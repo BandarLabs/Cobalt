@@ -150,10 +150,17 @@ def main():
                 drive(f'tap-id {direction}', 'wait-idle')
                 return True
 
-            def add(text):
+            def add_in_a_row(texts):
+                """Adds several items without leaving the keyboard, then puts it
+                away with Back."""
                 drive('tap-id add', 'wait-idle')
-                type_text(text)
-                drive('tap Add', 'wait-idle')
+                composed = None
+                for text in texts:
+                    type_text(text)
+                    drive('tap Add', 'wait-idle')
+                    composed = capture('01b-still-composing')
+                drive('tap Back', 'wait-idle')
+                return composed
 
             try:
                 address = start()
@@ -163,8 +170,11 @@ def main():
                 assert 'Add a task' in words(empty), words(empty)
                 checks.append('an empty list says so and offers the one thing to do about it')
 
-                for text in ITEMS:
-                    add(text)
+                composing = add_in_a_row(ITEMS)
+                said = words(composing)
+                assert 'New item' in said and 'Added' in said, said
+                assert f'Todo: {len(ITEMS)} left' in said, said
+                checks.append('items are added one after another without leaving the keyboard')
                 listed = page_until('02-a-list', 'buy milk')
                 said = words(listed)
                 assert 'buy milk' in said, said

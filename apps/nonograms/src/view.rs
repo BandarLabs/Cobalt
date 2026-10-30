@@ -3,7 +3,7 @@ use super::{action_id, ActionId, Context, Game, Mark, Route, Screen, ScreenBuild
 use kobo_sdk::board::{Board, BoardClues, BoardViewport, Direction, Field, Mark as Ink};
 use kobo_sdk::{BandAlign, Chrome, ControlState, SlotWidth, Space};
 
-const HELP: &str = "Use the clues to fill the picture\n\nEach number is a run of filled squares in its row or column. Separate runs with at least one empty square. A zero means the entire line is empty.\n\nTap a square to cycle blank, filled and crossed out. The outlined square is your last choice. A cross means you have decided the square is empty.\n\nClues sit beside their matching lines. Tap a clue to read its complete sequence. An ellipsis means there are more numbers.\n\nLeft, Right, Up and Down move the window with an overlap. The − and + buttons change square size. Your marks stay in their original rows and columns.\n\nMore contains checking and run entry. Free accepts your choices without warnings. Guided names a row or column whose clues no longer fit.\n\nRun entry fills a horizontal or vertical run between two taps. Undo reverses the whole run, a single mark or a confirmed restart.\n\nMark every square, including empty squares with a cross, to finish. The completed picture opens when all marks match.";
+const HELP: &str = "Use the clues to fill the picture\n\nEach number is a run of filled squares in its row or column. Separate runs with at least one empty square. A zero means the entire line is empty.\n\nTap a square to cycle blank, filled and crossed out. The outlined square is your last choice. A cross means you have decided the square is empty.\n\nClues sit beside their matching lines. Tap a clue to read its complete sequence. An ellipsis means there are more numbers.\n\nLeft, Right, Up and Down move the window with an overlap. The − and + buttons change square size. Your marks stay in their original rows and columns.\n\nMore holds two switches. With Guided off, your choices are accepted without warnings. Guided names a row or column whose clues no longer fit.\n\nRun entry fills a horizontal or vertical run between two taps. Undo reverses the whole run, a single mark or a confirmed restart.\n\nMark every square, including empty squares with a cross, to finish. The completed picture opens when all marks match.";
 
 fn state(enabled: bool) -> ControlState {
     if enabled {
@@ -242,20 +242,16 @@ impl Game {
         if let Some(notice) = &self.notice {
             screen = screen.text(notice);
         }
+        // Checking and run entry are settings, so they are switches that show
+        // which way they are set. As buttons labelled with their state, "Run
+        // off" read as an order to turn it off as easily as a report that it
+        // was. How Guided does it is on the help pages: a line of summary
+        // under each switch is what pushes Puzzles off a small panel held
+        // sideways at the larger text sizes.
         screen
-            .grid(
-                2,
-                false,
-                [
-                    ("policy", if self.guided { "Guided" } else { "Free" }),
-                    (
-                        "run-entry",
-                        if self.run_entry { "Run on" } else { "Run off" },
-                    ),
-                    ("reset", "Restart"),
-                    ("resume", "Resume"),
-                ],
-            )
+            .toggle("policy", "Guided", "", self.guided)
+            .toggle("run-entry", "Run entry", "", self.run_entry)
+            .grid(2, false, [("reset", "Restart"), ("resume", "Resume")])
             .button_with_state("undo", "Undo", state(!self.undo.is_empty()))
             .button("back-browser", "Puzzles")
             .build()
@@ -279,9 +275,9 @@ On your computer, run:
 
 kobo nonograms push IMAGE --name NAME --size N
 
-Replace IMAGE with your image file, NAME with what to call the puzzle, and N with a grid size from 5 to 25. Choose the same size in Photo puzzles, then Import.
+Replace IMAGE with your image file, NAME with what to call the puzzle, and N with a grid size from 5 to 25. The puzzle appears under Photos the next time Nonograms opens or the reader wakes.
 
-To send several at once, write imported.txt beside the photos, one line per puzzle: file name, puzzle name and grid size, separated by tabs. The list sets the sizes.
+Each push adds to the photos already here. To send several at once, add --add IMAGE --name NAME --size N for each. To keep only the photos you are sending, add --replace.
 
 Only puzzles solvable by row and column deductions are accepted. Try another photo or size if the clues need guessing.
 

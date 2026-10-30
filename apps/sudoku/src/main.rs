@@ -4,9 +4,10 @@ mod saved;
 #[cfg(test)]
 mod tests;
 use game::{Game, Level, Puzzle, CELLS};
+use kobo_sdk::game::{self as chrome, Menu, Tap};
 use kobo_sdk::{
-    action_id, ActionId, BandAlign, Context, ControlState, DialogAction, KoboApp, PencilBoard,
-    PencilMark, PencilMarkKind, Screen, ScreenBuilder, SlotWidth, StoreResult,
+    action_id, ActionId, BandAlign, Context, DialogAction, Glyph, KoboApp, PencilBoard, PencilMark,
+    PencilMarkKind, Screen, ScreenBuilder, SlotWidth, StoreResult,
 };
 use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
@@ -16,17 +17,16 @@ type BuildSlot<'a> = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder + 'a>;
 enum View {
     #[default]
     Play,
-    Menu,
     New,
     Restart,
     Help,
     Hint,
-    Display,
 }
 struct Sudoku {
     puzzles: Vec<Puzzle>,
     game: Game,
     view: View,
+    menu: Menu,
     draft: Draft,
     active: Option<u64>,
     loaded: bool,
@@ -42,6 +42,7 @@ impl Default for Sudoku {
             game: Game::new(0, &puzzles),
             puzzles,
             view: View::Play,
+            menu: Menu::default(),
             draft: Draft::restored(Vec::new(), saved::LIMIT).expect("bounded empty draft"),
             active: None,
             loaded: false,
@@ -50,13 +51,6 @@ impl Default for Sudoku {
             help_page: 0,
             sent_orientation: None,
         }
-    }
-}
-fn state(enabled: bool) -> ControlState {
-    if enabled {
-        ControlState::Enabled
-    } else {
-        ControlState::Disabled
     }
 }
 fn cell_name(cell: usize) -> String {
@@ -84,26 +78,27 @@ impl Sudoku {
             .count();
         format!("{left} left")
     }
-    fn saved_label(&self) -> &'static str {
-        match self.draft.status() {
-            Status::Saved => "Saved",
-            Status::Saving => "Saving…",
-            Status::Unsaved | Status::Failed(_) => "Not saved",
-        }
+    fn save_failed(&self) -> bool {
+        matches!(self.draft.status(), Status::Failed(_))
     }
-    fn heading(&self) -> String {
-        format!(
-            "{} · {}/12",
-            self.puzzles[self.game.puzzle].level.name(),
-            self.game.puzzle % 12 + 1
-        )
+    fn title(&self) -> String {
+        let puzzle = &self.puzzles[self.game.puzzle];
+        format!("Sudoku · {} {}", puzzle.level.name(), puzzle.number)
     }
     fn status(&self) -> String {
-        if matches!(self.draft.status(), Status::Failed(_)) {
-            return "Not saved · Open More to retry.".into();
+        if self.save_failed() {
+            return "Not saved · Retry saving in More.".into();
         }
         if self.game.solved(&self.puzzles) {
-            return "Puzzle complete".into();
+            // The hint count used to live on a menu screen that no longer
+            // exists, and the end of a puzzle is the one moment it matters.
+            // The way on is named too, since the board is otherwise a dead
+            // end: the digits and Notes do nothing once it is full.
+            return match self.game.position.hints {
+                0 => "Puzzle complete. New game is in More.".into(),
+                1 => "Puzzle complete with 1 hint. New game is in More.".into(),
+                hints => format!("Puzzle complete with {hints} hints. New game is in More."),
+            };
         }
         if let Some(notice) = &self.notice {
             return notice.clone();
@@ -117,7 +112,7 @@ impl Sudoku {
                 && self.game.position.board[cell] != 0
                 && self.game.position.board[cell] != spec.solution[cell]
             {
-                return "Check this answer".into();
+                return format!("Wrong answer · {}", self.progress_label());
             }
             if self.game.pencil {
                 format!("Notes · {}", self.progress_label())
@@ -192,54 +187,66 @@ impl Sudoku {
             }),
         )
     }
-
-    fn controls(&self, builder: ScreenBuilder) -> ScreenBuilder {
-        builder.grid(
-            3,
-            false,
-            [
-                ("pencil", if self.game.pencil { "Digits" } else { "Notes" }),
-                ("undo", "Undo"),
-                ("more", "More"),
-            ],
-        )
+    /// The game's own entries in More, after New game.
+    ///
+    /// Retry saving joins them only while a save has failed, next to New
+    /// game at the top, because the status line sends the player here for it.
+    /// A banner over the board would cost the squares the height the fit
+    /// tests guard, so the status line names the entry instead.
+    fn more_items(&self) -> Vec<(&'static str, &'static str)> {
+        let mut items = Vec::with_capacity(5);
+        if self.save_failed() {
+            items.push(("retry-save", "Retry saving"));
+        }
+        items.push(("restart", "Restart puzzle"));
+        items.push((
+            "checking",
+            if self.game.checking {
+                "Hide mistakes"
+            } else {
+                "Show mistakes"
+            },
+        ));
+        items.push(("hint", "Reveal square"));
+        items.push((
+            "rotate",
+            if self.game.landscape {
+                "Use portrait"
+            } else {
+                "Use landscape"
+            },
+        ));
+        items
     }
     fn screen(&self, context: &Context) -> Screen {
-        let title = if self.loaded && self.view == View::Play {
-            format!(
-                "Sudoku · {} {}",
-                self.puzzles[self.game.puzzle].level.name(),
-                self.game.puzzle % 12 + 1
-            )
-        } else {
-            "Sudoku".into()
-        };
-        let builder = ScreenBuilder::new("sudoku").top_bar(title);
         if !self.loaded {
+            let head = || ScreenBuilder::new("sudoku").top_bar("Sudoku");
+            // A splash with the fix directly under its reason, the shape every
+            // other whole-screen failure takes. The heading and the Retry at
+            // the foot of the panel left an empty page between the two.
             return if let Some(error) = &self.load_error {
-                builder
-                    .heading("Cannot open game")
-                    .text(error)
-                    .text("Your saved game has been kept. Retry reading it before playing.")
-                    .bottom_action("retry-load", "Retry")
-                    .build()
+                failure_screen(
+                    head,
+                    &context.metrics(),
+                    "Cannot open game",
+                    (&format!("{error} Your saved game has been kept."), error),
+                    ("retry-load", "Try again"),
+                )
             } else {
-                builder.text("Opening your game…").build()
+                head().text("Opening your game…").build()
             };
         }
-        let builder = builder.owns_back(self.view != View::Play);
+        // Every screen but the puzzle is a step away from it, so each has a
+        // plain bar and Back returns to the board.
+        let away = |title| ScreenBuilder::new("sudoku").top_bar(title).owns_back(true);
         match self.view {
-            View::Play => self.play_screen(builder),
-            View::Menu => self.menu_screen(builder),
-            View::New => builder
-                .heading("New puzzle")
-                .secondary("Replaces this game and its history.")
-                .button("new-easy", "Easy")
-                .button("new-medium", "Medium")
-                .button("new-hard", "Hard")
-                .bottom_action("play", "Keep playing")
-                .build(),
-            View::Restart => builder
+            View::Play => self.play_screen(ScreenBuilder::new("sudoku").game_top_bar(
+                self.title(),
+                self.menu,
+                self.more_items(),
+            )),
+            View::New => self.new_game_screen(context),
+            View::Restart => away("Sudoku")
                 .confirmation(
                     "Restart puzzle?",
                     "Clear answers, notes and hints. You can undo.",
@@ -247,31 +254,18 @@ impl Sudoku {
                     DialogAction::new("play", "Keep playing"),
                 )
                 .build(),
-            View::Hint => builder
+            View::Hint => away("Sudoku")
                 .confirmation(
-                    "Reveal answer?",
-                    "Fill this square and count one hint. You can undo.",
-                    DialogAction::new("confirm-hint", "Reveal answer"),
+                    "Reveal square?",
+                    "Fill this square with its answer and count one hint. You can undo.",
+                    DialogAction::new("confirm-hint", "Reveal square"),
                     DialogAction::new("play", "Keep playing"),
                 )
-                .build(),
-            View::Display => builder
-                .heading("View")
-                .button(
-                    "rotate",
-                    if self.orientation() == kobo_sdk::Orientation::Landscape {
-                        "Use portrait"
-                    } else {
-                        "Use landscape"
-                    },
-                )
-                .button("how-to-play", "How to play")
-                .bottom_action("play", "Return to puzzle")
                 .build(),
             View::Help => {
                 let pages = self.help_pages(context);
                 let current = self.help_page.min(pages.len().saturating_sub(1));
-                let mut b = builder
+                let mut b = away(chrome::RULES_LABEL)
                     .page_position(
                         u16::try_from(current + 1).expect("bounded help"),
                         u16::try_from(pages.len()).expect("bounded help"),
@@ -284,116 +278,166 @@ impl Sudoku {
             }
         }
     }
+    /// The three difficulties. Each deals a new puzzle, so they are three
+    /// verbs side by side rather than a stack of full-width buttons that
+    /// reads as a form. Where a third of the panel cannot hold "Medium" on
+    /// one line, as upright at the largest sizes, they stack instead of
+    /// breaking the word.
+    fn new_game_screen(&self, context: &Context) -> Screen {
+        const LEVELS: [(&str, &str); 3] = [
+            ("new-easy", "Easy"),
+            ("new-medium", "Medium"),
+            ("new-hard", "Hard"),
+        ];
+        let build = |side_by_side: bool| {
+            let screen = ScreenBuilder::new("sudoku")
+                .top_bar("Sudoku")
+                .owns_back(true)
+                .heading(chrome::NEW_GAME_LABEL)
+                .secondary(if self.has_progress() {
+                    "Replaces this game and its history."
+                } else {
+                    "Choose a difficulty."
+                });
+            let screen = if side_by_side {
+                screen.buttons(LEVELS)
+            } else {
+                LEVELS
+                    .into_iter()
+                    .fold(screen, |screen, (name, label)| screen.button(name, label))
+            };
+            screen.bottom_action("play", "Keep playing").build()
+        };
+        // A label broken across lines makes its button taller than the
+        // one-line buttons of the stacked shape. The runtime names the panel
+        // upright, so it is turned the way the game asked to be drawn.
+        let metrics = context.metrics().oriented(self.orientation());
+        let chrome = kobo_sdk::Chrome::measuring(true);
+        let stacked = build(false);
+        let one_line = stacked
+            .layout_with(&metrics, &chrome)
+            .rect_of_action(action_id(LEVELS[0].0))
+            .map_or(i32::MAX, |rect| rect.height);
+        let paired = build(true);
+        let layout = paired.layout_with(&metrics, &chrome);
+        let whole = LEVELS.iter().all(|(name, _)| {
+            layout
+                .rect_of_action(action_id(name))
+                .is_some_and(|rect| rect.height <= one_line)
+        });
+        if whole {
+            paired
+        } else {
+            stacked
+        }
+    }
     fn play_screen(&self, builder: ScreenBuilder) -> Screen {
-        let landscape = self.orientation() == kobo_sdk::Orientation::Landscape;
-        let status = self.status();
-        let builder = builder.secondary(status);
-        if landscape {
+        let builder = if self.game.landscape {
+            // The status line and a keypad of three rows sit beside the
+            // board, so the board keeps every line of height the foot bar
+            // leaves it: at the largest text a status line above it cost
+            // the squares their last pixel of touch target.
             let slots: [(SlotWidth, BuildSlot<'_>); 2] = [
                 (SlotWidth::Fill, Box::new(|b| self.board(b))),
                 (
                     SlotWidth::Fixed(392),
-                    Box::new(|b| {
-                        self.digits(b, 5)
-                            .button("pencil", if self.game.pencil { "Digits" } else { "Notes" })
-                            .button_with_state("undo", "Undo", state(!self.game.undo.is_empty()))
-                            .button("more", "More")
-                    }),
+                    Box::new(|b| self.digits(b.secondary(self.status()), 3)),
                 ),
             ];
-            builder.band(BandAlign::Top, slots).build()
+            builder.band(BandAlign::Top, slots)
         } else {
-            self.controls(self.digits(self.board(builder), 9)).build()
+            self.digits(self.board(builder.secondary(self.status())), 9)
+        };
+        builder
+            .game_actions(
+                true,
+                [
+                    ("pencil", if self.game.pencil { "Digits" } else { "Notes" }),
+                    ("erase", "Erase"),
+                ],
+            )
+            .build()
+    }
+    /// Whether starting another puzzle would throw anything away.
+    fn has_progress(&self) -> bool {
+        !self.game.solved(&self.puzzles) && !self.game.undo.is_empty()
+    }
+    /// Why Erase did nothing, since the bar has no greyed-out state to show it.
+    fn cannot_erase(&self) -> &'static str {
+        match self.game.position.selected {
+            None => "Choose a square to erase.",
+            Some(cell) if !self.game.editable(cell, &self.puzzles) => {
+                "Given numbers cannot change."
+            }
+            Some(_) => "This square is already empty.",
         }
     }
-    fn menu_screen(&self, builder: ScreenBuilder) -> Screen {
-        let mut b = if matches!(self.draft.status(), Status::Failed(_)) {
-            builder
-                .section("Not saved")
-                .secondary("Free some storage, then retry.")
-                .button("retry-save", "Retry save")
-        } else {
-            // A label over the game's details rather than a display heading:
-            // the menu is six buttons, and a heading two lines tall at the
-            // largest text size pushed the last of them off a landscape panel.
-            builder
-                .section(if self.game.solved(&self.puzzles) {
-                    "Puzzle complete"
-                } else {
-                    "This game"
-                })
-                .secondary(format!(
-                    "{} · {} · {} hint{}",
-                    self.heading(),
-                    self.saved_label(),
-                    self.game.position.hints,
-                    if self.game.position.hints == 1 {
-                        ""
-                    } else {
-                        "s"
-                    }
-                ))
+    /// Whether Reveal square has anything to fill, and if not, why.
+    fn cannot_reveal(&self) -> Option<&'static str> {
+        let Some(cell) = self.game.position.selected else {
+            return Some("Choose a square to reveal.");
         };
-        let cell = self.game.position.selected;
-        let editable = cell.is_some_and(|c| self.game.editable(c, &self.puzzles));
-        let rows = [
-            [
-                (
-                    "erase",
-                    "Erase",
-                    editable
-                        && cell.is_some_and(|c| {
-                            self.game.position.board[c] != 0 || self.game.position.notes[c] != 0
-                        }),
-                ),
-                (
-                    "checking",
-                    if self.game.checking {
-                        "Check on"
-                    } else {
-                        "Check off"
-                    },
-                    true,
-                ),
-            ],
-            [
-                (
-                    "hint",
-                    "Reveal",
-                    editable
-                        && cell.is_some_and(|c| {
-                            self.game.position.board[c]
-                                != self.puzzles[self.game.puzzle].solution[c]
-                        }),
-                ),
-                ("new-game", "New", true),
-            ],
-            [("restart", "Restart", true), ("view", "View", true)],
-        ];
-        for row in rows {
-            b = b.band(
-                BandAlign::Middle,
-                row.map(|(name, label, enabled)| {
-                    (SlotWidth::Fill, move |b: ScreenBuilder| {
-                        b.button_with_state(name, label, state(enabled))
-                    })
-                }),
-            );
+        if !self.game.editable(cell, &self.puzzles) {
+            Some("Given numbers cannot change.")
+        } else if self.game.position.board[cell] == self.puzzles[self.game.puzzle].solution[cell] {
+            Some("This square is already right.")
+        } else {
+            None
         }
-        b.bottom_action("play", "Return to puzzle").build()
     }
     fn help_pages(&self, context: &Context) -> Vec<Vec<String>> {
-        context.paginate_oriented("Use 1–9 once in each row, column and 3×3 box. The shaded cross follows your selection; a bracketed number or small square marks your target. Given numbers cannot change.
+        let each = self.puzzles.len() / Level::ALL.len();
+        context.paginate_oriented(&format!("Use 1–9 once in each row, column and 3×3 box. The shaded cross follows your selection; a bracketed number or small square marks your target. Given numbers cannot change.
 
-Tap Notes, then numbers to add or remove notes. A dot marks a square with notes; its selected numbers have outlined keys. Tap Digits to enter answers. Erase a filled square before adding notes.
+Tap Notes, then numbers to add or remove notes. A dot marks a square with notes; its selected numbers have outlined keys. Tap Digits to enter answers. Erase clears the selected square, so notes can go where an answer was.
 
-More offers erase, checking and reveal. Checking starts off. Turn it on to flag a wrong selected answer without rejecting your entry. Revealing a square asks first and counts as a hint.
+Mistakes are hidden at first. Show mistakes in More marks a wrong answer in the selected square without removing it, and Hide mistakes turns that off again. Reveal square in More fills the selected square after asking, and counts as a hint.
 
-Your game saves after every edit. Undo restores the last 64 moves, even after reopening. A full correct grid completes the puzzle. New puzzle replaces the current game and its history.
+Your game saves after every edit. Undo takes back the last 64 edits, even after reopening. A full correct grid completes the puzzle. New game in More replaces the current game and its history.
 
-Landscape shows the whole board with the digits beside it.
+The three dots at the top open More: New game, Restart puzzle, Show mistakes, Reveal square, and Use landscape, which shows the whole board with the digits beside it.
 
-There are 12 original puzzles per difficulty. Easy uses single candidates. Medium adds single locations in a row, column or box. Hard needs more advanced techniques.", true, self.orientation())
+There are {each} original puzzles at each difficulty, and New game moves on to the next one. Easy needs only squares with one possible number. Medium also needs numbers with one possible place in a row, column or box. Hard also needs pairs and pointing: two squares in a row, column or box that share the same two possible numbers, or a number whose places in a box all lie along one line."), true, self.orientation())
+    }
+    /// A tap on the board, the digits, the foot bar or the game's own entries
+    /// in More.
+    fn play_action(&mut self, context: &mut Context, action: ActionId) {
+        let is = |name: &str| action == action_id(name);
+        if is("pencil") {
+            self.game.pencil = !self.game.pencil;
+        } else if is("erase") {
+            if !self.game.erase(&self.puzzles) {
+                self.notice = Some(self.cannot_erase().into());
+            }
+        } else if is("retry-save") {
+            self.draft.retry();
+            self.pump(context);
+        } else if is("restart") {
+            self.view = View::Restart;
+        } else if is("checking") {
+            self.game.checking = !self.game.checking;
+        } else if is("hint") {
+            match self.cannot_reveal() {
+                Some(reason) => self.notice = Some(reason.into()),
+                None => self.view = View::Hint,
+            }
+        } else if is("rotate") {
+            self.game.landscape = !self.game.landscape;
+        } else if let Some(cell) = (0..CELLS).find(|&c| is(&cell_name(c))) {
+            self.game.position.selected = Some(cell);
+        } else if let Some(digit) = (1..=9).find(|&d| is(&digit_name(d))) {
+            if !self.game.enter(digit, &self.puzzles) && self.notes_need_erase() {
+                self.notice = Some("Erase this answer to add notes.".into());
+            }
+        }
+    }
+    /// Whether a note was refused only because the square holds an answer.
+    fn notes_need_erase(&self) -> bool {
+        self.game.pencil
+            && !self.game.solved(&self.puzzles)
+            && self.game.position.selected.is_some_and(|cell| {
+                self.game.editable(cell, &self.puzzles) && self.game.position.board[cell] != 0
+            })
     }
     fn orientation(&self) -> kobo_sdk::Orientation {
         if self.game.landscape {
@@ -475,84 +519,49 @@ impl KoboApp for Sudoku {
         }
         let before = self.game.clone();
         self.notice = None;
-        if is("play") || action == ActionId::BACK {
-            self.view = View::Play;
-        } else {
-            match self.view {
-                View::Play => {
-                    if is("more") {
-                        self.view = View::Menu;
-                    } else if is("pencil") {
-                        self.game.pencil = !self.game.pencil;
-                    } else if is("undo") {
-                        if !self.game.undo() {
-                            self.notice = Some("No moves to undo.".into());
-                        }
-                    } else if let Some(cell) = (0..CELLS).find(|&c| is(&cell_name(c))) {
-                        self.game.position.selected = Some(cell);
-                    } else if let Some(digit) = (1..=9).find(|&d| is(&digit_name(d))) {
-                        self.game.enter(digit, &self.puzzles);
+        match self.view {
+            View::Play => match self.menu.read(action) {
+                Some(Tap::Menu) => {}
+                Some(Tap::Undo) => {
+                    if !self.game.undo() {
+                        self.notice = Some(chrome::NOTHING_TO_UNDO.into());
                     }
                 }
-                View::Menu => {
-                    if is("retry-save") {
-                        self.draft.retry();
-                        self.pump(context);
-                    } else if is("erase") {
-                        self.game.erase(&self.puzzles);
-                        self.view = View::Play;
-                    } else if is("checking") {
-                        self.game.checking = !self.game.checking;
-                    } else if is("hint") {
-                        self.view = View::Hint;
-                    } else if is("new-game") {
-                        self.view = View::New;
-                    } else if is("restart") {
-                        self.view = View::Restart;
-                    } else if is("view") {
-                        self.view = View::Display;
-                    }
+                Some(Tap::Rules) => {
+                    self.help_page = 0;
+                    self.view = View::Help;
                 }
-                View::New => {
-                    if let Some(level) = Level::ALL
-                        .into_iter()
-                        .find(|l| is(&format!("new-{}", l.key())))
-                    {
-                        let next = self.game.next(level, &self.puzzles);
-                        let landscape = self.game.landscape;
-                        self.game = Game::new(next, &self.puzzles);
-                        self.game.landscape = landscape;
-                        self.view = View::Play;
-                    }
+                Some(Tap::NewGame) => self.view = View::New,
+                None => self.play_action(context, action),
+            },
+            _ if is("play") || action == ActionId::BACK => self.view = View::Play,
+            View::New => {
+                if let Some(level) = Level::ALL
+                    .into_iter()
+                    .find(|l| is(&format!("new-{}", l.key())))
+                {
+                    self.game = self.game.start(level, &self.puzzles);
+                    self.view = View::Play;
                 }
-                View::Restart => {
-                    if is("confirm-restart") {
-                        self.game.reset(&self.puzzles);
-                        self.view = View::Play;
-                    }
+            }
+            View::Restart => {
+                if is("confirm-restart") {
+                    self.game.reset(&self.puzzles);
+                    self.view = View::Play;
                 }
-                View::Hint => {
-                    if is("confirm-hint") {
-                        self.game.hint(&self.puzzles);
-                        self.view = View::Play;
-                    }
+            }
+            View::Hint => {
+                if is("confirm-hint") {
+                    self.game.hint(&self.puzzles);
+                    self.view = View::Play;
                 }
-                View::Display => {
-                    if is("rotate") {
-                        self.game.landscape = !self.game.landscape;
-                        self.view = View::Play;
-                    } else if is("how-to-play") {
-                        self.help_page = 0;
-                        self.view = View::Help;
-                    }
-                }
-                View::Help => {
-                    if is("help-next") {
-                        self.help_page = (self.help_page + 1)
-                            .min(self.help_pages(context).len().saturating_sub(1));
-                    } else if is("help-previous") {
-                        self.help_page = self.help_page.saturating_sub(1);
-                    }
+            }
+            View::Help => {
+                if is("help-next") {
+                    self.help_page =
+                        (self.help_page + 1).min(self.help_pages(context).len().saturating_sub(1));
+                } else if is("help-previous") {
+                    self.help_page = self.help_page.saturating_sub(1);
                 }
             }
         }
@@ -561,6 +570,33 @@ impl KoboApp for Sudoku {
         }
         self.show(context);
     }
+}
+/// A whole-screen failure: a splash saying why, then its one fix directly
+/// under it. On a small panel at the largest text sizes the mark gives way
+/// first and then the longer sentence, so the reason and the fix are always
+/// on the panel together.
+fn failure_screen(
+    head: impl Fn() -> ScreenBuilder,
+    metrics: &kobo_sdk::DisplayMetrics,
+    title: &str,
+    (full, short): (&str, &str),
+    (retry, label): (&str, &str),
+) -> Screen {
+    let build = |glyph, summary: &str| {
+        head()
+            .splash(glyph, title, summary)
+            .primary_button(retry, label)
+            .build()
+    };
+    [(Some(Glyph::Close), full), (None, full), (None, short)]
+        .into_iter()
+        .map(|(glyph, summary)| build(glyph, summary))
+        .find(|screen| {
+            !screen
+                .diagnostics(metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        })
+        .unwrap_or_else(|| build(None, short))
 }
 fn main() -> ExitCode {
     match kobo_sdk::run("sudoku", Sudoku::default()) {

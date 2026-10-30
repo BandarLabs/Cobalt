@@ -4,8 +4,8 @@
   "short_label": "Needles",
   "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
   "page_description": "Count rows for each section of a project, browse your Ravelry library, and read patterns you own offline.",
-  "version": "0.1.8",
-  "release_notes": "+1 row is the large filled control at the foot of the counter, beside Undo, and projects and the library moved to the top bar.",
+  "version": "0.1.11",
+  "release_notes": "Use landscape under More turns the counter on its side, Change section lists every section with its row, and Repeat length is set in one tap. Undo and +1 row stay on screen under a message at every text size.",
   "glyph": "bookmark",
   "capabilities": [
     "network",
@@ -14,11 +14,11 @@
   "setup": {
     "steps": [
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already. PDF patterns also need Poppler on this computer, which kobo needles setup installs.",
+        "command": "kobo setup"
       },
       {
-        "text": "Send a pattern you own. PDFs need Poppler's pdftotext on this computer.",
+        "text": "Send a pattern you own. Each push adds a pattern; the ones already there stay.",
         "command": "kobo needles push PATTERN.pdf"
       },
       {

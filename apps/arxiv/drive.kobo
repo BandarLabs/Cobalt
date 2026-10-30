@@ -1,9 +1,53 @@
 wait 800
 expect Preprints
-expect Artificial Intelligence
+expect Computer Science
+expect 40 subjects
+expect Mathematics
+expect-missing Artificial Intelligence
 clean
 shot subjects
+tap Computer Science
+wait-idle
+expect Artificial Intelligence
+expect cs.AI
+# The group pages; how many pages depends on the panel and the text size.
+expect 1 of
+clean
+shot group
+tap Back
+wait-idle
+expect Mathematics
 tap Library
+wait-idle
 expect Library
+expect No papers kept yet
+expect-missing No saved papers
 clean
 shot library
+tap Back
+wait-idle
+# A search is typed on the reader's own keyboard, and Back puts it away.
+tap Search arXiv
+wait-for Type here
+expect A phrase, an author, a title
+clean
+shot search
+tap Back
+wait-idle
+expect Computer Science
+expect-missing Type here
+scenario offline
+tap Computer Science
+wait-idle
+tap Artificial Intelligence
+wait-for This reader is not on a network
+wait-idle
+expect This reader is not on a network
+expect Try again
+expect-missing No papers found
+clean
+shot listing-offline
+scenario normal
+tap Back
+wait-idle
+expect cs.AI

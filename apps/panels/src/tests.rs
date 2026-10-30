@@ -637,6 +637,10 @@ fn download_recovery_controls_fit_every_portrait_text_size() {
                 pixels_per_inch,
                 text_scale,
             };
+            // A runner installs the face the runtime measures with. Without
+            // one, this test measured in the built-in fallback type whenever
+            // it ran before any other test had made one.
+            let _runner = kobo_sdk::AppRunner::with_metrics(Panels::default(), metrics);
             for notice in [
                 "This paused download could not be opened. Retry, or remove it and download the comic again.",
                 "The comic on your server has changed. Remove this download and start again.",
@@ -691,4 +695,236 @@ fn shelf_summary_reports_the_acknowledged_page_while_a_newer_page_is_pending() {
     assert_eq!(app.progress[&key].status(), super::DraftStatus::Saving);
     app.on_save(&mut context, &key, StoreResult::Saved { key: key.clone() });
     assert_eq!(app.previews.summary(&kept), "Saved page 3 of 3");
+}
+
+fn sent_comic(title: &str, bytes: &[u8]) -> kobo_comic::inbox::Sent {
+    let sha256 = kobo_net::sha256::hex_digest(bytes);
+    kobo_comic::inbox::Sent {
+        file: kobo_comic::inbox::file_name(&sha256),
+        title: title.to_owned(),
+        pages: 4,
+        sha256,
+    }
+}
+
+fn shelf_read(name: &str, bytes: &[u8]) -> kobo_sdk::StoreResult {
+    kobo_sdk::StoreResult::ShelfRead {
+        name: name.into(),
+        offset: 0,
+        size: u32::try_from(bytes.len()).unwrap(),
+        bytes: bytes.to_vec(),
+    }
+}
+
+#[test]
+fn comics_pushed_while_panels_was_away_start_going_on_the_shelf_when_it_comes_back() {
+    use kobo_sdk::{AppRunner, StoreResult};
+    let garden = include_bytes!("../assets/a-small-garden.cbz");
+    let pages = include_bytes!("../../../docs/quality/fixtures/original-pages.cbz");
+    let mut runner = AppRunner::new(super::Panels::default());
+    runner.start();
+    // Library, partial download, server, then the list of sent comics.
+    runner.store_result(StoreResult::Loaded {
+        key: super::LIBRARY.into(),
+        value: None,
+    });
+    runner.store_result(StoreResult::Loaded {
+        key: super::PARTIAL_META.into(),
+        value: None,
+    });
+    runner.store_result(StoreResult::Loaded {
+        key: super::server::KEY.into(),
+        value: None,
+    });
+    runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+    assert!(runner.app().sent.is_empty());
+    runner.resume();
+    let first = sent_comic("The Small Garden", garden);
+    let list = kobo_comic::inbox::encode(&[first.clone(), sent_comic("Original Pages", pages)]);
+    runner.store_result(shelf_read(kobo_comic::inbox::MANIFEST, &list));
+    assert_eq!(runner.app().sent.len(), 2);
+    assert_eq!(runner.app().waiting(), 2);
+    assert!(runner.app().adding, "the first sent comic is being added");
+    assert_eq!(runner.app().route, super::Route::Import);
+    assert_eq!(
+        runner
+            .app()
+            .local_load
+            .as_ref()
+            .map(|load| load.name().to_owned()),
+        Some(first.file.clone())
+    );
+    // Both stay listed under their own titles on the Add comic list.
+    let shown = format!("{:?}", runner.app().sent_screen(&runner.context()));
+    assert!(shown.contains("Original Pages") && shown.contains("The Small Garden"));
+    assert!(runner
+        .app()
+        .sent_screen(&runner.context())
+        .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+        .issues
+        .is_empty());
+}
+
+#[test]
+fn a_sent_comic_that_cannot_be_read_stops_the_run_and_is_not_tried_again() {
+    use kobo_sdk::{Context, KoboApp};
+    let broken = b"not a comic at all".to_vec();
+    let sent = sent_comic("Broken", &broken);
+    let mut app = super::Panels {
+        library: Some(super::Library::restore(None).unwrap()),
+        loaded: true,
+        sent: vec![sent.clone()],
+        ..super::Panels::default()
+    };
+    let mut context = Context::default();
+    app.add_waiting(&mut context);
+    assert!(app.adding);
+    app.on_shelf(&mut context, &sent.file, shelf_read(&sent.file, &broken));
+    assert!(!app.adding);
+    assert_eq!(app.route, super::Route::Library);
+    assert!(app.add_failed.contains(&sent.sha256));
+    app.add_waiting(&mut context);
+    assert!(
+        !app.adding,
+        "a comic that failed is not tried again this session"
+    );
+    assert_eq!(app.waiting(), 1, "it stays listed for the owner to see");
+}
+
+#[test]
+fn a_sent_comic_without_comic_info_keeps_the_title_it_was_sent_with() {
+    use kobo_sdk::{Context, KoboApp};
+    let bytes = include_bytes!("../../../docs/quality/fixtures/original-pages.cbz").to_vec();
+    let sent = sent_comic("Original Pages, sent by name", &bytes);
+    let mut app = super::Panels {
+        library: Some(super::Library::restore(None).unwrap()),
+        loaded: true,
+        sent: vec![sent.clone()],
+        ..super::Panels::default()
+    };
+    let mut context = Context::default();
+    app.load_sideload(&mut context);
+    app.on_action(&mut context, action_id("sent-0"));
+    assert_eq!(app.route, super::Route::Import);
+    app.on_shelf(&mut context, &sent.file, shelf_read(&sent.file, &bytes));
+    let import = app.import.as_ref().expect("previewed");
+    let expected = kobo_comic::inspect(&bytes)
+        .unwrap()
+        .metadata
+        .title
+        .unwrap_or_else(|| sent.title.clone());
+    assert_eq!(import.receipt().title, expected);
+    assert_ne!(import.receipt().title, "Added comic");
+}
+
+#[test]
+fn a_sent_comic_already_on_the_shelf_opens_instead_of_importing_again() {
+    use kobo_sdk::{Context, KoboApp};
+    let bytes = include_bytes!("../assets/a-small-garden.cbz");
+    let sent = sent_comic("A small garden", bytes);
+    let mut library = super::Library::restore(None).unwrap();
+    library
+        .remember(super::Kept {
+            key: sent.sha256.clone(),
+            title: sent.title.clone(),
+            pages: 4,
+            rtl: false,
+        })
+        .unwrap();
+    let mut app = super::Panels {
+        library: Some(library),
+        loaded: true,
+        sent: vec![sent],
+        ..super::Panels::default()
+    };
+    assert_eq!(app.waiting(), 0);
+    assert!(app.waiting_notice().is_none());
+    let mut context = Context::default();
+    app.load_sideload(&mut context);
+    app.on_action(&mut context, action_id("sent-0"));
+    assert!(app.import.is_none());
+    assert!(app.pending_open.is_some(), "the shelf copy is opening");
+}
+
+#[test]
+fn a_search_is_typed_on_the_readers_keyboard_and_back_lets_go_of_it_before_the_page() {
+    use kobo_sdk::{keyboard::testing, ActionId, AppRunner};
+    let mut runner = AppRunner::new(Panels {
+        catalog: Some(large_catalog()),
+        catalog_url: "https://library.example/catalog".into(),
+        route: super::Route::Catalog,
+        ..Panels::default()
+    });
+    let opened = runner.action(action_id("search"));
+    assert!(
+        testing::asked(&opened).is_some(),
+        "the reader's keyboard was not asked for"
+    );
+    runner.type_text("Garden 12");
+    assert_eq!(runner.app().query, "Garden 12");
+    assert_eq!(runner.app().route, super::Route::Catalog);
+    let reopened = runner.action(action_id("search"));
+    let Some(kobo_sdk::DeviceRequest::TypeText { initial, .. }) = testing::asked(&reopened) else {
+        panic!("the field did not open again");
+    };
+    assert_eq!(
+        initial, "Garden 12",
+        "the search was not put back to refine"
+    );
+    runner.cancel_text();
+    assert_eq!(
+        runner.app().query,
+        "Garden 12",
+        "backing out lost the search"
+    );
+    runner.action(ActionId::BACK);
+    assert!(runner.app().query.is_empty(), "Back kept the search");
+    assert_eq!(
+        runner.app().route,
+        super::Route::Catalog,
+        "Back left the page along with its search"
+    );
+}
+
+#[test]
+fn reading_order_is_a_switch_that_fits_beside_a_volume_at_every_text_size() {
+    use kobo_sdk::{AppRunner, Node};
+    let publication = large_catalog().publications[0].clone();
+    for text_scale in kobo_ui::TextScale::STEPS {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale,
+            ..CLARA_BW_METRICS
+        };
+        let mut runner = AppRunner::with_metrics(
+            Panels {
+                selected: Some(publication.clone()),
+                route: super::Route::Detail,
+                ..Panels::default()
+            },
+            metrics,
+        );
+        let switch = |app: &Panels, context: &kobo_sdk::Context| {
+            app.detail_screen(context)
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    Node::Toggle { on, .. } => Some(*on),
+                    _ => None,
+                })
+                .expect("reading order is not a switch")
+        };
+        let context = runner.context();
+        assert!(!switch(runner.app(), &context));
+        let diagnostics = runner
+            .app()
+            .detail_screen(&context)
+            .diagnostics(&metrics, &Chrome::measuring(true));
+        assert!(
+            diagnostics.issues.is_empty(),
+            "{text_scale:?}: {:?}",
+            diagnostics.issues
+        );
+        runner.action(action_id("detail-rtl"));
+        assert!(switch(runner.app(), &runner.context()));
+    }
 }

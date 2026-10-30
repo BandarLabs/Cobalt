@@ -25,6 +25,7 @@ class Home:
     def __init__(self):
         self.requests = []
         self.drop = False
+        self.token = TOKEN
         self.entities = {
             'light.desk': {'state': 'on', 'attributes': {'friendly_name': 'Desk lamp'}},
             'switch.fan': {'state': 'off', 'attributes': {'friendly_name': 'Fan'}},
@@ -94,10 +95,21 @@ def handler_for(home):
             # The reply never arrives: what Wi-Fi trouble looks like.
             self.close_connection = True
 
+        def refused(self):
+            # A token that is not this Home Assistant's is refused as HA does.
+            if self.headers.get('Authorization') == f'Bearer {home.token}':
+                return False
+            self.send_response(401)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return True
+
         def do_GET(self):
             if home.drop:
                 self.record('GET')
                 return self.unavailable()
+            if self.refused():
+                return
             if self.path == '/api/':
                 self.record('GET')
                 self.reply({'message': 'API running.'})
@@ -113,6 +125,8 @@ def handler_for(home):
             if home.drop:
                 self.record('POST')
                 return self.unavailable()
+            if self.refused():
+                return
             if self.path == '/api/template':
                 self.record('POST', raw.decode())
                 self.reply(home.template(raw.decode()))
@@ -145,7 +159,7 @@ def main():
                        CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0')
             config = private / 'config'
             env.update(KOBO_STREAM_CONFIG_DIR=str(config), KOBO_SIM_TRUST_DIR=str(config / 'trust'))
-            subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'], cwd=ROOT,
+            subprocess.run([str(cli), 'stream', 'init', '--sim', '--host', '127.0.0.1'], cwd=ROOT,
                            env=env, check=True, capture_output=True, timeout=60)
 
             home = Home()
@@ -157,12 +171,11 @@ def main():
             threading.Thread(target=server.serve_forever, daemon=True).start()
             origin = f'https://127.0.0.1:{server.server_port}'
 
-            # The token lands the way kobo secret set installs it: a raw value
-            # under the app-scoped secrets directory, never seen by the app.
-            secrets = private / 'cobalt-sim-secrets/apps/homepanel'
-            secrets.mkdir(parents=True)
-            (secrets / 'homeassistant').write_text(TOKEN)
-            os.chmod(secrets / 'homeassistant', 0o600)
+            def connect(token):
+                """The setup step exactly as the guide words it, against the fixture."""
+                return subprocess.run([str(cli), 'connect', 'homepanel', '--sim', '--server',
+                                       origin, '--stdin'], cwd=ROOT, env=env, input=token,
+                                      text=True, capture_output=True, timeout=120)
 
             (private / 'cobalt-sim-state/homepanel').mkdir(parents=True)
             (private / 'cobalt-sim-data/homepanel').mkdir(parents=True)
@@ -207,12 +220,30 @@ def main():
 
             try:
                 address = start()
-                drive('wait-for Connect Home Assistant')
+                # The token command and the HTTPS requirement are on the first
+                # screen, before anything has failed.
+                drive('wait-for kobo connect homepanel', 'expect must be on HTTPS')
                 capture('homepanel-setup')
+                drive('tap Check again', 'wait-for No address has arrived')
+                capture('homepanel-check-again-before-connect')
 
-                # Guided setup: type the address, test the connection.
-                drive('tap ?123', f'type 127.0.0.1:{server.server_port}',
-                      'tap Test connection', 'wait-for No tiles')
+                wrong = connect('not-the-token')
+                assert wrong.returncode != 0 and 'did not accept the token' in wrong.stderr, wrong
+                assert not (private / 'cobalt-sim-state/homepanel/base-url').exists()
+                done = connect(TOKEN)
+                assert done.returncode == 0, done.stderr
+                assert (private / 'cobalt-sim-state/homepanel/base-url').read_text() == origin
+                assert (private / 'cobalt-sim-secrets/homeassistant').read_text().strip() == TOKEN
+                home.requests.clear()
+                result['checks'].append(dict(
+                    name='kobo connect homepanel',
+                    detail='a wrong token is refused on the computer and nothing is installed; '
+                           'the right one installs the token and the address, and Check again '
+                           'on the reader opens the panel with nothing typed.',
+                    status='passed'))
+
+                # Check again opens the panel with nothing typed on the reader.
+                drive('tap Check again', 'wait-for No tiles')
                 capture('homepanel-empty')
 
                 # Add four tiles from the discovered devices.
@@ -239,15 +270,15 @@ def main():
                 drive('tap fan', 'wait-for Move up', 'tap Move up',
                       'wait-for Edit tiles')
                 drive('tap fan', 'wait-for Remove', 'tap Remove',
-                      'wait-for fan removed.', 'tap Done', 'tap Done',
+                      'wait-for fan removed.', 'tap back', 'wait-for Wall panel', 'tap back',
                       'wait-for Home Panel', 'expect-missing fan · off')
                 capture('homepanel-edited')
 
                 # Wall panel: one large tile per row.
-                drive('tap Settings', 'tap Use one large column', 'tap Done',
+                drive('tap Settings', 'tap Wall panel', 'tap back',
                       'wait-for Home Panel')
                 capture('homepanel-wall')
-                drive('tap Settings', 'tap Use two columns', 'tap Done',
+                drive('tap Settings', 'tap Wall panel', 'tap back',
                       'wait-for Home Panel')
 
                 # Connection failure is honest, recovery clears it.
@@ -257,6 +288,13 @@ def main():
                 home.drop = False
                 drive('wait 12000', 'wait-for Updated')
                 capture('homepanel-recovered')
+
+                # A replaced token on the server: the panel blames the token.
+                home.token = 'rotated-token'
+                drive('wait 12000', 'wait-for did not accept your account')
+                capture('homepanel-token-refused')
+                home.token = TOKEN
+                drive('wait 12000', 'wait-for Updated')
 
                 # State survives a restart.
                 stop()
@@ -284,7 +322,8 @@ def main():
                            'from discovery, toggle acknowledged by name after repoll, '
                            'climate target set to 21.5, tiles reordered and removed, '
                            'wall-panel layout, server outage reported with the last '
-                           'good reading time, recovery, and a restart with state kept. '
+                           'good reading time, a rotated token blamed on the token, recovery, '
+                           'and a restart with state kept. '
                            'Every server request carried the installed bearer token.',
                     status='passed'))
             finally:

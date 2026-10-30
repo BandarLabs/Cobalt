@@ -6,7 +6,7 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
+    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState, FieldKind,
     FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
     PictureFormat, PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile,
     TilePicture, TileShape, TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS,
@@ -62,6 +62,10 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// Its beta numbered-grid tag 33 carries corner clue numbers; tag 15 stays byte-compatible.
 /// Beta tag 34 adds bounded pencil-puzzle marks and orthogonal strokes.
 /// Beta task tag 4 adds explicit PUT/PATCH updates; older task tags are unchanged.
+/// Version 16 adds the controls the runtime draws, on node tags 35 to 39 and on
+/// bytes after everything tags 11, 14 and 24 already carried; see
+/// [`CONTROLS_VERSION`]. Version 15 remains readable and is written exactly as
+/// it was.
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
@@ -79,7 +83,27 @@ pub const PICTURE_BLEED_VERSION: u8 = 15;
 
 pub const AUTO_HIDDEN_TOP_BAR_VERSION: u8 = 15;
 
-pub const VERSION: u8 = 15;
+/// The protocol a screen must be encoded at to carry the runtime-drawn
+/// controls: toggles, checked rows, the selection bar, option lists, field
+/// labels and kinds, banner actions, row buttons and badges, codes and step
+/// indicators.
+///
+/// Each arrives on a tag or a trailing byte that an older runtime has no
+/// reading for, so an application built against an earlier protocol cannot
+/// send one, and a frame at an earlier protocol that names one is refused
+/// rather than drawn as something else. Every node an older protocol could
+/// already carry is encoded at that protocol exactly as it was.
+pub const CONTROLS_VERSION: u8 = 16;
+
+/// The protocol an application must speak to ask the runtime for typed text,
+/// with [`DeviceRequest::TypeText`], and to be answered with
+/// [`DeviceResult::Text`].
+///
+/// Both travel on tags an older runtime has no reading for, so a frame naming
+/// either at an earlier protocol is refused rather than misread.
+pub const TEXT_ENTRY_VERSION: u8 = 16;
+
+pub const VERSION: u8 = 16;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Beta wire version introducing explicit update tasks.
@@ -120,12 +144,14 @@ const PRE_FOLIO_VERSIONS: [u8; 2] = [DICTIONARY_VERSION, LEGACY_VERSION];
 /// application can still be speaking it. A test holds it to the release
 /// registry's `tools/protocol-minimums.json`, so removing one is a visible
 /// decision rather than a side effect.
-pub const ACCEPTED_VERSIONS: [u8; 6] = [
+pub const ACCEPTED_VERSIONS: [u8; 7] = [
     DICTIONARY_VERSION,
     LEGACY_VERSION,
     FOLIO_VERSION,
     SELECTED_GRID_VERSION,
     SUSPEND_VERSION,
+    // Fifteen, named by what it added now that it is no longer the newest.
+    PICTURE_BLEED_VERSION,
     VERSION,
 ];
 
@@ -1351,6 +1377,161 @@ pub enum DeviceRequest {
     /// Additive on a new tag: older sides refuse the frame rather than
     /// misreading it.
     CheckSecrets { names: Vec<String> },
+    /// Ask the owner to type something, on a keyboard the runtime draws.
+    ///
+    /// The runtime takes the panel, draws the field and the keys with its own
+    /// fonts, reads the taps itself and answers once, with
+    /// [`DeviceResult::Text`], when the owner submits or backs out. Before
+    /// this, every application drew the keys out of grid cells, so a missing
+    /// key was fixed one Store release at a time and every password passed
+    /// through the application that drew the field.
+    ///
+    /// `prompt` says what is being asked for, `hint` is one optional line
+    /// under it, `initial` is text already in the field and `submit` labels
+    /// the key that accepts it. `kind` chooses the keys the field opens on.
+    ///
+    /// A [`kobo_ui::FieldKind::Secret`] field names `save_as`, and the runtime
+    /// writes what was typed into the calling application's own secret
+    /// namespace exactly as [`DeviceRequest::SetSecret`] would, then answers
+    /// [`TextOutcome::Saved`]. The application never receives the value, so
+    /// it starts empty and cannot be given one. Every other kind leaves
+    /// `save_as` empty and is answered with the text.
+    ///
+    /// Requires [`TEXT_ENTRY_VERSION`].
+    TypeText {
+        prompt: String,
+        hint: String,
+        initial: String,
+        submit: String,
+        kind: kobo_ui::FieldKind,
+        save_as: Option<SecretTarget>,
+    },
+}
+
+/// Where the runtime keeps a secret typed into a [`DeviceRequest::TypeText`]
+/// field.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SecretTarget {
+    /// The secret's name in the calling application's namespace, held to the
+    /// same review as [`DeviceRequest::SetSecret`].
+    pub name: String,
+    /// The HTTPS server an account is bound to, kept in one record with it as
+    /// [`DeviceRequest::SetServerSecret`] does.
+    pub server: Option<String>,
+    /// For an HTTP Basic account, the username typed on the screen before.
+    ///
+    /// The runtime stores `username:password`, the shape a Basic credential
+    /// has always been stored in, so the password is the only part that has
+    /// to stay out of the application. A username is shown on screen anyway.
+    pub username: Option<String>,
+}
+
+impl SecretTarget {
+    /// A plain secret, such as an access token, under `name`.
+    #[must_use]
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            server: None,
+            username: None,
+        }
+    }
+
+    /// The device request that would store `value` here, which is how the
+    /// runtime stores a typed secret: one validation and one write path for
+    /// a secret whether it was typed on the reader or handed over.
+    #[must_use]
+    pub fn install(&self, value: &str) -> DeviceRequest {
+        let value = match &self.username {
+            Some(username) => SecretValue::new(format!("{username}:{value}")),
+            None => SecretValue::new(value),
+        };
+        match &self.server {
+            Some(server) => DeviceRequest::SetServerSecret {
+                name: self.name.clone(),
+                server: server.clone(),
+                value,
+            },
+            None => DeviceRequest::SetSecret {
+                name: self.name.clone(),
+                value,
+            },
+        }
+    }
+}
+
+/// How a [`DeviceRequest::TypeText`] field ended.
+///
+/// Every answer to that request is one of these, refusals included, rather
+/// than the general [`DeviceResult::Denied`] and [`DeviceResult::Failed`].
+/// A field stays open for as long as the owner takes, and other requests are
+/// answered while it does, so the application has to be able to tell this
+/// answer from theirs by its shape alone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TextOutcome {
+    /// What the owner typed and accepted. Never a secret.
+    Typed(String),
+    /// A secret was typed and written to the application's namespace. The
+    /// value itself stays with the runtime.
+    Saved,
+    /// The owner backed out. Nothing was typed into anything.
+    Cancelled,
+    /// The runtime would not open the field, with the reason.
+    Denied(DenyReason),
+    /// The field was answered but the secret could not be written.
+    Failed(DeviceError),
+}
+
+/// The longest prompt a text field may carry, in bytes.
+pub const MAX_TEXT_PROMPT_LEN: usize = 256;
+/// The longest line of guidance under a prompt, in bytes.
+pub const MAX_TEXT_HINT_LEN: usize = 512;
+/// The longest label for the key that accepts a field, in bytes.
+pub const MAX_TEXT_SUBMIT_LEN: usize = 32;
+/// The most a field may hold, in bytes: the keyboard's character limit at the
+/// widest a character can be encoded.
+pub const MAX_TYPED_LEN: usize = 4 * kobo_ui::keyboard::MAX_TEXT;
+
+/// Whether `text` is something the keyboard could have typed into a field.
+fn valid_typed(text: &str) -> bool {
+    text.len() <= MAX_TYPED_LEN
+        && text.chars().count() <= kobo_ui::keyboard::MAX_TEXT
+        && !text.chars().any(char::is_control)
+}
+
+fn valid_label(text: &str, limit: usize, required: bool) -> bool {
+    (!required || !text.trim().is_empty())
+        && text.len() <= limit
+        && !text.chars().any(char::is_control)
+}
+
+/// Checked at both ends of the wire, so a runtime is never asked to draw a
+/// field it cannot honour and an application is never told it was.
+fn valid_text_request(
+    prompt: &str,
+    hint: &str,
+    initial: &str,
+    submit: &str,
+    kind: kobo_ui::FieldKind,
+    save_as: Option<&SecretTarget>,
+) -> bool {
+    let secret = kind == kobo_ui::FieldKind::Secret;
+    valid_label(prompt, MAX_TEXT_PROMPT_LEN, true)
+        && valid_label(hint, MAX_TEXT_HINT_LEN, false)
+        && valid_label(submit, MAX_TEXT_SUBMIT_LEN, true)
+        && valid_typed(initial)
+        && secret == save_as.is_some()
+        && (!secret || initial.is_empty())
+        && save_as.is_none_or(|target| {
+            valid_app_id(&target.name)
+                && target.server.as_deref().is_none_or(valid_secret_server)
+                && target.username.as_deref().is_none_or(|username| {
+                    !username.is_empty()
+                        && username.len() <= MAX_APP_SECRET_BYTES
+                        && !username.contains(':')
+                        && !username.chars().any(char::is_control)
+                })
+        })
 }
 
 /// Current state of the runtime-owned App Store browser link.
@@ -1638,6 +1819,9 @@ pub enum DeviceResult {
     /// installed on this reader. Names only: a stored value never
     /// leaves the runtime, and an absent name says so by omission.
     Secrets { present: Vec<String> },
+    /// How a [`DeviceRequest::TypeText`] field ended. Requires
+    /// [`TEXT_ENTRY_VERSION`].
+    Text(TextOutcome),
 }
 
 /// The largest library listing one result may carry.
@@ -2072,7 +2256,9 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         Message::DeviceRequest(request) => {
             encode_device_request(&mut payload, request, frame.version)?;
         }
-        Message::DeviceResult(result) => encode_device_result(&mut payload, result)?,
+        Message::DeviceResult(result) => {
+            encode_device_result(&mut payload, result, frame.version)?;
+        }
         Message::Spawn { .. } | Message::Cancel { .. } | Message::TaskOutcome { .. } => {
             encode_task_message(&mut payload, &frame.message)?;
         }
@@ -2690,7 +2876,7 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
             Ok((12, length))
         }
         Message::DeviceRequest(request) => Ok((7, device_request_len(request, version)?)),
-        Message::DeviceResult(result) => Ok((8, device_result_len(result)?)),
+        Message::DeviceResult(result) => Ok((8, device_result_len(result, version)?)),
         Message::Spawn { work, .. } => {
             if matches!(work, Task::Update { .. }) && version < UPDATE_TASK_VERSION {
                 return Err(ProtocolError::UnsupportedVersion(version));
@@ -3000,6 +3186,35 @@ fn encode_device_request(
         DeviceRequest::CheckSecrets { .. } => {
             return Err(ProtocolError::InvalidValue("secret names"));
         }
+        DeviceRequest::TypeText { .. } if version < TEXT_ENTRY_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::TypeText {
+            prompt,
+            hint,
+            initial,
+            submit,
+            kind,
+            save_as,
+        } => {
+            if !valid_text_request(prompt, hint, initial, submit, *kind, save_as.as_ref()) {
+                return Err(ProtocolError::InvalidValue("text field"));
+            }
+            output.push(52);
+            for text in [prompt, hint, initial, submit] {
+                push_string(output, text)?;
+            }
+            output.push(encode_field_kind(*kind));
+            match save_as {
+                Some(target) => {
+                    output.push(1);
+                    push_string(output, &target.name)?;
+                    push_optional_string(output, target.server.as_deref())?;
+                    push_optional_string(output, target.username.as_deref())?;
+                }
+                None => output.push(0),
+            }
+        }
     }
     Ok(())
 }
@@ -3067,9 +3282,9 @@ fn device_request_len(request: &DeviceRequest, version: u8) -> Result<usize, Pro
     Ok(encoded.len())
 }
 
-fn device_result_len(result: &DeviceResult) -> Result<usize, ProtocolError> {
+fn device_result_len(result: &DeviceResult, version: u8) -> Result<usize, ProtocolError> {
     let mut encoded = Vec::new();
-    encode_device_result(&mut encoded, result)?;
+    encode_device_result(&mut encoded, result, version)?;
     Ok(encoded.len())
 }
 
@@ -3385,8 +3600,54 @@ fn decode_device_request(
             }
             Ok(DeviceRequest::ReadLibrary { id })
         }
+        52 if version >= TEXT_ENTRY_VERSION => decode_text_request(reader),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
+}
+
+fn decode_text_request(reader: &mut Reader<'_>) -> Result<DeviceRequest, ProtocolError> {
+    let prompt = reader.string()?;
+    let hint = reader.string()?;
+    let initial = reader.string()?;
+    let submit = reader.string()?;
+    let kind = decode_field_kind(reader.u8()?)?;
+    let save_as = match reader.u8()? {
+        0 => None,
+        1 => Some(SecretTarget {
+            name: reader.string()?,
+            server: reader.optional_string()?,
+            username: reader.optional_string()?,
+        }),
+        _ => return Err(ProtocolError::InvalidValue("text field")),
+    };
+    if !valid_text_request(&prompt, &hint, &initial, &submit, kind, save_as.as_ref()) {
+        return Err(ProtocolError::InvalidValue("text field"));
+    }
+    Ok(DeviceRequest::TypeText {
+        prompt,
+        hint,
+        initial,
+        submit,
+        kind,
+        save_as,
+    })
+}
+
+fn decode_text_outcome(reader: &mut Reader<'_>) -> Result<TextOutcome, ProtocolError> {
+    Ok(match reader.u8()? {
+        1 => {
+            let text = reader.string()?;
+            if !valid_typed(&text) {
+                return Err(ProtocolError::InvalidValue("typed text"));
+            }
+            TextOutcome::Typed(text)
+        }
+        2 => TextOutcome::Saved,
+        3 => TextOutcome::Cancelled,
+        4 => TextOutcome::Denied(DenyReason::try_from(reader.u8()?)?),
+        5 => TextOutcome::Failed(DeviceError::try_from(reader.u8()?)?),
+        _ => return Err(ProtocolError::InvalidValue("text outcome")),
+    })
 }
 
 /// Both fields are checked here as well as at the encoder, so a peer that
@@ -3430,7 +3691,11 @@ fn fixed_argument(reader: &mut Reader<'_>, expected: u32) -> Result<(), Protocol
     clippy::too_many_lines,
     reason = "one explicit bounded result tag table"
 )]
-fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(), ProtocolError> {
+fn encode_device_result(
+    output: &mut Vec<u8>,
+    result: &DeviceResult,
+    version: u8,
+) -> Result<(), ProtocolError> {
     match result {
         DeviceResult::Done => output.push(1),
         DeviceResult::Granted { seconds } => {
@@ -3608,6 +3873,23 @@ fn encode_device_result(output: &mut Vec<u8>, result: &DeviceResult) -> Result<(
         DeviceResult::Secrets { .. } => {
             return Err(ProtocolError::InvalidValue("secret names"));
         }
+        DeviceResult::Text(_) if version < TEXT_ENTRY_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceResult::Text(outcome) => {
+            output.push(22);
+            match outcome {
+                TextOutcome::Typed(text) if valid_typed(text) => {
+                    output.push(1);
+                    push_string(output, text)?;
+                }
+                TextOutcome::Typed(_) => return Err(ProtocolError::InvalidValue("typed text")),
+                TextOutcome::Saved => output.push(2),
+                TextOutcome::Cancelled => output.push(3),
+                TextOutcome::Denied(reason) => output.extend_from_slice(&[4, *reason as u8]),
+                TextOutcome::Failed(error) => output.extend_from_slice(&[5, *error as u8]),
+            }
+        }
     }
     Ok(())
 }
@@ -3750,8 +4032,12 @@ fn valid_cobalt_version(version: &str) -> bool {
             .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
-fn decode_device_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+fn decode_device_result(
+    reader: &mut Reader<'_>,
+    version: u8,
+) -> Result<DeviceResult, ProtocolError> {
     match reader.u8()? {
+        22 if version >= TEXT_ENTRY_VERSION => decode_text_outcome(reader).map(DeviceResult::Text),
         1 => Ok(DeviceResult::Done),
         2 => Ok(DeviceResult::Granted {
             seconds: reader.u32()?,
@@ -4345,6 +4631,10 @@ fn encoded_node_len(
             value,
             placeholder,
             clear,
+            label,
+            hint,
+            error,
+            kind,
             ..
         } => {
             // id, the action, the clear flag, then the two strings. A clear
@@ -4354,6 +4644,18 @@ fn encoded_node_len(
             add_encoded_len(&mut length, encoded_string_len(placeholder)?)?;
             if clear.is_some() {
                 add_encoded_len(&mut length, 4)?;
+            }
+            // Protocol 16 adds the kind and three flagged strings.
+            if version < CONTROLS_VERSION {
+                if label.is_some() || hint.is_some() || error.is_some() || *kind != FieldKind::Text
+                {
+                    return Err(ProtocolError::InvalidValue("protocol 16 field"));
+                }
+            } else {
+                add_encoded_len(&mut length, 4)?;
+                for text in [label, hint, error].into_iter().flatten() {
+                    add_encoded_len(&mut length, encoded_string_len(text)?)?;
+                }
             }
             length
         }
@@ -4470,6 +4772,20 @@ fn encoded_node_len(
                 if row.menu.is_some() {
                     add_encoded_len(&mut length, 4)?;
                 }
+                // Protocol 16 adds a flagged button and a flagged badge.
+                if version < CONTROLS_VERSION {
+                    if row.button.is_some() || row.badge.is_some() || row.state.is_check() {
+                        return Err(ProtocolError::InvalidValue("protocol 16 row"));
+                    }
+                } else {
+                    add_encoded_len(&mut length, 2)?;
+                    if let Some(button) = &row.button {
+                        add_encoded_len(&mut length, encoded_bar_action_len(button)?)?;
+                    }
+                    if row.badge.is_some() {
+                        add_encoded_len(&mut length, 4)?;
+                    }
+                }
             }
             length
         }
@@ -4557,9 +4873,25 @@ fn encoded_node_len(
             }
             length
         }
-        Node::Banner { text, .. } => {
+        Node::Banner {
+            text,
+            level,
+            action,
+            ..
+        } => {
             let mut length = 6;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
+            // Protocol 16 adds two levels and a flagged action.
+            if version < CONTROLS_VERSION {
+                if action.is_some() || matches!(level, BannerLevel::Success | BannerLevel::Error) {
+                    return Err(ProtocolError::InvalidValue("protocol 16 banner"));
+                }
+            } else {
+                add_encoded_len(&mut length, 1)?;
+                if let Some(action) = action {
+                    add_encoded_len(&mut length, encoded_bar_action_len(action)?)?;
+                }
+            }
             length
         }
         Node::Skeleton { .. } => 6,
@@ -4622,6 +4954,71 @@ fn encoded_node_len(
             add_encoded_len(&mut length, 1)?;
             if cursor.is_some() {
                 add_encoded_len(&mut length, 4)?;
+            }
+            length
+        }
+        Node::Toggle { .. }
+        | Node::SelectionBar { .. }
+        | Node::Options { .. }
+        | Node::Code { .. }
+        | Node::Steps { .. }
+            if version < CONTROLS_VERSION =>
+        {
+            return Err(ProtocolError::InvalidValue("protocol 16 control"));
+        }
+        Node::Toggle { label, summary, .. } => {
+            // Tag, id, action, a flag byte, then the two strings.
+            let mut length = 10;
+            add_encoded_len(&mut length, encoded_string_len(label)?)?;
+            add_encoded_len(&mut length, encoded_string_len(summary)?)?;
+            length
+        }
+        Node::SelectionBar { actions, .. } => {
+            // Tag, id, the count, how many verbs, then each verb.
+            let mut length = 10;
+            for action in actions.iter().take(kobo_ui::MAX_SELECTION_ACTIONS) {
+                add_encoded_len(&mut length, encoded_bar_action_len(action)?)?;
+            }
+            length
+        }
+        Node::Options {
+            prompt, options, ..
+        } => {
+            // Tag, id, the prompt, how many options, then an action and two
+            // strings each, then the selection, the page and the two pager
+            // actions.
+            let mut length = 7;
+            add_encoded_len(&mut length, encoded_string_len(prompt)?)?;
+            for option in options.iter().take(kobo_ui::MAX_OPTIONS) {
+                add_encoded_len(&mut length, 4)?;
+                add_encoded_len(&mut length, encoded_string_len(&option.label)?)?;
+                add_encoded_len(&mut length, encoded_string_len(&option.summary)?)?;
+            }
+            add_encoded_len(&mut length, 12)?;
+            length
+        }
+        Node::Code {
+            payload, caption, ..
+        } => {
+            if payload.len() > kobo_ui::MAX_CODE_BYTES {
+                return Err(ProtocolError::InvalidValue("code payload"));
+            }
+            let mut length = 5;
+            add_encoded_len(&mut length, encoded_string_len(payload)?)?;
+            add_encoded_len(&mut length, encoded_string_len(caption)?)?;
+            length
+        }
+        Node::Steps { total, labels, .. } => {
+            if *total == 0
+                || usize::from(*total) > kobo_ui::MAX_STEPS
+                || !(labels.is_empty() || labels.len() == usize::from(*total))
+            {
+                return Err(ProtocolError::InvalidValue("steps"));
+            }
+            // Tag, id, the step, the total, how many labels, then each one.
+            let mut length = 8;
+            for label in labels {
+                add_encoded_len(&mut length, encoded_string_len(label)?)?;
             }
             length
         }
@@ -4731,7 +5128,7 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             name: reader.string()?,
         },
         7 => Message::DeviceRequest(decode_device_request(&mut reader, version)?),
-        8 => Message::DeviceResult(decode_device_result(&mut reader)?),
+        8 => Message::DeviceResult(decode_device_result(&mut reader, version)?),
         9 => {
             let task = TaskId(reader.u32()?);
             let work = match reader.u8()? {
@@ -5632,6 +6029,10 @@ fn encode_node(
             value,
             placeholder,
             clear,
+            label,
+            hint,
+            error,
+            kind,
         } => {
             output.push(24);
             push_u32(output, id.0);
@@ -5644,6 +6045,19 @@ fn encode_node(
                     push_u32(output, clear.0);
                 }
                 None => output.push(0),
+            }
+            // After everything protocol 15 wrote, so a field that uses none
+            // of it is still the bytes it always was up to this point.
+            if version < CONTROLS_VERSION {
+                if label.is_some() || hint.is_some() || error.is_some() || *kind != FieldKind::Text
+                {
+                    return Err(ProtocolError::InvalidValue("protocol 16 field"));
+                }
+            } else {
+                output.push(encode_field_kind(*kind));
+                push_optional_string(output, label.as_deref())?;
+                push_optional_string(output, hint.as_deref())?;
+                push_optional_string(output, error.as_deref())?;
             }
         }
         Node::Chips { id, chips } => {
@@ -5811,6 +6225,26 @@ fn encode_node(
                 if let Some(menu) = row.menu {
                     push_u32(output, menu.0);
                 }
+                if version < CONTROLS_VERSION {
+                    if row.button.is_some() || row.badge.is_some() || row.state.is_check() {
+                        return Err(ProtocolError::InvalidValue("protocol 16 row"));
+                    }
+                } else {
+                    match &row.button {
+                        Some(button) => {
+                            output.push(1);
+                            encode_bar_action(output, button)?;
+                        }
+                        None => output.push(0),
+                    }
+                    match row.badge {
+                        Some(count) => {
+                            output.push(1);
+                            push_u32(output, count);
+                        }
+                        None => output.push(0),
+                    }
+                }
             }
         }
         Node::TileGrid { id, tiles, shape } => {
@@ -5967,14 +6401,35 @@ fn encode_node(
                 }
             }
         }
-        Node::Banner { id, level, text } => {
+        Node::Banner {
+            id,
+            level,
+            text,
+            action,
+        } => {
+            if version < CONTROLS_VERSION
+                && (action.is_some() || matches!(level, BannerLevel::Success | BannerLevel::Error))
+            {
+                return Err(ProtocolError::InvalidValue("protocol 16 banner"));
+            }
             output.push(11);
             push_u32(output, id.0);
             output.push(match level {
                 BannerLevel::Info => 0,
                 BannerLevel::Attention => 1,
+                BannerLevel::Success => 2,
+                BannerLevel::Error => 3,
             });
             push_string(output, text)?;
+            if version >= CONTROLS_VERSION {
+                match action {
+                    Some(action) => {
+                        output.push(1);
+                        encode_bar_action(output, action)?;
+                    }
+                    None => output.push(0),
+                }
+            }
         }
         Node::Skeleton { id, lines } => {
             output.push(12);
@@ -6069,6 +6524,108 @@ fn encode_node(
                 }
             }
         }
+        Node::Toggle { .. }
+        | Node::SelectionBar { .. }
+        | Node::Options { .. }
+        | Node::Code { .. }
+        | Node::Steps { .. }
+            if version < CONTROLS_VERSION =>
+        {
+            return Err(ProtocolError::InvalidValue("protocol 16 control"));
+        }
+        Node::Toggle {
+            id,
+            action,
+            label,
+            summary,
+            on,
+            state,
+        } => {
+            output.push(35);
+            push_u32(output, id.0);
+            push_u32(output, action.0);
+            output.push(u8::from(*on) | (u8::from(!state.is_enabled()) << 1));
+            push_string(output, label)?;
+            push_string(output, summary)?;
+        }
+        Node::SelectionBar { id, count, actions } => {
+            let actions = &actions[..actions.len().min(kobo_ui::MAX_SELECTION_ACTIONS)];
+            output.push(36);
+            push_u32(output, id.0);
+            push_u32(output, *count);
+            output.push(u8::try_from(actions.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for action in actions {
+                encode_bar_action(output, action)?;
+            }
+        }
+        Node::Options {
+            id,
+            prompt,
+            options,
+            selected,
+            page,
+            previous,
+            next,
+        } => {
+            let options = &options[..options.len().min(kobo_ui::MAX_OPTIONS)];
+            output.push(37);
+            push_u32(output, id.0);
+            push_string(output, prompt)?;
+            push_u16(
+                output,
+                u16::try_from(options.len()).map_err(|_| ProtocolError::TooManyNodes)?,
+            );
+            for option in options {
+                push_u32(output, option.action.0);
+                push_string(output, &option.label)?;
+                push_string(output, &option.summary)?;
+            }
+            // One past the index, so "no answer yet" is zero, as on a choice.
+            push_u16(
+                output,
+                match selected {
+                    Some(index) if usize::from(*index) < options.len() => index.saturating_add(1),
+                    _ => 0,
+                },
+            );
+            push_u16(output, *page);
+            push_u32(output, previous.0);
+            push_u32(output, next.0);
+        }
+        Node::Code {
+            id,
+            payload,
+            caption,
+        } => {
+            if payload.len() > kobo_ui::MAX_CODE_BYTES {
+                return Err(ProtocolError::InvalidValue("code payload"));
+            }
+            output.push(38);
+            push_u32(output, id.0);
+            push_string(output, payload)?;
+            push_string(output, caption)?;
+        }
+        Node::Steps {
+            id,
+            current,
+            total,
+            labels,
+        } => {
+            if *total == 0
+                || usize::from(*total) > kobo_ui::MAX_STEPS
+                || !(labels.is_empty() || labels.len() == usize::from(*total))
+            {
+                return Err(ProtocolError::InvalidValue("steps"));
+            }
+            output.push(39);
+            push_u32(output, id.0);
+            output.push((*current).min(*total - 1));
+            output.push(*total);
+            output.push(u8::try_from(labels.len()).map_err(|_| ProtocolError::TooManyNodes)?);
+            for label in labels {
+                push_string(output, label)?;
+            }
+        }
     }
     Ok(())
 }
@@ -6077,17 +6634,56 @@ const fn encode_row_state(state: RowState) -> u8 {
     match state {
         RowState::Open => 0,
         RowState::Done => 1,
+        RowState::Checked => 2,
+        RowState::Unchecked => 3,
+        RowState::Mixed => 4,
     }
 }
 
 // Rejected rather than defaulted. A state nobody defined is a sender this
 // receiver does not understand, and guessing "not done" for it would quietly
-// show a finished task as outstanding.
-const fn decode_row_state(tag: u8) -> Option<RowState> {
+// show a finished task as outstanding. The check states exist from protocol
+// 16, so an older frame naming one is refused rather than drawn as a box its
+// sender never asked for.
+const fn decode_row_state(tag: u8, version: u8) -> Option<RowState> {
     Some(match tag {
         0 => RowState::Open,
         1 => RowState::Done,
+        2 if version >= CONTROLS_VERSION => RowState::Checked,
+        3 if version >= CONTROLS_VERSION => RowState::Unchecked,
+        4 if version >= CONTROLS_VERSION => RowState::Mixed,
         _ => return None,
+    })
+}
+
+/// The byte a [`FieldKind`] travels as, on a field and on any request that
+/// asks the runtime for text of that kind.
+#[must_use]
+pub const fn encode_field_kind(kind: FieldKind) -> u8 {
+    match kind {
+        FieldKind::Text => 0,
+        FieldKind::Secret => 1,
+        FieldKind::Number => 2,
+        FieldKind::Address => 3,
+    }
+}
+
+/// The [`FieldKind`] a byte names.
+///
+/// Refused rather than read as plain text, because the kind that would be
+/// lost is the one that matters: a secret drawn in the clear is on the panel
+/// for the next person to read.
+///
+/// # Errors
+///
+/// Returns an error for a byte that names no kind.
+pub const fn decode_field_kind(tag: u8) -> Result<FieldKind, ProtocolError> {
+    Ok(match tag {
+        0 => FieldKind::Text,
+        1 => FieldKind::Secret,
+        2 => FieldKind::Number,
+        3 => FieldKind::Address,
+        _ => return Err(ProtocolError::InvalidValue("field kind")),
     })
 }
 
@@ -6778,12 +7374,26 @@ fn decode_node(
                 }
                 _ => return Err(ProtocolError::InvalidValue("field clear flag")),
             };
+            let (kind, label, hint, error) = if version < CONTROLS_VERSION {
+                (FieldKind::Text, None, None, None)
+            } else {
+                (
+                    decode_field_kind(reader.u8()?)?,
+                    reader.optional_string()?,
+                    reader.optional_string()?,
+                    reader.optional_string()?,
+                )
+            };
             Ok(Node::Field {
                 id,
                 action,
                 value,
                 placeholder,
                 clear,
+                label,
+                hint,
+                error,
+                kind,
             })
         }
         25 => {
@@ -7086,12 +7696,132 @@ fn decode_node(
             let level = match reader.u8()? {
                 0 => BannerLevel::Info,
                 1 => BannerLevel::Attention,
+                2 if version >= CONTROLS_VERSION => BannerLevel::Success,
+                3 if version >= CONTROLS_VERSION => BannerLevel::Error,
                 _ => return Err(ProtocolError::InvalidValue("banner level")),
+            };
+            let text = reader.string()?;
+            let action = if version < CONTROLS_VERSION {
+                None
+            } else {
+                match reader.u8()? {
+                    0 => None,
+                    1 => Some(decode_bar_action(reader)?),
+                    _ => return Err(ProtocolError::InvalidValue("banner action flag")),
+                }
             };
             Ok(Node::Banner {
                 id,
                 level,
-                text: reader.string()?,
+                text,
+                action,
+            })
+        }
+        35 if version >= CONTROLS_VERSION => {
+            let action = ActionId(reader.u32()?);
+            if action.is_reserved() {
+                return Err(ProtocolError::InvalidValue("reserved action id"));
+            }
+            let flags = reader.u8()?;
+            if flags & !0b11 != 0 {
+                return Err(ProtocolError::InvalidValue("toggle flags"));
+            }
+            Ok(Node::Toggle {
+                id,
+                action,
+                on: flags & 0b1 != 0,
+                state: if flags & 0b10 == 0 {
+                    ControlState::Enabled
+                } else {
+                    ControlState::Disabled
+                },
+                label: reader.string()?,
+                summary: reader.string()?,
+            })
+        }
+        36 if version >= CONTROLS_VERSION => {
+            let count = reader.u32()?;
+            let shown = usize::from(reader.u8()?);
+            if shown > kobo_ui::MAX_SELECTION_ACTIONS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut actions = Vec::with_capacity(shown);
+            for _ in 0..shown {
+                actions.push(decode_bar_action(reader)?);
+            }
+            Ok(Node::SelectionBar { id, count, actions })
+        }
+        37 if version >= CONTROLS_VERSION => {
+            let prompt = reader.string()?;
+            let count = usize::from(reader.u16()?);
+            if count > kobo_ui::MAX_OPTIONS {
+                return Err(ProtocolError::TooManyNodes);
+            }
+            let mut options = Vec::with_capacity(count);
+            for _ in 0..count {
+                let action = ActionId(reader.u32()?);
+                if action.is_reserved() {
+                    return Err(ProtocolError::InvalidValue("reserved action id"));
+                }
+                options.push(kobo_ui::OptionRow {
+                    action,
+                    label: reader.string()?,
+                    summary: reader.string()?,
+                });
+            }
+            // Clamped rather than refused, for the reason a choice gives.
+            let selected = match reader.u16()? {
+                0 => None,
+                marked if usize::from(marked) <= options.len() => Some(marked - 1),
+                _ => None,
+            };
+            let page = reader.u16()?;
+            let previous = ActionId(reader.u32()?);
+            let next = ActionId(reader.u32()?);
+            if previous.is_reserved() || next.is_reserved() {
+                return Err(ProtocolError::InvalidValue("reserved action id"));
+            }
+            Ok(Node::Options {
+                id,
+                prompt,
+                options,
+                selected,
+                page,
+                previous,
+                next,
+            })
+        }
+        38 if version >= CONTROLS_VERSION => {
+            let payload = reader.string()?;
+            if payload.len() > kobo_ui::MAX_CODE_BYTES {
+                return Err(ProtocolError::InvalidValue("code payload"));
+            }
+            Ok(Node::Code {
+                id,
+                payload,
+                caption: reader.string()?,
+            })
+        }
+        39 if version >= CONTROLS_VERSION => {
+            let current = reader.u8()?;
+            let total = reader.u8()?;
+            if total == 0 || usize::from(total) > kobo_ui::MAX_STEPS {
+                return Err(ProtocolError::InvalidValue("step count"));
+            }
+            let named = usize::from(reader.u8()?);
+            if named != 0 && named != usize::from(total) {
+                return Err(ProtocolError::InvalidValue("step labels"));
+            }
+            let mut labels = Vec::with_capacity(named);
+            for _ in 0..named {
+                labels.push(reader.string()?);
+            }
+            Ok(Node::Steps {
+                id,
+                // Clamped rather than refused, as a tab's selection is.
+                current: current.min(total - 1),
+                total,
+                labels,
             })
         }
         12 => Ok(Node::Skeleton {
@@ -7253,7 +7983,7 @@ fn decode_node(
                 let title = reader.string()?;
                 let summary = reader.string()?;
                 let lead = read_row_lead(reader)?;
-                let state = decode_row_state(reader.u8()?)
+                let state = decode_row_state(reader.u8()?, version)
                     .ok_or(ProtocolError::InvalidValue("row state"))?;
                 let trailing = if reader.u8()? == 0 {
                     None
@@ -7269,6 +7999,21 @@ fn decode_node(
                     }
                     Some(menu)
                 };
+                let (button, badge) = if version < CONTROLS_VERSION {
+                    (None, None)
+                } else {
+                    let button = match reader.u8()? {
+                        0 => None,
+                        1 => Some(decode_bar_action(reader)?),
+                        _ => return Err(ProtocolError::InvalidValue("row button flag")),
+                    };
+                    let badge = match reader.u8()? {
+                        0 => None,
+                        1 => Some(reader.u32()?),
+                        _ => return Err(ProtocolError::InvalidValue("row badge flag")),
+                    };
+                    (button, badge)
+                };
                 rows.push(Row {
                     action,
                     title,
@@ -7277,6 +8022,8 @@ fn decode_node(
                     state,
                     trailing,
                     menu,
+                    button,
+                    badge,
                 });
             }
             Ok(Node::Rows { id, rows })
@@ -7510,2798 +8257,16 @@ impl<'a> Reader<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    #[test]
-    fn a_shared_failure_code_never_blames_a_part_of_the_system_it_cannot_know_about() {
-        // These seven codes answer for the radio, the Store, the app link and
-        // the platform updater alike, so each sentence has to be true of all
-        // of them. InvalidInput used to read "the address or credentials are
-        // invalid", which is a sentence about a network: it was what a reader
-        // showed when a platform update would not install, sending its owner
-        // to their Wi-Fi settings for a download that had already succeeded,
-        // and telling whoever they reported it to nothing at all.
-        for failure in [
-            DeviceError::NotFound,
-            DeviceError::Authentication,
-            DeviceError::TimedOut,
-            DeviceError::Unreachable,
-            DeviceError::InvalidInput,
-            DeviceError::Backend,
-            DeviceError::Integrity,
-        ] {
-            let described = failure.describe();
-            assert!(
-                !described.is_empty(),
-                "{failure:?} has nothing to show an owner"
-            );
-            if !matches!(
-                failure,
-                DeviceError::Authentication | DeviceError::Unreachable | DeviceError::NotFound
-            ) {
-                assert!(
-                    !described.contains("credential")
-                        && !described.contains("address")
-                        && !described.contains("network"),
-                    "{failure:?} explains itself with a network that may not be involved: {described}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn every_glyph_has_a_wire_tag_and_gets_it_back() {
-        // A glyph added to the enum without a tag here encodes as whatever the
-        // match arm above it chose, so a book would arrive as a battery. The
-        // encoder is exhaustive so that half is caught by the compiler; the
-        // decoder is a numeric table and is not, which is the half this covers.
-        for glyph in Glyph::ALL {
-            let tag = encode_glyph(glyph);
-            assert_eq!(
-                decode_glyph(tag),
-                Some(glyph),
-                "{glyph:?} encoded as {tag} and came back as something else"
-            );
-        }
-        let tags: Vec<u8> = Glyph::ALL.iter().copied().map(encode_glyph).collect();
-        let mut unique = tags.clone();
-        unique.sort_unstable();
-        unique.dedup();
-        assert_eq!(unique.len(), tags.len(), "two glyphs share one wire tag");
-        let highest = tags.iter().copied().max().expect("glyphs have tags");
-        assert_eq!(
-            decode_glyph(highest.checked_add(1).expect("glyph tag space remains")),
-            None,
-            "a tag one past the end decoded as a glyph"
-        );
-    }
-
-    #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one entry per wire variant; a shorter list is a variant that stopped being covered"
-    )]
-    fn every_device_request_round_trips() {
-        let requests = vec![
-            DeviceRequest::ReadBattery,
-            DeviceRequest::HoldWifi { seconds: 600 },
-            DeviceRequest::ReleaseWifi,
-            DeviceRequest::KeepAwake { seconds: u32::MAX },
-            DeviceRequest::AllowSleep,
-            DeviceRequest::ScheduleWake { seconds: 900 },
-            DeviceRequest::CancelWake,
-            DeviceRequest::SetFrontlight { percent: 100 },
-            DeviceRequest::SetFrontlight { percent: 0 },
-            DeviceRequest::ReadFrontlight,
-            DeviceRequest::ReadBluetooth,
-            DeviceRequest::SetBluetooth { enabled: true },
-            DeviceRequest::ScanBluetooth,
-            DeviceRequest::PairBluetooth {
-                address: "AA:BB:CC:DD:EE:FF".to_owned(),
-            },
-            DeviceRequest::ConnectBluetooth {
-                address: "AA:BB:CC:DD:EE:FF".to_owned(),
-            },
-            DeviceRequest::DisconnectBluetooth {
-                address: "AA:BB:CC:DD:EE:FF".to_owned(),
-            },
-            DeviceRequest::ForgetBluetooth {
-                address: "AA:BB:CC:DD:EE:FF".to_owned(),
-            },
-            DeviceRequest::ReadWifi,
-            DeviceRequest::SetWifi { enabled: false },
-            DeviceRequest::ScanWifi,
-            DeviceRequest::JoinWifi {
-                ssid: "Library".to_owned(),
-                password: "readmore".to_owned(),
-            },
-            DeviceRequest::DisconnectWifi,
-            DeviceRequest::ReadAudio,
-            DeviceRequest::LoadAudio {
-                source: AudioSource::Shelf("audiobook.mp3z".to_owned()),
-            },
-            DeviceRequest::LoadAudio {
-                source: AudioSource::Stream("https://example.com/book.mp3".to_owned()),
-            },
-            DeviceRequest::PlayAudio,
-            DeviceRequest::PauseAudio,
-            DeviceRequest::SeekAudio {
-                position_ms: 120_000,
-            },
-            DeviceRequest::StopAudio,
-            DeviceRequest::SetAudioVolume { percent: 65 },
-            DeviceRequest::ReadBatteryDetail,
-            DeviceRequest::ReadCover,
-            DeviceRequest::Update {
-                url: "https://github.com/o/r/releases/download/v0.1.1/KoboRoot.tgz".to_owned(),
-                sha256: "a".repeat(64),
-            },
-            DeviceRequest::ListInstalledApps,
-            DeviceRequest::ReadAppCatalog,
-            DeviceRequest::RefreshAppCatalog,
-            DeviceRequest::InstallApp {
-                id: "word-count".to_owned(),
-            },
-            DeviceRequest::UninstallApp {
-                id: "word-count".to_owned(),
-            },
-            DeviceRequest::ReadAppLink,
-            DeviceRequest::BeginAppLink,
-            DeviceRequest::PollAppLink,
-            DeviceRequest::DisconnectAppLink,
-            DeviceRequest::ReadIdentity,
-            DeviceRequest::ReadAutoUpdate,
-            DeviceRequest::SetAutoUpdate {
-                cobalt: true,
-                apps: false,
-            },
-            DeviceRequest::SetAutoUpdate {
-                cobalt: false,
-                apps: true,
-            },
-            DeviceRequest::ReadUpdateChannel,
-            DeviceRequest::SetUpdateChannel {
-                channel: UpdateChannel::Stable,
-            },
-            DeviceRequest::SetUpdateChannel {
-                channel: UpdateChannel::Beta,
-            },
-            DeviceRequest::SetSecret {
-                name: "lichess".to_owned(),
-                value: SecretValue::new("token-value"),
-            },
-            DeviceRequest::ListLibrary,
-            DeviceRequest::ReadLibrary {
-                id: "0/Bleak-House.epub".to_owned(),
-            },
-        ];
-        for request in requests {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 9,
-                message: Message::DeviceRequest(request),
-            };
-            let bytes = encode(&frame).expect("encode");
-            assert_eq!(decode(&bytes).expect("decode"), frame);
-        }
-    }
-
-    #[test]
-    fn an_update_that_could_not_be_verified_is_refused_at_the_encoder() {
-        let cases = [
-            // Plaintext could be rewritten in flight, digest or no digest.
-            ("http://github.com/a.tgz".to_owned(), "a".repeat(64)),
-            // A digest of the wrong length matches nothing.
-            ("https://github.com/a.tgz".to_owned(), "a".repeat(63)),
-            // Uppercase is somebody's formatting, not this wire's.
-            (
-                "https://github.com/a.tgz".to_owned(),
-                format!("{}F", "a".repeat(63)),
-            ),
-        ];
-        for (url, sha256) in cases {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 9,
-                message: Message::DeviceRequest(DeviceRequest::Update {
-                    url: url.clone(),
-                    sha256,
-                }),
-            };
-            assert!(encode(&frame).is_err(), "{url} was encoded");
-        }
-    }
-
-    #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one entry per wire variant; a shorter list is a variant that stopped being covered"
-    )]
-    fn every_device_result_round_trips() {
-        let results = vec![
-            DeviceResult::Done,
-            DeviceResult::Granted { seconds: 300 },
-            DeviceResult::Battery {
-                percent: 100,
-                charging: true,
-            },
-            DeviceResult::Battery {
-                percent: 0,
-                charging: false,
-            },
-            DeviceResult::Frontlight { percent: 42 },
-            DeviceResult::Denied(DenyReason::NotDeclared),
-            DeviceResult::Denied(DenyReason::WithheldForBattery),
-            DeviceResult::Denied(DenyReason::Unsupported),
-            DeviceResult::Denied(DenyReason::PolicyRejected),
-            DeviceResult::Denied(DenyReason::Busy),
-            DeviceResult::Bluetooth {
-                available: true,
-                enabled: true,
-                devices: vec![BluetoothDevice {
-                    address: "AA:BB:CC:DD:EE:FF".to_owned(),
-                    name: "Headphones".to_owned(),
-                    kind: BluetoothDeviceKind::Audio,
-                    paired: true,
-                    connected: true,
-                }],
-                restart_on_exit: false,
-            },
-            DeviceResult::Bluetooth {
-                available: true,
-                enabled: true,
-                devices: Vec::new(),
-                restart_on_exit: true,
-            },
-            DeviceResult::Wifi {
-                available: true,
-                enabled: true,
-                connected_ssid: Some("Library".to_owned()),
-                networks: vec![WifiNetwork {
-                    ssid: "Library".to_owned(),
-                    signal_dbm: -48,
-                    secured: true,
-                    connected: true,
-                }],
-            },
-            DeviceResult::Audio {
-                available: true,
-                state: AudioPlaybackState::Playing,
-                position_ms: 75_000,
-                duration_ms: 600_000,
-                volume: 70,
-            },
-            DeviceResult::Failed(DeviceError::Authentication),
-            DeviceResult::Failed(DeviceError::Integrity),
-            DeviceResult::BatteryDetail(BatteryDetail {
-                percent: Some(28),
-                status: Some("Discharging".to_owned()),
-                health: Some("Good".to_owned()),
-                technology: Some("Li-ion".to_owned()),
-                decidegrees: Some(290),
-                microvolts: Some(3_720_000),
-                microamps: Some(-180_000),
-                charge_now: Some(420_000),
-                charge_full: Some(1_480_000),
-                charge_full_design: Some(1_500_000),
-            }),
-            DeviceResult::BatteryDetail(BatteryDetail::default()),
-            DeviceResult::Cover {
-                available: true,
-                magnet_present: true,
-            },
-            DeviceResult::Cover {
-                available: false,
-                magnet_present: false,
-            },
-            DeviceResult::Apps {
-                entries: vec![AppInfo {
-                    id: "word-count".to_owned(),
-                    title: "Word Count".to_owned(),
-                    label: "Words".to_owned(),
-                    summary: "Counts words in a note.".to_owned(),
-                    version: "1.2.0".to_owned(),
-                    minimum_cobalt_version: "0.3.0".to_owned(),
-                    glyph: Glyph::Note,
-                    capabilities: vec!["shared-files".to_owned()],
-                    installed_version: Some("1.1.0".to_owned()),
-                }],
-            },
-            DeviceResult::Library {
-                entries: vec![LibraryEntry {
-                    id: "0/Bleak-House.epub".to_owned(),
-                    title: "Bleak House".to_owned(),
-                    kind: 1,
-                    bytes: 12_000,
-                    on_card: true,
-                }],
-                truncated: false,
-            },
-            DeviceResult::LibraryDocument {
-                id: "0/notes.md".to_owned(),
-                bytes: b"hello".to_vec(),
-            },
-        ];
-        for result in results {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 11,
-                message: Message::DeviceResult(result),
-            };
-            let bytes = encode(&frame).expect("encode");
-            assert_eq!(decode(&bytes).expect("decode"), frame);
-        }
-    }
-
-    /// A Kepub is the kind most Kobo owners have most of, and the encoder
-    /// used to refuse it. A refused entry is not a missing tile: encoding is
-    /// the whole listing, so one purchased book took the shelf, the launcher
-    /// and the session down with it.
-    #[test]
-    fn a_kepub_listing_survives_the_wire() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 11,
-            message: Message::DeviceResult(DeviceResult::Library {
-                entries: vec![LibraryEntry {
-                    id: "n//mnt/onboard/Piranesi.kepub.epub".to_owned(),
-                    title: "Piranesi".to_owned(),
-                    kind: 6,
-                    bytes: 900_000,
-                    on_card: true,
-                }],
-                truncated: false,
-            }),
-        };
-        let bytes = encode(&frame).expect("a Kepub entry the wire refuses takes the session down");
-        assert_eq!(decode(&bytes).expect("decode"), frame);
-    }
-
-    #[test]
-    fn a_kepub_is_listed_and_not_offered_as_readable() {
-        let kepub = LibraryEntry {
-            id: "n//mnt/onboard/Piranesi.kepub.epub".to_owned(),
-            title: "Piranesi".to_owned(),
-            kind: 6,
-            bytes: 900_000,
-            on_card: true,
-        };
-        assert!(
-            !kepub.is_readable(),
-            "a Kepub on the card was offered to a reader that shows its markup"
-        );
-    }
-
-    #[test]
-    fn every_auto_update_result_round_trips() {
-        for cobalt in [false, true] {
-            for apps in [false, true] {
-                let frame = Frame {
-                    version: VERSION,
-                    request_id: 11,
-                    message: Message::DeviceResult(DeviceResult::AutoUpdate { cobalt, apps }),
-                };
-                let bytes = encode(&frame).expect("encode");
-                assert_eq!(decode(&bytes).expect("decode"), frame);
-            }
-        }
-    }
-
-    #[test]
-    fn protocol_12_auto_update_frames_keep_their_payload_shape() {
-        let read = Frame {
-            version: VERSION,
-            request_id: 8,
-            message: Message::DeviceRequest(DeviceRequest::ReadAutoUpdate),
-        };
-        let read_bytes = encode(&read).expect("encode read");
-        assert_eq!(
-            read_bytes,
-            [b'K', b'O', b'B', b'O', VERSION, 7, 0, 0, 0, 1, 0, 0, 0, 8, 43,]
-        );
-        assert_eq!(decode(&read_bytes).expect("decode read"), read);
-
-        let request = Frame {
-            version: VERSION,
-            request_id: 9,
-            message: Message::DeviceRequest(DeviceRequest::SetAutoUpdate {
-                cobalt: true,
-                apps: false,
-            }),
-        };
-        let request_bytes = encode(&request).expect("encode request");
-        assert_eq!(
-            request_bytes,
-            [b'K', b'O', b'B', b'O', VERSION, 7, 0, 0, 0, 2, 0, 0, 0, 9, 44, 1,]
-        );
-        assert_eq!(decode(&request_bytes).expect("decode request"), request);
-
-        let result = Frame {
-            version: VERSION,
-            request_id: 11,
-            message: Message::DeviceResult(DeviceResult::AutoUpdate {
-                cobalt: false,
-                apps: true,
-            }),
-        };
-        let result_bytes = encode(&result).expect("encode result");
-        assert_eq!(
-            result_bytes,
-            [b'K', b'O', b'B', b'O', VERSION, 8, 0, 0, 0, 2, 0, 0, 0, 11, 17, 2,]
-        );
-        assert_eq!(decode(&result_bytes).expect("decode result"), result);
-    }
-
-    #[test]
-    fn secret_presence_round_trips_and_stays_bounded() {
-        let request = Frame {
-            version: VERSION,
-            request_id: 9,
-            message: Message::DeviceRequest(DeviceRequest::CheckSecrets {
-                names: vec!["exa".to_owned(), "openai".to_owned()],
-            }),
-        };
-        let bytes = encode(&request).expect("encode request");
-        assert_eq!(decode(&bytes).expect("decode request"), request);
-        let result = Frame {
-            version: VERSION,
-            request_id: 9,
-            message: Message::DeviceResult(DeviceResult::Secrets {
-                present: vec!["openai".to_owned()],
-            }),
-        };
-        let bytes = encode(&result).expect("encode result");
-        assert_eq!(decode(&bytes).expect("decode result"), result);
-        // An empty answer is meaningful: nothing asked about is installed.
-        let none = Frame {
-            version: VERSION,
-            request_id: 9,
-            message: Message::DeviceResult(DeviceResult::Secrets { present: vec![] }),
-        };
-        let bytes = encode(&none).expect("encode empty result");
-        assert_eq!(decode(&bytes).expect("decode empty result"), none);
-        // An empty ask is not, and neither is one past the bound or a name
-        // that could not be a reviewed secret.
-        for message in [
-            Message::DeviceRequest(DeviceRequest::CheckSecrets { names: vec![] }),
-            Message::DeviceRequest(DeviceRequest::CheckSecrets {
-                names: (0..=MAX_CHECKED_SECRETS)
-                    .map(|index| format!("key{index}"))
-                    .collect(),
-            }),
-            Message::DeviceRequest(DeviceRequest::CheckSecrets {
-                names: vec!["not a name".to_owned()],
-            }),
-            Message::DeviceResult(DeviceResult::Secrets {
-                present: vec!["../escape".to_owned()],
-            }),
-        ] {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 9,
-                message,
-            };
-            assert!(encode(&frame).is_err());
-        }
-    }
-
-    #[test]
-    fn update_channel_variants_round_trip() {
-        for channel in [UpdateChannel::Stable, UpdateChannel::Beta] {
-            for message in [
-                Message::DeviceRequest(DeviceRequest::SetUpdateChannel { channel }),
-                Message::DeviceResult(DeviceResult::UpdateChannel(channel)),
-            ] {
-                let frame = Frame {
-                    version: VERSION,
-                    request_id: 9,
-                    message,
-                };
-                let bytes = encode(&frame).expect("encode");
-                assert_eq!(decode(&bytes).expect("decode"), frame);
-            }
-        }
-        let read = Frame {
-            version: VERSION,
-            request_id: 9,
-            message: Message::DeviceRequest(DeviceRequest::ReadUpdateChannel),
-        };
-        let bytes = encode(&read).expect("encode");
-        assert_eq!(decode(&bytes).expect("decode"), read);
-    }
-
-    #[test]
-    fn server_accounts_roundtrip_only_with_scope_aware_protocol() {
-        let frame = Frame {
-            version: SERVER_ACCOUNT_VERSION,
-            request_id: 19,
-            message: Message::DeviceRequest(DeviceRequest::SetServerSecret {
-                name: "komga".into(),
-                server: "https://books.example/library".into(),
-                value: SecretValue::new("reader:private-value"),
-            }),
-        };
-        let bytes = encode(&frame).unwrap();
-        assert_eq!(decode(&bytes).unwrap(), frame);
-        assert!(!format!("{:?}", frame.message).contains("private-value"));
-        for version in 11..SERVER_ACCOUNT_VERSION {
-            assert!(encode(&Frame {
-                version,
-                ..frame.clone()
-            })
-            .is_err());
-            let mut legacy = bytes.clone();
-            legacy[4] = version;
-            assert!(decode(&legacy).is_err());
-        }
-        for server in [
-            "http://books.example",
-            "https://reader@books.example",
-            "https://books.example?key=x",
-            "https://books.example/#a",
-        ] {
-            let invalid = Frame {
-                message: Message::DeviceRequest(DeviceRequest::SetServerSecret {
-                    name: "komga".into(),
-                    server: server.into(),
-                    value: SecretValue::new("reader:private-value"),
-                }),
-                ..frame.clone()
-            };
-            assert!(encode(&invalid).is_err(), "{server}");
-        }
-    }
-
-    #[test]
-    fn application_secret_debug_output_is_redacted() {
-        let request = DeviceRequest::SetSecret {
-            name: "zotero".to_owned(),
-            value: SecretValue::new("must-not-appear"),
-        };
-        let debug = format!("{request:?}");
-        assert!(debug.contains("zotero"));
-        assert!(debug.contains("[redacted]"));
-        assert!(!debug.contains("must-not-appear"));
-    }
-
-    #[test]
-    fn pre_folio_protocols_cannot_encode_or_decode_application_secret_requests() {
-        // Protocol 10 is read and answered as protocol 11 is, through the
-        // same pre-Folio gates, so every gate is held for both.
-        for version in crate::PRE_FOLIO_VERSIONS {
-            let request = Frame {
-                version,
-                request_id: 9,
-                message: Message::DeviceRequest(DeviceRequest::SetSecret {
-                    name: "zotero".to_owned(),
-                    value: SecretValue::new("owner-value"),
-                }),
-            };
-            assert_eq!(
-                encode(&request),
-                Err(ProtocolError::InvalidValue("application secret"))
-            );
-
-            let mut bytes = encode(&Frame {
-                version: VERSION,
-                ..request
-            })
-            .expect("protocol 12 secret request");
-            bytes[4] = version;
-            assert_eq!(
-                decode(&bytes),
-                Err(ProtocolError::InvalidValue("device request"))
-            );
-        }
-    }
-
-    #[test]
-    fn unknown_update_channels_are_refused() {
-        let request = Frame {
-            version: VERSION,
-            request_id: 9,
-            message: Message::DeviceRequest(DeviceRequest::SetUpdateChannel {
-                channel: UpdateChannel::Stable,
-            }),
-        };
-        let mut bytes = encode(&request).expect("encode request");
-        *bytes.last_mut().expect("channel byte") = 2;
-        assert_eq!(
-            decode(&bytes),
-            Err(ProtocolError::InvalidValue("update channel"))
-        );
-
-        let result = Frame {
-            version: VERSION,
-            request_id: 9,
-            message: Message::DeviceResult(DeviceResult::UpdateChannel(UpdateChannel::Stable)),
-        };
-        let mut bytes = encode(&result).expect("encode result");
-        *bytes.last_mut().expect("channel byte") = 2;
-        assert_eq!(
-            decode(&bytes),
-            Err(ProtocolError::InvalidValue("update channel"))
-        );
-    }
-
-    #[test]
-    fn identity_results_round_trip() {
-        let results = [
-            DeviceResult::Identity(DeviceIdentity {
-                profile_id: "CLARA_BW_391".to_owned(),
-                model: "Kobo Clara BW".to_owned(),
-                device_code: 391,
-                firmware: "4.41.23145".to_owned(),
-                kernel: "5.10.117".to_owned(),
-                runtime_version: "0.1.0".to_owned(),
-                panel_width: 1072,
-                panel_height: 1448,
-            }),
-            DeviceResult::Identity(DeviceIdentity::default()),
-        ];
-        for result in results {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 11,
-                message: Message::DeviceResult(result),
-            };
-            let bytes = encode(&frame).expect("encode");
-            assert_eq!(decode(&bytes).expect("decode"), frame);
-        }
-    }
-
-    #[test]
-    fn oversized_identity_field_is_refused() {
-        let identity = DeviceIdentity {
-            model: "x".repeat(MAX_IDENTITY_FIELD_LEN + 1),
-            ..DeviceIdentity::default()
-        };
-        let frame = Frame {
-            version: VERSION,
-            request_id: 11,
-            message: Message::DeviceResult(DeviceResult::Identity(identity)),
-        };
-        assert!(encode(&frame).is_err());
-    }
-
-    #[test]
-    fn every_app_link_result_round_trips() {
-        let results = [
-            DeviceResult::AppLink(AppLinkState::Unpaired),
-            DeviceResult::AppLink(AppLinkState::Pairing {
-                code: "2345ABCD".to_owned(),
-                url: "https://store.example/link".to_owned(),
-                expires_in: 600,
-            }),
-            DeviceResult::AppLink(AppLinkState::Paired { browsers: 8 }),
-            DeviceResult::RemoteInstall(RemoteInstallOutcome::None),
-            DeviceResult::RemoteInstall(RemoteInstallOutcome::Installed {
-                id: "word-count".to_owned(),
-            }),
-            DeviceResult::RemoteInstall(RemoteInstallOutcome::Updated {
-                id: "word-count".to_owned(),
-            }),
-            DeviceResult::RemoteInstall(RemoteInstallOutcome::AlreadyInstalled {
-                id: "word-count".to_owned(),
-            }),
-            DeviceResult::RemoteInstall(RemoteInstallOutcome::Included {
-                id: "word-count".to_owned(),
-            }),
-            DeviceResult::RemoteInstall(RemoteInstallOutcome::Unavailable {
-                id: "word-count".to_owned(),
-            }),
-            DeviceResult::RemoteInstall(RemoteInstallOutcome::RequiresCobalt {
-                id: "word-count".to_owned(),
-                minimum_cobalt_version: "0.4.0".to_owned(),
-            }),
-        ];
-        for result in results {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 11,
-                message: Message::DeviceResult(result),
-            };
-            let bytes = encode(&frame).expect("encode");
-            assert_eq!(decode(&bytes).expect("decode"), frame);
-        }
-    }
-
-    #[test]
-    fn app_requests_and_results_are_bounded_and_validated() {
-        let ids = vec![
-            String::new(),
-            "../todo".to_owned(),
-            "Todo".to_owned(),
-            "a/b".to_owned(),
-            "1todo".to_owned(),
-            "-todo".to_owned(),
-            "todo-".to_owned(),
-            "todo--list".to_owned(),
-            "a".repeat(MAX_APP_ID_LEN + 1),
-        ];
-        for id in ids {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 1,
-                message: Message::DeviceRequest(DeviceRequest::InstallApp { id: id.clone() }),
-            };
-            assert!(encode(&frame).is_err(), "{id:?} was accepted as an app id");
-        }
-        for id in ["a", "todo", "todo-2", "a1-b2"] {
-            assert!(valid_app_id(id), "{id:?} was rejected as an app id");
-        }
-
-        let too_many = DeviceResult::Apps {
-            entries: (0..=MAX_APP_CATALOG_ENTRIES)
-                .map(|index| AppInfo {
-                    id: format!("app-{index}"),
-                    title: "App".to_owned(),
-                    label: "App".to_owned(),
-                    summary: "One application.".to_owned(),
-                    version: "1.0.0".to_owned(),
-                    minimum_cobalt_version: "0.3.0".to_owned(),
-                    glyph: Glyph::App,
-                    capabilities: Vec::new(),
-                    installed_version: None,
-                })
-                .collect(),
-        };
-        assert!(encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(too_many),
-        })
-        .is_err());
-
-        let app = |version: String| AppInfo {
-            id: "version-test".to_owned(),
-            title: "Version Test".to_owned(),
-            label: "Version".to_owned(),
-            summary: "Checks the application version wire bound.".to_owned(),
-            version,
-            minimum_cobalt_version: "0.3.0".to_owned(),
-            glyph: Glyph::App,
-            capabilities: Vec::new(),
-            installed_version: None,
-        };
-        assert!(encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::Apps {
-                entries: vec![app("a".repeat(MAX_APP_VERSION_LEN))],
-            }),
-        })
-        .is_ok());
-        assert!(encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::Apps {
-                entries: vec![app("a".repeat(MAX_APP_VERSION_LEN + 1))],
-            }),
-        })
-        .is_err());
-    }
-
-    #[test]
-    fn app_compatibility_uses_numeric_cobalt_versions() {
-        let app = AppInfo {
-            id: "version-test".to_owned(),
-            title: "Version Test".to_owned(),
-            label: "Version".to_owned(),
-            summary: "Checks minimum Cobalt versions.".to_owned(),
-            version: "1.0.0".to_owned(),
-            minimum_cobalt_version: "0.2.4".to_owned(),
-            glyph: Glyph::App,
-            capabilities: Vec::new(),
-            installed_version: None,
-        };
-        assert!(app.is_compatible_with("0.3.0"));
-        assert!(app.is_compatible_with("0.3"));
-        assert!(!app.is_compatible_with("0.2.3"));
-        assert!(!app.is_compatible_with("nightly"));
-
-        let newer = AppInfo {
-            minimum_cobalt_version: "0.4.0".to_owned(),
-            ..app
-        };
-        assert!(!newer.is_compatible_with("0.3.0"));
-    }
-
-    #[test]
-    fn app_updates_are_only_strictly_newer_numeric_versions() {
-        let app = |published: &str, installed: &str| AppInfo {
-            id: "version-test".to_owned(),
-            title: "Version Test".to_owned(),
-            label: "Version".to_owned(),
-            summary: "Checks Store update ordering.".to_owned(),
-            version: published.to_owned(),
-            minimum_cobalt_version: "0.3.2".to_owned(),
-            glyph: Glyph::App,
-            capabilities: Vec::new(),
-            installed_version: Some(installed.to_owned()),
-        };
-        assert!(app("1.2.0", "1.1.9").has_update());
-        assert!(!app("1.2.0", "1.2.0").has_update());
-        assert!(!app("1.1.9", "1.2.0").has_update());
-        assert!(!app("stable", "1.2.0").has_update());
-        assert!(!app("1.2.0", "beta").has_update());
-    }
-
-    #[test]
-    fn malformed_device_payloads_are_rejected_without_panic() {
-        let template = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceRequest(DeviceRequest::ReadBattery),
-        })
-        .expect("encode");
-
-        // An unknown request tag.
-        let mut unknown = template.clone();
-        unknown[HEADER_LEN] = 200;
-        assert_eq!(
-            decode(&unknown),
-            Err(ProtocolError::InvalidValue("device request"))
-        );
-
-        // A percentage that cannot exist.
-        let mut absurd = template.clone();
-        absurd[HEADER_LEN] = 8;
-        absurd[HEADER_LEN + 4] = 250;
-        assert_eq!(
-            decode(&absurd),
-            Err(ProtocolError::InvalidValue("frontlight percent"))
-        );
-
-        // A truncated payload must not be read past its end.
-        let mut truncated = template.clone();
-        truncated.truncate(HEADER_LEN + 3);
-        assert_eq!(decode(&truncated), Err(ProtocolError::LengthMismatch));
-
-        let result = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::Denied(DenyReason::Busy)),
-        })
-        .expect("encode");
-        let mut bad_reason = result;
-        let last = bad_reason.len() - 1;
-        bad_reason[last] = 99;
-        assert_eq!(
-            decode(&bad_reason),
-            Err(ProtocolError::InvalidValue("deny reason"))
-        );
-    }
-
-    #[test]
-    fn app_link_and_remote_install_payloads_are_bounded_and_validated() {
-        let pairing = |code: String, url: String, expires_in| Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Pairing {
-                code,
-                url,
-                expires_in,
-            })),
-        };
-        for code in [
-            "2345ABC".to_owned(),
-            "2345ABCDE".to_owned(),
-            "2345ABCI".to_owned(),
-            "2345abcD".to_owned(),
-        ] {
-            assert!(encode(&pairing(code, "https://store.example/link".to_owned(), 60)).is_err());
-        }
-        assert!(encode(&pairing(
-            "2345ABCD".to_owned(),
-            "http://store.example/link".to_owned(),
-            60
-        ))
-        .is_err());
-        assert!(encode(&pairing(
-            "2345ABCD".to_owned(),
-            format!("https://{}", "a".repeat(MAX_URL_LEN)),
-            60
-        ))
-        .is_err());
-        assert!(encode(&pairing(
-            "2345ABCD".to_owned(),
-            "https://store.example/link".to_owned(),
-            601
-        ))
-        .is_err());
-        assert!(encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Paired {
-                browsers: 9,
-            })),
-        })
-        .is_err());
-        assert!(encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::RemoteInstall(
-                RemoteInstallOutcome::Installed {
-                    id: "../store".to_owned(),
-                },
-            )),
-        })
-        .is_err());
-    }
-
-    #[test]
-    fn malformed_app_link_payloads_are_rejected() {
-        let pairing = |code: String, url: String, expires_in| Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Pairing {
-                code,
-                url,
-                expires_in,
-            })),
-        };
-        let valid_pairing = encode(&pairing(
-            "2345ABCD".to_owned(),
-            "https://store.example/link".to_owned(),
-            600,
-        ))
-        .expect("valid pairing");
-        let mut bad_code = valid_pairing.clone();
-        bad_code[HEADER_LEN + 6] = b'I';
-        assert_eq!(
-            decode(&bad_code),
-            Err(ProtocolError::InvalidValue("application link"))
-        );
-        let mut bad_expiry = valid_pairing;
-        let last = bad_expiry.len() - 1;
-        bad_expiry[last] = 0x59;
-        assert_eq!(
-            decode(&bad_expiry),
-            Err(ProtocolError::InvalidValue("application link"))
-        );
-
-        let mut bad_url = encode(&pairing(
-            "2345ABCD".to_owned(),
-            "https://store.example/link".to_owned(),
-            600,
-        ))
-        .expect("valid pairing");
-        bad_url[HEADER_LEN + 18] = b'x';
-        assert_eq!(
-            decode(&bad_url),
-            Err(ProtocolError::InvalidValue("application link"))
-        );
-
-        let mut bad_browsers = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::AppLink(AppLinkState::Paired {
-                browsers: 8,
-            })),
-        })
-        .expect("valid paired state");
-        let last = bad_browsers.len() - 1;
-        bad_browsers[last] = 9;
-        assert_eq!(
-            decode(&bad_browsers),
-            Err(ProtocolError::InvalidValue("application link"))
-        );
-
-        let mut bad_id = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::RemoteInstall(
-                RemoteInstallOutcome::Installed {
-                    id: "word-count".to_owned(),
-                },
-            )),
-        })
-        .expect("valid outcome");
-        bad_id[HEADER_LEN + 6] = b'W';
-        assert_eq!(
-            decode(&bad_id),
-            Err(ProtocolError::InvalidValue("application id"))
-        );
-
-        let mut bad_outcome = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::DeviceResult(DeviceResult::RemoteInstall(RemoteInstallOutcome::None)),
-        })
-        .expect("valid empty outcome");
-        let last = bad_outcome.len() - 1;
-        bad_outcome[last] = 8;
-        assert_eq!(
-            decode(&bad_outcome),
-            Err(ProtocolError::InvalidValue("remote install outcome"))
-        );
-    }
-
-    #[test]
-    fn screen_round_trip_is_deterministic() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 12,
-            message: Message::SetScreen(Screen::new(
-                7,
-                vec![Node::Card {
-                    id: NodeId(1),
-                    children: vec![Node::Button {
-                        id: NodeId(2),
-                        action: ActionId(3),
-                        label: "Go".into(),
-                        state: ControlState::Enabled,
-                        emphasis: kobo_ui::Emphasis::Normal,
-                    }],
-                }],
-            )),
-        };
-        let encoded = encode(&frame).expect("valid screen");
-        assert_eq!(encoded, encode(&frame).expect("stable encoding"));
-        assert_eq!(decode(&encoded), Ok(frame));
-    }
-
-    #[test]
-    fn a_reading_screens_middle_column_survives_the_wire() {
-        // The length calculation is separate from the encoder, so a field
-        // added to one and not the other produces a frame that encodes and
-        // then refuses to decode. Both shapes are round-tripped for that
-        // reason rather than only the new one.
-        let plain = Screen::new(1, Vec::new()).with_page_turns(ActionId(11), ActionId(12));
-        let with_menu = {
-            let mut screen = plain.clone();
-            screen.page_turns = screen
-                .page_turns
-                .map(|turns| turns.with_menu(ActionId(13)).with_position(4, 12));
-            screen
-        };
-        for screen in [plain, with_menu] {
-            let expected = screen.page_turns;
-            let frame = Frame {
-                version: VERSION,
-                request_id: 4,
-                message: Message::SetScreen(screen),
-            };
-            let bytes = encode(&frame).expect("encodes");
-            let back = decode(&bytes).expect("decodes");
-            let Message::SetScreen(out) = back.message else {
-                panic!("wrong message");
-            };
-            assert_eq!(out.page_turns, expected);
-        }
-    }
-
-    #[test]
-    fn a_held_finger_survives_the_wire() {
-        // Same trap as the middle column: encoded_len is computed apart from
-        // the encoder, so both shapes are round-tripped rather than only the
-        // one carrying the new field.
-        let plain = Screen::new(1, Vec::new());
-        let holding = Screen::new(1, Vec::new()).with_hold(ActionId(21));
-        for screen in [plain, holding] {
-            let expected = screen.hold;
-            let frame = Frame {
-                version: VERSION,
-                request_id: 4,
-                message: Message::SetScreen(screen),
-            };
-            let bytes = encode(&frame).expect("encodes");
-            let back = decode(&bytes).expect("decodes");
-            let Message::SetScreen(out) = back.message else {
-                panic!("wrong message");
-            };
-            assert_eq!(out.hold, expected);
-        }
-    }
-
-    #[test]
-    fn a_screen_can_ask_for_a_text_size_and_most_do_not() {
-        let screen = Screen::new(1, Vec::new());
-        assert!(
-            screen.text_scale.is_none(),
-            "inheriting the reader's own setting is the default"
-        );
-        for scale in [None, Some(TextScale::Large), Some(TextScale::ExtraLarge)] {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 9,
-                message: Message::SetScreen(screen.clone().with_text_scale(scale)),
-            };
-            let bytes = encode(&frame).expect("encodes");
-            let back = decode(&bytes).expect("decodes");
-            let Message::SetScreen(out) = back.message else {
-                panic!("wrong message");
-            };
-            assert_eq!(out.text_scale, scale);
-        }
-    }
-
-    #[test]
-    fn a_request_for_first_refusal_on_back_survives_the_wire() {
-        // A screen that asked to answer Back itself has to arrive that way,
-        // because the runtime decides where the reader's tap goes from this
-        // flag alone. Lost in transit it would silently mean the opposite.
-        let screen = Screen::new(
-            7,
-            vec![Node::Text {
-                id: NodeId(1),
-                text: "Chapter one".into(),
-                links: Vec::new(),
-            }],
-        );
-        assert!(!screen.owns_back, "not asking for it is the default");
-        for owns_back in [false, true] {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 12,
-                message: Message::SetScreen(screen.clone().with_own_back(owns_back)),
-            };
-            let encoded = encode(&frame).expect("valid screen");
-            assert_eq!(decode(&encoded), Ok(frame));
-        }
-    }
-
-    #[test]
-    fn malformed_frames_are_rejected_before_allocation() {
-        assert_eq!(decode(b"short"), Err(ProtocolError::Truncated));
-        let mut header = [0_u8; HEADER_LEN];
-        header[..4].copy_from_slice(&MAGIC);
-        header[4] = VERSION;
-        header[5] = 6;
-        header[6..10].copy_from_slice(&u32::MAX.to_be_bytes());
-        assert_eq!(decode(&header), Err(ProtocolError::FrameTooLarge));
-    }
-
-    #[test]
-    fn pre_folio_screen_frames_keep_the_legacy_renderer() {
-        // Protocol 10 is read and answered as protocol 11 is, through the
-        // same pre-Folio gates, so every gate is held for both.
-        for version in crate::PRE_FOLIO_VERSIONS {
-            // Heading and body are unchanged v11 payloads, representative of an
-            // already-installed app. The peer version must select the legacy
-            // renderer rather than refuse an OTA user's application.
-            let nodes = vec![
-                Node::Heading {
-                    id: NodeId(1),
-                    text: "Existing app".into(),
-                    level: 1,
-                },
-                Node::Text {
-                    id: NodeId(2),
-                    text: "Its local Atkinson measurements still apply.".into(),
-                    links: Vec::new(),
-                },
-            ];
-            let screen = Screen::new(9, nodes.clone());
-            let frame = Frame {
-                version,
-                request_id: 3,
-                message: Message::SetScreen(screen),
-            };
-            let bytes = encode(&frame).expect("v11 encoding");
-            let back = decode(&bytes).expect("v11 accepted");
-            assert_eq!(back.version, version);
-            let Message::SetScreen(decoded) = back.message else {
-                panic!("expected screen");
-            };
-            assert!(decoded.legacy_typography);
-            assert_eq!(decoded.nodes, nodes);
-            assert!(decoded
-                .layout()
-                .nodes
-                .iter()
-                .any(|node| matches!(node.kind, kobo_ui::LayoutKind::Heading(1))));
-        }
-    }
-
-    #[test]
-    fn pre_folio_sections_and_tiles_use_the_legacy_wire_layout() {
-        // Protocol 10 is read and answered as protocol 11 is, through the
-        // same pre-Folio gates, so every gate is held for both.
-        for version in crate::PRE_FOLIO_VERSIONS {
-            let nodes = vec![
-                Node::Section {
-                    id: NodeId(1),
-                    title: "Library".into(),
-                    value: Some("12".into()),
-                    link: None,
-                },
-                Node::TileGrid {
-                    id: NodeId(2),
-                    shape: TileShape::Portrait,
-                    tiles: vec![Tile::new(ActionId(5), "Book", Glyph::Book)],
-                },
-            ];
-            let frame = Frame {
-                version,
-                request_id: 7,
-                message: Message::SetScreen(Screen::new(10, nodes.clone())),
-            };
-            let Message::SetScreen(decoded) = decode(&encode(&frame).expect("v11 encoding"))
-                .expect("v11 decoding")
-                .message
-            else {
-                panic!("expected screen");
-            };
-            assert_eq!(decoded.nodes, nodes);
-        }
-    }
-
-    #[test]
-    fn pre_folio_encoders_reject_folio_only_fields() {
-        // Protocol 10 is read and answered as protocol 11 is, through the
-        // same pre-Folio gates, so every gate is held for both.
-        for version in crate::PRE_FOLIO_VERSIONS {
-            let screens = [
-                Screen::new(
-                    1,
-                    vec![Node::Section {
-                        id: NodeId(1),
-                        title: "Library".into(),
-                        value: None,
-                        link: Some(BarAction::new(ActionId(2), "View all")),
-                    }],
-                ),
-                Screen::new(
-                    1,
-                    vec![Node::TileGrid {
-                        id: NodeId(1),
-                        shape: TileShape::Square,
-                        tiles: vec![Tile::new(ActionId(2), "Updates", Glyph::Download)
-                            .with_value("3")
-                            .with_menu(ActionId(3))],
-                    }],
-                ),
-                Screen::new(
-                    1,
-                    vec![Node::TileGrid {
-                        id: NodeId(1),
-                        shape: TileShape::Card,
-                        tiles: Vec::new(),
-                    }],
-                ),
-                Screen::new(
-                    1,
-                    vec![Node::PageRail {
-                        id: NodeId(1),
-                        page: 0,
-                        of: 2,
-                    }],
-                ),
-            ];
-            for screen in screens {
-                assert!(matches!(
-                    encode(&Frame {
-                        version,
-                        request_id: 8,
-                        message: Message::SetScreen(screen),
-                    }),
-                    Err(ProtocolError::InvalidValue(_))
-                ));
-            }
-        }
-    }
-
-    #[test]
-    fn version_12_folio_fields_round_trip() {
-        let screen = Screen::new(
-            10,
-            vec![
-                Node::Section {
-                    id: NodeId(1),
-                    title: "Featured".into(),
-                    value: None,
-                    link: Some(BarAction::new(ActionId(4), "View all ↗")),
-                },
-                Node::TileGrid {
-                    id: NodeId(2),
-                    shape: TileShape::Card,
-                    tiles: vec![Tile::new(ActionId(5), "App Store", Glyph::Download)
-                        .with_caption("Updates")
-                        .with_value("3")
-                        .with_menu(ActionId(6))],
-                },
-                Node::PageRail {
-                    id: NodeId(3),
-                    page: 1,
-                    of: 3,
-                },
-            ],
-        );
-        let frame = Frame {
-            version: VERSION,
-            request_id: 4,
-            message: Message::SetScreen(screen.clone()),
-        };
-        let Message::SetScreen(decoded) = decode(&encode(&frame).expect("v12 encoding"))
-            .expect("v12 decoding")
-            .message
-        else {
-            panic!("expected screen");
-        };
-        assert_eq!(decoded, screen);
-        assert!(!decoded.legacy_typography);
-    }
-
-    #[test]
-    fn every_protocol_a_published_app_was_built_for_is_still_accepted() {
-        // The release registry lists every protocol the Store has published
-        // applications at. An application keeps its protocol for as long as
-        // it is installed, so a platform update that refused one of these
-        // would leave that application unable to open. Removing a version
-        // from the runtime now means removing it from the registry first.
-        let registry = include_str!("../../../tools/protocol-minimums.json");
-        let start = registry.find("\"protocols\"").expect("a protocols map");
-        let body = &registry[start..];
-        let end = body.find('}').expect("the map closes");
-        let published: Vec<u8> = body[..end]
-            .split('"')
-            .filter_map(|part| part.parse::<u8>().ok())
-            .collect();
-        assert!(
-            !published.is_empty(),
-            "no protocols were read from the registry"
-        );
-        for version in published {
-            assert!(
-                accepted_version(version),
-                "protocol {version} is in the release registry but the runtime refuses it"
-            );
-        }
-    }
-
-    #[test]
-    fn versions_outside_the_window_are_refused() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 3,
-            message: Message::Exit,
-        };
-        let mut bytes = encode(&frame).expect("encoding");
-        bytes[4] = DICTIONARY_VERSION - 1;
-        assert_eq!(
-            decode(&bytes),
-            Err(ProtocolError::UnsupportedVersion(DICTIONARY_VERSION - 1))
-        );
-        bytes[4] = VERSION + 1;
-        assert_eq!(
-            decode(&bytes),
-            Err(ProtocolError::UnsupportedVersion(VERSION + 1))
-        );
-    }
-
-    #[test]
-    fn invalid_utf8_is_rejected() {
-        let mut bytes = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::Hello { name: "x".into() },
-        })
-        .expect("valid hello");
-        *bytes.last_mut().expect("payload") = 0xff;
-        assert_eq!(decode(&bytes), Err(ProtocolError::InvalidUtf8));
-    }
-
-    #[test]
-    fn stream_round_trip_reads_exactly_one_frame() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 42,
-            message: Message::Hello {
-                name: "counter".into(),
-            },
-        };
-        let mut bytes = Vec::new();
-        write_to(&mut bytes, &frame).expect("write frame");
-        bytes.extend_from_slice(b"remaining");
-        let mut cursor = Cursor::new(bytes);
-        assert_eq!(read_from(&mut cursor).expect("read frame"), frame);
-        assert_eq!(
-            usize::try_from(cursor.position()).expect("fixture position fits"),
-            encode(&frame).unwrap().len()
-        );
-    }
-
-    #[test]
-    fn stream_rejects_oversized_length_before_allocation() {
-        let mut header = [0_u8; HEADER_LEN];
-        header[..4].copy_from_slice(&MAGIC);
-        header[4] = VERSION;
-        header[5] = 1;
-        header[6..10].copy_from_slice(&u32::MAX.to_be_bytes());
-        assert_eq!(
-            read_from(&mut Cursor::new(header)),
-            Err(StreamError::Protocol(ProtocolError::FrameTooLarge))
-        );
-    }
-
-    #[test]
-    fn encoder_rejects_node_and_list_counts_decoder_would_reject() {
-        let nodes = (0..=MAX_NODES)
-            .map(|id| Node::Divider {
-                id: NodeId(u32::try_from(id).expect("fixture ID")),
-            })
-            .collect();
-        assert_eq!(
-            encode(&Frame {
-                version: VERSION,
-                request_id: 1,
-                message: Message::SetScreen(Screen::new(1, nodes)),
-            }),
-            Err(ProtocolError::TooManyNodes)
-        );
-
-        assert_eq!(
-            encode(&Frame {
-                version: VERSION,
-                request_id: 2,
-                message: Message::SetScreen(Screen::new(
-                    2,
-                    vec![Node::PagedList {
-                        id: NodeId(1),
-                        page: 0,
-                        items: vec![String::new(); MAX_NODES + 1],
-                    }],
-                )),
-            }),
-            Err(ProtocolError::TooManyNodes)
-        );
-    }
-
-    #[test]
-    fn encoder_preflights_payload_limit() {
-        // The full node budget with the longest string each node may carry:
-        // 512 × 16 KiB is the frame limit exactly, and the envelope around
-        // the strings takes it over.
-        let nodes = (0..512)
-            .map(|id| Node::Text {
-                id: NodeId(id),
-                text: "x".repeat(MAX_STRING_LEN),
-                links: Vec::new(),
-            })
-            .collect();
-        assert_eq!(
-            encode(&Frame {
-                version: VERSION,
-                request_id: 3,
-                message: Message::SetScreen(Screen::new(3, nodes)),
-            }),
-            Err(ProtocolError::FrameTooLarge)
-        );
-    }
-}
+mod tests;
 
 #[cfg(test)]
-mod node_coverage_tests {
-    use super::*;
-    use kobo_ui::{BandAlign, BandSlot, Chip};
-
-    /// Every node kind, so the precomputed frame layout is checked against the
-    /// real encoder for all of them.
-    ///
-    /// This exists because `Spacer` carried a stale length of nine bytes for
-    /// as long as it encoded an `i32`, and nothing noticed when it became a
-    /// single tag byte: no test had ever put a spacer through `encode`. The
-    /// encoder asserts its own predicted length in debug builds, so the bug was
-    /// one call away from being loud, and was silently over-reserving instead.
-    #[allow(clippy::too_many_lines, reason = "one literal per node variant")]
-    fn one_of_every_node() -> Vec<Node> {
-        vec![
-            Node::Table {
-                id: NodeId(70),
-                rows: vec![
-                    kobo_ui::TableRow {
-                        header: true,
-                        cells: vec!["Model".into(), "Top-1".into()],
-                    },
-                    kobo_ui::TableRow {
-                        header: false,
-                        cells: vec!["ResNet-50".into(), "76.1".into()],
-                    },
-                ],
-                weights: vec![240, 90],
-            },
-            Node::Heading {
-                id: NodeId(1),
-                text: "Heading".into(),
-                level: 1,
-            },
-            Node::Text {
-                id: NodeId(2),
-                text: "Body".into(),
-                links: Vec::new(),
-            },
-            Node::RichText {
-                id: NodeId(52),
-                text: "Styled body".into(),
-                spans: vec![kobo_ui::RichTextSpan {
-                    start: 0,
-                    end: 6,
-                    presentation: kobo_ui::TextPresentation {
-                        strong: true,
-                        ..kobo_ui::TextPresentation::default()
-                    },
-                }],
-                links: Vec::new(),
-                presentation: kobo_ui::ParagraphPresentation {
-                    alignment: kobo_ui::ParagraphAlignment::Center,
-                    line_height_percent: 130,
-                    ..kobo_ui::ParagraphPresentation::default()
-                },
-                selection: Some(kobo_ui::TextSelection {
-                    context: 3,
-                    offset: 11,
-                }),
-                formulae: vec![kobo_ui::InlineFormula {
-                    start: 7,
-                    end: 11,
-                    handle: PictureHandle(9),
-                    source: (40, 20),
-                }],
-            },
-            Node::Quote {
-                id: NodeId(30),
-                depth: 2,
-                role: kobo_ui::QuoteRole::Body,
-                fold: None,
-                text: "A reply".into(),
-            },
-            Node::Button {
-                id: NodeId(3),
-                action: ActionId(1),
-                label: "Press".into(),
-                state: ControlState::Disabled,
-                emphasis: kobo_ui::Emphasis::Normal,
-            },
-            Node::Card {
-                id: NodeId(4),
-                children: vec![Node::Text {
-                    id: NodeId(5),
-                    text: "Nested".into(),
-                    links: Vec::new(),
-                }],
-            },
-            Node::Divider { id: NodeId(6) },
-            Node::Rows {
-                id: NodeId(45),
-                rows: vec![Row::new(
-                    ActionId(67),
-                    "Bleak House",
-                    "Charles Dickens",
-                    RowLead::Picture(
-                        TilePicture {
-                            handle: PictureHandle(9),
-                            source: (190, 300),
-                        },
-                        Glyph::Book,
-                    ),
-                )],
-            },
-            Node::Field {
-                id: NodeId(40),
-                action: ActionId(60),
-                value: "dickens".into(),
-                placeholder: "Search the library".into(),
-                clear: Some(ActionId(61)),
-            },
-            // Empty and with nothing to clear: both optional halves absent is
-            // where a length mismatch hides.
-            Node::Field {
-                id: NodeId(41),
-                action: ActionId(62),
-                value: String::new(),
-                placeholder: String::new(),
-                clear: None,
-            },
-            Node::Chips {
-                id: NodeId(42),
-                chips: vec![
-                    Chip::new(ActionId(63), "Fiction").selected(true),
-                    Chip::new(ActionId(64), "History"),
-                ],
-            },
-            Node::Chips {
-                id: NodeId(43),
-                chips: Vec::new(),
-            },
-            Node::Tabs {
-                id: NodeId(44),
-                tabs: vec![
-                    Chip::new(ActionId(65), "Discover"),
-                    Chip::new(ActionId(66), "Popular"),
-                ],
-                selected: 1,
-            },
-            Node::Facts {
-                id: NodeId(31),
-                entries: vec![
-                    ("Downloads".into(), "94,206".into()),
-                    ("Rights".into(), "Public domain in the USA".into()),
-                    // An empty value is legal and must survive the wire.
-                    ("Series".into(), String::new()),
-                ],
-            },
-            // Every slot shape, because the width token is the part that
-            // changes length on the wire and a fixed width is the only one
-            // carrying a number after it.
-            Node::Band {
-                id: NodeId(25),
-                align: BandAlign::Middle,
-                slots: vec![
-                    BandSlot::fixed(
-                        300,
-                        vec![Node::Text {
-                            id: NodeId(26),
-                            text: "Cover".into(),
-                            links: Vec::new(),
-                        }],
-                    ),
-                    BandSlot::fill(vec![
-                        Node::Heading {
-                            id: NodeId(27),
-                            text: "Moby Dick".into(),
-                            level: 1,
-                        },
-                        Node::Secondary {
-                            id: NodeId(28),
-                            text: "Herman Melville".into(),
-                        },
-                    ]),
-                    BandSlot::natural(vec![Node::Secondary {
-                        id: NodeId(29),
-                        text: "32".into(),
-                    }]),
-                ],
-            },
-            // A slot holding nothing at all: the empty collection is where a
-            // length mismatch hides.
-            Node::Band {
-                id: NodeId(30),
-                align: BandAlign::Bottom,
-                slots: vec![BandSlot::fill(Vec::new())],
-            },
-            // Both shapes of section: the value is the optional half, and an
-            // optional half is exactly what a length mismatch hides in.
-            Node::Section {
-                id: NodeId(23),
-                title: "Details".into(),
-                value: None,
-                link: None,
-            },
-            Node::Section {
-                id: NodeId(24),
-                title: "Popular".into(),
-                value: Some("32".into()),
-                link: Some(BarAction::new(ActionId(68), "View all ↗")),
-            },
-            Node::Flex { id: NodeId(90) },
-            Node::Spacer {
-                id: NodeId(7),
-                space: Space::Medium,
-            },
-            Node::Progress {
-                id: NodeId(8),
-                value: Percent::new(40),
-            },
-            Node::Stepper {
-                id: NodeId(96),
-                label: "120%".into(),
-                less: BarAction::new(ActionId(30), String::new()).with_glyph(Glyph::Minus),
-                more: BarAction::new(ActionId(31), String::new()).with_glyph(Glyph::Plus),
-                less_state: ControlState::Enabled,
-                more_state: ControlState::Disabled,
-                fill: Some(75),
-            },
-            Node::PagedList {
-                id: NodeId(9),
-                page: 0,
-                items: vec!["one".into(), "two".into()],
-            },
-            Node::TileGrid {
-                shape: TileShape::Square,
-                id: NodeId(10),
-                tiles: vec![
-                    Tile::new(ActionId(2), "Reader", Glyph::Reader),
-                    Tile::new(ActionId(3), "Notes", Glyph::Note),
-                    // A tile wearing every optional part at once, because the
-                    // empty ones are exactly where a length mismatch hides.
-                    Tile::new(ActionId(4), "Bleak House", Glyph::Book)
-                        .with_state(TileState::Held)
-                        .with_badge("12")
-                        .with_subtitle("Charles Dickens")
-                        .with_value("12"),
-                ],
-            },
-            Node::PageRail {
-                id: NodeId(91),
-                page: 1,
-                of: 3,
-            },
-            Node::Splash {
-                id: NodeId(21),
-                glyph: Some(Glyph::Book),
-                title: "Gutenbird".into(),
-                summary: "Sixty thousand free books.".into(),
-            },
-            // No mark, and nothing to say. Both halves are optional in
-            // practice and the empty ones are what a length mismatch hides in.
-            Node::Splash {
-                id: NodeId(22),
-                glyph: None,
-                title: "Starting".into(),
-                summary: String::new(),
-            },
-            Node::Rows {
-                id: NodeId(20),
-                rows: vec![
-                    Row::new(
-                        ActionId(7),
-                        "Hello",
-                        "The smallest application.",
-                        Glyph::App,
-                    ),
-                    // An empty summary is legal and must survive the wire.
-                    Row::new(ActionId(8), "Counter", "", Glyph::Note),
-                    // A trailing value is the optional half of a row, and an
-                    // optional half is where a length mismatch hides.
-                    Row::new(ActionId(9), "Great Expectations", "Dickens", Glyph::Book)
-                        .with_trailing("18,204"),
-                    // An overflow action is the other optional half, and the
-                    // two together are where an ordering mistake hides.
-                    Row::new(ActionId(10), "Ars Technica", "arstechnica.com", Glyph::Rss)
-                        .with_menu(ActionId(11)),
-                    Row::new(
-                        ActionId(12),
-                        "Hacker News",
-                        "news.ycombinator.com",
-                        Glyph::News,
-                    )
-                    .with_trailing("30")
-                    .with_menu(ActionId(13)),
-                ],
-            },
-            Node::Choice {
-                id: NodeId(11),
-                prompt: "Pick one".into(),
-                options: vec![
-                    BarAction::new(ActionId(4), "First"),
-                    BarAction::new(ActionId(5), "Second"),
-                ],
-                selected: Some(1),
-                freeform: Some(Freeform::new(ActionId(6), "Something else")),
-            },
-            Node::Banner {
-                id: NodeId(12),
-                level: BannerLevel::Attention,
-                text: "Battery low".into(),
-            },
-            Node::Skeleton {
-                id: NodeId(13),
-                lines: 3,
-            },
-            Node::Activity {
-                id: NodeId(14),
-                label: "Fetching articles".into(),
-                progress: Some(Percent::new(45)),
-                cancel: Some(BarAction::new(ActionId(7), "Cancel")),
-                transferred: Some((4_404_019, Some(11_534_336))),
-                failure: Some(TransferFailure {
-                    reason: "The connection was reset".into(),
-                    resumable: true,
-                }),
-            },
-            Node::Activity {
-                id: NodeId(15),
-                label: "Connecting".into(),
-                progress: None,
-                cancel: None,
-                transferred: None,
-                failure: None,
-            },
-            Node::Activity {
-                id: NodeId(56),
-                label: "Downloading".into(),
-                progress: None,
-                cancel: None,
-                transferred: Some((512, None)),
-                failure: Some(TransferFailure {
-                    reason: "This edition is no longer published".into(),
-                    resumable: false,
-                }),
-            },
-            Node::Terminal {
-                id: NodeId(16),
-                rows: vec!["~ # uname -a".into(), "Linux kobo 4.9.77".into()],
-                cursor: Some(Caret::new(1, 17)),
-            },
-            Node::Terminal {
-                id: NodeId(17),
-                rows: Vec::new(),
-                cursor: None,
-            },
-        ]
-    }
-
-    fn round_trip(screen: Screen) -> Screen {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 7,
-            message: Message::SetScreen(screen),
-        };
-        let bytes = encode(&frame).expect("encode");
-        match decode(&bytes).expect("decode").message {
-            Message::SetScreen(screen) => screen,
-            other => panic!("expected a screen, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn numbered_boards_round_trip_without_changing_installed_grid_frames() {
-        let mut cell = Cell::new(ActionId(11), "H").with_selected(true);
-        cell.corner = Some(12);
-        let screen = Screen::new(
-            1,
-            vec![Node::Grid {
-                id: NodeId(1),
-                columns: 1,
-                square: true,
-                cells: vec![cell],
-            }],
-        );
-        assert_eq!(round_trip(screen.clone()), screen);
-        let mut frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::SetScreen(screen),
-        };
-        let bytes = encode(&frame).unwrap();
-        for end in 0..bytes.len() {
-            assert!(decode(&bytes[..end]).is_err());
-        }
-        frame.version = SELECTED_GRID_VERSION;
-        assert!(encode(&frame).is_err());
-        frame.version = VERSION;
-        if let Message::SetScreen(s) = &mut frame.message {
-            if let Node::Grid { cells, .. } = &mut s.nodes[0] {
-                cells[0].corner = Some(100);
-            }
-        }
-        assert!(encode(&frame).is_err());
-    }
-
-    #[test]
-    fn a_grid_cell_carries_its_glyph_across_the_wire() {
-        // The cell payload gained a flag byte after its label. An encoder that
-        // wrote it and a decoder that did not would read the flag as the top
-        // byte of the next cell's action, so the second button of a transport
-        // row would fire something nobody named. VERSION went to 3 for this.
-        let cells = vec![
-            kobo_ui::Cell::new(ActionId(11), "Back 30 sec")
-                .with_glyph(Glyph::Rewind30)
-                .with_selected(true),
-            kobo_ui::Cell::new(ActionId(12), "Play"),
-            kobo_ui::Cell::new(ActionId(13), "Louder").with_glyph(Glyph::VolumeUp),
-        ];
-        let screen = Screen::new(
-            1,
-            vec![Node::Grid {
-                id: NodeId(1),
-                columns: 3,
-                square: false,
-                cells: cells.clone(),
-            }],
-        );
-        match round_trip(screen).nodes.first() {
-            Some(Node::Grid { cells: back, .. }) => assert_eq!(back, &cells),
-            other => panic!("expected a grid, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_reading_screen_keeps_its_publisher_font_handle() {
-        let screen = Screen::new(
-            1,
-            vec![Node::Text {
-                id: NodeId(1),
-                text: "Publisher prose".into(),
-                links: Vec::new(),
-            }],
-        )
-        .with_reading(true)
-        .with_reading_font(Some(FontHandle(42)));
-        assert_eq!(round_trip(screen.clone()), screen);
-    }
-
-    #[test]
-    fn a_folding_byline_survives_the_wire_with_its_count() {
-        // The count is what the renderer draws beside the mark, so losing it
-        // would show a bare plus with no idea how much is behind it -- and the
-        // size table has to agree with the payload or every frame carrying one
-        // fails the length check rather than the assertion here.
-        for fold in [
-            None,
-            Some(kobo_ui::Fold {
-                action: ActionId(4321),
-                collapsed: true,
-                hidden: 4095,
-            }),
-            Some(kobo_ui::Fold {
-                action: ActionId(0),
-                collapsed: false,
-                hidden: 0,
-            }),
-        ] {
-            let node = Node::Quote {
-                id: NodeId(3),
-                depth: 2,
-                role: kobo_ui::QuoteRole::Byline,
-                fold,
-                text: "someone 3 hours ago".to_owned(),
-            };
-            assert_eq!(
-                round_trip(Screen::new(1, vec![node.clone()])).nodes,
-                vec![node.clone()],
-                "a fold did not survive the wire: {fold:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn an_overlay_survives_the_wire() {
-        let screen = Screen::new(
-            1,
-            vec![Node::Text {
-                id: NodeId(1),
-                text: "Underneath".to_owned(),
-                links: Vec::new(),
-            }],
-        )
-        .with_overlay(kobo_ui::Overlay::modal(
-            NodeId(9),
-            "Delete this?",
-            vec![Node::Button {
-                id: NodeId(10),
-                action: ActionId(6),
-                label: "Delete".to_owned(),
-                state: ControlState::Enabled,
-                emphasis: kobo_ui::Emphasis::Primary,
-            }],
-        ));
-        assert_eq!(round_trip(screen.clone()).overlay, screen.overlay);
-    }
-
-    #[test]
-    fn every_node_kind_round_trips_byte_for_byte() {
-        for node in one_of_every_node() {
-            let screen = Screen::new(1, vec![node.clone()]);
-            assert_eq!(
-                round_trip(screen).nodes,
-                vec![node.clone()],
-                "node did not survive the wire: {node:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_reply_deeper_than_the_cap_arrives_at_the_cap_rather_than_being_refused() {
-        // Real discussion threads nest far past anything this panel can draw,
-        // and forty levels is a deeper reply rather than a malformed frame. It
-        // is clamped on the way out and again on the way in, so a peer that
-        // never clamped cannot make the renderer indent off the panel.
-        let screen = Screen::new(
-            1,
-            vec![Node::Quote {
-                id: NodeId(1),
-                depth: 40,
-                role: kobo_ui::QuoteRole::Body,
-                fold: None,
-                text: "Deep in an argument".into(),
-            }],
-        );
-        assert_eq!(
-            round_trip(screen).nodes,
-            vec![Node::Quote {
-                id: NodeId(1),
-                depth: kobo_ui::MAX_QUOTE_DEPTH,
-                role: kobo_ui::QuoteRole::Body,
-                fold: None,
-                text: "Deep in an argument".into(),
-            }]
-        );
-    }
-
-    #[test]
-    fn a_screen_holding_every_node_round_trips() {
-        let nodes = one_of_every_node();
-        let screen = Screen::new(9, nodes.clone())
-            .with_top_bar(TopBar::new(NodeId(100), "Gallery").action(ActionId(50), "Done"))
-            .with_nav_bar(NavBar::new(
-                NodeId(101),
-                vec![
-                    BarAction::new(ActionId(60), "Home"),
-                    BarAction::new(ActionId(61), "Books"),
-                    BarAction::new(ActionId(62), "More"),
-                ],
-                Some(1),
-            ));
-        let decoded = round_trip(screen.clone());
-        assert_eq!(decoded, screen);
-    }
-
-    #[test]
-    fn bars_survive_independently_of_each_other() {
-        let only_top = Screen::new(1, Vec::new()).with_top_bar(TopBar::new(NodeId(1), "Title"));
-        assert_eq!(round_trip(only_top.clone()), only_top);
-
-        let only_nav = Screen::new(2, Vec::new()).with_nav_bar(NavBar::new(
-            NodeId(2),
-            vec![
-                BarAction::new(ActionId(1), "A"),
-                BarAction::new(ActionId(2), "B"),
-            ],
-            Some(0),
-        ));
-        assert_eq!(round_trip(only_nav.clone()), only_nav);
-
-        let neither = Screen::new(3, Vec::new());
-        assert_eq!(round_trip(neither.clone()), neither);
-    }
-
-    #[test]
-    fn the_reserved_back_action_cannot_arrive_from_an_application() {
-        // Going back belongs to the runtime's navigation stack. If an app could
-        // name that identifier it could draw a control the reader is entitled
-        // to trust and then handle it however it liked.
-        let screen = Screen::new(1, Vec::new())
-            .with_top_bar(TopBar::new(NodeId(1), "Trap").action(ActionId::BACK, "Back"));
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::SetScreen(screen),
-        };
-        let bytes = encode(&frame).expect("encode");
-        assert!(matches!(
-            decode(&bytes),
-            Err(ProtocolError::InvalidValue("reserved action id"))
-        ));
-    }
-
-    /// A mark on a bar entry used to be a top bar privilege.
-    ///
-    /// The flag was encoded beside the top bar rather than inside the shared
-    /// bar action, so a bottom bar could hold a glyph in memory, encode it,
-    /// and arrive on the panel as a word. The launcher is where it showed:
-    /// "Return to Kobo reader" in a slot a third of a panel wide.
-    #[test]
-    fn a_mark_on_any_bar_entry_survives_the_wire() {
-        let screen = Screen::new(1, Vec::new())
-            .with_nav_bar(NavBar::actions(
-                NodeId(1),
-                vec![
-                    BarAction::new(ActionId(1), "Previous").with_glyph(Glyph::Previous),
-                    BarAction::new(ActionId(2), "Reader"),
-                    BarAction::new(ActionId(3), "More apps").with_glyph(Glyph::Next),
-                ],
-            ))
-            .with_top_bar(TopBar::new(NodeId(2), "Cobalt"));
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::SetScreen(screen.clone()),
-        };
-        let bytes = encode(&frame).expect("encode");
-        // The reserved length and the encoder have to agree, and a mark that
-        // is written but not counted is exactly how they stop agreeing.
-        let counted = encoded_screen_len(&screen, 0, &mut 0, VERSION).expect("length");
-        assert_eq!(bytes.len(), HEADER_LEN + counted);
-        let Message::SetScreen(back) = decode(&bytes).expect("decode").message else {
-            panic!("expected a screen");
-        };
-        let marks = back
-            .nav_bar
-            .expect("nav bar")
-            .destinations
-            .iter()
-            .map(|destination| destination.glyph)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            marks,
-            vec![Some(Glyph::Previous), None, Some(Glyph::Next)],
-            "a bar entry came back without the mark it was given"
-        );
-    }
-
-    /// A one-destination bar is refused by both halves, and the encoder
-    /// matters more than the decoder.
-    ///
-    /// It used to encode cleanly and fail only on arrival. The runtime's
-    /// reader thread died on the malformed frame, the application never heard
-    /// about it, and it then waited forever on a socket nobody was reading:
-    /// the panel kept showing the previous screen and every later tap did
-    /// nothing at all. A Hacker News thread opening with a single "Stories"
-    /// destination is exactly how it was found.
-    #[test]
-    fn a_nav_bar_with_one_destination_is_rejected() {
-        let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
-            NodeId(1),
-            vec![BarAction::new(ActionId(1), "Only")],
-            Some(0),
-        ));
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::SetScreen(screen),
-        };
-        assert!(matches!(
-            encode(&frame),
-            Err(ProtocolError::InvalidValue("nav bar destinations"))
-        ));
-    }
-
-    /// The launcher and the library both meant "none of these is where you
-    /// are" and both said `usize::MAX`. The byte saturated to 255 and the
-    /// decoder clamped it onto the last destination, so both shipped with the
-    /// rightmost entry underlined on the panel, "More apps" on a launcher
-    /// showing page one, "Next" on a library showing the first page.
-    #[test]
-    fn no_destination_being_current_survives_the_wire() {
-        let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
-            NodeId(1),
-            vec![
-                BarAction::new(ActionId(1), "Back"),
-                BarAction::new(ActionId(2), "Library"),
-                BarAction::new(ActionId(3), "Next"),
-            ],
-            None,
-        ));
-        let decoded = round_trip(screen);
-        assert_eq!(
-            decoded.nav_bar.expect("nav bar").selected,
-            None,
-            "a bar of actions must not claim the reader is standing on one of them"
-        );
-    }
-
-    #[test]
-    fn an_out_of_range_selection_clamps_rather_than_losing_navigation() {
-        let screen = Screen::new(1, Vec::new()).with_nav_bar(NavBar::new(
-            NodeId(1),
-            vec![
-                BarAction::new(ActionId(1), "A"),
-                BarAction::new(ActionId(2), "B"),
-            ],
-            Some(250),
-        ));
-        let decoded = round_trip(screen);
-        assert_eq!(decoded.nav_bar.expect("nav bar").selected, Some(1));
-    }
-
-    #[test]
-    fn an_answer_naming_no_option_arrives_unmarked_rather_than_refused() {
-        let screen = Screen::new(
-            1,
-            vec![Node::Choice {
-                id: NodeId(1),
-                prompt: "Pick one".into(),
-                options: vec![BarAction::new(ActionId(4), "First")],
-                selected: Some(9),
-                freeform: None,
-            }],
-        );
-        let bytes = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::SetScreen(screen),
-        })
-        .expect("encode");
-        let Message::SetScreen(screen) = decode(&bytes).expect("decode").message else {
-            unreachable!("a set screen frame decodes as one")
-        };
-        let [Node::Choice { selected, .. }] = &screen.nodes[..] else {
-            unreachable!("the screen is one choice")
-        };
-        assert_eq!(*selected, None);
-    }
-
-    #[test]
-    fn a_choice_offering_no_answers_is_rejected() {
-        let screen = Screen::new(
-            1,
-            vec![Node::Choice {
-                id: NodeId(1),
-                prompt: "Dead end".into(),
-                options: Vec::new(),
-                selected: None,
-                freeform: None,
-            }],
-        );
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::SetScreen(screen),
-        };
-        let bytes = encode(&frame).expect("encode");
-        assert!(matches!(
-            decode(&bytes),
-            Err(ProtocolError::InvalidValue("choice with no answers"))
-        ));
-    }
-
-    #[test]
-    fn unknown_tags_are_rejected_rather_than_guessed() {
-        for (label, bytes) in [
-            ("glyph", {
-                let mut screen = Vec::new();
-                let mut count = 0;
-                encode_screen(
-                    &mut screen,
-                    &Screen::new(
-                        1,
-                        vec![Node::TileGrid {
-                            shape: TileShape::Square,
-                            id: NodeId(1),
-                            tiles: vec![Tile::new(ActionId(1), "x", Glyph::App)],
-                        }],
-                    ),
-                    0,
-                    &mut count,
-                    VERSION,
-                )
-                .expect("encode");
-                let last = screen.len() - 1;
-                screen[last] = 200;
-                screen
-            }),
-            ("banner level", {
-                let mut screen = Vec::new();
-                let mut count = 0;
-                encode_screen(
-                    &mut screen,
-                    &Screen::new(
-                        1,
-                        vec![Node::Banner {
-                            id: NodeId(1),
-                            level: BannerLevel::Info,
-                            text: String::new(),
-                        }],
-                    ),
-                    0,
-                    &mut count,
-                    VERSION,
-                )
-                .expect("encode");
-                // The level byte sits after the screen header, node tag and id.
-                let position = screen.len() - 3;
-                screen[position] = 9;
-                screen
-            }),
-        ] {
-            let mut reader = Reader::new(&bytes);
-            let mut count = 0;
-            assert!(
-                decode_screen(&mut reader, 0, &mut count, VERSION).is_err(),
-                "an unknown {label} tag was accepted"
-            );
-        }
-    }
-}
+mod node_coverage_tests;
 
 #[cfg(test)]
-mod store_tests {
-    use super::*;
+mod controls_wire_tests;
 
-    fn message_round_trip(message: Message) -> Message {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 11,
-            message,
-        };
-        let bytes = encode(&frame).expect("encode");
-        decode(&bytes).expect("decode").message
-    }
-
-    #[test]
-    fn a_text_hold_survives_the_wire_without_losing_its_range() {
-        let message = Message::TextHold {
-            action: ActionId(9),
-            context: u64::MAX - 1,
-            start: 41,
-            end: 48,
-        };
-        assert_eq!(message_round_trip(message.clone()), message);
-    }
-
-    #[test]
-    fn offline_dictionary_requests_and_entries_are_bounded_and_typed() {
-        let request = Message::DeviceRequest(DeviceRequest::LookupWord {
-            word: "café".into(),
-            language: Some("fr".into()),
-        });
-        assert_eq!(message_round_trip(request.clone()), request);
-
-        let result = Message::DeviceResult(DeviceResult::Dictionary {
-            word: "café".into(),
-            entries: vec![DictionaryEntry {
-                dictionary: "Pocket French".into(),
-                language: "fr".into(),
-                headword: "café".into(),
-                definition: "Établissement où l'on sert des boissons.".into(),
-            }],
-        });
-        assert_eq!(message_round_trip(result.clone()), result);
-    }
-
-    #[test]
-    fn a_terminal_chunk_larger_than_the_bound_is_refused_rather_than_sent() {
-        // The ceiling has to be enforced by the sender as well as the reader,
-        // or a program printing without pause builds a frame the other end
-        // will only reject after it has already been allocated.
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::ShellEvent(ShellEvent::Output(vec![b'x'; MAX_SHELL_CHUNK + 1])),
-        };
-        assert!(matches!(encode(&frame), Err(ProtocolError::FrameTooLarge)));
-    }
-
-    #[test]
-    fn a_terminal_chunk_exactly_at_the_bound_is_carried() {
-        let message = Message::ShellRequest(ShellRequest::Input(vec![b'x'; MAX_SHELL_CHUNK]));
-        assert_eq!(message_round_trip(message.clone()), message);
-    }
-
-    #[test]
-    fn a_request_body_may_be_far_larger_than_a_label() {
-        // The body used to be encoded as a label, so an application that
-        // handed a model the research it had just fetched could not spawn the
-        // request at all: encoding failed with `StringTooLarge` and the
-        // application ended, having said nothing about why.
-        let body = "x".repeat(64 * 1024);
-        let message = Message::Spawn {
-            task: TaskId(3),
-            work: Task::Post {
-                url: "https://example.invalid/v1".into(),
-                body: body.clone(),
-                content_type: "application/json".into(),
-                credential: Some(Credential::bearer("openai")),
-                headers: Vec::new(),
-                max_bytes: 4096,
-            },
-        };
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message,
-        };
-        let encoded = encode(&frame).expect("a 64 KiB body encodes");
-        let decoded = decode(&encoded).expect("a 64 KiB body decodes");
-        assert_eq!(decoded, frame);
-
-        let oversized = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::Spawn {
-                task: TaskId(3),
-                work: Task::Post {
-                    url: "https://example.invalid/v1".into(),
-                    body: "x".repeat(MAX_POST_BODY_LEN + 1),
-                    content_type: "application/json".into(),
-                    credential: None,
-                    headers: Vec::new(),
-                    max_bytes: 4096,
-                },
-            },
-        };
-        assert_eq!(encode(&oversized), Err(ProtocolError::StringTooLarge));
-    }
-
-    #[test]
-    fn every_task_message_encodes_to_exactly_the_length_it_claims() {
-        // `encode` predicts the payload length before it writes anything, and
-        // a wrong prediction used to be a debug assertion that only fired when
-        // an application actually spawned something, which meant every task
-        // message crashed the simulator and no test noticed, because none of
-        // them encoded one.
-        for message in [
-            Message::Spawn {
-                task: TaskId(7),
-                work: Task::Fetch {
-                    url: "https://example.invalid/book.txt".into(),
-                    offset: 0,
-                    max_bytes: 1024,
-                    credential: None,
-                    headers: Vec::new(),
-                },
-            },
-            Message::Spawn {
-                task: TaskId(16),
-                work: Task::Fetch {
-                    url: "https://example.invalid/catalog".into(),
-                    offset: 0,
-                    max_bytes: 1024,
-                    credential: None,
-                    headers: vec![Header::new("Accept", "application/opds+json")],
-                },
-            },
-            Message::Spawn {
-                task: TaskId(8),
-                work: Task::ReadFile {
-                    path: "/mnt/onboard/book.txt".into(),
-                },
-            },
-            Message::Spawn {
-                task: TaskId(9),
-                work: Task::Sleep { seconds: 30 },
-            },
-            Message::Spawn {
-                task: TaskId(10),
-                work: Task::Post {
-                    url: "https://example.invalid/v1".into(),
-                    body: "{}".into(),
-                    content_type: "application/json".into(),
-                    credential: Some(Credential::bearer("openai")),
-                    headers: Vec::new(),
-                    max_bytes: 4096,
-                },
-            },
-            Message::Spawn {
-                task: TaskId(11),
-                work: Task::Post {
-                    url: "https://example.invalid/v1".into(),
-                    body: String::new(),
-                    content_type: "application/json".into(),
-                    credential: None,
-                    headers: Vec::new(),
-                    max_bytes: 4096,
-                },
-            },
-            Message::Cancel { task: TaskId(12) },
-            Message::TaskOutcome {
-                task: TaskId(13),
-                outcome: TaskOutcome::Completed(b"hello".to_vec()),
-            },
-            Message::TaskOutcome {
-                task: TaskId(14),
-                outcome: TaskOutcome::Failed(TaskError::TooLarge),
-            },
-            Message::TaskOutcome {
-                task: TaskId(15),
-                outcome: TaskOutcome::Cancelled,
-            },
-            Message::TaskOutcome {
-                task: TaskId(16),
-                outcome: TaskOutcome::Failed(TaskError::RateLimited(37)),
-            },
-        ] {
-            let (_, predicted) = encoded_message_layout(&message, VERSION)
-                .expect("the message is within the limits");
-            let frame = Frame {
-                version: VERSION,
-                request_id: 3,
-                message: message.clone(),
-            };
-            let encoded = encode(&frame).expect("encode");
-            assert_eq!(
-                encoded.len() - HEADER_LEN,
-                predicted,
-                "{message:?} encodes to a different length than it predicted"
-            );
-            assert_eq!(message_round_trip(message.clone()), message);
-        }
-    }
-
-    #[test]
-    fn a_fetch_that_carries_headers_survives_an_encode_decode_round_trip() {
-        let message = Message::Spawn {
-            task: TaskId(20),
-            work: Task::Fetch {
-                url: "https://example.invalid/catalog".into(),
-                offset: 0,
-                max_bytes: 4096,
-                credential: None,
-                headers: vec![
-                    Header::new("Accept", "application/opds+json"),
-                    Header::new("If-None-Match", "\"abc123\""),
-                ],
-            },
-        };
-        assert_eq!(message_round_trip(message.clone()), message);
-    }
-
-    #[test]
-    fn a_fetch_whose_header_count_exceeds_the_bound_is_refused_rather_than_truncated() {
-        let headers = (0..=MAX_HEADERS)
-            .map(|index| Header::new(format!("X-{index}"), "value"))
-            .collect();
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::Spawn {
-                task: TaskId(21),
-                work: Task::Fetch {
-                    url: "https://example.invalid/catalog".into(),
-                    offset: 0,
-                    max_bytes: 4096,
-                    credential: None,
-                    headers,
-                },
-            },
-        };
-        assert_eq!(
-            encode(&frame),
-            Err(ProtocolError::InvalidValue("request header"))
-        );
-    }
-
-    #[test]
-    fn a_fetch_header_carrying_a_newline_in_its_name_or_value_is_refused() {
-        // A newline in either would let an application append headers of its
-        // own onto the wire, including ones the runtime never agreed to send.
-        for header in [
-            Header::new("X-Evil\r\nX-Injected", "value"),
-            Header::new("X-Evil", "value\r\nX-Injected: 1"),
-        ] {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 1,
-                message: Message::Spawn {
-                    task: TaskId(22),
-                    work: Task::Fetch {
-                        url: "https://example.invalid/catalog".into(),
-                        offset: 0,
-                        max_bytes: 4096,
-                        credential: None,
-                        headers: vec![header],
-                    },
-                },
-            };
-            assert_eq!(
-                encode(&frame),
-                Err(ProtocolError::InvalidValue("request header"))
-            );
-        }
-    }
-
-    #[test]
-    fn every_store_message_survives_the_wire() {
-        for message in [
-            Message::StoreRequest(StoreRequest::Save {
-                key: "tasks".into(),
-                value: vec![0, 1, 2, 255],
-            }),
-            Message::StoreRequest(StoreRequest::Load {
-                key: "tasks".into(),
-            }),
-            Message::StoreRequest(StoreRequest::Forget {
-                key: "tasks".into(),
-            }),
-            Message::StoreRequest(StoreRequest::List),
-            Message::StoreResult(StoreResult::Saved {
-                key: "tasks".into(),
-            }),
-            Message::StoreResult(StoreResult::Loaded {
-                key: "tasks".into(),
-                value: Some(b"[]".to_vec()),
-            }),
-            Message::StoreResult(StoreResult::Loaded {
-                key: "tasks".into(),
-                value: None,
-            }),
-            Message::StoreResult(StoreResult::Forgotten {
-                key: "tasks".into(),
-            }),
-            Message::StoreResult(StoreResult::Keys(vec!["a".into(), "b".into()])),
-            Message::StoreResult(StoreResult::Denied(StoreError::BadKey)),
-            Message::Lifecycle(Lifecycle::Foreground),
-            Message::Lifecycle(Lifecycle::Background),
-            Message::CoverChanged {
-                magnet_present: true,
-            },
-            Message::CoverChanged {
-                magnet_present: false,
-            },
-            Message::PageTurn { forward: true },
-            Message::PageTurn { forward: false },
-            Message::ShellRequest(ShellRequest::Open {
-                columns: 53,
-                rows: 20,
-            }),
-            Message::ShellRequest(ShellRequest::Input(vec![0x03])),
-            Message::ShellRequest(ShellRequest::Input(Vec::new())),
-            Message::ShellRequest(ShellRequest::Resize {
-                columns: 40,
-                rows: 10,
-            }),
-            Message::ShellRequest(ShellRequest::Close),
-            Message::ShellEvent(ShellEvent::Opened),
-            Message::ShellEvent(ShellEvent::Output(b"~ # \x1b[K".to_vec())),
-            Message::ShellEvent(ShellEvent::Closed { status: 0 }),
-            // Negative, because a program stopped by a signal is reported as
-            // one and a status that came back wrong would look like success.
-            Message::ShellEvent(ShellEvent::Closed { status: -1 }),
-            Message::ShellEvent(ShellEvent::Refused(ShellError::NotPermitted)),
-            Message::ShellEvent(ShellEvent::Refused(ShellError::Failed)),
-        ] {
-            assert_eq!(message_round_trip(message.clone()), message);
-        }
-    }
-
-    #[test]
-    fn every_shelf_message_survives_the_wire_at_the_length_it_predicted() {
-        // The length functions are maintained by hand beside the encoders, so
-        // this asserts the two agree as well as that the bytes decode back.
-        for message in [
-            Message::StoreRequest(StoreRequest::ShelfWrite {
-                name: "pg1342.epub".into(),
-                offset: 0,
-                bytes: vec![0, 1, 2, 255],
-                last: false,
-            }),
-            Message::StoreRequest(StoreRequest::ShelfWrite {
-                name: "pg1342.epub".into(),
-                offset: 262_144,
-                bytes: Vec::new(),
-                last: true,
-            }),
-            Message::StoreRequest(StoreRequest::ShelfRead {
-                name: "pg1342.epub".into(),
-                offset: 4096,
-                length: 65536,
-            }),
-            Message::StoreRequest(StoreRequest::ShelfRemove {
-                name: "pg1342.epub".into(),
-            }),
-            Message::StoreRequest(StoreRequest::ShelfList),
-            Message::StoreResult(StoreResult::ShelfWritten {
-                name: "pg1342.epub".into(),
-                size: 262_144,
-            }),
-            Message::StoreResult(StoreResult::ShelfRead {
-                name: "pg1342.epub".into(),
-                offset: 4096,
-                bytes: b"It is a truth universally acknowledged".to_vec(),
-                size: 700_000,
-            }),
-            Message::StoreResult(StoreResult::ShelfRemoved {
-                name: "pg1342.epub".into(),
-            }),
-            Message::StoreResult(StoreResult::Shelf(vec![
-                ("pg1342.epub".into(), 700_000),
-                ("pg84.txt".into(), 442_000),
-            ])),
-            Message::StoreResult(StoreResult::Shelf(Vec::new())),
-            Message::StoreResult(StoreResult::Denied(StoreError::NoRoom)),
-            Message::StoreResult(StoreResult::Denied(StoreError::Missing)),
-        ] {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 1,
-                message: message.clone(),
-            };
-            let (_, predicted) =
-                encoded_message_layout(&frame.message, frame.version).expect("a valid message");
-            let encoded = encode(&frame).expect("a valid message");
-            assert_eq!(
-                encoded.len() - HEADER_LEN,
-                predicted,
-                "{message:?} encodes to a different length than it predicted"
-            );
-            assert_eq!(message_round_trip(message.clone()), message);
-        }
-    }
-
-    #[test]
-    fn a_chunk_over_the_ceiling_is_refused_by_both_ends() {
-        // Refused at encode, so an application cannot build a frame the
-        // runtime would only drop, and refused at decode, so a peer that
-        // ignored the first rule cannot make us allocate on its say-so.
-        let message = Message::StoreRequest(StoreRequest::ShelfWrite {
-            name: "big".into(),
-            offset: 0,
-            bytes: vec![0; MAX_SHELF_CHUNK + 1],
-            last: false,
-        });
-        assert!(matches!(
-            encode(&Frame {
-                version: VERSION,
-                request_id: 1,
-                message,
-            }),
-            Err(ProtocolError::FrameTooLarge)
-        ));
-    }
-
-    #[test]
-    fn a_finished_flag_that_is_neither_yes_nor_no_is_refused() {
-        let mut encoded = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::StoreRequest(StoreRequest::ShelfWrite {
-                name: "a".into(),
-                offset: 0,
-                bytes: Vec::new(),
-                last: true,
-            }),
-        })
-        .expect("a valid message");
-        let flag = encoded.len() - 5;
-        assert_eq!(encoded[flag], 1, "the finished flag moved");
-        encoded[flag] = 2;
-        assert!(matches!(
-            decode(&encoded),
-            Err(ProtocolError::InvalidValue("shelf finished flag"))
-        ));
-    }
-
-    #[test]
-    fn a_never_written_key_is_distinct_from_an_empty_one() {
-        // These encode to different bytes on purpose. An application that
-        // cannot tell "nothing saved yet" from "saved nothing" cannot tell a
-        // first run from a cleared list.
-        let missing = Message::StoreResult(StoreResult::Loaded {
-            key: "k".into(),
-            value: None,
-        });
-        let empty = Message::StoreResult(StoreResult::Loaded {
-            key: "k".into(),
-            value: Some(Vec::new()),
-        });
-        assert_ne!(
-            encode(&Frame {
-                version: VERSION,
-                request_id: 0,
-                message: missing.clone()
-            })
-            .unwrap(),
-            encode(&Frame {
-                version: VERSION,
-                request_id: 0,
-                message: empty.clone()
-            })
-            .unwrap()
-        );
-        assert_eq!(message_round_trip(missing.clone()), missing);
-        assert_eq!(message_round_trip(empty.clone()), empty);
-    }
-
-    #[test]
-    fn an_oversized_value_is_refused_before_it_is_encoded() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 0,
-            message: Message::StoreRequest(StoreRequest::Save {
-                key: "big".into(),
-                value: vec![0; MAX_STORE_VALUE + 1],
-            }),
-        };
-        assert!(matches!(encode(&frame), Err(ProtocolError::FrameTooLarge)));
-    }
-
-    #[test]
-    fn keys_that_could_name_somewhere_else_are_refused() {
-        for bad in [
-            "",
-            "..",
-            "../../etc/passwd",
-            ".hidden",
-            "has/slash",
-            "Upper",
-            "has space",
-            "has\\backslash",
-            "nul\0byte",
-        ] {
-            assert!(!is_valid_key(bad), "{bad:?} was accepted as a key");
-        }
-        for good in ["tasks", "book.position", "a-b_c", "v2.state"] {
-            assert!(is_valid_key(good), "{good:?} was refused as a key");
-        }
-        assert!(!is_valid_key(&"a".repeat(MAX_STORE_KEY_LEN + 1)));
-        assert!(is_valid_key(&"a".repeat(MAX_STORE_KEY_LEN)));
-    }
-}
+#[cfg(test)]
+mod store_tests;
 
 fn encode_task_error(payload: &mut Vec<u8>, error: TaskError) {
     match error {
@@ -10347,679 +8312,16 @@ fn decode_task_error(reader: &mut Reader<'_>) -> Result<TaskError, ProtocolError
 }
 
 #[cfg(test)]
-mod task_error_tests {
-    use super::{decode_task_error, encode_task_error, Reader, TaskError};
-
-    /// Every variant, so that adding one without a tag fails here.
-    const EVERY: &[TaskError] = &[
-        TaskError::Denied,
-        TaskError::NoCredential,
-        TaskError::Offline,
-        TaskError::Unreachable,
-        TaskError::TooLarge,
-        TaskError::TimedOut,
-        TaskError::NotFound,
-        TaskError::Unauthorized,
-        TaskError::RateLimited(37),
-    ];
-
-    #[test]
-    fn every_task_error_survives_the_wire() {
-        for error in EVERY {
-            let mut bytes = Vec::new();
-            encode_task_error(&mut bytes, *error);
-            assert_eq!(decode_task_error(&mut Reader::new(&bytes)), Ok(*error));
-        }
-    }
-
-    #[test]
-    fn no_two_task_errors_share_a_tag() {
-        let mut tags: Vec<u8> = EVERY
-            .iter()
-            .map(|error| {
-                let mut bytes = Vec::new();
-                encode_task_error(&mut bytes, *error);
-                bytes[0]
-            })
-            .collect();
-        tags.sort_unstable();
-        let count = tags.len();
-        tags.dedup();
-        assert_eq!(tags.len(), count, "two errors encode to the same tag");
-    }
-
-    #[test]
-    fn the_tags_that_were_already_on_the_wire_did_not_move() {
-        // An app built before Offline existed is still talking to this daemon
-        // over these numbers. Renumbering would make the two disagree about
-        // what went wrong without either of them noticing.
-        let tag = |error: TaskError| {
-            let mut bytes = Vec::new();
-            encode_task_error(&mut bytes, error);
-            bytes[0]
-        };
-        assert_eq!(tag(TaskError::Denied), 0);
-        assert_eq!(tag(TaskError::Unreachable), 1);
-        assert_eq!(tag(TaskError::TooLarge), 2);
-        assert_eq!(tag(TaskError::TimedOut), 3);
-        assert_eq!(tag(TaskError::NotFound), 4);
-        assert_eq!(tag(TaskError::Offline), 5);
-        assert_eq!(tag(TaskError::NoCredential), 6);
-        assert_eq!(tag(TaskError::Unauthorized), 7);
-    }
-
-    /// The two refusals have to stay distinguishable in words as well as on
-    /// the wire. A missing key blamed on the application sends whoever is
-    /// holding the reader looking in entirely the wrong place.
-    #[test]
-    fn a_missing_key_and_a_refused_permission_do_not_share_a_sentence() {
-        let denied = TaskError::Denied.to_string();
-        let absent = TaskError::NoCredential.to_string();
-        assert_ne!(denied, absent);
-        assert!(absent.contains("key"), "{absent}");
-        assert!(!TaskError::NoCredential.worth_retrying());
-    }
-
-    #[test]
-    fn a_tag_from_the_future_is_refused_rather_than_guessed() {
-        assert_eq!(
-            decode_task_error(&mut Reader::new(&[255])),
-            Err(super::ProtocolError::InvalidValue("task error"))
-        );
-    }
-
-    #[test]
-    fn only_the_failures_that_could_pass_next_time_are_worth_retrying() {
-        assert!(TaskError::Offline.worth_retrying());
-        assert!(TaskError::Unreachable.worth_retrying());
-        assert!(TaskError::TimedOut.worth_retrying());
-        // A permission does not appear on the second ask, a response does not
-        // shrink, and a 404 is a working host giving a real answer.
-        assert!(!TaskError::Denied.worth_retrying());
-        assert!(!TaskError::TooLarge.worth_retrying());
-        assert!(!TaskError::NotFound.worth_retrying());
-    }
-
-    #[test]
-    fn the_two_network_failures_do_not_read_the_same() {
-        // They ask opposite things of the person holding the reader: one is
-        // answered by joining Wi-Fi, the other by waiting for a host.
-        let offline = TaskError::Offline.to_string();
-        let unreachable = TaskError::Unreachable.to_string();
-        assert_ne!(offline, unreachable);
-        assert!(offline.contains("not on a network"), "{offline}");
-        assert!(unreachable.contains("host"), "{unreachable}");
-    }
-}
+mod task_error_tests;
 
 #[cfg(test)]
-mod picture_tests {
-    use super::*;
-
-    #[test]
-    fn a_picture_on_a_shelf_survives_the_wire() {
-        let screen = Screen::new(
-            9,
-            vec![
-                Node::TileGrid {
-                    id: NodeId(1),
-                    tiles: vec![
-                        Tile::new(ActionId(11), "Waiting", Glyph::Book),
-                        Tile::new(ActionId(12), "Moby Dick", Glyph::Book)
-                            .with_picture(TilePicture::new(PictureHandle(7), 190, 300)),
-                    ],
-                    shape: TileShape::Portrait,
-                },
-                Node::Picture {
-                    id: NodeId(2),
-                    handle: PictureHandle(7),
-                    source: (190, 300),
-                    max_height_tenths_mm: 600,
-                    framed: true,
-                    bleed: false,
-                },
-            ],
-        );
-        let frame = Frame {
-            version: VERSION,
-            request_id: 3,
-            message: Message::SetScreen(screen),
-        };
-        let bytes = encode(&frame).expect("encode");
-        assert_eq!(decode(&bytes).expect("decode"), frame);
-    }
-
-    #[test]
-    fn handing_over_a_picture_survives_the_wire() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::PutPicture {
-                handle: PictureHandle(4),
-                width: 3,
-                height: 2,
-                format: PictureFormat::Grey,
-                pixels: vec![0, 32, 64, 96, 128, 160],
-            },
-        };
-        let bytes = encode(&frame).expect("encode");
-        assert_eq!(decode(&bytes).expect("decode"), frame);
-    }
-
-    /// Where the message tag sits in a frame: after the magic and the version.
-    const TAG_INDEX: usize = MAGIC.len() + 1;
-
-    #[test]
-    fn a_grey_picture_is_the_same_bytes_it_was_before_colour_existed() {
-        // The frame an application built last year, byte for byte: magic,
-        // version, request id, tag 18, length, then the handle, the size and
-        // the pixels. A runtime from before colour reads it unchanged.
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::PutPicture {
-                handle: PictureHandle(4),
-                width: 2,
-                height: 1,
-                format: PictureFormat::Grey,
-                pixels: vec![7, 9],
-            },
-        };
-        let bytes = encode(&frame).expect("encode");
-        assert_eq!(bytes[MAGIC.len()], VERSION);
-        assert_eq!(bytes[TAG_INDEX], 18, "the grey tag did not move");
-        assert_eq!(
-            &bytes[HEADER_LEN..],
-            &[0, 0, 0, 4, 0, 0, 0, 2, 0, 0, 0, 1, 7, 9]
-        );
-
-        let begin = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::BeginPicture {
-                handle: PictureHandle(4),
-                width: 2,
-                height: 1,
-                format: PictureFormat::Grey,
-            },
-        })
-        .expect("encode");
-        assert_eq!(begin[TAG_INDEX], 20);
-    }
-
-    #[test]
-    fn a_colour_picture_travels_on_its_own_tag_at_three_bytes_a_pixel() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::PutPicture {
-                handle: PictureHandle(4),
-                width: 2,
-                height: 1,
-                format: PictureFormat::Rgb,
-                pixels: vec![255, 0, 0, 0, 0, 255],
-            },
-        };
-        let bytes = encode(&frame).expect("encode");
-        assert_eq!(bytes[TAG_INDEX], 28);
-        assert_eq!(decode(&bytes).expect("decode"), frame);
-
-        // The same pixels declared grey are the wrong length and refused; a
-        // colour picture short of three bytes a pixel likewise.
-        assert!(matches!(
-            encode(&Frame {
-                version: VERSION,
-                request_id: 1,
-                message: Message::PutPicture {
-                    handle: PictureHandle(4),
-                    width: 2,
-                    height: 1,
-                    format: PictureFormat::Grey,
-                    pixels: vec![255, 0, 0, 0, 0, 255],
-                },
-            }),
-            Err(ProtocolError::InvalidValue(_))
-        ));
-        assert!(matches!(
-            encode(&Frame {
-                version: VERSION,
-                request_id: 1,
-                message: Message::PutPicture {
-                    handle: PictureHandle(4),
-                    width: 2,
-                    height: 1,
-                    format: PictureFormat::Rgb,
-                    pixels: vec![255, 0, 0, 0],
-                },
-            }),
-            Err(ProtocolError::InvalidValue(_))
-        ));
-
-        let begin = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::BeginPicture {
-                handle: PictureHandle(4),
-                width: 1072,
-                height: 1448,
-                format: PictureFormat::Rgb,
-            },
-        };
-        let bytes = encode(&begin).expect("a full colour panel fits the byte bound");
-        assert_eq!(bytes[TAG_INDEX], 29);
-        assert_eq!(decode(&bytes).expect("decode"), begin);
-        // Two colour panels do not: the bound is on bytes, not pixels.
-        assert!(matches!(
-            encode(&Frame {
-                version: VERSION,
-                request_id: 1,
-                message: Message::BeginPicture {
-                    handle: PictureHandle(4),
-                    width: 1072,
-                    height: 1448 * 2,
-                    format: PictureFormat::Rgb,
-                },
-            }),
-            Err(ProtocolError::FrameTooLarge)
-        ));
-    }
-
-    #[test]
-    fn a_picture_whose_size_disagrees_with_its_bytes_is_refused() {
-        // The decoder allocates on the strength of the declared size, so the
-        // two have to be checked against each other before anything is read.
-        let refused = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::PutPicture {
-                handle: PictureHandle(4),
-                width: 100,
-                height: 100,
-                format: PictureFormat::Grey,
-                pixels: vec![0; 99],
-            },
-        });
-        assert!(matches!(refused, Err(ProtocolError::InvalidValue(_))));
-    }
-
-    #[test]
-    fn a_picture_larger_than_a_frame_is_refused() {
-        let refused = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::PutPicture {
-                handle: PictureHandle(4),
-                width: u32::try_from(MAX_INLINE_PICTURE_BYTES + 1).expect("fits"),
-                height: 1,
-                format: PictureFormat::Grey,
-                pixels: vec![0; MAX_INLINE_PICTURE_BYTES + 1],
-            },
-        });
-        assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));
-    }
-
-    #[test]
-    fn every_phase_of_a_large_picture_upload_survives_the_wire() {
-        let messages = [
-            Message::BeginPicture {
-                handle: PictureHandle(4),
-                width: 1072,
-                height: 1448,
-                format: PictureFormat::Grey,
-            },
-            Message::PictureChunk {
-                handle: PictureHandle(4),
-                offset: 0,
-                pixels: vec![17; 4096],
-            },
-            Message::CommitPicture {
-                handle: PictureHandle(4),
-            },
-        ];
-        for message in messages {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 1,
-                message,
-            };
-            let bytes = encode(&frame).expect("encode");
-            assert_eq!(decode(&bytes).expect("decode"), frame);
-        }
-    }
-
-    #[test]
-    fn a_picture_chunk_is_independently_bounded() {
-        let refused = encode(&Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::PictureChunk {
-                handle: PictureHandle(4),
-                offset: 0,
-                pixels: vec![0; MAX_PICTURE_CHUNK_BYTES + 1],
-            },
-        });
-        assert!(matches!(refused, Err(ProtocolError::FrameTooLarge)));
-    }
-
-    #[test]
-    fn releasing_a_picture_survives_the_wire() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 8,
-            message: Message::DropPicture {
-                handle: PictureHandle(4),
-            },
-        };
-        let bytes = encode(&frame).expect("encode");
-        assert_eq!(decode(&bytes).expect("decode"), frame);
-    }
-
-    #[test]
-    fn a_publisher_font_travels_once_and_is_bounded() {
-        let message = Message::PutFont {
-            handle: FontHandle(7),
-            name: "Book.otf".into(),
-            bytes: b"OTTOfixture".to_vec(),
-        };
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: message.clone(),
-        };
-        let bytes = encode(&frame).expect("encode font");
-        assert_eq!(decode(&bytes).expect("decode font").message, message);
-
-        let oversized = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::PutFont {
-                handle: FontHandle(8),
-                name: "huge.ttf".into(),
-                bytes: vec![0; MAX_FONT_BYTES + 1],
-            },
-        };
-        assert!(matches!(
-            encode(&oversized),
-            Err(ProtocolError::FrameTooLarge)
-        ));
-    }
-
-    #[test]
-    fn an_unknown_tile_shape_is_refused_rather_than_guessed() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::SetScreen(Screen::new(
-                1,
-                vec![Node::TileGrid {
-                    id: NodeId(1),
-                    tiles: Vec::new(),
-                    shape: TileShape::Square,
-                }],
-            )),
-        };
-        let mut bytes = encode(&frame).expect("encode");
-        // An empty grid ends with its shape and then its tile count, and a
-        // screen ends with whether it carries an overlay, so the shape is the
-        // third byte from the end.
-        let shape = bytes.len() - 3;
-        assert_eq!(bytes[shape], 0, "square");
-        bytes[shape] = 9;
-        assert!(matches!(
-            decode(&bytes),
-            Err(ProtocolError::InvalidValue("tile shape"))
-        ));
-    }
-
-    #[test]
-    fn orientation_request_round_trips_and_keeps_portrait_as_the_default() {
-        let frame = Frame {
-            version: VERSION,
-            request_id: 4,
-            message: Message::SetOrientation(Orientation::Landscape),
-        };
-        assert_eq!(
-            decode(&encode(&frame).expect("encode")).expect("decode"),
-            frame
-        );
-        assert_eq!(Orientation::default(), Orientation::Portrait);
-        assert_eq!(Orientation::Portrait as u8, 0);
-    }
-
-    #[test]
-    fn pre_folio_protocols_cannot_send_orientation_requests() {
-        // Protocol 10 is read and answered as protocol 11 is, through the
-        // same pre-Folio gates, so every gate is held for both.
-        for version in crate::PRE_FOLIO_VERSIONS {
-            let frame = Frame {
-                version,
-                request_id: 4,
-                message: Message::SetOrientation(Orientation::Landscape),
-            };
-            assert_eq!(
-                encode(&frame),
-                Err(ProtocolError::InvalidValue("protocol 12 orientation"))
-            );
-        }
-    }
-
-    #[test]
-    fn a_basic_credential_survives_an_encode_decode_round_trip() {
-        // A gated catalogue is reached by name, and the name is all an
-        // application ever holds: the pair behind it is the runtime's.
-        let work = Task::Post {
-            url: "https://standardebooks.example/feeds/opds/all".to_owned(),
-            body: String::new(),
-            content_type: "application/x-www-form-urlencoded".to_owned(),
-            credential: Some(Credential::basic("standardebooks")),
-            headers: Vec::new(),
-            max_bytes: 1024,
-        };
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::Spawn {
-                task: TaskId(1),
-                work: work.clone(),
-            },
-        };
-        let bytes = encode(&frame).expect("encodes");
-        let Message::Spawn { work: back, .. } = decode(&bytes).expect("decodes").message else {
-            panic!("not a spawn");
-        };
-        assert_eq!(back, work);
-    }
-}
+mod picture_tests;
 
 #[cfg(test)]
 mod suspend_tests;
 
 #[cfg(test)]
-mod update_task_tests {
-    use super::*;
+mod update_task_tests;
 
-    fn update(method: UpdateMethod) -> Task {
-        Task::Update {
-            method,
-            url: "https://reader.test/v1/entries".into(),
-            body: "{\"title\":\"Café\"}".into(),
-            content_type: "application/json".into(),
-            credential: Some(Credential::in_header("miniflux", "X-Auth-Token")),
-            headers: vec![Header::new("Accept", "application/json")],
-            max_bytes: 1024,
-        }
-    }
-
-    #[test]
-    fn update_wire_round_trips_and_refuses_unknown_methods_and_old_versions() {
-        for method in [UpdateMethod::Put, UpdateMethod::Patch] {
-            let frame = Frame {
-                version: VERSION,
-                request_id: 7,
-                message: Message::Spawn {
-                    task: TaskId(9),
-                    work: update(method),
-                },
-            };
-            let bytes = encode(&frame).unwrap();
-            assert_eq!(decode(&bytes).unwrap(), frame);
-            assert_eq!(bytes[HEADER_LEN + 4], 4, "new task tag");
-            let mut unknown = bytes.clone();
-            unknown[HEADER_LEN + 5] = 2;
-            assert!(decode(&unknown).is_err());
-            for version in [
-                DICTIONARY_VERSION,
-                LEGACY_VERSION,
-                FOLIO_VERSION,
-                SELECTED_GRID_VERSION,
-            ] {
-                let mut older = frame.clone();
-                older.version = version;
-                assert!(encode(&older).is_err());
-                let mut older_wire = bytes.clone();
-                older_wire[4] = version;
-                assert!(decode(&older_wire).is_err());
-            }
-            for end in HEADER_LEN..bytes.len() {
-                assert!(decode(&bytes[..end]).is_err(), "truncation {end}");
-            }
-        }
-    }
-
-    #[test]
-    fn an_auto_hidden_top_bar_costs_nothing_for_the_screens_that_never_ask() {
-        let plain = Screen::new(1, Vec::new());
-        let asking = Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true);
-        let frame = |screen: Screen, version| Frame {
-            version,
-            request_id: 3,
-            message: Message::SetScreen(screen),
-        };
-        // The whole point of carrying it in the presence byte: a screen that
-        // does not ask encodes the bytes it always did, so nothing published
-        // has to be republished for a flag it never sets.
-        assert_eq!(
-            encode(&frame(plain.clone(), SUSPEND_VERSION)).unwrap()[HEADER_LEN..],
-            encode(&frame(plain.clone(), VERSION)).unwrap()[HEADER_LEN..]
-        );
-
-        let decoded = decode(&encode(&frame(asking.clone(), VERSION)).unwrap()).unwrap();
-        let Message::SetScreen(screen) = decoded.message else {
-            panic!("screen");
-        };
-        assert!(screen.auto_hide_top_bar, "the ask must survive the wire");
-
-        // An older runtime was never told about hiding, so asking it is not
-        // encoded at all rather than encoded and silently misread.
-        let older = decode(&encode(&frame(asking, SUSPEND_VERSION)).unwrap()).unwrap();
-        let Message::SetScreen(screen) = older.message else {
-            panic!("screen");
-        };
-        assert!(
-            !screen.auto_hide_top_bar,
-            "a protocol that cannot hide a bar must not claim to have hidden one"
-        );
-    }
-
-    #[test]
-    fn suspend_still_reaches_an_application_built_before_this_protocol() {
-        // Suspend arrived at protocol 14, and the guard that admits it was
-        // written as "the current version". Moving the current version left
-        // every published application unable to be told the cover had closed.
-        for message in [
-            Message::PrepareSuspend { generation: 4 },
-            Message::SuspendReady {
-                generation: 4,
-                ready: true,
-            },
-        ] {
-            let frame = Frame {
-                version: SUSPEND_VERSION,
-                request_id: 2,
-                message,
-            };
-            assert_eq!(
-                decode(&encode(&frame).unwrap()).unwrap(),
-                frame,
-                "a protocol 14 application must still be suspendable"
-            );
-        }
-    }
-
-    #[test]
-    fn an_application_published_before_this_protocol_still_speaks_to_it() {
-        // The case that must never break: a reader updates, and every
-        // application already installed on it carries on. Those binaries were
-        // built against protocol 14 and will never be rebuilt, so 14 has to
-        // keep working in a runtime that has moved on to 15.
-        let screen = Screen::new(
-            7,
-            vec![Node::Heading {
-                id: NodeId(1),
-                level: 1,
-                text: "Chapter".into(),
-            }],
-        )
-        .with_top_bar(TopBar::new(NodeId(2), "Books"))
-        .with_reading(true);
-        let frame = Frame {
-            version: SUSPEND_VERSION,
-            request_id: 5,
-            message: Message::SetScreen(screen),
-        };
-        assert_eq!(
-            decode(&encode(&frame).unwrap()).unwrap(),
-            frame,
-            "a protocol 14 screen must survive a protocol 15 runtime unchanged"
-        );
-
-        // The handshake decides the session, and the runtime answers in the
-        // version the application opened with rather than its own newest.
-        let hello = Frame {
-            version: SUSPEND_VERSION,
-            request_id: 1,
-            message: Message::Hello {
-                name: "books".into(),
-            },
-        };
-        let decoded = decode(&encode(&hello).unwrap()).unwrap();
-        assert_eq!(
-            decoded.version, SUSPEND_VERSION,
-            "the runtime must keep speaking the version the application opened with"
-        );
-    }
-
-    #[test]
-    fn a_bar_hidden_by_a_protocol_that_has_no_such_flag_is_refused() {
-        // Byte 4 is the version and the presence byte follows the screen id.
-        // A payload that sets the auto-hide bit while naming protocol 14 is
-        // malformed: granting it would let a crafted frame take the way out
-        // off a screen on a runtime that cannot give it back.
-        let frame = Frame {
-            version: VERSION,
-            request_id: 1,
-            message: Message::SetScreen(Screen::new(1, Vec::new()).with_auto_hidden_top_bar(true)),
-        };
-        let mut bytes = encode(&frame).unwrap();
-        assert_eq!(bytes[HEADER_LEN + 4], 2, "an auto-hidden bar with no bar");
-        bytes[4] = SUSPEND_VERSION;
-        assert!(decode(&bytes).is_err());
-    }
-
-    #[test]
-    fn update_tasks_enforce_existing_body_and_header_bounds() {
-        let mut work = update(UpdateMethod::Put);
-        assert!(work.is_sendable());
-        if let Task::Update { body, .. } = &mut work {
-            *body = "x".repeat(MAX_POST_BODY_LEN + 1);
-        }
-        assert!(!work.is_sendable());
-        assert!(encoded_task_len(&work).is_err());
-        let mut work = update(UpdateMethod::Patch);
-        if let Task::Update { headers, .. } = &mut work {
-            headers.push(Header::new("Bad\r\nHeader", "value"));
-        }
-        assert!(!work.is_sendable());
-        assert!(encoded_task_len(&work).is_err());
-    }
-}
+#[cfg(test)]
+mod text_entry_tests;

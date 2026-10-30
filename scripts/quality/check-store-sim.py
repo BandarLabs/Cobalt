@@ -20,15 +20,16 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--scale', default='extra-large')
     args = parser.parse_args()
-    cli = ROOT / 'target/debug/kobo'
-    builder = ROOT / 'target/debug/examples/signed-store'
+    target = Path(os.environ.get('CARGO_TARGET_DIR', str(ROOT / 'target'))).resolve()
+    cli = target / 'debug/kobo'
+    builder = target / 'debug/examples/signed-store'
     if not cli.is_file() or not builder.is_file():
         parser.error('Build kobo-cli and the kobo-sim signed-store example first.')
     args.output.mkdir(parents=True, mode=0o700)
     process = None
     with tempfile.TemporaryDirectory(prefix='cobalt-store-', dir='/tmp') as private:
         fixture = Path(private) / 'fixture'
-        env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(ROOT / 'target'),
+        env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(target),
                    CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0',
                    KOBO_SIM_PROFILE='clara-bw-391', KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_APP_STORE=str(fixture), KOBO_SIM_FIXTURE='original-signed-store',
@@ -79,36 +80,64 @@ def main():
                 def installed():
                     return json.loads((fixture / 'installed/apps/quality-fixture/manifest.json').read_text())['version']
 
+                # The way back from an app's page: the runtime's Back action.
+                back = 'tap-id 4294967295'
+                # Install on the row opens the app's page, so its permissions
+                # are read before anything is installed. The page's Install
+                # installs, stays on the page, says so, and offers Open.
                 drive('wait-idle', 'expect-state /simulation#/appStore/mode "signed-local"',
-                      'tap-id app-quality-fixture', 'shot available',
-                      'tap-id install-quality-fixture', 'expect installed successfully', 'shot installed')
+                      'expect Link browser', 'tap-id filter-available', 'expect Available to install',
+                      'tap Install', 'wait-for Permissions', 'expect Not installed', 'shot available')
+                assert not (fixture / 'installed/apps/quality-fixture').exists()
+                drive('tap-id install-quality-fixture', 'wait-for is installed.',
+                      'expect Open', 'expect Uninstall', 'expect-missing Not installed', 'shot installed',
+                      'tap-id open-quality-fixture')
                 assert installed() == '1.0.0'
                 notes = fixture / 'installed/data/quality-fixture/notes'
                 notes.parent.mkdir(parents=True)
                 notes.write_text('Original owner fixture note\n')
                 publish('1.1.0')
-                drive('tap-id refresh', 'tap-id app-quality-fixture', 'shot update',
-                      'scenario storage-full', 'tap-id install-quality-fixture', 'expect Check free space', 'shot failed')
+                # A failed update stays on the app's page and offers to try
+                # again; trying again with room to spare finishes the update.
+                # The Updates tab's count gives way at the largest text sizes,
+                # so the update is found by opening the tab, not by its count.
+                drive(back, 'tap-id refresh', 'wait-idle', 'tap-id filter-updates',
+                      'wait-for Quality fixture', 'expect-missing Every installed app is up to date.',
+                      'tap-id app-quality-fixture', 'shot update',
+                      'scenario storage-full', 'tap-id install-quality-fixture',
+                      'wait-for Check free space', 'expect Try again', 'shot failed')
                 assert installed() == '1.0.0'
-                drive('scenario normal', 'tap-id app-quality-fixture',
-                      'tap-id install-quality-fixture', 'expect updated successfully', 'shot updated')
+                drive('scenario normal', 'tap Try again', 'wait-for is updated.',
+                      'expect Open', 'shot updated')
                 assert installed() == '1.1.0'
                 stop()
                 address = start()
-                drive('wait-idle', 'expect Installed · 1.1.0', 'shot reopened',
-                      'tap-id app-quality-fixture', 'tap-id remove-quality-fixture',
-                      'expect removed successfully', 'shot removed')
+                # Uninstall asks first. Cancel keeps the app; confirming removes
+                # it and keeps its data, as the question promised.
+                # The row offers Open now that nothing newer is waiting, and
+                # the app's page says which version is installed.
+                drive('wait-idle', 'tap-id filter-updates', 'wait-for Every installed app is up to date.',
+                      'tap-id filter-all', 'shot reopened',
+                      'tap-id app-quality-fixture', 'expect-missing Not installed',
+                      'tap-id remove-quality-fixture',
+                      'wait-for Its saved data stays on this reader', 'shot confirm-uninstall',
+                      'tap Cancel', 'expect-missing Its saved data stays on this reader', 'expect Open')
+                assert installed() == '1.1.0'
+                drive('tap-id remove-quality-fixture', 'wait-for Its saved data stays on this reader',
+                      'tap-id confirm-remove', 'wait-for is uninstalled.', 'shot removed')
                 assert not (fixture / 'installed/apps/quality-fixture').exists()
                 assert notes.read_text() == 'Original owner fixture note\n'
                 drive('tap-id app-quality-fixture', 'tap-id install-quality-fixture',
-                      'expect installed successfully', 'shot reinstalled')
+                      'wait-for is installed.', 'expect Open', 'shot reinstalled')
                 assert installed() == '1.1.0'
                 with urllib.request.urlopen(f'http://{address}/simulation', timeout=5) as response:
                     simulation = json.load(response)
                 result = dict(status='passed', basis='store-app-sdk-ipc-and-runtime-transactions',
                               original_fixture=True, fixture_payload='inert; not a launch validation',
                               scale=args.scale, app_store=simulation['appStore'],
-                              checks=['install', 'disk-full preserves version', 'update', 'process restart',
+                              checks=['install stays on the app with Open', 'disk-full preserves version',
+                                      'failed update offers Try again', 'update', 'process restart',
+                                      'uninstall asks first and Cancel keeps the app',
                                       'remove preserves data', 'reinstall'],
                               cli_sha256=hashlib.sha256(cli.read_bytes()).hexdigest(),
                               builder_sha256=hashlib.sha256(builder.read_bytes()).hexdigest(),

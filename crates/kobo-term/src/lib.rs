@@ -26,8 +26,10 @@ use kobo_ui::Caret;
 ///
 /// Scrollback costs memory on a device with very little, and a reader cannot
 /// select or copy from this panel, so its only use is looking back at what
-/// scrolled past. A screen or two of that is the whole benefit.
-const SCROLLBACK: usize = 100;
+/// scrolled past: the error a build printed before its summary, the start of
+/// a listing. Ten screens or so covers that, at a few hundred kilobytes for
+/// a grid as wide as this panel's.
+const SCROLLBACK: usize = 300;
 
 /// A running terminal's screen.
 pub struct Terminal {
@@ -92,11 +94,13 @@ impl Terminal {
     ///
     /// A hidden cursor is honoured rather than drawn anyway: a full-screen
     /// program that hides it has put something else where the reader should be
-    /// looking, and an inverted cell in the middle of that is noise.
+    /// looking, and an inverted cell in the middle of that is noise. Nor is
+    /// one drawn over earlier output, where its row and column would point at
+    /// a line the program is no longer writing to.
     #[must_use]
     pub fn cursor(&self) -> Option<Caret> {
         let screen = self.parser.screen();
-        if screen.hide_cursor() {
+        if screen.hide_cursor() || screen.scrollback() > 0 {
             return None;
         }
         let (row, column) = screen.cursor_position();
@@ -104,6 +108,37 @@ impl Terminal {
             return None;
         }
         Some(Caret::new(row, column))
+    }
+
+    /// Shows output from further back, up to the history that is kept.
+    ///
+    /// The view stays where it was put while the program goes on printing,
+    /// so a reader looking back at an error is not pulled away from it by the
+    /// next line of a build.
+    pub fn scroll_back(&mut self, lines: usize) {
+        let at = self.parser.screen().scrollback();
+        self.parser
+            .screen_mut()
+            .set_scrollback(at.saturating_add(lines));
+    }
+
+    /// Shows later output, stopping at the newest.
+    pub fn scroll_forward(&mut self, lines: usize) {
+        let at = self.parser.screen().scrollback();
+        self.parser
+            .screen_mut()
+            .set_scrollback(at.saturating_sub(lines));
+    }
+
+    /// Goes back to the newest output, where typing appears.
+    pub fn show_latest(&mut self) {
+        self.parser.screen_mut().set_scrollback(0);
+    }
+
+    /// How many lines above the newest output the view is.
+    #[must_use]
+    pub fn lines_back(&self) -> usize {
+        self.parser.screen().scrollback()
     }
 
     /// Everything on the visible screen as one string, for tests and logs.
@@ -209,5 +244,46 @@ mod tests {
         let mut terminal = Terminal::new(20, 2);
         terminal.feed(b"\x1b[31mred\x1b[0m");
         assert_eq!(terminal.rows()[0], "red");
+    }
+
+    #[test]
+    fn earlier_output_can_be_brought_back_and_left_again() {
+        let mut terminal = Terminal::new(20, 3);
+        terminal.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive");
+        assert_eq!(terminal.rows()[0], "three");
+        terminal.scroll_back(2);
+        assert_eq!(terminal.lines_back(), 2);
+        assert_eq!(terminal.rows()[0], "one");
+        assert_eq!(
+            terminal.cursor(),
+            None,
+            "a cursor was drawn over old output"
+        );
+        terminal.scroll_forward(1);
+        assert_eq!(terminal.rows()[0], "two");
+        terminal.show_latest();
+        assert_eq!(terminal.rows()[0], "three");
+        assert!(terminal.cursor().is_some());
+    }
+
+    #[test]
+    fn looking_back_stops_at_the_oldest_line_kept() {
+        let mut terminal = Terminal::new(20, 3);
+        terminal.feed(b"one\r\ntwo\r\nthree\r\nfour");
+        terminal.scroll_back(500);
+        assert_eq!(terminal.lines_back(), 1);
+        assert_eq!(terminal.rows()[0], "one");
+        terminal.scroll_forward(500);
+        assert_eq!(terminal.lines_back(), 0);
+    }
+
+    #[test]
+    fn new_output_does_not_pull_the_view_away_from_earlier_lines() {
+        let mut terminal = Terminal::new(20, 3);
+        terminal.feed(b"one\r\ntwo\r\nthree\r\nfour");
+        terminal.scroll_back(1);
+        assert_eq!(terminal.rows()[0], "one");
+        terminal.feed(b"\r\nfive");
+        assert_eq!(terminal.rows()[0], "one");
     }
 }

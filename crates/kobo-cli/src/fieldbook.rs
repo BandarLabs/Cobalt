@@ -14,12 +14,27 @@ const AVICOMMONS_CATALOG: &str = "https://avicommons.org/2025.json";
 const DEVICE_DATA: &str = "/mnt/onboard/.adds/cobalt/data/fieldbook";
 const DEVICE_STATE: &str = "/mnt/onboard/.adds/cobalt/state/fieldbook";
 const CHECKLIST: &str = "export-checklist.csv";
-const USAGE: &str = "usage: kobo fieldbook photos PACK.json --out PACK_DIR [--cache DIR]\n\
+const ATTRIBUTION: &str = "attribution.json";
+const USAGE: &str = concat!(
+    "usage: kobo fieldbook new SPECIES.csv --title TITLE [--region REGION] --out PACK.json\n\
+                     \x20      kobo fieldbook photos PACK.json --out PACK_DIR [--cache DIR]\n\
                      \x20      kobo fieldbook inspect PACK.json\n\
-                     \x20      kobo fieldbook push PACK.json (--sim | --device IP)\n\
-                     \x20      kobo fieldbook ls (--sim | --device IP)\n\
-                     \x20      kobo fieldbook export (--sim | --device IP) --out FILE.csv\n\
-                     Pack manifests are limited to 512 KiB. Export receives the checklist prepared in Fieldbook.";
+                     \x20      kobo fieldbook push PACK.json ",
+    crate::targets::target_choice!(),
+    " [--replace]\n\
+                     \x20      kobo fieldbook ls ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo fieldbook export ",
+    crate::targets::target_choice!(),
+    " --out FILE.csv\n\
+                     new makes a pack from a CSV list of birds, such as eBird's My eBird data download\n\
+                     or a region's species list, with Common Name and Scientific Name columns.\n\
+                     A push adds its packs to the ones on the reader, replacing a pack with the same id.\n\
+                     --replace leaves only the pushed packs. Pack manifests are limited to 512 KiB.\n\
+                     Export receives the checklist prepared in Fieldbook.\n",
+    crate::targets::saved_reader_note!(),
+);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Summary {
@@ -38,6 +53,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         return super::print_command_help(USAGE);
     }
     match arguments.first().map(String::as_str) {
+        Some("new") => new_pack(&arguments[1..]),
         Some("photos") => photos(&arguments[1..]),
         Some("inspect") if arguments.len() == 2 => {
             let input = Path::new(&arguments[1]);
@@ -51,30 +67,269 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         }
         Some("push") if arguments.len() >= 3 => {
             let input = Path::new(&arguments[1]);
-            let target = parse_target(&arguments[2..])?;
+            let mut rest = arguments[2..].to_vec();
+            let replace = take_flag(&mut rest, "--replace");
+            let target = parse_target(&rest)?;
             let summary = if input.is_dir() {
                 let summary = inspect_directory(input)?;
-                publish_directory(target, input)?;
+                if replace {
+                    publish_directory(target.clone(), input)?;
+                } else {
+                    add_directory(&target, input)?;
+                }
                 summary
             } else {
                 let bytes = bounded(input, MAX_MANIFEST, "pack manifest")?;
                 let summary = inspect(&bytes)?;
-                publish(target, &bytes)?;
+                if replace {
+                    publish(target.clone(), &bytes)?;
+                } else {
+                    let existing = read_existing(&target, MANIFEST)?;
+                    publish(target.clone(), &merge_shelves(existing.as_deref(), &bytes)?)?;
+                }
                 summary
             };
-            print!("Fieldbook pack ready: ");
+            print!("Sent: ");
             print_summary(&summary);
-            Ok(())
+            print_on_reader(&target)
         }
         Some("ls") => {
             let target = parse_target(&arguments[1..])?;
-            let bytes = read_target(&target, MANIFEST, MAX_MANIFEST, true)?;
-            print_summary(&inspect(&bytes)?);
-            Ok(())
+            print_on_reader(&target)
         }
         Some("export") => export(&arguments[1..]),
         _ => Err(USAGE.into()),
     }
+}
+
+/// Makes a pack from a list of birds the owner already has: eBird's "My
+/// eBird data" download, a region's species list saved as CSV, or a sheet of
+/// their own. Columns are found by their header, so any of these work
+/// without editing; a list with no codes gets four-letter codes made the way
+/// banding codes are, one per bird.
+fn new_pack(arguments: &[String]) -> Result<(), String> {
+    let mut input = None;
+    let mut title = None;
+    let mut region = None;
+    let mut output = None;
+    let mut index = 0;
+    while index < arguments.len() {
+        let value = || arguments.get(index + 1).ok_or_else(|| USAGE.to_owned());
+        match arguments[index].as_str() {
+            "--title" => title = Some(value()?.clone()),
+            "--region" => region = Some(value()?.clone()),
+            "--out" => output = Some(value()?.clone()),
+            other if !other.starts_with('-') && input.is_none() => {
+                input = Some(other.to_owned());
+                index += 1;
+                continue;
+            }
+            _ => return Err(USAGE.into()),
+        }
+        index += 2;
+    }
+    let (Some(input), Some(title), Some(output)) = (input, title, output) else {
+        return Err(USAGE.into());
+    };
+    let output = Path::new(&output);
+    if output.exists() {
+        return Err(format!("{} already exists", output.display()));
+    }
+    let csv = bounded(Path::new(&input), 16 * 1024 * 1024, "species list")?;
+    let csv = String::from_utf8(csv).map_err(|_| format!("{input} is not UTF-8 text"))?;
+    let species = species_from_csv(&csv)?;
+    let pack = pack_json(
+        &title,
+        region.as_deref().unwrap_or(&title),
+        &species,
+        &today(),
+    );
+    let bytes = serde_json::to_vec_pretty(&pack).map_err(|error| error.to_string())?;
+    inspect(&bytes)?;
+    fs::write(output, &bytes).map_err(|error| format!("write {}: {error}", output.display()))?;
+    println!(
+        "Made {} with {} species. Send it with kobo fieldbook push {}",
+        output.display(),
+        species.len(),
+        output.display()
+    );
+    Ok(())
+}
+
+fn today() -> String {
+    use kobo_policy::clock::Clock as _;
+    kobo_policy::clock::SystemClock::new(0)
+        .ok()
+        .and_then(|clock| clock.now().ok())
+        .and_then(kobo_policy::clock::Snapshot::date)
+        .map_or_else(|| "1970-01-01".to_owned(), |date| date.to_string())
+}
+
+fn pack_json(
+    title: &str,
+    region: &str,
+    species: &[(String, String, String)],
+    issued: &str,
+) -> JsonValue {
+    let mut id = String::new();
+    for character in title.to_lowercase().chars() {
+        if character.is_ascii_alphanumeric() {
+            id.push(character);
+        } else if !id.is_empty() && !id.ends_with('-') {
+            id.push('-');
+        }
+    }
+    let id = id.trim_end_matches('-');
+    json!({
+        "format": "fieldbook-shelf",
+        "version": "1",
+        "packs": [{
+            "id": if id.is_empty() { "pack" } else { id },
+            "title": title,
+            "region": region,
+            "issued": issued,
+            "species": species
+                .iter()
+                .map(|(code, common, scientific)| json!({
+                    "code": code,
+                    "common": common,
+                    "scientific": scientific,
+                }))
+                .collect::<Vec<_>>(),
+        }],
+        "failures": [],
+    })
+}
+
+/// One `(code, common, scientific)` per bird, in list order, each bird once.
+fn species_from_csv(text: &str) -> Result<Vec<(String, String, String)>, String> {
+    let mut rows = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(csv_fields);
+    let header = rows
+        .next()
+        .ok_or("the species list is empty")?
+        .into_iter()
+        .map(|field| field.trim().trim_start_matches('\u{feff}').to_lowercase())
+        .collect::<Vec<_>>();
+    let column = |names: &[&str]| {
+        header
+            .iter()
+            .position(|field| names.contains(&field.as_str()))
+    };
+    let common = column(&[
+        "common name",
+        "common",
+        "primary_com_name",
+        "english name",
+        "english_name",
+    ])
+    .ok_or("the species list needs a Common Name column")?;
+    let scientific = column(&[
+        "scientific name",
+        "scientific",
+        "sci_name",
+        "scientific_name",
+    ])
+    .ok_or("the species list needs a Scientific Name column")?;
+    let code = column(&[
+        "code",
+        "banding code",
+        "banding_codes",
+        "alpha code",
+        "species_code",
+        "species code",
+    ]);
+    let category = column(&["category"]);
+    let mut species: Vec<(String, String, String)> = Vec::new();
+    for row in rows {
+        let field = |index: usize| row.get(index).map_or("", |value| value.trim());
+        // A taxonomy lists hybrids, slashes and "sp." entries as well as
+        // species; only the species belong on a tally.
+        if category.is_some_and(|index| !field(index).is_empty() && field(index) != "species") {
+            continue;
+        }
+        let (name, latin) = (field(common), field(scientific));
+        if name.is_empty() || latin.is_empty() {
+            continue;
+        }
+        if species
+            .iter()
+            .any(|(_, _, known)| known.eq_ignore_ascii_case(latin))
+        {
+            continue;
+        }
+        let given = code
+            .map(field)
+            .and_then(|value| value.split_whitespace().next())
+            .unwrap_or("");
+        let mut made = if given.is_empty() {
+            alpha_code(name)
+        } else {
+            given.to_uppercase()
+        };
+        if species.iter().any(|(known, _, _)| *known == made) {
+            let stem = made.clone();
+            let mut number = 2;
+            while species.iter().any(|(known, _, _)| *known == made) {
+                made = format!("{stem}{number}");
+                number += 1;
+            }
+        }
+        species.push((made, name.to_owned(), latin.to_owned()));
+    }
+    if species.is_empty() {
+        return Err(
+            "the species list names no birds with both a common and a scientific name".into(),
+        );
+    }
+    Ok(species)
+}
+
+/// A four-letter code from a common name: four letters of one word, two
+/// and two of two, one, one and two of three, the first letter of each of
+/// four. These are the banding-code rules before their exceptions.
+fn alpha_code(name: &str) -> String {
+    let words = name
+        .split(|character: char| character.is_whitespace() || character == '-')
+        .map(|word| {
+            word.chars()
+                .filter(char::is_ascii_alphabetic)
+                .collect::<String>()
+                .to_uppercase()
+        })
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    let take = |word: &String, count: usize| word.chars().take(count).collect::<String>();
+    match words.as_slice() {
+        [] => "BIRD".to_owned(),
+        [one] => take(one, 4),
+        [first, second] => take(first, 2) + &take(second, 2),
+        [first, second, third] => take(first, 1) + &take(second, 1) + &take(third, 2),
+        many => many.iter().take(4).map(|word| take(word, 1)).collect(),
+    }
+}
+
+/// The fields of one CSV line, with quoted fields and doubled quotes.
+fn csv_fields(line: &str) -> Vec<String> {
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut characters = line.chars().peekable();
+    while let Some(character) = characters.next() {
+        match (character, quoted) {
+            ('"', true) if characters.peek() == Some(&'"') => {
+                field.push('"');
+                characters.next();
+            }
+            ('"', _) => quoted = !quoted,
+            (',', false) => fields.push(std::mem::take(&mut field)),
+            _ => field.push(character),
+        }
+    }
+    fields.push(field);
+    fields
 }
 
 #[derive(Clone, Debug)]
@@ -540,11 +795,267 @@ fn validate_asset_name(asset: &str, digest: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Removes `flag` from the arguments, saying whether it was there.
+fn take_flag(arguments: &mut Vec<String>, flag: &str) -> bool {
+    let before = arguments.len();
+    arguments.retain(|argument| argument != flag);
+    arguments.len() != before
+}
+
+/// What the reader holds after a push, pack by pack, so an owner sees that
+/// adding a region kept the others.
+fn print_on_reader(target: &Target) -> Result<(), String> {
+    let Some(bytes) = read_existing(target, MANIFEST)? else {
+        println!("No field packs are on the reader.");
+        return Ok(());
+    };
+    let summary = inspect(&bytes)?;
+    let shelf: JsonValue = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid Fieldbook pack: {error}"))?;
+    let titles = shelf
+        .get("packs")
+        .and_then(JsonValue::as_array)
+        .map(|packs| {
+            packs
+                .iter()
+                .filter_map(|pack| pack.get("title").and_then(JsonValue::as_str))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    print!("On the reader: ");
+    print_summary(&summary);
+    for title in titles {
+        println!("  {title}");
+    }
+    Ok(())
+}
+
+/// A file from the reader's Fieldbook shelf, or nothing when it has none.
+fn read_existing(target: &Target, name: &str) -> Result<Option<Vec<u8>>, String> {
+    match target {
+        Target::Sim => {
+            let path = sim_data().join(name);
+            if path.exists() {
+                bounded(&path, MAX_MANIFEST, name).map(Some)
+            } else {
+                Ok(None)
+            }
+        }
+        Target::Device(host) => {
+            let script = format!(
+                "set -eu\nif test -f '{DEVICE_DATA}/{name}' && test ! -L '{DEVICE_DATA}/{name}'; then\n\
+                 \x20 printf 'present\\n'\n\
+                 \x20 head -c {} '{DEVICE_DATA}/{name}'\n\
+                 fi\n",
+                MAX_MANIFEST + 1
+            );
+            let out = super::run_remote_shell(
+                &format!("root@{host}"),
+                &script,
+                super::REMOTE_COMMAND_TIMEOUT,
+            )
+            .map_err(super::unreachable_device)?;
+            if !out.status.success() {
+                return Err(format!("the reader could not read its {name}"));
+            }
+            match out.stdout.strip_prefix(b"present\n") {
+                Some(bytes) if bytes.len() > MAX_MANIFEST => {
+                    Err(format!("the reader's {name} is larger than 512 KiB"))
+                }
+                Some(bytes) => Ok(Some(bytes.to_vec())),
+                None => Ok(None),
+            }
+        }
+    }
+}
+
+/// The reader's shelf with the pushed packs added: a pack with an id the
+/// reader already has replaces it where it stands, a new one goes last.
+/// Import failures the push reports again replace the old report of them.
+fn merge_shelves(existing: Option<&[u8]>, incoming: &[u8]) -> Result<Vec<u8>, String> {
+    let incoming: JsonValue = serde_json::from_slice(incoming)
+        .map_err(|error| format!("invalid Fieldbook pack: {error}"))?;
+    let Some(existing) = existing else {
+        return serde_json::to_vec_pretty(&incoming).map_err(|error| error.to_string());
+    };
+    let Ok(existing) = serde_json::from_slice::<JsonValue>(existing) else {
+        // A shelf the reader cannot read is no loss to replace.
+        return serde_json::to_vec_pretty(&incoming).map_err(|error| error.to_string());
+    };
+    let list = |root: &JsonValue, key: &str| {
+        root.get(key)
+            .and_then(JsonValue::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let text = |value: &JsonValue, key: &str| {
+        value
+            .get(key)
+            .and_then(JsonValue::as_str)
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let mut packs = list(&existing, "packs");
+    for pack in list(&incoming, "packs") {
+        let id = text(&pack, "id");
+        if let Some(slot) = packs.iter_mut().find(|known| text(known, "id") == id) {
+            *slot = pack;
+        } else {
+            packs.push(pack);
+        }
+    }
+    let fresh = list(&incoming, "failures");
+    let mut failures = list(&existing, "failures")
+        .into_iter()
+        .filter(|old| {
+            !fresh
+                .iter()
+                .any(|new| text(new, "input") == text(old, "input"))
+        })
+        .collect::<Vec<_>>();
+    failures.extend(fresh);
+    let version = if text(&existing, "version") == "2" || text(&incoming, "version") == "2" {
+        "2"
+    } else {
+        "1"
+    };
+    let merged = serde_json::to_vec_pretty(&json!({
+        "format": "fieldbook-shelf",
+        "version": version,
+        "packs": packs,
+        "failures": failures,
+    }))
+    .map_err(|error| error.to_string())?;
+    if merged.len() > MAX_MANIFEST {
+        return Err(
+            "the reader's packs and this one together exceed 512 KiB. Push with --replace to \
+             keep only the packs you name"
+                .into(),
+        );
+    }
+    Ok(merged)
+}
+
+/// Photo credits from both sides, one record per photo id.
+fn merge_attribution(existing: Option<&[u8]>, incoming: &[u8]) -> Result<Vec<u8>, String> {
+    let incoming: JsonValue = serde_json::from_slice(incoming)
+        .map_err(|error| format!("invalid Fieldbook attribution manifest: {error}"))?;
+    let mut photos = existing
+        .and_then(|bytes| serde_json::from_slice::<JsonValue>(bytes).ok())
+        .and_then(|root| root.get("photos").and_then(JsonValue::as_array).cloned())
+        .unwrap_or_default();
+    for photo in incoming
+        .get("photos")
+        .and_then(JsonValue::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        let id = photo.get("id").cloned();
+        if let Some(slot) = photos
+            .iter_mut()
+            .find(|known| known.get("id").cloned() == id)
+        {
+            *slot = photo;
+        } else {
+            photos.push(photo);
+        }
+    }
+    serde_json::to_vec_pretty(&json!({
+        "format": "fieldbook-attribution",
+        "version": "1",
+        "photos": photos,
+    }))
+    .map_err(|error| error.to_string())
+}
+
+/// Adds a photo pack to the reader's shelf without removing what is there:
+/// the photos land under their content address first, then the merged
+/// credits, then the merged manifest that refers to them.
+fn add_directory(target: &Target, source: &Path) -> Result<(), String> {
+    let manifest = merge_shelves(
+        read_existing(target, MANIFEST)?.as_deref(),
+        &bounded(&source.join(MANIFEST), MAX_MANIFEST, "pack manifest")?,
+    )?;
+    let attribution = merge_attribution(
+        read_existing(target, ATTRIBUTION)?.as_deref(),
+        &bounded(
+            &source.join(ATTRIBUTION),
+            MAX_MANIFEST,
+            "photo attribution manifest",
+        )?,
+    )?;
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let photos = source.join("photos");
+    if photos.exists() {
+        for entry in fs::read_dir(&photos).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let name = entry.file_name();
+            let name = name.to_str().ok_or("photo file name is not UTF-8")?;
+            // The reader's shelf key is the photo's file stem.
+            let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+            if stem.len() != 64 || !stem.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(format!("unsafe or non-content-addressed photo {name}"));
+            }
+            files.push((stem.to_owned(), bounded(&entry.path(), MAX_PHOTO, "photo")?));
+        }
+    }
+    files.push((ATTRIBUTION.to_owned(), attribution));
+    files.push((MANIFEST.to_owned(), manifest));
+    match target {
+        Target::Sim => {
+            for (name, bytes) in &files {
+                atomic(&sim_data().join(name), bytes)?;
+            }
+            Ok(())
+        }
+        Target::Device(host) => {
+            let mut script = format!("set -eu\nroot='{DEVICE_DATA}'\nmkdir -p \"$root\"\n");
+            let mut total = 0;
+            for (name, bytes) in &files {
+                total += bytes.len();
+                let digest = kobo_net::sha256::hex_digest(bytes);
+                script.push_str(&format!(
+                    "partial=\"$root/.{name}.$$.writing\"\n\
+                     base64 -d > \"$partial\" <<'FIELD_BOOK_FILE'\n{}\nFIELD_BOOK_FILE\n\
+                     set -- $(sha256sum \"$partial\"); test \"$1\" = '{digest}'\n\
+                     chmod 600 \"$partial\"\nmv -f \"$partial\" \"$root/{name}\"\n",
+                    super::base64_encode(bytes)
+                ));
+            }
+            script.push_str("sync\n");
+            let timeout = super::REMOTE_COMMAND_TIMEOUT
+                + std::time::Duration::from_secs(u64::try_from(total / 200_000).unwrap_or(0));
+            let output = super::run_remote_shell(&format!("root@{host}"), &script, timeout)
+                .map_err(super::unreachable_device)?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err("the reader refused the Fieldbook photo pack".into())
+            }
+        }
+    }
+}
+
 fn print_summary(s: &Summary) {
-    println!(
-        "{} pack(s) · {} species · {} import failure(s)",
-        s.packs, s.species, s.failures
+    let plural = |count: usize, one: &str, many: &str| {
+        format!("{count} {}", if count == 1 { one } else { many })
+    };
+    let mut line = format!(
+        "{}, {} species",
+        plural(s.packs, "pack", "packs"),
+        s.species
     );
+    if s.failures > 0 {
+        line.push_str(&format!(
+            ", {}",
+            plural(
+                s.failures,
+                "pack that could not be read",
+                "packs that could not be read"
+            )
+        ));
+    }
+    println!("{line}.");
 }
 fn sim_data() -> PathBuf {
     kobo_sim::simulated_data_root("fieldbook")
@@ -729,7 +1240,7 @@ fn read_target(target: &Target, name: &str, max: usize, data: bool) -> Result<Ve
             let root = if data {
                 sim_data()
             } else {
-                std::env::temp_dir().join("cobalt-sim-state/fieldbook")
+                kobo_sim::simulated_state_root("fieldbook")
             };
             bounded(&root.join(name), max, name)
         }
@@ -840,6 +1351,87 @@ mod tests {
         assert!(!destination.join("photos").exists());
         let _ = fs::remove_dir_all(&root);
     }
+    #[test]
+    fn a_pack_is_made_from_an_ebird_download_with_codes_made_for_it() {
+        let csv = "Submission ID,Common Name,Scientific Name,Count\n\
+                   S1,American Robin,Turdus migratorius,2\n\
+                   S1,\"Black-and-white Warbler\",Mniotilta varia,1\n\
+                   S2,American Robin,Turdus migratorius,4\n\
+                   S2,American Redstart,Setophaga ruticilla,1\n";
+        let species = species_from_csv(csv).unwrap();
+        assert_eq!(
+            species,
+            vec![
+                (
+                    "AMRO".to_owned(),
+                    "American Robin".to_owned(),
+                    "Turdus migratorius".to_owned()
+                ),
+                (
+                    "BAWW".to_owned(),
+                    "Black-and-white Warbler".to_owned(),
+                    "Mniotilta varia".to_owned()
+                ),
+                (
+                    "AMRE".to_owned(),
+                    "American Redstart".to_owned(),
+                    "Setophaga ruticilla".to_owned()
+                ),
+            ]
+        );
+        let pack = serde_json::to_vec(&pack_json("Central Park", "US-NY", &species, "2026-10-28"))
+            .unwrap();
+        assert_eq!(inspect(&pack).unwrap().species, 3);
+    }
+
+    #[test]
+    fn a_taxonomy_keeps_its_own_codes_and_only_its_species() {
+        let csv = "SPECIES_CODE,PRIMARY_COM_NAME,SCI_NAME,CATEGORY\n\
+                   amerob,American Robin,Turdus migratorius,species\n\
+                   thrush1,thrush sp.,Turdidae sp.,spuh\n";
+        let species = species_from_csv(csv).unwrap();
+        assert_eq!(species.len(), 1);
+        assert_eq!(species[0].0, "AMEROB");
+        assert!(species_from_csv("Name,Count\nRobin,2\n").is_err());
+    }
+
+    #[test]
+    fn a_push_adds_packs_and_replaces_one_with_the_same_id() {
+        let existing = br#"{"format":"fieldbook-shelf","version":"1","packs":[{"id":"cp","title":"Central Park","region":"US-NY","issued":"2026-09-18","species":[]},{"id":"sf","title":"San Francisco","region":"US-CA","issued":"2026-09-01","species":[]}],"failures":[{"input":"old.csv","reason":"x"}]}"#;
+        let incoming = br#"{"format":"fieldbook-shelf","version":"1","packs":[{"id":"cp","title":"Central Park 2027","region":"US-NY","issued":"2027-01-01","species":[]},{"id":"pr","title":"Prospect Park","region":"US-NY","issued":"2026-10-01","species":[]}],"failures":[]}"#;
+        let merged: JsonValue =
+            serde_json::from_slice(&merge_shelves(Some(existing), incoming).unwrap()).unwrap();
+        let titles = merged["packs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|pack| pack["title"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            ["Central Park 2027", "San Francisco", "Prospect Park"]
+        );
+        assert_eq!(merged["failures"].as_array().unwrap().len(), 1);
+        let fresh: JsonValue =
+            serde_json::from_slice(&merge_shelves(None, incoming).unwrap()).unwrap();
+        assert_eq!(fresh["packs"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn photo_credits_from_two_pushes_are_kept_together() {
+        let first = br#"{"format":"fieldbook-attribution","version":"1","photos":[{"id":"a","creator":"A"}]}"#;
+        let second = br#"{"format":"fieldbook-attribution","version":"1","photos":[{"id":"b","creator":"B"},{"id":"a","creator":"A2"}]}"#;
+        let merged: JsonValue =
+            serde_json::from_slice(&merge_attribution(Some(first), second).unwrap()).unwrap();
+        let creators = merged["photos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|photo| photo["creator"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(creators, ["A2", "B"]);
+    }
+
     #[test]
     fn rejects_wrong_schema_and_incomplete_species() {
         assert!(inspect(b"{}").is_err());

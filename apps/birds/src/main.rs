@@ -6,7 +6,7 @@ use kobo_sdk::{
     TilePicture,
 };
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const SNAPSHOT: &str = "current.json";
 const IMAGE: &str = "current.png";
@@ -25,6 +25,10 @@ const EXIT: &str = "exit";
 /// itself reads a two-hundred-byte pointer, and the megabyte of collage
 /// behind it is only opened when that pointer names a different picture.
 const POLL_SECONDS: u32 = 10;
+/// How long each request to stay awake asks for. Asked again on every poll,
+/// so the hold lapses about a minute after Birds stops polling, which is
+/// when it leaves the screen or the reader is put to sleep by hand.
+const AWAKE_SECONDS: u64 = 60;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Snapshot {
@@ -56,6 +60,8 @@ struct Birds {
     panel_height: u32,
     /// The sleep that becomes the next look at the shelf.
     tick: Option<TaskId>,
+    /// Why the reader would not stay awake for Birds, when it said no.
+    awake_refused: Option<kobo_sdk::DenyReason>,
 }
 
 impl Birds {
@@ -76,10 +82,9 @@ impl Birds {
                     .splash(
                         Some(Glyph::App),
                         "No birds yet",
-                        "Birds shows what BirdNET-Go hears, mirrored from a computer.",
+                        "Birds shows what BirdNET-Go hears on a computer, drawn by Fugleramme. Start both there, then send the birds here.",
                     )
                     .section("On your computer")
-                    .command("kobo pair")
                     .command("kobo birds listen --source http://localhost:8080")
                     .buttons([(REFRESH, "Refresh")])
                     .build()
@@ -109,15 +114,20 @@ impl Birds {
         }
         if self.menu_open {
             let freshness = if age >= 24 * 60 * 60 {
-                format!("Stale - last update was {} ago", age_label(age))
+                format!("Out of date. Last updated {} ago.", age_label(age))
             } else if age < 60 {
                 "Updated just now".into()
             } else {
                 format!("Updated {} ago", age_label(age))
             };
+            let awake = self.awake_note();
             screen = screen.modal("Birds", |overlay| {
                 let overlay =
                     overlay.facts([("Status", freshness), ("Source", snapshot.source.clone())]);
+                let overlay = match awake {
+                    Some(note) => overlay.secondary(note),
+                    None => overlay,
+                };
                 if let Some(notice) = &self.notice {
                     overlay
                         .banner(BannerLevel::Attention, notice)
@@ -141,6 +151,30 @@ impl Birds {
 
     fn show(&self, context: &mut Context) {
         context.set_screen(self.screen());
+    }
+
+    /// What the menu says when the reader would not stay awake.
+    fn awake_note(&self) -> Option<&'static str> {
+        match self.awake_refused? {
+            kobo_sdk::DenyReason::WithheldForBattery => Some(
+                "The battery is low, so the reader may go to sleep over the birds. Charge it to keep them on screen.",
+            ),
+            _ => Some(
+                "This reader cannot stay awake for Birds yet. After an hour without a touch it goes back to the Kobo home screen, unless it is charging.",
+            ),
+        }
+    }
+
+    /// Asks the reader to stay awake for a while longer.
+    ///
+    /// Birds is something to glance at across a room, so a reader that goes
+    /// to sleep over it after a few idle minutes defeats the point of it. The
+    /// hold is short and renewed by every poll rather than asked for once and
+    /// for hours, so it ends on its own soon after Birds stops looking.
+    fn stay_awake(context: &mut Context) {
+        context
+            .device()
+            .keep_awake(Duration::from_secs(AWAKE_SECONDS));
     }
 
     /// Queues the next look at the shelf.
@@ -332,6 +366,7 @@ impl KoboApp for Birds {
         self.panel_width = u32::try_from(context.metrics().width).unwrap_or_default();
         self.panel_height = u32::try_from(context.metrics().height).unwrap_or_default();
         context.device().read_identity();
+        Self::stay_awake(context);
         self.reload(context);
         self.schedule_poll(context);
         self.show(context);
@@ -357,6 +392,7 @@ impl KoboApp for Birds {
         if self.snapshot_load.is_none() && self.image_load.is_none() {
             self.reload(context);
         }
+        Self::stay_awake(context);
         self.schedule_poll(context);
         self.show(context);
     }
@@ -369,8 +405,21 @@ impl KoboApp for Birds {
         if self.snapshot_load.is_none() && self.image_load.is_none() {
             self.reload(context);
         }
+        Self::stay_awake(context);
         self.schedule_poll(context);
         self.show(context);
+    }
+
+    /// Coming back from another app is the same moment as waking: read the
+    /// shelf now and hold the reader awake again.
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.on_resume(context);
+    }
+
+    /// Leaving Birds lets the reader sleep at once, rather than a minute
+    /// after the last poll asked it not to.
+    fn on_background(&mut self, context: &mut Context) {
+        context.device().allow_sleep();
     }
 
     fn on_device_result(
@@ -379,6 +428,17 @@ impl KoboApp for Birds {
         request: kobo_sdk::DeviceRequest,
         result: kobo_sdk::DeviceResult,
     ) {
+        if let kobo_sdk::DeviceRequest::KeepAwake { .. } = request {
+            let refused = match result {
+                kobo_sdk::DeviceResult::Denied(reason) => Some(reason),
+                _ => None,
+            };
+            if refused != self.awake_refused {
+                self.awake_refused = refused;
+                self.show(context);
+            }
+            return;
+        }
         if request == kobo_sdk::DeviceRequest::ReadIdentity {
             self.identity = match result {
                 kobo_sdk::DeviceResult::Identity(identity) => Some(identity),
@@ -572,11 +632,15 @@ mod tests {
         runner.start();
         let tick = runner.app().tick.expect("queued");
         // A read is still in flight from opening, so this tick must not start
-        // a second one on top of it.
-        let before = runner.outstanding_requests();
+        // a second one on top of it. Only shelf reads are counted: every tick
+        // also renews the request to stay awake, which is a device request.
+        let reads = |runner: &AppRunner<Birds>| {
+            runner.outstanding_answers() - runner.outstanding_requests()
+        };
+        let before = reads(&runner);
         runner.task_outcome(tick, TaskOutcome::Completed(Vec::new()));
         assert_eq!(
-            runner.outstanding_requests(),
+            reads(&runner),
             before,
             "a tick during a read must not queue the same read again"
         );
@@ -615,6 +679,54 @@ mod tests {
             "a reader who closed the cover on one bird and opened it on another \
              should not wait a further ten seconds"
         );
+    }
+
+    #[test]
+    fn birds_asks_the_reader_to_stay_awake_and_asks_again_with_every_poll() {
+        let keep_awake = |commands: &[kobo_sdk::Command]| {
+            commands.iter().any(|command| {
+                matches!(
+                    command,
+                    kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::KeepAwake { .. })
+                )
+            })
+        };
+        let mut runner = AppRunner::new(Birds::default());
+        assert!(keep_awake(&runner.start()));
+        let tick = runner.app().tick.expect("queued");
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
+        assert!(keep_awake(
+            &runner.task_outcome(tick, TaskOutcome::Completed(Vec::new()))
+        ));
+        assert!(keep_awake(&runner.resume()));
+    }
+
+    #[test]
+    fn a_reader_that_will_not_stay_awake_is_explained_in_the_menu() {
+        let mut birds = Birds {
+            snapshot: Some(Snapshot {
+                generated_at: unix_seconds(),
+                source: "Garden Mac".into(),
+                recent: Vec::new(),
+                image_checksum: None,
+                image: None,
+            }),
+            picture: Some(TilePicture::new(PICTURE, 800, 600)),
+            menu_open: true,
+            ..Birds::default()
+        };
+        let mut context = Context::default();
+        birds.on_device_result(
+            &mut context,
+            kobo_sdk::DeviceRequest::KeepAwake { seconds: 60 },
+            kobo_sdk::DeviceResult::Denied(kobo_sdk::DenyReason::Unsupported),
+        );
+        let screen = birds.screen();
+        assert!(format!("{screen:?}").contains("cannot stay awake for Birds yet"));
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
     }
 
     #[test]

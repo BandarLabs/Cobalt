@@ -188,12 +188,25 @@ impl TraceClient {
     }
 
     pub fn checkpoint(&mut self, event: Lifecycle) {
-        let Some(events) = self.events.as_mut() else {
-            return;
-        };
-        let line = format!("{}\n", event.name());
-        let _ignored = events.write_all(line.as_bytes());
-        let _ignored = events.flush();
+        record(self.events.as_mut(), event);
+    }
+
+    /// A second writer onto the same event log, for a checkpoint that happens
+    /// on another thread.
+    ///
+    /// Network recovery runs beside the session rather than in front of it,
+    /// and the moment it first succeeds is a checkpoint the trace exists to
+    /// time. Cloning the client itself would not do: dropping a client records
+    /// the runtime's exit, and a recovery thread that finished early would
+    /// write that line while the runtime was still running.
+    #[must_use]
+    pub fn sidecar(&self) -> TraceSidecar {
+        TraceSidecar {
+            events: self
+                .events
+                .as_ref()
+                .and_then(|events| events.try_clone().ok()),
+        }
     }
 
     #[cfg(test)]
@@ -203,6 +216,32 @@ impl TraceClient {
             trace_path: None,
         }
     }
+}
+
+/// Records checkpoints into a client's event log from another thread.
+///
+/// It records nothing on drop, so its lifetime says nothing about the
+/// runtime's. With tracing off it holds no file and every checkpoint is a
+/// no-op, exactly as the client's are.
+pub struct TraceSidecar {
+    events: Option<File>,
+}
+
+impl TraceSidecar {
+    pub fn checkpoint(&mut self, event: Lifecycle) {
+        record(self.events.as_mut(), event);
+    }
+}
+
+/// One line per event, flushed at once: the helper reading the log may be the
+/// only witness left if the device resets a moment later.
+fn record(events: Option<&mut File>, event: Lifecycle) {
+    let Some(events) = events else {
+        return;
+    };
+    let line = format!("{}\n", event.name());
+    let _ignored = events.write_all(line.as_bytes());
+    let _ignored = events.flush();
 }
 
 fn trace_mode(unlock: Option<&str>, active_probes: Option<&str>) -> Option<bool> {
@@ -2309,6 +2348,35 @@ fn json_usize(value: usize) -> Value {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+
+    #[test]
+    fn a_sidecar_records_its_checkpoint_and_never_the_runtime_s_exit() {
+        let root = test_root("sidecar");
+        let log = root.join("events");
+        let client = TraceClient {
+            events: Some(File::create(&log).expect("create event log")),
+            trace_path: None,
+        };
+        let mut sidecar = client.sidecar();
+        sidecar.checkpoint(Lifecycle::RecoveryFirstSuccess);
+        drop(sidecar);
+        assert_eq!(
+            fs::read_to_string(&log).expect("read event log"),
+            "recovery_first_success\n"
+        );
+        drop(client);
+        assert_eq!(
+            fs::read_to_string(&log).expect("read event log"),
+            "recovery_first_success\nkobod_exit\n"
+        );
+    }
+
+    #[test]
+    fn a_disabled_client_hands_out_a_sidecar_that_writes_nothing() {
+        let mut sidecar = TraceClient::disabled().sidecar();
+        sidecar.checkpoint(Lifecycle::RecoveryFirstSuccess);
+        assert!(sidecar.events.is_none());
+    }
 
     #[test]
     fn passive_sampling_never_opens_the_wakeup_handshake() {

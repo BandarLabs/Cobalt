@@ -3,9 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.15",
-  "release_notes": "The home screen no longer shows 1 of 1 under a single page, and the setup guide needs no address.",
-  "minimum_cobalt_version": "0.3.5",
+  "version": "1.0.19",
+  "release_notes": "Your token is typed on Cobalt's own keyboard and saved by the reader, never the app, and a QR code opens the Lichess token page on a phone. Rated or Casual, side and clock are each one row of segments.",
   "glyph": "grid",
   "capabilities": [
     "network",
@@ -15,15 +14,18 @@
   "setup": {
     "steps": [
       {
-        "text": "Create a Lichess Personal Access Token granting only board:play.",
+        "text": "Computer games and puzzles need no account. To play people, create a Lichess Personal Access Token granting only board:play.",
         "link": {
           "label": "Create a Lichess API token",
           "url": "https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt"
         }
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "On the reader, open Lichess, tap Account/Games, then Connect Lichess, and type the token."
+      },
+      {
+        "text": "Or install the token from a computer. Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
         "text": "Save the token in a private local file, then install it under the exact secret name lichess.",
@@ -34,5 +36,5 @@
       }
     ]
   },
-  "page_description": "An unofficial Lichess client for Kobo. Play rated games at rapid and classical time controls, accept or send challenges, solve puzzles, or play the computer offline."
+  "page_description": "An unofficial Lichess client for Kobo. Play rated or casual games at rapid and classical time controls, accept or send challenges, solve puzzles, or play the computer offline, with or without a clock."
 }

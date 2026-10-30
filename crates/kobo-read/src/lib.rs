@@ -256,6 +256,14 @@ impl Kind {
 pub struct Memory {
     /// The block that was at the top of the page.
     pub at: Locator,
+    /// How far into `at` the page began, in bytes of the block's text.
+    ///
+    /// Most pages of a novel open partway through a paragraph, and the block
+    /// alone names the page that paragraph started on, so a book closed on
+    /// page 87 came back on page 86. Zero is the start of the block, which is
+    /// what a jump to a heading or a mark asks for and what a record written
+    /// before this was kept reads as.
+    pub within: u32,
     pub bookmarks: BTreeSet<Locator>,
     pub highlights: BTreeSet<Locator>,
     /// Version-1 range annotations. The legacy paragraph set above remains a
@@ -286,6 +294,7 @@ impl Default for Memory {
     fn default() -> Self {
         Self {
             at: 0,
+            within: 0,
             bookmarks: BTreeSet::new(),
             highlights: BTreeSet::new(),
             annotations: BTreeMap::new(),
@@ -310,6 +319,9 @@ impl Memory {
         use std::fmt::Write;
         let mut text = String::new();
         let _ = writeln!(text, "at {}", self.at);
+        if self.within > 0 {
+            let _ = writeln!(text, "within {}", self.within);
+        }
         let _ = writeln!(text, "scale {}", self.scale.wire_value());
         if let Some(light) = self.light {
             let _ = writeln!(text, "light {light}");
@@ -353,6 +365,7 @@ impl Memory {
             };
             match field {
                 "at" => memory.at = value.parse().unwrap_or(0),
+                "within" => memory.within = value.parse().unwrap_or(0),
                 "scale" => {
                     if let Ok(wire) = value.parse::<u8>() {
                         memory.scale = TextScale::from_wire(wire).unwrap_or_default();
@@ -675,7 +688,7 @@ impl Reader {
         decorate_annotation_ranges(&self.document, &self.memory.annotations, &mut pages);
         self.pages = pages;
         self.cut = capped || self.document.truncated;
-        self.page = self.page_holding(self.memory.at);
+        self.page = self.page_holding_place(self.memory.at, self.memory.within);
     }
 
     /// Creates a range highlight or marginal note exactly once for an
@@ -859,6 +872,33 @@ impl Reader {
             .unwrap_or(0)
     }
 
+    /// The page a remembered place is on: the last page on which `block` has
+    /// reached `within`.
+    ///
+    /// At the size the place was kept at, that is the page that was left. At
+    /// another size it is the page that now holds the words that were at the
+    /// top, so the reader neither goes back to the paragraph's start nor
+    /// skips past those words.
+    fn page_holding_place(&self, block: Locator, within: u32) -> usize {
+        let first = self.page_holding(block);
+        if within == 0 {
+            return first;
+        }
+        self.pages
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take_while(|(_, page)| page.iter().any(|piece| piece.block == block))
+            .filter(|(_, page)| {
+                page.iter().any(|piece| {
+                    piece.block == block && piece.source_offset.is_some_and(|from| from <= within)
+                })
+            })
+            .map(|(index, _)| index)
+            .last()
+            .unwrap_or(first)
+    }
+
     /// The block at the top of the current page, which is what gets kept.
     fn top(&self) -> Locator {
         self.pages
@@ -868,7 +908,9 @@ impl Reader {
     }
 
     fn remember_position(&mut self) {
-        self.memory.at = self.top();
+        let first = self.pages.get(self.page).and_then(|page| page.first());
+        self.memory.at = first.map_or(0, |piece| piece.block);
+        self.memory.within = first.and_then(|piece| piece.source_offset).unwrap_or(0);
     }
 
     /// Whether there is a page after this one.
@@ -909,6 +951,7 @@ impl Reader {
     /// they asked for would need a second tap to see it.
     pub fn go_to(&mut self, block: Locator, panel: &DisplayMetrics) {
         self.memory.at = block;
+        self.memory.within = 0;
         self.chrome = Chrome::Hidden;
         self.repaginate(panel);
     }
@@ -1151,6 +1194,7 @@ impl Reader {
         };
         if on_screen {
             self.memory.at = block;
+            self.memory.within = 0;
         }
         self.repaginate(panel);
         on
@@ -4891,6 +4935,35 @@ mod tests {
         assert_eq!(kept.light, None);
         assert!(kept.bookmarks.contains(&7));
         assert!(kept.highlights.contains(&9));
+    }
+
+    #[test]
+    fn a_book_closed_on_a_page_that_opens_partway_through_a_paragraph_reopens_on_that_page() {
+        let mut reader = Reader::open(book(40), Memory::default(), &panel());
+        while reader
+            .page()
+            .first()
+            .and_then(|piece| piece.source_offset)
+            .unwrap_or(0)
+            == 0
+        {
+            assert!(
+                reader.forward(),
+                "no page of the book opens partway through a paragraph"
+            );
+        }
+        let left = reader.page_number();
+        let kept = Memory::decode(&reader.memory().encode());
+        assert!(
+            kept.within > 0,
+            "the place inside the paragraph was not kept"
+        );
+        let reopened = Reader::open(book(40), kept, &panel());
+        assert_eq!(
+            reopened.page_number(),
+            left,
+            "the book came back on the page its paragraph started on"
+        );
     }
 
     #[test]

@@ -2,10 +2,10 @@
   "id": "musicstand",
   "display_name": "Music Stand",
   "short_label": "Music",
-  "summary": "Read music scores with setlists and half-page turns.",
+  "summary": "Read music scores with setlists and half-page turns. Needs your computer.",
   "page_description": "A Kobo score reader with stable stand mode, setlists, and two-stage half-page turns.",
-  "version": "0.1.7",
-  "release_notes": "An empty stand lists the commands that send a score, with no IP address to look up.",
+  "version": "0.1.10",
+  "release_notes": "Zoom and the corner mark are switches in the reading menu, the last page reads as news rather than a fault, and the setlist's button is now Add from library.",
   "glyph": "note",
   "capabilities": [
     "keep-awake"
@@ -13,16 +13,16 @@
   "setup": {
     "steps": [
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "To send PDF scores, install Poppler on your Mac or Linux computer first: brew install poppler on a Mac, or sudo apt install poppler-utils on Debian or Ubuntu.",
+        "command": "brew install poppler"
       },
       {
-        "text": "Create the score shelf on the reader.",
-        "command": "kobo musicstand init"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Send a PDF score or a folder of page images.",
-        "command": "kobo musicstand push score.pdf"
+        "text": "Send PDF scores, page images, or a folder of them. Each push adds to your library.",
+        "command": "kobo musicstand push ~/Scores"
       }
     ]
   }

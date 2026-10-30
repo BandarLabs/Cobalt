@@ -358,12 +358,12 @@
   },
   {
    "protocol_version": 15,
-   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Chat now directly uses the already-resolved unicode-segmentation package to keep long-turn display page boundaries on graphemes. Only the changed Chat app gains that edge; existing third-party package versions, runtime protocol bytes and unchanged Store app dependencies remain unchanged. The companion prerequisite additionally gives host-only kobo-sidekickd a direct edge to the existing nix 0.27.1 package for process-group liveness. Both reviewed edges are composed here; no new third-party version or unchanged Store app dependency is introduced. Settings adds kobo-text only as a dev-dependency for an isolated real-font certificate-trust layout regression; published app runtime dependencies are unchanged by that test edge.",
+   "reason": "Add the kobo-json workspace member, the kobo-zstory structural inspector wiring, and the kobo-music-host, kobo-vault-host and host-only kobo-cli to kobo-comic dependency edges for companion CLIs. The same regeneration records the version-bumped stanzas of the apps that publish with their own changes in this release. Host tooling only otherwise: no package identity a published Store app resolves moved, and no app crate that is not itself publishing gains a dependency. Chat now directly uses the already-resolved unicode-segmentation package to keep long-turn display page boundaries on graphemes. Only the changed Chat app gains that edge; existing third-party package versions, runtime protocol bytes and unchanged Store app dependencies remain unchanged. The companion prerequisite additionally gives host-only kobo-sidekickd a direct edge to the existing nix 0.27.1 package for process-group liveness. Both reviewed edges are composed here; no new third-party version or unchanged Store app dependency is introduced. Settings adds kobo-text only as a dev-dependency for an isolated real-font certificate-trust layout regression; published app runtime dependencies are unchanged by that test edge. Re-pinned for the new Readeck app stanza (including the existing kobo-net parser) and the host-only kobo-cli to kobo-policy edge for server-account setup; existing Store app dependency closures are unchanged.",
    "files": [
     {
      "path": "Cargo.lock",
      "base_blob": "222f7b330431a22b5ec2a8071d0e7e55f36ec4a4",
-     "compatible_blob": "67777d3ec875a6efd0d45e471ff308a34e0371a6"
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   },
@@ -406,7 +406,7 @@
     {
      "path": "crates/kobo-ui/src/lib.rs",
      "base_blob": "8e34d50c89524ec1c921e02a2d206e161069459f",
-     "compatible_blob": "cd2a4dbf72810b24ec289bebe19eff298c91417e"
+     "compatible_blob": "d43f100e17181682b91bcd01451065b2f0bc2652"
     }
    ]
   },
@@ -418,6 +418,61 @@
      "path": "Cargo.lock",
      "base_blob": "c77109faf6e96f3402a380b7d3673d4b3747c696",
      "compatible_blob": "1dd82bf4386d785dadcea10a1a5f48bf117eb607"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Take rustls 0.23.46 for the four TLS advisories published on 2026-10-14 (RUSTSEC-2026-0346 to RUSTSEC-2026-0349). Store apps keep their existing messages; the patched stack reaches readers in the next platform package.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "rust-toolchain.toml pins the compiler the workflows already named, 1.85.1, so a contributor builds and lints with the one CI uses; no Store binary is built differently. Any later change to the pin is a global release input again.",
+   "files": [
+    {
+     "path": "rust-toolchain.toml",
+     "base_blob": null,
+     "compatible_blob": "6c114996c00c356bd8c1bb9800f901b1165c19e2"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "The panel frame planner moved from kobod into its own crate, kobo-frame-plan, and every Store package now inherits the workspace version from its Cargo.toml. The lock gains one path crate that only the runtime and the simulator depend on, and the Store packages' own version lines; no Store binary resolves to different code. The inline test modules of kobo-ui, kobo-protocol, the kobo command and the runtime's device module moved into sibling files, which changes those sources' bytes and none of their code; the active entries naming them are re-pinned to the tree.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "3602372b8c132a0b32622c730d4e8b45c219c148",
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Take rustls-webpki 0.103.16 and webpki-roots 1.0.11 for the two certificate trust advisories published on 2026-10-19 and 2026-10-20 (RUSTSEC-2026-0381 and RUSTSEC-2026-0382). Store apps keep their existing messages and cannot open a network socket inside the sandbox, so any TLS code they link is never reached; the runtime makes their requests, and the patched trust store reaches readers in the next platform package. The lock also gains kobo-readeck, a new Store app that adds only its own package, and the host-only kobo-cli edge to kobo-policy for server-bound secrets.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "f394649a66bc235232478bb20240de9596390eff",
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
+    }
+   ]
+  },
+  {
+   "protocol_version": 15,
+   "reason": "Promoting 0.3.30 checks the lock against the stable catalog's source, 95bb2d7a, instead of beta's. Every change since was reviewed on beta against beta's base: rustls 0.23.46, rustls-webpki 0.103.16 and webpki-roots 1.0.11 for published advisories, the kobo-frame-plan and kobo-readeck path crates, and workspace version lines. Those entries name beta's lock blobs, so none of them match stable's. Without this, the four managed built-ins Daily Brief, Hacker News, Magnet and Tic-tac-toe would need new versions, and they ship in the platform package too. Both catalogs already publish the same binaries for them.",
+   "files": [
+    {
+     "path": "Cargo.lock",
+     "base_blob": "f951482f971a4a00931a97286c824c980d48ed34",
+     "compatible_blob": "4bd277857a98e5694e1b9b1855e9f72935ea1e09"
     }
    ]
   }

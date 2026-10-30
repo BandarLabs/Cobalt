@@ -2,11 +2,31 @@
   "id": "sidekick",
   "display_name": "Sidekick",
   "short_label": "Sidekick",
-  "summary": "Answer coding-agent permission prompts from your Kobo.",
-  "version": "1.0.12",
+  "summary": "Answer coding-agent permission prompts from your Kobo. Needs your computer.",
+  "version": "1.0.15",
   "glyph": "key",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Pairing names kobo sidekick init, and Leave it for the terminal stays in the same place on every page of a long question."
+  "release_notes": "The address and pairing code are typed on Cobalt's own keyboard with a refused address explained under its field, and questions with several answers are ticked and sent from a bar that counts them.",
+  "setup": {
+    "steps": [
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Pair this computer with the reader. It writes the pairing for Sidekick, Deck and Paperterm onto the reader, so there is nothing to type there. The first time, close Cobalt and open it again afterwards.",
+        "command": "kobo sidekick init"
+      },
+      {
+        "text": "Let Claude Code ask through Sidekick. Use codex instead of claude for Codex.",
+        "command": "kobo sidekick setup claude"
+      },
+      {
+        "text": "Start the helper and leave it running, then open Sidekick on the reader.",
+        "command": "kobo sidekick run"
+      }
+    ]
+  }
 }

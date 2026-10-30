@@ -1,4 +1,5 @@
 mod model;
+use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
 use kobo_sdk::exports::{Export, Format as ExportFormat};
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::ShelfDownload;
@@ -17,6 +18,14 @@ const HABITS: &str = "habits-v1";
 /// a few kilobytes, so this is room to spare rather than a limit anybody meets.
 const MAX_BACKUP_BYTES: usize = 64 * 1024;
 const ROWS_PER_PAGE: usize = 3;
+/// The schedules a habit can keep, in the order the edit screen offers them.
+const SCHEDULES: [(&str, &str, Schedule); 3] = [
+    ("sched-daily", "Daily", Schedule::Daily),
+    ("sched-weekdays", "Weekdays", Schedule::Weekdays),
+    ("sched-every-2", "Every 2 days", Schedule::Every(2)),
+];
+const SHOW_TODAY: &str = "show-today";
+const SHOW_YESTERDAY: &str = "show-yesterday";
 const ACTION_NAME_CHARS: usize = 12;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EntryMode {
@@ -61,6 +70,10 @@ struct Habits {
     items: Vec<Habit>,
     loaded: bool,
     page: Page,
+    /// How many days back the Today list is marking: none, or one for
+    /// yesterday. A habit done late at night, or forgotten until the
+    /// morning, used to be a broken streak with no way to say otherwise.
+    days_back: u8,
     today_page: usize,
     manage_page: usize,
     import_page: usize,
@@ -68,6 +81,8 @@ struct Habits {
     entry: TextEntry,
     entry_mode: EntryMode,
     editing: Option<usize>,
+    /// Which page of the schedule list is showing on the edit screen.
+    schedule_page: u16,
     export: Option<Export>,
     import: Option<Import>,
     import_files: Vec<String>,
@@ -83,6 +98,7 @@ impl Default for Habits {
             items: vec![],
             loaded: false,
             page: Page::Today,
+            days_back: 0,
             today_page: 0,
             manage_page: 0,
             import_page: 0,
@@ -90,6 +106,7 @@ impl Default for Habits {
             entry: TextEntry::new().opened_by("add"),
             entry_mode: EntryMode::Add,
             editing: None,
+            schedule_page: 0,
             export: None,
             import: None,
             import_files: Vec::new(),
@@ -102,15 +119,19 @@ impl Default for Habits {
     }
 }
 impl Habits {
+    /// Today on the reader's own calendar. Counted in UTC, a habit ticked
+    /// off at nine in the evening in California landed on tomorrow.
     fn day() -> u32 {
-        u32::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-                / 86_400,
-        )
-        .unwrap_or(u32::MAX)
+        SystemClock::reader()
+            .now()
+            .ok()
+            .and_then(Snapshot::local_day)
+            .and_then(|day| u32::try_from(day).ok())
+            .unwrap_or(0)
+    }
+    /// The day the Today list is marking: today, or yesterday when asked.
+    fn marking_day(&self) -> u32 {
+        Self::day().saturating_sub(u32::from(self.days_back))
     }
     fn save(&mut self, cx: &mut Context) {
         self.queued_save = Some(encode(&self.items));
@@ -139,7 +160,7 @@ impl Habits {
         }
     }
     fn normalize_pages(&mut self) {
-        let day = Self::day();
+        let day = self.marking_day();
         let due = self
             .items
             .iter()
@@ -228,10 +249,17 @@ impl Habits {
                 EntryMode::Add => "Add",
                 EntryMode::Rename => "Save",
             };
+            // The limit is the field's hint, because the reader's keyboard
+            // covers this screen and a line drawn above the field here is
+            // not on the panel while the name is typed.
             return ScreenBuilder::new("hb-add")
                 .top_bar("Habits")
-                .secondary(format!("Use {MAX_HABIT_NAME_CHARS} characters or fewer."))
-                .text_entry(&self.entry, "Habit name", submit)
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Habit name",
+                    &format!("Use {MAX_HABIT_NAME_CHARS} characters or fewer."),
+                    submit,
+                )
                 .build();
         }
         let mut s = ScreenBuilder::new(match self.page {
@@ -257,14 +285,26 @@ impl Habits {
         }
         match self.page {
             Page::Today => {
-                let day = Self::day();
+                let day = self.marking_day();
                 let due: Vec<_> = self
                     .items
                     .iter()
                     .enumerate()
                     .filter(|(_, h)| !h.archived && h.due(day))
                     .collect();
-                if due.is_empty() {
+                if !self.items.is_empty() {
+                    s = s.segmented(
+                        usize::from(self.days_back),
+                        [(SHOW_TODAY, "Today"), (SHOW_YESTERDAY, "Yesterday")],
+                    );
+                }
+                if due.is_empty() && self.days_back == 1 {
+                    s = s.splash(
+                        Some(Glyph::Check),
+                        "Nothing was due yesterday",
+                        "Tap Today to mark today's habits.",
+                    );
+                } else if due.is_empty() {
                     s = s
                         .splash(
                             Some(Glyph::Check),
@@ -283,7 +323,11 @@ impl Habits {
                         .filter(|(_, h)| !h.done.contains(&day) && !h.skipped.contains(&day))
                         .count();
                     s = s
-                        .secondary("Tap a habit when it is done.")
+                        .secondary(if self.days_back == 1 {
+                            "Tap a habit you did yesterday."
+                        } else {
+                            "Tap a habit when it is done."
+                        })
                         .checklist(visible.iter().map(|(i, h)| {
                             let done = h.done.contains(&day);
                             let skipped = h.skipped.contains(&day);
@@ -301,7 +345,11 @@ impl Habits {
                             )
                         }));
                     if open > 0 {
-                        s = s.section("Not today?");
+                        s = s.section(if self.days_back == 1 {
+                            "Not yesterday?"
+                        } else {
+                            "Not today?"
+                        });
                     }
                     s = s.buttons(
                         visible
@@ -379,32 +427,29 @@ impl Habits {
                     } else {
                         ("archive", "Archive")
                     };
-                    let schedules = [
-                        ("sched-daily", "Daily", Schedule::Daily),
-                        ("sched-weekdays", "Weekdays", Schedule::Weekdays),
-                        ("sched-every-2", "Every 2 days", Schedule::Every(2)),
-                    ];
                     let _ = i;
+                    // One answer from a list the runtime marks, where each
+                    // row used to say "current" under itself and draw its
+                    // own tick.
+                    let chosen = SCHEDULES
+                        .iter()
+                        .position(|(_, _, schedule)| *schedule == h.schedule);
                     s = s
                         .top_bar_action("rename", "Rename")
                         .heading(Self::display_name(&h.name))
-                        .rows(schedules.iter().map(|(action, label, schedule)| {
-                            (
-                                (*action).to_owned(),
-                                (*label).to_owned(),
-                                if *schedule == h.schedule {
-                                    "current".to_owned()
-                                } else {
-                                    String::new()
-                                },
-                                if *schedule == h.schedule {
-                                    Glyph::Check
-                                } else {
-                                    Glyph::Circle
-                                },
-                            )
-                        }))
-                        .buttons([archive]);
+                        .option_list(
+                            "How often",
+                            self.schedule_page,
+                            "sched-prev",
+                            "sched-next",
+                            SCHEDULES
+                                .iter()
+                                .map(|(action, label, _)| (*action, *label, "")),
+                        );
+                    if let Some(chosen) = chosen {
+                        s = s.chosen(chosen);
+                    }
+                    s = s.buttons([archive]);
                 }
                 None => {
                     s = s.splash(
@@ -611,13 +656,19 @@ impl Habits {
                 habit.archived = !habit.archived;
                 self.save(cx);
             }
+        } else if a == action_id("sched-next") {
+            let last =
+                kobo_sdk::options_pages(SCHEDULES.len(), &cx.metrics(), false).saturating_sub(1);
+            self.schedule_page = self
+                .schedule_page
+                .saturating_add(1)
+                .min(u16::try_from(last).unwrap_or(0));
+        } else if a == action_id("sched-prev") {
+            self.schedule_page = self.schedule_page.saturating_sub(1);
         } else {
-            let schedules = [
-                ("sched-daily", Schedule::Daily),
-                ("sched-weekdays", Schedule::Weekdays),
-                ("sched-every-2", Schedule::Every(2)),
-            ];
-            let Some((_, schedule)) = schedules.iter().find(|(action, _)| a == action_id(action))
+            let Some((_, _, schedule)) = SCHEDULES
+                .iter()
+                .find(|(action, _, _)| a == action_id(action))
             else {
                 return false;
             };
@@ -772,7 +823,14 @@ impl KoboApp for Habits {
             self.page = page;
             if page == Page::Today {
                 self.today_page = 0;
+                self.days_back = 0;
             }
+            self.show(cx);
+            return;
+        }
+        if a == action_id(SHOW_TODAY) || a == action_id(SHOW_YESTERDAY) {
+            self.days_back = u8::from(a == action_id(SHOW_YESTERDAY));
+            self.today_page = 0;
             self.show(cx);
             return;
         }
@@ -814,9 +872,9 @@ impl KoboApp for Habits {
             return;
         }
         let mut changed = false;
+        let day = self.marking_day();
         for (i, h) in self.items.iter_mut().enumerate() {
             if a == action_id(&format!("done-{i}")) {
-                let day = Self::day();
                 if h.skipped.contains(&day) {
                     changed |= h.unskip(day);
                 } else {
@@ -824,11 +882,19 @@ impl KoboApp for Habits {
                 }
             }
             if a == action_id(&format!("skip-{i}")) {
-                changed |= h.skip(Self::day());
+                changed |= h.skip(day);
             }
             if a == action_id(&format!("edit-{i}")) {
                 self.editing = Some(i);
                 self.page = Page::Edit;
+                // Onto the page of the list holding this habit's schedule,
+                // counted the way the runtime pages it.
+                let chosen = SCHEDULES
+                    .iter()
+                    .position(|(_, _, schedule)| *schedule == h.schedule)
+                    .unwrap_or(0);
+                let per_page = kobo_sdk::options_per_page(&cx.metrics(), false).max(1);
+                self.schedule_page = u16::try_from(chosen / per_page).unwrap_or(0);
                 self.show(cx);
                 return;
             }
@@ -952,6 +1018,44 @@ mod tests {
     }
 
     #[test]
+    fn a_habit_forgotten_yesterday_can_still_be_marked_done_for_yesterday() {
+        use kobo_ui::{Chrome, CLARA_BW_METRICS};
+
+        let mut runner = AppRunner::new(Habits::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: HABITS.to_owned(),
+            value: Some(encode(&[Habit::new("Read".into())])),
+        });
+        runner.action(action_id(SHOW_YESTERDAY));
+        let screen = runner.app().screen();
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+        runner.action(action_id("done-0"));
+        let today = Habits::day();
+        assert_eq!(runner.app().items[0].done, vec![today - 1]);
+        assert_eq!(runner.app().items[0].current_streak(today), 1);
+
+        runner.action(action_id(SHOW_TODAY));
+        runner.action(action_id("done-0"));
+        assert_eq!(runner.app().items[0].done, vec![today - 1, today]);
+    }
+
+    #[test]
+    fn a_runtime_that_passes_no_offset_leaves_the_day_on_utc_as_before() {
+        let utc = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after 1970")
+            .as_secs()
+            / 86_400;
+        if std::env::var(kobo_sdk::clock::READER_OFFSET_VARIABLE).is_err() {
+            assert_eq!(u64::from(Habits::day()), utc);
+        }
+    }
+
+    #[test]
     fn manage_screen_has_no_layout_errors() {
         use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
@@ -1042,6 +1146,10 @@ mod tests {
                         pixels_per_inch,
                         text_scale,
                     };
+                    // A runner installs the face the runtime measures with.
+                    // Without one, this test measured in the built-in fallback
+                    // type whenever it ran before any other test had made one.
+                    let _runner = AppRunner::with_metrics(Habits::default(), metrics);
                     let chrome = kobo_ui::Chrome::measuring(true);
                     let diagnostics = screen.diagnostics(&metrics, &chrome);
                     assert!(
@@ -1088,10 +1196,13 @@ mod tests {
         runner.action(action_id("edit-0"));
         runner.action(action_id("rename"));
         assert!(runner.app().entry.is_open());
-        runner.action(action_id("kb.space"));
-        runner.action(action_id("kb.r0c1"));
+        // A tap that reaches the app while the reader's keyboard is up, such
+        // as a redraw, does not turn the rename into an add.
+        runner.action(action_id("redraw"));
         assert_eq!(runner.app().entry_mode, EntryMode::Rename);
+        runner.type_text("read daily");
         assert_eq!(runner.app().items.len(), 1);
+        assert_eq!(runner.app().items[0].name, "read daily");
     }
 
     #[test]

@@ -5,12 +5,14 @@ mod library;
 
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, QuoteRole, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId,
+    TaskOutcome,
 };
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt::Write as _;
 use std::process::ExitCode;
 
 use library::{
@@ -21,6 +23,8 @@ use library::{
 
 const WORKS_KEY: &str = "works.v2";
 const READING_KEY: &str = "reading.v1";
+/// Works whose new chapters arrived and have not been opened since.
+const FRESH_KEY: &str = "fresh.v1";
 const LEGACY_WORKS_KEY: &str = "works";
 const TAGS_KEY: &str = "tags.v1";
 const CHUNK: u32 = 256 * 1024;
@@ -31,7 +35,7 @@ const UA: &str = "kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)";
 const LOCKED: &str =
     "Locked to AO3 members. Fanshelf has no account sign-in, so it cannot download this work.";
 const REMOVED: &str = "removed from the archive";
-const SLOW_DOWN: &str = "The archive asked us to slow down — try in a minute";
+const SLOW_DOWN: &str = "AO3 asked Fanshelf to slow down. It waits, then carries on by itself.";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum View {
@@ -47,6 +51,9 @@ enum View {
     Feed,
     Updates,
     Reading,
+    /// A work's whole summary, for a panel and text size where the work's
+    /// own page could only show the start of it.
+    Summary,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -64,6 +71,24 @@ enum Active {
     Backoff(Request),
 }
 
+/// One pass of Update all, counted so it can end on a single sentence.
+///
+/// Checking and downloading used to live on two screens: Updates found new
+/// chapters and Manage fetched them, so an owner who checked and then took
+/// the reader onto a train had a list of works marked new and none of the
+/// chapters. A pass now downloads what it finds, and the message at the end
+/// says what is on the reader rather than what could have been.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Sweep {
+    /// Works still waiting for their check.
+    pending: BTreeSet<usize>,
+    checked: usize,
+    failed: usize,
+    /// Works with new chapters this pass is downloading.
+    found: BTreeSet<usize>,
+    saved: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum AdultPurpose {
     Lookup(String),
@@ -73,7 +98,12 @@ enum AdultPurpose {
 #[allow(clippy::struct_excessive_bools)]
 struct Fanshelf {
     view: View,
-    keyboard: Keyboard,
+    /// A work's address or number, typed on the runtime's keyboard with the
+    /// marks an address needs beside the letters.
+    work_entry: TextEntry,
+    /// A tag's name or address. Tag names have spaces in them, so this one
+    /// keeps the space bar.
+    tag_entry: TextEntry,
     works: Vec<Work>,
     tags: Vec<FollowedTag>,
     feed: Vec<FeedWork>,
@@ -89,6 +119,17 @@ struct Fanshelf {
     rate_attempt: u8,
     adult: Option<AdultPurpose>,
     bytes: Vec<u8>,
+    /// Works waiting for their EPUB, in the order they were asked for.
+    ///
+    /// One at a time, because the chunks of one download are gathered in
+    /// `bytes` and a second download started beside it would splice its
+    /// chapters into the first.
+    downloads: VecDeque<(usize, bool)>,
+    /// The work whose EPUB is being fetched or written, until it is saved.
+    downloading: Option<usize>,
+    sweep: Option<Sweep>,
+    /// What the shelf says each stored file weighs, once it has said.
+    shelf_sizes: Option<BTreeMap<String, u32>>,
     upload: Option<ShelfUpload>,
     upload_work: Option<usize>,
     open_after_upload: bool,
@@ -98,9 +139,19 @@ struct Fanshelf {
     place: Option<Memory>,
     message: Option<String>,
     reading: std::collections::BTreeSet<String>,
+    /// Works downloaded with new chapters nobody has opened yet.
+    ///
+    /// Kept apart from the download state because the download now follows
+    /// the check by itself: without this, the mark that told an owner which
+    /// works had moved on would be gone before they ever saw it.
+    fresh: BTreeSet<String>,
     filter: Option<String>,
     fandom_page: usize,
     confirm_remove: bool,
+    /// Whether the work page's menu is open.
+    work_menu: bool,
+    /// Which page of the whole summary is showing.
+    summary_page: usize,
     works_loaded: bool,
     tags_loaded: bool,
     #[cfg(not(target_arch = "arm"))]
@@ -111,7 +162,8 @@ impl Default for Fanshelf {
     fn default() -> Self {
         Self {
             view: View::Shelf,
-            keyboard: Keyboard::new(),
+            work_entry: TextEntry::new().address(),
+            tag_entry: TextEntry::new(),
             works: Vec::new(),
             tags: Vec::new(),
             feed: Vec::new(),
@@ -127,6 +179,10 @@ impl Default for Fanshelf {
             rate_attempt: 0,
             adult: None,
             bytes: Vec::new(),
+            downloads: VecDeque::new(),
+            downloading: None,
+            sweep: None,
+            shelf_sizes: None,
             upload: None,
             upload_work: None,
             open_after_upload: false,
@@ -136,9 +192,12 @@ impl Default for Fanshelf {
             place: None,
             message: None,
             reading: std::collections::BTreeSet::new(),
+            fresh: BTreeSet::new(),
             filter: None,
             fandom_page: 0,
             confirm_remove: false,
+            work_menu: false,
+            summary_page: 0,
             works_loaded: false,
             tags_loaded: false,
             #[cfg(not(target_arch = "arm"))]
@@ -173,6 +232,15 @@ fn fetch(request: &Request, works: &[Work], tags: &[FollowedTag]) -> Option<Task
     })
 }
 
+/// "1 work" or "3 works".
+fn plural(count: usize) -> String {
+    if count == 1 {
+        "1 work".to_owned()
+    } else {
+        format!("{count} works")
+    }
+}
+
 fn display(text: &str, bytes: usize) -> String {
     if text.len() <= bytes {
         return text.to_owned();
@@ -184,26 +252,9 @@ fn display(text: &str, bytes: usize) -> String {
     format!("{}…", text[..end].trim_end())
 }
 
-/// The reader's clock, at the offset the runtime was started with.
+/// The reader's clock, on the reader's own day.
 fn reader_clock() -> Box<dyn kobo_sdk::clock::Clock> {
-    use kobo_sdk::clock::{ManualClock, Snapshot, SystemClock};
-    let minutes = std::env::var("KOBO_UTC_OFFSET_MINUTES")
-        .ok()
-        .and_then(|value| value.parse::<i16>().ok())
-        .unwrap_or(0);
-    SystemClock::new(minutes).map_or_else(
-        |_| {
-            Box::new(
-                ManualClock::new(Snapshot {
-                    unix_millis: 0,
-                    monotonic_millis: 0,
-                    utc_offset_minutes: 0,
-                })
-                .expect("a valid fixed clock"),
-            ) as Box<dyn kobo_sdk::clock::Clock>
-        },
-        |clock| Box::new(clock) as Box<dyn kobo_sdk::clock::Clock>,
-    )
+    Box::new(kobo_sdk::clock::SystemClock::reader())
 }
 
 fn now_seconds() -> u64 {
@@ -231,13 +282,22 @@ fn format_checked(epoch: u64) -> String {
     format!("{month} {}", date.day)
 }
 
-/// One line naming the manual update state: never checked, current as of
-/// the last check, or an update waiting since the last check.
-fn update_label(work: &Work) -> String {
+/// One line naming the update state: never checked, current as of the last
+/// check, new chapters waiting, or new chapters downloaded and not yet opened.
+///
+/// `fresh` is the last of those. Without it, a check that had just downloaded
+/// new chapters read "No new chapters as of" under a banner announcing them,
+/// because the copy on the reader was, by then, current.
+fn update_label(work: &Work, fresh: bool) -> String {
     if work.download == DownloadState::UpdateAvailable {
         format!("New chapters found {}", format_checked(work.last_checked))
     } else if work.last_checked == 0 {
         "Updates never checked".to_owned()
+    } else if fresh {
+        format!(
+            "New chapters downloaded {}",
+            format_checked(work.last_checked)
+        )
     } else {
         format!(
             "No new chapters as of {}",
@@ -306,14 +366,15 @@ impl Fanshelf {
     fn screen(&self, context: &Context) -> Screen {
         match self.view {
             View::Shelf => self.shelf_screen(context),
-            View::Add => ScreenBuilder::new("fs-add")
-                .top_bar("Add work")
-                .heading("Add an AO3 work")
-                .secondary("Enter its web address or numeric work ID.")
-                .keyboard(&self.keyboard, "Open work")
-                .owns_back(true)
-                .build(),
-            View::Work => self.work_screen(),
+            View::Add => self.entry_screen(
+                ScreenBuilder::new("fs-add").top_bar("Add work"),
+                &self.work_entry,
+                "Add an AO3 work",
+                "Work address or number, such as 4242",
+                "Open work",
+            ),
+            View::Work => self.work_screen(context),
+            View::Summary => self.summary_screen(context),
             View::Adult => ScreenBuilder::new("fs-adult")
                 .top_bar("Adult content")
                 .top_bar_action("shelf", "Shelf")
@@ -324,14 +385,14 @@ impl Fanshelf {
                 .build(),
             View::Follow => self.follow_screen(context),
             View::Fandoms => self.fandoms_screen(context),
-            View::Manage => self.manage_screen(),
-            View::AddTag => ScreenBuilder::new("fs-add-tag")
-                .top_bar("Follow tag")
-                .heading("Follow an AO3 tag")
-                .secondary("Enter a tag name or paste its AO3 tag URL. Fanshelf reads only its Atom feed.")
-                .keyboard(&self.keyboard, "Follow")
-                .owns_back(true)
-                .build(),
+            View::Manage => self.manage_screen(context),
+            View::AddTag => self.entry_screen(
+                ScreenBuilder::new("fs-add-tag").top_bar("Follow tag"),
+                &self.tag_entry,
+                "Follow an AO3 tag",
+                "Tag name or tag address",
+                "Follow",
+            ),
             View::Feed => self.feed_screen(context),
             View::Updates => self.updates_screen(context),
             View::Reading => self
@@ -346,9 +407,72 @@ impl Fanshelf {
         }
     }
 
-    fn badge(work: &Work, reading: &std::collections::BTreeSet<String>) -> &'static str {
+    /// A screen that takes typed text on the reader's own keyboard, and says
+    /// why the last attempt was refused.
+    ///
+    /// The reason takes the place of the guidance under the prompt. The
+    /// runtime's field covers this application's screen, so a banner drawn
+    /// here would sit under the keys unseen, and a mistyped address would
+    /// come back looking like a button that did nothing.
+    fn entry_screen(
+        &self,
+        screen: ScreenBuilder,
+        entry: &TextEntry,
+        prompt: &str,
+        hint: &str,
+        submit: &str,
+    ) -> Screen {
+        let hint = self.message.as_deref().unwrap_or(hint);
+        screen
+            .owns_back(true)
+            .text_entry_with_hint(entry, prompt, hint, submit)
+            .build()
+    }
+
+    /// What was typed on the Add or Follow screen, taken at its word.
+    ///
+    /// Text that cannot be read is put back where it was typed, so a single
+    /// wrong letter is one correction rather than the whole address again.
+    fn submitted(&mut self, context: &mut Context, entered: String) {
+        if self.view == View::Add {
+            if let Some(id) = work_id(&entered) {
+                self.begin_lookup(context, id, false);
+            } else {
+                self.message = Some(
+                    "That is not an AO3 work address or number. Try the number in the work's address, such as 4242."
+                        .into(),
+                );
+                self.work_entry.open_with(entered);
+            }
+            return;
+        }
+        let Some(tag) = parse_tag(&entered) else {
+            self.message = Some("Type a tag name, or paste the tag's AO3 address.".into());
+            self.tag_entry.open_with(entered);
+            return;
+        };
+        if self.tags.iter().any(|known| known.slug == tag.slug) {
+            self.view = View::Follow;
+            self.message = Some("You already follow this tag.".into());
+        } else if self.tags.len() >= MAX_TAGS {
+            self.message = Some(format!("Fanshelf can follow {MAX_TAGS} tags at most."));
+            self.tag_entry.open_with(entered);
+        } else {
+            self.tags.push(tag);
+            self.save_tags(context);
+            self.view = View::Follow;
+            self.message = Some("Tag followed. Open it to see its newest works.".into());
+        }
+    }
+
+    fn badge(
+        work: &Work,
+        reading: &std::collections::BTreeSet<String>,
+        fresh: &BTreeSet<String>,
+    ) -> &'static str {
         match work.download {
-            DownloadState::UpdateAvailable => " · NEW",
+            DownloadState::UpdateAvailable => " · update waiting",
+            DownloadState::Downloaded if fresh.contains(&work.id) => " · new chapters",
             DownloadState::Removed => " · removed from the archive",
             _ if !work.complete && work.last_checked == 0 => " · updates unchecked",
             DownloadState::Downloaded if reading.contains(&work.id) => " · reading",
@@ -443,6 +567,9 @@ impl Fanshelf {
         if let Some(message) = &self.message {
             screen = screen.banner(BannerLevel::Info, message);
         }
+        if let Some(offline) = self.offline_line().filter(|_| !self.works.is_empty()) {
+            screen = screen.secondary(offline);
+        }
         if self.works.is_empty() {
             screen = screen.splash(
                 Some(Glyph::Book),
@@ -462,7 +589,7 @@ impl Fanshelf {
                     .iter()
                     .map(|index| {
                         let work = &self.works[*index];
-                        let badge = Self::badge(work, &self.reading);
+                        let badge = Self::badge(work, &self.reading, &self.fresh);
                         (
                             format!("work-{index}"),
                             display(&work.title, 74),
@@ -501,8 +628,37 @@ impl Fanshelf {
             .count()
     }
 
-    fn manage_screen(&self) -> Screen {
-        let updates = self.updates_waiting();
+    /// Works with a copy on this reader, and what those copies weigh.
+    ///
+    /// A work AO3 has since removed still counts: its copy is the one place
+    /// it can still be read, which is the best reason there is to keep it.
+    fn offline(&self) -> (usize, u64) {
+        let sizes = self.shelf_sizes.as_ref();
+        self.works
+            .iter()
+            .filter(|work| work.downloaded())
+            .fold((0, 0), |(count, bytes), work| {
+                let size = sizes
+                    .and_then(|sizes| sizes.get(&shelf_name(&work.id)))
+                    .copied()
+                    .unwrap_or(0);
+                (count + 1, bytes + u64::from(size))
+            })
+    }
+
+    /// The home screen's line about what opens with the radio off.
+    ///
+    /// Held back until the shelf has said what its files weigh, so the line
+    /// never claims a size it has not measured.
+    fn offline_line(&self) -> Option<String> {
+        self.shelf_sizes.as_ref()?;
+        let (count, bytes) = self.offline();
+        Some(kobo_bookview::offline::ready_offline(
+            count, bytes, "work", "works",
+        ))
+    }
+
+    fn manage_screen(&self, context: &Context) -> Screen {
         let downloaded = self.downloaded_count();
         let mut screen = ScreenBuilder::new("fs-manage")
             .top_bar("Manage shelf")
@@ -522,23 +678,24 @@ impl Fanshelf {
             screen = screen.splash(
                 Some(Glyph::Book),
                 "Nothing to manage",
-                "Downloaded copies and updates appear once works are added.",
+                "Downloaded copies appear here once works are added.",
             );
         } else {
-            screen = screen.rows([
-                (
-                    "download-all".to_owned(),
-                    "Download all updates".to_owned(),
-                    format!("{updates} waiting"),
-                    Glyph::Book,
-                ),
-                (
-                    "manage-remove".to_owned(),
-                    "Remove downloaded copies".to_owned(),
-                    format!("{downloaded} on the shelf"),
-                    Glyph::Book,
-                ),
-            ]);
+            let (_, bytes) = self.offline();
+            let detail = if self.shelf_sizes.is_some() && downloaded > 0 {
+                format!(
+                    "{downloaded} on the reader, {}",
+                    kobo_bookview::offline::size(bytes)
+                )
+            } else {
+                format!("{downloaded} on the reader")
+            };
+            screen = screen.rows([(
+                "manage-remove".to_owned(),
+                context.clamped_row("Remove downloaded copies", 2, false),
+                detail,
+                Glyph::Book,
+            )]);
         }
         if let Some(message) = &self.message {
             screen = screen.banner(BannerLevel::Info, message);
@@ -546,7 +703,33 @@ impl Fanshelf {
         screen.owns_back(true).build()
     }
 
-    fn work_screen(&self) -> Screen {
+    /// Whether a screen draws whole on this panel at its text size.
+    fn fits(context: &Context, screen: &Screen) -> bool {
+        screen
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+            .issues
+            .iter()
+            .all(|issue| {
+                !matches!(
+                    issue.kind,
+                    kobo_sdk::LayoutIssueKind::ContentOverflow { .. }
+                        | kobo_sdk::LayoutIssueKind::TextOverflow
+                        | kobo_sdk::LayoutIssueKind::Clipped
+                        | kobo_sdk::LayoutIssueKind::InteractiveOffscreen
+                )
+            })
+    }
+
+    /// The work's page: what it is, what AO3 says about it, and what to do.
+    ///
+    /// The summary is the author's own pitch and the thing most owners read
+    /// before deciding to download, so it sits under the byline. It is the
+    /// longest field here, so it is the one shortened when the page would
+    /// otherwise run off the panel at a large text size, and it is dropped
+    /// before the rating or the warnings ever are. Whenever it is cut, the
+    /// menu offers the whole of it on a page of its own, so nothing the
+    /// author wrote is out of reach at any size.
+    fn work_screen(&self, context: &Context) -> Screen {
         let Some(work) = self.current() else {
             return ScreenBuilder::new("fs-work")
                 .top_bar("Work")
@@ -554,20 +737,59 @@ impl Fanshelf {
                 .owns_back(true)
                 .build();
         };
+        let summary = work.summary.trim();
+        let full_title = display(&work.title, 110);
+        let mut budget = summary.len();
+        let mut title_budget = full_title.len();
+        loop {
+            let shown = display(summary, budget);
+            let title = display(&full_title, title_budget);
+            let cut = shown != summary || title != full_title;
+            let screen = self.work_screen_with(work, &title, &shown, cut);
+            if Self::fits(context, &screen) || (budget == 0 && title_budget <= 24) {
+                return screen;
+            }
+            // Down to the first few words before giving the line up, so the
+            // page says what the work is about wherever a line is left. Only
+            // a title too long for the panel at this size is cut after that,
+            // and the whole of it heads the summary pages.
+            if budget > 80 {
+                budget = budget * 3 / 4;
+            } else if budget > 30 {
+                budget -= 25;
+            } else if budget > 0 {
+                budget = 0;
+            } else {
+                title_budget = (title_budget * 3 / 4).max(24);
+            }
+        }
+    }
+
+    fn work_screen_with(&self, work: &Work, title: &str, summary: &str, cut: bool) -> Screen {
+        // Checking is a step an owner takes now and then, and the Updates tab
+        // checks every work at once, so it waits in the menu. On the page it
+        // was a third full-width button, and at the largest text sizes that
+        // was the room the summary and the warnings needed.
+        let mut menu = vec![("check", "Check for new chapters")];
+        if cut {
+            menu.push(("summary", "Whole summary"));
+        }
         let mut screen = ScreenBuilder::new("fs-work")
             .top_bar("Work")
+            .top_bar_overflow("more", self.work_menu, menu)
             .top_bar_action("shelf", "Shelf")
-            .heading(display(&work.title, 110))
+            .heading(title)
             .secondary(format!(
                 "{} · {}",
                 display(&work.author, 60),
                 display(&work.fandom, 70)
-            ))
+            ));
+        if !summary.is_empty() && summary != "…" {
+            screen = screen.text(summary);
+        }
+        screen = screen
             .text(format!("Rating: {}", display(&work.rating, 90)))
-            .text(format!(
-                "Archive warnings: {}",
-                display(&work.warnings, 180)
-            ))
+            .text(format!("Warnings: {}", display(&work.warnings, 180)))
             .secondary(format!(
                 "Chapters {} · Updated {} · {}",
                 work.chapters_label(),
@@ -576,7 +798,7 @@ impl Fanshelf {
                 } else {
                     &work.updated
                 },
-                update_label(work)
+                update_label(work, self.fresh.contains(&work.id))
             ));
         if work.download == DownloadState::Removed {
             screen = screen.banner(BannerLevel::Attention, REMOVED);
@@ -588,21 +810,62 @@ impl Fanshelf {
         } else if let Some(message) = &self.message {
             screen = screen.banner(BannerLevel::Info, message);
         }
-        let buttons = if work.download == DownloadState::UpdateAvailable {
-            vec![
-                ("read", "Read"),
-                ("redownload", "Re-download"),
-                ("check", "Check updates"),
-            ]
+        // Pinned to the foot of the panel, where they stay whatever the page
+        // above them holds: stacked under the facts they were the first thing
+        // a long title or a large text size pushed off the panel.
+        screen = if work.download == DownloadState::UpdateAvailable {
+            screen.action_bar([("read", "Read"), ("redownload", "Download new chapters")])
         } else if work.downloaded() {
-            vec![("read", "Read"), ("check", "Check updates")]
+            screen.bottom_action("read", "Read")
         } else {
-            vec![("download", "Download EPUB"), ("check", "Check updates")]
+            screen.bottom_action("download", "Download EPUB")
         };
-        for (name, label) in buttons {
-            screen = screen.button(name, label);
-        }
         screen.owns_back(true).build()
+    }
+
+    /// The whole summary, a page at a time, under the work's whole title.
+    fn summary_screen(&self, context: &Context) -> Screen {
+        let pages = self.summary_pages(context);
+        let page = self.summary_page.min(pages.len().saturating_sub(1));
+        let mut screen = self.summary_head(page == 0);
+        for (_, depth, role, paragraph) in pages.get(page).into_iter().flatten() {
+            screen = match role {
+                QuoteRole::Body => screen.quote(*depth, paragraph),
+                QuoteRole::Byline => screen.byline(*depth, paragraph),
+            };
+        }
+        if pages.len() > 1 {
+            screen = screen
+                .page_turns("summary-previous", "summary-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        screen.build()
+    }
+
+    /// What sits above the summary: the top bar, and on the first page the
+    /// work's title.
+    fn summary_head(&self, first: bool) -> ScreenBuilder {
+        let screen = ScreenBuilder::new("fs-summary")
+            .top_bar("Summary")
+            .owns_back(true);
+        match self.current() {
+            Some(work) if first => screen.heading(display(&work.title, 110)),
+            _ => screen,
+        }
+    }
+
+    fn summary_pages(&self, context: &Context) -> Vec<Vec<(u32, u8, QuoteRole, String)>> {
+        let summary = self.current().map_or("", |work| work.summary.trim());
+        let paragraphs = summary
+            .split('\n')
+            .map(str::trim)
+            .filter(|paragraph| !paragraph.is_empty())
+            .map(|paragraph| (0, 0, QuoteRole::Body, paragraph))
+            .collect::<Vec<_>>();
+        context.paginate_tagged_under(&paragraphs, false, &self.summary_head(true).build())
     }
 
     fn follow_screen(&self, context: &Context) -> Screen {
@@ -628,7 +891,7 @@ impl Fanshelf {
                     (
                         format!("tag-{index}"),
                         display(&tag.name, 90),
-                        "Newest works from feeds.atom".to_owned(),
+                        "Newest works in this tag".to_owned(),
                         Glyph::Bookmark,
                     )
                 })
@@ -646,7 +909,7 @@ impl Fanshelf {
         let mut screen = ScreenBuilder::new("fs-feed")
             .top_bar(display(title, 54))
             .top_bar_action("shelf", "Shelf")
-            .secondary("AO3 Atom feed · newest entries");
+            .secondary("Newest works in this tag on AO3");
         if self.task.is_some() && self.feed.is_empty() {
             screen = screen.skeleton(6);
         } else if self.feed.is_empty() {
@@ -655,7 +918,7 @@ impl Fanshelf {
                 "No feed entries",
                 self.message
                     .as_deref()
-                    .unwrap_or("AO3 returned no readable Atom entries for this tag."),
+                    .unwrap_or("AO3 listed no works for this tag."),
             );
         } else {
             let rows = self
@@ -689,10 +952,17 @@ impl Fanshelf {
             .collect::<Vec<_>>();
         let mut screen = ScreenBuilder::new("fs-updates")
             .top_bar("Updates")
-            .top_bar_action("check-all", "Check all")
+            .top_bar_action("update-all", "Update all")
             .top_bar_action("shelf", "Shelf");
         if let Some(message) = &self.message {
             screen = screen.banner(BannerLevel::Info, message);
+        }
+        let waiting = self.updates_waiting();
+        if waiting > 0 && self.sweep.is_none() {
+            screen = screen.secondary(format!(
+                "New chapters waiting for {}. Update all downloads them.",
+                plural(waiting)
+            ));
         }
         if wips.is_empty() {
             screen = screen.splash(
@@ -705,13 +975,15 @@ impl Fanshelf {
                 .iter()
                 .map(|(index, work)| {
                     let state = if work.download == DownloadState::UpdateAvailable {
-                        "Unread update"
+                        "Update waiting to download"
+                    } else if self.fresh.contains(&work.id) {
+                        "New chapters, not opened yet"
                     } else if work.download == DownloadState::Removed {
                         REMOVED
                     } else if work.last_checked == 0 {
                         "Never checked"
                     } else {
-                        "Up to date at last manual check"
+                        "No new chapters at the last check"
                     };
                     (
                         format!("update-{index}"),
@@ -758,6 +1030,7 @@ impl Fanshelf {
     fn spawn_fetch(&mut self, context: &mut Context, request: Request) {
         let Some(work) = fetch(&request, &self.works, &self.tags) else {
             self.message = Some("That item is no longer available in this list.".into());
+            self.request_failed(context, &request);
             self.start_next(context);
             return;
         };
@@ -766,6 +1039,7 @@ impl Fanshelf {
             self.task = Some((task, Active::Fetching(request)));
         } else {
             self.message = Some("Try again in a moment.".into());
+            self.request_failed(context, &request);
         }
     }
 
@@ -789,11 +1063,125 @@ impl Fanshelf {
         self.enqueue(context, Request::Lookup { id, adult });
     }
 
+    /// Asks for a work's EPUB, after whatever download is already running.
     fn begin_download(&mut self, context: &mut Context, work: usize, open_after: bool) {
+        if self.downloading == Some(work) || self.downloads.iter().any(|(w, _)| *w == work) {
+            return;
+        }
+        self.downloads.push_back((work, open_after));
+        self.next_download(context);
+    }
+
+    fn next_download(&mut self, context: &mut Context) {
+        if self.downloading.is_some() || self.upload.is_some() {
+            return;
+        }
+        let Some((work, open_after)) = self.downloads.pop_front() else {
+            self.settle_sweep();
+            return;
+        };
+        self.downloading = Some(work);
         self.bytes.clear();
         self.open_after_upload = open_after;
         self.message = Some("Downloading EPUB…".into());
         self.enqueue(context, Request::Epub { work, offset: 0 });
+    }
+
+    /// The running download is over, saved or not. The next one starts.
+    fn download_ended(&mut self, context: &mut Context) {
+        self.downloading = None;
+        self.bytes.clear();
+        self.next_download(context);
+    }
+
+    /// Checks every work in progress and downloads what has new chapters.
+    ///
+    /// A work already marked as having new chapters is downloaded straight
+    /// away rather than checked again: the EPUB AO3 hands over is the latest
+    /// one either way.
+    fn update_all(&mut self, context: &mut Context) {
+        let mut sweep = Sweep::default();
+        let mut requests = Vec::new();
+        let mut waiting = Vec::new();
+        for (index, work) in self.works.iter().enumerate() {
+            if work.download == DownloadState::UpdateAvailable {
+                sweep.found.insert(index);
+                waiting.push(index);
+            } else if !work.complete && work.download != DownloadState::Removed {
+                sweep.pending.insert(index);
+                requests.push(Request::Update {
+                    work: index,
+                    adult: work.adult,
+                });
+            }
+        }
+        if requests.is_empty() && waiting.is_empty() {
+            self.message = Some("No works in progress to update.".into());
+            return;
+        }
+        self.message = Some(if requests.is_empty() {
+            format!("Downloading new chapters for {}…", plural(waiting.len()))
+        } else {
+            format!("Checking {} for new chapters…", plural(requests.len()))
+        });
+        self.sweep = Some(sweep);
+        for request in requests {
+            self.enqueue(context, request);
+        }
+        for index in waiting {
+            self.begin_download(context, index, false);
+        }
+    }
+
+    /// Ends a pass of Update all with one sentence, once nothing is left.
+    fn settle_sweep(&mut self) {
+        let Some(sweep) = &self.sweep else {
+            return;
+        };
+        let downloading = self
+            .downloading
+            .is_some_and(|work| sweep.found.contains(&work))
+            || self
+                .downloads
+                .iter()
+                .any(|(work, _)| sweep.found.contains(work));
+        if !sweep.pending.is_empty() || downloading {
+            return;
+        }
+        let mut said = if sweep.checked == 0 {
+            String::new()
+        } else {
+            format!("Checked {}. ", plural(sweep.checked))
+        };
+        said.push_str(&match (sweep.found.len(), sweep.saved) {
+            (0, _) => "No new chapters.".to_owned(),
+            (found, saved) if saved == found => {
+                format!("New chapters downloaded for {}.", plural(found))
+            }
+            (found, saved) => format!(
+                "New chapters downloaded for {saved} of {}. Update all tries the rest again.",
+                plural(found)
+            ),
+        });
+        if sweep.failed > 0 {
+            let _ = write!(said, " {} could not be checked.", plural(sweep.failed));
+        }
+        self.message = Some(said);
+        self.sweep = None;
+    }
+
+    /// An Update request for `work` finished, with or without an answer.
+    fn checked(&mut self, work: usize, answered: bool) {
+        if let Some(sweep) = &mut self.sweep {
+            if sweep.pending.remove(&work) {
+                if answered {
+                    sweep.checked += 1;
+                } else {
+                    sweep.failed += 1;
+                }
+            }
+        }
+        self.settle_sweep();
     }
 
     fn finish_lookup(&mut self, context: &mut Context, id: String, adult: bool, body: &[u8]) {
@@ -846,13 +1234,22 @@ impl Fanshelf {
                 } else {
                     existing.download
                 };
+                let downloaded = existing.downloaded();
                 self.works[index] = *incoming;
-                self.message = Some(if changed {
-                    "A newer version is available.".into()
+                self.message = Some(if changed && downloaded {
+                    "New chapters found. Downloading them now.".into()
+                } else if changed {
+                    "New chapters found. Download the work to read them offline.".into()
                 } else {
                     "No new chapters found.".into()
                 });
                 self.save_works(context);
+                if changed && downloaded {
+                    if let Some(sweep) = &mut self.sweep {
+                        sweep.found.insert(index);
+                    }
+                    self.begin_download(context, index, false);
+                }
             }
             ParsedWork::AdultInterstitial => {
                 self.adult = Some(AdultPurpose::Update(index));
@@ -874,6 +1271,73 @@ impl Fanshelf {
         }
     }
 
+    /// A downloaded EPUB is on the shelf. The work is marked, and the next
+    /// download in line starts.
+    fn upload_saved(&mut self, context: &mut Context) {
+        self.upload = None;
+        if let Some(work) = self.upload_work.take() {
+            if let Some(item) = self.works.get_mut(work) {
+                item.download = DownloadState::Downloaded;
+            }
+            if let Some(sweep) = self
+                .sweep
+                .as_mut()
+                .filter(|sweep| sweep.found.contains(&work))
+            {
+                sweep.saved += 1;
+            }
+            if !self.open_after_upload {
+                if let Some(item) = self.works.get(work) {
+                    if self.fresh.insert(item.id.clone()) {
+                        context.store().save(FRESH_KEY, encode_reading(&self.fresh));
+                    }
+                }
+            }
+            self.save_works(context);
+            if self.open_after_upload {
+                self.start_read(context, work);
+            } else {
+                self.message = Some("New chapters downloaded. Your reading place is kept.".into());
+            }
+        }
+        context.shelf().list();
+        self.download_ended(context);
+    }
+
+    /// What the shelf says its files weigh, for the offline line.
+    fn took_shelf_list(&mut self, files: &[(String, u32)]) {
+        self.shelf_sizes = Some(files.iter().cloned().collect());
+        #[cfg(not(target_arch = "arm"))]
+        self.weigh_demo();
+    }
+
+    /// The demonstration shelf has no files behind it, so its copies are
+    /// given the weight a short novel would have. Called from both sides,
+    /// because the shelf's answer and the demonstration works arrive in
+    /// either order.
+    #[cfg(not(target_arch = "arm"))]
+    fn weigh_demo(&mut self) {
+        if !self.demo {
+            return;
+        }
+        if let Some(sizes) = &mut self.shelf_sizes {
+            for work in self.works.iter().filter(|work| work.downloaded()) {
+                sizes.entry(shelf_name(&work.id)).or_insert(420 * 1024);
+            }
+        }
+    }
+
+    /// A request that ended without an answer, as far as what waits on it.
+    fn request_failed(&mut self, context: &mut Context, request: &Request) {
+        match request {
+            Request::Update { work, .. } => self.checked(*work, false),
+            Request::Epub { work, .. } if self.downloading == Some(*work) => {
+                self.download_ended(context);
+            }
+            _ => {}
+        }
+    }
+
     fn finish_feed(&mut self, body: &[u8]) {
         let text = String::from_utf8_lossy(body);
         self.feed = parse_feed(&text);
@@ -881,13 +1345,13 @@ impl Fanshelf {
         self.message = self
             .feed
             .is_empty()
-            .then(|| "AO3 returned no readable Atom entries for this tag.".into());
+            .then(|| "AO3 listed no works for this tag.".into());
     }
 
     fn finish_epub(&mut self, context: &mut Context, work: usize, chunk: &[u8]) {
         if self.bytes.len().saturating_add(chunk.len()) > MAX_EPUB {
-            self.bytes.clear();
             self.message = Some("This EPUB is too large to keep on this reader.".into());
+            self.download_ended(context);
             return;
         }
         let done = chunk.len() < CHUNK as usize;
@@ -903,6 +1367,7 @@ impl Fanshelf {
             return;
         }
         let Some(item) = self.works.get(work) else {
+            self.download_ended(context);
             return;
         };
         let mut upload = ShelfUpload::new(shelf_name(&item.id), self.bytes.clone());
@@ -916,6 +1381,9 @@ impl Fanshelf {
         let Some(item) = self.works.get(work) else {
             return;
         };
+        if self.fresh.remove(&item.id) {
+            context.store().save(FRESH_KEY, encode_reading(&self.fresh));
+        }
         context.store().load(place_key(&item.id));
         self.place = None;
         let mut loading = ShelfDownload::new(shelf_name(&item.id)).at_most(MAX_EPUB);
@@ -1027,6 +1495,7 @@ impl Fanshelf {
         ];
         self.reading = ["9002".to_owned()].into_iter().collect();
         self.seed_demo_feed();
+        self.weigh_demo();
     }
 
     fn seed_demo_feed(&mut self) {
@@ -1055,10 +1524,15 @@ impl KoboApp for Fanshelf {
         context.store().load(WORKS_KEY);
         context.store().load(TAGS_KEY);
         context.store().load(READING_KEY);
+        context.store().load(FRESH_KEY);
+        context.shelf().list();
         self.show(context);
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Shelf(files) = &result {
+            self.took_shelf_list(files);
+        }
         if let StoreResult::Loaded { key, value } = &result {
             if key == WORKS_KEY {
                 if let Some(value) = value {
@@ -1073,6 +1547,8 @@ impl KoboApp for Fanshelf {
                     self.save_works(context);
                 }
                 self.works_loaded = true;
+            } else if key == FRESH_KEY {
+                self.fresh = value.as_deref().map_or_else(BTreeSet::new, decode_reading);
             } else if key == READING_KEY {
                 self.reading = value
                     .as_deref()
@@ -1101,29 +1577,14 @@ impl KoboApp for Fanshelf {
             .map(|upload| upload.advance(context, &result))
         {
             match progress {
-                ShelfProgress::Done => {
-                    self.upload = None;
-                    if let Some(work) = self.upload_work.take() {
-                        if let Some(item) = self.works.get_mut(work) {
-                            item.download = DownloadState::Downloaded;
-                        }
-                        self.save_works(context);
-                        if self.open_after_upload {
-                            self.start_read(context, work);
-                        } else {
-                            self.message =
-                                Some("Updated EPUB saved. Reading position kept.".into());
-                        }
-                    }
-                    self.bytes.clear();
-                }
+                ShelfProgress::Done => self.upload_saved(context),
                 ShelfProgress::Failed(_) => {
                     self.upload = None;
                     self.upload_work = None;
-                    self.bytes.clear();
                     self.message = Some(
                         "The EPUB could not be saved. The previous shelf copy is unchanged.".into(),
                     );
+                    self.download_ended(context);
                 }
                 ShelfProgress::Elsewhere | ShelfProgress::Moving { .. } => {}
             }
@@ -1169,34 +1630,55 @@ impl KoboApp for Fanshelf {
                 return;
             }
         }
-        if matches!(self.view, View::Add | View::AddTag) {
-            if let Some(Pressed::Submitted) = self.keyboard.press(action) {
-                let entered = self.keyboard.take();
-                if self.view == View::Add {
-                    if let Some(id) = work_id(&entered) {
-                        self.begin_lookup(context, id, false);
+        // Back is the way out of a typing screen, so it is not offered to the
+        // field first: the field has no use for it, and the screen it was
+        // pressed on would stay put.
+        if matches!(self.view, View::Add | View::AddTag) && action != ActionId::BACK {
+            let entry = if self.view == View::Add {
+                &mut self.work_entry
+            } else {
+                &mut self.tag_entry
+            };
+            match entry.handle(action) {
+                Some(Typing::Submitted(entered)) => self.submitted(context, entered),
+                // Backing out of the reader's keyboard is leaving the screen
+                // it was opened from, as Back always was.
+                Some(Typing::Cancelled | Typing::Saved | Typing::Refused(_)) => {
+                    self.view = if self.view == View::Add {
+                        View::Shelf
                     } else {
-                        self.message = Some("Enter an AO3 work address or work number.".into());
-                    }
-                } else if let Some(tag) = parse_tag(&entered) {
-                    if self.tags.len() >= MAX_TAGS {
-                        self.message = Some("Fanshelf can follow at most 24 tags.".into());
-                    } else if !self.tags.iter().any(|known| known.slug == tag.slug) {
-                        self.tags.push(tag);
-                        self.save_tags(context);
-                        self.view = View::Follow;
-                        self.message = Some("Tag followed. Open it to check for new works.".into());
-                    }
-                } else {
-                    self.message = Some("Enter an AO3 tag name or tag URL.".into());
+                        View::Follow
+                    };
+                    self.message = None;
                 }
+                Some(Typing::Changed) | None => {}
             }
             self.show(context);
             return;
         }
 
-        if action == action_id("add") {
-            self.keyboard.clear();
+        if self.view == View::Work && action == action_id("more") {
+            self.work_menu = true;
+            self.show(context);
+            return;
+        }
+        // A tap outside the open menu arrives as Back, and only closes it.
+        if self.work_menu && action == ActionId::BACK {
+            self.work_menu = false;
+            self.show(context);
+            return;
+        }
+        self.work_menu = false;
+        if action == action_id("summary") {
+            self.summary_page = 0;
+            self.view = View::Summary;
+        } else if action == action_id("summary-previous") {
+            self.summary_page = self.summary_page.saturating_sub(1);
+        } else if action == action_id("summary-next") {
+            let last = self.summary_pages(context).len().saturating_sub(1);
+            self.summary_page = self.summary_page.saturating_add(1).min(last);
+        } else if action == action_id("add") {
+            self.work_entry.open();
             self.view = View::Add;
             self.message = None;
         } else if action == action_id("filter") {
@@ -1219,22 +1701,6 @@ impl KoboApp for Fanshelf {
             self.confirm_remove = false;
             self.view = View::Manage;
             self.message = None;
-        } else if action == action_id("download-all") {
-            let waiting = self
-                .works
-                .iter()
-                .enumerate()
-                .filter(|(_, work)| work.download == DownloadState::UpdateAvailable)
-                .map(|(index, _)| index)
-                .collect::<Vec<_>>();
-            if waiting.is_empty() {
-                self.message = Some("No updates waiting.".into());
-            } else {
-                for index in &waiting {
-                    self.begin_download(context, *index, false);
-                }
-                self.message = Some(format!("Downloading {} updates…", waiting.len()));
-            }
         } else if action == action_id("manage-remove") {
             self.confirm_remove = true;
             self.message = None;
@@ -1256,6 +1722,7 @@ impl KoboApp for Fanshelf {
             self.confirm_remove = false;
             if removed > 0 {
                 self.save_works(context);
+                context.shelf().list();
             }
             self.message = Some(format!(
                 "Removed {removed} copies. Works stay on the shelf."
@@ -1273,7 +1740,7 @@ impl KoboApp for Fanshelf {
             self.shelf_page = 0;
             self.message = None;
         } else if action == action_id("add-tag") {
-            self.keyboard.clear();
+            self.tag_entry.open();
             self.view = View::AddTag;
             self.message = None;
         } else if action == action_id("adult-confirm") {
@@ -1322,21 +1789,8 @@ impl KoboApp for Fanshelf {
             self.view = View::Work;
             let adult = self.works[index].adult;
             self.enqueue(context, Request::Update { work: index, adult });
-        } else if action == action_id("check-all") {
-            let requests = self
-                .works
-                .iter()
-                .enumerate()
-                .filter(|(_, work)| !work.complete)
-                .map(|(work, item)| Request::Update {
-                    work,
-                    adult: item.adult,
-                })
-                .collect::<Vec<_>>();
-            self.message = Some(format!("Checking {} works…", requests.len()));
-            for request in requests {
-                self.enqueue(context, request);
-            }
+        } else if action == action_id("update-all") {
+            self.update_all(context);
         } else if action == action_id("page-prev") || action == action_id("page-next") {
             // Clamp from the page actually shown, including after a collection
             // shrinks. Repeated turns at either boundary must remain harmless.
@@ -1391,6 +1845,7 @@ impl KoboApp for Fanshelf {
                     self.view = View::Shelf;
                 }
                 View::Feed | View::AddTag => self.view = View::Follow,
+                View::Summary => self.view = View::Work,
                 View::Reading => self.close_book(context),
                 View::Shelf => {}
             }
@@ -1411,6 +1866,8 @@ impl KoboApp for Fanshelf {
             Active::Spacing(request) | Active::Backoff(request) => {
                 if matches!(outcome, TaskOutcome::Completed(_)) {
                     self.spawn_fetch(context, request);
+                } else {
+                    self.request_failed(context, &request);
                 }
             }
             Active::Fetching(request) => match outcome {
@@ -1422,6 +1879,7 @@ impl KoboApp for Fanshelf {
                         }
                         Request::Update { work, adult } => {
                             self.finish_update(context, work, adult, &body);
+                            self.checked(work, true);
                         }
                         Request::Feed { .. } => self.finish_feed(&body),
                         Request::Epub { work, .. } => self.finish_epub(context, work, &body),
@@ -1433,6 +1891,7 @@ impl KoboApp for Fanshelf {
                 }
                 TaskOutcome::Failed(TaskError::Unauthorized) => {
                     self.message = Some(LOCKED.into());
+                    self.request_failed(context, &request);
                     self.start_next(context);
                 }
                 TaskOutcome::Failed(TaskError::NotFound) => {
@@ -1443,6 +1902,7 @@ impl KoboApp for Fanshelf {
                         }
                     }
                     self.message = Some(REMOVED.into());
+                    self.request_failed(context, &request);
                     self.start_next(context);
                 }
                 TaskOutcome::Failed(error) => {
@@ -1453,9 +1913,13 @@ impl KoboApp for Fanshelf {
                         }
                         _ => "AO3 did not answer this request.".into(),
                     });
+                    self.request_failed(context, &request);
                     self.start_next(context);
                 }
-                TaskOutcome::Cancelled => self.start_next(context),
+                TaskOutcome::Cancelled => {
+                    self.request_failed(context, &request);
+                    self.start_next(context);
+                }
             },
         }
         self.show(context);
@@ -1481,6 +1945,49 @@ mod tests {
     use super::*;
     use kobo_sdk::{AppRunner, Command, StoreRequest};
     use kobo_ui::{Chrome, Node, CLARA_BW_METRICS};
+
+    #[test]
+    fn a_mistyped_work_comes_back_in_the_field_with_the_reason_under_the_prompt() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        let opened = runner.action(action_id("add"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, .. }) =
+            kobo_sdk::keyboard::testing::asked(&opened)
+        else {
+            panic!("Add did not ask for the reader's keyboard");
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Address);
+        let refused = runner.type_text("nonsense");
+        let Some(kobo_sdk::DeviceRequest::TypeText { hint, initial, .. }) =
+            kobo_sdk::keyboard::testing::asked(&refused)
+        else {
+            panic!("the field did not come back for a correction");
+        };
+        assert!(
+            hint.starts_with("That is not an AO3 work address or number."),
+            "{hint}"
+        );
+        assert_eq!(initial, "nonsense");
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Shelf);
+        assert_eq!(runner.app().message, None);
+    }
+
+    #[test]
+    fn a_tag_is_typed_with_a_space_bar_and_backing_out_returns_to_the_followed_tags() {
+        let mut runner = AppRunner::new(Fanshelf {
+            view: View::Follow,
+            ..Fanshelf::default()
+        });
+        let opened = runner.action(action_id("add-tag"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, .. }) =
+            kobo_sdk::keyboard::testing::asked(&opened)
+        else {
+            panic!("Add did not ask for the reader's keyboard");
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Text);
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Follow);
+    }
 
     fn work() -> Work {
         Work {
@@ -1521,24 +2028,21 @@ mod tests {
             ..Fanshelf::default()
         };
         let screen = app.screen(&AppRunner::new(Fanshelf::default()).context());
-        let labels = screen
-            .nodes
-            .iter()
-            .filter_map(node_label)
-            .collect::<Vec<_>>();
-        let rating = labels
-            .iter()
-            .position(|text| text.starts_with("Rating:"))
-            .unwrap();
-        let warnings = labels
-            .iter()
-            .position(|text| text.starts_with("Archive warnings:"))
-            .unwrap();
-        let download = labels
-            .iter()
-            .position(|text| *text == "Download EPUB")
-            .unwrap();
-        assert!(rating < download && warnings < download);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+        let top_of = |prefix: &str| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| {
+                    node.text_lines
+                        .first()
+                        .is_some_and(|line| line.starts_with(prefix))
+                })
+                .map(|node| node.rect.y)
+                .unwrap()
+        };
+        let download = layout.rect_of_action(action_id("download")).unwrap();
+        assert!(top_of("Rating:") < download.y && top_of("Warnings:") < download.y);
     }
 
     #[test]
@@ -1691,26 +2195,346 @@ mod tests {
     fn shelf_badge_prefers_update_then_never_checked_then_reading() {
         let mut work = work();
         let mut reading = std::collections::BTreeSet::new();
+        let mut fresh = BTreeSet::new();
         work.download = DownloadState::UpdateAvailable;
-        assert_eq!(Fanshelf::badge(&work, &reading), " · NEW");
+        assert_eq!(
+            Fanshelf::badge(&work, &reading, &fresh),
+            " · update waiting"
+        );
         work.download = DownloadState::NotDownloaded;
         work.last_checked = 0;
-        assert_eq!(Fanshelf::badge(&work, &reading), " · updates unchecked");
+        assert_eq!(
+            Fanshelf::badge(&work, &reading, &fresh),
+            " · updates unchecked"
+        );
         work.complete = true;
         work.download = DownloadState::Downloaded;
-        assert_eq!(Fanshelf::badge(&work, &reading), " · offline");
+        assert_eq!(Fanshelf::badge(&work, &reading, &fresh), " · offline");
         reading.insert(work.id.clone());
-        assert_eq!(Fanshelf::badge(&work, &reading), " · reading");
+        assert_eq!(Fanshelf::badge(&work, &reading, &fresh), " · reading");
+        fresh.insert(work.id.clone());
+        assert_eq!(Fanshelf::badge(&work, &reading, &fresh), " · new chapters");
+    }
+
+    /// The archive's page for work 42, with `chapters` chapters posted.
+    fn page(chapters: u16) -> Vec<u8> {
+        format!(
+            r#"<html><body><h2 class="title heading">A safe synthetic work</h2>
+            <a rel="author" href="/users/x">Example Author</a>
+            <dd class="chapters">{chapters}/?</dd>
+            <dd class="updated">2026-10-0{}</dd>
+            <a href="/downloads/42/work.epub?updated_at={chapters}">EPUB</a>
+            </body></html>"#,
+            chapters % 9 + 1
+        )
+        .into_bytes()
+    }
+
+    fn spawned(commands: &[Command]) -> Option<TaskId> {
+        commands.iter().find_map(|command| match command {
+            Command::Spawn { task, .. } => Some(*task),
+            _ => None,
+        })
+    }
+
+    /// Answers whatever is running, spacing sleeps included, until a fetch
+    /// for `wanted` is the one in flight.
+    fn run_until(runner: &mut AppRunner<Fanshelf>, wanted: &Request) {
+        for _ in 0..8 {
+            match runner.app().task.clone() {
+                Some((_, Active::Fetching(request))) if request == *wanted => return,
+                Some((task, Active::Spacing(_) | Active::Backoff(_))) => {
+                    runner.task_outcome(task, TaskOutcome::Completed(Vec::new()));
+                }
+                other => panic!("waiting for {wanted:?}, found {other:?}"),
+            }
+        }
+        panic!("{wanted:?} was never asked for");
+    }
+
+    fn answer(runner: &mut AppRunner<Fanshelf>, body: Vec<u8>) -> Vec<Command> {
+        let task = runner.app().task.as_ref().unwrap().0;
+        runner.task_outcome(task, TaskOutcome::Completed(body))
+    }
+
+    #[test]
+    fn checking_a_downloaded_work_downloads_its_new_chapters_without_another_tap() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        let mut downloaded = work();
+        downloaded.download = DownloadState::Downloaded;
+        runner.app_mut().works = vec![downloaded];
+        runner.app_mut().open = Some(0);
+        runner.app_mut().view = View::Work;
+        runner.action(action_id("check"));
+        answer(&mut runner, page(41));
+        assert_eq!(runner.app().downloading, Some(0));
+        let epub = Request::Epub { work: 0, offset: 0 };
+        run_until(&mut runner, &epub);
+        answer(&mut runner, b"a small epub".to_vec());
+        assert!(runner.app().upload.is_some(), "the chapters were not saved");
+        runner.store_result(StoreResult::ShelfWritten {
+            name: shelf_name("42"),
+            size: 12,
+        });
+        let app = runner.app();
+        assert_eq!(app.works[0].download, DownloadState::Downloaded);
+        assert_eq!(app.downloading, None);
+        assert!(app.fresh.contains("42"), "new chapters lost their mark");
+    }
+
+    #[test]
+    fn checking_a_work_that_was_never_downloaded_downloads_nothing() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        runner.app_mut().works = vec![work()];
+        runner.app_mut().open = Some(0);
+        runner.app_mut().view = View::Work;
+        runner.action(action_id("check"));
+        let commands = answer(&mut runner, page(41));
+        assert!(spawned(&commands).is_none());
+        assert_eq!(runner.app().downloading, None);
+        assert_eq!(
+            runner.app().message.as_deref(),
+            Some("New chapters found. Download the work to read them offline.")
+        );
+    }
+
+    #[test]
+    fn update_all_checks_every_work_in_progress_and_ends_on_what_it_downloaded() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        let mut moved = work();
+        moved.download = DownloadState::Downloaded;
+        let mut still = work();
+        still.id = "43".into();
+        still.chapters = 41;
+        still.updated = "2026-10-06".into();
+        still.download = DownloadState::Downloaded;
+        runner.app_mut().works = vec![moved, still];
+        runner.app_mut().view = View::Updates;
+        runner.action(action_id("update-all"));
+        assert_eq!(
+            runner.app().message.as_deref(),
+            Some("Checking 2 works for new chapters…")
+        );
+        answer(&mut runner, page(41));
+        run_until(
+            &mut runner,
+            &Request::Update {
+                work: 1,
+                adult: false,
+            },
+        );
+        answer(&mut runner, page(41));
+        run_until(&mut runner, &Request::Epub { work: 0, offset: 0 });
+        answer(&mut runner, b"a small epub".to_vec());
+        runner.store_result(StoreResult::ShelfWritten {
+            name: shelf_name("42"),
+            size: 12,
+        });
+        assert_eq!(runner.app().sweep, None);
+        assert_eq!(
+            runner.app().message.as_deref(),
+            Some("Checked 2 works. New chapters downloaded for 1 work.")
+        );
+    }
+
+    #[test]
+    fn a_second_download_waits_for_the_first_rather_than_sharing_its_buffer() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        let mut second = work();
+        second.id = "43".into();
+        runner.app_mut().works = vec![work(), second];
+        let mut context = runner.context();
+        let app = runner.app_mut();
+        app.begin_download(&mut context, 0, false);
+        app.begin_download(&mut context, 1, false);
+        app.begin_download(&mut context, 1, false);
+        assert_eq!(app.downloading, Some(0));
+        assert_eq!(app.downloads, VecDeque::from([(1, false)]));
+        app.bytes = b"half of the first".to_vec();
+        app.request_failed(&mut context, &Request::Epub { work: 0, offset: 0 });
+        assert_eq!(app.downloading, Some(1));
+        assert!(app.bytes.is_empty());
+    }
+
+    #[test]
+    fn the_shelf_says_what_is_ready_offline_once_the_reader_has_measured_it() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        runner.app_mut().works_loaded = true;
+        runner.app_mut().tags_loaded = true;
+        let mut kept = work();
+        kept.download = DownloadState::Downloaded;
+        runner.app_mut().works = vec![kept, work()];
+        assert_eq!(runner.app().offline_line(), None);
+        runner.store_result(StoreResult::Shelf(vec![(
+            shelf_name("42"),
+            3 * 1024 * 1024,
+        )]));
+        assert_eq!(
+            runner.app().offline_line().as_deref(),
+            Some("Ready offline: 1 work, 3.0 MB")
+        );
+        let screen = runner.app().screen(&runner.context());
+        assert!(screen
+            .nodes
+            .iter()
+            .filter_map(node_label)
+            .any(|text| text.starts_with("Ready offline")));
+    }
+
+    #[test]
+    fn a_work_page_shows_the_summary_and_shortens_it_before_it_runs_off_the_panel() {
+        let mut long = work();
+        long.summary = "A lantern keeper finds a door in the library that opens onto every \
+            night she has ever forgotten. "
+            .repeat(6)
+            .trim_end()
+            .to_owned();
+        for metrics in collection_tests::metrics() {
+            let app = Fanshelf {
+                works: vec![long.clone()],
+                open: Some(0),
+                view: View::Work,
+                ..Fanshelf::default()
+            };
+            let runner = AppRunner::with_metrics(Fanshelf::default(), metrics);
+            let screen = app.screen(&runner.context());
+            assert!(
+                Fanshelf::fits(&runner.context(), &screen),
+                "{}% runs off the panel",
+                metrics.text_scale.percent()
+            );
+            let labels = screen
+                .nodes
+                .iter()
+                .filter_map(node_label)
+                .collect::<Vec<_>>();
+            assert!(screen
+                .layout_with(&metrics, &Chrome::measuring(true))
+                .rect_of_action(action_id("download"))
+                .is_some());
+            if metrics.text_scale.percent() == 100 {
+                assert!(
+                    labels
+                        .iter()
+                        .any(|text| text.starts_with("A lantern keeper")),
+                    "the summary is missing at the default size"
+                );
+            }
+        }
+    }
+
+    /// Every word of a work's summary is somewhere an owner can read it, at
+    /// every text size held either way: on the work's page, or, where the page
+    /// had to cut it, on the summary pages its menu opens. The demonstration
+    /// shelf is used because its first work carries every line the page has,
+    /// an update waiting included, and a long summary is added to it.
+    #[test]
+    fn a_work_summary_is_always_within_reach_and_every_page_fits_at_every_size_held_either_way() {
+        let mut shelf = Fanshelf {
+            demo: true,
+            works_loaded: true,
+            tags_loaded: true,
+            ..Fanshelf::default()
+        };
+        shelf.seed_demo();
+        let mut works = shelf.works.clone();
+        let mut long = works[0].clone();
+        long.summary = "A lantern keeper finds a door in the library that opens onto every \
+            night she has ever forgotten. "
+            .repeat(8)
+            .trim_end()
+            .to_owned();
+        works.push(long);
+        for metrics in collection_tests::metrics() {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = metrics.oriented(orientation);
+                let mut runner = AppRunner::with_metrics(
+                    Fanshelf {
+                        works: works.clone(),
+                        works_loaded: true,
+                        tags_loaded: true,
+                        ..Fanshelf::default()
+                    },
+                    metrics,
+                );
+                for (index, work) in works.iter().enumerate() {
+                    let at = format!("{metrics:?}, {}", work.title);
+                    runner.app_mut().view = View::Shelf;
+                    runner.action(action_id(&format!("work-{index}")));
+                    let context = runner.context();
+                    let page = runner.app().screen(&context);
+                    assert!(
+                        Fanshelf::fits(&context, &page),
+                        "{at}: the work page runs off"
+                    );
+                    let shown = format!("{page:?}");
+                    assert!(
+                        shown.contains("Read") || shown.contains("Download EPUB"),
+                        "{at}"
+                    );
+                    runner.action(action_id("more"));
+                    let menu = format!("{:?}", runner.app().screen(&runner.context()));
+                    assert!(menu.contains("Check for new chapters"), "{at}");
+                    let summary = work.summary.trim();
+                    if shown.contains(summary) {
+                        assert!(!menu.contains("Whole summary"), "{at}");
+                        runner.action(ActionId::BACK);
+                        continue;
+                    }
+                    assert!(
+                        menu.contains("Whole summary"),
+                        "{at}: the summary is cut and out of reach"
+                    );
+                    runner.action(action_id("summary"));
+                    let mut read = String::new();
+                    loop {
+                        let screen = runner.app().screen(&runner.context());
+                        assert!(
+                            Fanshelf::fits(&runner.context(), &screen),
+                            "{at}: a summary page runs off"
+                        );
+                        for node in &screen.nodes {
+                            if let Node::Quote { text, .. } = node {
+                                read.push_str(text);
+                                read.push(' ');
+                            }
+                        }
+                        let before = runner.app().summary_page;
+                        runner.action(action_id("summary-next"));
+                        if runner.app().summary_page == before {
+                            break;
+                        }
+                    }
+                    let split = |text: &str| {
+                        text.split_whitespace()
+                            .map(str::to_owned)
+                            .collect::<Vec<_>>()
+                    };
+                    assert_eq!(split(&read), split(summary), "{at}");
+                    runner.action(ActionId::BACK);
+                    assert_eq!(runner.app().view, View::Work, "{at}");
+                }
+            }
+        }
     }
 
     #[test]
     fn update_label_distinguishes_never_checked_current_and_waiting() {
         let mut work = work();
-        assert_eq!(update_label(&work), "Updates never checked");
+        assert_eq!(update_label(&work, false), "Updates never checked");
         work.last_checked = 1_789_617_600;
-        assert!(update_label(&work).starts_with("No new chapters as of "));
+        assert!(update_label(&work, false).starts_with("No new chapters as of "));
+        assert!(update_label(&work, true).starts_with("New chapters downloaded "));
         work.download = DownloadState::UpdateAvailable;
-        assert!(update_label(&work).starts_with("New chapters found "));
+        assert!(update_label(&work, false).starts_with("New chapters found "));
     }
 
     #[test]

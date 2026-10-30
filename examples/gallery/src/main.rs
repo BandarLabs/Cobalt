@@ -7,9 +7,9 @@
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, BannerLevel, Chrome, Context, ControlState, DisplayMetrics,
-    Glyph, KoboApp, LayoutIssueKind, LogLevel, ParagraphPresentation, PictureHandle, QuoteRole,
-    RichTextSpan, RowLead, Screen, ScreenBuilder, SlotWidth, Space, TableRow, Task, TaskId,
-    TaskOutcome, TextPresentation, Tile, TilePicture, TileShape, TileState,
+    FieldKind, Glyph, KoboApp, LayoutIssueKind, LogLevel, ParagraphPresentation, PictureHandle,
+    QuoteRole, RichTextSpan, RowLead, RowState, Screen, ScreenBuilder, SlotWidth, Space, TableRow,
+    Task, TaskId, TaskOutcome, TextPresentation, Tile, TilePicture, TileShape, TileState,
 };
 use std::process::ExitCode;
 
@@ -38,6 +38,48 @@ const FILINGS: [(&str, &str); 4] = [
     ("file-archive", "Archive"),
     ("file-discard", "Discard"),
 ];
+
+/// The update channels the short option list offers, with what each means.
+const CHANNELS: [(&str, &str, &str); 3] = [
+    ("channel-stable", "Stable", "Updates every few weeks"),
+    ("channel-beta", "Beta", "New things first, sometimes rough"),
+    ("channel-off", "Off", "Only when you ask"),
+];
+
+/// The zones the full-screen option list pages through: enough of them that
+/// the list takes several pages at every text size, which is the case the
+/// control exists for.
+const ZONES: [(&str, &str); 24] = [
+    ("Reykjavik", "UTC+0"),
+    ("Lisbon", "UTC+0, summer UTC+1"),
+    ("London", "UTC+0, summer UTC+1"),
+    ("Paris", "UTC+1, summer UTC+2"),
+    ("Berlin", "UTC+1, summer UTC+2"),
+    ("Athens", "UTC+2, summer UTC+3"),
+    ("Istanbul", "UTC+3"),
+    ("Dubai", "UTC+4"),
+    ("Karachi", "UTC+5"),
+    ("Kolkata", "UTC+5:30"),
+    ("Dhaka", "UTC+6"),
+    ("Bangkok", "UTC+7"),
+    ("Singapore", "UTC+8"),
+    ("Tokyo", "UTC+9"),
+    ("Sydney", "UTC+10, summer UTC+11"),
+    ("Noumea", "UTC+11"),
+    ("Auckland", "UTC+12, summer UTC+13"),
+    ("Honolulu", "UTC-10"),
+    ("Anchorage", "UTC-9, summer UTC-8"),
+    ("Los Angeles", "UTC-8, summer UTC-7"),
+    ("Denver", "UTC-7, summer UTC-6"),
+    ("Chicago", "UTC-6, summer UTC-5"),
+    ("New York", "UTC-5, summer UTC-4"),
+    ("Sao Paulo", "UTC-3"),
+];
+
+/// The rows that can be ticked, by name and label. Two, under a group row
+/// that is ticked when both are: three rows and the bar are what a six inch
+/// panel holds at the largest text size beside the gallery's own bars.
+const SPECIES: [(&str, &str); 2] = [("species-wren", "Wren"), ("species-robin", "Robin")];
 
 /// The step wedge: sixteen bands, one per grey the panel can actually resolve.
 ///
@@ -168,8 +210,30 @@ impl Tab {
 }
 
 /// One part of a page: the controls it draws, added to whatever is already
-/// on the panel.
-type Part = fn(&Gallery, ScreenBuilder) -> ScreenBuilder;
+/// on the panel, and the builder calls that drew them.
+///
+/// The calls are printed under the sample. A reference that shows a control
+/// without its name sends whoever wants one like it into the source, to find
+/// which of sixty builder methods it was.
+#[derive(Clone, Copy)]
+struct Part {
+    draw: fn(&Gallery, ScreenBuilder) -> ScreenBuilder,
+    /// The `ScreenBuilder` methods behind the sample, comma separated.
+    calls: &'static str,
+}
+
+impl Part {
+    /// The line set under the sample, such as "Built with `.grid()`".
+    fn caption(self) -> String {
+        let calls = self
+            .calls
+            .split(", ")
+            .map(|call| format!(".{call}()"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("Built with {calls}")
+    }
+}
 
 /// Where the reader is in the one job this gallery carries out end to end.
 ///
@@ -244,6 +308,13 @@ const SPECIMENS: &[(&str, &str)] = &[
     ("state-retry", "You pressed Try again."),
     ("state-report", "You pressed Report it."),
     ("hold-here", "You held there."),
+    ("banner-retry", "You pressed Check again."),
+    ("store-birds", "You pressed Field guide to birds."),
+    ("store-birds-update", "You pressed Update."),
+    ("store-moths", "You pressed Moths."),
+    ("store-moths-open", "You pressed Open."),
+    ("species-delete", "You pressed Delete."),
+    ("token-field", "You tapped the token field."),
 ];
 
 #[allow(
@@ -307,6 +378,18 @@ struct Gallery {
     outcome: Option<String>,
     /// Where the worked example has got to, when it is running.
     step: Option<Step>,
+    /// Whether the night light toggle is on.
+    night_light: bool,
+    /// Which of [`SPECIES`] are ticked.
+    species: [bool; 2],
+    /// Which of [`CHANNELS`] the short option list says is chosen.
+    channel: usize,
+    /// Which of [`ZONES`] is chosen.
+    zone: usize,
+    /// The page of the full-screen zone list, while it is open.
+    zones: Option<u16>,
+    /// Whether the labelled field is showing what a refusal looks like.
+    refused: bool,
 }
 
 impl Default for Gallery {
@@ -336,6 +419,12 @@ impl Default for Gallery {
             task: None,
             outcome: None,
             step: None,
+            night_light: true,
+            species: [true, false],
+            channel: 0,
+            zone: 2,
+            zones: None,
+            refused: false,
         }
     }
 }
@@ -348,58 +437,232 @@ impl Gallery {
     /// of them fit on a panel is not known here: it depends on the device and
     /// on how large the reader has asked for the type to be, and the only
     /// honest answer to "does this fit" is to measure it.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one table of every sample and its calls reads better whole than split"
+    )]
     fn parts(tab: Tab, page: usize) -> &'static [Part] {
         match (tab, page) {
-            (Tab::Text, 0) => &[Gallery::type_page, Gallery::facts_page],
-            (Tab::Text, 1) => &[Gallery::quotes_page],
+            (Tab::Text, 0) => &[
+                Part {
+                    draw: Gallery::type_page,
+                    calls: "heading, text, secondary",
+                },
+                Part {
+                    draw: Gallery::facts_page,
+                    calls: "section_with_value, facts",
+                },
+            ],
+            (Tab::Text, 1) => &[Part {
+                draw: Gallery::quotes_page,
+                calls: "paged_list, quote, command",
+            }],
             (Tab::Text, 2) => &[
-                Gallery::marks_page,
-                Gallery::quoted_page,
-                Gallery::linked_text_page,
+                Part {
+                    draw: Gallery::marks_page,
+                    calls: "heading_at_level, byline, folding_byline",
+                },
+                Part {
+                    draw: Gallery::quoted_page,
+                    calls: "quote_as, table",
+                },
+                Part {
+                    draw: Gallery::linked_text_page,
+                    calls: "rich_text, text_linking, rich_text_linking, hold",
+                },
             ],
             (Tab::Text, _) => &[
-                Gallery::banners_page,
-                Gallery::tone_page,
-                Gallery::waiting_page,
+                Part {
+                    draw: Gallery::banners_page,
+                    calls: "banner",
+                },
+                Part {
+                    draw: Gallery::acting_banners_page,
+                    calls: "banner, banner_action",
+                },
+                Part {
+                    draw: Gallery::tone_page,
+                    calls: "picture, skeleton",
+                },
+                Part {
+                    draw: Gallery::waiting_page,
+                    calls: "progress, skeleton",
+                },
             ],
             (Tab::Lists, 0) => &[
-                Gallery::rows_page,
-                Gallery::checklist_page,
-                Gallery::long_labels_page,
+                Part {
+                    draw: Gallery::rows_page,
+                    calls: "rows_with_trailing",
+                },
+                Part {
+                    draw: Gallery::checklist_page,
+                    calls: "checklist",
+                },
+                Part {
+                    draw: Gallery::selection_page,
+                    calls: "checked_rows, selection_bar",
+                },
+                Part {
+                    draw: Gallery::row_extras_page,
+                    calls: "rows, row_button, row_badge",
+                },
+                Part {
+                    draw: Gallery::long_labels_page,
+                    calls: "rows_with_trailing, chips",
+                },
             ],
             (Tab::Lists, 1) => &[
-                Gallery::bleed_page,
-                Gallery::covers_page,
-                Gallery::marked_tiles,
-                Gallery::tiles_page,
+                Part {
+                    draw: Gallery::bleed_page,
+                    calls: "full_bleed_picture",
+                },
+                Part {
+                    draw: Gallery::covers_page,
+                    calls: "unframed_picture, picture_tiles",
+                },
+                Part {
+                    draw: Gallery::marked_tiles,
+                    calls: "contextual_tiles, apps",
+                },
+                Part {
+                    draw: Gallery::tiles_page,
+                    calls: "tile_grid",
+                },
             ],
             (Tab::Lists, 2) => &[
-                Gallery::boards_page,
-                Gallery::pads_page,
-                Gallery::crossword_page,
-                Gallery::pencil_page,
+                Part {
+                    draw: Gallery::boards_page,
+                    calls: "grid, grid_with_selection, board, board_with_selection",
+                },
+                Part {
+                    draw: Gallery::pads_page,
+                    calls: "pads",
+                },
+                Part {
+                    draw: Gallery::crossword_page,
+                    calls: "crossword_board",
+                },
+                Part {
+                    draw: Gallery::pencil_page,
+                    calls: "pencil_board, terminal",
+                },
             ],
-            (Tab::Lists, _) => &[Gallery::icons_page],
-            (Tab::Input, 0) => &[Gallery::buttons_page, Gallery::stepper_page],
-            (Tab::Input, 1) => &[Gallery::groups_page, Gallery::section_rows_page],
+            (Tab::Lists, _) => &[Part {
+                draw: Gallery::icons_page,
+                calls: "tiles, page_turns",
+            }],
+            (Tab::Input, 0) => &[
+                Part {
+                    draw: Gallery::buttons_page,
+                    calls: "primary_button, buttons, button_with_state, disabled_button",
+                },
+                Part {
+                    draw: Gallery::stepper_page,
+                    calls: "stepper, segmented, picker, toggles",
+                },
+                Part {
+                    draw: Gallery::toggle_page,
+                    calls: "toggle, toggle_with_state",
+                },
+            ],
+            (Tab::Input, 1) => &[
+                Part {
+                    draw: Gallery::groups_page,
+                    calls: "hero, band",
+                },
+                Part {
+                    draw: Gallery::section_rows_page,
+                    calls: "section_rows",
+                },
+            ],
             (Tab::Input, 2) => &[
-                Gallery::input_page,
-                Gallery::asking_page,
-                Gallery::choice_page,
+                Part {
+                    draw: Gallery::input_page,
+                    calls: "field, chips, controls, confirm",
+                },
+                Part {
+                    draw: Gallery::asking_page,
+                    calls: "confirmation",
+                },
+                Part {
+                    draw: Gallery::choice_page,
+                    calls: "choose, chosen, or_type",
+                },
+                Part {
+                    draw: Gallery::labelled_field_page,
+                    calls: "field, field_label, field_hint, field_error, field_kind",
+                },
+                Part {
+                    draw: Gallery::option_list_page,
+                    calls: "option_list, chosen",
+                },
             ],
-            (Tab::Input, _) => &[Gallery::overlay_page],
-            (Tab::States, 0) => &[Gallery::nothing_page],
-            (Tab::States, 1) => &[Gallery::offline_page],
+            (Tab::Input, _) => &[Part {
+                draw: Gallery::overlay_page,
+                calls: "top_bar_overflow, row_overflow, rows_with_menu, modal",
+            }],
+            (Tab::States, 0) => &[Part {
+                draw: Gallery::nothing_page,
+                calls: "empty_state",
+            }],
+            (Tab::States, 1) => &[Part {
+                draw: Gallery::offline_page,
+                calls: "failure_state",
+            }],
             (Tab::States, 2) => &[
-                Gallery::denied_page,
-                Gallery::offline_state_page,
-                Gallery::faulted_page,
+                Part {
+                    draw: Gallery::denied_page,
+                    calls: "permission_denied_state",
+                },
+                Part {
+                    draw: Gallery::offline_state_page,
+                    calls: "offline_state",
+                },
+                Part {
+                    draw: Gallery::faulted_page,
+                    calls: "error_state",
+                },
             ],
-            (Tab::States, _) => &[Gallery::trouble_page],
-            (Tab::Panel, 0) => &[Gallery::folio_page, Gallery::folio_tiles],
-            (Tab::Panel, 1) => &[Gallery::ghosting_page],
-            (Tab::Panel, 2) => &[Gallery::transfer_page, Gallery::unsized_transfer_page],
-            (Tab::Panel, _) => &[Gallery::request_page],
+            (Tab::States, _) => &[Part {
+                draw: Gallery::trouble_page,
+                calls: "standard_state, bottom_action_marked",
+            }],
+            (Tab::Panel, 0) => &[
+                Part {
+                    draw: Gallery::folio_page,
+                    calls: "section_link, page_rail",
+                },
+                Part {
+                    draw: Gallery::folio_tiles,
+                    calls: "tile_grid, popover, rows",
+                },
+            ],
+            (Tab::Panel, 1) => &[Part {
+                draw: Gallery::ghosting_page,
+                calls: "page_rail, tile_grid",
+            }],
+            (Tab::Panel, 2) => &[
+                Part {
+                    draw: Gallery::transfer_page,
+                    calls: "transfer, transfer_failed, transfer_retry, cancellable",
+                },
+                Part {
+                    draw: Gallery::unsized_transfer_page,
+                    calls: "transfer",
+                },
+                Part {
+                    draw: Gallery::steps_page,
+                    calls: "steps",
+                },
+                Part {
+                    draw: Gallery::code_page,
+                    calls: "code",
+                },
+            ],
+            (Tab::Panel, _) => &[Part {
+                draw: Gallery::request_page,
+                calls: "activity, cancellable",
+            }],
         }
     }
 
@@ -459,6 +722,20 @@ impl Gallery {
     /// One panel of the reference, whole: the bars, the strip, the parts that
     /// landed on this panel, and the page turns between panels.
     fn frame(&self, page: usize, parts: &[Part], total: usize) -> ScreenBuilder {
+        self.frame_with(page, parts, total, true)
+    }
+
+    /// The same, with or without the line naming each sample's builder calls.
+    /// A sample that takes a whole panel to itself at the largest text sizes
+    /// has no room for its caption, and drawing it anyway pushes the sample
+    /// off the panel.
+    fn frame_with(
+        &self,
+        page: usize,
+        parts: &[Part],
+        total: usize,
+        captions: bool,
+    ) -> ScreenBuilder {
         let screen = ScreenBuilder::new("gallery")
             .top_bar_action("about-gallery", "About")
             .top_bar(match self.tab {
@@ -485,7 +762,14 @@ impl Gallery {
         } else {
             screen
         };
-        let screen = parts.iter().fold(screen, |screen, part| part(self, screen));
+        let screen = parts.iter().fold(screen, |screen, part| {
+            let screen = (part.draw)(self, screen);
+            if captions {
+                screen.secondary(part.caption())
+            } else {
+                screen
+            }
+        });
         let screen = match self.pressed {
             Some(caption) => screen.text(caption),
             None => screen,
@@ -610,11 +894,17 @@ impl Gallery {
             context.set_screen(Self::detail_page());
             return;
         }
+        if let Some(page) = self.zones {
+            context.set_screen(self.zones_page(page));
+            return;
+        }
 
         let page = self.page();
         let panels = self.panels(context.metrics(), page);
         let panel = self.shown.min(panels.len().saturating_sub(1));
-        context.set_screen(self.frame(page, &panels[panel], panels.len()).build());
+        let parts = &panels[panel];
+        let captions = !Self::overflows(self.frame(page, parts, panels.len()), context.metrics());
+        context.set_screen(self.frame_with(page, parts, panels.len(), captions).build());
     }
 
     /// Every way the system sets words: the roles, the groupings and the
@@ -924,6 +1214,26 @@ impl Gallery {
             .action_bar([("bar-one", "First"), ("bar-two", "Second")])
     }
 
+    /// Settings drawn by the runtime as switches, one of which cannot change
+    /// right now.
+    fn toggle_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("Settings drawn as switches")
+            .toggle(
+                "toggle-night",
+                "Night light",
+                "Warms the light after sunset.",
+                self.night_light,
+            )
+            .toggle_with_state(
+                "toggle-sync",
+                "Sync reading positions",
+                "Needs Wi-Fi.",
+                false,
+                ControlState::Disabled,
+            )
+    }
+
     /// Nesting, and the two rules that separate things.
     fn quotes_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
@@ -970,6 +1280,18 @@ impl Gallery {
             .reading_menu("reading-controls")
             .page_position(1, 214)
             .bottom_action("reading-close", "Close the book")
+    }
+
+    /// The two levels that report how something went, and the one action a
+    /// banner may carry.
+    fn acting_banners_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .banner(BannerLevel::Success, "Saved. The note is on the reader.")
+            .banner(
+                BannerLevel::Error,
+                "The catalogue did not answer. What you had is still here.",
+            )
+            .banner_action("banner-retry", "Check again")
     }
 
     /// The two banners, which are the loudest thing the toolkit will draw.
@@ -1303,6 +1625,61 @@ impl Gallery {
             )])
     }
 
+    /// Rows that can be ticked, a group row that is partly ticked, and the
+    /// bar that acts on what is ticked.
+    fn selection_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let ticked = self.species.iter().filter(|ticked| **ticked).count();
+        let group = match ticked {
+            0 => RowState::Unchecked,
+            count if count == SPECIES.len() => RowState::Checked,
+            _ => RowState::Mixed,
+        };
+        let rows = std::iter::once(("species-all", "Garden birds", "", Glyph::Folder, group))
+            .chain(
+                SPECIES
+                    .iter()
+                    .zip(self.species)
+                    .map(|((name, label), ticked)| {
+                        (
+                            *name,
+                            *label,
+                            "",
+                            Glyph::Book,
+                            if ticked {
+                                RowState::Checked
+                            } else {
+                                RowState::Unchecked
+                            },
+                        )
+                    }),
+            );
+        screen
+            .section("Rows that can be ticked")
+            .checked_rows(rows)
+            .selection_bar(
+                u32::try_from(ticked).unwrap_or(0),
+                [("species-clear", "Clear"), ("species-delete", "Delete")],
+            )
+    }
+
+    /// A row with a button of its own and a count, which is a Store row.
+    fn row_extras_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("Rows with a button and a count")
+            .rows([
+                (
+                    "store-birds",
+                    "Field guide to birds",
+                    "Version 1.4",
+                    Glyph::Book,
+                ),
+                ("store-moths", "Moths", "Installed", Glyph::Book),
+            ])
+            .row_button("store-birds", "store-birds-update", "Update")
+            .row_badge("store-birds", 3)
+            .row_button("store-moths", "store-moths-open", "Open")
+    }
+
     /// A checklist, which is a row whose value is whether it is done.
     fn checklist_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
         screen.section("A checklist").checklist([
@@ -1480,6 +1857,59 @@ impl Gallery {
         )
     }
 
+    /// A field that names itself, says how to fill it in, and says why what
+    /// was in it was refused. It holds a secret, so it is drawn as dots.
+    fn labelled_field_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let screen = screen
+            .field("token-field", "fake-token-sample", "Paste your token")
+            .field_label("Lichess token")
+            .field_hint("24 characters, from lichess.org/account/oauth/token")
+            .field_kind(FieldKind::Secret);
+        if self.refused {
+            screen
+                .field_error("Lichess refused this token. Make a new one and paste it here.")
+                .button("token-accept", "Pretend it was accepted")
+        } else {
+            screen.button("token-refuse", "Pretend it was refused")
+        }
+    }
+
+    /// A short option list that fits one page, and the way into a long one.
+    fn option_list_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .option_list(
+                "Update channel",
+                0,
+                "channel-previous",
+                "channel-next",
+                CHANNELS,
+            )
+            .chosen(self.channel)
+            .button(
+                "open-zones",
+                format!("Time zone: {}", ZONES[self.zone.min(ZONES.len() - 1)].0),
+            )
+    }
+
+    /// The long list, on a screen of its own: a page of zones at a time.
+    fn zones_page(&self, page: u16) -> Screen {
+        ScreenBuilder::new("gallery")
+            .top_bar("Time zone")
+            .owns_back(true)
+            .option_list(
+                "Choose the zone this reader keeps",
+                page,
+                "zones-previous",
+                "zones-next",
+                ZONES
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (zone, offset))| (format!("zone-{index}"), *zone, *offset)),
+            )
+            .chosen(self.zone)
+            .build()
+    }
+
     fn choice_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
             .section_with_value(
@@ -1561,6 +1991,21 @@ impl Gallery {
                 .cancellable("xfer-cancel", "Cancel")
                 .button("xfer-fail", "Pretend it fails")
         }
+    }
+
+    /// Where a reader is in a short sequence.
+    fn steps_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("A step indicator")
+            .steps(1, 3, ["Account", "Sign in", "Done"])
+    }
+
+    /// An address for a phone to read off the panel.
+    fn code_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen.section("A code for a phone").code(
+            "https://github.com/BandarLabs/Cobalt",
+            "Scan this with a phone to open Cobalt's source.",
+        )
     }
 
     /// The same control, for work whose size the server never sent.
@@ -1700,6 +2145,28 @@ impl Gallery {
             self.chip = (self.chip + 1).min(2);
         } else if action == action_id("toggle-sleep") {
             self.keep_awake = !self.keep_awake;
+        } else if action == action_id("toggle-night") {
+            // Applied the moment it is tapped, as a phone applies a setting.
+            self.night_light = !self.night_light;
+        } else if let Some(index) = SPECIES
+            .iter()
+            .position(|(name, _)| action == action_id(name))
+        {
+            self.species[index] = !self.species[index];
+        } else if action == action_id("species-all") {
+            // A group that is not wholly ticked ticks everything in it, the
+            // way a mixed box does everywhere else.
+            let all = !self.species.iter().all(|ticked| *ticked);
+            self.species = [all; SPECIES.len()];
+        } else if action == action_id("species-clear") {
+            self.species = [false; SPECIES.len()];
+        } else if let Some(index) = CHANNELS
+            .iter()
+            .position(|(name, _, _)| action == action_id(name))
+        {
+            self.channel = index;
+        } else if action == action_id("token-refuse") || action == action_id("token-accept") {
+            self.refused = action == action_id("token-refuse");
         } else if let Some(index) = SORTS.iter().position(|(name, _)| action == action_id(name)) {
             // Choosing an order is the whole of what the menu is for, so the
             // choice closes it as well as making it.
@@ -1819,7 +2286,39 @@ impl Gallery {
             return true;
         }
 
-        false
+        self.zoned(context, action)
+    }
+
+    /// Opens, pages and answers the full-screen zone list.
+    ///
+    /// The list opens on the page holding the zone already chosen, which
+    /// the application works out from the panel and text size alone, the
+    /// same count the runtime pages by.
+    fn zoned(&mut self, context: &mut Context, action: ActionId) -> bool {
+        let metrics = context.metrics();
+        let per_page = kobo_sdk::options_per_page(&metrics, true);
+        let last = kobo_sdk::options_pages(ZONES.len(), &metrics, true).saturating_sub(1);
+        let page = |index: usize| u16::try_from(index).unwrap_or(u16::MAX);
+        if action == action_id("open-zones") {
+            self.zones = Some(page(self.zone / per_page));
+        } else if action == action_id("zones-next") {
+            self.zones = self
+                .zones
+                .map(|shown| page((usize::from(shown) + 1).min(last)));
+        } else if action == action_id("zones-previous") {
+            self.zones = self.zones.map(|shown| shown.saturating_sub(1));
+        } else if let Some(index) =
+            (0..ZONES.len()).find(|index| action == action_id(&format!("zone-{index}")))
+        {
+            // Choosing is the whole of what the list is for, so the choice
+            // closes it as well as making it.
+            self.zone = index;
+            self.zones = None;
+        } else {
+            return false;
+        }
+        self.show(context);
+        true
     }
 
     fn open_group(&mut self, context: &mut Context) {
@@ -1860,8 +2359,9 @@ impl KoboApp for Gallery {
         }
 
         if action == ActionId::BACK {
-            if self.floating.take().is_some() || self.detail {
+            if self.floating.take().is_some() || self.detail || self.zones.is_some() {
                 self.detail = false;
+                self.zones = None;
                 self.show(context);
             }
             return;
@@ -1983,12 +2483,33 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        card, icons, wedge, Gallery, Tab, CARD_HEIGHT, CARD_WIDTH, WEDGE_HEIGHT, WEDGE_WIDTH,
+        card, icons, wedge, Gallery, Tab, CARD_HEIGHT, CARD_WIDTH, WEDGE_HEIGHT, WEDGE_WIDTH, ZONES,
     };
     use kobo_sdk::{
-        action_id, Chrome, Command, Context, DiagnosticSeverity, DisplayMetrics, Glyph, KoboApp,
-        Node, Screen, CLARA_BW_METRICS,
+        action_id, BannerLevel, Chrome, Command, Context, DiagnosticSeverity, DisplayMetrics,
+        FieldKind, Glyph, KoboApp, Node, RowState, Screen, CLARA_BW_METRICS,
     };
+
+    #[test]
+    fn every_sample_names_the_builder_calls_that_drew_it() {
+        for (tab, _, _) in Tab::ALL {
+            for page in 0..tab.pages().len() {
+                for part in Gallery::parts(tab, page) {
+                    assert!(part.caption().starts_with("Built with ."), "{tab:?} {page}");
+                }
+            }
+        }
+        let gallery = Gallery {
+            tab: Tab::Lists,
+            page: [0, 2, 0, 0, 0],
+            ..Gallery::default()
+        };
+        let screen = painted(&gallery, CLARA_BW_METRICS);
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Secondary { text, .. } if text.contains(".board_with_selection()")
+        )));
+    }
 
     /// Paints one page and hands back what was drawn.
     ///
@@ -2072,6 +2593,24 @@ mod tests {
                     gallery.floating = Some(super::Floating::Confirm);
                     screens.push(("page-input-confirm".to_owned(), painted(&gallery)));
                     gallery.floating = None;
+                }
+                if tab == Tab::Input && index == 2 {
+                    // The refused field is a page too, and so is every page
+                    // of the long zone list.
+                    gallery.refused = true;
+                    screens.push(("page-input-refused".to_owned(), painted(&gallery)));
+                    for panel in 1..gallery.panels(metrics, index).len() {
+                        gallery.shown = panel;
+                        screens.push((format!("page-input-refused-{panel}"), painted(&gallery)));
+                    }
+                    gallery.shown = 0;
+                    gallery.refused = false;
+                    let pages = kobo_sdk::options_pages(super::ZONES.len(), &metrics, true);
+                    for page in 0..pages {
+                        gallery.zones = Some(u16::try_from(page).expect("a page"));
+                        screens.push((format!("page-zones-{page}"), painted(&gallery)));
+                    }
+                    gallery.zones = None;
                 }
                 if tab == Tab::Input && index == 3 {
                     gallery.floating = Some(super::Floating::Menu);
@@ -2313,6 +2852,11 @@ mod tests {
             "Button",
             "Splash",
             "Overlay",
+            "Toggle",
+            "SelectionBar",
+            "Options",
+            "Code",
+            "Steps",
         ] {
             assert!(
                 drawn.iter().any(|kind| kind == wanted),
@@ -2346,6 +2890,143 @@ mod tests {
                 .any(|row| matches!(row.lead, kobo_sdk::RowLead::Picture(..))),
             "no row is drawn with a cover"
         );
+    }
+
+    /// Every state the protocol 16 controls can be in is on a panel here,
+    /// not only every node: a box ticked, unticked and mixed, a row's button
+    /// and count, a field with every part, and a banner of each new level.
+    #[test]
+    fn every_new_control_state_is_drawn_somewhere() {
+        let rows = every_page(CLARA_BW_METRICS)
+            .into_iter()
+            .flat_map(|(_, screen)| screen.nodes)
+            .filter_map(|node| match node {
+                Node::Rows { rows, .. } => Some(rows),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        for state in [RowState::Checked, RowState::Unchecked, RowState::Mixed] {
+            assert!(
+                rows.iter().any(|row| row.state == state),
+                "no row is drawn {state:?}"
+            );
+        }
+        assert!(
+            rows.iter().any(|row| row.button.is_some()),
+            "no row is drawn with a button"
+        );
+        assert!(
+            rows.iter().any(|row| row.badge.is_some()),
+            "no row is drawn with a badge"
+        );
+        let nodes = every_page(CLARA_BW_METRICS)
+            .into_iter()
+            .flat_map(|(_, screen)| screen.nodes)
+            .collect::<Vec<_>>();
+        assert!(
+            nodes.iter().any(|node| matches!(
+                node,
+                Node::Field {
+                    label: Some(_),
+                    hint: Some(_),
+                    error: Some(_),
+                    kind: FieldKind::Secret,
+                    ..
+                }
+            )),
+            "no field is drawn with a label, a hint and an error"
+        );
+        for level in [BannerLevel::Success, BannerLevel::Error] {
+            assert!(
+                nodes.iter().any(
+                    |node| matches!(node, Node::Banner { level: drawn, .. } if *drawn == level)
+                ),
+                "no banner is drawn at {level:?}"
+            );
+        }
+        assert!(
+            nodes.iter().any(|node| matches!(
+                node,
+                Node::Banner {
+                    action: Some(_),
+                    ..
+                }
+            )),
+            "no banner is drawn with an action"
+        );
+    }
+
+    /// A toggle applies on the tap, as a phone's setting does, and only the
+    /// toggle that was tapped changes.
+    #[test]
+    fn tapping_a_toggle_switches_it_and_nothing_else() {
+        let (mut gallery, mut context) = on_the_buttons_page();
+        assert!(gallery.night_light);
+        let keep_awake = gallery.keep_awake;
+        gallery.on_action(&mut context, action_id("toggle-night"));
+        assert!(!gallery.night_light);
+        assert_eq!(gallery.keep_awake, keep_awake);
+        // The disabled one is drawn but answers nothing, so no handler moves.
+        gallery.on_action(&mut context, action_id("toggle-sync"));
+        assert!(!gallery.night_light);
+    }
+
+    /// Ticking a row changes the count on the bar, and the group row says
+    /// whether some, all or none of its members are ticked.
+    #[test]
+    fn ticking_rows_moves_the_count_and_the_group_box() {
+        let mut gallery = Gallery::default();
+        let runner = kobo_sdk::AppRunner::new(Gallery::default());
+        let mut context = runner.context();
+        let drawn = |gallery: &Gallery| {
+            let screen =
+                Gallery::selection_page(gallery, kobo_sdk::ScreenBuilder::new("x")).build();
+            let group = screen.nodes.iter().find_map(|node| match node {
+                Node::Rows { rows, .. } => rows
+                    .iter()
+                    .find(|row| row.action == action_id("species-all"))
+                    .map(|row| row.state),
+                _ => None,
+            });
+            let count = screen.nodes.iter().find_map(|node| match node {
+                Node::SelectionBar { count, .. } => Some(*count),
+                _ => None,
+            });
+            (group, count)
+        };
+        assert_eq!(drawn(&gallery), (Some(RowState::Mixed), Some(1)));
+        gallery.on_action(&mut context, action_id("species-all"));
+        assert_eq!(gallery.species, [true; 2]);
+        assert_eq!(drawn(&gallery), (Some(RowState::Checked), Some(2)));
+        gallery.on_action(&mut context, action_id("species-clear"));
+        assert_eq!(drawn(&gallery), (Some(RowState::Unchecked), Some(0)));
+        gallery.on_action(&mut context, action_id("species-robin"));
+        assert_eq!(gallery.species, [false, true]);
+    }
+
+    /// The long list opens on the page holding the answer, turns, and closes
+    /// when a zone is chosen.
+    #[test]
+    fn the_zone_list_opens_on_its_answer_turns_and_closes_on_a_choice() {
+        let mut gallery = Gallery::default();
+        let runner = kobo_sdk::AppRunner::new(Gallery::default());
+        let mut context = runner.context();
+        gallery.zone = 13;
+        gallery.on_action(&mut context, action_id("open-zones"));
+        let per_page = kobo_sdk::options_per_page(&context.metrics(), true);
+        let opened = u16::try_from(13 / per_page).unwrap();
+        assert_eq!(gallery.zones, Some(opened));
+        gallery.on_action(&mut context, action_id("zones-previous"));
+        assert_eq!(gallery.zones, Some(opened.saturating_sub(1)));
+        for _ in 0..ZONES.len() {
+            gallery.on_action(&mut context, action_id("zones-next"));
+        }
+        let last = kobo_sdk::options_pages(ZONES.len(), &context.metrics(), true) - 1;
+        assert_eq!(gallery.zones, Some(u16::try_from(last).unwrap()));
+        gallery.on_action(&mut context, action_id("zone-3"));
+        assert_eq!(gallery.zone, 3);
+        assert_eq!(gallery.zones, None);
     }
 
     /// Leaving a tab and coming back returns to the page that was open.
@@ -2569,10 +3250,11 @@ mod tests {
         let mut gallery = Gallery::default();
         let mut context = Context::default();
         gallery.on_action(&mut context, action_id("file-other"));
-        for key in ["kb.r0c0", "kb.r0c1"] {
-            gallery.on_action(&mut context, action_id(key));
-        }
-        gallery.on_action(&mut context, action_id("kb.enter"));
+        assert!(
+            kobo_sdk::keyboard::testing::asked(&context.take_commands()).is_some(),
+            "the runtime is asked for the field"
+        );
+        kobo_sdk::keyboard::testing::type_text(&mut gallery, &mut context, "qw");
         assert_eq!(gallery.answer.as_deref(), Some("qw"));
         assert!(!gallery.entry.is_open());
     }

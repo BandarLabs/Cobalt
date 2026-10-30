@@ -12,17 +12,19 @@ use kobo_flashcards_import::{
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const NOTICE: &str = "flashcards-import is an unofficial host-only converter for the documented legacy Anki package subset. It links pinned Anki rslib under AGPL-3.0-or-later, is not affiliated with Ankitects, and contains no upstream logos. Its Cobalt bundle output is neutral and the Kobo app links no Anki code.";
-const FORMATS: &str = "Supported imports: legacy APKG (merge) and COLPKG (explicit replace).
-The archive must contain one collection.anki2 or collection.anki21 SQLite file,
-a legacy JSON media map, and collection schema 11 or 14 through 18.
+const NOTICE: &str = "flashcards-import is an unofficial host-only converter for the documented Anki package subset. It links pinned Anki rslib under AGPL-3.0-or-later, is not affiliated with Ankitects, and contains no upstream logos. Its Cobalt bundle output is neutral and the Kobo app links no Anki code.";
+const FORMATS: &str = "Supported imports: APKG (merge) and COLPKG (explicit replace), as Anki
+exports them today, with or without Support older Anki versions ticked, and
+from older Anki releases. Collection schema 11 or 14 through 18.
 
-Not supported: modern collection.anki21b/meta packages, schemas 12 and 13,
+Not supported: packages from an Anki newer than this helper knows (tick
+Support older Anki versions in Anki's export window), schemas 12 and 13,
 encrypted archives, JavaScript or add-on template filters. Used media must be
 supported by the reader; a card side with multiple images is refused.
 
-The reader reviews the imported due queue. Grades are saved to a separate
-Cobalt review log; exporting that log does not update Anki scheduling.
+The reader starts from the imported due queue and schedules every card it
+grades itself. Grades are saved to a separate Cobalt review log; exporting
+that log does not update Anki scheduling.
 For full limits, see docs/FLASHCARDS_COMPATIBILITY.md.";
 const ANKI_NOTICE: &str = include_str!("../../../licenses/NOTICE-Flashcards-Anki.md");
 const ANKI_LICENSE: &str = include_str!("../../../licenses/LICENSE-Anki.txt");

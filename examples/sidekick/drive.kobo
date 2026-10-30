@@ -1,11 +1,30 @@
 # Pairing asks for the daemon address first, then the six-character code.
 wait-for Sidekick
 expect Pair with your computer
+expect Run kobo sidekick init on your computer. It pairs this reader for you.
+expect Or type the address it shows
 clean
 shot sidekick-address
+# The field raises the reader's own keyboard, which keeps the steps.
+tap-id address.box
+wait-for Next
+clean
+shot sidekick-address-typing
 type example
 tap Next
 wait-for Now the pairing code
 expect The six characters shown beside the address.
 clean
 shot sidekick-code
+
+# Paired without a network: the splash says so rather than claiming to be
+# watching for questions that are going to the terminal instead.
+scenario offline
+type abc234
+tap Pair
+wait-for Not connected
+expect This reader is not on a network.
+expect Change pairing
+expect-missing Watching
+clean
+shot sidekick-not-connected

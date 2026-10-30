@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Play each of the four table games on the panel: take a turn, read what just
-happened, find the legal squares drawn rather than typed, and pick a game up
-again after closing it."""
+"""Play each of the four table games on the panel against the computer: take a
+turn, see the reply marked and named, take both back, find Rules and the menu
+where every game keeps them, pick a game up again after closing it, and play
+a turn between two people."""
 import argparse
 import json
 import os
@@ -96,60 +97,106 @@ def main():
                 return [node for node in layout['nodes']
                         if 'LegalPoint' in node['kind'] or 'Legal square' in str(node['lines'])]
 
+            def marked(layout):
+                """The board squares drawn in their chosen state."""
+                return [node for node in layout['nodes']
+                        if node['kind'].startswith('Cell(') and node['kind'].endswith('true)')]
+
             try:
                 panel = start()
-                drive('wait-for Pass-and-play classics')
+                drive('wait-for Board games')
                 menu = capture('01-the-table')
+                said = words(menu)
                 for game in GAMES:
-                    assert game in words(menu), words(menu)
+                    assert game in said, said
+                assert 'Play the computer' in said, said
                 checks.append('all four games are offered, each by its own name')
 
-                played = {}
                 for at, game in enumerate(GAMES):
                     short = game.split()[0].lower().strip(',')
                     drive(f'tap {game}', 'wait-idle')
-                    capture(f'{at + 2:02d}-{short}-setup')
+                    setup = capture(f'{at + 2:02d}-{short}-setup')
+                    said = words(setup)
+                    # The computer is the opponent a new reader starts with,
+                    # and the two removed dead ends stay removed.
+                    assert 'Computer strength' in said, said
+                    for gone in ('How to play', 'International', '10×10', 'house', 'South'):
+                        assert gone not in said, f'{game}: {gone}: {said}'
                     drive('tap Start game', 'wait-idle')
                     board = capture(f'{at + 2:02d}-{short}-board')
                     said = words(board)
-                    assert 'to move' in said, said
+                    assert 'Your move' in said, said
+                    assert 'Rules' in said and 'Undo' in said, said
                     # A legal destination is a drawn mark rather than whatever
                     # dotted circle the typeface happens to carry.
                     if game in ('Reversi', "Nine Men's Morris"):
                         assert legal_cells(board), f'{game}: no legal square was marked'
-                    played[game] = said
-                    drive('tap back', 'wait-idle')
-                checks.append('each game sets up, says whose move it is and marks where a piece '
-                              'may go')
+                    drive('tap Back', 'wait-idle')
+                checks.append('each game sets up against the computer, says whose move it is, '
+                              'and marks where a piece may go')
 
-                # One real turn, and the board says what just happened.
+                # One real turn: the computer answers without being asked, and
+                # its move is marked on the board and named under the status.
                 drive('tap Reversi', 'wait-idle', 'tap Start game', 'wait-idle')
                 board = capture('06-reversi-before')
+                assert not marked(board), 'a mark before anybody moved'
                 target = legal_cells(board)[0]
                 drive(f"tap-id {target['action']}", 'wait-idle')
                 after = capture('07-reversi-after')
-                assert 'Last:' in words(after), words(after)
-                checks.append('a turn is taken and the board says what it was')
+                said = words(after)
+                assert 'The computer placed the marked disc' in said, said
+                assert 'Your move' in said, said
+                assert len(marked(after)) == 1, marked(after)
+                checks.append('the computer replies at once and its move is marked')
 
-                # Closed and opened again: the game is where it was left.
+                drive('tap Undo', 'wait-idle')
+                undone = capture('08-undone')
+                said = words(undone)
+                assert "Your last move and the computer's reply are taken back." in said, said
+                assert not marked(undone), marked(undone)
+                drive(f"tap-id {target['action']}", 'wait-idle')
+                checks.append('Undo takes back the move and the reply together')
+
+                drive('tap-id game-more', 'wait-idle')
+                more = capture('09-more')
+                said = words(more)
+                assert 'New game' in said and 'Change game' in said, said
+                # A tap beside the open menu closes it and leaves the game alone.
+                drive('tap-at 300,900', 'wait-idle', 'wait-for Your move', 'tap Rules',
+                      'wait-idle')
+                rules = capture('10-rules')
+                assert 'Bracketed discs flip' in words(rules), words(rules)
+                drive('tap Back', 'wait-idle', 'wait-for Your move')
+                checks.append('Rules and the menu sit in the top bar, and Back returns to play')
+
+                # Closed and opened again: the game is where it was left, and
+                # the computer's last move is still marked.
                 stop()
                 panel = start()
-                drive('wait-for Pass-and-play classics')
-                resumed = capture('08-resume-offered')
+                drive('wait-for Board games')
+                resumed = capture('11-resume-offered')
                 assert 'Resume saved game' in words(resumed), words(resumed)
                 drive('tap Resume saved game', 'wait-idle')
-                back = capture('09-resumed')
-                assert 'Last:' in words(back), words(back)
-                checks.append('a game put down mid-turn is picked up where it was left')
+                back = capture('12-resumed')
+                said = words(back)
+                assert 'The computer placed the marked disc' in said, said
+                assert len(marked(back)) == 1, marked(back)
+                checks.append('a game put down is picked up where it was left, mark and all')
 
-                # A board this panel cannot hold says so before it is started.
-                drive('tap back', 'wait-idle', 'tap Draughts', 'wait-idle')
-                drive('tap Rules', 'wait-idle')
-                rules = capture('10-international-refused')
-                said = words(rules)
-                assert 'not playable on this panel' in said, said
-                assert '10×10' in said, said
-                checks.append('the board this panel cannot draw says so on the row that offers it')
+                # Between two people: one tap away, the other player's move is
+                # marked too, and Undo waits for the other player to agree.
+                drive('tap-id game-more', 'wait-idle', 'tap New game', 'wait-idle',
+                      'tap Pass-and-play', 'wait-idle', 'tap Start game', 'wait-idle')
+                board = capture('13-pass-and-play')
+                assert 'Black to move' in words(board), words(board)
+                drive(f"tap-id {legal_cells(board)[0]['action']}", 'wait-idle')
+                passed = capture('14-pass-and-play-after-black')
+                said = words(passed)
+                assert 'Board turned. Pass the reader to White.' in said, said
+                assert 'Black placed the marked disc' in said, said
+                drive('tap Undo', 'wait-idle', 'wait-for The other player taps Undo to agree',
+                      'tap Undo', 'wait-idle', 'wait-for The last move is taken back.')
+                checks.append('pass-and-play is one tap away and its undo needs both players')
 
                 (output/'result.json').write_text(json.dumps({
                     'status': 'passed', 'scale': args.scale,

@@ -25,9 +25,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "ammonia"
-version = "4.1.4"
+version = "4.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc6d763210e2eb7670d1a5183a08bebefa3f97db2a738a684f2ce00bd49f681d"
+checksum = "2f6660fb4ff692ef4937b1b4e74ab3d378653d8588389587d91f96a296907ea0"
 dependencies = [
  "cssparser",
  "html5ever",
@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-doc"
-version = "0.3.27"
+version = "0.3.31"
 dependencies = [
  "kobo-html",
  "miniz_oxide 0.9.1",
@@ -1588,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "kobo-flashcards-format"
-version = "0.3.27"
+version = "0.3.31"
 dependencies = [
  "flate2",
  "kobo-image",
@@ -1615,6 +1615,7 @@ dependencies = [
  "kobo-flashcards-format",
  "kobo-html",
  "kobo-image",
+ "prost",
  "rusqlite",
  "serde",
  "serde_json",
@@ -1622,22 +1623,23 @@ dependencies = [
  "tokio",
  "unicase",
  "zip 2.4.2",
+ "zstd",
 ]
 
 [[package]]
 name = "kobo-html"
-version = "0.3.27"
+version = "0.3.31"
 
 [[package]]
 name = "kobo-image"
-version = "0.3.27"
+version = "0.3.31"
 dependencies = [
  "image",
 ]
 
 [[package]]
 name = "kobo-text"
-version = "0.3.27"
+version = "0.3.31"
 dependencies = [
  "fontdue",
  "kobo-ui",
@@ -1647,8 +1649,9 @@ dependencies = [
 
 [[package]]
 name = "kobo-ui"
-version = "0.3.27"
+version = "0.3.31"
 dependencies = [
+ "qrcodegen",
  "unicode-segmentation",
  "unicode-width",
 ]
@@ -2399,9 +2402,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.13.4"
+version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
+checksum = "278e9268c93b9e498a2da46c34d90ba93a3255eb99009646398f34bc73ab36eb"
 dependencies = [
  "bitflags 2.13.1",
  "getopts",
@@ -2421,6 +2424,12 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "qrcodegen"
+version = "1.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4339fc7a1021c9c1621d87f5e3505f2805c8c105420ba2f2a4df86814590c142"
 
 [[package]]
 name = "quote"
@@ -3194,7 +3203,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys",
@@ -4293,9 +4302,9 @@ dependencies = [
 
 [[package]]
 name = "zstd-sys"
-version = "2.1.0+zstd.1.5.7"
+version = "2.1.2+zstd.1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ef0a8027ec3ee71300ab3bcbcd0393f434aa72b91ca6d635a39941deae8eea0"
+checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
 dependencies = [
  "cc",
  "pkg-config",

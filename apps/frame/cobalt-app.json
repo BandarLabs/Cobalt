@@ -2,10 +2,10 @@
   "id": "frame",
   "display_name": "Frame",
   "short_label": "Frame",
-  "summary": "Show photos from your computer as a slideshow, with the screen on or waking on a schedule.",
+  "summary": "Show photos from your computer as a slideshow, with the screen on or waking on a schedule. Needs your computer.",
   "page_description": "Turn a Kobo into a low-power black-and-white photo frame. Send albums from your computer, then choose a slideshow that keeps the screen on or wakes the reader every few hours.",
-  "version": "1.2.3",
-  "release_notes": "An empty frame lists kobo pair, kobo frame init and kobo frame push as commands, with no IP address to look up.",
+  "version": "1.2.6",
+  "release_notes": "Shuffle is now a switch in Settings, and Check for photos stays at the foot of an empty frame at every text size.",
   "glyph": "app",
   "capabilities": [
     "keep-awake",
@@ -14,15 +14,11 @@
   "setup": {
     "steps": [
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Create Frame's photo folder on the reader.",
-        "command": "kobo frame init"
-      },
-      {
-        "text": "Send a photo or a folder of photos.",
+        "text": "Send a photo or a folder of photos. Each push adds to the frame, and Frame shows new photos the next time it changes photo or you come back to it.",
         "command": "kobo frame push ~/Pictures/family"
       }
     ]

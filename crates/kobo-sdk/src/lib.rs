@@ -6,8 +6,12 @@
 //! [`AppRunner::action`] from their platform event loop.
 
 #[cfg(test)]
+mod banner_pagination_tests;
+#[cfg(test)]
 mod callback_scale_tests;
 pub mod collections;
+#[cfg(test)]
+mod controls_fit_tests;
 #[cfg(test)]
 mod load_result_tests;
 #[cfg(test)]
@@ -27,6 +31,7 @@ pub use kobo_protocol::{
     MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK,
     MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
+pub use kobo_protocol::{SecretTarget, TextOutcome, TEXT_ENTRY_VERSION};
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     document_preview, stamp_format_badge, terminal_grid, terminal_grid_for, typographic_cover,
@@ -39,6 +44,12 @@ pub use kobo_ui::{
     TileShape, TileState, TopBar, TransferFailure, CLARA_BW_METRICS, MAX_BAND_SLOTS, MAX_CELLS,
     MAX_CHIPS, MAX_CHOICE_OPTIONS, MAX_COLUMNS, MAX_INLINE_FORMULAE, MAX_QUOTE_DEPTH, MAX_ROWS,
     MAX_TABS, MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, TILE_BADGE_LIMIT,
+};
+/// The runtime-drawn controls of protocol 16, and the limits that fix their
+/// footprints.
+pub use kobo_ui::{
+    options_pages, options_per_page, FieldKind, OptionRow, RowEdge, MAX_CODE_BYTES, MAX_OPTIONS,
+    MAX_OPTIONS_PER_PAGE, MAX_SELECTION_ACTIONS, MAX_STEPS,
 };
 pub use kobo_ui::{PencilBoard, PencilEdge, PencilMark, PencilMarkKind};
 use std::collections::BTreeMap;
@@ -60,7 +71,9 @@ mod builder;
 pub mod credentials;
 pub mod entropy;
 pub mod exports;
+pub mod failure;
 pub mod feedback;
+pub mod game;
 pub mod imports;
 /// Common application and builder types.
 pub mod keyboard;
@@ -845,6 +858,10 @@ impl Context {
 
     /// Paginates rows below an attention banner, reserving its measured height.
     /// Use `nav_bar` when a fixed bottom action is also present.
+    ///
+    /// Measures the words of an info or attention banner. A banner with an
+    /// action, or a success or error banner with its mark, is taller: use
+    /// [`Self::paginate_rows_below_banner`] for those.
     #[must_use]
     pub fn paginate_rows_below_notice(
         &self,
@@ -852,20 +869,13 @@ impl Context {
         nav_bar: bool,
         notice: Option<&str>,
     ) -> Vec<Vec<usize>> {
-        kobo_ui::with_text_scale(self.metrics.text_scale, || {
-            let mut area = self.paged_area(nav_bar);
-            if let Some(notice) = notice {
-                area.height = area
-                    .height
-                    .saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics))
-                    .saturating_sub(area.gap)
-                    .max(1);
-            }
-            kobo_ui::paginate_rows(rows, &self.metrics, area)
-        })
+        self.paginate_rows_below_banner(rows, nav_bar, notice.map(BannerShape::from))
     }
 
     /// Paginates rows with overflow menus beneath a measured notice.
+    ///
+    /// As [`Self::paginate_rows_below_notice`]; for a banner with an action
+    /// or a mark use [`Self::paginate_rows_with_menu_below_banner`].
     #[must_use]
     pub fn paginate_rows_with_menu_below_notice(
         &self,
@@ -873,17 +883,116 @@ impl Context {
         nav_bar: bool,
         notice: Option<&str>,
     ) -> Vec<Vec<usize>> {
+        self.paginate_rows_with_menu_below_banner(rows, nav_bar, notice.map(BannerShape::from))
+    }
+
+    /// Paginates rows below a banner, reserving all of its height: the words,
+    /// the mark a success or an error banner sets ahead of them, and the line
+    /// its action takes. Use `nav_bar` when a fixed bottom action is also
+    /// present.
+    ///
+    /// This is what lets a retry sit on the banner that explains the failure
+    /// over a list that pages.
+    #[must_use]
+    pub fn paginate_rows_below_banner(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        banner: Option<BannerShape<'_>>,
+    ) -> Vec<Vec<usize>> {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
-            let mut area = self.paged_area(nav_bar);
-            if let Some(notice) = notice {
-                area.height = area
-                    .height
-                    .saturating_sub(kobo_ui::banner_height(notice, area.width, &self.metrics))
-                    .saturating_sub(area.gap)
-                    .max(1);
-            }
-            kobo_ui::paginate_rows_with_menu(rows, &self.metrics, area)
+            kobo_ui::paginate_rows(rows, &self.metrics, self.area_below(nav_bar, banner))
         })
+    }
+
+    /// The same, for rows that carry an overflow mark.
+    #[must_use]
+    pub fn paginate_rows_with_menu_below_banner(
+        &self,
+        rows: &[(&str, &str)],
+        nav_bar: bool,
+        banner: Option<BannerShape<'_>>,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_rows_with_menu(rows, &self.metrics, self.area_below(nav_bar, banner))
+        })
+    }
+
+    /// The same, for rows that carry a button, a count, a menu or a value at
+    /// their right edge, each described by its own [`RowEdge`].
+    ///
+    /// A row button and a badge each keep a column the title cannot use, so a
+    /// list measured as though they were not there packs a row too many and
+    /// draws it under the bar. Rows without anything at the edge pass
+    /// `RowEdge::new()`.
+    #[must_use]
+    pub fn paginate_rows_with_edges_below_banner(
+        &self,
+        rows: &[(&str, &str, RowEdge<'_>)],
+        nav_bar: bool,
+        banner: Option<BannerShape<'_>>,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            kobo_ui::paginate_rows_with_edges(rows, &self.metrics, self.area_below(nav_bar, banner))
+        })
+    }
+
+    /// The same, under a built prefix rather than a banner, as
+    /// [`Self::paginate_rows_under`] measures it.
+    #[must_use]
+    pub fn paginate_rows_with_edges_under(
+        &self,
+        rows: &[(&str, &str, RowEdge<'_>)],
+        nav_bar: bool,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let used = placed
+                .layout_with(&self.metrics, &Chrome::measuring(true))
+                .content_used();
+            let mut area = self.area_for(nav_bar, position);
+            area.height = area
+                .height
+                .saturating_sub(used.saturating_add(area.gap))
+                .max(0);
+            kobo_ui::paginate_rows_with_edges(rows, &self.metrics, area)
+        })
+    }
+
+    /// `text` cut to at most `lines` lines of a row with `edge` at its right
+    /// edge, measured at the width the title will really have there.
+    #[must_use]
+    pub fn clamped_row_with_edge(
+        &self,
+        text: &str,
+        lines: usize,
+        nav_bar: bool,
+        edge: RowEdge<'_>,
+    ) -> String {
+        kobo_ui::with_text_scale(self.metrics.text_scale, || {
+            let area = self.metrics.prose_area(true, nav_bar);
+            kobo_ui::clamp_lines(
+                text,
+                kobo_ui::row_title_width_at_edge(&self.metrics, area, edge),
+                kobo_ui::FontSize::Body,
+                lines,
+            )
+        })
+    }
+
+    /// The page a list gets under `banner`, less the banner and the gap after
+    /// it.
+    fn area_below(&self, nav_bar: bool, banner: Option<BannerShape<'_>>) -> ProseArea {
+        let mut area = self.paged_area(nav_bar);
+        if let Some(banner) = banner {
+            area.height = area
+                .height
+                .saturating_sub(banner.height(area.width, &self.metrics))
+                .saturating_sub(area.gap)
+                .max(1);
+        }
+        area
     }
 
     /// The content area a screen that pages actually gets.
@@ -1303,6 +1412,12 @@ impl Context {
                     );
                 }
             }
+        }
+        // A text field drawn open on this screen is asked for ahead of it, so
+        // the runtime puts its keyboard up without first painting the screen
+        // underneath that the keyboard is about to cover.
+        if let Some(request) = keyboard::runtime::take_drawn() {
+            self.commands.push(Command::Device(request));
         }
         self.commands.push(Command::SetScreen(screen));
     }
@@ -1919,6 +2034,57 @@ pub enum Position {
     AtTheFoot,
     /// Anywhere but there, so no strip is reserved.
     Elsewhere,
+}
+
+/// A banner as the paginators measure it: its level, its words, and whether
+/// it carries an action.
+///
+/// The height of a banner is more than its words. A success or an error
+/// banner sets a mark ahead of them, so they wrap narrower, and an action
+/// from [`ScreenBuilder::banner_action`] takes a line of its own underneath.
+/// A list paged under the words alone came out a line too long for each, and
+/// its last row went under the bar, which is why retries were left off the
+/// banners that explain them. Describe the banner the way the screen builds
+/// it, and pass the same words.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BannerShape<'a> {
+    level: BannerLevel,
+    text: &'a str,
+    action: bool,
+}
+
+impl<'a> BannerShape<'a> {
+    /// A banner of `level` saying `text`, with no action.
+    #[must_use]
+    pub const fn new(level: BannerLevel, text: &'a str) -> Self {
+        Self {
+            level,
+            text,
+            action: false,
+        }
+    }
+
+    /// The same banner, carrying an action on the line under its words.
+    ///
+    /// The label is not needed: the line is a finger high whatever it says.
+    #[must_use]
+    pub const fn with_action(mut self) -> Self {
+        self.action = true;
+        self
+    }
+
+    /// The height this banner takes on a page `width` wide.
+    fn height(&self, width: i32, metrics: &DisplayMetrics) -> i32 {
+        kobo_ui::banner_height_with(self.text, self.level, self.action, width, metrics)
+    }
+}
+
+/// Plain words, measured as the `_below_notice` paginators always measured
+/// them: an info or attention banner with no action.
+impl<'a> From<&'a str> for BannerShape<'a> {
+    fn from(text: &'a str) -> Self {
+        Self::new(BannerLevel::Info, text)
+    }
 }
 
 /// Written out rather than derived, because a derived one would tick every
@@ -2777,6 +2943,10 @@ pub struct AppRunner<A> {
     metrics: DisplayMetrics,
     started: bool,
     pending: VecDeque<DeviceRequest>,
+    /// Text fields the runtime is holding open for this application. Kept
+    /// out of `pending` because their answers do not arrive in turn: see
+    /// [`Self::device_result`].
+    pending_text: usize,
     /// Store requests sent but not yet answered. Every request is answered
     /// exactly once, in request order. Save keys are retained because denied
     /// results carry no key. Payloads are never copied into this queue.
@@ -2836,6 +3006,7 @@ impl<A: KoboApp> AppRunner<A> {
             metrics: DisplayMetrics::default(),
             started: false,
             pending: VecDeque::new(),
+            pending_text: 0,
             pending_stores: VecDeque::new(),
             next_task: 0,
             in_flight: 0,
@@ -2950,10 +3121,68 @@ impl<A: KoboApp> AppRunner<A> {
     /// Answers arrive in request order on a single ordered stream. An answer
     /// with nothing outstanding is ignored rather than mismatched.
     pub fn device_result(&mut self, result: DeviceResult) -> Vec<Command> {
+        // A text field's answer is matched by its shape, not its place in the
+        // queue: the field stays open for as long as the owner takes, and the
+        // answers to everything asked meanwhile arrive before it.
+        if let DeviceResult::Text(outcome) = result {
+            if self.pending_text == 0 {
+                return Vec::new();
+            }
+            self.pending_text -= 1;
+            keyboard::runtime::answer(outcome);
+            // The runtime was showing its field, not this application's
+            // screen, so the next screen is sent even if it is the same one.
+            self.displayed = None;
+            return self.dispatch(|app, context| app.on_action(context, keyboard::answered()));
+        }
         let Some(request) = self.pending.pop_front() else {
             return Vec::new();
         };
         self.dispatch(|app, context| app.on_device_result(context, request, result))
+    }
+
+    /// Answers the text field the application has open, as if the owner had
+    /// typed `text` on the runtime's keyboard and submitted it.
+    ///
+    /// For an application's tests, which have no runtime to draw the field.
+    /// See [`keyboard::testing`] for one that drives the application
+    /// directly rather than through a runner.
+    ///
+    /// # Panics
+    ///
+    /// When the application has no field open.
+    pub fn type_text(&mut self, text: &str) -> Vec<Command> {
+        self.answer_text(kobo_protocol::TextOutcome::Typed(text.to_owned()))
+    }
+
+    /// Backs out of the text field the application has open, as if the owner
+    /// had tapped Back on the runtime's keyboard.
+    ///
+    /// # Panics
+    ///
+    /// When the application has no field open.
+    pub fn cancel_text(&mut self) -> Vec<Command> {
+        self.answer_text(kobo_protocol::TextOutcome::Cancelled)
+    }
+
+    /// Answers the newest text field the application has open with
+    /// `outcome`, cancelling any older one first, which is the order the
+    /// runtime answers in.
+    ///
+    /// # Panics
+    ///
+    /// When the application has no field open, which is a test that typed
+    /// before tapping whatever opens one.
+    pub fn answer_text(&mut self, outcome: kobo_protocol::TextOutcome) -> Vec<Command> {
+        assert!(self.pending_text > 0, "no text field is open to answer");
+        let mut commands = Vec::new();
+        for _ in 1..self.pending_text {
+            commands.extend(
+                self.device_result(DeviceResult::Text(kobo_protocol::TextOutcome::Cancelled)),
+            );
+        }
+        commands.extend(self.device_result(DeviceResult::Text(outcome)));
+        commands
     }
 
     /// Delivers the outcome of one task.
@@ -3067,7 +3296,7 @@ impl<A: KoboApp> AppRunner<A> {
     /// The device requests still awaiting an answer, oldest first.
     #[must_use]
     pub fn outstanding_requests(&self) -> usize {
-        self.pending.len()
+        self.pending.len() + self.pending_text
     }
 
     /// Every answer the runtime still owes this application.
@@ -3077,7 +3306,7 @@ impl<A: KoboApp> AppRunner<A> {
     /// the runtime rather than the clean shutdown it looks like from here.
     #[must_use]
     pub fn outstanding_answers(&self) -> usize {
-        self.pending.len() + self.pending_stores.len()
+        self.pending.len() + self.pending_text + self.pending_stores.len()
     }
 
     #[must_use]
@@ -3151,6 +3380,7 @@ impl<A: KoboApp> AppRunner<A> {
         });
         for command in &commands {
             match command {
+                Command::Device(DeviceRequest::TypeText { .. }) => self.pending_text += 1,
                 Command::Device(request) => self.pending.push_back(request.clone()),
                 Command::Store(request) => {
                     self.pending_stores.push_back(match request {

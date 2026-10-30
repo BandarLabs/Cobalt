@@ -1,30 +1,51 @@
 # Simulator recorders pin this day; the answer is gravy.
-expect Inkling
-tap How to play
-expect Find the five-letter word
-wait 250
+wait-for Inkling
+expect-missing Shapes, not color
+expect-missing Enter guess
+tap Rules
+expect Filled: right spot
+expect Hard mode
+expect Guesses can leave out letters found.
 clean
 shot inkling-help
 tap Play
-tap Enter guess
+# The board stays in view while typing, and a refused word stays typed.
+# Where the keys and the board do not fit together, as at the largest text
+# size, Type a guess opens the keys on a screen of their own.
+maybe-tap-id enter
+type zzzzz
+tap Guess
+expect Not in the word list
+maybe-tap-id enter
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
 type crane
 tap Guess
 expect 1 of 6
-tap Enter guess
-expect Placed: _RA__
+expect Right spot: _RA__
 clean
 shot inkling-knowledge
+tap-id game-more
+expect New game
+expect-missing Hard mode
+tap Statistics
+expect Played 0. Won 0.
+tap Play
+maybe-tap-id enter
 type gravy
 tap Guess
 expect Solved
 clean
 shot inkling-solved
-tap Stats
+tap Statistics
 expect Played 1. Won 1.
 clean
 shot inkling-stats
 tap Play
-tap Archive
+tap Play an earlier day
 expect August 31, 2026
 tap August 31, 2026
 expect Archive puzzle

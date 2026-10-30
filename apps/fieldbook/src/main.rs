@@ -3,18 +3,21 @@
 //! sightings are recorded locally and never need a connection.
 mod shelf;
 
-use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Chrome, Context, DisplayMetrics, Glyph, KoboApp,
-    LayoutIssueKind, PictureHandle, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
-    StoreResult, TilePicture,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, PictureHandle, RowState, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult, TilePicture,
 };
 use shelf::{Attribution, Pack, PhotoCredit, Species, MANIFEST, MAX_MANIFEST};
+use std::collections::BTreeSet;
 use std::process::ExitCode;
 
 const OUTINGS: &str = "outings.v1";
 const SIGHTINGS: &str = "sightings.v1";
+/// The outing still being logged, and the pack it tallies from, so closing
+/// the app or a restart in the field does not end it.
+const OPEN_OUTING: &str = "open-outing.v1";
 const EXPORT: &str = "export-checklist.csv";
 const MAX_STATE: usize = 256 * 1024;
 const ATTRIBUTION: &str = "attribution.json";
@@ -68,23 +71,40 @@ struct Fieldbook {
     view: View,
     packs: Vec<Pack>,
     pack_failures: Vec<(String, String)>,
-    pack_notice: Option<String>,
+    /// What went wrong reading the field packs, at the level its meaning
+    /// asks for: a pack that must be pushed again is an error, a shelf that
+    /// did not open this time something to attend to.
+    pack_notice: Option<(BannerLevel, String)>,
     outings: Vec<Outing>,
     sightings: Vec<Sighting>,
     open_outing: Option<u64>,
+    /// The open outing as last saved, held until outings and packs are read.
+    saved_open: Option<String>,
     pack_pick: Option<usize>,
     detail: Option<Species>,
-    deleted: Option<(usize, Sighting)>,
-    search: Keyboard,
+    /// The sightings the last delete removed, each with the place it held,
+    /// lowest first, so Undo puts every one back where it was.
+    deleted: Vec<(usize, Sighting)>,
+    /// What a search is typed into, on the reader's own keyboard.
+    search: TextEntry,
     query: String,
-    location: Keyboard,
+    /// The name of a new outing's place, on the reader's own keyboard.
+    location: TextEntry,
     naming_location: bool,
     outing_page: usize,
     home_page: usize,
     packs_page: usize,
     sightings_page: usize,
     life_page: usize,
-    delete_candidate: Option<usize>,
+    /// The sightings ticked for removal on the review screen, by index.
+    ///
+    /// Ticked rather than removed one tap and one confirmation at a time,
+    /// because the time a review finds one wrong tally is usually the time
+    /// it finds several: a flock counted twice, or a run of taps on the
+    /// wrong row with gloves on.
+    ticked: BTreeSet<usize>,
+    /// Whether the removal of the ticked sightings is waiting to be confirmed.
+    confirming: bool,
     save: SaveState,
     manifest_load: Option<ShelfDownload>,
     loads: Loads,
@@ -104,19 +124,21 @@ impl Default for Fieldbook {
             outings: Vec::new(),
             sightings: Vec::new(),
             open_outing: None,
+            saved_open: None,
             pack_pick: None,
             detail: None,
-            deleted: None,
-            search: Keyboard::new(),
+            deleted: Vec::new(),
+            search: TextEntry::new(),
             query: String::new(),
-            location: Keyboard::new(),
+            location: TextEntry::new(),
             naming_location: false,
             outing_page: 0,
             home_page: 0,
             packs_page: 0,
             sightings_page: 0,
             life_page: 0,
-            delete_candidate: None,
+            ticked: BTreeSet::new(),
+            confirming: false,
             save: SaveState::Idle,
             manifest_load: None,
             loads: Loads::default(),
@@ -129,25 +151,7 @@ impl Default for Fieldbook {
 }
 
 fn reader_clock() -> Box<dyn Clock> {
-    let minutes = std::env::var("KOBO_UTC_OFFSET_MINUTES")
-        .ok()
-        .and_then(|value| value.parse::<i16>().ok())
-        .unwrap_or(0);
-    SystemClock::new(minutes)
-        .or_else(|_| SystemClock::new(0))
-        .map_or_else(
-            |_| {
-                Box::new(
-                    ManualClock::new(Snapshot {
-                        unix_millis: 0,
-                        monotonic_millis: 0,
-                        utc_offset_minutes: 0,
-                    })
-                    .expect("a valid fixed clock"),
-                ) as Box<dyn Clock>
-            },
-            |clock| Box::new(clock) as Box<dyn Clock>,
-        )
+    Box::new(SystemClock::reader())
 }
 
 /// Date as MM/DD/YYYY, the shape the checklist import expects.
@@ -198,6 +202,7 @@ impl Fieldbook {
     fn start_when_ready(&mut self, context: &mut Context) {
         if self.loads.manifest && self.loads.state && !self.loads.started {
             self.loads.started = true;
+            self.restore_open();
             self.show(context);
         }
     }
@@ -215,6 +220,10 @@ impl Fieldbook {
         match load.advance(context, result) {
             ShelfProgress::Done => {
                 let bytes = self.manifest_load.take().expect("active manifest").take();
+                let picked = self
+                    .pack_pick
+                    .and_then(|index| self.packs.get(index))
+                    .map(|pack| pack.id.clone());
                 match shelf::Shelf::decode(&bytes) {
                     Ok(decoded) => {
                         self.pack_failures = decoded
@@ -223,6 +232,8 @@ impl Fieldbook {
                             .map(|failure| (failure.input.clone(), failure.reason.clone()))
                             .collect();
                         self.packs = decoded.packs;
+                        self.pack_pick =
+                            picked.and_then(|id| self.packs.iter().position(|pack| pack.id == id));
                         self.pack_notice = None;
                         if self
                             .packs
@@ -234,7 +245,10 @@ impl Fieldbook {
                     }
                     Err(error) => {
                         self.packs.clear();
-                        self.pack_notice = Some(format!("Field packs need re-pushing: {error}"));
+                        self.pack_notice = Some((
+                            BannerLevel::Error,
+                            format!("Field packs need re-pushing: {error}"),
+                        ));
                     }
                 }
                 self.loads.manifest = true;
@@ -250,7 +264,10 @@ impl Fieldbook {
             ShelfProgress::Failed(_) => {
                 self.manifest_load = None;
                 self.loads.manifest = true;
-                self.pack_notice = Some("The field pack shelf could not be opened.".to_owned());
+                self.pack_notice = Some((
+                    BannerLevel::Attention,
+                    "The field pack shelf could not be opened.".to_owned(),
+                ));
                 self.start_when_ready(context);
                 true
             }
@@ -374,6 +391,40 @@ impl Fieldbook {
             .collect::<Vec<_>>()
             .join("\n");
         context.store().save(SIGHTINGS, sightings.into_bytes());
+        self.persist_open(context);
+    }
+
+    /// Writes which outing is open, or that none is.
+    fn persist_open(&self, context: &mut Context) {
+        let open = self.open_outing.map_or_else(String::new, |id| {
+            let pack = self
+                .pack_pick
+                .and_then(|index| self.packs.get(index))
+                .map_or("", |pack| pack.id.as_str());
+            format!("{id}|{pack}")
+        });
+        context.store().save(OPEN_OUTING, open.into_bytes());
+    }
+
+    /// Puts back the outing that was open when the app last stopped, once
+    /// both the outings and the packs are known.
+    fn restore_open(&mut self) {
+        let Some(saved) = self.saved_open.take() else {
+            return;
+        };
+        let mut parts = saved.splitn(2, '|');
+        let Some(id) = parts.next().and_then(|id| id.parse::<u64>().ok()) else {
+            return;
+        };
+        if !self.outings.iter().any(|outing| outing.id == id) {
+            return;
+        }
+        self.open_outing = Some(id);
+        let pack = parts.next().unwrap_or("");
+        self.pack_pick = self
+            .packs
+            .iter()
+            .position(|known| !pack.is_empty() && known.id == pack);
     }
 
     fn open(&self) -> Option<&Outing> {
@@ -381,6 +432,10 @@ impl Fieldbook {
             .and_then(|id| self.outings.iter().find(|outing| outing.id == id))
     }
 
+    /// Every species the outing can tally with one tap: the chosen pack's,
+    /// or every pack's when none was chosen, then birds logged by name
+    /// earlier. The order never changes while a bird is being tallied, so a
+    /// row is where it was a tap ago.
     fn outing_species(&self) -> Vec<Species> {
         if let Some(pick) = self.pack_pick {
             if let Some(pack) = self.packs.get(pick) {
@@ -388,6 +443,13 @@ impl Fieldbook {
             }
         }
         let mut seen: Vec<Species> = Vec::new();
+        for species in self.packs.iter().flat_map(|pack| &pack.species) {
+            if !seen.iter().any(|known| {
+                same_species(&known.code, &known.common, &species.code, &species.common)
+            }) {
+                seen.push(species.clone());
+            }
+        }
         for sighting in &self.sightings {
             if !seen.iter().any(|known| {
                 same_species(&known.code, &known.common, &sighting.code, &sighting.common)
@@ -526,8 +588,10 @@ impl Fieldbook {
 
     fn top(&self, title: &str) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("fieldbook").top_bar(title);
+        // A write the reader refused is lost until something is saved
+        // again, so it is drawn as an error rather than a passing note.
         if self.save == SaveState::Failed {
-            screen = screen.banner(BannerLevel::Attention, "Not saved. The last write failed.");
+            screen = screen.banner(BannerLevel::Error, "Not saved. The last write failed.");
         }
         screen
     }
@@ -539,20 +603,34 @@ impl Fieldbook {
         page: usize,
         bottom_bar: bool,
     ) -> (ScreenBuilder, usize) {
+        let (visible, page, count) =
+            Self::page_of(context, &screen.clone().build(), rows, page, bottom_bar);
+        let screen = screen.rows(visible.iter().map(|&index| rows[index].clone()));
+        (Self::page_controls(screen, page, count), count)
+    }
+
+    /// Which rows land on `page` when the list goes under `placed`, the page
+    /// that actually is, and how many pages there are.
+    fn page_of(
+        context: &Context,
+        placed: &Screen,
+        rows: &[(String, String, String, Glyph)],
+        page: usize,
+        bottom_bar: bool,
+    ) -> (Vec<usize>, usize, usize) {
         let labels = rows
             .iter()
             .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
             .collect::<Vec<_>>();
-        let pages = context.paginate_rows_under(
-            &labels,
-            bottom_bar,
-            kobo_sdk::Position::AtTheFoot,
-            &screen.clone().build(),
-        );
+        let pages =
+            context.paginate_rows_under(&labels, bottom_bar, kobo_sdk::Position::AtTheFoot, placed);
         let count = pages.len().max(1);
         let page = page.min(count - 1);
-        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
-        let mut screen = screen.rows(visible.iter().map(|&index| rows[index].clone()));
+        let visible = pages.get(page).cloned().unwrap_or_default();
+        (visible, page, count)
+    }
+
+    fn page_controls(mut screen: ScreenBuilder, page: usize, count: usize) -> ScreenBuilder {
         if count > 1 {
             screen = screen
                 .page_turns("list-previous", "list-next")
@@ -561,13 +639,13 @@ impl Fieldbook {
                     u16::try_from(count).unwrap_or(u16::MAX),
                 );
         }
-        (screen, count)
+        screen
     }
 
     fn home_screen(&self, context: &Context) -> (Screen, usize) {
         let mut screen = self.top("Fieldbook");
-        if let Some(notice) = &self.pack_notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
+        if let Some((level, notice)) = &self.pack_notice {
+            screen = screen.banner(*level, notice);
         }
         screen = if self.packs.is_empty() {
             screen.secondary("No field pack yet. Send one from a computer with kobo fieldbook push; logging works without one.")
@@ -615,8 +693,8 @@ impl Fieldbook {
         let mut screen = self.top("Field packs");
         if self.packs.is_empty() {
             screen=screen.splash(Some(Glyph::Search),"No field pack yet","Send a pack from a computer with kobo fieldbook push. Sightings logged now stay on this reader and join any pack you import later.");
-            if let Some(notice) = &self.pack_notice {
-                screen = screen.banner(BannerLevel::Attention, notice);
+            if let Some((level, notice)) = &self.pack_notice {
+                screen = screen.banner(*level, notice);
             }
             return (screen.nav_bar(Some(1), Self::tab_bar()).build(), 1);
         }
@@ -645,9 +723,23 @@ impl Fieldbook {
         (screen.nav_bar(Some(1), Self::tab_bar()).build(), count)
     }
 
+    /// Whether there is anything a search could find or log, which is
+    /// whether the search screen offers the keyboard at all.
+    fn searchable(&self) -> bool {
+        !self.packs.is_empty() || self.open_outing.is_some()
+    }
+
+    fn search_guidance(&self) -> &'static str {
+        if self.packs.is_empty() {
+            "Type the species you see."
+        } else {
+            "Type a name, a banding code, or a scientific name."
+        }
+    }
+
     fn search_screen(&self) -> Screen {
-        let mut s = self.top("Search packs");
-        if self.packs.is_empty() && self.open_outing.is_none() {
+        let s = self.top("Search packs");
+        if !self.searchable() {
             return s
                 .splash(
                     Some(Glyph::Search),
@@ -656,59 +748,86 @@ impl Fieldbook {
                 )
                 .build();
         }
+        if self.search.is_open() {
+            return s
+                .text_entry_with_hint(&self.search, "Species", self.search_guidance(), "Find")
+                .build();
+        }
+        // The guidance and the miss are the field's own lines, so the miss
+        // takes the guidance's place under the field rather than a line of
+        // its own above it.
         let results = self.search_results();
-        if self.query.is_empty() {
-            s = s.secondary(if self.packs.is_empty() {
-                "Type the species you see.".to_owned()
-            } else {
-                "Type a name, a banding code, or a scientific name.".to_owned()
-            });
-        } else if results.is_empty() && !self.packs.is_empty() {
-            s = s.secondary(format!(
+        let mut s = s
+            .field(
+                "search-field",
+                self.query.clone(),
+                "Name, code, or scientific name",
+            )
+            .field_hint(self.search_guidance());
+        if !self.query.is_empty() && results.is_empty() && !self.packs.is_empty() {
+            s = s.field_error(format!(
                 "No species in your packs matches “{}”.",
                 self.query
             ));
         }
-        let mut screen = s
-            .typed(&self.search, "Name, code, or scientific name")
-            .keyboard(&self.search, "Find")
-            .rows(results.iter().take(3).enumerate().map(|(index, species)| {
-                (
-                    format!("found-{index}"),
-                    species.common.clone(),
-                    species_line(species),
-                    Glyph::Search,
-                )
-            }));
+        let mut screen = s.rows(results.iter().take(3).enumerate().map(|(index, species)| {
+            (
+                format!("found-{index}"),
+                species.common.clone(),
+                species_line(species),
+                Glyph::Search,
+            )
+        }));
         if !self.query.is_empty() && self.open_outing.is_some() {
             screen = screen.button("log-manual", format!("Log “{}” by name", self.query));
         }
         screen.nav_bar(Some(2), Self::tab_bar()).build()
     }
 
-    fn outing_screen(&self, metrics: DisplayMetrics) -> Screen {
+    /// The tally: one row per species the outing can log with a tap, dealt
+    /// onto as many pages as the pack needs, under the outing's summary and
+    /// the two ways to log something not listed. Finishing sits in the bar
+    /// at the foot, where it cannot be pushed off the panel by a long pack.
+    fn outing_screen(&self, context: &Context) -> (Screen, usize) {
         let s = self.top("Outing");
         if self.naming_location {
-            return s
-                .secondary("Name this place. Recent places are offered next time.")
-                .typed(&self.location, "Location")
-                .keyboard(&self.location, "Save")
-                .build();
+            return (
+                s.text_entry_with_hint(
+                    &self.location,
+                    "Name this place",
+                    "Recent places are offered next time.",
+                    "Save",
+                )
+                .build(),
+                1,
+            );
         }
         let Some(outing) = self.open() else {
-            return s
-                .splash(None, "No open outing", "Start an outing from Today.")
-                .build();
+            return (
+                s.splash(None, "No open outing", "Start an outing from Today.")
+                    .build(),
+                1,
+            );
         };
         let (species, individuals) = self.outing_totals(outing.id);
-        let summary = format!(
-            "{} · {} · {} — {} species, {} birds",
-            outing.location, outing.date, outing.start, species, individuals
-        );
+        let mut screen = s
+            .secondary(format!(
+                "{} · {} · {} · {} species, {} birds",
+                outing.location, outing.date, outing.start, species, individuals
+            ))
+            .buttons([
+                ("type-species", "Type a species"),
+                ("sightings", "Review sightings"),
+            ]);
         let tally = self.outing_species();
+        if tally.is_empty() {
+            screen = screen.secondary(
+                "Type the first bird you see. A field pack from your computer lists your \
+                 region's birds here, one tap each.",
+            );
+        }
         let rows: Vec<(String, String, String, Glyph)> = tally
             .iter()
-            .take(6)
             .enumerate()
             .map(|(index, bird)| {
                 let logged: u32 = self
@@ -722,7 +841,7 @@ impl Fieldbook {
                     .sum();
                 (
                     format!("tally-{index}"),
-                    bird.common.clone(),
+                    context.clamped_row(&bird.common, 2, true),
                     if logged > 0 {
                         format!("{} · {logged} logged", bird.code)
                     } else {
@@ -736,79 +855,30 @@ impl Fieldbook {
                 )
             })
             .collect();
-        // One panel of the outing, whole: the summary, the tally rows dealt
-        // to the device in hand, and the three actions. At the largest text
-        // scale six rows and the actions do not fit one Clara panel, so the
-        // rows deal onto panels measured the way the gallery measures its
-        // reference pages -- a button pushed off the panel is an outing that
-        // cannot be finished.
-        let frame = |page_rows: &[(String, String, String, Glyph)], page: usize, pages: usize| {
-            let mut screen = self.top("Outing").secondary(summary.clone());
-            if tally.is_empty() {
-                screen = screen.section("Log a species by name:");
-            }
-            let mut screen = screen.rows(page_rows.iter().cloned()).buttons([
-                ("type-species", "Type a species"),
-                ("sightings", "Review sightings"),
-                ("finish", "Finish outing"),
-            ]);
-            if pages > 1 {
-                // Six rows deal onto a single-digit page count; the fallback
-                // is for the compiler, not the reader.
-                let (page, of) = (
-                    u16::try_from(page + 1).unwrap_or(1),
-                    u16::try_from(pages).unwrap_or(1),
-                );
-                screen = screen
-                    .page_turns("outing-back", "outing-next")
-                    .page_position(page, of);
-            }
-            screen
-        };
-        let mut panels: Vec<usize> = Vec::new();
-        let mut start = 0;
-        while start < rows.len() {
-            let mut take = rows.len() - start;
-            // Measured against the most pages the deal can produce, because
-            // "6 of 6" is wider than "1 of 1" and a page that fits only
-            // while it is the only page is not fitting.
-            while take > 1
-                && Self::overflows(
-                    frame(&rows[start..start + take], panels.len(), rows.len()),
-                    metrics,
-                )
-            {
-                take -= 1;
-            }
-            panels.push(take);
-            start += take;
-        }
-        if panels.is_empty() {
-            panels.push(0);
-        }
-        let page = self.outing_page.min(panels.len() - 1);
-        let start = panels[..page].iter().sum();
-        frame(&rows[start..start + panels[page]], page, panels.len()).build()
-    }
-
-    /// Whether anything on this screen was pushed off the panel, or squeezed
-    /// until it no longer fits what it says. Measured against the runtime's
-    /// own diagnostics, the way the gallery deals its reference pages.
-    fn overflows(screen: ScreenBuilder, metrics: DisplayMetrics) -> bool {
-        screen
-            .build()
-            .diagnostics(&metrics, &Chrome::measuring(false))
-            .issues
+        let screen = screen.bottom_action("finish", "Finish outing");
+        let labels = rows
             .iter()
-            .any(|issue| {
-                matches!(
-                    issue.kind,
-                    LayoutIssueKind::ContentOverflow { .. }
-                        | LayoutIssueKind::Clipped
-                        | LayoutIssueKind::InteractiveOffscreen
-                        | LayoutIssueKind::TextOverflow
-                )
-            })
+            .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
+            .collect::<Vec<_>>();
+        let pages = context.paginate_rows_under(
+            &labels,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
+        let count = pages.len().max(1);
+        let page = self.outing_page.min(count - 1);
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let mut screen = screen.rows(visible.iter().map(|&index| rows[index].clone()));
+        if count > 1 {
+            screen = screen
+                .page_turns("outing-back", "outing-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(count).unwrap_or(u16::MAX),
+                );
+        }
+        (screen.build(), count)
     }
 
     fn sightings_screen(&self, context: &Context) -> (Screen, usize) {
@@ -821,8 +891,23 @@ impl Fieldbook {
                 1,
             );
         };
-        if self.deleted.is_some() {
-            screen = screen.banner(BannerLevel::Info, "Sighting deleted.");
+        // Undo sits on the notice of what it undoes, so the bottom of the
+        // panel stays for the bar that acts on ticked rows.
+        match self.deleted.len() {
+            0 => {}
+            1 => {
+                screen = screen
+                    .banner(BannerLevel::Success, "Sighting deleted.")
+                    .banner_action("undo", "Undo delete");
+            }
+            removed => {
+                screen = screen
+                    .banner(
+                        BannerLevel::Success,
+                        format!("{removed} sightings deleted."),
+                    )
+                    .banner_action("undo", "Undo delete");
+            }
         }
         let rows = self
             .sightings
@@ -835,7 +920,7 @@ impl Fieldbook {
                     context.clamped_row(
                         &format!("{} ×{}", sighting.common, sighting.count),
                         2,
-                        self.deleted.is_some(),
+                        false,
                     ),
                     format!("{} · {}", sighting.code, outing.date),
                     Glyph::Check,
@@ -843,40 +928,85 @@ impl Fieldbook {
             })
             .collect::<Vec<_>>();
         if rows.is_empty() {
-            screen = screen.splash(
+            let screen = screen.splash(
                 Some(Glyph::Search),
                 "Nothing logged",
                 "Tally a species on the outing screen.",
             );
-        } else {
-            screen = screen.secondary("Tap a sighting to review its removal.");
+            return (screen.build(), 1);
         }
-        let (mut screen, count) = Self::paged_rows(
-            context,
-            screen,
-            &rows,
-            self.sightings_page,
-            self.deleted.is_some(),
-        );
-        if self.deleted.is_some() {
-            screen = screen.bottom_action("undo", "Undo delete");
-        }
-        if let Some(sighting) = self
-            .delete_candidate
-            .and_then(|index| self.sightings.get(index))
-        {
-            screen = screen.confirm(
-                "Delete sighting?",
-                format!(
-                    "Remove {} ×{} from this outing? You can undo this deletion.",
-                    context.clamped_row(&sighting.common, 2, false),
-                    sighting.count
-                ),
-                ("delete-sighting", "Delete"),
-                ("keep-sighting", "Keep sighting"),
+        screen = screen.secondary("Tick the sightings to remove.");
+        // The bar is measured in whether or not anything is ticked, so the
+        // first tick does not push the last row onto the next page.
+        let placed = screen
+            .clone()
+            .selection_bar(1, [("delete-ticked", "Delete"), ("clear-ticked", "Clear")])
+            .build();
+        let (visible, page, count) =
+            Self::page_of(context, &placed, &rows, self.sightings_page, false);
+        screen = screen.checked_rows(visible.iter().map(|&index| {
+            let (name, title, detail, glyph) = rows[index].clone();
+            let ticked = self
+                .sightings_index(&name)
+                .is_some_and(|sighting| self.ticked.contains(&sighting));
+            let state = if ticked {
+                RowState::Checked
+            } else {
+                RowState::Unchecked
+            };
+            (name, title, detail, glyph, state)
+        }));
+        if !self.ticked.is_empty() {
+            screen = screen.fill().selection_bar(
+                u32::try_from(self.ticked.len()).unwrap_or(u32::MAX),
+                [("delete-ticked", "Delete"), ("clear-ticked", "Clear")],
             );
         }
+        screen = Self::page_controls(screen, page, count);
+        screen = self.confirm_delete(context, screen);
         (screen.build(), count)
+    }
+
+    /// The question over the review screen once Delete is tapped, naming
+    /// the sighting when there is one and counting them when there are more.
+    fn confirm_delete(&self, context: &Context, screen: ScreenBuilder) -> ScreenBuilder {
+        if !self.confirming || self.ticked.is_empty() {
+            return screen;
+        }
+        let (title, body) = match self.ticked.iter().next() {
+            Some(&only) if self.ticked.len() == 1 => {
+                let sighting = &self.sightings[only];
+                (
+                    "Delete sighting?".to_owned(),
+                    format!(
+                        "Remove {} ×{} from this outing? You can undo this deletion.",
+                        context.clamped_row(&sighting.common, 2, false),
+                        sighting.count
+                    ),
+                )
+            }
+            _ => (
+                format!("Delete {} sightings?", self.ticked.len()),
+                format!(
+                    "Remove {} sightings from this outing? You can undo this deletion.",
+                    self.ticked.len()
+                ),
+            ),
+        };
+        screen.confirm(
+            title,
+            body,
+            ("delete-sighting", "Delete"),
+            ("keep-sighting", "Keep sighting"),
+        )
+    }
+
+    /// The sighting a row named `sight-N` stands for.
+    fn sightings_index(&self, name: &str) -> Option<usize> {
+        name.strip_prefix("sight-")?
+            .parse()
+            .ok()
+            .filter(|index| *index < self.sightings.len())
     }
 
     fn life_totals(&self) -> Vec<(&Sighting, u32)> {
@@ -932,6 +1062,7 @@ impl Fieldbook {
 
     fn turn_list(&mut self, context: &Context, forward: bool) {
         let count = match self.view {
+            View::Outing => self.outing_screen(context).1,
             View::Home => self.home_screen(context).1,
             View::Packs => self.packs_screen(context).1,
             View::Sightings => self.sightings_screen(context).1,
@@ -939,6 +1070,7 @@ impl Fieldbook {
             _ => return,
         };
         let page = match self.view {
+            View::Outing => &mut self.outing_page,
             View::Home => &mut self.home_page,
             View::Packs => &mut self.packs_page,
             View::Sightings => &mut self.sightings_page,
@@ -1006,7 +1138,7 @@ impl Fieldbook {
             View::Home => self.home_screen(context).0,
             View::Packs => self.packs_screen(context).0,
             View::Search => self.search_screen(),
-            View::Outing => self.outing_screen(context.metrics()),
+            View::Outing => self.outing_screen(context).0,
             View::Sightings => self.sightings_screen(context).0,
             View::Life => self.life_screen(context).0,
             View::Export => self.export_screen(),
@@ -1037,26 +1169,56 @@ impl Fieldbook {
         self.view = View::Outing;
     }
 
+    /// The confirmation over the review screen. While it is up it is the
+    /// only thing that answers, as a dialog is anywhere else.
     fn handle_delete_confirmation(&mut self, context: &mut Context, action: ActionId) -> bool {
-        let Some(index) = self.delete_candidate else {
+        if !self.confirming {
             return false;
-        };
-        {
-            if action == action_id("delete-sighting") {
-                self.delete_candidate = None;
-                if let Some(sighting) = self.sightings.get(index).cloned() {
-                    self.deleted = Some((index, sighting));
-                    self.sightings.remove(index);
-                    self.persist(context);
-                    self.sightings_page = self
-                        .sightings_page
-                        .min(self.sightings_screen(context).1.saturating_sub(1));
-                }
-            } else if action == action_id("keep-sighting") || action == ActionId::BACK {
-                self.delete_candidate = None;
-            }
-            true
         }
+        if action == action_id("delete-sighting") {
+            self.confirming = false;
+            self.delete_ticked(context);
+        } else if action == action_id("keep-sighting") || action == ActionId::BACK {
+            self.confirming = false;
+        }
+        true
+    }
+
+    /// Removes every ticked sighting, keeping each one and its place so a
+    /// single Undo puts the lot back.
+    fn delete_ticked(&mut self, context: &mut Context) {
+        let ticked = std::mem::take(&mut self.ticked);
+        self.deleted = ticked
+            .iter()
+            .filter_map(|&index| Some((index, self.sightings.get(index)?.clone())))
+            .collect();
+        // Highest first, so each removal leaves the places of the ones still
+        // to go where they were.
+        for &index in ticked.iter().rev() {
+            if index < self.sightings.len() {
+                self.sightings.remove(index);
+            }
+        }
+        if !self.deleted.is_empty() {
+            self.persist(context);
+            self.sightings_page = self
+                .sightings_page
+                .min(self.sightings_screen(context).1.saturating_sub(1));
+        }
+    }
+
+    fn undo_delete(&mut self, context: &mut Context) {
+        if self.deleted.is_empty() {
+            return;
+        }
+        // Ticks name places in a list that is about to change under them.
+        self.ticked.clear();
+        // Lowest first, so each sighting goes back to the place it held.
+        for (index, sighting) in std::mem::take(&mut self.deleted) {
+            self.sightings
+                .insert(index.min(self.sightings.len()), sighting);
+        }
+        self.persist(context);
     }
 
     fn open_life_entry(&mut self, index: usize) {
@@ -1087,43 +1249,87 @@ impl Fieldbook {
         self.view = View::Outing;
     }
 
-    /// Keyboards consume their own key actions; true means the action is done.
-    /// Every `Keyboard` answers any key action, so the view decides which
-    /// one is actually on screen and listening.
-    fn handle_keyboards(&mut self, context: &mut Context, action: ActionId) -> bool {
-        if self.view == View::Search {
-            match self.search.press(action) {
-                Some(Pressed::Submitted) => {
-                    self.query = self.search.take();
-                    self.show(context);
-                    return true;
-                }
-                Some(_) => {
-                    self.show(context);
-                    return true;
-                }
-                None => return false,
-            }
+    /// The outing screen's own actions: turning the tally, a one-tap tally
+    /// and finishing. True when the action was one of them.
+    fn outing_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id("outing-next") {
+            self.turn_list(context, true);
+        } else if action == action_id("outing-back") {
+            self.turn_list(context, false);
+        } else if action == action_id("finish") {
+            self.open_outing = None;
+            self.pack_pick = None;
+            self.persist_open(context);
+            self.view = View::Home;
+        } else if let Some(species) = (self.view == View::Outing)
+            .then(|| self.outing_species())
+            .and_then(|tally| {
+                tally
+                    .into_iter()
+                    .enumerate()
+                    .find(|(index, _)| action == action_id(&format!("tally-{index}")))
+                    .map(|(_, species)| species)
+            })
+        {
+            self.log_sighting(context, species);
+        } else {
+            return false;
         }
-        if self.view == View::Outing && self.naming_location {
-            match self.location.press(action) {
-                Some(Pressed::Submitted) => {
-                    let name = clean(&self.location.take());
+        true
+    }
+
+    /// The two fields first: while one is open the runtime holds the panel,
+    /// and its answer arrives as an action. True means the action was one.
+    fn handle_keyboards(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if let Some(typing) = self.search.handle(action) {
+            // Backing out keeps the last search and its results on the
+            // screen, where the field can be tapped to change it.
+            if let Typing::Submitted(query) = typing {
+                self.query = query;
+            }
+            self.show(context);
+            return true;
+        }
+        if let Some(typing) = self.location.handle(action) {
+            match typing {
+                Typing::Submitted(name) => {
                     self.naming_location = false;
+                    let name = clean(&name);
                     if !name.is_empty() {
                         self.open_outing_with(context, name);
                     }
-                    self.show(context);
-                    return true;
                 }
-                Some(_) => {
-                    self.show(context);
-                    return true;
+                Typing::Changed => {}
+                // Backing out of naming the place is Back from the outing
+                // that never started, which has always been Today.
+                Typing::Cancelled | Typing::Saved | Typing::Refused(_) => {
+                    self.naming_location = false;
+                    self.view = View::Home;
                 }
-                None => return false,
             }
+            self.show(context);
+            return true;
         }
         false
+    }
+
+    /// Opens the search, and the keyboard with it when there is anything to
+    /// search, so a search tapped for is a search being typed.
+    ///
+    /// A new search starts empty, as the keys this replaced always did; a
+    /// species is a fresh word each time. Tapping the field that shows the
+    /// last search opens on it instead, because that tap is asking to change
+    /// it.
+    fn open_search(&mut self, editing: bool) {
+        self.view = View::Search;
+        if !self.searchable() {
+            return;
+        }
+        if editing {
+            self.search.open_with(self.query.clone());
+        } else {
+            self.search.open();
+        }
     }
 }
 
@@ -1132,10 +1338,27 @@ impl KoboApp for Fieldbook {
         self.begin_manifest(context);
         context.store().load(OUTINGS);
         context.store().load(SIGHTINGS);
+        context.store().load(OPEN_OUTING);
+    }
+
+    /// A pack pushed while the reader slept is on the shelf when it wakes,
+    /// so the shelf is read again rather than waiting for a restart.
+    fn on_resume(&mut self, context: &mut Context) {
+        if self.manifest_load.is_none() {
+            self.begin_manifest(context);
+        }
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.on_resume(context);
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if self.advance_manifest(context, &result) {
+            // A pack pushed while the app was away is drawn when it lands.
+            if self.loads.started && self.manifest_load.is_none() {
+                self.show(context);
+            }
             return;
         }
         if self.advance_attribution(context, &result) {
@@ -1183,6 +1406,12 @@ impl KoboApp for Fieldbook {
                         })
                         .collect();
                 }
+            }
+            StoreResult::Loaded { key, value } if key == OPEN_OUTING => {
+                self.saved_open = value
+                    .filter(|bytes| bytes.len() <= MAX_STATE)
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .filter(|text| !text.is_empty());
                 self.loads.state = true;
                 self.start_when_ready(context);
                 return;
@@ -1201,10 +1430,10 @@ impl KoboApp for Fieldbook {
     }
 
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
-        if self.delete_candidate.is_none()
+        if !self.confirming
             && matches!(
                 self.view,
-                View::Home | View::Packs | View::Sightings | View::Life
+                View::Home | View::Packs | View::Sightings | View::Life | View::Outing
             )
         {
             self.turn_list(context, forward);
@@ -1220,6 +1449,10 @@ impl KoboApp for Fieldbook {
         if self.handle_keyboards(context, action) {
             return;
         }
+        if self.outing_action(context, action) {
+            self.show(context);
+            return;
+        }
         if action == ActionId::BACK || action == action_id("back") || action == action_id("home") {
             self.view = View::Home;
         } else if action == action_id("list-next") {
@@ -1228,32 +1461,25 @@ impl KoboApp for Fieldbook {
             self.turn_list(context, false);
         } else if action == action_id("packs") {
             self.view = View::Packs;
-        } else if action == action_id("search") {
-            self.view = View::Search;
+        } else if action == action_id("search") || action == action_id("type-species") {
+            self.open_search(false);
+        } else if action == action_id("search-field") {
+            self.open_search(true);
         } else if action == action_id("life") {
             self.view = View::Life;
         } else if action == action_id("export") {
             self.view = View::Export;
         } else if action == action_id("new-outing") {
             self.naming_location = true;
+            self.location.open();
             self.view = View::Outing;
             self.open_outing = None;
             self.outing_page = 0;
         } else if action == action_id("resume") {
             self.view = View::Outing;
             self.outing_page = 0;
-        } else if action == action_id("outing-next") {
-            self.outing_page += 1;
-        } else if action == action_id("outing-back") {
-            self.outing_page = self.outing_page.saturating_sub(1);
-        } else if action == action_id("finish") {
-            self.open_outing = None;
-            self.pack_pick = None;
-            self.view = View::Home;
         } else if action == action_id("sightings") {
             self.view = View::Sightings;
-        } else if action == action_id("type-species") {
-            self.view = View::Search;
         } else if action == action_id("log-detail") {
             if let Some(species) = self.detail.clone() {
                 self.log_sighting(context, species);
@@ -1267,16 +1493,12 @@ impl KoboApp for Fieldbook {
             (0..self.packs.len()).find(|i| action == action_id(&format!("pack-{i}")))
         {
             self.pack_pick = Some(index);
-            self.view = View::Search;
+            self.open_search(false);
         } else if let Some(index) = (0..3).find(|i| action == action_id(&format!("found-{i}"))) {
             if let Some(species) = self.search_results().get(index).cloned() {
                 self.detail = Some(species);
                 self.view = View::Detail;
                 self.begin_photo(context);
-            }
-        } else if let Some(index) = (0..6).find(|i| action == action_id(&format!("tally-{i}"))) {
-            if let Some(species) = self.outing_species().get(index).cloned() {
-                self.log_sighting(context, species);
             }
         } else if let Some(outing) = self
             .outings
@@ -1287,20 +1509,29 @@ impl KoboApp for Fieldbook {
             self.view = View::Outing;
             self.outing_page = 0;
             self.sightings_page = 0;
+            self.persist_open(context);
         } else if let Some(index) = (0..self.sightings.len()).find(|index| {
             self.view == View::Sightings && action == action_id(&format!("sight-{index}"))
         }) {
-            self.delete_candidate = Some(index);
+            // A tap ticks or unticks; nothing is removed until Delete.
+            if !self.ticked.remove(&index) {
+                self.ticked.insert(index);
+            }
+        } else if action == action_id("delete-ticked") && !self.ticked.is_empty() {
+            self.confirming = true;
+        } else if action == action_id("clear-ticked") {
+            self.ticked.clear();
         } else if let Some(index) = (0..self.life_totals().len())
             .find(|index| self.view == View::Life && action == action_id(&format!("life-{index}")))
         {
             self.open_life_entry(index);
         } else if action == action_id("undo") {
-            if let Some((index, sighting)) = self.deleted.take() {
-                self.sightings
-                    .insert(index.min(self.sightings.len()), sighting);
-                self.persist(context);
-            }
+            self.undo_delete(context);
+        }
+        // Ticks name places in the list, which mean nothing once the list is
+        // left or changed under them.
+        if self.view != View::Sightings {
+            self.ticked.clear();
         }
         if self.view != View::Detail {
             self.photo = None;

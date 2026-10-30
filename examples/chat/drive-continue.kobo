@@ -1,0 +1,16 @@
+# sweep: --bare --seed-root examples/chat/fixtures/cut-short
+# A reply that reached its length limit, saved before a restart, seeded in
+# place of the default conversation. The route stops before Continue is
+# tapped, so nothing is sent.
+wait-for AI Command Center
+wait-for so the flour can
+expect Continue the answer
+clean
+shot continue-after-restart
+# Back from the reader's keyboard returns to the reply, Continue intact.
+tap Type
+wait-for Type a message
+clean
+shot compose
+tap Back
+expect Continue the answer

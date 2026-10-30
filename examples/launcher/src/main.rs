@@ -16,8 +16,8 @@
 //! exactly where the reliability is wanted.
 
 use kobo_sdk::{
-    action_id, ActionId, AppInfo, Context, DeviceIdentity, DeviceRequest, DeviceResult, Glyph,
-    KoboApp, ScreenBuilder, Tile, TileShape,
+    action_id, ActionId, AppInfo, Capability, Context, DeviceIdentity, DeviceRequest, DeviceResult,
+    Glyph, KoboApp, ScreenBuilder, Tile, TileShape,
 };
 use std::process::ExitCode;
 
@@ -41,6 +41,12 @@ struct Entry {
     /// while it starts -- which is the last moment it is still useful.
     needs: &'static str,
     glyph: Glyph,
+    /// Reached from the bar at the foot of every page rather than from a tile.
+    ///
+    /// Settings and Books each have a tab there. A tile as well was a second
+    /// door to the same room, and it spent two of the first page's places on
+    /// things the owner could already reach without turning a page.
+    on_tab_bar: bool,
 }
 
 /// Where Settings sits in [`ENTRIES`].
@@ -62,6 +68,7 @@ const ENTRIES: &[Entry] = &[
         summary: "Connect Wi-Fi, headphones, speakers and keyboards.",
         needs: "Changes the device's Wi-Fi and Bluetooth radios.",
         glyph: Glyph::Settings,
+        on_tab_bar: true,
     },
     Entry {
         name: "books",
@@ -70,6 +77,7 @@ const ENTRIES: &[Entry] = &[
         summary: "The documents already on this device.",
         needs: "Reads the books already on the card. It does not write.",
         glyph: Glyph::Book,
+        on_tab_bar: true,
     },
     Entry {
         name: "store",
@@ -78,6 +86,7 @@ const ENTRIES: &[Entry] = &[
         summary: "Install, update and remove public Cobalt apps over Wi-Fi.",
         needs: "Uses Wi-Fi to refresh Cobalt's signed GitHub app catalog.",
         glyph: Glyph::Download,
+        on_tab_bar: false,
     },
     Entry {
         name: "terminal",
@@ -86,6 +95,7 @@ const ENTRIES: &[Entry] = &[
         summary: "A shell on the panel, with keys that send rather than collect.",
         needs: "Runs commands on this device. File changes can survive a reboot.",
         glyph: Glyph::Terminal,
+        on_tab_bar: false,
     },
 ];
 
@@ -147,12 +157,22 @@ impl Launcher {
     /// a Sage, and an application that picked a number would be wrong on every
     /// panel but one.
     fn pages(&self, context: &Context) -> Vec<Vec<usize>> {
-        let pages = context.paginate_tiles(self.entry_count(), TileShape::Square, true);
+        let tiles = self.tiles();
+        let pages = context.paginate_tiles(tiles.len(), TileShape::Square, true);
         if pages.is_empty() {
-            vec![Vec::new()]
-        } else {
-            pages
+            return vec![Vec::new()];
         }
+        pages
+            .into_iter()
+            .map(|page| page.into_iter().map(|place| tiles[place]).collect())
+            .collect()
+    }
+
+    /// The entries that get a tile, in the order they are drawn.
+    fn tiles(&self) -> Vec<usize> {
+        (0..self.entry_count())
+            .filter(|&index| ENTRIES.get(index).is_none_or(|entry| !entry.on_tab_bar))
+            .collect()
     }
 
     fn app_grid(screen: ScreenBuilder, entries: Vec<(DisplayEntry, bool)>) -> ScreenBuilder {
@@ -289,14 +309,32 @@ impl Launcher {
             title: entry.title.clone(),
             label: entry.label.clone(),
             summary: entry.summary.clone(),
-            needs: if entry.capabilities.is_empty() {
-                "Needs no additional capabilities.".to_owned()
-            } else {
-                format!("Uses {}.", entry.capabilities.join(", "))
-            },
+            needs: needs(&entry.capabilities),
             glyph: entry.glyph,
         }
     }
+}
+
+/// What a Store app will reach for, in the words the Store used for it.
+///
+/// This used to print the manifest's own identifiers, so the splash under a
+/// newly installed app read "Uses keep-awake, scheduled-wake." The wording
+/// now comes from the runtime's policy crate, the same sentences the Store
+/// and `kobo apps` show.
+fn needs(capabilities: &[String]) -> String {
+    if capabilities.is_empty() {
+        return "It needs no special permissions.".to_owned();
+    }
+    capabilities
+        .iter()
+        .map(|name| {
+            Capability::parse(name).map_or_else(
+                || format!("Another permission ({name})."),
+                |capability| format!("{}.", capability.plain_wording()),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Clone)]
@@ -458,7 +496,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{opening, Launcher, View, BOOKS, ENTRIES};
+    use super::{opening, Entry, Launcher, View, BOOKS, ENTRIES, SETTINGS};
     use kobo_sdk::{
         action_id, AppInfo, AppRunner, Command, DeviceRequest, DeviceResult, Glyph, Lifecycle,
     };
@@ -466,6 +504,14 @@ mod tests {
         render_with, tone, Chrome, DisplayMetrics, LayoutKind, Node, Surface, TextScale, TileShape,
         CLARA_BW_METRICS,
     };
+
+    /// Where the App Store sits in [`ENTRIES`]: the first entry with a tile.
+    const STORE: usize = 2;
+
+    /// The entries the grid draws, which is every one without a tab.
+    fn tiled() -> Vec<&'static Entry> {
+        ENTRIES.iter().filter(|entry| !entry.on_tab_bar).collect()
+    }
 
     fn panels() -> Vec<(String, DisplayMetrics)> {
         kobo_profile::SUPPORTED_PROFILES
@@ -649,11 +695,11 @@ mod tests {
                 if let Some(next) = repainted(runner.action(action_id("next"))) {
                     screen = next;
                 }
-                let first = ENTRIES
+                let first = tiled()
                     .first()
                     .map(|entry| action_id(&opening(entry.name)))
                     .expect("the catalogue is not empty");
-                if found.contains(&first) && found.len() >= ENTRIES.len() {
+                if found.contains(&first) && found.len() >= tiled().len() {
                     break;
                 }
             }
@@ -661,10 +707,10 @@ mod tests {
             found.dedup();
             assert_eq!(
                 found.len(),
-                ENTRIES.len(),
+                tiled().len(),
                 "{name}: {} of {} entries were reachable",
                 found.len(),
-                ENTRIES.len()
+                tiled().len()
             );
         }
     }
@@ -727,7 +773,7 @@ mod tests {
                 })
                 .count();
             assert_eq!(sections, 0, "{name}: the compact home grid grew a section");
-            assert_eq!(tiles, ENTRIES.len(), "{name}: a home tile was dropped");
+            assert_eq!(tiles, tiled().len(), "{name}: a home tile was dropped");
             assert_eq!(destinations, 4, "{name}: launcher navigation changed");
         }
     }
@@ -736,7 +782,7 @@ mod tests {
     fn launcher_home_uses_a_compact_resume_mark() {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
-        runner.action(action_id(&opening(ENTRIES[0].name)));
+        runner.action(action_id(&opening(ENTRIES[STORE].name)));
         // The list the runtime holds while the panel is elsewhere, which is
         // the one it repaints when the owner comes back.
         let screen = painted(runner.lifecycle(Lifecycle::Background));
@@ -766,9 +812,11 @@ mod tests {
             );
         }
         assert!(runner
-            .action(action_id(&opening(ENTRIES[0].name)))
+            .action(action_id(&opening(ENTRIES[STORE].name)))
             .iter()
-            .any(|command| matches!(command, Command::Launch(name) if name == ENTRIES[0].name)));
+            .any(
+                |command| matches!(command, Command::Launch(name) if name == ENTRIES[STORE].name)
+            ));
     }
 
     #[test]
@@ -827,14 +875,14 @@ mod tests {
     fn tapping_a_tile_starts_the_entry_and_says_what_is_starting() {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
-        let commands = runner.action(action_id(&opening(ENTRIES[0].name)));
+        let commands = runner.action(action_id(&opening(ENTRIES[STORE].name)));
         assert!(
-            commands
-                .iter()
-                .any(|command| matches!(command, Command::Launch(name) if name == ENTRIES[0].name)),
+            commands.iter().any(
+                |command| matches!(command, Command::Launch(name) if name == ENTRIES[STORE].name)
+            ),
             "a tile tap did not start the application"
         );
-        assert!(matches!(runner.app().view, View::Starting(0)));
+        assert!(matches!(runner.app().view, View::Starting(STORE)));
         let shown = painted(commands);
         let layout = shown.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         let words = layout
@@ -850,17 +898,17 @@ mod tests {
                 .join(" ")
         };
         assert!(
-            words.contains(ENTRIES[0].title),
+            words.contains(ENTRIES[STORE].title),
             "the splash did not name what is starting: {words}"
         );
         assert!(
-            words.contains(&head(ENTRIES[0].summary)),
+            words.contains(&head(ENTRIES[STORE].summary)),
             "the description was not shown: {words}"
         );
         // What it will reach for is the one thing worth knowing before it is
         // running, so it does not get dropped along with the intermediate screen.
         assert!(
-            words.contains(&head(ENTRIES[0].needs)),
+            words.contains(&head(ENTRIES[STORE].needs)),
             "what it needs was not shown: {words}"
         );
     }
@@ -1004,7 +1052,7 @@ mod tests {
     fn the_active_app_is_marked_for_resume_on_home() {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
-        runner.action(action_id(&opening(ENTRIES[0].name)));
+        runner.action(action_id(&opening(ENTRIES[STORE].name)));
         let home = painted(runner.lifecycle(Lifecycle::Background));
         let home_layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         let home_text = home_layout
@@ -1103,5 +1151,60 @@ mod tests {
         assert_eq!(terminal.name, "terminal");
         assert!(terminal.needs.contains("File changes can survive a reboot"));
         assert!(!terminal.needs.contains("Nothing it does survives"));
+    }
+
+    #[test]
+    fn settings_and_books_are_reached_from_their_tabs_and_not_also_from_tiles() {
+        for (name, metrics) in panels() {
+            let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+            let mut screen = painted(runner.start());
+            for _ in 0..=ENTRIES.len() {
+                let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
+                for duplicate in [SETTINGS, BOOKS] {
+                    let tile = action_id(&opening(ENTRIES[duplicate].name));
+                    assert!(
+                        !layout
+                            .nodes
+                            .iter()
+                            .any(|node| matches!(node.kind, LayoutKind::Tile(action, _) if action == tile)),
+                        "{name}: {} has a tile as well as a tab",
+                        ENTRIES[duplicate].title
+                    );
+                }
+                match repainted(runner.action(action_id("next"))) {
+                    Some(next) => screen = next,
+                    None => break,
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_store_app_says_what_it_needs_in_words_rather_than_identifiers() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![AppInfo {
+                id: "frame".to_owned(),
+                title: "Frame".to_owned(),
+                label: "Frame".to_owned(),
+                summary: "Show photos from your computer.".to_owned(),
+                version: "1.0.0".to_owned(),
+                minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
+                glyph: Glyph::App,
+                capabilities: vec!["keep-awake".to_owned(), "scheduled-wake".to_owned()],
+                installed_version: Some("1.0.0".to_owned()),
+            }],
+        });
+        let shown = painted(runner.action(action_id(&opening("frame"))));
+        let words = shown
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(words.contains("Can keep the reader awake"), "{words}");
+        assert!(!words.contains("keep-awake"), "{words}");
     }
 }

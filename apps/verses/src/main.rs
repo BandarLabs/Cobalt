@@ -1,6 +1,6 @@
 //! Daily public-domain poetry with an offline shelf and `PoetryDB` search.
-use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, Screen, ScreenBuilder,
     StoreResult, Task, TaskError, TaskId, TaskOutcome,
@@ -12,6 +12,8 @@ use std::hash::{Hash, Hasher};
 use std::process::ExitCode;
 
 const SETTINGS: &str = "settings";
+/// The search box, which raises the reader's keyboard when it is tapped.
+const SEARCH_FIELD: &str = "search-field";
 const SEARCH_LIMIT: u32 = 512 * 1024;
 const USER_AGENT: &str = "Cobalt Verses/0.1";
 
@@ -192,6 +194,1056 @@ const CORPUS: &[Poem] = &[
             ],
         ],
     },
+    Poem {
+        id: "shakespeare-sonnet-18",
+        title: "Sonnet 18",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "Shall I compare thee to a summer's day?",
+                "Thou art more lovely and more temperate:",
+                "Rough winds do shake the darling buds of May,",
+                "And summer's lease hath all too short a date;",
+                "Sometime too hot the eye of heaven shines,",
+                "And often is his gold complexion dimm'd;",
+                "And every fair from fair sometime declines,",
+                "By chance or nature's changing course untrimm'd;",
+                "But thy eternal summer shall not fade,",
+                "Nor lose possession of that fair thou ow'st;",
+                "Nor shall Death brag thou wander'st in his shade,",
+                "When in eternal lines to time thou grow'st:",
+                "So long as men can breathe or eyes can see,",
+                "So long lives this, and this gives life to thee.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shakespeare-sonnet-29",
+        title: "Sonnet 29",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "When, in disgrace with fortune and men's eyes,",
+                "I all alone beweep my outcast state,",
+                "And trouble deaf heaven with my bootless cries,",
+                "And look upon myself and curse my fate,",
+                "Wishing me like to one more rich in hope,",
+                "Featured like him, like him with friends possess'd,",
+                "Desiring this man's art and that man's scope,",
+                "With what I most enjoy contented least;",
+                "Yet in these thoughts myself almost despising,",
+                "Haply I think on thee, and then my state,",
+                "Like to the lark at break of day arising",
+                "From sullen earth, sings hymns at heaven's gate;",
+                "For thy sweet love remember'd such wealth brings",
+                "That then I scorn to change my state with kings.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shakespeare-sonnet-73",
+        title: "Sonnet 73",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "age · a minute",
+        stanzas: &[
+            &[
+                "That time of year thou mayst in me behold",
+                "When yellow leaves, or none, or few, do hang",
+                "Upon those boughs which shake against the cold,",
+                "Bare ruin'd choirs, where late the sweet birds sang.",
+                "In me thou see'st the twilight of such day",
+                "As after sunset fadeth in the west,",
+                "Which by and by black night doth take away,",
+                "Death's second self, that seals up all in rest.",
+                "In me thou see'st the glowing of such fire",
+                "That on the ashes of his youth doth lie,",
+                "As the death-bed whereon it must expire,",
+                "Consumed with that which it was nourish'd by.",
+                "This thou perceivest, which makes thy love more strong,",
+                "To love that well which thou must leave ere long.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shakespeare-sonnet-116",
+        title: "Sonnet 116",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "Let me not to the marriage of true minds",
+                "Admit impediments. Love is not love",
+                "Which alters when it alteration finds,",
+                "Or bends with the remover to remove:",
+                "O no! it is an ever-fixed mark",
+                "That looks on tempests and is never shaken;",
+                "It is the star to every wandering bark,",
+                "Whose worth's unknown, although his height be taken.",
+                "Love's not Time's fool, though rosy lips and cheeks",
+                "Within his bending sickle's compass come;",
+                "Love alters not with his brief hours and weeks,",
+                "But bears it out even to the edge of doom.",
+                "If this be error and upon me proved,",
+                "I never writ, nor no man ever loved.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shakespeare-sonnet-130",
+        title: "Sonnet 130",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "My mistress' eyes are nothing like the sun;",
+                "Coral is far more red than her lips' red;",
+                "If snow be white, why then her breasts are dun;",
+                "If hairs be wires, black wires grow on her head.",
+                "I have seen roses damask'd, red and white,",
+                "But no such roses see I in her cheeks;",
+                "And in some perfumes is there more delight",
+                "Than in the breath that from my mistress reeks.",
+                "I love to hear her speak, yet well I know",
+                "That music hath a far more pleasing sound;",
+                "I grant I never saw a goddess go;",
+                "My mistress, when she walks, treads on the ground:",
+                "And yet, by heaven, I think my love as rare",
+                "As any she belied with false compare.",
+            ],
+        ],
+    },
+    Poem {
+        id: "wordsworth-westminster",
+        title: "Composed upon Westminster Bridge",
+        author: "William Wordsworth",
+        year: 1807,
+        source: "Poems, in Two Volumes, via Project Gutenberg",
+        tags: "cities · a minute",
+        stanzas: &[
+            &[
+                "Earth has not anything to show more fair:",
+                "Dull would he be of soul who could pass by",
+                "A sight so touching in its majesty:",
+                "This City now doth, like a garment, wear",
+                "The beauty of the morning; silent, bare,",
+                "Ships, towers, domes, theatres, and temples lie",
+                "Open unto the fields, and to the sky;",
+                "All bright and glittering in the smokeless air.",
+                "Never did sun more beautifully steep",
+                "In his first splendour, valley, rock, or hill;",
+                "Ne'er saw I, never felt, a calm so deep!",
+                "The river glideth at his own sweet will:",
+                "Dear God! the very houses seem asleep;",
+                "And all that mighty heart is lying still!",
+            ],
+        ],
+    },
+    Poem {
+        id: "wordsworth-world",
+        title: "The World Is Too Much with Us",
+        author: "William Wordsworth",
+        year: 1807,
+        source: "Poems, in Two Volumes, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "The world is too much with us; late and soon,",
+                "Getting and spending, we lay waste our powers;",
+                "Little we see in Nature that is ours;",
+                "We have given our hearts away, a sordid boon!",
+                "This Sea that bares her bosom to the moon;",
+                "The winds that will be howling at all hours,",
+                "And are up-gathered now like sleeping flowers;",
+                "For this, for everything, we are out of tune;",
+                "It moves us not. Great God! I'd rather be",
+                "A Pagan suckled in a creed outworn;",
+                "So might I, standing on this pleasant lea,",
+                "Have glimpses that would make me less forlorn;",
+                "Have sight of Proteus rising from the sea;",
+                "Or hear old Triton blow his wreathed horn.",
+            ],
+        ],
+    },
+    Poem {
+        id: "wordsworth-rainbow",
+        title: "My Heart Leaps Up",
+        author: "William Wordsworth",
+        year: 1807,
+        source: "Poems, in Two Volumes, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "My heart leaps up when I behold",
+                "A rainbow in the sky:",
+                "So was it when my life began;",
+                "So is it now I am a man;",
+                "So be it when I shall grow old,",
+                "Or let me die!",
+                "The Child is father of the Man;",
+                "And I could wish my days to be",
+                "Bound each to each by natural piety.",
+            ],
+        ],
+    },
+    Poem {
+        id: "wordsworth-lucy",
+        title: "She Dwelt among the Untrodden Ways",
+        author: "William Wordsworth",
+        year: 1800,
+        source: "Lyrical Ballads, via Project Gutenberg",
+        tags: "loss · a minute",
+        stanzas: &[
+            &[
+                "She dwelt among the untrodden ways",
+                "Beside the springs of Dove,",
+                "A Maid whom there were none to praise",
+                "And very few to love:",
+            ],
+            &[
+                "A violet by a mossy stone",
+                "Half hidden from the eye!",
+                "Fair as a star, when only one",
+                "Is shining in the sky.",
+            ],
+            &[
+                "She lived unknown, and few could know",
+                "When Lucy ceased to be;",
+                "But she is in her grave, and, oh,",
+                "The difference to me!",
+            ],
+        ],
+    },
+    Poem {
+        id: "keats-chapman",
+        title: "On First Looking into Chapman's Homer",
+        author: "John Keats",
+        year: 1816,
+        source: "Poems, via Project Gutenberg",
+        tags: "discovery · a minute",
+        stanzas: &[
+            &[
+                "Much have I travell'd in the realms of gold,",
+                "And many goodly states and kingdoms seen;",
+                "Round many western islands have I been",
+                "Which bards in fealty to Apollo hold.",
+                "Oft of one wide expanse had I been told",
+                "That deep-brow'd Homer ruled as his demesne;",
+                "Yet did I never breathe its pure serene",
+                "Till I heard Chapman speak out loud and bold:",
+                "Then felt I like some watcher of the skies",
+                "When a new planet swims into his ken;",
+                "Or like stout Cortez when with eagle eyes",
+                "He star'd at the Pacific, and all his men",
+                "Look'd at each other with a wild surmise,",
+                "Silent, upon a peak in Darien.",
+            ],
+        ],
+    },
+    Poem {
+        id: "keats-fears",
+        title: "When I Have Fears",
+        author: "John Keats",
+        year: 1848,
+        source: "Life, Letters, and Literary Remains, via Project Gutenberg",
+        tags: "time · a minute",
+        stanzas: &[
+            &[
+                "When I have fears that I may cease to be",
+                "Before my pen has glean'd my teeming brain,",
+                "Before high-piled books, in charactery,",
+                "Hold like rich garners the full ripen'd grain;",
+                "When I behold, upon the night's starr'd face,",
+                "Huge cloudy symbols of a high romance,",
+                "And think that I may never live to trace",
+                "Their shadows, with the magic hand of chance;",
+                "And when I feel, fair creature of an hour,",
+                "That I shall never look upon thee more,",
+                "Never have relish in the faery power",
+                "Of unreflecting love; then on the shore",
+                "Of the wide world I stand alone, and think",
+                "Till love and fame to nothingness do sink.",
+            ],
+        ],
+    },
+    Poem {
+        id: "rossetti-remember",
+        title: "Remember",
+        author: "Christina Rossetti",
+        year: 1862,
+        source: "Goblin Market and Other Poems, via Project Gutenberg",
+        tags: "loss · a minute",
+        stanzas: &[
+            &[
+                "Remember me when I am gone away,",
+                "Gone far away into the silent land;",
+                "When you can no more hold me by the hand,",
+                "Nor I half turn to go yet turning stay.",
+                "Remember me when no more day by day",
+                "You tell me of our future that you plann'd:",
+                "Only remember me; you understand",
+                "It will be late to counsel then or pray.",
+                "Yet if you should forget me for a while",
+                "And afterwards remember, do not grieve:",
+                "For if the darkness and corruption leave",
+                "A vestige of the thoughts that once I had,",
+                "Better by far you should forget and smile",
+                "Than that you should remember and be sad.",
+            ],
+        ],
+    },
+    Poem {
+        id: "rossetti-birthday",
+        title: "A Birthday",
+        author: "Christina Rossetti",
+        year: 1862,
+        source: "Goblin Market and Other Poems, via Project Gutenberg",
+        tags: "joy · a minute",
+        stanzas: &[
+            &[
+                "My heart is like a singing bird",
+                "Whose nest is in a water'd shoot;",
+                "My heart is like an apple-tree",
+                "Whose boughs are bent with thickset fruit;",
+                "My heart is like a rainbow shell",
+                "That paddles in a halcyon sea;",
+                "My heart is gladder than all these",
+                "Because my love is come to me.",
+            ],
+            &[
+                "Raise me a dais of silk and down;",
+                "Hang it with vair and purple dyes;",
+                "Carve it in doves and pomegranates,",
+                "And peacocks with a hundred eyes;",
+                "Work it in gold and silver grapes,",
+                "In leaves and silver fleurs-de-lys;",
+                "Because the birthday of my life",
+                "Is come, my love is come to me.",
+            ],
+        ],
+    },
+    Poem {
+        id: "rossetti-wind",
+        title: "Who Has Seen the Wind?",
+        author: "Christina Rossetti",
+        year: 1872,
+        source: "Sing-Song, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "Who has seen the wind?",
+                "Neither I nor you:",
+                "But when the leaves hang trembling,",
+                "The wind is passing through.",
+            ],
+            &[
+                "Who has seen the wind?",
+                "Neither you nor I:",
+                "But when the trees bow down their heads,",
+                "The wind is passing by.",
+            ],
+        ],
+    },
+    Poem {
+        id: "blake-lamb",
+        title: "The Lamb",
+        author: "William Blake",
+        year: 1789,
+        source: "Songs of Innocence and of Experience, via Project Gutenberg",
+        tags: "faith · a minute",
+        stanzas: &[
+            &[
+                "Little Lamb, who made thee?",
+                "Dost thou know who made thee?",
+                "Gave thee life, and bid thee feed,",
+                "By the stream and o'er the mead;",
+                "Gave thee clothing of delight,",
+                "Softest clothing, woolly, bright;",
+                "Gave thee such a tender voice,",
+                "Making all the vales rejoice?",
+                "Little Lamb, who made thee?",
+                "Dost thou know who made thee?",
+            ],
+            &[
+                "Little Lamb, I'll tell thee,",
+                "Little Lamb, I'll tell thee:",
+                "He is called by thy name,",
+                "For He calls Himself a Lamb.",
+                "He is meek, and He is mild;",
+                "He became a little child.",
+                "I a child, and thou a lamb,",
+                "We are called by His name.",
+                "Little Lamb, God bless thee!",
+                "Little Lamb, God bless thee!",
+            ],
+        ],
+    },
+    Poem {
+        id: "blake-rose",
+        title: "The Sick Rose",
+        author: "William Blake",
+        year: 1794,
+        source: "Songs of Innocence and of Experience, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "O Rose, thou art sick!",
+                "The invisible worm",
+                "That flies in the night,",
+                "In the howling storm,",
+            ],
+            &[
+                "Has found out thy bed",
+                "Of crimson joy:",
+                "And his dark secret love",
+                "Does thy life destroy.",
+            ],
+        ],
+    },
+    Poem {
+        id: "blake-sunflower",
+        title: "Ah! Sun-flower",
+        author: "William Blake",
+        year: 1794,
+        source: "Songs of Innocence and of Experience, via Project Gutenberg",
+        tags: "longing · a minute",
+        stanzas: &[
+            &[
+                "Ah, Sun-flower! weary of time,",
+                "Who countest the steps of the Sun:",
+                "Seeking after that sweet golden clime",
+                "Where the traveller's journey is done:",
+            ],
+            &[
+                "Where the Youth pined away with desire,",
+                "And the pale Virgin shrouded in snow:",
+                "Arise from their graves, and aspire",
+                "Where my Sun-flower wishes to go.",
+            ],
+        ],
+    },
+    Poem {
+        id: "burns-rose",
+        title: "A Red, Red Rose",
+        author: "Robert Burns",
+        year: 1794,
+        source: "The Poetical Works of Robert Burns, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "O my Luve's like a red, red rose,",
+                "That's newly sprung in June:",
+                "O my Luve's like the melodie,",
+                "That's sweetly play'd in tune.",
+            ],
+            &[
+                "As fair art thou, my bonnie lass,",
+                "So deep in luve am I;",
+                "And I will luve thee still, my dear,",
+                "Till a' the seas gang dry.",
+            ],
+            &[
+                "Till a' the seas gang dry, my dear,",
+                "And the rocks melt wi' the sun;",
+                "And I will luve thee still, my dear,",
+                "While the sands o' life shall run.",
+            ],
+            &[
+                "And fare thee weel, my only Luve!",
+                "And fare thee weel a while!",
+                "And I will come again, my Luve,",
+                "Tho' it were ten thousand mile!",
+            ],
+        ],
+    },
+    Poem {
+        id: "byron-beauty",
+        title: "She Walks in Beauty",
+        author: "Lord Byron",
+        year: 1815,
+        source: "Hebrew Melodies, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "She walks in beauty, like the night",
+                "Of cloudless climes and starry skies;",
+                "And all that's best of dark and bright",
+                "Meet in her aspect and her eyes:",
+                "Thus mellow'd to that tender light",
+                "Which heaven to gaudy day denies.",
+            ],
+            &[
+                "One shade the more, one ray the less,",
+                "Had half impair'd the nameless grace",
+                "Which waves in every raven tress,",
+                "Or softly lightens o'er her face;",
+                "Where thoughts serenely sweet express",
+                "How pure, how dear their dwelling-place.",
+            ],
+            &[
+                "And on that cheek, and o'er that brow,",
+                "So soft, so calm, yet eloquent,",
+                "The smiles that win, the tints that glow,",
+                "But tell of days in goodness spent,",
+                "A mind at peace with all below,",
+                "A heart whose love is innocent!",
+            ],
+        ],
+    },
+    Poem {
+        id: "tennyson-bar",
+        title: "Crossing the Bar",
+        author: "Alfred Tennyson",
+        year: 1889,
+        source: "Demeter and Other Poems, via Project Gutenberg",
+        tags: "time · a minute",
+        stanzas: &[
+            &[
+                "Sunset and evening star,",
+                "And one clear call for me!",
+                "And may there be no moaning of the bar,",
+                "When I put out to sea,",
+            ],
+            &[
+                "But such a tide as moving seems asleep,",
+                "Too full for sound and foam,",
+                "When that which drew from out the boundless deep",
+                "Turns again home.",
+            ],
+            &[
+                "Twilight and evening bell,",
+                "And after that the dark!",
+                "And may there be no sadness of farewell,",
+                "When I embark;",
+            ],
+            &[
+                "For tho' from out our bourne of Time and Place",
+                "The flood may bear me far,",
+                "I hope to see my Pilot face to face",
+                "When I have crost the bar.",
+            ],
+        ],
+    },
+    Poem {
+        id: "tennyson-eagle",
+        title: "The Eagle",
+        author: "Alfred Tennyson",
+        year: 1851,
+        source: "Poems, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "He clasps the crag with crooked hands;",
+                "Close to the sun in lonely lands,",
+                "Ring'd with the azure world, he stands.",
+            ],
+            &[
+                "The wrinkled sea beneath him crawls;",
+                "He watches from his mountain walls,",
+                "And like a thunderbolt he falls.",
+            ],
+        ],
+    },
+    Poem {
+        id: "tennyson-break",
+        title: "Break, Break, Break",
+        author: "Alfred Tennyson",
+        year: 1842,
+        source: "Poems, via Project Gutenberg",
+        tags: "loss · a minute",
+        stanzas: &[
+            &[
+                "Break, break, break,",
+                "On thy cold gray stones, O Sea!",
+                "And I would that my tongue could utter",
+                "The thoughts that arise in me.",
+            ],
+            &[
+                "O well for the fisherman's boy,",
+                "That he shouts with his sister at play!",
+                "O well for the sailor lad,",
+                "That he sings in his boat on the bay!",
+            ],
+            &[
+                "And the stately ships go on",
+                "To their haven under the hill;",
+                "But O for the touch of a vanish'd hand,",
+                "And the sound of a voice that is still!",
+            ],
+            &[
+                "Break, break, break,",
+                "At the foot of thy crags, O Sea!",
+                "But the tender grace of a day that is dead",
+                "Will never come back to me.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shelley-music",
+        title: "Music, When Soft Voices Die",
+        author: "Percy Bysshe Shelley",
+        year: 1824,
+        source: "Posthumous Poems, via Project Gutenberg",
+        tags: "memory · a minute",
+        stanzas: &[
+            &[
+                "Music, when soft voices die,",
+                "Vibrates in the memory;",
+                "Odours, when sweet violets sicken,",
+                "Live within the sense they quicken.",
+            ],
+            &[
+                "Rose leaves, when the rose is dead,",
+                "Are heaped for the beloved's bed;",
+                "And so thy thoughts, when thou art gone,",
+                "Love itself shall slumber on.",
+            ],
+        ],
+    },
+    Poem {
+        id: "stevenson-requiem",
+        title: "Requiem",
+        author: "Robert Louis Stevenson",
+        year: 1887,
+        source: "Underwoods, via Project Gutenberg",
+        tags: "rest · a minute",
+        stanzas: &[
+            &[
+                "Under the wide and starry sky,",
+                "Dig the grave and let me lie.",
+                "Glad did I live and gladly die,",
+                "And I laid me down with a will.",
+            ],
+            &[
+                "This be the verse you grave for me:",
+                "Here he lies where he longed to be;",
+                "Home is the sailor, home from sea,",
+                "And the hunter home from the hill.",
+            ],
+        ],
+    },
+    Poem {
+        id: "whitman-captain",
+        title: "O Captain! My Captain!",
+        author: "Walt Whitman",
+        year: 1865,
+        source: "Leaves of Grass, via Project Gutenberg",
+        tags: "loss · two minutes",
+        stanzas: &[
+            &[
+                "O Captain! my Captain! our fearful trip is done,",
+                "The ship has weather'd every rack, the prize we sought is won,",
+                "The port is near, the bells I hear, the people all exulting,",
+                "While follow eyes the steady keel, the vessel grim and daring;",
+                "But O heart! heart! heart!",
+                "O the bleeding drops of red,",
+                "Where on the deck my Captain lies,",
+                "Fallen cold and dead.",
+            ],
+            &[
+                "O Captain! my Captain! rise up and hear the bells;",
+                "Rise up, for you the flag is flung, for you the bugle trills,",
+                "For you bouquets and ribbon'd wreaths, for you the shores a-crowding,",
+                "For you they call, the swaying mass, their eager faces turning;",
+                "Here Captain! dear father!",
+                "This arm beneath your head!",
+                "It is some dream that on the deck,",
+                "You've fallen cold and dead.",
+            ],
+            &[
+                "My Captain does not answer, his lips are pale and still,",
+                "My father does not feel my arm, he has no pulse nor will,",
+                "The ship is anchor'd safe and sound, its voyage closed and done,",
+                "From fearful trip the victor ship comes in with object won;",
+                "Exult O shores, and ring O bells!",
+                "But I with mournful tread,",
+                "Walk the deck my Captain lies,",
+                "Fallen cold and dead.",
+            ],
+        ],
+    },
+    Poem {
+        id: "whitman-astronomer",
+        title: "When I Heard the Learn'd Astronomer",
+        author: "Walt Whitman",
+        year: 1865,
+        source: "Leaves of Grass, via Project Gutenberg",
+        tags: "stars · a minute",
+        stanzas: &[
+            &[
+                "When I heard the learn'd astronomer,",
+                "When the proofs, the figures, were ranged in columns before me,",
+                "When I was shown the charts and diagrams, to add, divide, and measure them,",
+                "When I sitting heard the astronomer where he lectured with much applause in the lecture-room,",
+                "How soon unaccountable I became tired and sick,",
+                "Till rising and gliding out I wander'd off by myself,",
+                "In the mystical moist night-air, and from time to time,",
+                "Look'd up in perfect silence at the stars.",
+            ],
+        ],
+    },
+    Poem {
+        id: "longfellow-arrow",
+        title: "The Arrow and the Song",
+        author: "Henry Wadsworth Longfellow",
+        year: 1845,
+        source: "The Belfry of Bruges and Other Poems, via Project Gutenberg",
+        tags: "friendship · a minute",
+        stanzas: &[
+            &[
+                "I shot an arrow into the air,",
+                "It fell to earth, I knew not where;",
+                "For, so swiftly it flew, the sight",
+                "Could not follow it in its flight.",
+            ],
+            &[
+                "I breathed a song into the air,",
+                "It fell to earth, I knew not where;",
+                "For who has sight so keen and strong,",
+                "That it can follow the flight of song?",
+            ],
+            &[
+                "Long, long afterward, in an oak",
+                "I found the arrow, still unbroke;",
+                "And the song, from beginning to end,",
+                "I found again in the heart of a friend.",
+            ],
+        ],
+    },
+    Poem {
+        id: "poe-eldorado",
+        title: "Eldorado",
+        author: "Edgar Allan Poe",
+        year: 1849,
+        source: "The Works of Edgar Allan Poe, via Project Gutenberg",
+        tags: "quests · two minutes",
+        stanzas: &[
+            &[
+                "Gaily bedight,",
+                "A gallant knight,",
+                "In sunshine and in shadow,",
+                "Had journeyed long,",
+                "Singing a song,",
+                "In search of Eldorado.",
+            ],
+            &[
+                "But he grew old,",
+                "This knight so bold,",
+                "And o'er his heart a shadow",
+                "Fell as he found",
+                "No spot of ground",
+                "That looked like Eldorado.",
+            ],
+            &[
+                "And, as his strength",
+                "Failed him at length,",
+                "He met a pilgrim shadow;",
+                "\u{201c}Shadow,\u{201d} said he,",
+                "\u{201c}Where can it be,",
+                "This land of Eldorado?\u{201d}",
+            ],
+            &[
+                "\u{201c}Over the Mountains",
+                "Of the Moon,",
+                "Down the Valley of the Shadow,",
+                "Ride, boldly ride,\u{201d}",
+                "The shade replied,",
+                "\u{201c}If you seek for Eldorado!\u{201d}",
+            ],
+        ],
+    },
+    Poem {
+        id: "donne-death",
+        title: "Death, Be Not Proud",
+        author: "John Donne",
+        year: 1633,
+        source: "Poems, via Project Gutenberg",
+        tags: "faith · a minute",
+        stanzas: &[
+            &[
+                "Death, be not proud, though some have called thee",
+                "Mighty and dreadful, for thou art not so;",
+                "For those whom thou think'st thou dost overthrow",
+                "Die not, poor Death, nor yet canst thou kill me.",
+                "From rest and sleep, which but thy pictures be,",
+                "Much pleasure; then from thee much more must flow,",
+                "And soonest our best men with thee do go,",
+                "Rest of their bones, and soul's delivery.",
+                "Thou art slave to fate, chance, kings, and desperate men,",
+                "And dost with poison, war, and sickness dwell,",
+                "And poppy or charms can make us sleep as well",
+                "And better than thy stroke; why swell'st thou then?",
+                "One short sleep past, we wake eternally",
+                "And death shall be no more; Death, thou shalt die.",
+            ],
+        ],
+    },
+    Poem {
+        id: "herrick-rosebuds",
+        title: "To the Virgins, to Make Much of Time",
+        author: "Robert Herrick",
+        year: 1648,
+        source: "Hesperides, via Project Gutenberg",
+        tags: "time · a minute",
+        stanzas: &[
+            &[
+                "Gather ye rosebuds while ye may,",
+                "Old Time is still a-flying;",
+                "And this same flower that smiles today",
+                "Tomorrow will be dying.",
+            ],
+            &[
+                "The glorious lamp of heaven, the sun,",
+                "The higher he's a-getting,",
+                "The sooner will his race be run,",
+                "And nearer he's to setting.",
+            ],
+            &[
+                "That age is best which is the first,",
+                "When youth and blood are warmer;",
+                "But being spent, the worse, and worst",
+                "Times still succeed the former.",
+            ],
+            &[
+                "Then be not coy, but use your time,",
+                "And while ye may, go marry;",
+                "For having lost but once your prime,",
+                "You may forever tarry.",
+            ],
+        ],
+    },
+    Poem {
+        id: "jonson-celia",
+        title: "Song: To Celia",
+        author: "Ben Jonson",
+        year: 1616,
+        source: "The Forest, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "Drink to me only with thine eyes,",
+                "And I will pledge with mine;",
+                "Or leave a kiss but in the cup,",
+                "And I'll not look for wine.",
+                "The thirst that from the soul doth rise",
+                "Doth ask a drink divine;",
+                "But might I of Jove's nectar sup,",
+                "I would not change for thine.",
+            ],
+            &[
+                "I sent thee late a rosy wreath,",
+                "Not so much honouring thee",
+                "As giving it a hope that there",
+                "It could not withered be;",
+                "But thou thereon didst only breathe,",
+                "And sent'st it back to me;",
+                "Since when it grows, and smells, I swear,",
+                "Not of itself, but thee.",
+            ],
+        ],
+    },
+    Poem {
+        id: "marlowe-shepherd",
+        title: "The Passionate Shepherd to His Love",
+        author: "Christopher Marlowe",
+        year: 1600,
+        source: "England's Helicon, via Project Gutenberg",
+        tags: "love · two minutes",
+        stanzas: &[
+            &[
+                "Come live with me and be my love,",
+                "And we will all the pleasures prove,",
+                "That valleys, groves, hills, and fields,",
+                "Woods, or steepy mountain yields.",
+            ],
+            &[
+                "And we will sit upon the rocks,",
+                "Seeing the shepherds feed their flocks,",
+                "By shallow rivers to whose falls",
+                "Melodious birds sing madrigals.",
+            ],
+            &[
+                "And I will make thee beds of roses",
+                "And a thousand fragrant posies,",
+                "A cap of flowers, and a kirtle",
+                "Embroidered all with leaves of myrtle;",
+            ],
+            &[
+                "A gown made of the finest wool",
+                "Which from our pretty lambs we pull;",
+                "Fair lined slippers for the cold,",
+                "With buckles of the purest gold;",
+            ],
+            &[
+                "A belt of straw and ivy buds,",
+                "With coral clasps and amber studs:",
+                "And if these pleasures may thee move,",
+                "Come live with me, and be my love.",
+            ],
+            &[
+                "The shepherds' swains shall dance and sing",
+                "For thy delight each May morning:",
+                "If these delights thy mind may move,",
+                "Then live with me and be my love.",
+            ],
+        ],
+    },
+    Poem {
+        id: "hunt-jenny",
+        title: "Jenny Kiss'd Me",
+        author: "Leigh Hunt",
+        year: 1838,
+        source: "The Monthly Chronicle, via Project Gutenberg",
+        tags: "joy · a minute",
+        stanzas: &[
+            &[
+                "Jenny kiss'd me when we met,",
+                "Jumping from the chair she sat in;",
+                "Time, you thief, who love to get",
+                "Sweets into your list, put that in!",
+                "Say I'm weary, say I'm sad,",
+                "Say that health and wealth have miss'd me,",
+                "Say I'm growing old, but add,",
+                "Jenny kiss'd me.",
+            ],
+        ],
+    },
+    Poem {
+        id: "browning-count",
+        title: "How Do I Love Thee?",
+        author: "Elizabeth Barrett Browning",
+        year: 1850,
+        source: "Sonnets from the Portuguese, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "How do I love thee? Let me count the ways.",
+                "I love thee to the depth and breadth and height",
+                "My soul can reach, when feeling out of sight",
+                "For the ends of Being and ideal Grace.",
+                "I love thee to the level of everyday's",
+                "Most quiet need, by sun and candle-light.",
+                "I love thee freely, as men strive for Right;",
+                "I love thee purely, as they turn from Praise.",
+                "I love thee with the passion put to use",
+                "In my old griefs, and with my childhood's faith.",
+                "I love thee with a love I seemed to lose",
+                "With my lost saints, I love thee with the breath,",
+                "Smiles, tears, of all my life! and, if God choose,",
+                "I shall but love thee better after death.",
+            ],
+        ],
+    },
+    Poem {
+        id: "dickinson-success",
+        title: "Success Is Counted Sweetest",
+        author: "Emily Dickinson",
+        year: 1878,
+        source: "Poems, First Series, via Project Gutenberg",
+        tags: "longing · a minute",
+        stanzas: &[
+            &[
+                "Success is counted sweetest",
+                "By those who ne'er succeed.",
+                "To comprehend a nectar",
+                "Requires sorest need.",
+            ],
+            &[
+                "Not one of all the purple host",
+                "Who took the flag to-day",
+                "Can tell the definition,",
+                "So clear, of victory,",
+            ],
+            &[
+                "As he, defeated, dying,",
+                "On whose forbidden ear",
+                "The distant strains of triumph",
+                "Break, agonized and clear!",
+            ],
+        ],
+    },
+    Poem {
+        id: "dickinson-moor",
+        title: "I Never Saw a Moor",
+        author: "Emily Dickinson",
+        year: 1890,
+        source: "Poems, First Series, via Project Gutenberg",
+        tags: "faith · a minute",
+        stanzas: &[
+            &[
+                "I never saw a moor,",
+                "I never saw the sea;",
+                "Yet know I how the heather looks,",
+                "And what a wave must be.",
+            ],
+            &[
+                "I never spoke with God,",
+                "Nor visited in heaven;",
+                "Yet certain am I of the spot",
+                "As if the chart were given.",
+            ],
+        ],
+    },
+    Poem {
+        id: "lear-owl",
+        title: "The Owl and the Pussy-cat",
+        author: "Edward Lear",
+        year: 1871,
+        source: "Nonsense Songs, Stories, Botany, and Alphabets, via Project Gutenberg",
+        tags: "nonsense · two minutes",
+        stanzas: &[
+            &[
+                "The Owl and the Pussy-cat went to sea",
+                "In a beautiful pea-green boat,",
+                "They took some honey, and plenty of money,",
+                "Wrapped up in a five-pound note.",
+                "The Owl looked up to the stars above,",
+                "And sang to a small guitar,",
+                "\u{201c}O lovely Pussy! O Pussy, my love,",
+                "What a beautiful Pussy you are,",
+                "You are,",
+                "You are!",
+                "What a beautiful Pussy you are!\u{201d}",
+            ],
+            &[
+                "Pussy said to the Owl, \u{201c}You elegant fowl!",
+                "How charmingly sweet you sing!",
+                "O let us be married! too long we have tarried:",
+                "But what shall we do for a ring?\u{201d}",
+                "They sailed away, for a year and a day,",
+                "To the land where the Bong-tree grows,",
+                "And there in a wood a Piggy-wig stood,",
+                "With a ring at the end of his nose,",
+                "His nose,",
+                "His nose,",
+                "With a ring at the end of his nose.",
+            ],
+            &[
+                "\u{201c}Dear Pig, are you willing to sell for one shilling",
+                "Your ring?\u{201d} Said the Piggy, \u{201c}I will.\u{201d}",
+                "So they took it away, and were married next day",
+                "By the Turkey who lives on the hill.",
+                "They dined on mince, and slices of quince,",
+                "Which they ate with a runcible spoon;",
+                "And hand in hand, on the edge of the sand,",
+                "They danced by the light of the moon,",
+                "The moon,",
+                "The moon,",
+                "They danced by the light of the moon.",
+            ],
+        ],
+    },
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize, Hash)]
@@ -323,8 +1375,14 @@ struct OnlineLine {
 }
 
 type OnlinePages = Vec<Vec<OnlineLine>>;
-/// A bundled poem's pages, with the poem and panel they were measured for.
-type PoemLayout = (usize, kobo_ui::DisplayMetrics, Vec<Vec<VerseRun>>);
+/// A bundled poem's pages, with the poem and panel they were measured for and
+/// the size its verse is set at.
+type PoemLayout = (
+    usize,
+    kobo_ui::DisplayMetrics,
+    kobo_ui::TextScale,
+    Vec<Vec<VerseRun>>,
+);
 type OnlineLayout = (kobo_sdk::DisplayMetrics, u64, OnlinePages);
 
 #[derive(Clone)]
@@ -342,6 +1400,13 @@ struct Saved {
     #[serde(default)]
     favorites: BTreeSet<String>,
     online_favorites: Vec<OnlinePoem>,
+    /// Written by a sleep-screen setting that never reached the sleep screen.
+    ///
+    /// The runtime has no way for an application to draw while the reader
+    /// sleeps, so the setting was a switch wired to nothing and is gone. The
+    /// field stays so a reader who goes back to an earlier version still has
+    /// their favourites read back.
+    #[serde(default)]
     sleep: bool,
     /// Today's poem from `PoetryDB`, and the day it was chosen for.
     #[serde(default)]
@@ -413,6 +1478,9 @@ const VERSE_LEADING: u16 = 88;
 ///
 /// Pagination is measured at this size too. A page measured at one size and
 /// set at another loses its last lines.
+///
+/// The step is given back when it is the only thing splitting a short poem:
+/// see [`Verses::poem_pages`].
 fn poem_scale(context: &Context) -> kobo_ui::TextScale {
     let chosen = context.metrics().text_scale;
     chosen.larger().unwrap_or(chosen)
@@ -436,7 +1504,6 @@ enum View {
     Search,
     Results,
     Online,
-    Settings,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -461,7 +1528,8 @@ struct Verses {
     online_from: View,
     card_from: View,
     saved: Saved,
-    keyboard: Keyboard,
+    /// The words of a search, typed on the reader's own keyboard.
+    entry: TextEntry,
     results: Vec<OnlinePoem>,
     /// Where the next search looks, and what the last one asked for.
     scope: Scope,
@@ -505,7 +1573,7 @@ impl Default for Verses {
             online_from: View::Results,
             card_from: View::Today,
             saved: Saved::default(),
-            keyboard: Keyboard::new(),
+            entry: TextEntry::new().opened_by(SEARCH_FIELD),
             results: Vec::new(),
             scope: Scope::Anything,
             query: String::new(),
@@ -524,6 +1592,11 @@ impl Default for Verses {
             saving: false,
         }
     }
+}
+
+/// The name a poet is filed under: the last word of how they are credited.
+fn surname(author: &str) -> &str {
+    author.rsplit(' ').next().unwrap_or(author)
 }
 
 fn daily_index(year: u16, month: u8, day: u8) -> usize {
@@ -545,26 +1618,13 @@ fn poem_for_today(clock: &dyn Clock) -> usize {
         .map_or(0, |date| daily_index(date.year, date.month, date.day))
 }
 
-/// The reader's clock, at the offset the runtime was started with.
+/// The reader's clock, on the reader's own day.
+///
+/// The SDK's, which takes the offset the runtime hands every application and
+/// never fails, so the day a poem is chosen for is the day on the status bar.
 fn reader_clock() -> Box<dyn Clock> {
-    let minutes = std::env::var("KOBO_UTC_OFFSET_MINUTES")
-        .ok()
-        .and_then(|value| value.parse::<i16>().ok())
-        .unwrap_or(0);
-    SystemClock::new(minutes)
-        .or_else(|_| SystemClock::new(0))
-        .map_or_else(
-            |_| Box::new(ManualClock::new(EPOCH).expect("a valid fixed clock")) as Box<dyn Clock>,
-            |clock| Box::new(clock) as Box<dyn Clock>,
-        )
+    Box::new(SystemClock::reader())
 }
-
-/// A clock that cannot be read is not a reason to refuse to draw a poem.
-const EPOCH: Snapshot = Snapshot {
-    unix_millis: 0,
-    monotonic_millis: 0,
-    utc_offset_minutes: 0,
-};
 
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -619,17 +1679,17 @@ impl Verses {
     /// empty beneath twelve lines, which read as a page that had failed to
     /// load the rest.
     fn local_poem(&self, context: &Context) -> Screen {
-        let pages = self.poem_pages(context);
+        let (scale, pages) = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
-        self.poem_page_screen(context, &pages[page], page, pages.len())
+        self.poem_page_screen(&pages[page], page, pages.len(), scale)
     }
 
     fn poem_page_screen(
         &self,
-        context: &Context,
         runs: &[VerseRun],
         page: usize,
         count: usize,
+        scale: kobo_ui::TextScale,
     ) -> Screen {
         let poem = CORPUS[self.poem];
         let mut screen = ScreenBuilder::new("verses-poem").top_bar(if self.view == View::Today {
@@ -658,7 +1718,7 @@ impl Verses {
                 .heading_at_level(2, poem.title)
                 .secondary(format!("{} · {}", poem.author, poem.year));
         }
-        screen = screen.reading(true).text_scale(poem_scale(context));
+        screen = screen.reading(true).text_scale(scale);
         screen = set_verse(screen, poem, runs);
         if page + 1 == count {
             screen = screen.secondary(format!("From {}", poem.source));
@@ -677,7 +1737,8 @@ impl Verses {
         screen.bottom_action("card", "Make a quote card").build()
     }
 
-    /// Which lines go on which page, measured against the panel.
+    /// Which lines go on which page, measured against the panel, and the size
+    /// they are set at.
     ///
     /// Each page is filled by laying it out and keeping whatever still fits,
     /// a whole stanza at a time, so the measure is the page the reader will
@@ -687,31 +1748,63 @@ impl Verses {
     /// next page: Hope, twelve lines in three stanzas, came out as two pages
     /// with four lines on the second and the bottom half of the first empty.
     ///
+    /// A poem that fits one page is measured as the one page it is, without
+    /// the page-position strip a longer poem carries. Measured as the first
+    /// page of two, a sonnet lost its closing couplet to a strip it would
+    /// never have had, and read eleven lines and then three. If the poem fits
+    /// only at the reader's own size rather than a step above it, it is set
+    /// at their size: a sonnet whole is worth more than a sonnet large.
+    ///
     /// A stanza is only split when it is taller than a page on its own, which
-    /// a sonnet is at the largest text sizes, and then line by line so nothing
-    /// is lost.
-    fn poem_pages(&self, context: &Context) -> Vec<Vec<VerseRun>> {
+    /// a long one is at the largest text sizes, and then line by line so
+    /// nothing is lost.
+    fn poem_pages(&self, context: &Context) -> (kobo_ui::TextScale, Vec<Vec<VerseRun>>) {
         let metrics = context.metrics();
-        if let Some((poem, measured, pages)) = self.poem_layout.borrow().as_ref() {
+        if let Some((poem, measured, scale, pages)) = self.poem_layout.borrow().as_ref() {
             if *poem == self.poem && *measured == metrics {
-                return pages.clone();
+                return (*scale, pages.clone());
             }
         }
-        let pages = self.measure_poem_pages(context);
-        *self.poem_layout.borrow_mut() = Some((self.poem, metrics, pages.clone()));
-        pages
+        let (scale, pages) = self.measure_poem_pages(context);
+        *self.poem_layout.borrow_mut() = Some((self.poem, metrics, scale, pages.clone()));
+        (scale, pages)
     }
 
-    fn measure_poem_pages(&self, context: &Context) -> Vec<Vec<VerseRun>> {
+    fn page_fits(context: &Context, screen: &Screen) -> bool {
+        screen
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+            .issues
+            .is_empty()
+    }
+
+    fn measure_poem_pages(&self, context: &Context) -> (kobo_ui::TextScale, Vec<Vec<VerseRun>>) {
         let poem = CORPUS[self.poem];
+        let whole: Vec<VerseRun> = poem
+            .stanzas
+            .iter()
+            .enumerate()
+            .map(|(stanza, lines)| VerseRun {
+                stanza,
+                from: 0,
+                to: lines.len(),
+            })
+            .collect();
+        let larger = poem_scale(context);
+        let own = context.metrics().text_scale;
+        for scale in [larger, own] {
+            if Self::page_fits(context, &self.poem_page_screen(&whole, 0, 1, scale)) {
+                return (scale, vec![whole]);
+            }
+        }
+        let scale = larger;
         // Measured as a page of a longer poem, with the page position and the
         // attribution both present, so a page that fits here fits wherever it
         // lands.
         let fits = |runs: &[VerseRun], first: bool| {
-            self.poem_page_screen(context, runs, usize::from(!first), 2)
-                .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
-                .issues
-                .is_empty()
+            Self::page_fits(
+                context,
+                &self.poem_page_screen(runs, usize::from(!first), 2, scale),
+            )
         };
         let mut pages: Vec<Vec<VerseRun>> = Vec::new();
         let mut current: Vec<VerseRun> = Vec::new();
@@ -748,6 +1841,12 @@ impl Verses {
                 {
                     to += 1;
                 }
+                // Shared out evenly over the pages it needs, rather than
+                // filling the first and leaving the last with a couplet. Every
+                // share is no longer than what was just measured to fit.
+                let left = lines.len() - from;
+                let share = left.div_ceil(left.div_ceil(to - from));
+                let to = from + share;
                 pages.push(vec![VerseRun { stanza, from, to }]);
                 from = to;
             }
@@ -762,7 +1861,7 @@ impl Verses {
                 to: poem.stanzas.first().map_or(0, |lines| lines.len()),
             }]);
         }
-        pages
+        (scale, pages)
     }
 
     fn online_prefix(&self, context: &Context, poem: &OnlinePoem, page: usize) -> ScreenBuilder {
@@ -833,6 +1932,13 @@ impl Verses {
 
     /// Keep verse lines and stanza gaps, measuring the same rich-text nodes
     /// the reader sees. Cache the result so each page turn stays cheap.
+    ///
+    /// A poem that fits one page is one page, measured as that page rather
+    /// than as the first of several. Otherwise a stanza moves to the next
+    /// page whole when it does not fit the rest of this one, and is cut line
+    /// by line only when it is taller than a page by itself. Filling every
+    /// page to the last line it could hold set the closing couplet of a
+    /// sonnet on a page of its own.
     fn online_pages(&self, context: &Context, poem: &OnlinePoem) -> OnlinePages {
         let mut hash = std::collections::hash_map::DefaultHasher::new();
         poem.hash(&mut hash);
@@ -857,6 +1963,14 @@ impl Verses {
             stanza_start = false;
         }
         let metrics = context.metrics();
+        let all: Vec<OnlineLine> = pending.iter().cloned().collect();
+        if !all.is_empty()
+            && Self::page_fits(context, &self.online_page_screen(context, poem, &all, 0, 1))
+        {
+            let pages = vec![all];
+            *self.online_layout.borrow_mut() = Some((metrics, key, pages.clone()));
+            return pages;
+        }
         // Measured with the first page's heading and the attribution, so every
         // page has at least the room the fullest one needs.
         let prefix = self.online_page_screen(context, poem, &[], 0, 2);
@@ -875,37 +1989,37 @@ impl Verses {
                 area.gap,
             )
         });
+        // Measure each source line once, rather than relaying out the entire
+        // growing page for every additional line.
+        let measure = |line: &OnlineLine| measure_online_line(line, &metrics, &chrome);
         let mut pages = Vec::new();
         let mut page = Vec::new();
         let mut used = 0;
         while let Some(mut line) = pending.pop_front() {
             if page.is_empty() {
                 line.stanza_start = false;
+            } else if line.stanza_start {
+                // The whole stanza, as it would sit at the top of a page.
+                let mut stanza = vec![OnlineLine {
+                    text: line.text.clone(),
+                    stanza_start: false,
+                }];
+                stanza.extend(
+                    pending
+                        .iter()
+                        .take_while(|next| !next.stanza_start)
+                        .cloned(),
+                );
+                let alone = stanza.iter().map(|line| measure(line).0 + gap).sum::<i32>();
+                let here = alone + measure(&line).0 - measure(&stanza[0]).0;
+                if used + here > capacity && alone <= capacity {
+                    pages.push(std::mem::take(&mut page));
+                    used = 0;
+                    pending.push_front(line);
+                    continue;
+                }
             }
-            // Measure each source line once, rather than relaying out the
-            // entire growing page for every additional line.
-            let screen = ScreenBuilder::new("verses-line-measure")
-                .reading(true)
-                .rich_text(
-                    line.text.clone(),
-                    Vec::new(),
-                    kobo_sdk::ParagraphPresentation {
-                        margin_before_em: if line.stanza_start { STANZA_AIR } else { 0 },
-                        ..kobo_sdk::ParagraphPresentation::default()
-                    },
-                )
-                .build();
-            let measured = screen.diagnostics(&metrics, &chrome);
-            let height = measured.layout.content_used();
-            let overflow = measured.issues.iter().any(|issue| {
-                matches!(
-                    issue.kind,
-                    kobo_ui::LayoutIssueKind::TextOverflow
-                        | kobo_ui::LayoutIssueKind::Clipped
-                        | kobo_ui::LayoutIssueKind::ContentOverflow { .. }
-                        | kobo_ui::LayoutIssueKind::InteractiveOffscreen
-                )
-            });
+            let (height, overflow) = measure(&line);
             if !overflow && used + gap + height <= capacity {
                 used += gap + height;
                 page.push(line);
@@ -1056,18 +2170,47 @@ impl Verses {
         if let Some(first) = rows.first_mut() {
             first.section = Some("Favorites".to_owned());
         }
-        rows.extend(CORPUS.iter().enumerate().map(|(index, poem)| PoemRow {
-            section: (index == 0).then(|| "Poems".to_owned()),
-            action: format!("poem-{index}"),
-            title: context.clamped_row(poem.title, 2, false),
-            detail: format!("{} · {}", poem.author, poem.tags),
-            glyph: Glyph::Note,
+        // By poet, so the shelf reads like the contents of an anthology and
+        // a reader after Keats finds his two together. In the order the
+        // poems were written down it was seven pages to search by eye.
+        let mut by_poet: Vec<usize> = (0..CORPUS.len()).collect();
+        by_poet.sort_by_key(|index| (surname(CORPUS[*index].author), CORPUS[*index].year));
+        rows.extend(by_poet.iter().enumerate().map(|(place, &index)| {
+            let poem = CORPUS[index];
+            PoemRow {
+                section: (place == 0).then(|| "Poems".to_owned()),
+                action: format!("poem-{index}"),
+                title: context.clamped_row(poem.title, 2, false),
+                detail: format!("{} · {}", poem.author, poem.tags),
+                glyph: Glyph::Note,
+            }
         }));
         Self::paged_poems(context, screen, &rows, self.browse_page)
     }
 
+    /// What the search box asks for, which follows where the search looks.
+    const fn search_prompt(&self) -> &'static str {
+        match self.scope {
+            Scope::Anything => "A title, a poet, or a line you remember",
+            Scope::Title => "A poem's title",
+            Scope::Poet => "A poet's name",
+            Scope::Line => "Words from a line",
+        }
+    }
+
+    /// Where a search looks, which poets to start from, and the box that
+    /// raises the reader's keyboard.
+    ///
+    /// The box is a field rather than keys on this screen: the scope and the
+    /// suggested poets are taps, and a search that needs neither typing nor
+    /// a third of the panel given to keys should not pay for them.
     fn search(&self) -> Screen {
         let mut screen = ScreenBuilder::new("verses-search").top_bar("Search poetry");
+        if self.entry.is_open() {
+            return screen
+                .text_entry(&self.entry, self.search_prompt(), "Search")
+                .build();
+        }
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice.clone());
         }
@@ -1080,25 +2223,17 @@ impl Verses {
                 selected,
                 Scope::ALL.iter().map(|&(_, name, label)| (name, label)),
             )
-            .typed(
-                &self.keyboard,
-                match self.scope {
-                    Scope::Anything => "A title, a poet, or a line you remember",
-                    Scope::Title => "A poem's title",
-                    Scope::Poet => "A poet's name",
-                    Scope::Line => "Words from a line",
-                },
-            );
-        // Somewhere to start, while there is nothing typed: the whole of
-        // PoetryDB is behind this box and an empty one says nothing about it.
-        if self.keyboard.text().is_empty() {
-            screen = screen.section("Poets to start with").chips(
+            .field(SEARCH_FIELD, "", self.search_prompt());
+        // Somewhere to start: the whole of PoetryDB is behind this box and an
+        // empty one says nothing about it.
+        screen
+            .section("Poets to start with")
+            .chips(
                 SUGGESTED_POETS
                     .iter()
                     .map(|poet| (format!("suggest-{poet}"), *poet, false)),
-            );
-        }
-        screen.keyboard(&self.keyboard, "Search").build()
+            )
+            .build()
     }
 
     fn results(&self, context: &Context) -> (Screen, usize) {
@@ -1218,33 +2353,6 @@ impl Verses {
         self.pending = None;
     }
 
-    fn settings(&self) -> Screen {
-        ScreenBuilder::new("verses-settings")
-            .top_bar("Sleep screen")
-            .splash(
-                Some(Glyph::Note),
-                if self.saved.sleep {
-                    "Daily poem on"
-                } else {
-                    "Daily poem off"
-                },
-                if self.saved.sleep {
-                    "Tomorrow's poem will appear when the reader sleeps."
-                } else {
-                    "Show tomorrow's poem while the reader sleeps."
-                },
-            )
-            .primary_button(
-                "sleep",
-                if self.saved.sleep {
-                    "Turn off"
-                } else {
-                    "Turn on"
-                },
-            )
-            .build()
-    }
-
     fn screen(&self, context: &Context) -> Screen {
         match self.view {
             View::Today if self.daily_poem().is_some() => self.online_poem(context),
@@ -1259,7 +2367,6 @@ impl Verses {
             View::Search => self.search(),
             View::Results => self.results(context).0,
             View::Online => self.online_poem(context),
-            View::Settings => self.settings(),
         }
     }
 
@@ -1322,7 +2429,7 @@ impl Verses {
                 .build();
         }
         let poem = CORPUS[self.poem];
-        let pages = self.poem_pages(context);
+        let (scale, pages) = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
         // The card is a picture of the poem, so it is set at the size the poem
         // is set at. It also shares the poem's pagination, and pagination is
@@ -1331,7 +2438,7 @@ impl Verses {
         let mut screen = ScreenBuilder::new("verses-card")
             .top_bar(poem.title)
             .reading(true)
-            .text_scale(poem_scale(context));
+            .text_scale(scale);
         screen = set_verse(screen, poem, &pages[page]);
         screen
             .secondary(format!("{} · {}", poem.author, poem.year))
@@ -1565,6 +2672,18 @@ impl KoboApp for Verses {
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         self.advance_day(reader_clock().as_ref());
         self.fetch_daily(context);
+        // The search box first: while it is open the runtime holds the panel,
+        // and its answer arrives as an action like any other. Backing out of
+        // it leaves the search screen as it was.
+        if self.view == View::Search {
+            if let Some(typing) = self.entry.handle(action) {
+                if let Typing::Submitted(query) = typing {
+                    self.begin_search(context, &query, self.scope);
+                }
+                self.show(context);
+                return;
+            }
+        }
         if self.view == View::Search && action != ActionId::BACK {
             if let Some(&(scope, _, _)) = Scope::ALL
                 .iter()
@@ -1576,9 +2695,6 @@ impl KoboApp for Verses {
                 .find(|poet| action == action_id(&format!("suggest-{poet}")))
             {
                 self.begin_search(context, poet, Scope::Poet);
-            } else if let Some(Pressed::Submitted) = self.keyboard.press(action) {
-                let query = self.keyboard.take();
-                self.begin_search(context, &query, self.scope);
             }
             self.show(context);
             return;
@@ -1605,7 +2721,7 @@ impl KoboApp for Verses {
             self.view = View::Browse;
         } else if action == action_id("search") {
             self.cancel_request(context);
-            self.keyboard = Keyboard::new();
+            self.entry.close();
             self.notice = None;
             self.view = View::Search;
         } else if action == action_id("favorite") {
@@ -1633,15 +2749,10 @@ impl KoboApp for Verses {
         } else if action == action_id("online-previous") {
             self.turn_online(context, false);
         } else if action == action_id("poem-next") {
-            let last = self.poem_pages(context).len().saturating_sub(1);
+            let last = self.poem_pages(context).1.len().saturating_sub(1);
             self.poem_page = (self.poem_page + 1).min(last);
         } else if action == action_id("poem-previous") {
             self.poem_page = self.poem_page.saturating_sub(1);
-        } else if action == action_id("sleep") {
-            self.saved.sleep = !self.saved.sleep;
-            self.save(context);
-        } else if action == action_id("settings") {
-            self.view = View::Settings;
         } else if let Some(index) =
             (0..CORPUS.len()).find(|index| action == action_id(&format!("poem-{index}")))
         {
@@ -1686,7 +2797,7 @@ impl KoboApp for Verses {
             View::Online => self.turn_online(context, forward),
             View::Today if self.daily_poem().is_some() => self.turn_online(context, forward),
             View::Today | View::Reading => {
-                let last = self.poem_pages(context).len().saturating_sub(1);
+                let last = self.poem_pages(context).1.len().saturating_sub(1);
                 self.poem_page = if forward {
                     self.poem_page.saturating_add(1).min(last)
                 } else {
@@ -1874,6 +2985,37 @@ fn set_verse(mut screen: ScreenBuilder, poem: Poem, runs: &[VerseRun]) -> Screen
     screen
 }
 
+/// How tall one line of a fetched poem stands, alone, and whether it fits the
+/// panel at all.
+fn measure_online_line(
+    line: &OnlineLine,
+    metrics: &kobo_sdk::DisplayMetrics,
+    chrome: &kobo_ui::Chrome,
+) -> (i32, bool) {
+    let screen = ScreenBuilder::new("verses-line-measure")
+        .reading(true)
+        .rich_text(
+            line.text.clone(),
+            Vec::new(),
+            kobo_sdk::ParagraphPresentation {
+                margin_before_em: if line.stanza_start { STANZA_AIR } else { 0 },
+                ..kobo_sdk::ParagraphPresentation::default()
+            },
+        )
+        .build();
+    let measured = screen.diagnostics(metrics, chrome);
+    let overflow = measured.issues.iter().any(|issue| {
+        matches!(
+            issue.kind,
+            kobo_ui::LayoutIssueKind::TextOverflow
+                | kobo_ui::LayoutIssueKind::Clipped
+                | kobo_ui::LayoutIssueKind::ContentOverflow { .. }
+                | kobo_ui::LayoutIssueKind::InteractiveOffscreen
+        )
+    });
+    (measured.layout.content_used(), overflow)
+}
+
 fn split_online_line(text: &str, context: &Context) -> Option<(String, String)> {
     let metrics = context.metrics();
     let lines = kobo_ui::with_text_scale(metrics.text_scale, || {
@@ -1915,6 +3057,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kobo_sdk::clock::ManualClock;
     use kobo_sdk::AppRunner;
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
@@ -2011,9 +3154,9 @@ mod tests {
             );
             // Not a proof of completeness, which no test can give: a floor
             // that the four line excerpts this corpus used to carry could not
-            // have cleared.
+            // have cleared. The shortest whole poem here is The Eagle, at six.
             assert!(
-                poem.line_count() >= 12,
+                poem.line_count() >= 6,
                 "{} is {} lines, which is an excerpt rather than a poem",
                 poem.title,
                 poem.line_count()
@@ -2036,7 +3179,7 @@ mod tests {
                     poem: index,
                     ..Verses::default()
                 };
-                let pages = app.poem_pages(&context);
+                let (_, pages) = app.poem_pages(&context);
                 let seen: Vec<(usize, usize)> = pages
                     .iter()
                     .flatten()
@@ -2074,7 +3217,7 @@ mod tests {
                     view: View::Reading,
                     ..Verses::default()
                 };
-                for page in 0..app.poem_pages(&context).len() {
+                for page in 0..app.poem_pages(&context).1.len() {
                     app.poem_page = page;
                     let issues = app
                         .local_poem(&context)
@@ -2088,6 +3231,128 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    fn pages_at(index: usize, scale: kobo_ui::TextScale) -> Vec<Vec<VerseRun>> {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale: scale,
+            ..CLARA_BW_METRICS
+        };
+        let context = AppRunner::with_metrics(Verses::default(), metrics).context();
+        let app = Verses {
+            poem: index,
+            view: View::Reading,
+            ..Verses::default()
+        };
+        app.poem_pages(&context).1
+    }
+
+    #[test]
+    fn a_sonnet_is_one_page_rather_than_eleven_lines_and_then_three() {
+        for (index, poem) in CORPUS.iter().enumerate() {
+            if poem.stanzas.len() == 1 && poem.line_count() == 14 {
+                assert_eq!(
+                    pages_at(index, kobo_ui::TextScale::default()).len(),
+                    1,
+                    "{} is split at the default size",
+                    poem.title
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_sonnet_too_tall_for_one_page_is_shared_out_rather_than_left_a_couplet() {
+        let sonnet = CORPUS
+            .iter()
+            .position(|poem| poem.id == "shakespeare-sonnet-18")
+            .expect("a sonnet");
+        let pages = pages_at(sonnet, kobo_ui::TextScale::Largest);
+        assert!(pages.len() > 1);
+        let sizes: Vec<usize> = pages
+            .iter()
+            .map(|runs| runs.iter().map(|run| run.to - run.from).sum())
+            .collect();
+        let (least, most) = (
+            sizes.iter().min().copied().unwrap_or(0),
+            sizes.iter().max().copied().unwrap_or(0),
+        );
+        assert!(most - least <= 1, "uneven pages: {sizes:?}");
+    }
+
+    #[test]
+    fn a_short_poem_is_one_page_and_a_longer_one_never_breaks_a_stanza() {
+        for (index, poem) in CORPUS.iter().enumerate() {
+            let pages = pages_at(index, kobo_ui::TextScale::default());
+            if poem.line_count() <= 14 {
+                assert_eq!(pages.len(), 1, "{} is split", poem.title);
+            }
+            for run in pages.iter().flatten() {
+                assert!(
+                    run.from == 0 && run.to == poem.stanzas[run.stanza].len(),
+                    "{} breaks a stanza at the default size",
+                    poem.title
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_offline_shelf_has_a_month_of_different_poems() {
+        assert!(CORPUS.len() >= 30, "only {} poems offline", CORPUS.len());
+        let ids: BTreeSet<&str> = CORPUS.iter().map(|poem| poem.id).collect();
+        assert_eq!(ids.len(), CORPUS.len(), "two poems share a name");
+        let month: BTreeSet<usize> = (1..=30).map(|day| daily_index(2026, 11, day)).collect();
+        assert!(month.len() >= 25, "a month offline repeats itself");
+        for poem in CORPUS {
+            for line in poem.lines() {
+                assert!(
+                    !line.contains('\u{2014}') && !line.contains('\u{2013}'),
+                    "{}: a dash the panel sets badly",
+                    poem.title
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_short_poem_from_poetrydb_is_one_page_and_a_long_one_breaks_between_stanzas() {
+        let context = AppRunner::new(Verses::default()).context();
+        let app = Verses::default();
+        let sonnet = OnlinePoem {
+            title: "Sonnet".into(),
+            author: "A Poet".into(),
+            lines: (1..=14)
+                .map(|line| format!("The line numbered {line} of the poem"))
+                .collect(),
+            linecount: "14".into(),
+        };
+        assert_eq!(app.online_pages(&context, &sonnet).len(), 1);
+        let mut lines = Vec::new();
+        for stanza in 1..=8 {
+            if stanza > 1 {
+                lines.push(String::new());
+            }
+            for line in 1..=4 {
+                lines.push(format!("Stanza {stanza}, line {line}, of a long poem"));
+            }
+        }
+        let long = OnlinePoem {
+            title: "Long".into(),
+            author: "A Poet".into(),
+            lines,
+            linecount: "32".into(),
+        };
+        let pages = app.online_pages(&context, &long);
+        assert!(pages.len() > 1);
+        for page in &pages {
+            let first = page.first().expect("a page with lines");
+            assert!(
+                first.text.ends_with("line 1, of a long poem"),
+                "a stanza was broken: {}",
+                first.text
+            );
         }
     }
 
@@ -2133,7 +3398,7 @@ mod tests {
                     view: View::Reading,
                     ..Verses::default()
                 };
-                for page in 0..app.poem_pages(&context).len() {
+                for page in 0..app.poem_pages(&context).1.len() {
                     app.poem_page = page;
                     let card = app.quote_card(&context);
                     let issues = card.diagnostics(&metrics, &chrome).issues;

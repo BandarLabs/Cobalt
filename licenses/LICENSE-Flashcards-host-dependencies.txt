@@ -7144,7 +7144,7 @@ Used by: windows 0.61.3, windows-collections 0.2.0, windows-core 0.61.2, windows
 
 ===============================================================================
 Apache License 2.0 [Apache-2.0]
-Used by: ammonia 4.1.4, crc32fast 1.5.1, fallible-iterator 0.3.0, fallible-streaming-iterator 0.1.9, hex 0.4.3, toml_datetime 1.1.1+spec-1.1.0, toml_edit 0.25.13+spec-1.1.0, toml_parser 1.1.3+spec-1.1.0
+Used by: ammonia 4.1.8, crc32fast 1.5.1, fallible-iterator 0.3.0, fallible-streaming-iterator 0.1.9, hex 0.4.3, toml_datetime 1.1.1+spec-1.1.0, toml_edit 0.25.13+spec-1.1.0, toml_parser 1.1.3+spec-1.1.0
 -------------------------------------------------------------------------------
                                  Apache License
                            Version 2.0, January 2004
@@ -8819,7 +8819,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ===============================================================================
 BSD 3-Clause "New" or "Revised" License [BSD-3-Clause]
-Used by: zstd-safe 7.3.0, zstd-sys 2.1.0+zstd.1.5.7
+Used by: zstd-safe 7.3.0, zstd-sys 2.1.2+zstd.1.5.7
 -------------------------------------------------------------------------------
 BSD 3-Clause License
 
@@ -8903,7 +8903,7 @@ OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ===============================================================================
 GNU Affero General Public License v3.0 [AGPL-3.0]
-Used by: anki 0.0.0, anki_i18n 0.0.0, anki_io 0.0.0, anki_proto 0.0.0, anki_proto_gen 0.0.0, kobo-doc 0.3.20, kobo-flashcards-format 0.3.20, kobo-flashcards-import 0.3.10, kobo-html 0.3.20, kobo-image 0.3.20, kobo-text 0.3.20, kobo-ui 0.3.20
+Used by: anki 0.0.0, anki_i18n 0.0.0, anki_io 0.0.0, anki_proto 0.0.0, anki_proto_gen 0.0.0, kobo-doc 0.3.31, kobo-flashcards-format 0.3.31, kobo-flashcards-import 0.3.10, kobo-html 0.3.31, kobo-image 0.3.31, kobo-text 0.3.31, kobo-ui 0.3.31
 -------------------------------------------------------------------------------
 GNU AFFERO GENERAL PUBLIC LICENSE
 Version 3, 19 November 2007
@@ -10267,7 +10267,7 @@ SOFTWARE.
 
 ===============================================================================
 MIT License [MIT]
-Used by: difflib 0.4.0, libm 0.2.16
+Used by: difflib 0.4.0, libm 0.2.16, qrcodegen 1.8.0
 -------------------------------------------------------------------------------
 MIT License
 
@@ -10357,7 +10357,7 @@ Used by: rustybuzz 0.20.1
 
 ===============================================================================
 MIT License [MIT]
-Used by: pulldown-cmark 0.13.4, pulldown-cmark-escape 0.11.0
+Used by: pulldown-cmark 0.13.5, pulldown-cmark-escape 0.11.0
 -------------------------------------------------------------------------------
 The MIT License
 

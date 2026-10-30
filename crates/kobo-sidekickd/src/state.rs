@@ -136,14 +136,13 @@ pub fn init(extra_hosts: &[String]) -> Result<(), String> {
         println!("The authority and pairing code were kept, so a reader that");
         println!("already trusts this daemon needs nothing done to it.\n");
     }
+    // The companion's own init pairs the reader over Wi-Fi and says what to
+    // do next in its own words, so this is only for somebody running the
+    // helper by hand.
     println!("Next:");
-    println!("  1. kobo-sidekickd setup codex   (or claude), follow it");
-    println!("  2. kobo-sidekickd run");
-    println!("  3. open Sidekick on the reader, enter the address and code");
-    println!();
-    println!("A reader set up with 'kobo setup' after this point trusts the");
-    println!("daemon already; one that was set up before it needs one");
-    println!("'kobo trust set sidekick --device READER_IP'.");
+    println!("  1. kobo sidekick init   pairs the reader, so nothing is typed on it");
+    println!("  2. kobo sidekick setup claude   (or codex)");
+    println!("  3. kobo sidekick run");
     Ok(())
 }
 

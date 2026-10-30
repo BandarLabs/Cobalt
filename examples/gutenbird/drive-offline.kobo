@@ -1,0 +1,39 @@
+# sweep: --bare --seed-root examples/gutenbird/fixtures/offline
+# Two books on the device, one of them open when the application was last
+# left, and no connection:
+#
+#   python3 scripts/check-apps-sim.py gutenbird --bare \
+#     --seed-root examples/gutenbird/fixtures/offline \
+#     --route examples/gutenbird/drive-offline.kobo
+#
+# Starting goes straight back into the open book, with no catalog asked first.
+scenario offline
+wait-for A Lamp for the Ledger
+wait-for-id reader-forward
+clean
+shot gutenbird-offline-resumed
+# Back from the book is the list of books on the device, which needs no
+# connection. A book kept before titles were recorded is still listed.
+tap Back
+wait-for On this device
+expect A Lamp for the Ledger
+expect A. Keeper
+expect Book downloaded earlier
+clean
+shot gutenbird-offline-device
+tap Back
+wait-for Catalogs
+expect Ready offline: 2 books
+# A catalog that cannot be reached says so once, and points at the books that
+# need no catalog rather than ending there.
+tap Standard Ebooks
+wait-for Books on this device
+expect-missing Permission needed
+clean
+shot gutenbird-offline-catalog
+tap Books on this device
+wait-for-id device-1
+tap-id device-1
+wait-for An Older Book
+# The reading bar shortens a long title with an ellipsis at large text sizes.
+expect Book downloaded

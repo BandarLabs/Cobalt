@@ -6,6 +6,11 @@
 //! Website names use feed discovery; full HTTPS feed addresses are fetched
 //! directly without disclosure to the discovery service. Articles currently
 //! survive refresh failures and are saved in verified local snapshots.
+//!
+//! Refresh all reads every feed in turn, and the newest articles that carry
+//! pictures are kept whole with their pictures, so the shelf's "Ready
+//! offline" line is a promise about what opens with the radio off rather
+//! than about which words happen to be in a feed file.
 
 mod cache;
 mod feed;
@@ -15,10 +20,11 @@ mod progress;
 mod search;
 mod status;
 
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_bookview::offline::{Heard, Keeper};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, LogLevel, Screen,
-    ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, BannerShape, Context, Failure, Glyph, KoboApp, LogLevel,
+    RowEdge, RowState, Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 
@@ -34,16 +40,23 @@ const MAX_FEEDS: usize = 40;
 const FEEDS: &str = "feeds";
 
 /// Public feeds, opened only after the reader chooses one.
+///
+/// Both carry whole articles with their pictures. The first starter used to be
+/// a news service whose feed carries one sentence per story, so the first
+/// article anybody opened in Feeds was a sentence and a link they could not
+/// follow, and the application looked broken on its first screen. The titles
+/// are the ones each feed gives itself, so the shelf does not rename a feed
+/// the moment it is first read.
 const STARTER_FEEDS: &[(&str, &str, &str)] = &[
     (
-        "BBC Science & Environment",
-        "Science and environmental reporting",
-        "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml",
+        "NASA Science",
+        "Space, Earth and discoveries from NASA, whole articles",
+        "https://science.nasa.gov/feed/",
     ),
     (
-        "NASA Science",
-        "Space, Earth and discoveries from NASA",
-        "https://science.nasa.gov/feed/",
+        "Science + Tech \u{2013} The Conversation",
+        "Researchers explain the news, whole articles",
+        "https://theconversation.com/us/technology/articles.atom",
     ),
 ];
 
@@ -85,12 +98,24 @@ fn truncated(bytes: &[u8], budget: u32) -> bool {
     bytes.len() >= budget as usize
 }
 
+/// How many of each feed's newest articles are kept whole with their
+/// pictures.
+///
+/// A feed of fifty illustrated articles is tens of megabytes of pictures, and
+/// the radio and the card both pay for every one. The newest ten are what
+/// somebody reads on the train; older ones still open offline as words, and
+/// fetch their pictures when they are opened online.
+const KEEP_NEWEST: usize = 10;
+
 /// The attribution Feedsearch's terms ask for, on the screen where there is
 /// room for the whole sentence.
 ///
 /// The results screen carries it in its top bar instead. Both screens show
 /// their results because of Feedsearch, and both have to say so.
 const ATTRIBUTION: &str = "Feed search powered by feedsearch.dev";
+
+/// The address field on the screen that adds a feed.
+const FEED_ADDRESS: &str = "feed-address";
 
 /// A feed the reader has chosen to follow.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -167,7 +192,15 @@ struct Feeds {
     /// False until the store has answered once, so that an empty list is not
     /// mistaken for a reader who follows nothing.
     loaded: bool,
-    keyboard: Keyboard,
+    /// The address of a site or feed to add, typed on the reader's keyboard.
+    entry: TextEntry,
+    /// An address refused before anything was fetched, kept in the field so
+    /// it can be corrected rather than typed again.
+    address: String,
+    /// Why `address` was refused, drawn as the field's error.
+    address_error: Option<&'static str>,
+    /// Words to look for in saved articles, typed on the reader's keyboard.
+    search_entry: TextEntry,
     /// What was typed, kept to caption the results screen.
     query: String,
     article_query: String,
@@ -199,6 +232,18 @@ struct Feeds {
     /// `subscriptions` rather than a page position, so turning a page or
     /// removing an earlier feed cannot leave it pointing at the wrong one.
     menu_open: Option<usize>,
+    /// Articles kept whole with their pictures.
+    keeper: Keeper,
+    /// Refresh all: the feed being fetched now, and the ones still to go.
+    refreshing: Option<(TaskId, String)>,
+    refresh_queue: std::collections::VecDeque<String>,
+    /// How many feeds refresh all has finished, and how many of them failed.
+    refreshed: (usize, usize),
+    /// Feeds fetched by refresh all whose saved copy had not been read back
+    /// yet, held until it has so the new copy is written over the right slot.
+    refresh_pending: std::collections::HashMap<String, Vec<u8>>,
+    /// Articles and bytes in each saved feed, counted once as it arrives.
+    offline: std::collections::HashMap<String, (usize, usize)>,
 }
 
 #[derive(Default)]
@@ -241,8 +286,8 @@ impl Feeds {
         self.found.clear();
         self.problem = None;
         self.trouble = None;
-        if !address.starts_with("https://") {
-            self.problem = Some("Use an HTTPS feed address.".to_owned());
+        if let Some(refused) = refused_address(address) {
+            self.problem = Some(refused.to_owned());
             return;
         }
         match context.spawn_retrying(Task::Fetch {
@@ -302,6 +347,16 @@ impl Feeds {
     }
 
     fn cache_event(&mut self, context: &mut Context, url: &str, event: Option<cache::Event>) {
+        if event == Some(cache::Event::Loaded) {
+            if let Some(bytes) = self.refresh_pending.remove(url) {
+                if let Some(cached) = self.caches.get_mut(url) {
+                    cached.save(context, bytes);
+                }
+            }
+        }
+        if matches!(event, Some(cache::Event::Loaded | cache::Event::Saved)) {
+            self.count_offline(url);
+        }
         let current = self
             .open
             .and_then(|index| self.subscriptions.get(index))
@@ -311,6 +366,16 @@ impl Feeds {
             // the open one, so its results grow as the copies arrive.
             if self.view == View::SavedResults && event == Some(cache::Event::Loaded) {
                 self.find_saved_hits();
+                self.show(context);
+            }
+            // The shelf counts what is on the device, so it is redrawn once
+            // the saved feeds have all been read back. Once, not per feed:
+            // forty feeds arriving one by one would be forty full refreshes
+            // of the panel while somebody is trying to tap one of them.
+            if self.view == View::Shelf
+                && matches!(event, Some(cache::Event::Loaded | cache::Event::Saved))
+                && !self.saved_copies_arriving()
+            {
                 self.show(context);
             }
             return;
@@ -422,6 +487,231 @@ impl Feeds {
         }
     }
 
+    /// Counts what one saved feed holds, for the shelf's offline line.
+    fn count_offline(&mut self, url: &str) {
+        if let Some(bytes) = self
+            .caches
+            .get(url)
+            .and_then(|cached| cached.bytes.as_ref())
+        {
+            let articles = feed::parse(bytes).map_or(0, |parsed| parsed.items.len());
+            self.offline.insert(url.to_owned(), (articles, bytes.len()));
+        }
+    }
+
+    /// What the shelf says is on the device, in the words every application
+    /// uses for it.
+    fn offline_line(&self) -> String {
+        let (articles, bytes) = self
+            .subscriptions
+            .iter()
+            .filter_map(|feed| self.offline.get(&feed.url))
+            .fold((0, 0), |(articles, bytes), (more, size)| {
+                (articles + more, bytes + size)
+            });
+        let line = kobo_bookview::offline::ready_offline(
+            articles,
+            bytes as u64 + self.keeper.bytes(),
+            "article",
+            "articles",
+        );
+        let mut said = vec![line.trim_end_matches('.').to_owned()];
+        if self.refreshing.is_some() || !self.refresh_queue.is_empty() {
+            let total = self.refreshed.0 + self.refresh_queue.len() + 1;
+            said.insert(
+                0,
+                format!(
+                    "Refreshing {} of {total} feeds",
+                    (self.refreshed.0 + 1).min(total)
+                ),
+            );
+        } else if self.refreshed.1 > 0 {
+            said.push(format!(
+                "{} of {} feeds could not be refreshed",
+                self.refreshed.1, self.refreshed.0
+            ));
+        }
+        if self.keeper.is_busy() {
+            said.push("Saving pictures for offline reading".to_owned());
+        }
+        let mut joined = said.join(". ");
+        if said.len() > 1 || line.ends_with('.') {
+            joined.push('.');
+        }
+        joined
+    }
+
+    /// Fetches every feed, one after another.
+    ///
+    /// One at a time, because forty feeds at once is forty requests on a
+    /// radio that runs four, and the open article's pictures would wait
+    /// behind all of them.
+    fn refresh_all(&mut self, context: &mut Context) {
+        if self.refreshing.is_some() || self.subscriptions.is_empty() {
+            return;
+        }
+        self.load_saved_caches(context);
+        self.refresh_queue = self
+            .subscriptions
+            .iter()
+            .map(|feed| feed.url.clone())
+            .collect();
+        self.refreshed = (0, 0);
+        self.problem = None;
+        self.refresh_next(context);
+    }
+
+    fn refresh_next(&mut self, context: &mut Context) {
+        if self.refreshing.is_some() {
+            return;
+        }
+        let Some(url) = self.refresh_queue.pop_front() else {
+            self.finish_refresh(context);
+            return;
+        };
+        match context.spawn_retrying(Task::Fetch {
+            url: url.clone(),
+            offset: 0,
+            max_bytes: FEED_BYTES,
+            credential: None,
+            headers: Vec::new(),
+        }) {
+            Some(task) => self.refreshing = Some((task, url)),
+            // No lane free. It goes back to the front and the next task to
+            // finish starts it.
+            None => self.refresh_queue.push_front(url),
+        }
+    }
+
+    /// One feed of refresh all, answered.
+    fn took_refresh(&mut self, context: &mut Context, url: &str, outcome: TaskOutcome) {
+        let result = match outcome {
+            TaskOutcome::Completed(bytes) => match feed::parse(&bytes) {
+                Some(parsed) => {
+                    match self.caches.get_mut(url) {
+                        Some(cached) if !cached.busy() => {
+                            if !cached.save(context, bytes.clone()) {
+                                self.refresh_pending.insert(url.to_owned(), bytes);
+                            }
+                        }
+                        _ => {
+                            self.refresh_pending.insert(url.to_owned(), bytes);
+                        }
+                    }
+                    if let Some(index) = self.subscriptions.iter().position(|feed| feed.url == url)
+                    {
+                        if !parsed.title.trim().is_empty()
+                            && self.subscriptions[index].title != parsed.title
+                        {
+                            self.subscriptions[index].title.clone_from(&parsed.title);
+                            self.save(context);
+                        }
+                        if self.open == Some(index) {
+                            self.items.clone_from(&parsed.items);
+                        }
+                    }
+                    self.keep_pictures(context, url, &parsed.items);
+                    Ok(status::timestamp().unwrap_or_else(|| "time unavailable".into()))
+                }
+                None => Err(if truncated(&bytes, FEED_BYTES) {
+                    "That feed is larger than this can read.".to_owned()
+                } else {
+                    "That address did not answer with a feed.".to_owned()
+                }),
+            },
+            TaskOutcome::Failed(error) => Err(Failure::of(error).advice.to_owned()),
+            TaskOutcome::Cancelled => Err("Cancelled.".to_owned()),
+        };
+        self.refreshed.0 += 1;
+        if result.is_err() {
+            self.refreshed.1 += 1;
+        }
+        self.statuses.note(context, url, result);
+        self.refresh_next(context);
+    }
+
+    /// Everything has been asked for. The unread counts are worked out again,
+    /// and the kept articles that no feed carries any more are let go.
+    fn finish_refresh(&mut self, context: &mut Context) {
+        self.update_unread_summaries(context);
+        let every_feed_read = self.subscriptions.iter().all(|feed| {
+            self.caches
+                .get(&feed.url)
+                .is_some_and(|cached| cached.bytes.is_some())
+        });
+        // Only once every saved feed has been read back. A feed whose copy is
+        // still on its way would otherwise look empty, and its kept articles
+        // would be thrown away for it.
+        if every_feed_read {
+            let current: std::collections::HashSet<String> = self
+                .subscriptions
+                .iter()
+                .filter_map(|feed| {
+                    let parsed = feed::parse(self.caches[&feed.url].bytes.as_deref()?)?;
+                    Some(
+                        parsed
+                            .items
+                            .iter()
+                            .map(|item| article_id(item, &feed.url))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .flatten()
+                .collect();
+            self.keeper.retain(context, |id| current.contains(id));
+        }
+    }
+
+    /// Keeps the newest illustrated articles of a feed whole, with their
+    /// pictures, so they open with the radio off.
+    ///
+    /// Only for Refresh all, which is the owner getting ready to be away from
+    /// Wi-Fi; opening one feed is reading it now, and its pictures come as
+    /// each article opens. An article already opened is left out too: its
+    /// pictures were saved when it was read, and fetching them again would
+    /// spend the radio on a second copy.
+    fn keep_pictures(&mut self, context: &mut Context, feed_url: &str, items: &[feed::Item]) {
+        for item in items
+            .iter()
+            .filter(|item| !item.html.is_empty() && item.html.contains("<img"))
+            .filter(|item| self.progress.has_read(&article_id(item, feed_url)) != Some(true))
+            .take(KEEP_NEWEST)
+        {
+            let origin = if item.link.is_empty() {
+                feed_url
+            } else {
+                item.link.as_str()
+            };
+            self.keeper
+                .keep_markup(context, &article_id(item, feed_url), origin, &item.html);
+        }
+    }
+
+    /// What the keeper of whole articles said, acted on.
+    fn heard(&mut self, context: &mut Context, heard: Heard) {
+        match heard {
+            Heard::Elsewhere | Heard::Quiet => return,
+            Heard::Changed | Heard::Failed(..) => {}
+            Heard::Opened(id, kept) => {
+                if self.view == View::Reading
+                    && self.reading_id.as_deref() == Some(id.as_str())
+                    && !self.reader.is_open()
+                {
+                    let memory = self.progress.memory(&id);
+                    if !self.reader.open_kept(context, kept, memory) {
+                        self.open_from_feed(context);
+                    }
+                }
+            }
+            Heard::Unreadable(id) => {
+                if self.view == View::Reading && self.reading_id.as_deref() == Some(id.as_str()) {
+                    self.open_from_feed(context);
+                }
+            }
+        }
+        self.show(context);
+    }
+
     fn keep_position(&mut self, context: &mut Context) {
         if let (Some(id), Some(memory)) = (&self.reading_id, self.reader.memory()) {
             self.progress.keep(context, id.clone(), memory.clone());
@@ -447,6 +737,77 @@ impl Feeds {
             .set_screen(screen.with_own_back(self.view != View::Shelf || self.menu_open.is_some()));
     }
 
+    /// The banner over the shelf: what it says, how loudly, and the retry
+    /// it carries.
+    ///
+    /// A write that failed is the owner's to fix, so it is an Error with
+    /// Retry saving on it. That retry was the Refresh arrows in the top bar,
+    /// the same picture that means Refresh all in the same place, under words
+    /// naming a control the screen never showed.
+    fn shelf_notice(&self) -> Option<(BannerLevel, String, Option<&'static str>)> {
+        if self.subscription_save.failed {
+            Some((
+                BannerLevel::Error,
+                "Subscriptions were not saved. Retry saving before closing Feeds.".to_owned(),
+                Some("retry-subscriptions"),
+            ))
+        } else if self.statuses.failed {
+            Some((
+                BannerLevel::Error,
+                "Refresh history is not saved.".to_owned(),
+                Some("retry-status"),
+            ))
+        } else if let Some(problem) = &self.problem {
+            Some((BannerLevel::Attention, problem.clone(), None))
+        } else {
+            // What is on the device is said whenever nothing more urgent is,
+            // and only once there is something to follow.
+            (self.loaded && !self.subscriptions.is_empty())
+                .then(|| (BannerLevel::Info, self.offline_line(), None))
+        }
+    }
+
+    /// What stands at a feed row's right edge: the menu mark, and the count
+    /// of unread articles when there are any.
+    fn feed_edge(unread: u32) -> RowEdge<'static> {
+        if unread > 0 {
+            RowEdge::new().with_menu().with_badge()
+        } else {
+            RowEdge::new().with_menu()
+        }
+    }
+
+    /// Each feed's title and summary, clamped against the narrower column
+    /// the overflow mark and the unread badge leave, or the longest titles
+    /// run under them; and each feed's unread count.
+    fn shelf_rows(&self, context: &Context) -> (Vec<(String, String)>, Vec<u32>) {
+        let unread: Vec<u32> = self
+            .subscriptions
+            .iter()
+            .map(|feed| self.statuses.unread_of(&feed.url).unwrap_or(0))
+            .collect();
+        let rows: Vec<(String, String)> = self
+            .subscriptions
+            .iter()
+            .zip(&unread)
+            .map(|(feed, unread)| {
+                let edge = Self::feed_edge(*unread);
+                let title = context.clamped_row_with_edge(&feed.title, 1, true, edge);
+                let summary = context.clamped_row_with_edge(
+                    &self
+                        .statuses
+                        .summary(&feed.url)
+                        .unwrap_or_else(|| pretty_host(&feed.site, &feed.url)),
+                    2,
+                    true,
+                    edge,
+                );
+                (title, summary)
+            })
+            .collect();
+        (rows, unread)
+    }
+
     fn shelf(&self, context: &Context) -> Screen {
         let mut screen = ScreenBuilder::new("rss-shelf").top_bar("Feeds");
         if self.subscription_save.load_failed {
@@ -455,20 +816,15 @@ impl Feeds {
                 .primary_button("retry-load-subscriptions", "Try again")
                 .build();
         }
-        if self.subscription_save.failed {
-            screen = screen.top_bar_glyph("retry-subscriptions", "Retry saving", Glyph::Refresh);
-        } else if self.statuses.failed {
-            screen = screen.top_bar_glyph("retry-status", "Retry saving", Glyph::Refresh);
+        if self.loaded && !self.subscriptions.is_empty() {
+            screen = screen.top_bar_glyph("refresh-all", "Refresh all", Glyph::Refresh);
         }
-        let notice = if self.subscription_save.failed {
-            Some("Subscriptions were not saved. Retry saving before closing Feeds.")
-        } else if self.statuses.failed {
-            Some("Refresh history is not saved. Retry saving.")
-        } else {
-            self.problem.as_deref()
-        };
-        if let Some(problem) = notice {
-            screen = screen.banner(BannerLevel::Attention, problem);
+        let notice = self.shelf_notice();
+        if let Some((level, said, retry)) = &notice {
+            screen = screen.banner(*level, said.clone());
+            if let Some(retry) = retry {
+                screen = screen.banner_action(*retry, "Retry saving");
+            }
         }
         if !self.loaded {
             return screen.activity("Opening your feeds", None).build();
@@ -488,29 +844,25 @@ impl Feeds {
                 .primary_button("add", "Add a feed")
                 .build();
         }
-        // Clamped against the narrower column the overflow mark leaves, or
-        // the longest titles run under the dots.
-        let rows: Vec<(String, String)> = self
-            .subscriptions
+        let (rows, unread) = self.shelf_rows(context);
+        let measured: Vec<_> = rows
             .iter()
-            .map(|feed| {
-                let title = context.one_line_row_with_menu(&feed.title, true);
-                let summary = context.clamped_row_with_menu(
-                    &self
-                        .statuses
-                        .summary(&feed.url)
-                        .unwrap_or_else(|| pretty_host(&feed.site, &feed.url)),
-                    2,
-                    true,
-                );
-                (title, summary)
+            .zip(&unread)
+            .map(|((title, summary), unread)| {
+                (title.as_str(), summary.as_str(), Self::feed_edge(*unread))
             })
             .collect();
-        let borrowed: Vec<_> = rows
-            .iter()
-            .map(|(title, summary)| (title.as_str(), summary.as_str()))
-            .collect();
-        let pages = context.paginate_rows_with_menu_below_notice(&borrowed, true, notice);
+        // Measured under the banner as it is drawn, with its mark and the
+        // line its Retry saving takes.
+        let shape = notice.as_ref().map(|(level, said, retry)| {
+            let shape = BannerShape::new(*level, said);
+            if retry.is_some() {
+                shape.with_action()
+            } else {
+                shape
+            }
+        });
+        let pages = context.paginate_rows_with_edges_below_banner(&measured, true, shape);
         let page = self.list_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).cloned().unwrap_or_default();
         screen = screen.rows_with_menu(shown.iter().map(|index| {
@@ -522,6 +874,13 @@ impl Feeds {
                 format!("feed-menu-{index}"),
             )
         }));
+        // The count of what is new sits at the right edge, where an eye
+        // scanning the shelf for it looks, and is left off at zero.
+        for index in &shown {
+            if unread[*index] > 0 {
+                screen = screen.row_badge(format!("feed-{index}"), unread[*index]);
+            }
+        }
         // The menu hangs off the mark that opened it, and only while that mark
         // is on the panel: a page turn with one open would anchor a popover to
         // a control that is no longer drawn.
@@ -573,19 +932,50 @@ impl Feeds {
         screen.build()
     }
 
+    /// Where a feed is added from: an address, an OPML file or the bundled
+    /// list.
+    ///
+    /// The address field raises the reader's keyboard when it is tapped
+    /// rather than with the screen, because the keyboard covers the panel and
+    /// Import OPML and Browse would be out of reach behind it.
     fn search(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("rss-search")
-            .top_bar("Add a feed")
+        let screen = ScreenBuilder::new("rss-search").top_bar("Add a feed");
+        if self.entry.is_open() {
+            return screen
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Website or HTTPS feed address",
+                    ATTRIBUTION,
+                    "Search",
+                )
+                .build();
+        }
+        let mut screen = screen
             .top_bar_action("import-opml", "Import OPML")
             .top_bar_action("browse-feeds", "Browse");
         if let Some(problem) = &self.problem {
             screen = screen.banner(BannerLevel::Attention, problem.clone());
         }
-        screen
-            .typed(&self.keyboard, "Website or HTTPS feed address")
-            .secondary(ATTRIBUTION)
-            .keyboard(&self.keyboard, "Search")
-            .build()
+        // A refused address comes back in the field with the reason under
+        // it, in the attribution's place, so it is corrected rather than
+        // typed again. It used to go on to a results screen whose Try again
+        // asked for the same refused address.
+        let screen = screen
+            .field(FEED_ADDRESS, &self.address, "Website or HTTPS feed address")
+            .field_kind(kobo_sdk::FieldKind::Address)
+            .field_hint(ATTRIBUTION);
+        match self.address_error {
+            Some(error) => screen.field_error(error),
+            None => screen,
+        }
+        .build()
+    }
+
+    /// Raises the reader's keyboard for a feed address, holding `text` to
+    /// correct rather than retype.
+    fn type_address(&mut self, text: &str) {
+        self.entry = TextEntry::new().address();
+        self.entry.open_with(text);
     }
 
     fn results(&self, context: &Context) -> Screen {
@@ -600,9 +990,6 @@ impl Feeds {
         } else {
             "Feeds via feedsearch.dev"
         });
-        if let Some(problem) = &self.problem {
-            screen = screen.banner(BannerLevel::Attention, problem.clone());
-        }
         if self.awaiting(Awaiting::Search) || self.awaiting(Awaiting::Probe) {
             return screen
                 .divider()
@@ -610,11 +997,20 @@ impl Feeds {
                 .skeleton(4)
                 .build();
         }
-        if self.problem.is_some() {
-            return screen
-                .primary_button("search-retry", "Try again")
-                .button("add", "Change address")
-                .build();
+        // A fetch that failed keeps this screen, with its fix on the banner
+        // that says why: Join Wi-Fi off the network, Try again where asking
+        // again can help, nothing where it cannot. Change address is a
+        // different job and stays a button.
+        if let Some(problem) = &self.problem {
+            let screen = screen.banner(BannerLevel::Attention, problem.clone());
+            let screen = match self.trouble {
+                Some(failure) if failure.state == kobo_sdk::StandardState::Offline => {
+                    screen.banner_action(kobo_sdk::JOIN_WIFI, "Join Wi-Fi")
+                }
+                Some(failure) if !failure.retryable => screen,
+                _ => screen.banner_action("search-retry", "Try again"),
+            };
+            return screen.button("add", "Change address").build();
         }
         if self.found.is_empty() {
             return screen
@@ -716,11 +1112,17 @@ impl Feeds {
             .filter(|(index, _)| !self.import_excluded.contains(index))
             .count();
         let skipped = preview.skipped + preview.feeds.len() - fresh.len();
+        // A count of nothing skipped is a sentence somebody has to read to
+        // learn that nothing happened, so it is only said when it is not zero.
+        let skipped = match skipped {
+            0 => String::new(),
+            1 => "1 duplicate or unsupported entry skipped. ".to_owned(),
+            _ => format!("{skipped} duplicate or unsupported entries skipped. "),
+        };
         let mut notice = format!(
-            "{} new {}. {skipped} duplicate or unsupported {} skipped. Tap a feed to include or leave it out.",
+            "{} new {}. {skipped}Tap a feed to include or leave it out.",
             fresh.len(),
             if fresh.len() == 1 { "feed" } else { "feeds" },
-            if skipped == 1 { "entry" } else { "entries" }
         );
         if let Some(problem) = &self.problem {
             notice = format!("{problem} {notice}");
@@ -744,18 +1146,13 @@ impl Feeds {
         }
         let rows: Vec<_> = fresh
             .iter()
-            .map(|(index, feed)| {
+            .map(|(_, feed)| {
                 (
                     feed.title.clone(),
-                    format!(
-                        "{} · {}",
-                        if self.import_excluded.contains(index) {
-                            "Not selected"
-                        } else {
-                            "Selected"
-                        },
-                        feed.url
-                    ),
+                    // The site, the way somebody would say it. The whole
+                    // address wrapped onto a second line for most feeds and
+                    // said nothing the host did not.
+                    pretty_host(&feed.site, &feed.url),
                 )
             })
             .collect();
@@ -763,25 +1160,31 @@ impl Feeds {
             .iter()
             .map(|(title, detail)| (title.as_str(), detail.as_str()))
             .collect();
-        let pages = context.paginate_rows_below_notice(&measured, false, Some(&notice));
+        // Paged as though a bar were under the list, because the selection
+        // bar is: it takes the room a bar would.
+        let pages = context.paginate_rows_below_notice(&measured, true, Some(&notice));
         let page = self.list_page.min(pages.len().saturating_sub(1));
-        screen = screen.rows(pages.get(page).into_iter().flatten().map(|index| {
+        // Each feed is ticked in the runtime's own box, and the bar under the
+        // list counts them and adds them, so what will be added is read off
+        // the boxes rather than off a word in every row.
+        screen = screen.checked_rows(pages.get(page).into_iter().flatten().map(|index| {
+            let (feed, _) = fresh[*index];
             (
-                format!("import-toggle-{}", fresh[*index].0),
+                format!("import-toggle-{feed}"),
                 rows[*index].0.as_str(),
                 rows[*index].1.as_str(),
                 Glyph::Rss,
+                if self.import_excluded.contains(&feed) {
+                    RowState::Unchecked
+                } else {
+                    RowState::Checked
+                },
             )
         }));
-        if selected > 0 && selected <= room {
-            screen = screen.bottom_action(
-                "import-confirm",
-                format!(
-                    "Add {selected} {}",
-                    if selected == 1 { "feed" } else { "feeds" }
-                ),
-            );
-        }
+        let add = (selected > 0 && selected <= room).then_some(("import-confirm", "Add"));
+        screen = screen
+            .fill()
+            .selection_bar(u32::try_from(selected).unwrap_or(u32::MAX), add);
         if pages.len() > 1 {
             screen = screen
                 .page_turns("list-back", "list-next")
@@ -797,9 +1200,11 @@ impl Feeds {
             } else {
                 "Search saved articles"
             })
-            .top_bar_action("clear-search", "Clear")
-            .typed(&self.keyboard, "Words in the title, author or article")
-            .keyboard(&self.keyboard, "Search")
+            .text_entry(
+                &self.search_entry,
+                "Words in the title, author or article",
+                "Search",
+            )
             .build()
     }
 
@@ -949,7 +1354,35 @@ impl Feeds {
         self.article = Some(index);
         self.view = View::Reading;
         self.reader.close(context);
-        let item = item.clone();
+        let feed_url = self
+            .open
+            .and_then(|i| self.subscriptions.get(i))
+            .map_or(String::new(), |feed| feed.url.clone());
+        let origin = if item.link.is_empty() {
+            feed_url
+        } else {
+            item.link.clone()
+        };
+        let id = article_id(item, &origin);
+        self.reading_id = Some(id.clone());
+        // A copy kept with its pictures opens from the device. The feed's own
+        // words are the fallback, and they are always here too.
+        if !self.keeper.open(context, &id) {
+            self.open_from_feed(context);
+        }
+    }
+
+    /// Opens the article being read from the feed's own copy of it, fetching
+    /// its pictures as it goes.
+    fn open_from_feed(&mut self, context: &mut Context) {
+        self.keeper.stop_opening();
+        let Some(item) = self
+            .article
+            .and_then(|index| self.items.get(index))
+            .cloned()
+        else {
+            return;
+        };
         let origin = if item.link.is_empty() {
             self.open
                 .and_then(|i| self.subscriptions.get(i))
@@ -957,25 +1390,25 @@ impl Feeds {
         } else {
             item.link.clone()
         };
-        let article_body = if item.html.is_empty() {
-            article_text(&item)
-        } else {
-            item.html.clone()
-        };
         let id = article_id(&item, &origin);
         let memory = self.progress.memory(&id);
         self.reading_id = Some(id);
         if item.html.is_empty() {
             if self
                 .reader
-                .open_bytes(context, "article.txt", article_body.as_bytes(), memory)
+                .open_bytes(
+                    context,
+                    "article.txt",
+                    article_text(&item).as_bytes(),
+                    memory,
+                )
                 .is_err()
             {
                 self.problem = Some("This article could not be opened.".to_owned());
             }
         } else {
             self.reader
-                .open(context, kobo_doc::html::parse(&article_body), memory);
+                .open(context, kobo_doc::html::parse(&item.html), memory);
             self.illustrations.open(context, &mut self.reader, &origin);
         }
         self.keep_position(context);
@@ -1220,6 +1653,12 @@ impl Feeds {
         if let Some(screen) = self.reader.screen(&title) {
             return screen;
         }
+        if self.keeper.is_opening() {
+            return ScreenBuilder::new("rss-reading")
+                .top_bar(title)
+                .activity("Opening the saved article", None)
+                .build();
+        }
         ScreenBuilder::new("rss-reading")
             .top_bar(title)
             .empty_state("This article arrived empty.")
@@ -1420,10 +1859,16 @@ impl KoboApp for Feeds {
         context.store().load(FEEDS);
         context.store().load(progress::KEY);
         context.store().load(status::KEY);
+        self.keeper.start(context);
         self.show(context);
     }
 
     fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        let heard = self.keeper.loaded(context, key, &result);
+        if !matches!(heard, Heard::Elsewhere) {
+            self.heard(context, heard);
+            return;
+        }
         if key == status::KEY {
             self.statuses.load(context, result);
             if self.loaded
@@ -1464,6 +1909,11 @@ impl KoboApp for Feeds {
     }
 
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        let heard = self.keeper.saved(context, key, &result);
+        if !matches!(heard, Heard::Elsewhere) {
+            self.heard(context, heard);
+            return;
+        }
         if key == status::KEY {
             self.statuses.saved(context, &result);
             self.show(context);
@@ -1533,6 +1983,11 @@ impl KoboApp for Feeds {
     }
 
     fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        let heard = self.keeper.shelf(context, name, &result);
+        if !matches!(heard, Heard::Elsewhere) {
+            self.heard(context, heard);
+            return;
+        }
         if let Some(read) = &mut self.import_read {
             if read.name() == name {
                 match read.advance(context, &result) {
@@ -1602,6 +2057,9 @@ impl KoboApp for Feeds {
                     Ok(subscriptions) => {
                         self.subscriptions = subscriptions;
                         self.subscription_save.load_failed = false;
+                        // Every saved feed is read back now rather than as each
+                        // is opened, so the shelf can say what is on the device.
+                        self.load_saved_caches(context);
                         self.statuses.retain(
                             context,
                             self.subscriptions.iter().map(|feed| feed.url.clone()),
@@ -1725,12 +2183,17 @@ impl KoboApp for Feeds {
                 return;
             }
         }
+        if action == action_id("refresh-all") && self.view == View::Shelf {
+            self.refresh_all(context);
+            self.show(context);
+            return;
+        }
         if action == action_id("search-saved") && self.view == View::Shelf {
             self.article_search = ArticleSearch::EverySaved;
             self.open = None;
             self.article_query.clear();
             self.saved_hits.clear();
-            self.keyboard = Keyboard::new();
+            self.search_entry.open();
             self.list_page = 0;
             self.view = View::ArticleSearch;
             // The saved copies are read one feed at a time as feeds are
@@ -1741,7 +2204,7 @@ impl KoboApp for Feeds {
         }
         if action == action_id("search-articles") && self.view == View::Items {
             self.article_search = ArticleSearch::ThisFeed;
-            self.keyboard = Keyboard::with_text(&self.article_query);
+            self.search_entry.open_with(self.article_query.clone());
             self.view = View::ArticleSearch;
             self.show(context);
             return;
@@ -1764,12 +2227,9 @@ impl KoboApp for Feeds {
             return;
         }
         if self.view == View::ArticleSearch {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    self.keyboard
-                        .take()
-                        .trim()
-                        .clone_into(&mut self.article_query);
+            match self.search_entry.handle(action) {
+                Some(Typing::Submitted(words)) => {
+                    self.article_query = words;
                     self.list_page = 0;
                     if self.article_search == ArticleSearch::EverySaved {
                         self.view = View::SavedResults;
@@ -1780,7 +2240,18 @@ impl KoboApp for Feeds {
                     self.show(context);
                     return;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
+                Some(Typing::Changed) => {
+                    self.show(context);
+                    return;
+                }
+                // Backing out returns to the list the search was opened
+                // from, as Back always did here.
+                Some(_) => {
+                    self.view = if self.article_search == ArticleSearch::EverySaved {
+                        View::Shelf
+                    } else {
+                        View::Items
+                    };
                     self.show(context);
                     return;
                 }
@@ -1837,27 +2308,40 @@ impl KoboApp for Feeds {
             self.show(context);
             return;
         }
-        // The keyboard first: while the search screen is up, it owns the panel.
-        if self.view == View::Search {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let typed = self.keyboard.take().trim().to_owned();
-                    if typed.is_empty() {
-                        return;
-                    }
-                    self.query.clone_from(&typed);
-                    self.view = View::Found;
-                    self.list_page = 0;
-                    self.find_feed(context, &typed);
-                    self.show(context);
-                    return;
-                }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    self.show(context);
-                    return;
-                }
-                None => {}
+        // The keyboard first: while it is up, it owns the panel.
+        if self.view == View::Search && self.entry.is_open() {
+            if action == ActionId::BACK {
+                // Back from the keyboard puts it away and keeps Add a feed.
+                self.entry.close();
+                self.show(context);
+                return;
             }
+            if let Some(typing) = self.entry.handle(action) {
+                if let Typing::Submitted(typed) = typing {
+                    if let Some(error) = refused_address(&typed) {
+                        // Nothing to fetch, so nothing to show results for:
+                        // the address stays in the field with the reason.
+                        self.address = typed;
+                        self.address_error = Some(error);
+                    } else {
+                        self.address.clear();
+                        self.address_error = None;
+                        self.query.clone_from(&typed);
+                        self.view = View::Found;
+                        self.list_page = 0;
+                        self.find_feed(context, &typed);
+                    }
+                }
+                self.show(context);
+                return;
+            }
+        }
+        if self.view == View::Search && action == action_id(FEED_ADDRESS) {
+            self.problem = None;
+            let typed = self.address.clone();
+            self.type_address(&typed);
+            self.show(context);
+            return;
         }
 
         // An open menu takes Back before the view does: the scrim beside a
@@ -1885,12 +2369,22 @@ impl KoboApp for Feeds {
                     self.view = View::Shelf;
                     self.list_page = 0;
                 }
+                // A list narrowed by a search widens again first. The
+                // search screen used to carry Clear, and the reader's own
+                // keyboard has no room for it.
+                View::Items if !self.article_query.is_empty() => {
+                    self.article_query.clear();
+                    self.list_page = 0;
+                }
                 View::Search | View::Items => {
                     self.view = View::Shelf;
                     self.list_page = 0;
+                    self.address.clear();
+                    self.address_error = None;
                 }
                 View::Found | View::Starters => self.view = View::Search,
                 View::ArticleSearch => {
+                    self.search_entry.close();
                     self.view = if self.article_search == ArticleSearch::EverySaved {
                         View::Shelf
                     } else {
@@ -1909,10 +2403,22 @@ impl KoboApp for Feeds {
         }
 
         if action == action_id("add") {
-            self.keyboard.clear();
+            // From the results, "Change address" means typing one, so the
+            // keyboard comes straight up; from the shelf the screen comes
+            // first, with Import OPML and Browse beside the field.
+            let typing = self.view == View::Found;
             self.problem = None;
             self.trouble = None;
             self.view = View::Search;
+            self.address.clear();
+            self.address_error = None;
+            if typing {
+                // The address that found nothing, to correct.
+                let query = self.query.clone();
+                self.type_address(&query);
+            } else {
+                self.entry.close();
+            }
             self.show(context);
             return;
         }
@@ -2044,6 +2550,29 @@ impl KoboApp for Feeds {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        self.took_task(context, task, outcome);
+        // A lane that was busy a moment ago may be free now.
+        self.refresh_next(context);
+        self.keeper.pump(context);
+    }
+}
+
+impl Feeds {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one dispatch for every task the app starts keeps the order they are tried in visible"
+    )]
+    fn took_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        let heard = self.keeper.task(context, task, &outcome);
+        if !matches!(heard, Heard::Elsewhere) {
+            self.heard(context, heard);
+            return;
+        }
+        if let Some((_, url)) = self.refreshing.take_if(|(id, _)| *id == task) {
+            self.took_refresh(context, &url, outcome);
+            self.show(context);
+            return;
+        }
         if self
             .illustrations
             .task(context, &mut self.reader, task, &outcome)
@@ -2155,6 +2684,14 @@ impl KoboApp for Feeds {
     }
 }
 
+/// Why an address cannot be fetched as typed, before anything is asked of
+/// the network: anything with a scheme other than HTTPS. A website name with
+/// no scheme goes to Feedsearch instead.
+fn refused_address(address: &str) -> Option<&'static str> {
+    (address.contains("://") && !address.starts_with("https://"))
+        .then_some("Use an HTTPS feed address.")
+}
+
 fn main() -> ExitCode {
     match kobo_sdk::run("rss", Feeds::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -2235,6 +2772,264 @@ mod tests {
                     .iter()
                     .flat_map(|node| &node.text_lines)
                     .any(|line| line == "Feeds"));
+            }
+        }
+    }
+
+    /// `count` followed feeds, the first and every third one with unread
+    /// articles counted, the rest read to the end.
+    fn shelf_of(count: usize, context: &mut kobo_sdk::Context) -> Feeds {
+        let mut app = Feeds {
+            loaded: true,
+            subscriptions: (0..count)
+                .map(|index| Subscription {
+                    url: format!("https://example.com/{index}.xml"),
+                    title: format!("A journal of long and careful writing, number {index}"),
+                    site: "https://example.com/".to_owned(),
+                })
+                .collect(),
+            ..Feeds::default()
+        };
+        app.statuses.load(
+            context,
+            kobo_sdk::StoreResult::Loaded {
+                key: super::status::KEY.into(),
+                value: None,
+            },
+        );
+        for (index, feed) in app.subscriptions.iter().enumerate() {
+            app.statuses
+                .note(context, &feed.url, Ok("2026-09-09 08:30".into()));
+            let unread = if index % 3 == 0 { 12 } else { 0 };
+            app.statuses.unread(context, &feed.url, unread, 20);
+        }
+        app
+    }
+
+    fn rows_of(screen: &kobo_sdk::Screen) -> Vec<kobo_ui::Row> {
+        screen
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                kobo_sdk::Node::Rows { rows, .. } => Some(rows.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    }
+
+    fn banners_of(
+        screen: &kobo_sdk::Screen,
+    ) -> Vec<(kobo_sdk::BannerLevel, Option<(kobo_sdk::ActionId, String)>)> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Banner { level, action, .. } => Some((
+                    *level,
+                    action
+                        .as_ref()
+                        .map(|action| (action.action, action.label.clone())),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_feeds_unread_count_is_a_badge_at_the_rows_edge_and_not_words_in_its_summary() {
+        let mut context = kobo_sdk::Context::default();
+        let app = shelf_of(2, &mut context);
+        let rows = rows_of(&app.shelf(&context));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].badge, Some(12));
+        assert_eq!(rows[1].badge, None, "no badge for a feed read to the end");
+        for row in &rows {
+            assert!(!row.summary.contains("unread"), "{:?}", row.summary);
+            assert!(row.summary.contains("Updated"), "{:?}", row.summary);
+        }
+    }
+
+    #[test]
+    fn a_failed_write_carries_retry_saving_on_its_banner_and_the_arrows_only_refresh_all() {
+        let mut context = kobo_sdk::Context::default();
+        for subscriptions_failed in [true, false] {
+            let mut app = shelf_of(2, &mut context);
+            app.subscription_save.failed = subscriptions_failed;
+            app.statuses.failed = !subscriptions_failed;
+            let retry = if subscriptions_failed {
+                "retry-subscriptions"
+            } else {
+                "retry-status"
+            };
+            let screen = app.shelf(&context);
+            assert_eq!(
+                banners_of(&screen),
+                [(
+                    kobo_sdk::BannerLevel::Error,
+                    Some((action_id(retry), "Retry saving".to_owned()))
+                )]
+            );
+            let bar = format!("{:?}", screen.top_bar);
+            assert!(bar.contains("Refresh all"), "{bar}");
+            assert!(!bar.contains("Retry saving"), "{bar}");
+        }
+    }
+
+    #[test]
+    fn an_http_address_comes_back_in_the_field_with_its_reason_and_fetches_nothing() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        runner.action(action_id("add"));
+        runner.action(action_id(super::FEED_ADDRESS));
+        let commands = runner.type_text("http://example.com/feed.xml");
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+        assert_eq!(runner.app().view, View::Search);
+        let screen = screen_of(&commands);
+        let field = screen
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                kobo_sdk::Node::Field {
+                    value, hint, error, ..
+                } => Some((value.clone(), hint.clone(), error.clone())),
+                _ => None,
+            })
+            .expect("the Add screen has its field");
+        assert_eq!(
+            field,
+            (
+                "http://example.com/feed.xml".to_owned(),
+                Some(super::ATTRIBUTION.to_owned()),
+                Some("Use an HTTPS feed address.".to_owned())
+            )
+        );
+        // Tapping the field opens it on the refused address, to correct.
+        runner.action(action_id(super::FEED_ADDRESS));
+        assert_eq!(runner.app().entry.text(), "http://example.com/feed.xml");
+        let commands = runner.type_text("https://example.com/feed.xml");
+        assert_eq!(runner.app().view, View::Found);
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+    }
+
+    #[test]
+    fn a_failed_fetch_keeps_the_results_with_its_fix_on_the_banner() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Found,
+            query: "example.com".to_owned(),
+            task: Some((TaskId(1), Awaiting::Search)),
+            ..Feeds::default()
+        });
+        let commands = runner.task_outcome(
+            TaskId(1),
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        let screen = screen_of(&commands);
+        assert_eq!(
+            banners_of(&screen),
+            [(
+                kobo_sdk::BannerLevel::Attention,
+                Some((action_id("search-retry"), "Try again".to_owned()))
+            )]
+        );
+        assert!(!screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Button { action, .. } if *action == action_id("search-retry")
+        )));
+        // Off the network the fix is the Wi-Fi, not asking again.
+        let offline = kobo_sdk::Failure::of(kobo_sdk::TaskError::Offline);
+        let app = Feeds {
+            loaded: true,
+            view: View::Found,
+            query: "example.com".to_owned(),
+            problem: Some(offline.advice.to_owned()),
+            trouble: Some(offline),
+            ..Feeds::default()
+        };
+        assert_eq!(
+            banners_of(&app.results(&kobo_sdk::Context::default())),
+            [(
+                kobo_sdk::BannerLevel::Attention,
+                Some((action_id(kobo_sdk::JOIN_WIFI), "Join Wi-Fi".to_owned()))
+            )]
+        );
+    }
+
+    /// The shelf under each banner it can carry, with badges on some rows,
+    /// and the Add screen with a refused address, on a Clara at every text
+    /// size held either way. Every page of the shelf draws every row it was
+    /// measured for, and none runs under the bar.
+    #[test]
+    fn the_shelf_and_a_refused_address_fit_a_clara_at_every_text_size_held_either_way() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = AppRunner::with_metrics(Feeds::default(), metrics);
+                let mut context = runner.context();
+                for banner in 0..4 {
+                    let mut app = shelf_of(9, &mut context);
+                    app.subscription_save.failed = banner == 0;
+                    app.statuses.failed = banner == 1;
+                    if banner == 2 {
+                        app.problem = Some(
+                            "Saved articles could not be read or updated. Your open articles \
+                             are still available."
+                                .to_owned(),
+                        );
+                    }
+                    let mut page = 0;
+                    let mut seen = 0;
+                    loop {
+                        app.list_page = page;
+                        let screen = app.shelf(&context);
+                        let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                        assert!(
+                            diagnostics.issues.is_empty(),
+                            "banner {banner} page {page} {text_scale:?} {orientation:?}: {:?}",
+                            diagnostics.issues
+                        );
+                        let rows = rows_of(&screen).len();
+                        let drawn = diagnostics
+                            .layout
+                            .nodes
+                            .iter()
+                            .filter(|node| matches!(node.kind, LayoutKind::Row(_)))
+                            .count();
+                        assert_eq!(drawn, rows, "banner {banner} page {page}");
+                        seen += rows;
+                        if seen >= app.subscriptions.len() || rows == 0 {
+                            break;
+                        }
+                        page += 1;
+                    }
+                    assert_eq!(seen, app.subscriptions.len(), "every feed is on a page");
+                }
+                let add = Feeds {
+                    loaded: true,
+                    view: View::Search,
+                    address: "http://example.com/a/rather/long/path/to/the/feed.xml".to_owned(),
+                    address_error: Some("Use an HTTPS feed address."),
+                    ..Feeds::default()
+                };
+                let diagnostics = add.search().diagnostics(&metrics, &Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "add {text_scale:?} {orientation:?}: {:?}",
+                    diagnostics.issues
+                );
             }
         }
     }
@@ -2343,10 +3138,8 @@ mod tests {
             ..Feeds::default()
         });
         runner.action(action_id("add"));
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            runner.action(action_id(key));
-        }
-        let commands = runner.action(action_id("kb.enter"));
+        runner.action(action_id(super::FEED_ADDRESS));
+        let commands = runner.type_text("paw");
         let asked = commands.iter().find_map(|command| match command {
             Command::Spawn { work, .. } => Some(work.clone()),
             _ => None,
@@ -2824,6 +3617,10 @@ mod tests {
                 key: super::status::KEY.into(),
                 value: None,
             });
+            runner.store_result(StoreResult::Loaded {
+                key: kobo_bookview::offline::INDEX_KEY.into(),
+                value: None,
+            });
             assert!(runner.app().subscription_save.load_failed);
             for action in ["add", "retry-subscriptions", "import-confirm"] {
                 let commands = runner.action(action_id(action));
@@ -2950,6 +3747,77 @@ mod tests {
         assert!(runner.app().subscriptions.is_empty());
     }
 
+    /// Forty-one feeds from a file with room for forty: every page fits at
+    /// every text size with the bar under it, and the bar offers Add only
+    /// once what is ticked fits.
+    #[test]
+    fn feeds_to_import_are_ticked_in_boxes_and_counted_by_the_bar_that_adds_them() {
+        let preview = || opml::Import {
+            feeds: (0..41)
+                .map(|i| Subscription {
+                    title: format!("A journal with a long enough name to wrap {i}"),
+                    url: format!("https://example.com/feed-{i}.xml"),
+                    site: format!("https://journal-{i}.example.com/"),
+                })
+                .collect(),
+            skipped: 0,
+        };
+        let bar = |screen: &kobo_sdk::Screen| {
+            screen
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    kobo_sdk::Node::SelectionBar { count, actions, .. } => {
+                        Some((*count, actions.len()))
+                    }
+                    _ => None,
+                })
+                .expect("a selection bar")
+        };
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_sdk::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut runner = AppRunner::with_metrics(
+                Feeds {
+                    view: View::Import,
+                    loaded: true,
+                    import_preview: Some(preview()),
+                    ..Feeds::default()
+                },
+                metrics,
+            );
+            let context = runner.context();
+            let first = runner.app().import_screen(&context);
+            assert_eq!(bar(&first), (41, 0), "Add was offered past the limit");
+            let after = screen_of(&runner.action(action_id("import-toggle-0")));
+            assert_eq!(bar(&after), (40, 1));
+            let states: Vec<_> = after
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    kobo_sdk::Node::Rows { rows, .. } => {
+                        Some(rows.iter().map(|row| row.state).collect::<Vec<_>>())
+                    }
+                    _ => None,
+                })
+                .expect("the feeds");
+            assert_eq!(states[0], kobo_sdk::RowState::Unchecked);
+            assert!(states[1..]
+                .iter()
+                .all(|state| *state == kobo_sdk::RowState::Checked));
+            // A page past the last is drawn as the last, so every page is
+            // reached by counting to the number of feeds.
+            for page in 0..41 {
+                runner.app_mut().list_page = page;
+                let screen = runner.app().import_screen(&context);
+                let issues = screen.validate(&metrics);
+                assert!(issues.is_empty(), "{text_scale:?} page {page}: {issues:?}");
+            }
+        }
+    }
+
     #[test]
     fn an_empty_opml_selection_does_not_write_subscriptions() {
         let mut runner = AppRunner::new(Feeds {
@@ -3065,8 +3933,7 @@ mod tests {
         }
         let mut runner = AppRunner::new(app);
         runner.action(action_id("search-saved"));
-        runner.app_mut().keyboard = kobo_sdk::keyboard::Keyboard::with_text("quartz");
-        let commands = runner.action(action_id("kb.enter"));
+        let commands = runner.type_text("quartz");
         assert_eq!(runner.app_mut().view, View::SavedResults);
         assert_eq!(
             runner
@@ -3110,8 +3977,7 @@ mod tests {
             ..Feeds::default()
         });
         runner.action(action_id("search-articles"));
-        runner.app_mut().keyboard = kobo_sdk::keyboard::Keyboard::with_text(" bridge JO ");
-        let commands = runner.action(action_id("kb.enter"));
+        let commands = runner.type_text(" bridge JO ");
         assert_eq!(runner.app_mut().matching_items(), vec![1]);
         assert!(!commands
             .iter()
@@ -3123,12 +3989,12 @@ mod tests {
         runner.action(kobo_sdk::ActionId::BACK);
         assert_eq!(runner.app_mut().article_query, "bridge JO");
         runner.action(action_id("search-articles"));
-        runner.app_mut().keyboard = kobo_sdk::keyboard::Keyboard::with_text("quartz");
-        let commands = runner.action(action_id("kb.enter"));
+        let commands = runner.type_text("quartz");
         assert!(runner.app_mut().matching_items().is_empty());
         assert!(format!("{:?}", screen_of(&commands)).contains("No saved articles match"));
-        runner.action(action_id("search-articles"));
-        runner.action(action_id("clear-search"));
+        // Back widens a narrowed list before it leaves the feed.
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app_mut().view, View::Items);
         assert_eq!(runner.app_mut().matching_items(), vec![0, 1]);
     }
 
@@ -3414,22 +4280,14 @@ mod tests {
             "the empty shelf",
         );
 
-        // Typing an address. The keyboard takes most of the panel, and the
-        // attribution has to fit above it.
+        // Adding a feed: the field with Import OPML and Browse beside it,
+        // and the attribution under it.
         fits_the_panel(
             &screen_of(&runner.action(action_id("add"))),
             "the search screen",
         );
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            fits_the_panel(
-                &screen_of(&runner.action(action_id(key))),
-                "the search screen mid-typing",
-            );
-        }
-        fits_the_panel(
-            &screen_of(&runner.action(action_id("kb.enter"))),
-            "the search in flight",
-        );
+        runner.action(action_id(super::FEED_ADDRESS));
+        fits_the_panel(&screen_of(&runner.type_text("paw")), "the search in flight");
 
         // A full page of results, each with the longest title and summary the
         // service is allowed to return, plus the attribution underneath.
@@ -3548,11 +4406,9 @@ mod tests {
             "the search screen does not credit Feedsearch"
         );
 
-        for key in ["kb.r0c9", "kb.r1c0", "kb.r0c1"] {
-            runner.action(action_id(key));
-        }
+        runner.action(action_id(super::FEED_ADDRESS));
         // The results screen, while the search is still in flight.
-        let waiting = screen_of(&runner.action(action_id("kb.enter")));
+        let waiting = screen_of(&runner.type_text("paw"));
         assert!(
             format!("{waiting:?}").contains("feedsearch.dev"),
             "the results screen does not credit Feedsearch while loading"
@@ -3670,5 +4526,105 @@ mod tests {
         let commands = runner.task_outcome(TaskId(1), TaskOutcome::Completed(b"[]".to_vec()));
         let screen = screen_of(&commands);
         assert!(!format!("{screen:?}").contains("too large"));
+    }
+
+    const ILLUSTRATED: &str = "<feed><title>A Journal</title>\
+        <entry><title>With a plot</title><link href=\"https://example.com/2\"/>\
+        <content type=\"html\">&lt;p&gt;Words.&lt;/p&gt;&lt;img src=\"/plot.png\" alt=\"A plot\"&gt;</content>\
+        </entry></feed>";
+
+    fn two_feeds() -> Vec<Subscription> {
+        vec![
+            Subscription {
+                url: "https://example.com/feed.xml".to_owned(),
+                title: "A Journal".to_owned(),
+                site: "https://example.com/".to_owned(),
+            },
+            Subscription {
+                url: "https://example.org/feed.xml".to_owned(),
+                title: "Another".to_owned(),
+                site: "https://example.org/".to_owned(),
+            },
+        ]
+    }
+
+    fn fetched(commands: &[Command]) -> Vec<(TaskId, String)> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    task,
+                    work: kobo_sdk::Task::Fetch { url, .. },
+                } => Some((*task, url.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn refresh_all_reads_every_feed_in_turn_and_says_how_far_it_has_got() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            subscriptions: two_feeds(),
+            ..Feeds::default()
+        });
+        let context = runner.context();
+        let shelf = format!("{:?}", runner.app().shelf(&context));
+        assert!(shelf.contains("Refresh all"), "{shelf}");
+        let first = fetched(&runner.action(action_id("refresh-all")));
+        assert_eq!(first.len(), 1, "every feed was asked for at once");
+        assert_eq!(first[0].1, "https://example.com/feed.xml");
+        let second = fetched(&runner.task_outcome(
+            first[0].0,
+            TaskOutcome::Completed(ILLUSTRATED.as_bytes().to_vec()),
+        ));
+        assert_eq!(second[0].1, "https://example.org/feed.xml");
+        assert!(runner
+            .app()
+            .offline_line()
+            .starts_with("Refreshing 2 of 2 feeds."));
+        runner.task_outcome(
+            second[0].0,
+            TaskOutcome::Completed(b"<html>not a feed</html>".to_vec()),
+        );
+        let line = runner.app().offline_line();
+        assert!(
+            line.contains("1 of 2 feeds could not be refreshed."),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn a_refreshed_article_with_pictures_is_kept_whole_for_offline_reading() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            subscriptions: two_feeds(),
+            ..Feeds::default()
+        });
+        let first = fetched(&runner.action(action_id("refresh-all")));
+        runner.task_outcome(
+            first[0].0,
+            TaskOutcome::Completed(ILLUSTRATED.as_bytes().to_vec()),
+        );
+        let item = &super::feed::parse(ILLUSTRATED.as_bytes()).unwrap().items[0];
+        let id = super::article_id(item, "https://example.com/feed.xml");
+        assert!(runner.app().keeper.is_keeping(&id));
+    }
+
+    #[test]
+    fn the_shelf_says_what_is_ready_offline() {
+        let mut app = Feeds {
+            loaded: true,
+            subscriptions: two_feeds(),
+            ..Feeds::default()
+        };
+        app.offline
+            .insert("https://example.com/feed.xml".into(), (12, 4 * 1024 * 1024));
+        let context = AppRunner::new(Feeds::default()).context();
+        let screen = format!("{:?}", app.shelf(&context));
+        assert!(
+            screen.contains("Ready offline: 12 articles, 4.0 MB"),
+            "{screen}"
+        );
     }
 }

@@ -20,6 +20,7 @@ def main():
     plain = subprocess.run([cli], input='', capture_output=True, text=True, timeout=5)
     assert plain.returncode == 0 and 'Developer and release commands: kobo --help' in plain.stdout
     assert 'Choose a number:' not in plain.stdout
+    assert 'kobo send FILE' in plain.stdout and 'save it' in plain.stdout
     constrained = []
     for columns in ('32', '48'):
         env = dict(os.environ, COLUMNS=columns, NO_COLOR='1', TERM='dumb')
@@ -59,13 +60,53 @@ def main():
             if child.poll() is None:
                 child.kill(); child.wait(timeout=5)
             os.close(master); os.close(slave)
+        # The send choice offers the saved reader first, and the simulator
+        # still works from it: the subscription list lands in Feeds' shelf.
+        env = dict(os.environ, KOBO_SIM_DATA=str(Path(temp)/'sim'),
+                   KOBO_CONFIG_DIR=str(Path(temp)/'config'), KOBO_READER='')
+        master, slave = pty.openpty()
+        child = subprocess.Popen([cli], stdin=slave, stdout=slave, stderr=slave,
+                                 start_new_session=True, env=env)
+        sent = bytearray()
+        try:
+            deadline = time.monotonic()+20
+
+            def until(marker):
+                while marker not in sent:
+                    assert time.monotonic() < deadline, sent.decode(errors='replace')
+                    if select.select([master], [], [], .1)[0]:
+                        sent.extend(os.read(master, 65536))
+            until(b'Choose a number:')
+            os.write(master, b'7\n')
+            until(b'File or folder to send')
+            os.write(master, (str(source)+'\n').encode())
+            until(b'Send to (blank cancels):')
+            assert b'1. the reader kobo setup saved' in sent, sent.decode(errors='replace')
+            os.write(master, b'4\n')
+            while child.poll() is None:
+                assert time.monotonic() < deadline, sent.decode(errors='replace')
+                if select.select([master], [], [], .1)[0]:
+                    sent.extend(os.read(master, 65536))
+            while select.select([master], [], [], 0)[0]:
+                sent.extend(os.read(master, 65536))
+            assert child.returncode == 0, sent.decode(errors='replace')
+            sent_text = sent.decode().replace(temp, '<fixture>')
+            assert 'Sent <fixture>/Sample feeds.opml to Feeds on the simulator.' in sent_text, sent_text
+            assert (Path(temp)/'sim'/'rss'/'Sample feeds.opml').exists() or \
+                any((Path(temp)/'sim'/'rss').iterdir())
+        finally:
+            if child.poll() is None:
+                child.kill(); child.wait(timeout=5)
+            os.close(master); os.close(slave)
     args.output.mkdir(parents=True, exist_ok=True)
+    (args.output/'send.txt').write_text(sent_text)
     (args.output/'terminal.txt').write_text(text)
     (args.output/'noninteractive.txt').write_text(plain.stdout)
     (args.output/'constrained.json').write_text(json.dumps(constrained, indent=2)+'\n')
     (args.output/'result.json').write_text(json.dumps({'status':'passed','checks':[
         'noninteractive help exits without prompting', 'real PTY displays numbered owner choices',
         'menu reads a path containing spaces', 'existing feed checker validates original OPML fixture',
+        'send choice lists the saved reader first and delivers to the simulator, naming the app',
         '32/48-column dumb terminals and NO_COLOR keep compact stable escape-free output']},indent=2)+'\n')
 
 

@@ -2,10 +2,10 @@
   "id": "rss-miniflux",
   "display_name": "Digest",
   "short_label": "Digest",
-  "summary": "Read your Miniflux feeds anywhere.",
+  "summary": "Read your Miniflux feeds anywhere. Needs an account.",
   "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
-  "version": "0.1.5",
-  "release_notes": "Connecting Miniflux lists the commands to run on your computer, with no address to look up.",
+  "version": "0.1.8",
+  "release_notes": "The server address is typed on Cobalt's own keyboard, Retry saving sits on the message that says what was not saved, and the connect screen keeps every control on the panel at the largest text size.",
   "glyph": "rss",
   "capabilities": [
     "network"
@@ -13,15 +13,19 @@
   "setup": {
     "steps": [
       {
-        "text": "Have an HTTPS Miniflux instance, self-hosted or hosted, and create an API token in its settings."
+        "text": "Set up the reader once over USB, if you have not already. Miniflux must be reachable over HTTPS.",
+        "command": "kobo setup"
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "In Miniflux, create an API key (Settings, API Keys)."
       },
       {
-        "text": "Install the token under the name miniflux, then add the address in the app.",
-        "command": "kobo secret set miniflux"
+        "text": "Connect Digest from your computer. It asks for the server and the key, checks them, ties the key to your server, and fills in the address. Open Digest, or tap Check again.",
+        "command": "kobo connect rss-miniflux"
+      },
+      {
+        "text": "With the key in a file instead, the same setup is one command.",
+        "command": "kobo secret set miniflux --app rss-miniflux --server https://miniflux.example --from key.txt"
       }
     ]
   }

@@ -2,12 +2,12 @@
   "id": "gutenbird",
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
-  "summary": "Browse OPDS libraries and read their books on your Kobo.",
-  "version": "1.0.22",
+  "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
+  "version": "1.0.25",
   "glyph": "book",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "Added catalogs remain reachable on measured pages, including after errors. Returning from a shelf keeps the catalog page. Loading placeholders fit the available room at large text sizes."
+  "release_notes": "Search, marginal notes and catalog addresses are typed on Cobalt's own keyboard, searching every catalog is a switch, and the download list marks the edition you will read."
 }

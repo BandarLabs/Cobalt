@@ -617,6 +617,66 @@ fn local_https_mock_preserves_auth_and_retry_after_errors() {
 }
 
 #[test]
+fn a_refusal_reaches_a_caller_that_asked_with_its_body_and_without_the_token() {
+    let _fixture = trust_fixture();
+    let quota: &'static [u8] = b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 30\r\nContent-Length: 70\r\n\r\n{\"error\":{\"code\":\"insufficient_quota\",\"key\":\"Bearer mock-only-token\"}}";
+    let (url, server) = one_response(quota);
+    let cancel = AtomicBool::new(false);
+    let envelope = kobo_net::fetch_from_with_refusals(
+        &url,
+        0,
+        4096,
+        Some(("Authorization", "Bearer mock-only-token")),
+        &[],
+        RequestOptions::default(),
+        &cancel,
+    )
+    .expect("a refusal envelope");
+    server.join().expect("quota mock");
+    let refusal = kobo_net::Refusal::parse_envelope(&envelope).expect("an envelope");
+    assert_eq!(refusal.status, 429);
+    assert_eq!(refusal.retry_after, Some(30));
+    assert!(
+        refusal.excerpt.contains("insufficient_quota"),
+        "{refusal:?}"
+    );
+    assert!(!refusal.excerpt.contains("mock-only-token"), "{refusal:?}");
+
+    let (url, server) = one_response(quota);
+    assert_eq!(
+        fetch_from_controlled(
+            &url,
+            0,
+            4096,
+            Some(("Authorization", "Bearer mock-only-token")),
+            &[],
+            RequestOptions::default(),
+            &cancel,
+        ),
+        Err(TaskError::RateLimited(30)),
+        "a caller that did not ask still gets the flattened error"
+    );
+    server.join().expect("quota mock");
+
+    let (url, server) =
+        one_response(b"HTTP/1.1 402 Payment Required\r\nContent-Length: 11\r\n\r\nno credit\r\n");
+    let envelope = kobo_net::write_with_refusals(
+        kobo_net::WriteMethod::Post,
+        &url,
+        b"{}",
+        "application/json",
+        None,
+        &[],
+        4096,
+        RequestOptions::default(),
+        &cancel,
+    )
+    .expect("a refusal envelope");
+    server.join().expect("credit mock");
+    assert_eq!(envelope, b"COBALT-HTTP/1 402\nRetry-After: -\n\nno credit");
+}
+
+#[test]
 fn truncated_chunked_stream_is_rejected_instead_of_returned_as_an_event() {
     let _fixture = trust_fixture();
     let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock");

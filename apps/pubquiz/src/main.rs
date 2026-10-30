@@ -1,7 +1,12 @@
 //! Pub Quiz keeps its question packs and play state on the reader.
 
+mod bank;
+mod round;
+
 use kobo_json::Value;
 use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
+use kobo_sdk::failure::{Problem, Service};
+use kobo_sdk::game::{self, Menu, Tap};
 use kobo_sdk::{
     action_id,
     keyboard::{TextEntry, Typing},
@@ -15,7 +20,11 @@ const STATE: &str = "pubquiz-state";
 const PACK: &str = "pubquiz-pack-v1";
 const SCORECARD: &str = "pubquiz-scorecard.csv";
 const LICENSE: &str = "pubquiz-content-license";
-const LICENSE_TEXT: &str = "Questions: Open Trivia DB (opentdb.com), CC-BY-SA 4.0. Cached question content remains under CC-BY-SA 4.0.";
+const LICENSE_TEXT: &str = "Downloaded questions: Open Trivia DB (opentdb.com), CC BY-SA 4.0. Cached downloaded packs remain under CC BY-SA 4.0. The bundled questions were written for Pub Quiz.";
+/// The menu entry that opens About from a round.
+const ABOUT: &str = "about";
+/// The confirmed form of New game, which ends the round.
+const NEW_GAME_CONFIRMED: &str = "new-game-confirmed";
 const API: &str = "https://opentdb.com/api.php?amount=50&type=multiple";
 /// The longest round, and the fewest questions a round is worth starting with.
 ///
@@ -25,6 +34,50 @@ const API: &str = "https://opentdb.com/api.php?amount=50&type=multiple";
 /// held the reader, which looked like the game had broken.
 const ROUND_LENGTH: usize = 10;
 const MIN_ROUND: usize = 3;
+/// The name Open Trivia DB's failures are told in.
+const SOURCE: Service<'static> = Service::new("Open Trivia DB");
+
+/// A message on Home, kept with how it is drawn.
+///
+/// A fresh pack and a failed one used to be the same grey banner, and the
+/// only retry was a row further down under another name. Each message now
+/// carries its level, and a failure carries the control that answers it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Note {
+    /// Said at its level. `retry` puts Try again on the banner, which asks
+    /// Open Trivia DB again.
+    Said {
+        level: BannerLevel,
+        text: String,
+        retry: bool,
+    },
+    /// A sync that failed, drawn with the one control that may fix it: Join
+    /// Wi-Fi offline, Try again where asking again may help.
+    Problem(Problem),
+}
+impl Note {
+    fn said(level: BannerLevel, text: impl Into<String>) -> Self {
+        Self::Said {
+            level,
+            text: text.into(),
+            retry: false,
+        }
+    }
+    #[cfg(test)]
+    fn text(&self) -> &str {
+        match self {
+            Self::Said { text, .. } => text,
+            Self::Problem(problem) => &problem.message,
+        }
+    }
+    #[cfg(test)]
+    fn level(&self) -> BannerLevel {
+        match self {
+            Self::Said { level, .. } => *level,
+            Self::Problem(problem) => problem.level(),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
@@ -36,9 +89,28 @@ enum View {
     Pass,
     Reveal,
     Podium,
-    HowTo,
+    Rules,
     About,
 }
+impl View {
+    /// The screens a round is played on, where Back asks before leaving.
+    fn in_round(self) -> bool {
+        matches!(
+            self,
+            Self::Question | Self::Choices | Self::Pass | Self::Reveal
+        )
+    }
+}
+
+/// What the dialogue over a round is asking.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Confirm {
+    /// Back was pressed mid-round.
+    Leave,
+    /// New game was chosen from the menu mid-round.
+    NewGame,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Difficulty {
     Easy,
@@ -51,6 +123,14 @@ impl Difficulty {
             Self::Easy => "Easy",
             Self::Medium => "Medium",
             Self::Hard => "Hard",
+        }
+    }
+    /// The spelling the data file and the saved round use.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Easy => "easy",
+            Self::Medium => "medium",
+            Self::Hard => "hard",
         }
     }
     fn from_pack(value: &str) -> Self {
@@ -71,6 +151,7 @@ struct Question {
     correct: usize,
 }
 
+#[cfg(test)]
 fn question(
     category: &str,
     difficulty: Difficulty,
@@ -87,243 +168,25 @@ fn question(
     }
 }
 
-/// The pack that plays before anything is synced.
+/// A synced pack added to the bundled questions, never in place of them.
 ///
-/// Five questions in each of six categories, so any one category is a round
-/// of its own and a first evening without Wi-Fi is three rounds rather than
-/// one. Ten questions in nine categories made every category a round of one
-/// or two questions.
-#[allow(clippy::too_many_lines)]
-fn bundled_questions() -> Vec<Question> {
-    [
-        question(
-            "Science",
-            Difficulty::Easy,
-            "Which planet has the shortest year?",
-            ["Mercury", "Mars", "Venus", "Earth"],
-            0,
-        ),
-        question(
-            "Science",
-            Difficulty::Easy,
-            "What is the chemical symbol for gold?",
-            ["Ag", "Gd", "Au", "Go"],
-            2,
-        ),
-        question(
-            "Science",
-            Difficulty::Easy,
-            "Which gas do plants take from the air to make sugar?",
-            ["Oxygen", "Nitrogen", "Carbon dioxide", "Helium"],
-            2,
-        ),
-        question(
-            "Science",
-            Difficulty::Medium,
-            "How many bones are in the adult human body?",
-            ["186", "206", "226", "246"],
-            1,
-        ),
-        question(
-            "Science",
-            Difficulty::Medium,
-            "What is the hardest natural mineral?",
-            ["Quartz", "Topaz", "Corundum", "Diamond"],
-            3,
-        ),
-        question(
-            "Geography",
-            Difficulty::Easy,
-            "What is the capital of Finland?",
-            ["Oslo", "Helsinki", "Tallinn", "Stockholm"],
-            1,
-        ),
-        question(
-            "Geography",
-            Difficulty::Easy,
-            "Which river runs through Budapest?",
-            ["Rhine", "Danube", "Seine", "Tagus"],
-            1,
-        ),
-        question(
-            "Geography",
-            Difficulty::Easy,
-            "Which is the largest ocean?",
-            ["Atlantic", "Indian", "Arctic", "Pacific"],
-            3,
-        ),
-        question(
-            "Geography",
-            Difficulty::Medium,
-            "What is the capital of Australia?",
-            ["Sydney", "Melbourne", "Canberra", "Perth"],
-            2,
-        ),
-        question(
-            "Geography",
-            Difficulty::Hard,
-            "Which country has the most natural lakes?",
-            ["Canada", "Russia", "Finland", "United States"],
-            0,
-        ),
-        question(
-            "History",
-            Difficulty::Hard,
-            "Which ship carried Charles Darwin on his voyage?",
-            ["Beagle", "Endeavour", "Victory", "Resolution"],
-            0,
-        ),
-        question(
-            "History",
-            Difficulty::Medium,
-            "In which year did the Berlin Wall fall?",
-            ["1987", "1989", "1991", "1993"],
-            1,
-        ),
-        question(
-            "History",
-            Difficulty::Easy,
-            "Who was the first person to walk on the Moon?",
-            [
-                "Buzz Aldrin",
-                "Yuri Gagarin",
-                "Neil Armstrong",
-                "Michael Collins",
-            ],
-            2,
-        ),
-        question(
-            "History",
-            Difficulty::Medium,
-            "Which civilisation built Machu Picchu?",
-            ["Aztec", "Maya", "Inca", "Olmec"],
-            2,
-        ),
-        question(
-            "History",
-            Difficulty::Medium,
-            "Who was the first emperor of Rome?",
-            ["Julius Caesar", "Augustus", "Nero", "Caligula"],
-            1,
-        ),
-        question(
-            "Arts & Literature",
-            Difficulty::Medium,
-            "Who painted The Persistence of Memory?",
-            ["Miró", "Dalí", "Picasso", "Kahlo"],
-            1,
-        ),
-        question(
-            "Arts & Literature",
-            Difficulty::Medium,
-            "Who wrote Frankenstein?",
-            [
-                "Mary Shelley",
-                "George Eliot",
-                "Jane Austen",
-                "Emily Brontë",
-            ],
-            0,
-        ),
-        question(
-            "Arts & Literature",
-            Difficulty::Easy,
-            "How many strings does a standard violin have?",
-            ["Three", "Four", "Five", "Six"],
-            1,
-        ),
-        question(
-            "Arts & Literature",
-            Difficulty::Medium,
-            "Who wrote One Hundred Years of Solitude?",
-            [
-                "Jorge Luis Borges",
-                "Gabriel García Márquez",
-                "Isabel Allende",
-                "Pablo Neruda",
-            ],
-            1,
-        ),
-        question(
-            "Arts & Literature",
-            Difficulty::Medium,
-            "In which city is the Rijksmuseum?",
-            ["Brussels", "Amsterdam", "Copenhagen", "Vienna"],
-            1,
-        ),
-        question(
-            "Nature",
-            Difficulty::Medium,
-            "Which is the largest living bird?",
-            ["Emu", "Albatross", "Ostrich", "Condor"],
-            2,
-        ),
-        question(
-            "Nature",
-            Difficulty::Easy,
-            "How many legs does a spider have?",
-            ["Six", "Eight", "Ten", "Twelve"],
-            1,
-        ),
-        question(
-            "Nature",
-            Difficulty::Easy,
-            "What is a baby kangaroo called?",
-            ["Cub", "Kit", "Joey", "Calf"],
-            2,
-        ),
-        question(
-            "Nature",
-            Difficulty::Easy,
-            "Which tree grows acorns?",
-            ["Oak", "Beech", "Maple", "Ash"],
-            0,
-        ),
-        question(
-            "Nature",
-            Difficulty::Easy,
-            "Which is the fastest land animal?",
-            ["Lion", "Pronghorn", "Cheetah", "Greyhound"],
-            2,
-        ),
-        question(
-            "Sport & Games",
-            Difficulty::Easy,
-            "How many players does a football team start with?",
-            ["Nine", "Ten", "Eleven", "Twelve"],
-            2,
-        ),
-        question(
-            "Sport & Games",
-            Difficulty::Easy,
-            "How many squares are on a chessboard?",
-            ["36", "49", "64", "81"],
-            2,
-        ),
-        question(
-            "Sport & Games",
-            Difficulty::Easy,
-            "In which sport does love mean a score of zero?",
-            ["Golf", "Tennis", "Squash", "Cricket"],
-            1,
-        ),
-        question(
-            "Sport & Games",
-            Difficulty::Medium,
-            "How many points is the black ball worth in snooker?",
-            ["Five", "Six", "Seven", "Eight"],
-            2,
-        ),
-        question(
-            "Sport & Games",
-            Difficulty::Medium,
-            "Which country hosted the first modern Olympic Games?",
-            ["France", "Greece", "England", "United States"],
-            1,
-        ),
-    ]
-    .into()
+/// A pack is fifty questions and the bundled set is several hundred, so
+/// replacing one with the other made "Get more questions" leave fewer. The
+/// pack goes first so its categories lead the first round dealt from it.
+fn with_bundled(mut synced: Vec<Question>) -> Vec<Question> {
+    let known: std::collections::HashSet<String> = synced
+        .iter()
+        .map(|question| question.text.to_lowercase())
+        .collect();
+    synced.extend(
+        bank::bundled()
+            .iter()
+            .filter(|question| !known.contains(&question.text.to_lowercase()))
+            .cloned(),
+    );
+    synced
 }
+
 #[allow(clippy::struct_excessive_bools)]
 struct Quiz {
     view: View,
@@ -338,10 +201,24 @@ struct Quiz {
     /// the same question in turn, so the reveal can say who got it.
     answers: [Option<usize>; 4],
     scores: [u8; 4],
-    /// A reader pressed Back mid-round and is being asked whether to leave.
-    leaving: bool,
+    /// A dialogue over the round, waiting for an answer.
+    confirm: Option<Confirm>,
+    /// The game menu behind the dots in a round's top bar.
+    menu: Menu,
+    /// Where Rules and About go back to: home, or the round they were opened
+    /// from.
+    return_to: View,
+    /// The round as last written to the store, so an action that changes
+    /// nothing about it writes nothing.
+    saved_round: Option<String>,
     packs: u8,
-    note: Option<String>,
+    note: Option<Note>,
+    /// Why the last Continue on Setup did not start a round, said on Setup
+    /// where the choice is made.
+    setup_note: Option<String>,
+    /// Whether the store refused the scorecard, so the podium says so and
+    /// offers to save it again rather than claiming it is saved.
+    scorecard_refused: bool,
     rounds: u16,
     questions: Vec<Question>,
     round_questions: Vec<Question>,
@@ -369,12 +246,17 @@ impl Default for Quiz {
             question: 0,
             answers: [None; 4],
             scores: [0; 4],
-            leaving: false,
+            confirm: None,
+            menu: Menu::default(),
+            return_to: View::Home,
+            saved_round: None,
             packs: 0,
             note: None,
+            setup_note: None,
+            scorecard_refused: false,
             rounds: 0,
-            questions: bundled_questions(),
-            round_questions: bundled_questions(),
+            questions: bank::bundled().to_vec(),
+            round_questions: bank::bundled()[..ROUND_LENGTH].to_vec(),
             scorecard_saved: false,
             pack_origin: None,
             pack_updated_min: None,
@@ -429,8 +311,11 @@ impl Quiz {
                 .map_or_else(String::new, |minutes| minutes.to_string())
         )
     }
-    fn source_label(&self) -> &str {
-        self.pack_origin.as_deref().unwrap_or("Bundled")
+    fn source_label(&self) -> String {
+        self.pack_origin.as_deref().map_or_else(
+            || "Bundled".to_owned(),
+            |origin| format!("Bundled and {origin}"),
+        )
     }
     fn updated_label(&self) -> String {
         match (self.pack_origin.is_some(), self.pack_updated_min) {
@@ -448,6 +333,7 @@ impl Quiz {
         context.store().save(STATE, self.state_line().into_bytes());
     }
     fn setup_action(&mut self, action: ActionId, context: &Context) -> bool {
+        self.setup_note = None;
         if let Some(&(_, difficulty)) = DIFFICULTIES
             .iter()
             .find(|(name, _)| action == action_id(name))
@@ -500,27 +386,34 @@ impl Quiz {
     fn begin(&mut self, party: bool) {
         let pool = self.pool(self.setup_category.as_deref());
         if pool.len() < MIN_ROUND {
-            self.note = Some(if pool.is_empty() {
-                "No questions match that mix yet. Sync packs or widen the choice.".to_owned()
+            // Said on Setup, where the category and difficulty are chosen,
+            // rather than on Home, a step away from anything that fixes it.
+            self.setup_note = Some(if pool.is_empty() {
+                "No questions match. Widen the mix.".to_owned()
             } else {
                 format!(
-                    "Only {} matching. Choose Any category or sync packs for a full round.",
+                    "Only {} match. Widen the mix for a full round.",
                     questions_label(pool.len())
                 )
             });
-            self.view = View::Home;
+            self.setup_party = party;
+            self.view = View::Setup;
             return;
         }
+        self.setup_note = None;
         self.party = party;
         self.scorecard_saved = false;
+        self.scorecard_refused = false;
         self.view = View::Question;
         self.question = 0;
         self.player = 0;
         self.answers = [None; 4];
         self.scores = [0; 4];
-        self.leaving = false;
+        self.confirm = None;
+        self.menu.close();
         self.note = None;
         self.page = 0;
+        let pool = bank::dealt(pool);
         let offset = usize::from(self.rounds) * ROUND_LENGTH % pool.len();
         let length = pool.len().min(ROUND_LENGTH);
         self.round_questions = pool
@@ -530,6 +423,73 @@ impl Quiz {
             .take(length)
             .cloned()
             .collect();
+    }
+
+    /// Ends the round on screen and goes back to its choices, keeping the
+    /// mode, category and difficulty it was dealt with.
+    fn new_game(&mut self) {
+        self.confirm = None;
+        self.menu.close();
+        self.setup_party = self.party;
+        self.setup_page = 0;
+        self.page = 0;
+        self.view = View::Setup;
+    }
+
+    /// Opens Rules or About, remembering the screen to come back to.
+    fn open_aside(&mut self, view: View) {
+        if !matches!(self.view, View::Rules | View::About) {
+            self.return_to = self.view;
+        }
+        self.view = view;
+    }
+
+    /// Writes the round to the store when it changed, or forgets it once
+    /// there is no round any more.
+    fn keep_round(&mut self, context: &mut Context) {
+        let record = round::encode(self);
+        if record == self.saved_round {
+            return;
+        }
+        match &record {
+            Some(text) => context.store().save(round::KEY, text.clone().into_bytes()),
+            None => context.store().forget(round::KEY),
+        }
+        self.saved_round = record;
+    }
+
+    /// Picks up a round the store kept, if nothing has been started since.
+    ///
+    /// The store answers within moments of starting, but a quick tap can
+    /// still begin a new round first, and that round is the one the table
+    /// is now playing.
+    fn resume_saved(&mut self, context: &mut Context, value: Option<Vec<u8>>) {
+        let Some(bytes) = value else {
+            return;
+        };
+        let Some(saved) = round::decode(&bytes) else {
+            context.store().forget(round::KEY);
+            self.saved_round = None;
+            return;
+        };
+        if self.view != View::Home || self.entry.is_open() {
+            return;
+        }
+        self.view = saved.view;
+        self.party = saved.party;
+        self.players = saved.players;
+        self.question = saved.question;
+        self.player = saved.player;
+        self.scores = saved.scores;
+        self.answers = saved.answers;
+        self.round_questions = saved.questions;
+        self.confirm = None;
+        self.menu.close();
+        self.note = None;
+        self.page = 0;
+        self.scorecard_saved = false;
+        self.scorecard_refused = false;
+        self.saved_round = round::encode(self);
     }
     fn sync(&mut self, context: &mut Context) {
         if self.sync_task.is_some() {
@@ -544,7 +504,10 @@ impl Quiz {
             headers: Vec::new(),
         });
         if self.sync_task.is_none() {
-            self.note = Some("Trivia packs are already updating.".into());
+            self.note = Some(Note::said(
+                BannerLevel::Info,
+                "Trivia packs are already updating.",
+            ));
         }
     }
     fn page_count(&self, context: &Context) -> usize {
@@ -792,21 +755,37 @@ fn round_position(quiz: &Quiz, question: &Question) -> String {
 fn pass_screen(quiz: &Quiz) -> Screen {
     let next = quiz.player_name().to_owned();
     let previous = quiz.name_for(quiz.player.saturating_sub(1)).to_owned();
-    ScreenBuilder::new("pubquiz-pass")
-        .top_bar(format!(
+    round_top(
+        "pubquiz-pass",
+        format!(
             "Question {} of {}",
             quiz.question + 1,
             quiz.round_questions.len()
-        ))
+        ),
+        quiz.menu,
+    )
+    .splash(
+        Some(Glyph::Person),
+        format!("Pass to {next}"),
+        format!("{previous} has answered. {next}, tap below when only you can see the screen."),
+    )
+    .game_actions(
+        false,
+        [("show-question", format!("Show {next}'s question"))],
+    )
+    .compose(|b| leave_prompt(quiz, b))
+    .build()
+}
+
+/// The top of every screen of a round: where the round stands, Rules, and
+/// the game menu with New game first.
+///
+/// Every screen of a round owns Back, because Back mid-round asks before
+/// throwing the scores away rather than leaving the app.
+fn round_top(name: &str, title: impl Into<String>, menu: Menu) -> ScreenBuilder {
+    ScreenBuilder::new(name)
+        .game_top_bar(title, menu, [(ABOUT, "About the questions")])
         .owns_back(true)
-        .splash(
-            Some(Glyph::Person),
-            format!("Pass to {next}"),
-            format!("{previous} has answered. {next}, tap below when only you can see the screen."),
-        )
-        .bottom_action("show-question", format!("Show {next}'s question"))
-        .compose(|b| leave_prompt(quiz, b))
-        .build()
 }
 
 fn join_names(names: &[&str]) -> String {
@@ -817,7 +796,50 @@ fn join_names(names: &[&str]) -> String {
     }
 }
 
-fn podium_screen(quiz: &Quiz) -> Screen {
+/// The results, with a refused scorecard said the fullest way that fits.
+///
+/// The retry belongs on the banner that says the scores were not saved. The
+/// podium with four players has no room for that banner's action line, so
+/// where it does not fit the banner names the top bar's Retry saving, and
+/// where even the words do not fit the round line gives way.
+fn podium_screen(quiz: &Quiz, context: &Context) -> Screen {
+    if !quiz.scorecard_refused {
+        return podium_shaped(quiz, Refusal::None);
+    }
+    let metrics = context.metrics();
+    [
+        Refusal::OnBanner,
+        Refusal::InTopBar,
+        Refusal::Compact,
+        Refusal::BarOnly,
+    ]
+    .into_iter()
+    .map(|shape| podium_shaped(quiz, shape))
+    .find(|podium| {
+        !podium
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+    })
+    .unwrap_or_else(|| podium_shaped(quiz, Refusal::BarOnly))
+}
+
+/// How the podium says the scorecard was refused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Refusal {
+    /// Nothing was refused.
+    None,
+    /// An error banner carrying Retry saving.
+    OnBanner,
+    /// An error banner naming the top bar's Retry saving.
+    InTopBar,
+    /// The same, without the round line under the bar.
+    Compact,
+    /// Only the bar's Retry saving, in place of Saved, where four players
+    /// at the largest sizes leave no line for words.
+    BarOnly,
+}
+
+fn podium_shaped(quiz: &Quiz, refusal: Refusal) -> Screen {
     let count = if quiz.party { quiz.players } else { 1 };
     let mut order: Vec<usize> = (0..count).collect();
     order.sort_by_key(|&i| std::cmp::Reverse(quiz.scores[i]));
@@ -857,21 +879,42 @@ fn podium_screen(quiz: &Quiz) -> Screen {
             )
         })
         .collect();
-    ScreenBuilder::new("pubquiz-podium")
-        .top_bar("Results")
-        .top_bar_action(
+    let podium = ScreenBuilder::new("pubquiz-podium").top_bar("Results");
+    // A refused scorecard says so with its one retry, so the screen has one
+    // control for the job: on the banner where it fits, else in the bar.
+    let podium = match refusal {
+        Refusal::None => podium.top_bar_action(
             "save-scorecard",
             if quiz.scorecard_saved {
                 "Saved"
             } else {
                 "Save scores"
             },
-        )
-        .secondary(format!(
+        ),
+        Refusal::OnBanner => podium
+            .banner(
+                BannerLevel::Error,
+                "Scores could not be saved. Free some space on the reader.",
+            )
+            .banner_action("save-scorecard", "Retry saving"),
+        Refusal::InTopBar | Refusal::Compact => podium
+            .top_bar_action("save-scorecard", "Retry saving")
+            .banner(
+                BannerLevel::Error,
+                "Scores not saved. Free some space, then tap Retry saving.",
+            ),
+        Refusal::BarOnly => podium.top_bar_action("save-scorecard", "Retry saving"),
+    };
+    let podium = if matches!(refusal, Refusal::Compact | Refusal::BarOnly) {
+        podium
+    } else {
+        podium.secondary(format!(
             "Round {} · {}",
             quiz.rounds,
             questions_label(quiz.round_questions.len())
         ))
+    };
+    podium
         .heading(headline)
         .rows_with_trailing(rows)
         .primary_button("play-again", "Play again")
@@ -879,63 +922,176 @@ fn podium_screen(quiz: &Quiz) -> Screen {
         .build()
 }
 
-fn home_screen(quiz: &Quiz) -> Screen {
-    let mut b = ScreenBuilder::new("pubquiz-home")
-        .top_bar("Pub Quiz")
-        .heading("Ready when you are")
-        .secondary(format!(
-            "{} · {} pack · {} rounds played",
-            questions_label(quiz.questions.len()),
-            quiz.source_label(),
-            quiz.rounds
-        ));
-    if let Some(note) = &quiz.note {
-        b = b.banner(BannerLevel::Info, note);
+fn rounds_label(rounds: u16) -> String {
+    if rounds == 1 {
+        "1 round played".to_owned()
+    } else {
+        format!("{rounds} rounds played")
     }
-    b.primary_button("party", "Play with friends")
-        .button("solo", "Play solo")
-        .section("More")
-        .rows([
-            (
-                "sync",
-                "Get more questions",
-                if quiz.sync_task.is_some() {
-                    "Downloading from Open Trivia DB…".to_owned()
-                } else {
-                    format!("{} · Needs Wi-Fi once", quiz.updated_label())
-                },
-                Glyph::Download,
-            ),
-            (
-                "how-to-play",
-                "How to play",
-                "Solo or passed around the table".to_owned(),
-                Glyph::Note,
-            ),
-            (
-                "about",
-                "About the questions",
-                "Open Trivia DB, CC BY-SA 4.0".to_owned(),
-                Glyph::Book,
-            ),
-        ])
-        .build()
 }
 
-/// Asks before Back throws a round away.
+/// Home, with its message drawn the fullest way that fits.
 ///
-/// One press of Back mid-round used to drop every score on the table without a
-/// word. Every screen of a round owns Back and routes it here instead.
+/// Home is full: a heading, two ways to play and the More rows. With a
+/// message, and more so held sideways, the welcome heading gives way first,
+/// then the line of counts, then the two ways to play share a line, then the
+/// More heading and the rows' second lines, and last the banner's action
+/// line. Without the action the message keeps its level and names the row
+/// that asks again, which sits just below it.
+fn home_screen(quiz: &Quiz, context: &Context) -> Screen {
+    let metrics = context.metrics();
+    let shapes: &[GiveWay] = if quiz.note.is_some() {
+        &GiveWay::ALL
+    } else {
+        &[GiveWay::Nothing]
+    };
+    shapes
+        .iter()
+        .map(|shape| home_shaped(quiz, *shape))
+        .find(|home| {
+            !home
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        })
+        .unwrap_or_else(|| home_shaped(quiz, shapes[shapes.len() - 1]))
+}
+
+/// How much of Home has given way to a message, in order: each step keeps
+/// what the steps before it gave up.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum GiveWay {
+    /// Everything is drawn.
+    Nothing,
+    /// The welcome heading.
+    Heading,
+    /// The line counting questions and rounds.
+    Counts,
+    /// The two ways to play share a line rather than stacking.
+    Stack,
+    /// The More heading, and the rows' second lines that are not news; the
+    /// sync row still says when it is downloading.
+    Rows,
+    /// The banner's action line.
+    Action,
+}
+impl GiveWay {
+    const ALL: [Self; 6] = [
+        Self::Nothing,
+        Self::Heading,
+        Self::Counts,
+        Self::Stack,
+        Self::Rows,
+        Self::Action,
+    ];
+}
+
+type HomeSlot = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>;
+
+fn home_shaped(quiz: &Quiz, shape: GiveWay) -> Screen {
+    let b = ScreenBuilder::new("pubquiz-home")
+        .top_bar("Pub Quiz")
+        .top_bar_action(game::RULES, game::RULES_LABEL);
+    let b = if shape < GiveWay::Heading {
+        b.heading("Ready when you are")
+    } else {
+        b
+    };
+    let b = if shape < GiveWay::Counts {
+        b.secondary(format!(
+            "{} · {}",
+            questions_label(quiz.questions.len()),
+            rounds_label(quiz.rounds)
+        ))
+    } else {
+        b
+    };
+    let action = shape < GiveWay::Action;
+    let b = match &quiz.note {
+        None => b,
+        Some(Note::Problem(problem)) if action => b.problem_banner_with(problem, "sync", None),
+        // A problem's own words already say to try again, and the row that
+        // does it is just below.
+        Some(Note::Problem(problem)) => b.problem_banner(problem),
+        Some(Note::Said {
+            level,
+            text,
+            retry: true,
+        }) if action => b.banner(*level, text).banner_action("sync", "Try again"),
+        Some(Note::Said {
+            level,
+            text,
+            retry: true,
+        }) => b.banner(
+            *level,
+            format!("{text} Tap Get more questions to try again."),
+        ),
+        Some(Note::Said { level, text, .. }) => b.banner(*level, text),
+    };
+    let b = if shape >= GiveWay::Stack {
+        let slots: [(kobo_sdk::SlotWidth, HomeSlot); 2] = [
+            (
+                kobo_sdk::SlotWidth::Fill,
+                Box::new(|slot| slot.primary_button("party", "Play with friends")),
+            ),
+            (
+                kobo_sdk::SlotWidth::Fill,
+                Box::new(|slot| slot.button("solo", "Play solo")),
+            ),
+        ];
+        b.band(kobo_sdk::BandAlign::Middle, slots)
+    } else {
+        b.primary_button("party", "Play with friends")
+            .button("solo", "Play solo")
+    };
+    let lean = shape >= GiveWay::Rows;
+    let b = if lean { b } else { b.section("More") };
+    b.rows([
+        (
+            "sync",
+            "Get more questions",
+            if quiz.sync_task.is_some() {
+                "Downloading from Open Trivia DB…".to_owned()
+            } else if lean {
+                String::new()
+            } else {
+                format!("{} · Needs Wi-Fi once", quiz.updated_label())
+            },
+            Glyph::Download,
+        ),
+        (
+            ABOUT,
+            "About the questions",
+            if lean {
+                String::new()
+            } else {
+                "Where they come from".to_owned()
+            },
+            Glyph::Book,
+        ),
+    ])
+    .build()
+}
+
+/// Asks before a round is thrown away.
+///
+/// One press of Back mid-round used to drop every score on the table without
+/// a word. Every screen of a round owns Back and routes it here instead, and
+/// New game from the menu asks the same way.
 fn leave_prompt(quiz: &Quiz, builder: ScreenBuilder) -> ScreenBuilder {
-    if quiz.leaving {
-        builder.confirm(
+    match quiz.confirm {
+        Some(Confirm::Leave) => builder.confirm(
             "Leave this round?",
             "The scores so far will be lost.",
             ("leave-round", "Leave round"),
             ("keep-playing", "Keep playing"),
-        )
-    } else {
-        builder
+        ),
+        Some(Confirm::NewGame) => builder.confirm(
+            "Start a new game?",
+            "This round ends and its scores are lost.",
+            (NEW_GAME_CONFIRMED, game::NEW_GAME_LABEL),
+            ("keep-playing", "Keep playing"),
+        ),
+        None => builder,
     }
 }
 
@@ -950,17 +1106,28 @@ fn answer_rows(question: &Question) -> impl Iterator<Item = (String, String, &st
     })
 }
 
+/// The way back from Rules or About: to the round they were opened from, or
+/// home.
+fn aside_exit(quiz: &Quiz, home: (&'static str, &'static str)) -> (&'static str, &'static str) {
+    if quiz.return_to.in_round() {
+        ("resume", "Back to the round")
+    } else {
+        home
+    }
+}
+
 fn about_screen(quiz: &Quiz) -> Screen {
+    let (name, label) = aside_exit(quiz, ("home", "Back to packs"));
     ScreenBuilder::new("pubquiz-about")
-        .top_bar("Pub Quiz")
-        .heading("About")
-        .text("Question packs use Open Trivia DB content, licensed CC-BY-SA 4.0.")
-        .text("opentdb.com · cached packs are redistributed under the same license.")
+        .top_bar("About the questions")
+        .owns_back(true)
+        .text("The bundled questions were written for Pub Quiz and ship with it.")
+        .text("Get more questions adds a pack from Open Trivia DB, opentdb.com. Those questions are licensed CC BY-SA 4.0 and stay under that licence on this reader.")
         .rows([
             (
                 "about-source".to_owned(),
                 "Source".to_owned(),
-                quiz.source_label().to_owned(),
+                quiz.source_label(),
                 Glyph::Download,
             ),
             (
@@ -970,7 +1137,21 @@ fn about_screen(quiz: &Quiz) -> Screen {
                 Glyph::Clock,
             ),
         ])
-        .button("home", "Back to packs")
+        .button(name, label)
+        .build()
+}
+
+fn rules_screen(quiz: &Quiz) -> Screen {
+    let (name, label) = aside_exit(quiz, ("resume", "Done"));
+    ScreenBuilder::new("pubquiz-rules")
+        .top_bar(game::RULES_LABEL)
+        .owns_back(true)
+        .section("Solo")
+        .text("Up to ten questions. A point for each right answer.")
+        .section("With friends")
+        .text("Two to four players pass the reader round, then see who was right.")
+        .secondary("A round is saved if the reader sleeps.")
+        .bottom_action(name, label)
         .build()
 }
 
@@ -978,45 +1159,42 @@ fn question_screen(quiz: &Quiz, context: &Context) -> Screen {
     let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
     // The question in the display serif, so it reads as the card a quiz
     // master holds up rather than as one more line of interface.
-    let compact = || {
-        ScreenBuilder::new("pubquiz-question")
-            .top_bar(question_title(quiz))
-            .owns_back(true)
+    let compact = |menu| {
+        round_top("pubquiz-question", question_title(quiz), menu)
             .secondary(round_position(quiz, question))
             .heading_at_level(2, &question.text)
             .rows(answer_rows(question))
     };
-    // Measured without the leave prompt: a dialogue over the question is not
-    // the question failing to fit, and treating it as one swapped the page
-    // behind it for the paginated layout.
-    if compact()
+    // Measured without the leave prompt or an open menu: a dialogue over the
+    // question is not the question failing to fit, and treating it as one
+    // swapped the page behind it for the paginated layout. Measured with the
+    // status band the reader draws above every screen, because a page that
+    // fits only without it loses its last line on the panel.
+    if compact(Menu::default())
         .build()
-        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
         .issues
         .is_empty()
     {
-        return compact().compose(|b| leave_prompt(quiz, b)).build();
+        return compact(quiz.menu)
+            .compose(|b| leave_prompt(quiz, b))
+            .build();
     }
     // Long questions stay complete, including answers that share a prefix.
     // The same measured prose pagination as the reader keeps every word reachable.
     let pages = context.paginate(&question_text(quiz), true);
     let page = quiz.page.min(pages.len().saturating_sub(1));
-    let mut builder = ScreenBuilder::new("pubquiz-question")
-        .top_bar(question_title(quiz))
-        .owns_back(true);
+    let mut builder = round_top("pubquiz-question", question_title(quiz), quiz.menu);
     for paragraph in &pages[page] {
         builder = builder.text(paragraph);
     }
     builder
+        .page_turns("previous-page", "next-page")
         .page_position(
             u16::try_from(page + 1).unwrap_or(u16::MAX),
             u16::try_from(pages.len()).unwrap_or(u16::MAX),
         )
-        .action_bar([
-            ("previous-page", "Previous"),
-            ("next-page", "Next"),
-            ("choose", "Answer"),
-        ])
+        .game_actions(false, [("choose", "Answer")])
         .compose(|b| leave_prompt(quiz, b))
         .build()
 }
@@ -1030,9 +1208,7 @@ fn choices_screen(quiz: &Quiz, context: &Context) -> Screen {
         .collect::<Vec<_>>();
     let pages = context.paginate_rows(&rows, true);
     let page = quiz.page.min(pages.len().saturating_sub(1));
-    ScreenBuilder::new("pubquiz-choices")
-        .top_bar("Choose an answer")
-        .owns_back(true)
+    round_top("pubquiz-choices", "Choose an answer", quiz.menu)
         .rows(pages[page].iter().map(|&index| {
             (
                 choice(index),
@@ -1041,15 +1217,12 @@ fn choices_screen(quiz: &Quiz, context: &Context) -> Screen {
                 u16::try_from(index + 1).expect("four answers"),
             )
         }))
+        .page_turns("previous-page", "next-page")
         .page_position(
             u16::try_from(page + 1).unwrap_or(u16::MAX),
             u16::try_from(pages.len()).unwrap_or(u16::MAX),
         )
-        .action_bar([
-            ("previous-page", "Previous"),
-            ("next-page", "Next"),
-            ("question", "Question"),
-        ])
+        .game_actions(false, [("question", "Question")])
         .compose(|b| leave_prompt(quiz, b))
         .build()
 }
@@ -1084,19 +1257,28 @@ fn setup_categories(quiz: &Quiz) -> Vec<String> {
     categories
 }
 
-fn setup_prefix(quiz: &Quiz) -> ScreenBuilder {
+fn setup_prefix(quiz: &Quiz, note: bool) -> ScreenBuilder {
     let selected = DIFFICULTIES
         .iter()
         .position(|&(_, difficulty)| difficulty == quiz.setup_difficulty)
         .unwrap_or(0);
     let matching = quiz.pool(quiz.setup_category.as_deref()).len();
-    ScreenBuilder::new("pubquiz-setup")
+    let setup = ScreenBuilder::new("pubquiz-setup")
         .top_bar(if quiz.setup_party {
             "Pass-around round"
         } else {
             "Solo round"
         })
-        .owns_back(true)
+        .owns_back(true);
+    // Too few questions for a round is said here, where the mix is chosen.
+    // It may come right with another choice, so it asks for attention
+    // rather than reporting a failure. The rows are paged under this
+    // prefix, so the banner is measured with them.
+    let setup = match &quiz.setup_note {
+        Some(text) if note => setup.banner(BannerLevel::Attention, text),
+        _ => setup,
+    };
+    setup
         .section("Difficulty")
         .segmented(
             selected,
@@ -1137,7 +1319,26 @@ fn setup_rows(quiz: &Quiz, context: &Context) -> Vec<(String, String, String, Gl
     rows
 }
 
+/// Whether Setup draws its note: wherever every page of rows still fits
+/// under it, which is everywhere but a Clara held sideways at the largest
+/// sizes. There the Category line's count, "1 question match", says it.
+fn setup_note_shown(quiz: &Quiz, context: &Context) -> bool {
+    quiz.setup_note.is_some() && {
+        let metrics = context.metrics();
+        let pages = setup_pages_with(quiz, context, true);
+        (0..pages.len()).all(|page| {
+            !setup_built(quiz, context, &pages, page, true)
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        })
+    }
+}
+
 fn setup_pages(quiz: &Quiz, context: &Context) -> Vec<Vec<usize>> {
+    setup_pages_with(quiz, context, setup_note_shown(quiz, context))
+}
+
+fn setup_pages_with(quiz: &Quiz, context: &Context, note: bool) -> Vec<Vec<usize>> {
     let rows = setup_rows(quiz, context);
     let measured: Vec<_> = rows
         .iter()
@@ -1147,16 +1348,27 @@ fn setup_pages(quiz: &Quiz, context: &Context) -> Vec<Vec<usize>> {
         &measured,
         true,
         kobo_sdk::Position::AtTheFoot,
-        &setup_prefix(quiz).build(),
+        &setup_prefix(quiz, note).build(),
     )
 }
 
 fn setup_screen(quiz: &Quiz, context: &Context) -> Screen {
+    let note = setup_note_shown(quiz, context);
+    let pages = setup_pages_with(quiz, context, note);
+    setup_built(quiz, context, &pages, quiz.setup_page, note)
+}
+
+fn setup_built(
+    quiz: &Quiz,
+    context: &Context,
+    pages: &[Vec<usize>],
+    page: usize,
+    note: bool,
+) -> Screen {
     let rows = setup_rows(quiz, context);
-    let pages = setup_pages(quiz, context);
-    let page = quiz.setup_page.min(pages.len().saturating_sub(1));
-    let mut builder =
-        setup_prefix(quiz).rows_with_trailing(pages[page].iter().map(|&index| rows[index].clone()));
+    let page = page.min(pages.len().saturating_sub(1));
+    let mut builder = setup_prefix(quiz, note)
+        .rows_with_trailing(pages[page].iter().map(|&index| rows[index].clone()));
     if pages.len() > 1 {
         builder = builder
             .page_turns("previous-page", "next-page")
@@ -1307,24 +1519,28 @@ fn reveal_parts(
 ///
 /// `pages` is `None` for the reveal that fits whole, which has no page
 /// controls to draw. Continue is the bottom action on every page, so a table
-/// that has seen enough never has to page to the end to move on.
+/// that has seen enough never has to page to the end to move on. `menu` is
+/// closed whenever the page is only being measured.
 fn reveal_page(
     quiz: &Quiz,
     question: &Question,
     parts: &[Revealed],
     pages: Option<(usize, usize)>,
+    menu: Menu,
 ) -> ScreenBuilder {
     let mut builder = reveal_parts(
         quiz,
         question,
         parts,
-        ScreenBuilder::new("pubquiz-reveal")
-            .top_bar(format!(
+        round_top(
+            "pubquiz-reveal",
+            format!(
                 "Question {} of {}",
                 quiz.question + 1,
                 quiz.round_questions.len()
-            ))
-            .owns_back(true),
+            ),
+            menu,
+        ),
     );
     if let Some((page, count)) = pages {
         builder = builder
@@ -1334,13 +1550,16 @@ fn reveal_page(
                 u16::try_from(count).unwrap_or(u16::MAX),
             );
     }
-    builder.bottom_action(
-        "continue",
-        if quiz.question + 1 == quiz.round_questions.len() {
-            "See results"
-        } else {
-            "Next question"
-        },
+    builder.game_actions(
+        false,
+        [(
+            "continue",
+            if quiz.question + 1 == quiz.round_questions.len() {
+                "See results"
+            } else {
+                "Next question"
+            },
+        )],
     )
 }
 
@@ -1364,9 +1583,9 @@ fn reveal_all(question: &Question, text: Vec<String>) -> Vec<Revealed> {
 /// pagination the question screen uses, so not even it is too tall for a page.
 fn reveal_pages(quiz: &Quiz, question: &Question, context: &Context) -> Vec<Vec<Revealed>> {
     let fits = |parts: &[Revealed]| {
-        reveal_page(quiz, question, parts, Some((0, 2)))
+        reveal_page(quiz, question, parts, Some((0, 2)), Menu::default())
             .build()
-            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
             .issues
             .is_empty()
     };
@@ -1394,9 +1613,9 @@ fn reveal_pages(quiz: &Quiz, question: &Question, context: &Context) -> Vec<Vec<
 /// dialogue over the reveal is not the reveal failing to fit.
 fn reveal_paged(quiz: &Quiz, question: &Question, context: &Context) -> Option<Vec<Vec<Revealed>>> {
     let whole = reveal_all(question, vec![question.text.clone()]);
-    let fits = reveal_page(quiz, question, &whole, None)
+    let fits = reveal_page(quiz, question, &whole, None, Menu::default())
         .build()
-        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::default())
+        .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
         .issues
         .is_empty();
     (!fits).then(|| reveal_pages(quiz, question, context))
@@ -1405,14 +1624,20 @@ fn reveal_paged(quiz: &Quiz, question: &Question, context: &Context) -> Option<V
 fn reveal_screen(quiz: &Quiz, question: &Question, context: &Context) -> Screen {
     let Some(pages) = reveal_paged(quiz, question, context) else {
         let whole = reveal_all(question, vec![question.text.clone()]);
-        return reveal_page(quiz, question, &whole, None)
+        return reveal_page(quiz, question, &whole, None, quiz.menu)
             .compose(|b| leave_prompt(quiz, b))
             .build();
     };
     let page = quiz.page.min(pages.len().saturating_sub(1));
-    reveal_page(quiz, question, &pages[page], Some((page, pages.len())))
-        .compose(|b| leave_prompt(quiz, b))
-        .build()
+    reveal_page(
+        quiz,
+        question,
+        &pages[page],
+        Some((page, pages.len())),
+        quiz.menu,
+    )
+    .compose(|b| leave_prompt(quiz, b))
+    .build()
 }
 
 fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
@@ -1420,29 +1645,27 @@ fn screen_with(quiz: &Quiz, context: &Context) -> Screen {
         return ScreenBuilder::new("pubquiz-rename")
             .top_bar("Rename player")
             .owns_back(true)
-            .secondary("Letters and digits, twelve characters or fewer.")
-            .text_entry(&quiz.entry, "Player name", "Done")
+            // The rule rides with the field, because the runtime's keyboard
+            // covers this screen and shows only the prompt and the hint.
+            .text_entry_with_hint(
+                &quiz.entry,
+                "Player name",
+                "Letters and digits, twelve characters or fewer.",
+                "Done",
+            )
             .build();
     }
     let question = &quiz.round_questions[quiz.question % quiz.round_questions.len()];
     match quiz.view {
         View::Setup => setup_screen(quiz, context),
         View::Players => players_screen(quiz),
-        View::Home => home_screen(quiz),
+        View::Home => home_screen(quiz, context),
         View::Question => question_screen(quiz, context),
         View::Choices => choices_screen(quiz, context),
         View::Pass => pass_screen(quiz),
         View::Reveal => reveal_screen(quiz, question, context),
-        View::Podium => podium_screen(quiz),
-        View::HowTo => ScreenBuilder::new("pubquiz-help")
-            .top_bar("How to play")
-            .owns_back(true)
-            .section("Solo")
-            .text("Ten questions. See each answer straight away.")
-            .section("With friends")
-            .text("Two to four players, one reader. Each question goes round the table, then everyone sees who was right.")
-            .bottom_action("home", "Play")
-            .build(),
+        View::Podium => podium_screen(quiz, context),
+        View::Rules => rules_screen(quiz),
         View::About => about_screen(quiz),
     }
 }
@@ -1453,7 +1676,22 @@ impl KoboApp for Quiz {
         context
             .store()
             .save(LICENSE, LICENSE_TEXT.as_bytes().to_vec());
+        context.store().load(round::KEY);
         self.show(context);
+    }
+    /// Asks the store for the round again when there is none on screen.
+    ///
+    /// Usually the process slept with everything in memory and the round is
+    /// already showing. When it did not, the store has the copy written after
+    /// the last answer.
+    fn on_resume(&mut self, context: &mut Context) {
+        if self.view == View::Home && !self.entry.is_open() {
+            context.store().load(round::KEY);
+        }
+        self.show(context);
+    }
+    fn on_background(&mut self, context: &mut Context) {
+        self.keep_round(context);
     }
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
@@ -1484,56 +1722,106 @@ impl KoboApp for Quiz {
             } else if key == PACK && !self.pack_synced {
                 if let Some(bytes) = value {
                     if let Some(questions) = parse_pack(&bytes) {
-                        self.questions = questions;
+                        self.questions = with_bundled(questions);
                         self.packs = 1;
                         if self.pack_origin.is_none() {
                             self.pack_origin = Some("Open Trivia DB".to_owned());
                         }
                     } else {
                         context.store().forget(PACK);
-                        self.note =
-                            Some("Saved questions were damaged; the built-in set is ready.".into());
+                        self.note = Some(Note::said(
+                            BannerLevel::Info,
+                            "Saved questions were damaged; the built-in set is ready.",
+                        ));
                     }
                 }
+            } else if key == round::KEY {
+                self.resume_saved(context, value);
             }
             self.show(context);
         }
+    }
+    /// A refused write is said rather than dropped. The scorecard is
+    /// answered on the podium it was saved from; anything else on Home.
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if !matches!(result, StoreResult::Denied(_)) {
+            self.on_store(context, result);
+            return;
+        }
+        if key == SCORECARD {
+            self.scorecard_saved = false;
+            self.scorecard_refused = true;
+        } else {
+            let lost = match key {
+                PACK => "New questions could not be kept for offline play.",
+                k if k == round::KEY => "This round could not be saved if the reader sleeps.",
+                LICENSE => "The question licence could not be written.",
+                _ => "Player names and rounds played could not be saved.",
+            };
+            self.note = Some(Note::said(
+                BannerLevel::Error,
+                format!("{lost} Free some space on the reader."),
+            ));
+        }
+        self.show(context);
     }
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
         if self.sync_task != Some(task) {
             return;
         }
         self.sync_task = None;
-        match outcome {
+        // A failure is told in Open Trivia DB's terms, at the level its
+        // cause deserves, with Join Wi-Fi or Try again on the banner.
+        if let Some(mut problem) = SOURCE.problem(&outcome) {
+            // The address is Pub Quiz's own, so there is no server address
+            // for the owner to check; what is left to do is wait.
+            if problem.cause == kobo_sdk::failure::Cause::NotFound {
+                "Open Trivia DB sent no questions. Try again later."
+                    .clone_into(&mut problem.message);
+            }
+            self.note = Some(Note::Problem(problem));
+            self.show(context);
+            return;
+        }
+        self.note = Some(match outcome {
             TaskOutcome::Completed(bytes) => {
                 if let Some(questions) = parse_pack(&bytes) {
-                    self.questions = questions;
+                    let fresh = questions.len();
+                    self.questions = with_bundled(questions);
                     self.pack_synced = true;
                     self.packs = 1;
                     self.pack_origin = Some("Open Trivia DB".to_owned());
                     self.pack_updated_min = now_minutes();
                     context.store().save(PACK, bytes);
-                    self.note = Some(format!(
-                        "{} fresh questions saved for offline play.",
-                        self.questions.len()
-                    ));
                     self.save(context);
+                    Note::said(
+                        BannerLevel::Success,
+                        format!("{fresh} fresh questions saved for offline play."),
+                    )
                 } else {
-                    self.note = Some("Open Trivia DB returned no usable question set.".into());
+                    Note::Said {
+                        level: BannerLevel::Error,
+                        text: "Open Trivia DB returned no usable question set.".to_owned(),
+                        retry: true,
+                    }
                 }
             }
-            TaskOutcome::Failed(kobo_sdk::TaskError::Offline) => {
-                self.note = Some("Off the air. Existing packs still play offline.".into());
-            }
-            TaskOutcome::Failed(_) | TaskOutcome::Cancelled => {
-                self.note =
-                    Some("Open Trivia DB did not answer. Join Wi-Fi and try sync again.".into());
-            }
-        }
+            // Nothing failed, the download was stopped; asking again is the
+            // whole of the fix.
+            TaskOutcome::Failed(_) | TaskOutcome::Cancelled => Note::Said {
+                level: BannerLevel::Attention,
+                text: "The download stopped before it finished.".to_owned(),
+                retry: true,
+            },
+        });
         self.show(context);
     }
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
-        if self.view == View::Setup && !self.entry.is_open() {
+        let paged = matches!(
+            self.view,
+            View::Setup | View::Question | View::Choices | View::Reveal
+        );
+        if paged && !self.entry.is_open() {
             self.on_action(
                 context,
                 action_id(if forward {
@@ -1549,20 +1837,40 @@ impl KoboApp for Quiz {
         if self.rename_action(context, action) {
             return;
         }
-        let in_round = matches!(
-            self.view,
-            View::Question | View::Choices | View::Pass | View::Reveal
-        );
-        if self.leaving {
-            // The confirmation is the only thing that answers while it is up.
-            if action == action_id("leave-round") {
-                self.leaving = false;
+        let in_round = self.view.in_round();
+        // The game controls are read first on a round's screens and at home,
+        // where Rules also sits in the top bar; a confirmation over the round
+        // is the only thing that answers while it is up.
+        let tap = if self.confirm.is_none() && (in_round || self.view == View::Home) {
+            self.menu.read(action)
+        } else {
+            None
+        };
+        if let Some(asking) = self.confirm {
+            if action == action_id("leave-round") && asking == Confirm::Leave {
+                self.confirm = None;
                 self.view = View::Home;
+            } else if action == action_id(NEW_GAME_CONFIRMED) && asking == Confirm::NewGame {
+                self.new_game();
             } else if action == action_id("keep-playing") || action == ActionId::BACK {
-                self.leaving = false;
+                self.confirm = None;
             }
+        } else if let Some(tap) = tap {
+            match tap {
+                // A quiz has no undo, so the bar never offers one.
+                Tap::Menu | Tap::Undo => {}
+                Tap::Rules => self.open_aside(View::Rules),
+                Tap::NewGame if in_round => self.confirm = Some(Confirm::NewGame),
+                Tap::NewGame => self.new_game(),
+            }
+        } else if action == action_id(ABOUT) && (in_round || self.view == View::Home) {
+            self.open_aside(View::About);
+        } else if matches!(self.view, View::Rules | View::About)
+            && (action == ActionId::BACK || action == action_id("resume"))
+        {
+            self.view = self.return_to;
         } else if action == ActionId::BACK && in_round {
-            self.leaving = true;
+            self.confirm = Some(Confirm::Leave);
         } else if action == ActionId::BACK && self.view == View::Players {
             self.view = View::Setup;
         } else if action == action_id("choose") && self.view == View::Question {
@@ -1600,7 +1908,9 @@ impl KoboApp for Quiz {
                 (0..self.players).find(|i| action == action_id(&format!("rename-{i}")))
             {
                 self.renaming = index;
-                self.entry.open();
+                // Opened with the name in it, so a typo is mended rather
+                // than the whole name typed again.
+                self.entry.open_with(self.names[index].clone());
             }
         } else if action == action_id("solo") && self.view == View::Home {
             self.setup_party = false;
@@ -1613,12 +1923,9 @@ impl KoboApp for Quiz {
                 .store()
                 .save(SCORECARD, self.scorecard_csv().into_bytes());
             self.scorecard_saved = true;
+            self.scorecard_refused = false;
         } else if action == action_id("play-again") && self.view == View::Podium {
             self.begin(self.party);
-        } else if action == action_id("about") && self.view == View::Home {
-            self.view = View::About;
-        } else if action == action_id("how-to-play") && self.view == View::Home {
-            self.view = View::HowTo;
         } else if action == ActionId::BACK || action == action_id("home") {
             self.view = View::Home;
         } else if let Some(answer) = (0..4).find(|i| {
@@ -1651,6 +1958,7 @@ impl KoboApp for Quiz {
                 self.view = View::Question;
             }
         }
+        self.keep_round(context);
         self.show(context);
     }
 }
@@ -1709,15 +2017,16 @@ mod tests {
     }
 
     #[test]
-    fn a_round_has_ten_distinct_questions_and_short_help() {
-        assert_eq!(bundled_questions().len(), 30);
-        // Every bundled category is a round of its own.
+    fn every_bundled_category_is_a_full_round_and_the_rules_are_short() {
         let quiz = Quiz::default();
         for category in setup_categories(&quiz) {
-            assert!(quiz.pool(Some(&category)).len() >= MIN_ROUND, "{category}");
+            assert!(
+                quiz.pool(Some(&category)).len() >= ROUND_LENGTH,
+                "{category}"
+            );
         }
         let quiz = Quiz {
-            view: View::HowTo,
+            view: View::Rules,
             ..Quiz::default()
         };
         assert!(screen(&quiz)
@@ -1814,8 +2123,8 @@ mod tests {
         let kept = quiz.round_questions.clone();
         quiz.begin(false);
         assert_eq!(quiz.round_questions, kept);
-        assert_eq!(quiz.view, View::Home);
-        assert!(quiz.note.is_some());
+        assert_eq!(quiz.view, View::Setup);
+        assert!(quiz.setup_note.is_some());
 
         let mut quiz = Quiz {
             setup_difficulty: Some(Difficulty::Easy),
@@ -1925,16 +2234,25 @@ mod tests {
 
     #[test]
     fn short_pools_deal_short_rounds_without_repeats() {
+        // A synced pack often holds only a few questions in a category.
         let mut quiz = Quiz {
-            setup_category: Some("Nature".to_owned()),
+            questions: with_bundled(
+                (0..6)
+                    .map(|index| {
+                        question(
+                            "Mythology",
+                            Difficulty::Medium,
+                            &format!("Small pack question {index}?"),
+                            ["A", "B", "C", "D"],
+                            0,
+                        )
+                    })
+                    .collect(),
+            ),
+            setup_category: Some("Mythology".to_owned()),
             ..Quiz::default()
         };
-        let pool: Vec<_> = quiz
-            .questions
-            .iter()
-            .filter(|question| question.category == "Nature")
-            .cloned()
-            .collect();
+        let pool = quiz.pool(Some("Mythology"));
         assert!(pool.len() < 10, "test needs a small category");
         quiz.begin(false);
         assert_eq!(quiz.round_questions.len(), pool.len());
@@ -2067,7 +2385,7 @@ mod tests {
 mod regression_tests {
     use super::*;
     use kobo_sdk::{AppRunner, Chrome, DisplayMetrics};
-    use kobo_ui::TextScale;
+    use kobo_ui::{Orientation, TextScale};
 
     fn pack() -> Vec<u8> {
         let item = r#"{"category":"New pack","question":"Changed question?","correct_answer":"Right","incorrect_answers":["Wrong 1","Wrong 2","Wrong 3"]}"#;
@@ -2108,10 +2426,7 @@ mod regression_tests {
         runner.action(action_id("count-2"));
         assert_eq!(runner.app().players, 2);
         runner.action(action_id("rename-0"));
-        // Shift, s, a, m, then accept.
-        for key in ["kb.shift", "kb.r1c1", "kb.r1c0", "kb.r2c6", "kb.enter"] {
-            runner.action(action_id(key));
-        }
+        runner.type_text("Sam");
         assert_eq!(runner.app().names[0], "Sam");
         assert!(!runner.app().entry.is_open());
         runner.action(action_id("start"));
@@ -2202,11 +2517,11 @@ mod regression_tests {
         runner.action(action_id("solo"));
         runner.action(action_id("continue-setup"));
         runner.action(ActionId::BACK);
-        assert!(runner.app().leaving);
+        assert_eq!(runner.app().confirm, Some(Confirm::Leave));
         assert_eq!(runner.app().view, View::Question);
         assert!(format!("{:?}", screen(runner.app())).contains("Leave this round?"));
         runner.action(action_id("keep-playing"));
-        assert!(!runner.app().leaving);
+        assert_eq!(runner.app().confirm, None);
         assert_eq!(runner.app().view, View::Question);
         runner.action(ActionId::BACK);
         runner.action(action_id("leave-round"));
@@ -2347,9 +2662,11 @@ mod regression_tests {
         let before = runner.app().questions.clone();
         fail_sync_after_retry(&mut runner, task);
         assert!(runner.app().sync_task.is_none());
+        let note = runner.app().note.clone().expect("a note");
+        assert_eq!(note.level(), BannerLevel::Attention);
         assert_eq!(
-            runner.app().note.as_deref(),
-            Some("Off the air. Existing packs still play offline.")
+            note,
+            Note::Problem(SOURCE.explain(kobo_sdk::TaskError::Offline))
         );
         assert_eq!(runner.app().questions, before);
         assert!(runner.app().pack_updated_min.is_none());
@@ -2421,13 +2738,13 @@ mod regression_tests {
         for page in 0..pages.len() {
             assert_eq!(runner.app().page, page, "{metrics:?}");
             let screen = reveal_screen(runner.app(), &question, &context);
-            let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
             assert!(
                 diagnostics.issues.is_empty(),
                 "{metrics:?} page {page}: {:?}",
                 diagnostics.issues
             );
-            let layout = screen.layout_with(&metrics, &Chrome::default());
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
             assert!(
                 layout.rect_of_action(action_id("continue")).is_some(),
                 "{metrics:?} page {page} has no way on"
@@ -2457,6 +2774,52 @@ mod regression_tests {
         assert_eq!(words(&asked), words(&question.text), "{metrics:?}");
     }
 
+    /// The round an owner meets first: a short question that two players both
+    /// got right. Its verdict, question and the row naming both of them were
+    /// measured without the status band, so at the largest size the page
+    /// fitted in the app and the reader refused it.
+    #[test]
+    fn a_short_question_everyone_got_fits_every_text_size_on_a_clara_held_either_way() {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            for text_scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..kobo_ui::CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let table = || {
+                    let mut table = Quiz {
+                        players: 2,
+                        ..Quiz::default()
+                    };
+                    table.begin(true);
+                    table.round_questions[0] = bank::bundled()[0].clone();
+                    table.answers = [Some(table.round_questions[0].correct); 4];
+                    table
+                };
+                assert_the_reveal_pages_reach_everything(table(), metrics);
+                let mut solo = Quiz::default();
+                solo.begin(false);
+                solo.round_questions[0] = bank::bundled()[0].clone();
+                solo.answers[0] = Some(solo.round_questions[0].correct + 1);
+                assert_the_reveal_pages_reach_everything(solo, metrics);
+                let context = AppRunner::with_metrics(Quiz::default(), metrics).context();
+                let table = table();
+                for screen in [
+                    question_screen(&table, &context),
+                    choices_screen(&table, &context),
+                ] {
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?}: {:?}",
+                        diagnostics.issues
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn long_questions_keep_every_answer_reachable_at_large_text_sizes() {
         let mut quiz = long_question_round(false);
@@ -2475,7 +2838,7 @@ mod regression_tests {
                 for page in 0..pages.len() {
                     quiz.page = page;
                     let screen = question_screen(&quiz, &context);
-                    let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
                     assert!(
                         diagnostics.issues.is_empty(),
                         "{metrics:?}: {:?}",
@@ -2486,13 +2849,13 @@ mod regression_tests {
                 for page in 0..4 {
                     quiz.page = page;
                     let screen = choices_screen(&quiz, &context);
-                    let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
                     assert!(
                         diagnostics.issues.is_empty(),
                         "{metrics:?}: {:?}",
                         diagnostics.issues
                     );
-                    let layout = screen.layout_with(&metrics, &Chrome::default());
+                    let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
                     for (index, found) in seen.iter_mut().enumerate() {
                         *found |= layout.rect_of_action(action_id(&choice(index))).is_some();
                     }
@@ -2523,13 +2886,18 @@ mod regression_tests {
 mod help_layout_tests {
     use super::*;
     #[test]
-    fn help_fits_supported_text_scales_and_geometries() {
-        let quiz = Quiz {
-            view: View::HowTo,
+    fn the_rules_fit_every_text_size_and_pose_with_their_way_back() {
+        let from_home = Quiz {
+            view: View::Rules,
             ..Quiz::default()
         };
-        let screens = [screen(&quiz)];
-        for screen in screens {
+        let from_round = Quiz {
+            view: View::Rules,
+            return_to: View::Reveal,
+            ..Quiz::default()
+        };
+        assert!(format!("{:?}", screen(&from_round)).contains("Back to the round"));
+        for quiz in [&from_home, &from_round] {
             for (width, height, pixels_per_inch) in
                 [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
             {
@@ -2540,6 +2908,14 @@ mod help_layout_tests {
                         pixels_per_inch,
                         text_scale,
                     };
+                    // A runner installs the face the runtime measures with, so
+                    // the screen is built after one. The face is installed once
+                    // per process, at the density of whichever panel installs it
+                    // first, so the 212 ppi panel here is measured with 300 ppi
+                    // type and is stricter than a reader: the copy is short
+                    // enough to fit even so.
+                    let _runner = kobo_sdk::AppRunner::with_metrics(Quiz::default(), metrics);
+                    let screen = screen(quiz);
                     let chrome = kobo_ui::Chrome::measuring(true);
                     let diagnostics = screen.diagnostics(&metrics, &chrome);
                     assert!(
@@ -2549,7 +2925,7 @@ mod help_layout_tests {
                     );
                     assert!(screen
                         .layout_with(&metrics, &chrome)
-                        .rect_of_action(action_id("home"))
+                        .rect_of_action(action_id("resume"))
                         .is_some());
                 }
             }
@@ -2558,4 +2934,584 @@ mod help_layout_tests {
 }
 
 #[cfg(test)]
+mod chrome_tests {
+    use super::*;
+    use kobo_sdk::AppRunner;
+    use kobo_ui::{Chrome, CLARA_BW_METRICS};
+
+    fn solo_round() -> AppRunner<Quiz> {
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("solo"));
+        runner.action(action_id("continue-setup"));
+        assert_eq!(runner.app().view, View::Question);
+        runner
+    }
+
+    fn labels(screen: &Screen) -> Vec<String> {
+        screen
+            .top_bar
+            .as_ref()
+            .map(|bar| bar.actions.iter().map(|a| a.label.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn every_screen_of_a_round_carries_rules_and_the_menu() {
+        let mut runner = AppRunner::new(Quiz {
+            players: 2,
+            ..Quiz::default()
+        });
+        runner.start();
+        runner.action(action_id("party"));
+        runner.action(action_id("continue-setup"));
+        runner.action(action_id("start"));
+        for view in [View::Question, View::Pass, View::Question, View::Reveal] {
+            assert_eq!(runner.app().view, view);
+            let shown = screen(runner.app());
+            assert_eq!(labels(&shown), ["Rules", "More"], "{view:?}");
+            assert!(shown
+                .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+                .issues
+                .is_empty());
+            match view {
+                View::Pass => runner.action(action_id("show-question")),
+                _ => runner.action(action_id("answer-0")),
+            };
+        }
+        runner.app_mut().view = View::Choices;
+        assert_eq!(labels(&screen(runner.app())), ["Rules", "More"]);
+    }
+
+    #[test]
+    fn the_menu_opens_with_new_game_first_and_closes_on_back() {
+        let mut runner = solo_round();
+        runner.action(action_id(game::MORE));
+        let shown = format!("{:?}", screen(runner.app()));
+        let new_game = shown.find("New game").expect("New game is offered");
+        let about = shown.find("About the questions").expect("About is offered");
+        assert!(new_game < about);
+        runner.action(ActionId::BACK);
+        assert!(!runner.app().menu.is_open());
+        assert_eq!(runner.app().view, View::Question);
+        assert_eq!(
+            runner.app().confirm,
+            None,
+            "closing the menu is not leaving"
+        );
+    }
+
+    #[test]
+    fn new_game_mid_round_asks_first_then_goes_back_to_the_choices() {
+        let mut runner = solo_round();
+        runner.action(action_id("answer-0"));
+        runner.action(action_id(game::MORE));
+        runner.action(action_id(game::NEW_GAME));
+        assert_eq!(runner.app().confirm, Some(Confirm::NewGame));
+        assert!(format!("{:?}", screen(runner.app())).contains("Start a new game?"));
+        runner.action(action_id("keep-playing"));
+        assert_eq!(
+            runner.app().view,
+            View::Reveal,
+            "keeping the round keeps it"
+        );
+
+        runner.action(action_id(game::MORE));
+        runner.action(action_id(game::NEW_GAME));
+        runner.action(action_id(NEW_GAME_CONFIRMED));
+        assert_eq!(runner.app().view, View::Setup);
+        assert!(!runner.app().setup_party, "a solo round starts a solo game");
+        assert!(round::encode(runner.app()).is_none());
+    }
+
+    #[test]
+    fn rules_and_about_from_a_round_go_back_to_the_same_screen() {
+        let mut runner = solo_round();
+        runner.action(action_id("answer-1"));
+        let before = (runner.app().question, runner.app().scores);
+        runner.action(action_id(game::RULES));
+        assert_eq!(runner.app().view, View::Rules);
+        runner.action(action_id("resume"));
+        assert_eq!(runner.app().view, View::Reveal);
+
+        runner.action(action_id(game::MORE));
+        runner.action(action_id(ABOUT));
+        assert_eq!(runner.app().view, View::About);
+        assert!(format!("{:?}", screen(runner.app())).contains("Back to the round"));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Reveal);
+        assert_eq!((runner.app().question, runner.app().scores), before);
+    }
+
+    #[test]
+    fn home_offers_rules_in_the_top_bar_and_no_separate_how_to_play() {
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        let home = screen(runner.app());
+        assert_eq!(labels(&home), ["Rules"]);
+        let layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(layout.rect_of_action(action_id("how-to-play")).is_none());
+        assert!(!format!("{home:?}").contains("How to play"));
+        runner.action(action_id(game::RULES));
+        assert_eq!(runner.app().view, View::Rules);
+        assert!(format!("{:?}", screen(runner.app())).contains("pass the reader round"));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Home);
+    }
+
+    #[test]
+    fn a_synced_pack_adds_to_the_bundled_questions() {
+        let item = r#"{"category":"Mythology","question":"Synced question?","correct_answer":"Right","incorrect_answers":["W1","W2","W3"]}"#;
+        let body = format!(
+            r#"{{"response_code":0,"results":[{}]}}"#,
+            [item; 10].join(",")
+        );
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        runner.action(action_id("sync"));
+        let task = runner.app().sync_task.expect("sync started");
+        runner.task_outcome(task, TaskOutcome::Completed(body.into_bytes()));
+        assert_eq!(runner.app().questions.len(), bank::bundled().len() + 10);
+        assert_eq!(
+            runner.app().note,
+            Some(Note::said(
+                BannerLevel::Success,
+                "10 fresh questions saved for offline play."
+            ))
+        );
+        assert_eq!(runner.app().source_label(), "Bundled and Open Trivia DB");
+    }
+}
+
+#[cfg(test)]
 mod setup_tests;
+
+#[cfg(test)]
+mod p16_tests {
+    use super::*;
+    use kobo_sdk::{AppRunner, Chrome, Command, DisplayMetrics, StoreError, TaskError};
+    use kobo_ui::{Node, Orientation, TextScale};
+
+    fn banners(screen: &Screen) -> Vec<(BannerLevel, String, Option<String>)> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Banner {
+                    level,
+                    text,
+                    action,
+                    ..
+                } => Some((
+                    *level,
+                    text.clone(),
+                    action.as_ref().map(|action| action.label.clone()),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A started quiz whose first four store requests are answered, so the
+    /// next refusal answers the request a test makes.
+    fn started() -> AppRunner<Quiz> {
+        let mut runner = AppRunner::new(Quiz::default());
+        runner.start();
+        for key in [STATE, PACK] {
+            runner.store_result(StoreResult::Loaded {
+                key: key.into(),
+                value: None,
+            });
+        }
+        runner.store_result(StoreResult::Saved {
+            key: LICENSE.into(),
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: round::KEY.into(),
+            value: None,
+        });
+        runner
+    }
+
+    fn spawned(commands: &[Command]) -> TaskId {
+        commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            })
+            .expect("a task")
+    }
+
+    /// A sync answered with `outcome`, after the quiet second chance a
+    /// retrying fetch gives a failure.
+    fn synced(outcome: &TaskOutcome) -> AppRunner<Quiz> {
+        let mut runner = started();
+        runner.action(action_id("sync"));
+        let mut task = runner.app().sync_task.expect("sync started");
+        for _ in 0..3 {
+            let commands = runner.task_outcome(task, outcome.clone());
+            if runner.app().sync_task.is_none() {
+                break;
+            }
+            let nap = spawned(&commands);
+            task = spawned(&runner.task_outcome(nap, TaskOutcome::Completed(Vec::new())));
+        }
+        assert!(runner.app().sync_task.is_none(), "the sync never settled");
+        runner
+    }
+
+    /// Every message Home can carry.
+    fn notes() -> Vec<Note> {
+        vec![
+            Note::said(
+                BannerLevel::Success,
+                "50 fresh questions saved for offline play.",
+            ),
+            Note::Problem(SOURCE.explain(TaskError::Offline)),
+            Note::Problem(SOURCE.explain(TaskError::Unreachable)),
+            Note::Problem(SOURCE.explain(TaskError::TimedOut)),
+            Note::Problem(SOURCE.explain(TaskError::RateLimited(600))),
+            Note::Problem(Problem {
+                message: "Open Trivia DB sent no questions. Try again later.".to_owned(),
+                ..SOURCE.explain(TaskError::NotFound)
+            }),
+            Note::Said {
+                level: BannerLevel::Error,
+                text: "Open Trivia DB returned no usable question set.".to_owned(),
+                retry: true,
+            },
+            Note::Said {
+                level: BannerLevel::Attention,
+                text: "The download stopped before it finished.".to_owned(),
+                retry: true,
+            },
+            Note::said(BannerLevel::Info, "Trivia packs are already updating."),
+            Note::said(
+                BannerLevel::Info,
+                "Saved questions were damaged; the built-in set is ready.",
+            ),
+            Note::said(
+                BannerLevel::Error,
+                "Player names and rounds played could not be saved. Free some space on the reader.",
+            ),
+            Note::said(
+                BannerLevel::Error,
+                "This round could not be saved if the reader sleeps. Free some space on the reader.",
+            ),
+        ]
+    }
+
+    /// A fresh pack is a success, a pack that cannot be used is an error
+    /// with Try again on it, and a failed download is told in Open Trivia
+    /// DB's terms with the control that may fix it, so a failure no longer
+    /// looks like a success with its retry under another name further down.
+    #[test]
+    fn sync_notes_carry_a_level_and_the_retry_sits_on_the_banner() {
+        let item = r#"{"category":"Mythology","question":"Synced question?","correct_answer":"Right","incorrect_answers":["W1","W2","W3"]}"#;
+        let body = format!(
+            r#"{{"response_code":0,"results":[{}]}}"#,
+            [item; 10].join(",")
+        );
+        let fresh = synced(&TaskOutcome::Completed(body.into_bytes()));
+        assert_eq!(
+            banners(&screen(fresh.app())),
+            [(
+                BannerLevel::Success,
+                "10 fresh questions saved for offline play.".to_owned(),
+                None
+            )]
+        );
+
+        let unusable = synced(&TaskOutcome::Completed(b"not a pack".to_vec()));
+        assert_eq!(
+            banners(&screen(unusable.app())),
+            [(
+                BannerLevel::Error,
+                "Open Trivia DB returned no usable question set.".to_owned(),
+                Some("Try again".to_owned())
+            )]
+        );
+
+        let mut away = synced(&TaskOutcome::Failed(TaskError::TimedOut));
+        let drawn = banners(&screen(away.app()));
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].0, BannerLevel::Attention);
+        assert!(drawn[0].1.starts_with("Open Trivia DB"), "{drawn:?}");
+        assert_eq!(drawn[0].2.as_deref(), Some("Try again"));
+        // The banner's Try again asks again.
+        let commands = away.action(action_id("sync"));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+    }
+
+    /// Home holds a heading, two ways to play, a banner and the More rows,
+    /// so every message it can carry, with its action line, is measured on
+    /// a Clara at every size, held either way, with the sync row both idle
+    /// and downloading.
+    #[test]
+    fn home_fits_every_note_at_every_size_either_way_up() {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            for text_scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..kobo_ui::CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = AppRunner::with_metrics(Quiz::default(), metrics);
+                for note in notes() {
+                    for downloading in [false, true] {
+                        let mut quiz = Quiz {
+                            note: Some(note.clone()),
+                            ..Quiz::default()
+                        };
+                        if downloading {
+                            quiz.sync_task = Some(TaskId(1));
+                        }
+                        let home = screen_with(&quiz, &runner.context());
+                        let chrome = Chrome::measuring(true);
+                        let issues = home.diagnostics(&metrics, &chrome).issues;
+                        assert!(
+                            issues.is_empty(),
+                            "{metrics:?} {:?}: {issues:?}",
+                            note.text()
+                        );
+                        let layout = home.layout_with(&metrics, &chrome);
+                        // Upright at the default size nothing gives way: the
+                        // welcome heading and the banner's action are there.
+                        if orientation == Orientation::Portrait && text_scale == TextScale::Default
+                        {
+                            let drawn = format!("{home:?}");
+                            assert!(drawn.contains("Ready when you are"), "{:?}", note.text());
+                            let carries = matches!(&note, Note::Said { retry: true, .. })
+                                || matches!(&note, Note::Problem(problem) if problem.retryable);
+                            if carries {
+                                assert!(
+                                    banners(&home).iter().any(|banner| banner.2.is_some()),
+                                    "{:?}",
+                                    note.text()
+                                );
+                            }
+                        }
+                        for name in ["party", "solo", "sync", ABOUT] {
+                            assert!(
+                                layout.rect_of_action(action_id(name)).is_some(),
+                                "{metrics:?} {:?}: {name} is off the panel",
+                                note.text()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The rename field carries its rule as the runtime keyboard's hint,
+    /// since the keyboard covers the app's own screen, and it opens with the
+    /// name already in it so a typo is mended rather than retyped.
+    #[test]
+    fn renaming_shows_the_rule_on_the_keyboard_and_starts_from_the_name() {
+        let mut runner = started();
+        runner.action(action_id("party"));
+        runner.action(action_id("continue-setup"));
+        assert_eq!(runner.app().view, View::Players);
+        let commands = runner.action(action_id("rename-1"));
+        assert!(runner.app().entry.is_open());
+        assert_eq!(runner.app().entry.text(), "Bert");
+        match kobo_sdk::keyboard::testing::asked(&commands) {
+            Some(kobo_sdk::DeviceRequest::TypeText { hint, initial, .. }) => {
+                assert_eq!(hint, "Letters and digits, twelve characters or fewer.");
+                assert_eq!(initial, "Bert");
+            }
+            other => panic!("no field was asked for: {other:?}"),
+        }
+        let rename = screen_with(runner.app(), &runner.context());
+        let secondary: Vec<&str> = rename
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Secondary { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            secondary,
+            ["Letters and digits, twelve characters or fewer."],
+            "the rule is drawn once, as the field's hint"
+        );
+    }
+
+    /// A refused write is said. The scorecard is answered on the podium,
+    /// where Retry saving on the banner replaces the top bar's Save scores
+    /// and "Saved" is never claimed; anything else is an error on Home.
+    #[test]
+    fn a_refused_write_is_said_and_a_refused_scorecard_can_be_saved_again() {
+        let mut runner = started();
+        runner.app_mut().view = View::Podium;
+        runner.action(action_id("save-scorecard"));
+        assert!(runner.app().scorecard_saved);
+        runner.store_result(StoreResult::Denied(StoreError::NoRoom));
+        let podium = screen_with(runner.app(), &runner.context());
+        assert!(!runner.app().scorecard_saved);
+        let drawn = banners(&podium);
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].0, BannerLevel::Error);
+        let in_bar: Vec<&str> = podium
+            .top_bar
+            .as_ref()
+            .map(|bar| bar.actions.iter().map(|a| a.label.as_str()).collect())
+            .unwrap_or_default();
+        // One Retry saving: on the banner, or in the bar where the banner's
+        // action line does not fit; never a claim that it is saved.
+        let retries = usize::from(drawn[0].2.as_deref() == Some("Retry saving"))
+            + in_bar
+                .iter()
+                .filter(|label| **label == "Retry saving")
+                .count();
+        assert_eq!(retries, 1, "{drawn:?} {in_bar:?}");
+        assert!(!in_bar.contains(&"Saved"));
+        let commands = runner.action(action_id("save-scorecard"));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == SCORECARD
+        )));
+        assert!(banners(&screen(runner.app())).is_empty());
+
+        let mut runner = started();
+        runner.app_mut().view = View::Players;
+        runner.action(action_id("count-3"));
+        runner.store_result(StoreResult::Denied(StoreError::NoRoom));
+        runner.app_mut().view = View::Home;
+        let home = banners(&screen(runner.app()));
+        assert_eq!(home.len(), 1);
+        assert_eq!(home[0].0, BannerLevel::Error);
+        assert!(home[0].1.contains("Free some space"), "{home:?}");
+    }
+
+    /// The refused scorecard's banner keeps the podium on the panel with
+    /// four players, at every size, held either way.
+    #[test]
+    fn a_refused_scorecard_fits_the_podium_at_every_size_either_way_up() {
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            for text_scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..kobo_ui::CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = AppRunner::with_metrics(Quiz::default(), metrics);
+                let mut quiz = Quiz::default();
+                quiz.begin(true);
+                quiz.view = View::Podium;
+                quiz.scores = [3, 7, 7, 1];
+                // Four players and a shared win already fill the podium at
+                // the largest sizes; what this guards is that a refusal never
+                // pushes a podium that fits off the panel.
+                quiz.scorecard_refused = false;
+                let plain = screen_with(&quiz, &runner.context());
+                if plain
+                    .diagnostics(&metrics, &Chrome::measuring(true))
+                    .has_errors()
+                {
+                    continue;
+                }
+                for refused in [false, true] {
+                    quiz.scorecard_refused = refused;
+                    let podium = screen_with(&quiz, &runner.context());
+                    let chrome = Chrome::measuring(true);
+                    let issues = podium.diagnostics(&metrics, &chrome).issues;
+                    assert!(issues.is_empty(), "{metrics:?} {refused}: {issues:?}");
+                    if refused
+                        && orientation == Orientation::Portrait
+                        && text_scale == TextScale::Default
+                    {
+                        assert_eq!(banners(&podium).len(), 1, "the refusal is said");
+                    }
+                    let layout = podium.layout_with(&metrics, &chrome);
+                    for name in ["save-scorecard", "play-again", "home"] {
+                        assert!(
+                            layout.rect_of_action(action_id(name)).is_some(),
+                            "{metrics:?} {refused}: {name} is off the panel"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Too few questions for a round is said on Setup, where the category
+    /// and difficulty are chosen, as something to attend to, and the rows
+    /// under it are paged with the banner measured, at every size either
+    /// way up.
+    #[test]
+    fn too_few_questions_is_said_on_setup_and_the_rows_still_fit() {
+        let mut runner = started();
+        runner.action(action_id("solo"));
+        runner.app_mut().setup_category = Some("No such category".to_owned());
+        runner.action(action_id("continue-setup"));
+        assert_eq!(runner.app().view, View::Setup);
+        let drawn = banners(&screen_with(runner.app(), &runner.context()));
+        assert_eq!(drawn.len(), 1);
+        assert_eq!(drawn[0].0, BannerLevel::Attention);
+        assert!(runner.app().note.is_none());
+        runner.action(action_id("cat-any"));
+        assert!(banners(&screen_with(runner.app(), &runner.context())).is_empty());
+
+        for orientation in [Orientation::Portrait, Orientation::Landscape] {
+            for text_scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..kobo_ui::CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = AppRunner::with_metrics(Quiz::default(), metrics);
+                let context = runner.context();
+                // A category and difficulty with one or two questions, for
+                // the longer of the two messages, with every category row.
+                let mut quiz = Quiz {
+                    view: View::Setup,
+                    ..Quiz::default()
+                };
+                let sparse = setup_categories(&quiz).into_iter().find_map(|category| {
+                    [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard]
+                        .into_iter()
+                        .find(|difficulty| {
+                            let count = quiz
+                                .questions
+                                .iter()
+                                .filter(|q| q.category == category && q.difficulty == *difficulty)
+                                .count();
+                            (1..MIN_ROUND).contains(&count)
+                        })
+                        .map(|difficulty| (category, difficulty))
+                });
+                let (category, difficulty) = sparse.unwrap_or_else(|| {
+                    quiz.questions.truncate(2);
+                    (
+                        quiz.questions[0].category.clone(),
+                        quiz.questions[0].difficulty,
+                    )
+                });
+                quiz.setup_category = Some(category);
+                quiz.setup_difficulty = Some(difficulty);
+                quiz.begin(false);
+                assert!(quiz.setup_note.is_some(), "{metrics:?}");
+                for page in 0..setup_pages(&quiz, &context).len() {
+                    quiz.setup_page = page;
+                    let setup = setup_screen(&quiz, &context);
+                    let chrome = Chrome::measuring(true);
+                    let issues = setup.diagnostics(&metrics, &chrome).issues;
+                    assert!(issues.is_empty(), "{metrics:?} page {page}: {issues:?}");
+                    assert!(setup
+                        .layout_with(&metrics, &chrome)
+                        .rect_of_action(action_id("continue-setup"))
+                        .is_some());
+                    if orientation == Orientation::Portrait && text_scale == TextScale::Default {
+                        assert_eq!(banners(&setup).len(), 1, "the note is said on Setup");
+                    }
+                }
+            }
+        }
+    }
+}

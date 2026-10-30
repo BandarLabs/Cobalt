@@ -1,7 +1,9 @@
-//! Small offline word squares; clue numbering follows ordinary crossword order.
+//! Small offline crosswords; clue numbering follows ordinary crossword order.
+use crate::puzzles::GENERATED;
 use std::collections::VecDeque;
 
 pub const HISTORY: usize = 32;
+#[derive(Clone, Copy)]
 pub struct Puzzle {
     pub id: &'static str,
     pub title: &'static str,
@@ -21,7 +23,28 @@ pub struct Entry {
     pub length: usize,
 }
 
-pub const PUZZLES: &[Puzzle] = &[
+/// Every puzzle the app offers.
+///
+/// The four written by hand come first and stay in this order, because the
+/// first saves named a puzzle by its place in the list. Everything after them
+/// is generated; see `puzzles.rs`.
+pub const PUZZLES: &[Puzzle] = &ALL;
+
+const ALL: [Puzzle; FIRST.len() + GENERATED.len()] = {
+    let mut all = [FIRST[0]; FIRST.len() + GENERATED.len()];
+    let mut index = 0;
+    while index < all.len() {
+        all[index] = if index < FIRST.len() {
+            FIRST[index]
+        } else {
+            GENERATED[index - FIRST.len()]
+        };
+        index += 1;
+    }
+    all
+};
+
+const FIRST: [Puzzle; 4] = [
     Puzzle {
         id: "cat-v1",
         title: "Small beginnings",
@@ -111,11 +134,19 @@ impl Puzzle {
     ///
     /// A square starts an entry when the run it belongs to begins there and is
     /// long enough to be one, which is what a printed grid numbers.
+    ///
+    /// The length matters once a grid has squares that belong to one word
+    /// only: such a square is a run of one in the other direction, and
+    /// counting it as a start gave it a number no clue carried and pushed every
+    /// later number out by one.
     fn starts(&self, cell: usize) -> bool {
         if self.answer[cell] == b'#' {
             return false;
         }
-        self.run(cell, false).first() == Some(&cell) || self.run(cell, true).first() == Some(&cell)
+        [false, true].into_iter().any(|down| {
+            let run = self.run(cell, down);
+            run.len() > 1 && run[0] == cell
+        })
     }
 
     pub fn number(&self, cell: usize) -> Option<usize> {

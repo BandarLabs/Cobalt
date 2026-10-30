@@ -9,11 +9,11 @@ mod model;
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
 use kobo_sdk::credentials::{CredentialEvent, CredentialSetup};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Credential, Glyph, Header, KoboApp, RowLead, Screen,
-    ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreError, StoreResult, Task,
-    TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Credential, FieldKind, Glyph, Header, KoboApp,
+    RowLead, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StoreError,
+    StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use model::{Attachment, Collection, Conversion, Detail, Snapshot};
 use std::collections::VecDeque;
@@ -22,6 +22,42 @@ use std::process::ExitCode;
 
 const ZOTERO_API: &str = "https://api.zotero.org";
 const ZOTERO_CREDENTIAL: &str = "zotero";
+/// Connecting, named on each of its screens: the numeric user ID, the API key
+/// the runtime keeps, and the collection to read.
+const STEPS: [&str; 3] = ["User ID", "API key", "Collection"];
+/// The page that shows the user ID beside the keys and makes new ones. It is
+/// the only place either comes from, and the reader has no browser.
+const KEYS_PAGE: &str = "https://www.zotero.org/settings/keys";
+/// What a Check again that found nothing says, kept to tell it from other
+/// trouble: this one is answered by checking again, so it carries the action.
+const NO_ID_YET: &str =
+    "No user ID has arrived from the computer yet. Run the command, then check again.";
+
+/// How much of the first connect screen the panel has room for, most first.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SetupShape {
+    Full,
+    /// Without the sentence over the command.
+    Short,
+    /// Without the field's hint either, and Use phone in the top bar.
+    Tight,
+}
+
+/// The key flow. `connecting` puts it in its place among [`STEPS`]; a key that
+/// goes missing later is asked for on its own.
+fn key_setup(connecting: bool) -> CredentialSetup {
+    let setup = CredentialSetup::new(ZOTERO_CREDENTIAL, "Zotero")
+        .with_computer_command("kobo connect zotero-reader")
+        .with_key_page(
+            "https://www.zotero.org/settings/keys/new",
+            "Opens zotero.org to make a key that can read your library.",
+        );
+    if connecting {
+        setup.with_steps(1, STEPS)
+    } else {
+        setup
+    }
+}
 const BRIDGE_CREDENTIAL: &str = "zotero-bridge";
 const USER_ID_KEY: &str = "zotero-user-id";
 const SELECTED_KEY: &str = "selected";
@@ -90,6 +126,10 @@ struct Kept {
 }
 
 #[derive(Debug, Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about the reading list, not the states of one machine"
+)]
 struct ReadingList {
     view: View,
     user_id: Option<String>,
@@ -100,7 +140,17 @@ struct ReadingList {
     pending_snapshot: Vec<model::Paper>,
     fresh_snapshot: bool,
     filtered: Vec<usize>,
-    keyboard: Keyboard,
+    /// The user ID, typed on the runtime's keyboard on its digits.
+    user_entry: TextEntry,
+    /// The user ID last typed, shown in its field until it is accepted.
+    user_draft: String,
+    /// Why the typed user ID was refused, said under its field.
+    user_error: Option<String>,
+    /// Whether the setup screen is showing the code for a phone.
+    phone: bool,
+    search_entry: TextEntry,
+    /// What the feed is filtered by, as last searched.
+    phrase: String,
     collection_page: usize,
     list_page: usize,
     library_page: usize,
@@ -135,11 +185,21 @@ struct ReadingList {
     place: Option<Memory>,
     figure_task: Option<(TaskId, String)>,
     credential_setup: CredentialSetup,
+    /// The owner tapped Check again on setup and is owed an answer.
+    checking: bool,
     credential_retry: Option<Awaiting>,
     figures: VecDeque<String>,
 }
 
 impl ReadingList {
+    /// A key or user ID set up on the computer arrives while the app is away.
+    fn returned(&mut self, context: &mut Context) {
+        self.credential_setup.recheck(context);
+        if self.view == View::Setup {
+            context.store().load(USER_ID_KEY);
+        }
+    }
+
     fn bridge_origin() -> Option<&'static str> {
         option_env!("ZOTERO_READER_BRIDGE_ORIGIN").filter(|origin| valid_origin(origin))
     }
@@ -775,7 +835,7 @@ impl ReadingList {
     }
 
     fn apply_search(&mut self) {
-        let phrase = self.keyboard.text().trim();
+        let phrase = self.phrase.trim();
         self.filtered = self
             .snapshot
             .papers
@@ -856,27 +916,100 @@ impl ReadingList {
         self.view = View::Detail;
     }
 
-    fn setup_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("zotero-reader-setup").top_bar("Connect Zotero");
-        screen = if let Some(trouble) = &self.trouble {
-            screen.banner(BannerLevel::Attention, trouble.clone())
-        } else {
-            screen.secondary("Enter the numeric user ID shown beside your Zotero API key.")
+    /// The first step of connecting. The runtime draws the digits; this
+    /// screen is the computer route, which brings the ID and the key at
+    /// once, then the field for an owner typing the ID here.
+    ///
+    /// Laid out as every connect screen is: what the owner needs to read
+    /// first under the top bar, then where this is in connecting and the
+    /// one command, with Check again directly under the command. Once a
+    /// check has found nothing, Check again is the action of the banner that
+    /// says so, and the button under the command goes, so it is offered
+    /// once. Where the panel has no room, held sideways at the larger text
+    /// sizes, the sentence over the command gives way first, then the
+    /// field's hint, and Use phone moves into the top bar; the command and
+    /// every control stay.
+    fn setup_screen(&self, context: &Context) -> Screen {
+        if self.user_entry.is_open() {
+            return ScreenBuilder::new("zotero-reader-setup")
+                .top_bar("Connect Zotero")
+                .text_entry_with_hint(
+                    &self.user_entry,
+                    "Zotero user ID",
+                    "The number beside your API key, not your username.",
+                    "Continue",
+                )
+                .build();
+        }
+        if self.phone {
+            return ScreenBuilder::new("zotero-reader-setup")
+                .top_bar("Connect Zotero")
+                .owns_back(true)
+                .code(
+                    KEYS_PAGE,
+                    "Opens zotero.org/settings/keys, which shows your user ID.",
+                )
+                .bottom_action("zotero-user-id", "Enter user ID")
+                .build();
+        }
+        let checked = self.trouble.as_deref() == Some(NO_ID_YET);
+        let build = |shape: SetupShape| {
+            let mut screen = ScreenBuilder::new("zotero-reader-setup").top_bar("Connect Zotero");
+            if shape == SetupShape::Tight {
+                screen = screen.top_bar_action("zotero-phone", "Use phone");
+            }
+            if let Some(trouble) = &self.trouble {
+                screen = screen.banner(BannerLevel::Attention, trouble.clone());
+                if checked {
+                    screen = screen.banner_action("check-again", "Check again");
+                }
+            }
+            screen = screen.steps(0, 3, STEPS);
+            if shape == SetupShape::Full {
+                screen = screen
+                    .secondary("Run this on your computer. It asks for your user ID and API key.");
+            }
+            screen = screen.command("kobo connect zotero-reader");
+            if !checked {
+                screen = screen.primary_button("check-again", "Check again");
+            }
+            screen = screen
+                .field("zotero-user-id", &self.user_draft, "Numeric Zotero user ID")
+                .field_label("Zotero user ID")
+                .field_kind(FieldKind::Number);
+            // A banner is what the owner needs to read while it is up, and the
+            // hint gives up its line to it. The runtime's field says the same.
+            if self.trouble.is_none() && shape != SetupShape::Tight {
+                screen = screen.field_hint("The number shown beside your Zotero API key.");
+            }
+            if let Some(error) = &self.user_error {
+                screen = screen.field_error(error);
+            }
+            if shape != SetupShape::Tight {
+                screen = screen.button("zotero-phone", "Use phone");
+            }
+            screen.build()
         };
-        screen
-            .secondary("Read-only: kobo secret set zotero")
-            .field(
-                "zotero-user-id",
-                self.keyboard.text(),
-                "Numeric Zotero user ID",
-            )
-            .keyboard(&self.keyboard, "Continue")
-            .build()
+        let metrics = context.metrics();
+        [SetupShape::Full, SetupShape::Short]
+            .into_iter()
+            .map(build)
+            .find(|screen| {
+                screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .issues
+                    .is_empty()
+            })
+            .unwrap_or_else(|| build(SetupShape::Tight))
     }
 
     fn collections_screen(&self, context: &Context) -> Screen {
         let mut screen =
             ScreenBuilder::new("zotero-reader-collections").top_bar("Choose collection");
+        // Choosing the first collection is the last step of connecting.
+        if self.selected.is_none() {
+            screen = screen.steps(2, 3, STEPS);
+        }
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -1023,8 +1156,7 @@ impl ReadingList {
     fn search_screen(&self) -> Screen {
         ScreenBuilder::new("zotero-reader-search")
             .top_bar("Search cached papers")
-            .typed(&self.keyboard, "Title, author, or tag")
-            .keyboard(&self.keyboard, "Search")
+            .text_entry(&self.search_entry, "Title, author, or tag", "Search")
             .build()
     }
 
@@ -1242,7 +1374,7 @@ impl ReadingList {
             return;
         }
         let screen = match self.view {
-            View::Setup => self.setup_screen(),
+            View::Setup => self.setup_screen(context),
             View::Collections => self.collections_screen(context),
             View::Feed => self.feed_screen(context),
             View::Search => self.search_screen(),
@@ -1251,7 +1383,11 @@ impl ReadingList {
             View::FullText => self.full_text_screen(context),
             View::Library => self.library_screen(context),
         };
-        context.set_screen(screen.with_own_back(!matches!(self.view, View::Setup | View::Feed)));
+        // The phone code is a page of setup, so Back from it returns to the
+        // field rather than leaving the app.
+        let own_back = !matches!(self.view, View::Setup | View::Feed)
+            || (self.view == View::Setup && self.phone);
+        context.set_screen(screen.with_own_back(own_back));
     }
 
     fn paper_summary(&self, paper: &model::Paper) -> String {
@@ -1332,8 +1468,16 @@ impl ReadingList {
 }
 
 impl KoboApp for ReadingList {
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.returned(context);
+    }
+
     fn on_start(&mut self, context: &mut Context) {
-        self.credential_setup = CredentialSetup::new(ZOTERO_CREDENTIAL, "Zotero");
+        self.credential_setup = key_setup(false);
         context.store().load(USER_ID_KEY);
         context.store().load(SELECTED_KEY);
         context.store().load(LIBRARY_KEY);
@@ -1353,46 +1497,68 @@ impl KoboApp for ReadingList {
             }
             return;
         }
+        if self.view == View::Setup && action == action_id("check-again") {
+            self.trouble = None;
+            self.checking = true;
+            context.store().load(USER_ID_KEY);
+            return;
+        }
         if self.view == View::Setup {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let user_id = self.keyboard.text().trim().to_owned();
+            if let Some(typing) = self.user_entry.handle(action) {
+                if let Typing::Submitted(user_id) = typing {
                     if valid_user_id(&user_id) {
                         context
                             .store()
                             .save(USER_ID_KEY, user_id.as_bytes().to_vec());
                         self.user_id = Some(user_id);
-                        self.keyboard.clear();
+                        self.user_draft.clear();
+                        self.user_error = None;
+                        self.trouble = None;
                         self.fetch_collections(context);
                     } else {
-                        self.trouble = Some(
+                        self.user_draft = user_id;
+                        self.user_error = Some(
                             "The Zotero user ID must contain only digits and is not your username."
                                 .to_owned(),
                         );
                     }
-                    self.show(context);
-                    return;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    if self.keyboard.text().chars().count() > 20 {
-                        let kept: String = self.keyboard.text().chars().take(20).collect();
-                        self.keyboard = Keyboard::with_text(kept);
-                    }
-                    self.show(context);
-                    return;
-                }
-                None => {}
+                self.show(context);
+                return;
+            }
+            if action == action_id("zotero-user-id") {
+                self.phone = false;
+                self.user_entry = TextEntry::new().numeric();
+                self.user_entry.open_with(&self.user_draft);
+                self.show(context);
+                return;
+            }
+            if action == action_id("zotero-phone") {
+                self.phone = true;
+                self.show(context);
+                return;
+            }
+            if self.phone && action == ActionId::BACK {
+                self.phone = false;
+                self.show(context);
+                return;
             }
         }
         if self.view == View::Search {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
+            match self.search_entry.handle(action) {
+                Some(Typing::Submitted(phrase)) => {
+                    self.phrase = phrase;
                     self.apply_search();
                     self.view = View::Feed;
                     self.show(context);
                     return;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
+                Some(Typing::Cancelled) => {
+                    self.view = View::Feed;
+                    self.show(context);
+                    return;
+                }
+                Some(_) => {
                     self.show(context);
                     return;
                 }
@@ -1424,7 +1590,7 @@ impl KoboApp for ReadingList {
             return;
         }
         if action == action_id(SEARCH) {
-            self.keyboard.clear();
+            self.search_entry.open();
             self.view = View::Search;
             self.show(context);
             return;
@@ -1622,6 +1788,10 @@ impl KoboApp for ReadingList {
                 self.trouble = Some(explain_failure(awaiting, error));
                 if missing_direct_credential {
                     self.credential_retry = Some(awaiting);
+                    // The first collection list is where a new connection
+                    // learns it has no key yet, so that is step two of it.
+                    self.credential_setup =
+                        key_setup(awaiting == Awaiting::Collections && self.selected.is_none());
                     self.credential_setup.open();
                 }
                 if matches!(
@@ -1769,14 +1939,32 @@ impl KoboApp for ReadingList {
         }
         if let StoreResult::Loaded { key, value } = result {
             if key == USER_ID_KEY {
-                self.user_id = value
+                let loaded = value
                     .as_deref()
                     .and_then(|bytes| std::str::from_utf8(bytes).ok())
                     .map(str::trim)
                     .filter(|user_id| valid_user_id(user_id))
                     .map(str::to_owned);
-                self.config_loaded |= USER_ID_LOADED;
-                self.begin_after_config(context);
+                let checking = std::mem::take(&mut self.checking);
+                if self.config_loaded & USER_ID_LOADED == 0 {
+                    self.user_id = loaded;
+                    self.config_loaded |= USER_ID_LOADED;
+                    self.begin_after_config(context);
+                } else if self.view == View::Setup {
+                    // The ID may have arrived from `kobo connect zotero-reader`
+                    // while setup was on screen. A reload anywhere else
+                    // changes nothing.
+                    if loaded.is_some() {
+                        self.user_id = loaded;
+                        self.trouble = None;
+                        self.user_draft.clear();
+                        self.user_error = None;
+                        self.phone = false;
+                        self.fetch_collections(context);
+                    } else if checking {
+                        self.trouble = Some(NO_ID_YET.to_owned());
+                    }
+                }
             } else if key == SELECTED_KEY {
                 self.selected = value.as_deref().and_then(decode_selection);
                 self.config_loaded |= SELECTION_LOADED;
@@ -2019,19 +2207,17 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
     }
 
     match error {
-        TaskError::NoCredential => {
-            "Install a dedicated read-only Zotero key with: kobo secret set zotero.".to_owned()
-        }
-        TaskError::Offline => {
-            "This reader is offline. Cached papers are still available.".to_owned()
-        }
-        TaskError::Denied => "Stacks is not allowed to reach this endpoint.".to_owned(),
-        TaskError::Unauthorized => "Zotero rejected its credential.".to_owned(),
-        TaskError::TooLarge => "The Zotero response exceeded the app's safety limit.".to_owned(),
-        TaskError::TimedOut => "Zotero took too long to answer.".to_owned(),
         TaskError::NotFound => "The requested Zotero item is no longer available.".to_owned(),
-        TaskError::Unreachable => "Zotero could not be reached.".to_owned(),
-        TaskError::RateLimited(_) => "Zotero asked this reader to slow down.".to_owned(),
+        TaskError::TooLarge => "The Zotero response exceeded the app's safety limit.".to_owned(),
+        TaskError::Offline => {
+            "This reader is not on Wi-Fi. Cached papers are still available.".to_owned()
+        }
+        error => {
+            kobo_sdk::failure::Service::new("Zotero")
+                .fixed_by("Run kobo connect zotero-reader on your computer.")
+                .explain(error)
+                .message
+        }
     }
 }
 
@@ -2088,30 +2274,37 @@ mod tests {
                 metrics.width = width;
                 metrics.height = height;
                 let text_scale = metrics.text_scale;
-                let _runner = AppRunner::with_metrics(ReadingList::default(), metrics);
-                for trouble in [
-                    None,
-                    Some(
-                        "The Zotero user ID must contain only digits and is not your username."
-                            .to_owned(),
-                    ),
+                let runner = AppRunner::with_metrics(ReadingList::default(), metrics);
+                let refused =
+                    "The Zotero user ID must contain only digits and is not your username.";
+                for (trouble, user_error, phone) in [
+                    (None, None, false),
+                    (None, Some(refused.to_owned()), false),
+                    (Some(super::NO_ID_YET.to_owned()), None, false),
+                    (None, None, true),
                 ] {
                     let app = ReadingList {
                         trouble,
+                        user_error,
+                        user_draft: "readerjane".to_owned(),
+                        phone,
                         ..ReadingList::default()
                     };
-                    let screen = app.setup_screen();
+                    let screen = app.setup_screen(&runner.context()).with_own_back(phone);
                     let diagnostics =
                         screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
                     assert!(
                         diagnostics.issues.is_empty(),
-                        "{text_scale:?}: {:?}",
+                        "{text_scale:?} {width}x{height} phone {phone}: {:?}",
                         diagnostics.issues
                     );
                     assert!(diagnostics
                         .layout
-                        .rect_of_action(action_id("kb.enter"))
+                        .rect_of_action(action_id("zotero-user-id"))
                         .is_some());
+                    if phone {
+                        continue;
+                    }
                     let text = diagnostics
                         .layout
                         .nodes
@@ -2120,14 +2313,69 @@ mod tests {
                         .cloned()
                         .collect::<Vec<_>>()
                         .join(" ");
-                    assert!(text.to_ascii_lowercase().contains("read-only"));
+                    // The command is set with non-breaking hyphens.
                     assert!(
-                        text.contains("secret set zotero"),
-                        "the installation command must not be clipped"
+                        text.replace('\u{2011}', "-")
+                            .contains("kobo connect zotero-reader"),
+                        "the computer route must not be clipped: {text}"
                     );
+                    for action in ["check-again", "zotero-phone"] {
+                        assert!(
+                            diagnostics
+                                .layout
+                                .rect_of_action(action_id(action))
+                                .is_some(),
+                            "{text_scale:?} {width}x{height}: {action}"
+                        );
+                    }
                 }
             }
         }
+    }
+
+    /// Where each part of the connect screen is drawn, in reading order.
+    fn connect_order(screen: &kobo_sdk::Screen) -> Vec<&'static str> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Banner { .. } => Some("banner"),
+                kobo_sdk::Node::Steps { .. } => Some("steps"),
+                kobo_sdk::Node::Quote { .. } => Some("command"),
+                kobo_sdk::Node::Button {
+                    action,
+                    emphasis: kobo_sdk::Emphasis::Primary,
+                    ..
+                } if *action == action_id("check-again") => Some("check again"),
+                kobo_sdk::Node::Field { .. } => Some("field"),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_connect_screen_reads_banner_then_command_then_check_again_with_nothing_in_the_bar() {
+        let context = AppRunner::new(ReadingList::default()).context();
+        let first = ReadingList::default().setup_screen(&context);
+        assert_eq!(
+            connect_order(&first),
+            ["steps", "command", "check again", "field"],
+            "{first:?}"
+        );
+        assert!(first
+            .top_bar
+            .as_ref()
+            .is_some_and(|bar| bar.actions.is_empty()));
+        let checked = ReadingList {
+            trouble: Some(super::NO_ID_YET.to_owned()),
+            ..ReadingList::default()
+        }
+        .setup_screen(&context);
+        assert_eq!(
+            connect_order(&checked),
+            ["banner", "steps", "command", "field"],
+            "Check again moves onto the banner: {checked:?}"
+        );
     }
 
     #[test]
@@ -2296,22 +2544,29 @@ mod tests {
             _ => None,
         });
         let drawn = format!("{screen:?}");
-        assert!(drawn.contains("Connect Zotero"), "{drawn}");
+        assert!(drawn.contains("API key"), "{drawn}");
         assert!(drawn.contains("Enter account key"), "{drawn}");
         assert!(drawn.contains("Use computer"), "{drawn}");
     }
 
     fn save_missing_credential(runner: &mut AppRunner<ReadingList>, task: TaskId) -> Vec<Command> {
         runner.task_outcome(task, TaskOutcome::Failed(TaskError::NoCredential));
-        runner.action(action_id("credential.enter"));
-        runner.action(action_id("kb.r0c0"));
-        let saving = runner.action(action_id("kb.enter"));
-        assert!(saving.iter().any(|command| matches!(
+        let asked = runner.action(action_id("credential.enter"));
+        // The key is typed on the runtime's keyboard and kept by the runtime;
+        // the app says only where it goes.
+        assert!(asked.iter().any(|command| matches!(
             command,
-            Command::Device(kobo_sdk::DeviceRequest::SetSecret { name, .. })
-                if name == "zotero"
+            Command::Device(kobo_sdk::DeviceRequest::TypeText { save_as: Some(target), .. })
+                if target.name == "zotero"
         )));
-        runner.device_result(DeviceResult::Done)
+        let confirming = runner.answer_text(kobo_sdk::TextOutcome::Saved);
+        assert!(confirming.iter().any(|command| matches!(
+            command,
+            Command::Device(kobo_sdk::DeviceRequest::CheckSecrets { .. })
+        )));
+        runner.device_result(DeviceResult::Secrets {
+            present: vec!["zotero".to_owned()],
+        })
     }
 
     #[test]
@@ -2604,6 +2859,52 @@ mod tests {
     }
 
     #[test]
+    fn the_user_id_opens_on_the_digits_and_arrives_from_the_computer_on_check_again() {
+        use super::{View, SELECTED_KEY, USER_ID_KEY};
+        let mut runner = AppRunner::new(ReadingList::default());
+        runner.start();
+        for key in [USER_ID_KEY, SELECTED_KEY] {
+            runner.store_result(StoreResult::Loaded {
+                key: key.into(),
+                value: None,
+            });
+        }
+        assert!(runner.app().view == View::Setup);
+        let commands = runner.action(action_id("zotero-user-id"));
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Device(kobo_sdk::DeviceRequest::TypeText {
+                    kind: kobo_sdk::FieldKind::Number,
+                    ..
+                })
+            )),
+            "the user ID opens on the digits: {commands:?}"
+        );
+        runner.cancel_text();
+        runner.action(action_id("check-again"));
+        runner.store_result(StoreResult::Loaded {
+            key: USER_ID_KEY.into(),
+            value: None,
+        });
+        assert!(runner
+            .app()
+            .trouble
+            .as_deref()
+            .unwrap()
+            .contains("No user ID has arrived"));
+        runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+        let commands = runner.store_result(StoreResult::Loaded {
+            key: USER_ID_KEY.into(),
+            value: Some(b"475425".to_vec()),
+        });
+        assert_eq!(runner.app().user_id.as_deref(), Some("475425"));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+    }
+
+    #[test]
     fn unreachable_errors_name_the_service_that_was_requested() {
         assert_eq!(
             super::explain_failure(
@@ -2614,19 +2915,22 @@ mod tests {
         );
         assert_eq!(
             super::explain_failure(super::Awaiting::Collections, super::TaskError::Unreachable),
-            "Zotero could not be reached."
+            "Zotero did not answer, or its certificate is not one this reader trusts. Try again later."
         );
+        let refused =
+            super::explain_failure(super::Awaiting::Collections, super::TaskError::Unauthorized);
+        assert!(refused.contains("kobo connect zotero-reader"), "{refused}");
     }
 
     #[test]
     fn first_launch_connects_directly_to_zotero_api_v3() {
         let mut runner = AppRunner::new(super::ReadingList {
             view: super::View::Setup,
-            keyboard: kobo_sdk::keyboard::Keyboard::with_text("12345"),
             ..super::ReadingList::default()
         });
 
-        let commands = runner.action(action_id("kb.enter"));
+        runner.action(action_id("zotero-user-id"));
+        let commands = runner.type_text("12345");
         let request = commands.iter().find_map(|command| match command {
             Command::Spawn { work, .. } => Some(work),
             _ => None,
@@ -2646,6 +2950,110 @@ mod tests {
                 && credential == &Credential::bearer("zotero")
                 && headers.iter().any(|header| header.name == "Zotero-API-Version" && header.value == "3")
         ));
+    }
+
+    #[test]
+    fn connecting_names_its_steps_says_a_refused_id_under_the_field_and_offers_a_phone_code() {
+        let mut runner = AppRunner::new(super::ReadingList {
+            view: super::View::Setup,
+            ..super::ReadingList::default()
+        });
+        runner.action(action_id("zotero-user-id"));
+        let commands = runner.type_text("readerjane");
+        let setup = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen),
+                _ => None,
+            })
+            .expect("setup");
+        assert!(
+            setup.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Field { value, error: Some(error), kind: kobo_sdk::FieldKind::Number, .. }
+                    if value == "readerjane" && error.contains("only digits")
+            )),
+            "{setup:?}"
+        );
+        assert!(
+            setup.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Steps {
+                    current: 0,
+                    total: 3,
+                    ..
+                }
+            )),
+            "{setup:?}"
+        );
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Store(_))));
+
+        let commands = runner.action(action_id("zotero-phone"));
+        let phone = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen),
+                _ => None,
+            })
+            .expect("phone code");
+        assert!(phone.owns_back, "Back returns to the field");
+        assert!(
+            phone.nodes.iter().any(|node| matches!(
+                node,
+                kobo_sdk::Node::Code { payload, .. } if payload == super::KEYS_PAGE
+            )),
+            "{phone:?}"
+        );
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert!(!runner.app().phone);
+        assert!(runner.app().view == super::View::Setup);
+    }
+
+    #[test]
+    fn a_key_missing_on_first_connect_is_step_two_and_offers_the_key_page() {
+        let task = TaskId(7);
+        let mut runner = AppRunner::new(ReadingList {
+            user_id: Some("12345".to_owned()),
+            task: Some((task, Awaiting::Collections)),
+            ..ReadingList::default()
+        });
+        let commands = runner.task_outcome(task, TaskOutcome::Failed(TaskError::NoCredential));
+        let drawn = format!("{commands:?}");
+        assert!(
+            drawn.contains("Step") || drawn.contains("Steps {"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("Use phone"), "{drawn}");
+        let commands = runner.action(action_id("credential.phone"));
+        assert!(
+            format!("{commands:?}").contains("https://www.zotero.org/settings/keys/new"),
+            "{commands:?}"
+        );
+    }
+
+    #[test]
+    fn a_search_typed_on_the_runtime_filters_the_feed_and_back_leaves_it_alone() {
+        let mut runner = AppRunner::new(ReadingList {
+            view: super::View::Feed,
+            ..ReadingList::default()
+        });
+        let commands = runner.action(action_id(super::SEARCH));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Device(kobo_sdk::DeviceRequest::TypeText { kind: kobo_sdk::FieldKind::Text, submit, .. })
+                if submit == "Search"
+        )));
+        runner.type_text("  river  ");
+        assert_eq!(runner.app().phrase, "river");
+        assert!(runner.app().view == super::View::Feed);
+        runner.action(action_id(super::SEARCH));
+        runner.cancel_text();
+        assert!(runner.app().view == super::View::Feed);
+        assert_eq!(runner.app().phrase, "river");
     }
 
     #[test]

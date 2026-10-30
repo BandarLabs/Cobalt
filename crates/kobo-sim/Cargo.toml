@@ -13,6 +13,7 @@ kobo-hal = { path = "../kobo-hal" }
 kobo-abi = { path = "../kobo-abi" }
 kobo-json = { path = "../kobo-json" }
 kobo-catalog = { path = "../kobo-catalog" }
+kobo-frame-plan = { path = "../kobo-frame-plan" }
 kobo-net = { path = "../kobo-net" }
 kobo-policy = { path = "../kobo-policy" }
 kobo-profile = { path = "../kobo-profile" }

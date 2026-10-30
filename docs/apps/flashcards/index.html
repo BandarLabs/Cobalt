@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Flashcards for Kobo e-readers | Cobalt</title>
-<meta name="description" content="Study with large reveal and answer controls designed for a Kobo screen. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/flashcards/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Flashcards for Kobo e-readers | Cobalt">
-<meta property="og:description" content="Study with large reveal and answer controls designed for a Kobo screen. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/flashcards/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/flashcards.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Flashcards for Kobo e-readers | Cobalt">
-<meta name="twitter:description" content="Study with large reveal and answer controls designed for a Kobo screen. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/flashcards.png">
 <meta name="twitter:image:alt" content="A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-4I03l2n44bhKYQw3OgwSLgMJ4/8aSVFCG/CB2KecJ9o='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-iKmm4uIJY8gKYSZLAdAVXvHo/LTW0kvRYWvUebRJ4EE='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Flashcards",
-      "description": "Study with large reveal and answer controls designed for a Kobo screen.",
+      "description": "Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/flashcards/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.2.6",
+      "softwareVersion": "0.2.9",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -92,16 +92,16 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="flashcards" data-minimum-cobalt-version="0.3.18">
+<main class="wrap" data-app-id="flashcards" data-minimum-cobalt-version="0.3.31">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Productivity</p>
       <h1>Flashcards</h1>
-      <p class="summary">Study with large reveal and answer controls designed for a Kobo screen.</p>
+      <p class="summary">Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.2.6</dd></div>
+        <div><dt>Version</dt><dd>0.2.9</dd></div>
         <div><dt>Permissions</dt><dd>No additional permissions</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 0.3.31</dd></div>
       </dl>
       <a class="cta" href="#setup-panel">Install on your Kobo</a>
       <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/flashcards">Source code on GitHub</a></p>
@@ -119,19 +119,23 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.2.6</h2>
-    <p>The first screen shows the import and staging commands set apart and complete, including the --kobo-root a USB stage needs, and starting with the sample deck is the main action.</p>
+    <h2>New in 0.2.9</h2>
+    <p>Each deck shows how many cards are due as a count beside its name, and the first screen, Review settings and the licences list fit at every text size.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Turn an Anki deck into a collection on this computer.
+      <li>Or start with the sample deck in the app, no computer needed.</li>
+      <li>Set up the reader once over USB, if you have not already.
+        <code class="setup-command">kobo setup</code></li>
+      <li>Export a deck from Anki and turn it into a collection on this computer.
         <code class="setup-command">kobo flashcards import deck.apkg --merge collection.cobfc</code></li>
-      <li>Plug the Kobo in over USB and stage the collection on it.
-        <code class="setup-command">kobo flashcards stage collection.cobfc --kobo-root /Volumes/KOBOeReader</code></li>
-      <li>Or start with the sample deck from the app, no computer needed.</li>
+      <li>Send the collection to the reader over Wi-Fi. Grades on the reader are kept.
+        <code class="setup-command">kobo flashcards push collection.cobfc</code></li>
     </ol>
+    <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
+      <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">

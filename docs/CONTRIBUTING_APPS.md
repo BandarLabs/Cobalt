@@ -27,7 +27,11 @@ The only Store metadata file is `apps/<app-id>/cobalt-app.json`:
 }
 ```
 
-`package` is derived as `kobo-<id>` and cannot be supplied.
+`package` is derived as `kobo-<id>` and cannot be supplied. `Cargo.toml`
+inherits the workspace version with `version.workspace = true`; the app's own
+version is the manifest's `version` and nothing else. The contributor check and
+the Node test suite refuse a Cargo manifest that repeats a version of its own,
+which is how thirty-one of them came to disagree with their manifests.
 `minimum_cobalt_version` is normally derived from the current SDK protocol and
 capability policy in `tools/protocol-minimums.json`. An app may supply a newer
 version as an explicit compatibility floor; it can never lower the derived
@@ -102,6 +106,15 @@ cargo run --manifest-path ../../crates/kobo-cli/Cargo.toml -- dev
 
 Tests should validate screens with `CLARA_BW_METRICS`, including tappability
 and stable layout after state changes.
+
+## Licensing
+
+An app links `kobo-sdk`, which is AGPL-3.0-only with no linking exception, so
+the app is AGPL-3.0 as well, whether it lives here or in a checkout of its own.
+Content an app bundles, such as puzzles, texts, fonts or images, needs a
+licence that allows redistribution on those terms; name it in the app's README
+and in [THIRD-PARTY.md](../THIRD-PARTY.md). The SDK crates are not on
+crates.io, so an app is built from this repository.
 
 ## Pull request and Beta publication
 

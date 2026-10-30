@@ -5,3 +5,9 @@ tap Browse
 wait-for-id provider.address
 expect Connect Komga
 shot server-setup
+# With nothing sent from the computer, Add comic opens the USB guide.
+tap Back
+wait-for Your shelf is empty
+expect Try a sample comic
+tap Add comic
+wait-for Connect by USB

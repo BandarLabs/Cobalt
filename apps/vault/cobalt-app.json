@@ -2,24 +2,20 @@
   "id": "vault",
   "display_name": "Vault",
   "short_label": "Vault",
-  "summary": "Browse your notes by folder, tag, link, and backlink.",
+  "summary": "Browse your notes by folder, tag, link, and backlink. Needs your computer.",
   "page_description": "Keep a searchable copy of your note library ready to read on your Kobo.",
-  "version": "0.1.5",
-  "release_notes": "An empty vault lists the commands that send your notes, and the setup guide lists the steps.",
+  "version": "0.1.8",
+  "release_notes": "Search is typed on Cobalt's own keyboard, a note that cannot be opened says so, and notes that did not import are flagged with See why on the message.",
   "glyph": "note",
   "capabilities": [],
   "setup": {
     "steps": [
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Create the note shelf on the reader.",
-        "command": "kobo vault init"
-      },
-      {
-        "text": "Send a folder of Markdown notes. Push again to update it.",
+        "text": "Send a folder of Markdown notes. Push again whenever your notes change: only changed notes are sent.",
         "command": "kobo vault push ~/Notes"
       }
     ]

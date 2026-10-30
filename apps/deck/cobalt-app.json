@@ -2,10 +2,10 @@
   "id": "deck",
   "display_name": "Deck",
   "short_label": "Deck",
-  "summary": "Turn your Kobo into a remote control for your computer.",
+  "summary": "Turn your Kobo into a remote control for your computer. Needs your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.7",
-  "release_notes": "Pairing shows the commands to run on your computer, including the one that lets the reader trust the helper, instead of naming an app it never explained.",
+  "version": "0.2.10",
+  "release_notes": "The computer address and pairing code are typed on Cobalt's own keyboard, the address opens on keys made for addresses, and each field says where its answer comes from.",
   "glyph": "grid",
   "capabilities": [
     "network"
@@ -13,28 +13,20 @@
   "setup": {
     "steps": [
       {
-        "text": "Lay out your pads on the computer.",
-        "command": "kobo deck init"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "In your project folder on the computer, lay out your first pads. Change them later with kobo deck set.",
+        "command": "kobo deck init --preset build"
       },
       {
-        "text": "Prepare the helper. It prints the address and code Deck asks for.",
+        "text": "Pair this computer with the reader. There is nothing to type on the reader. The first time, close Cobalt and open it again afterwards.",
         "command": "kobo sidekick init"
       },
       {
-        "text": "Let the reader trust the helper, so Deck can check it is talking to your computer.",
-        "command": "kobo trust set sidekick"
-      },
-      {
-        "text": "Start the helper, then enter the address and code on the reader.",
+        "text": "Start the helper and leave it running, then open Deck on the reader.",
         "command": "kobo sidekick run"
-      },
-      {
-        "text": "Send the layout to the reader.",
-        "command": "kobo deck push"
       }
     ]
   }

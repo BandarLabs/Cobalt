@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Play a seeded backgammon turn in the actual simulator: roll, choose a
-checker, move it, read the record of the turn, and find it after a restart."""
+"""Play seeded backgammon turns against the computer in the actual simulator:
+roll, tap a checker on the board and a marked point, watch the computer reply
+without a tap, read the record of play, and find it all after a restart."""
 import argparse
 import json
 import os
@@ -87,73 +88,108 @@ def main():
                 drawn = ' '.join(str(line) for node in layout['nodes'] for line in node['lines'])
                 return ' '.join(drawn.split())
 
-            def checker_controls(layout):
-                """The point, bar and off controls offered right now."""
-                return [(node['action'], str(node['lines'][0])) for node in layout['nodes']
-                        if node['kind'].startswith('CellLabel') and node['lines']
-                        and re.fullmatch(r'\d+', str(node['lines'][0]))]
+            def board(layout):
+                found = [node for node in layout['nodes'] if node['kind'] == 'BackgammonBoard']
+                assert found, words(layout)
+                return tuple(found[0][key] for key in ('x', 'y', 'width', 'height'))
 
-            def tap_first_checker():
-                layout = get('layout')
-                offered = checker_controls(layout)
-                assert offered, f'no checker to tap: {words(layout)}'
-                action, label = offered[0]
-                drive(f'tap-id {action}', 'wait-idle')
-                return label
+            def stacks(layout):
+                return [str(node['lines'][0]) for node in layout['nodes']
+                        if node['kind'].startswith('BackgammonStack') and node['lines']]
+
+            def message(layout):
+                return ' '.join(' '.join(map(str, node['lines'])) for node in layout['nodes']
+                                if node['kind'] == 'Secondary')
+
+            def point(label):
+                # Against the computer the board reads from White's side, so
+                # the number beside a point is its index plus one.
+                return 'point-' + str(int(label.split()[1]) - 1)
+
+            def pick_up():
+                """Taps the player's checkers, farthest first, until one is in hand."""
+                for label in sorted((l for l in stacks(get('layout')) if ' white ' in l),
+                                    key=lambda l: -int(l.split()[1])):
+                    drive('tap-id ' + point(label), 'wait-idle')
+                    if message(get('layout')).startswith(('Tap a marked point', 'Tap Off')):
+                        return label
+                if 'White' in words(get('layout')).split('Bar')[1][:20]:
+                    drive('tap-id bar', 'wait-idle')
+                    return 'bar'
+                raise AssertionError('nothing could be picked up: ' + words(get('layout')))
+
+            def put_down():
+                open_points = [l for l in stacks(get('layout')) if l.endswith(', open')]
+                drive('tap-id ' + (point(open_points[0]) if open_points else 'off'), 'wait-idle')
 
             try:
                 address = start()
                 drive('wait-for-id roll')
                 opening = capture('01-before-the-first-roll')
-                assert 'None rolled' in words(opening), words(opening)
-                assert 'to play' in words(opening) or 'Your move' in words(opening), words(opening)
-                checks.append('the board says whose move it is and that no dice are down')
+                assert 'Not rolled yet' in words(opening), words(opening)
+                assert 'Opening roll' in words(opening), words(opening)
+                assert 'Computer move' not in words(opening), words(opening)
+                bar = [str(n['lines'][0]) for n in opening['nodes'] if n['kind'].startswith('BarAction')
+                       or n['kind'].startswith('BarGlyph')]
+                foot = [str(n['lines'][0]) for n in opening['nodes']
+                        if n['kind'].startswith('NavDestination')]
+                assert sorted(bar) == ['More', 'Rules'], bar
+                assert foot == ['Undo', 'Roll', 'Double'], foot
+                place = board(opening)
+                checks.append('the top bar carries Rules and More, and the foot reads Undo, Roll, Double')
 
-                # Two people passing one reader, which is where the record of
-                # each turn matters and where nothing is played for anybody.
-                drive('tap-id match', 'tap-id mode')
-                setup = capture('02-match-setup')
-                assert 'Players: Pass and play' in words(setup), words(setup)
-                checks.append('the match screen changes who is playing, off the board')
-                drive('tap-id close-match', 'tap-id roll')
+                drive('tap-id roll', 'wait-idle')
+                computer = capture('02-computer-opened')
+                assert re.search(r'Computer opened with \d and \d and played ', message(computer)), \
+                    words(computer)
+                assert 'Computer move' not in words(computer), words(computer)
+                assert board(computer) == place
+                checks.append('the computer plays its opening without a tap: ' + message(computer))
+
+                drive('tap-id roll', 'wait-idle')
                 rolled = capture('03-rolled')
-                dice = re.search(r'Dice (\d)(?: and (\d))?', words(rolled))
-                assert dice, words(rolled)
-                checks.append(f'a seeded roll of {dice.group(0)[5:]} is stated in words')
+                assert message(rolled).startswith('You rolled'), words(rolled)
+                assert board(rolled) == place
+                checks.append('the player rolls with a tap and the board stays where it was')
 
-                source = tap_first_checker()
+                source = pick_up()
                 selected = capture('04-checker-in-hand')
-                assert 'Tap a legal destination' in words(selected), words(selected)
-                checks.append('the checker in hand is marked and asks for a destination')
+                assert any(l.endswith(', one in hand') for l in stacks(selected)) or source == 'bar', \
+                    stacks(selected)
+                checks.append(f'tapping {source.split(" white")[0]} on the board picks its checker up')
 
-                destination = tap_first_checker()
-                moved = capture('05-moved')
-                assert source != destination
-                # The turn ends when both dice are used; play on until it does.
-                for _ in range(6):
-                    if 'Last:' in words(get('layout')):
+                put_down()
+                capture('05-moved')
+                for _ in range(8):
+                    if 'Computer rolled' in message(get('layout')):
                         break
-                    if not checker_controls(get('layout')):
-                        break
-                    tap_first_checker()
-                finished = capture('06-turn-recorded')
-                record = re.search(r'Last: (White|Black) ([\d/a-z ]+)', words(finished))
-                assert record, words(finished)
-                checks.append(f'the finished turn is written down as "{record.group(0)[6:]}"')
+                    if not message(get('layout')).startswith(('Tap a marked point', 'Tap Off')):
+                        pick_up()
+                    put_down()
+                replied = capture('06-computer-replied')
+                assert 'Computer rolled' in message(replied), words(replied)
+                assert board(replied) == place
+                checks.append('the computer replies as soon as the turn ends: ' + message(replied))
 
-                drive('tap-id match')
-                match = capture('07-match')
+                drive('tap-id game-more', 'tap-id turn-history', 'wait-idle')
+                history = capture('07-history')
+                record = re.search(r'You [\d/a-z ]+?(?= Computer| You|$)', words(history))
+                assert record and 'Computer ' in words(history), words(history)
+                drive('tap Back', 'tap-id game-more', 'tap-id match-settings', 'wait-idle')
+                match = capture('08-match')
                 assert f'Fixture dice, seed {SEED}' in words(match), words(match)
-                assert 'Turn history' in words(match), words(match)
-                assert record.group(0)[6:].strip() in words(match), words(match)
-                checks.append('the match screen names the seed and lists the turns')
+                drive('tap-id close-match', 'wait-idle')
+                checks.append(f'the turn history records "{record.group(0).strip()}" and the settings name the seed')
 
                 stop()
                 address = start()
-                drive('wait-for-id match', 'tap-id match')
-                reopened = capture('08-reopened-match')
-                assert record.group(0)[6:].strip() in words(reopened), words(reopened)
-                checks.append('the record of play survives a restart')
+                drive('wait-for-id roll')
+                reopened = capture('09-reopened')
+                assert 'Resumed saved game' in words(reopened), words(reopened)
+                assert board(reopened) == place
+                drive('tap-id game-more', 'tap-id turn-history', 'wait-idle')
+                assert record.group(0).strip() in words(get('layout')), words(get('layout'))
+                checks.append('the match and its record survive a restart')
 
                 (output/'result.json').write_text(json.dumps({
                     'status': 'passed', 'scale': args.scale, 'seed': SEED,

@@ -1,0 +1,29 @@
+# Earlier output can be read back, a failed command is plain output, and a
+# shell that closes after it says so in words with Restart beside it.
+wait-for Terminal
+type seq 1 80
+tap-id kb.enter
+# Typing digits leaves the symbol keys up, and that layer is taller than the
+# letters (its ctrl and esc keys wrap onto rows of their own), which hides the
+# newest lines of the grid. Back to the letters before reading the output.
+tap abc
+wait-for 80
+tap Earlier
+# The title says "Earlier output", or "History" where a large text size
+# leaves it no room beside the two actions; Latest shows either way.
+wait-for Latest
+shot terminal-earlier
+tap Latest
+wait-for Terminal
+type ls /nope
+tap-id kb.enter
+wait-for No such file
+type exit
+tap-id kb.enter
+wait-for Shell closed after an error
+expect-missing exited
+expect Restart
+shot terminal-closed
+tap Restart
+wait-for Terminal
+expect-missing Shell closed

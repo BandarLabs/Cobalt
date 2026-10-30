@@ -94,7 +94,7 @@ impl ProviderSetup {
             credential: Credential::bearer(secret),
             probe: probe.into(),
             credentials: CredentialSetup::new(secret, service),
-            entry: TextEntry::new(),
+            entry: TextEntry::new().address(),
             task: None,
             connection: Connection::Unchecked,
             advice: None,

@@ -4,7 +4,7 @@ mod filters;
 use corpus::Entry;
 use filters::Filter;
 use kobo_bookview::BookView;
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult, TaskId,
     TaskOutcome,
@@ -108,7 +108,22 @@ impl Tri {
 struct Combatant {
     name: String,
     initiative: i8,
+    /// Current and maximum hit points, for a combatant whose health the table
+    /// keeps. A monster added from its reference brings its own; a name typed
+    /// in has none unless one is given, because a player's health lives on
+    /// their party page.
+    hp: Option<(i16, i16)>,
 }
+/// One spell level's slots: how many the character has, and how many are
+/// spent. A level used to be a single tick box, so a wizard with four
+/// first-level slots could record one of them.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Slots {
+    used: u8,
+    max: u8,
+}
+/// The most slots any class has at one level.
+const MOST_SLOTS: u8 = 4;
 #[derive(Clone, Debug)]
 struct Member {
     name: String,
@@ -117,7 +132,59 @@ struct Member {
     hp: i16,
     success: u8,
     failure: u8,
-    slots: [bool; 9],
+    slots: [Slots; 9],
+}
+/// What a tap on a spell level does.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum SlotMode {
+    #[default]
+    Spend,
+    Regain,
+    SetUp,
+}
+/// Hit point steps, one tap each. Damage comes in fives and tens far more
+/// often than in ones, and a fireball used to be twenty-eight taps.
+const HP_STEPS: [(&str, &str, i16); 6] = [
+    ("hp-down-10", "\u{2212}10 HP", -10),
+    ("hp-down-5", "\u{2212}5 HP", -5),
+    ("hp-down", "\u{2212}1 HP", -1),
+    ("hp-up", "+1 HP", 1),
+    ("hp-up-5", "+5 HP", 5),
+    ("hp-up-10", "+10 HP", 10),
+];
+fn hp_step(a: ActionId) -> Option<i16> {
+    HP_STEPS
+        .iter()
+        .find(|(name, _, _)| a == action_id(name))
+        .map(|(_, _, step)| *step)
+}
+fn hp_controls(s: ScreenBuilder) -> ScreenBuilder {
+    s.grid(
+        3,
+        false,
+        HP_STEPS.iter().map(|(name, label, _)| (*name, *label)),
+    )
+}
+/// The hit points in a monster's stat block, which every SRD monster opens
+/// with as "HP 135 (18d10)".
+fn monster_hp(body: &str) -> Option<i16> {
+    let after = body.split("HP ").nth(1)?;
+    after
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .ok()
+        .filter(|hp| *hp > 0)
+}
+fn ordinal(level: usize) -> String {
+    let suffix = match level {
+        1 => "st",
+        2 => "nd",
+        3 => "rd",
+        _ => "th",
+    };
+    format!("{level}{suffix}")
 }
 #[derive(Clone, Copy)]
 enum Editor {
@@ -128,13 +195,18 @@ struct Edit {
     target: Editor,
     step: usize,
     values: Vec<String>,
+    /// What each step held before, offered again as the starting text so an
+    /// edit changes only what is retyped.
+    existing: Vec<String>,
 }
 struct Grimoire {
     view: View,
     kind: Kind,
     edition: u16,
     query: String,
-    keyboard: Keyboard,
+    /// The one field open at a time, a search or a step of an edit, drawn by
+    /// the runtime while it is open.
+    entry: TextEntry,
     page: usize,
     detail: Option<usize>,
     /// Which page of the open reference is drawn. Also pages About, which is
@@ -170,6 +242,7 @@ struct Grimoire {
     entry_menu: Option<usize>,
     /// Which page of a party member is showing: their health, or their slots.
     member_page: usize,
+    slot_mode: SlotMode,
     /// Whether the open reference was reached from the bookmark list, which is
     /// where closing it should land.
     bookmarks_open: bool,
@@ -182,7 +255,7 @@ impl Default for Grimoire {
             kind: Kind::Spell,
             edition: 2014,
             query: String::new(),
-            keyboard: Keyboard::new(),
+            entry: TextEntry::new(),
             page: 0,
             detail: None,
             detail_page: 0,
@@ -212,6 +285,7 @@ impl Default for Grimoire {
             book: BookView::new(),
             entry_menu: None,
             member_page: 0,
+            slot_mode: SlotMode::Spend,
             bookmarks_open: false,
             loaded: false,
         }
@@ -346,8 +420,7 @@ impl Grimoire {
             View::Filters | View::FilterChoice => self.filter_screen(context),
             View::Bookmarks => self.bookmarks(s, context),
             View::Search => s
-                .secondary(format!("Prefix search: {}", self.keyboard.text()))
-                .keyboard(&self.keyboard, "Search")
+                .text_entry(&self.entry, "Type the start of a name.", "Search")
                 .build(),
             View::Dice => self.dice(s),
             View::Initiative => self.initiative(s, context),
@@ -364,6 +437,23 @@ impl Grimoire {
     /// claimed. A reference that overstates its own contents sends somebody
     /// looking through filters for a spell that was never in the file.
     fn about(&self, s: ScreenBuilder, context: &Context) -> Screen {
+        let pages = context.paginate(&self.about_text(), true);
+        let page = self.detail_page.min(pages.len().saturating_sub(1));
+        let mut s = s;
+        for paragraph in pages.get(page).into_iter().flatten() {
+            s = s.text(paragraph);
+        }
+        if pages.len() > 1 {
+            s = s.page_turns("previous", "next").page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+        }
+        s.bottom_action("back", "Back").build()
+    }
+
+    /// Everything About says, in paragraphs, before it is set into pages.
+    fn about_text(&self) -> String {
         let mut text = String::from(
             "Grimoire is an unofficial offline reference. It requests no capabilities.\n\n",
         );
@@ -375,29 +465,17 @@ impl Grimoire {
                     (held > 0).then(|| format!("{held} {}", kind.plural()))
                 })
                 .collect();
-            let _ = writeln!(text, "{edition}: {}", counted.join(" · "));
+            // A paragraph each: one line break inside a paragraph is set as a
+            // space, and the two editions' counts ran on as one sentence.
+            let _ = write!(text, "{edition}: {}\n\n", counted.join(" · "));
         }
         text.push_str(
-            "\nThe System Reference Documents do not cover classes, subclasses, \
+            "The System Reference Documents do not cover classes, subclasses, \
              backgrounds or feats, so this reference has none of them. No \
              third-party OGL-only material or artwork is included.\n\n",
         );
         text.push_str(ATTRIBUTION);
-        let pages = context.paginate(&text, true);
-        let page = self.detail_page.min(pages.len().saturating_sub(1));
-        let mut s = s.text(
-            pages
-                .get(page)
-                .map(|lines| lines.join("\n"))
-                .unwrap_or_default(),
-        );
-        if pages.len() > 1 {
-            s = s.page_turns("previous", "next").page_position(
-                u16::try_from(page + 1).unwrap_or(u16::MAX),
-                u16::try_from(pages.len()).unwrap_or(u16::MAX),
-            );
-        }
-        s.bottom_action("back", "Back").build()
+        text
     }
 
     /// How many entries of one category this build holds for an edition.
@@ -691,8 +769,12 @@ impl Grimoire {
                 (
                     context.one_line_row(&combatant.name, true),
                     format!(
-                        "Initiative {}{}",
+                        "Initiative {}{}{}",
                         combatant.initiative,
+                        combatant
+                            .hp
+                            .map(|(hp, max)| format!(" · HP {hp}/{max}"))
+                            .unwrap_or_default(),
                         if index == self.current {
                             " · taking this turn"
                         } else {
@@ -780,19 +862,25 @@ impl Grimoire {
             return self.initiative(s, context);
         };
         let combatant = &self.initiative[index];
-        s.heading(combatant.name.clone())
-            .facts([
-                ("Initiative", combatant.initiative.to_string()),
-                (
-                    "Turn",
-                    if index == self.current {
-                        "Taking this turn".to_owned()
-                    } else {
-                        format!("{} of {}", index + 1, self.initiative.len())
-                    },
-                ),
-            ])
-            .primary_button("init-take", "Take the turn")
+        let mut facts = vec![("Initiative", combatant.initiative.to_string())];
+        if let Some((hp, max)) = combatant.hp {
+            facts.push(("HP", format!("{hp}/{max}")));
+        }
+        facts.push((
+            "Turn",
+            if index == self.current {
+                "Taking this turn".to_owned()
+            } else {
+                format!("{} of {}", index + 1, self.initiative.len())
+            },
+        ));
+        let s = s.heading(combatant.name.clone()).facts(facts);
+        let s = if combatant.hp.is_some() {
+            hp_controls(s)
+        } else {
+            s
+        };
+        s.primary_button("init-take", "Take the turn")
             .buttons([("init-edit", "Edit"), ("init-remove", "Remove")])
             .bottom_action("init-back", "Initiative")
             .build()
@@ -884,7 +972,12 @@ impl Grimoire {
             return self.party(s, context);
         };
         let member = &self.party[index];
-        let s = s.heading(member.name.clone());
+        // Edit and Remove ride in the bar, on both pages, so the hit point
+        // steps and the slot levels keep the body at the largest text sizes.
+        let s = s
+            .top_bar_glyph("party-remove", "Remove", Glyph::Trash)
+            .top_bar_action("party-edit", "Edit")
+            .heading(member.name.clone());
         let s = if self.member_page == 0 {
             s.facts([
                 ("AC", member.ac.to_string()),
@@ -894,24 +987,46 @@ impl Grimoire {
                     format!("{} success · {} failure", member.success, member.failure),
                 ),
             ])
-            .buttons([("hp-down", "− HP"), ("hp-up", "+ HP")])
+            .compose(hp_controls)
             .buttons([("save-success", "Success"), ("save-failure", "Failure")])
         } else {
-            s.section(format!(
-                "Spell slots · {} used",
-                member.slots.iter().filter(|filled| **filled).count()
-            ))
+            let (mode, hint) = match self.slot_mode {
+                SlotMode::Spend => (0, "Tap a level to spend a slot."),
+                SlotMode::Regain => (1, "Tap a level to get a slot back."),
+                SlotMode::SetUp => (
+                    2,
+                    "Tap a level to add a slot. After 4 it goes back to none.",
+                ),
+            };
+            s.segmented(
+                mode,
+                [
+                    ("slots-spend", "Spend"),
+                    ("slots-regain", "Regain"),
+                    ("slots-setup", "Set up"),
+                ],
+            )
+            .secondary(hint)
             .grid(
                 3,
                 false,
-                member.slots.iter().enumerate().map(|(slot, filled)| {
+                member.slots.iter().enumerate().map(|(level, slots)| {
                     (
-                        format!("slot-{slot}"),
-                        format!("{} {}", slot + 1, if *filled { "[x]" } else { "[ ]" }),
+                        format!("slot-{level}"),
+                        if slots.max == 0 {
+                            format!("{} · none", ordinal(level + 1))
+                        } else {
+                            format!(
+                                "{} · {} of {} left",
+                                ordinal(level + 1),
+                                slots.max - slots.used,
+                                slots.max
+                            )
+                        },
                     )
                 }),
             )
-            .buttons([("party-edit", "Edit"), ("party-remove", "Remove")])
+            .button("slots-rest", "Long rest")
         };
         s.page_turns("previous", "next")
             .page_position(u16::try_from(self.member_page + 1).unwrap_or(1), 2)
@@ -924,19 +1039,91 @@ impl Grimoire {
             return self.initiative(s, context);
         };
         let prompts = match edit.target {
-            Editor::Init(_) => ["Name", "Initiative", "", ""],
+            Editor::Init(_) => ["Name", "Initiative", "Hit points, or leave blank", ""],
             Editor::Party(_) => ["Name", "Armor class", "Maximum HP", "Current HP"],
         };
+        if self.entry.is_open() {
+            return s
+                .text_entry(&self.entry, prompts[edit.step], "Next")
+                .build();
+        }
+        // The keyboard was put away at the step that may be left blank. The
+        // runtime answers an empty field the way it answers Back, so the
+        // choice between the two is asked here, and Back still abandons.
         s.heading(prompts[edit.step])
-            .field("value", self.keyboard.text(), prompts[edit.step])
-            .keyboard(&self.keyboard, "Next")
+            .secondary(format!(
+                "{} \u{b7} Initiative {}",
+                edit.values.first().map_or("", String::as_str),
+                edit.values.get(1).map_or("", String::as_str)
+            ))
+            .button("edit-blank", "Leave hit points blank")
+            .button("edit-type", "Type hit points")
             .build()
+    }
+
+    /// Opens the field for a search or one step of an edit, holding `text`.
+    ///
+    /// Every step after a name is a number and opens on the digits, whether
+    /// or not it already holds one, since a value is changed by typing digits.
+    fn open_entry(&mut self, number: bool, text: &str) {
+        self.entry.close();
+        self.entry = if number {
+            TextEntry::new().numeric()
+        } else {
+            TextEntry::new()
+        };
+        self.entry.open_with(text);
+    }
+
+    /// Whether the step an edit is on may be left without a value: the hit
+    /// points of a combatant, which a table often does not track.
+    fn blank_allowed(&self) -> bool {
+        self.edit
+            .as_ref()
+            .is_some_and(|edit| matches!(edit.target, Editor::Init(_)) && edit.step == 2)
+    }
+
+    /// Answers the edit field, or the choice offered when it was put away.
+    fn edit_action(&mut self, c: &mut Context, a: ActionId) -> bool {
+        if a == action_id("edit-blank") && self.blank_allowed() && !self.entry.is_open() {
+            self.complete_edit(c, String::new());
+            return true;
+        }
+        if a == action_id("edit-type") && self.blank_allowed() && !self.entry.is_open() {
+            let existing = self
+                .edit
+                .as_ref()
+                .and_then(|edit| edit.existing.get(edit.step).cloned())
+                .unwrap_or_default();
+            self.open_entry(true, &existing);
+            return true;
+        }
+        match self.entry.handle(a) {
+            Some(Typing::Submitted(text)) => self.complete_edit(c, text),
+            Some(Typing::Changed) => {}
+            Some(_) if self.blank_allowed() => {}
+            Some(_) => {
+                self.view = match self.edit.take().map(|edit| edit.target) {
+                    Some(Editor::Party(_)) => View::Party,
+                    _ => View::Initiative,
+                };
+            }
+            None => return false,
+        }
+        true
     }
     fn save(&self, c: &mut Context) {
         let init = self
             .initiative
             .iter()
-            .map(|x| format!("{}~{}", x.name.replace(['|', '~'], " "), x.initiative))
+            .map(|x| match x.hp {
+                Some((hp, max)) => format!(
+                    "{}~{}~{hp}~{max}",
+                    x.name.replace(['|', '~'], " "),
+                    x.initiative
+                ),
+                None => format!("{}~{}", x.name.replace(['|', '~'], " "), x.initiative),
+            })
             .collect::<Vec<_>>()
             .join(";");
         let party = self
@@ -953,8 +1140,9 @@ impl Grimoire {
                     m.failure,
                     m.slots
                         .iter()
-                        .map(|v| if *v { '1' } else { '0' })
-                        .collect::<String>()
+                        .map(|slots| format!("{}/{}", slots.used, slots.max))
+                        .collect::<Vec<_>>()
+                        .join(",")
                 )
             })
             .collect::<Vec<_>>()
@@ -990,7 +1178,13 @@ impl Grimoire {
             Editor::Init(Some(i)) => self
                 .initiative
                 .get(i)
-                .map(|c| vec![c.name.clone(), c.initiative.to_string()])
+                .map(|c| {
+                    vec![
+                        c.name.clone(),
+                        c.initiative.to_string(),
+                        c.hp.map(|(_, max)| max.to_string()).unwrap_or_default(),
+                    ]
+                })
                 .unwrap_or_default(),
             Editor::Party(Some(i)) => self
                 .party
@@ -1006,11 +1200,12 @@ impl Grimoire {
                 .unwrap_or_default(),
             _ => vec![],
         };
-        self.keyboard = Keyboard::with_text(values.first().cloned().unwrap_or_default());
+        self.open_entry(false, &values.first().cloned().unwrap_or_default());
         self.edit = Some(Edit {
             target,
             step: 0,
-            values,
+            values: Vec::new(),
+            existing: values,
         });
         self.view = View::Edit;
     }
@@ -1020,21 +1215,39 @@ impl Grimoire {
         };
         edit.values.push(text);
         let count = match edit.target {
-            Editor::Init(_) => 2,
+            Editor::Init(_) => 3,
             Editor::Party(_) => 4,
         };
         if edit.values.len() < count {
-            self.keyboard = Keyboard::new();
+            // Every step after the name is a number, and one being edited
+            // holds what it held before.
             edit.step = edit.values.len();
+            let existing = edit.existing.get(edit.step).cloned().unwrap_or_default();
+            self.open_entry(true, &existing);
             self.edit = Some(edit);
             return;
         }
         match edit.target {
             Editor::Init(index) => {
                 let value = edit.values[1].parse().unwrap_or(0);
+                let before = index
+                    .and_then(|index| self.initiative.get(index))
+                    .and_then(|combatant| combatant.hp);
+                // A new maximum starts the combatant at full health; the same
+                // maximum keeps whatever damage they have taken.
+                let hp = edit.values[2]
+                    .trim()
+                    .parse::<i16>()
+                    .ok()
+                    .filter(|max| *max > 0)
+                    .map(|max| match before {
+                        Some((hp, old)) if old == max => (hp, max),
+                        _ => (max, max),
+                    });
                 let item = Combatant {
                     name: edit.values[0].clone(),
                     initiative: value,
+                    hp,
                 };
                 if let Some(i) = index {
                     if let Some(slot) = self.initiative.get_mut(i) {
@@ -1050,7 +1263,7 @@ impl Grimoire {
                 let max = edit.values[2].parse::<i16>().unwrap_or(1).max(1);
                 let retained = index
                     .and_then(|index| self.party.get(index))
-                    .map_or((0, 0, [false; 9]), |member| {
+                    .map_or((0, 0, [Slots::default(); 9]), |member| {
                         (member.success, member.failure, member.slots)
                     });
                 let item = Member {
@@ -1075,6 +1288,32 @@ impl Grimoire {
         self.save(c);
     }
 }
+/// Spell slots as saved: `used/max` for each level, comma separated. A save
+/// from before levels held counts is nine ticks, `0` or `1`; a ticked level
+/// comes back as one slot, spent, and an unticked one as none, since the old
+/// box could not say how many the character had.
+fn read_slots(field: &str) -> [Slots; 9] {
+    let mut slots = [Slots::default(); 9];
+    if field.contains('/') {
+        for (level, pair) in field.split(',').take(9).enumerate() {
+            let mut numbers = pair.split('/').map(|n| n.parse::<u8>().unwrap_or(0));
+            let used = numbers.next().unwrap_or(0);
+            let max = numbers.next().unwrap_or(0).min(MOST_SLOTS);
+            slots[level] = Slots {
+                used: used.min(max),
+                max,
+            };
+        }
+    } else {
+        for (level, tick) in field.chars().take(9).enumerate() {
+            if tick == '1' {
+                slots[level] = Slots { used: 1, max: 1 };
+            }
+        }
+    }
+    slots
+}
+
 impl KoboApp for Grimoire {
     fn on_start(&mut self, c: &mut Context) {
         c.store().load(STATE);
@@ -1096,9 +1335,19 @@ impl KoboApp for Grimoire {
                         x.split(';')
                             .filter_map(|r| {
                                 let p: Vec<_> = r.split('~').collect();
+                                let hp = p
+                                    .get(2)
+                                    .zip(p.get(3))
+                                    .and_then(|(hp, max)| {
+                                        Some((hp.parse().ok()?, max.parse().ok()?))
+                                    })
+                                    .filter(|(hp, max): &(i16, i16)| {
+                                        *max > 0 && (0..=*max).contains(hp)
+                                    });
                                 Some(Combatant {
                                     name: (*p.first()?).to_string(),
                                     initiative: p.get(1)?.parse().ok()?,
+                                    hp,
                                 })
                             })
                             .collect()
@@ -1107,13 +1356,7 @@ impl KoboApp for Grimoire {
                         x.split(';')
                             .filter_map(|r| {
                                 let p: Vec<_> = r.split('~').collect();
-                                let slots = p.get(6)?.chars().take(9).enumerate().fold(
-                                    [false; 9],
-                                    |mut out, (i, v)| {
-                                        out[i] = v == '1';
-                                        out
-                                    },
-                                );
+                                let slots = read_slots(p.get(6)?);
                                 Some(Member {
                                     name: (*p.first()?).to_string(),
                                     ac: p.get(1)?.parse().ok()?,
@@ -1180,21 +1423,24 @@ impl KoboApp for Grimoire {
             self.show(c);
             return;
         }
-        if self.view == View::Search || self.view == View::Edit {
-            if let Some(p) = self.keyboard.press(a) {
-                if p == Pressed::Submitted {
-                    let text = self.keyboard.take();
-                    if self.view == View::Search {
-                        self.query = text;
-                        self.page = 0;
-                        self.view = View::Compendium;
-                    } else {
-                        self.complete_edit(c, text);
-                    }
+        if self.view == View::Search {
+            match self.entry.handle(a) {
+                Some(Typing::Submitted(text)) => {
+                    self.query = text;
+                    self.page = 0;
+                    self.view = View::Compendium;
                 }
+                Some(Typing::Changed) | None => {}
+                Some(_) => self.view = View::Compendium,
+            }
+            if a != ActionId::BACK {
                 self.show(c);
                 return;
             }
+        }
+        if self.view == View::Edit && a != ActionId::BACK && self.edit_action(c, a) {
+            self.show(c);
+            return;
         }
         // The open reference answers its own page turns and controls first.
         if self.view == View::Detail && self.book.memory().is_some() {
@@ -1211,6 +1457,12 @@ impl KoboApp for Grimoire {
             // The scrim beside an open menu takes Back before the view does,
             // or putting the menu away leaves the compendium.
             self.entry_menu = None;
+        } else if a == ActionId::BACK && self.view == View::Compendium && !self.query.is_empty() {
+            // A search lets go before the list it narrowed. The runtime's
+            // field answers an empty search the way it answers Back, so
+            // clearing the field no longer clears the search.
+            self.query.clear();
+            self.page = 0;
         } else if a == ActionId::BACK || a == action_id("back") {
             self.init_menu = None;
             self.view = match self.view {
@@ -1257,7 +1509,8 @@ impl KoboApp for Grimoire {
             self.clear_filters();
             self.save(c);
         } else if a == action_id("search") {
-            self.keyboard = Keyboard::with_text(&self.query);
+            let query = self.query.clone();
+            self.open_entry(false, &query);
             self.view = View::Search;
         } else if a == action_id("bookmarks") {
             self.bookmarks_page = 0;
@@ -1271,7 +1524,10 @@ impl KoboApp for Grimoire {
             }
         } else if a == action_id("next") {
             match self.view {
-                View::About => self.detail_page += 1,
+                View::About => {
+                    let last = c.paginate(&self.about_text(), true).len().saturating_sub(1);
+                    self.detail_page = (self.detail_page + 1).min(last);
+                }
                 View::Member => self.member_page = 1,
                 View::Initiative => {
                     self.page =
@@ -1356,9 +1612,14 @@ impl KoboApp for Grimoire {
             self.view = View::Combatant;
         } else if a == action_id("add-init") {
             if let Some(i) = self.entry_menu.take().or(self.detail) {
+                let entry = &self.corpus[i];
                 self.initiative.push(Combatant {
-                    name: self.corpus[i].name.clone(),
+                    name: entry.name.clone(),
                     initiative: 0,
+                    hp: (entry.kind == "monster")
+                        .then(|| monster_hp(&entry.body))
+                        .flatten()
+                        .map(|hp| (hp, hp)),
                 });
                 self.sort_init();
                 self.save(c);
@@ -1376,20 +1637,47 @@ impl KoboApp for Grimoire {
             }
         } else if a == action_id("party-back") {
             self.view = View::Party;
+        } else if let (Some(step), View::Combatant, Some(index)) =
+            (hp_step(a), self.view, self.init_menu)
+        {
+            if let Some((hp, max)) = self.initiative.get_mut(index).and_then(|c| c.hp.as_mut()) {
+                *hp = (*hp + step).clamp(0, *max);
+                self.save(c);
+            }
+        } else if a == action_id("slots-spend") {
+            self.slot_mode = SlotMode::Spend;
+        } else if a == action_id("slots-regain") {
+            self.slot_mode = SlotMode::Regain;
+        } else if a == action_id("slots-setup") {
+            self.slot_mode = SlotMode::SetUp;
         } else if let Some(i) = self.member.filter(|i| *i < self.party.len()) {
             let m = &mut self.party[i];
-            if a == action_id("hp-down") {
-                m.hp = (m.hp - 1).max(0);
-            } else if a == action_id("hp-up") {
-                m.hp = (m.hp + 1).min(m.max_hp);
+            if let Some(step) = hp_step(a) {
+                m.hp = (m.hp + step).clamp(0, m.max_hp);
+            } else if a == action_id("slots-rest") {
+                for slots in &mut m.slots {
+                    slots.used = 0;
+                }
             } else if a == action_id("save-success") {
                 m.success = (m.success + 1) % 4;
             } else if a == action_id("save-failure") {
                 m.failure = (m.failure + 1) % 4;
-            } else if let Some(slot) =
-                (0..m.slots.len()).find(|slot| a == action_id(&format!("slot-{slot}")))
+            } else if let Some(level) =
+                (0..m.slots.len()).find(|level| a == action_id(&format!("slot-{level}")))
             {
-                m.slots[slot] = !m.slots[slot];
+                let slots = &mut m.slots[level];
+                match self.slot_mode {
+                    SlotMode::Spend => slots.used = (slots.used + 1).min(slots.max),
+                    SlotMode::Regain => slots.used = slots.used.saturating_sub(1),
+                    SlotMode::SetUp => {
+                        slots.max = if slots.max >= MOST_SLOTS {
+                            0
+                        } else {
+                            slots.max + 1
+                        };
+                        slots.used = slots.used.min(slots.max);
+                    }
+                }
             } else {
                 self.show(c);
                 return;
@@ -1438,6 +1726,12 @@ mod tests {
     use super::*;
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
+    fn ticks(flags: [bool; 9]) -> [Slots; 9] {
+        flags.map(|ticked| Slots {
+            used: u8::from(ticked),
+            max: u8::from(ticked),
+        })
+    }
     fn option_index(app: &Grimoire, key: &str, value: &str) -> usize {
         options(app, key)
             .iter()
@@ -1480,10 +1774,12 @@ mod tests {
             Combatant {
                 name: "Low".into(),
                 initiative: 4,
+                hp: None,
             },
             Combatant {
                 name: "High".into(),
                 initiative: 20,
+                hp: None,
             },
         ];
         app.current = 0;
@@ -1504,15 +1800,15 @@ mod tests {
                 hp: 10,
                 success: 0,
                 failure: 0,
-                slots: [false; 9],
+                slots: [Slots::default(); 9],
             })
             .collect();
         app.member = Some(4);
         app.party[4].hp -= 3;
-        app.party[4].slots[2] = true;
+        app.party[4].slots[2] = Slots { used: 1, max: 2 };
         assert_eq!(app.party[0].hp, 10);
         assert_eq!(app.party[4].hp, 7);
-        assert!(app.party[4].slots[2]);
+        assert_eq!(app.party[4].slots[2].used, 1);
         assert_eq!(app.party.len(), 6);
     }
     #[test]
@@ -1522,6 +1818,7 @@ mod tests {
         saved.initiative = vec![Combatant {
             name: "Owlbear".into(),
             initiative: 15,
+            hp: None,
         }];
         saved.party = vec![Member {
             name: "Moss".into(),
@@ -1530,7 +1827,7 @@ mod tests {
             hp: 9,
             success: 2,
             failure: 1,
-            slots: [true, false, true, false, false, false, false, false, false],
+            slots: ticks([true, false, true, false, false, false, false, false, false]),
         }];
         let init = saved
             .initiative
@@ -1551,9 +1848,214 @@ mod tests {
         assert_eq!(restored.round, 4);
         assert_eq!(restored.initiative[0].name, "Owlbear");
         assert_eq!(restored.party[0].hp, 9);
-        assert!(restored.party[0].slots[2]);
+        assert_eq!(restored.party[0].slots[2], Slots { used: 1, max: 1 });
         assert_eq!(restored.bookmarks, vec![2, 8]);
     }
+    fn ready() -> kobo_sdk::AppRunner<Grimoire> {
+        let mut runner = kobo_sdk::AppRunner::new(Grimoire::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: None,
+        });
+        runner
+    }
+
+    #[test]
+    fn hit_points_move_in_steps_of_one_five_and_ten_and_stop_at_zero_and_full() {
+        let mut runner = ready();
+        runner.app_mut().party.push(Member {
+            name: "Aria".into(),
+            ac: 14,
+            max_hp: 30,
+            hp: 30,
+            success: 0,
+            failure: 0,
+            slots: [Slots::default(); 9],
+        });
+        runner.action(action_id("party-0"));
+        runner.action(action_id("hp-down-10"));
+        runner.action(action_id("hp-down-5"));
+        runner.action(action_id("hp-down"));
+        assert_eq!(runner.app().party[0].hp, 14);
+        runner.action(action_id("hp-down-10"));
+        runner.action(action_id("hp-down-10"));
+        assert_eq!(runner.app().party[0].hp, 0);
+        for _ in 0..4 {
+            runner.action(action_id("hp-up-10"));
+        }
+        assert_eq!(runner.app().party[0].hp, 30);
+    }
+
+    #[test]
+    fn a_monster_added_from_its_reference_brings_its_hit_points_and_takes_damage() {
+        let mut runner = ready();
+        let aboleth = runner
+            .app()
+            .corpus
+            .iter()
+            .position(|entry| entry.edition == 2014 && entry.name == "Aboleth")
+            .expect("the SRD has an aboleth");
+        runner.app_mut().detail = Some(aboleth);
+        runner.action(action_id("add-init"));
+        assert_eq!(runner.app().initiative[0].hp, Some((135, 135)));
+        runner.app_mut().view = View::Initiative;
+        runner.action(action_id("init-0"));
+        runner.action(action_id("hp-down-10"));
+        runner.action(action_id("hp-down-5"));
+        assert_eq!(runner.app().initiative[0].hp, Some((120, 135)));
+        assert!(runner
+            .app()
+            .initiative_rows(&runner.context())
+            .iter()
+            .any(|(_, detail)| detail.contains("HP 120/135")));
+    }
+
+    #[test]
+    fn a_spell_level_holds_several_slots_that_are_spent_regained_and_restored_by_a_long_rest() {
+        let mut runner = ready();
+        runner.app_mut().party.push(Member {
+            name: "Wizard".into(),
+            ac: 12,
+            max_hp: 20,
+            hp: 20,
+            success: 0,
+            failure: 0,
+            slots: [Slots::default(); 9],
+        });
+        runner.action(action_id("party-0"));
+        runner.action(action_id("slots-setup"));
+        for _ in 0..4 {
+            runner.action(action_id("slot-0"));
+        }
+        assert_eq!(runner.app().party[0].slots[0], Slots { used: 0, max: 4 });
+        runner.action(action_id("slots-spend"));
+        for _ in 0..5 {
+            runner.action(action_id("slot-0"));
+        }
+        assert_eq!(
+            runner.app().party[0].slots[0].used,
+            4,
+            "spent more than it had"
+        );
+        runner.action(action_id("slots-regain"));
+        runner.action(action_id("slot-0"));
+        assert_eq!(runner.app().party[0].slots[0].used, 3);
+        runner.action(action_id("slots-rest"));
+        assert_eq!(runner.app().party[0].slots[0], Slots { used: 0, max: 4 });
+        runner.action(action_id("slots-setup"));
+        runner.action(action_id("slot-0"));
+        assert_eq!(runner.app().party[0].slots[0].max, 0, "four wraps to none");
+    }
+
+    #[test]
+    fn slots_saved_as_ticks_by_the_old_build_come_back_as_one_spent_slot() {
+        let slots = read_slots("010000000");
+        assert_eq!(slots[1], Slots { used: 1, max: 1 });
+        assert_eq!(slots[0], Slots::default());
+        let slots = read_slots("1/4,0/3,0/0,0/0,0/0,0/0,0/0,0/0,0/0");
+        assert_eq!(slots[0], Slots { used: 1, max: 4 });
+        assert_eq!(slots[1], Slots { used: 0, max: 3 });
+        assert_eq!(read_slots("9/2")[0], Slots { used: 2, max: 2 });
+    }
+
+    #[test]
+    fn a_combatant_can_be_left_without_hit_points_and_back_still_abandons_the_edit() {
+        let mut runner = ready();
+        runner.action(action_id("initiative"));
+        let before = runner.app().initiative.len();
+        runner.action(action_id("init-add"));
+        runner.type_text("goblin");
+        runner.type_text("7");
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Edit, "the edit was dropped");
+        runner.action(action_id("edit-blank"));
+        let goblin = runner
+            .app()
+            .initiative
+            .iter()
+            .find(|combatant| combatant.name == "goblin")
+            .expect("the combatant was not added");
+        assert_eq!((goblin.initiative, goblin.hp), (7, None));
+
+        runner.action(action_id("init-add"));
+        runner.type_text("orc");
+        runner.type_text("5");
+        runner.cancel_text();
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Initiative);
+        assert_eq!(
+            runner.app().initiative.len(),
+            before + 1,
+            "Back kept the orc"
+        );
+    }
+
+    #[test]
+    fn the_steps_after_a_name_open_on_the_digits() {
+        let mut runner = ready();
+        runner.action(action_id("initiative"));
+        let named = runner.action(action_id("init-add"));
+        let kind =
+            |commands: &[kobo_sdk::Command]| match kobo_sdk::keyboard::testing::asked(commands) {
+                Some(kobo_sdk::DeviceRequest::TypeText { kind, .. }) => *kind,
+                _ => panic!("no field was asked for"),
+            };
+        assert_eq!(kind(&named), kobo_sdk::FieldKind::Text);
+        let numbered = runner.type_text("goblin");
+        assert_eq!(kind(&numbered), kobo_sdk::FieldKind::Number);
+    }
+
+    #[test]
+    fn a_search_narrows_the_list_and_back_lets_go_of_it_before_leaving() {
+        let mut runner = ready();
+        runner.action(action_id("spells"));
+        runner.action(action_id("search"));
+        runner.type_text("fire");
+        assert_eq!(runner.app().view, View::Compendium);
+        assert_eq!(runner.app().query, "fire");
+        runner.action(action_id("search"));
+        runner.cancel_text();
+        assert_eq!(runner.app().query, "fire", "backing out lost the search");
+        runner.action(ActionId::BACK);
+        assert!(runner.app().query.is_empty(), "Back kept the search");
+        assert_eq!(runner.app().view, View::Compendium);
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Home);
+    }
+
+    #[test]
+    fn editing_a_member_keeps_what_was_not_retyped_and_takes_what_was() {
+        let mut runner = ready();
+        runner.app_mut().party.push(Member {
+            name: "Moss".into(),
+            ac: 12,
+            max_hp: 10,
+            hp: 8,
+            success: 0,
+            failure: 0,
+            slots: [Slots::default(); 9],
+        });
+        runner.app_mut().member = Some(0);
+        runner.action(action_id("party-edit"));
+        assert_eq!(runner.app().entry.text(), "Moss");
+        runner.type_text("Moss");
+        assert_eq!(
+            runner.app().entry.text(),
+            "12",
+            "the armour class step lost its value"
+        );
+        runner.type_text("15");
+        runner.type_text("10");
+        runner.type_text("8");
+        assert_eq!(runner.app().party[0].name, "Moss");
+        assert_eq!(runner.app().party[0].ac, 15);
+        assert_eq!(
+            (runner.app().party[0].hp, runner.app().party[0].max_hp),
+            (8, 10)
+        );
+    }
+
     #[test]
     fn party_edit_preserves_existing_saves_and_slots() {
         let member = Member {
@@ -1563,7 +2065,7 @@ mod tests {
             hp: 8,
             success: 2,
             failure: 1,
-            slots: [false, true, false, false, false, false, false, false, false],
+            slots: ticks([false, true, false, false, false, false, false, false, false]),
         };
         let mut app = Grimoire {
             party: vec![member],
@@ -1571,14 +2073,70 @@ mod tests {
                 target: Editor::Party(Some(0)),
                 step: 3,
                 values: vec!["Moss".into(), "14".into(), "18".into()],
+                existing: Vec::new(),
             }),
             ..Grimoire::default()
         };
         app.complete_edit(&mut Context::default(), "12".into());
         assert_eq!(app.party[0].ac, 14);
         assert_eq!((app.party[0].success, app.party[0].failure), (2, 1));
-        assert!(app.party[0].slots[1]);
+        assert_eq!(app.party[0].slots[1].used, 1);
     }
+    /// About pages at the larger sizes; every page fits, the two editions'
+    /// counts stay apart, and the licence is on one of the pages.
+    #[test]
+    fn every_about_page_fits_and_the_licence_is_on_one_of_them_at_every_size_held_either_way() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            for orientation in [
+                kobo_ui::Orientation::Portrait,
+                kobo_ui::Orientation::Landscape,
+            ] {
+                let metrics = kobo_ui::DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let mut runner = kobo_sdk::AppRunner::with_metrics(Grimoire::default(), metrics);
+                runner.app_mut().view = View::About;
+                let mut read = Vec::new();
+                for page in 0..8 {
+                    runner.app_mut().detail_page = page;
+                    let screen = runner.app().screen(&runner.context());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{text_scale:?} {orientation:?} page {page}: {:?}",
+                        diagnostics.issues
+                    );
+                    let paragraphs = screen
+                        .nodes
+                        .iter()
+                        .filter_map(|node| match node {
+                            kobo_ui::Node::Text { text, .. } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    if read.last() == Some(&paragraphs) {
+                        break;
+                    }
+                    read.push(paragraphs);
+                }
+                // A paragraph may carry on over a page turn, so the pages are
+                // read as one text.
+                let all = read.concat();
+                assert!(
+                    all.join(" ").contains("Creative Commons Attribution 4.0"),
+                    "{text_scale:?} {orientation:?}: {read:?}"
+                );
+                assert!(
+                    !all.iter()
+                        .any(|text| text.contains("2014") && text.contains("2024")),
+                    "{text_scale:?} {orientation:?}: {all:?}"
+                );
+            }
+        }
+    }
+
     /// Every screen a table touches during a fight, at every size the
     /// interface offers.
     #[test]
@@ -1593,6 +2151,7 @@ mod tests {
                 initiative: vec![Combatant {
                     name: "Goblin of the long road".into(),
                     initiative: 12,
+                    hp: Some((5, 7)),
                 }],
                 party: vec![Member {
                     name: "Aria of the long road".into(),
@@ -1601,7 +2160,7 @@ mod tests {
                     hp: 18,
                     success: 1,
                     failure: 2,
-                    slots: [true, false, true, false, true, false, false, false, false],
+                    slots: ticks([true, false, true, false, true, false, false, false, false]),
                 }],
                 member: Some(0),
                 init_menu: Some(0),
@@ -1841,11 +2400,12 @@ mod tests {
                 hp: 20 + i16::try_from(number).unwrap(),
                 success: 0,
                 failure: 0,
-                slots: [false; 9],
+                slots: [Slots::default(); 9],
             });
             runner.app_mut().initiative.push(Combatant {
                 name: (*name).to_owned(),
                 initiative: i8::try_from(20 - number * 3).unwrap(),
+                hp: None,
             });
         }
         runner.app_mut().sort_init();
@@ -1857,6 +2417,10 @@ mod tests {
         // A member takes damage and burns a slot.
         runner.action(action_id("party-3"));
         runner.action(action_id("hp-down"));
+        runner.action(action_id("slots-setup"));
+        runner.action(action_id("slot-1"));
+        runner.action(action_id("slot-1"));
+        runner.action(action_id("slots-spend"));
         runner.action(action_id("slot-1"));
         let commands = runner.action(action_id("save-failure"));
         let written = commands
@@ -1882,7 +2446,7 @@ mod tests {
         assert_eq!(reopened.app().current, 1);
         assert_eq!(reopened.app().round, 1);
         assert_eq!(reopened.app().party[3].hp, runner.app().party[3].hp);
-        assert!(reopened.app().party[3].slots[1]);
+        assert_eq!(reopened.app().party[3].slots[1], Slots { used: 1, max: 2 });
         assert_eq!(reopened.app().party[3].failure, 1);
         let names_back: Vec<&str> = reopened
             .app()
@@ -1905,6 +2469,7 @@ mod tests {
             runner.app_mut().initiative.push(Combatant {
                 name: name.to_owned(),
                 initiative,
+                hp: None,
             });
         }
         runner.action(action_id("turn-next"));
@@ -1930,6 +2495,7 @@ mod tests {
             runner.app_mut().initiative.push(Combatant {
                 name: name.to_owned(),
                 initiative,
+                hp: None,
             });
         }
         runner.app_mut().view = View::Initiative;
@@ -1978,7 +2544,7 @@ mod tests {
                         hp: 20 + i16::try_from(number).unwrap(),
                         success: 0,
                         failure: 0,
-                        slots: [false; 9],
+                        slots: [Slots::default(); 9],
                     })
                     .collect(),
                 ..Grimoire::default()
@@ -2017,6 +2583,7 @@ mod tests {
                     .map(|number| Combatant {
                         name: format!("Combatant {number} of the long road"),
                         initiative: 20 - i8::try_from(number).unwrap(),
+                        hp: None,
                     })
                     .collect(),
                 ..Grimoire::default()

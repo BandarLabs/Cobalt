@@ -874,6 +874,28 @@ fn scoped_secret(store: Option<&SecretStore>, name: &str) -> Option<String> {
     read_secret(&store.root, &store.root.join(name))
 }
 
+/// Whether a request from `app` naming this secret would find a value to send.
+///
+/// Answered by the very lookup a request makes, in the same order: a bound
+/// account, then the app's own copy, then the owner-wide file that
+/// `kobo secret set` writes. A presence check that looked anywhere else would
+/// sooner or later tell an app a key is missing while its requests go out
+/// with one, and the app would stop at a screen asking for a key the owner
+/// has already given it.
+pub(crate) fn secret_resolves(root: &Path, app: &str, name: &str) -> bool {
+    let store = SecretStore {
+        root: root.to_owned(),
+        app: Some(app.to_owned()),
+    };
+    match bound_secret(Some(&store), name) {
+        Ok(Some(_)) => true,
+        Ok(None) => scoped_secret(Some(&store), name).is_some(),
+        // A request with an unreadable bound record is refused outright, so
+        // nothing behind it counts.
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 fn secret(directory: Option<&Path>, name: &str) -> Option<String> {
     let directory = directory?;

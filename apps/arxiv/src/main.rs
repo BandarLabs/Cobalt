@@ -26,13 +26,15 @@
 mod atom;
 
 use atom::{Paper, Results};
+use kobo_bookview::offline::{Heard, Keeper, NO_ROOM};
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    ShelfDownload, ShelfProgress, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::process::ExitCode;
 
@@ -59,11 +61,13 @@ const LISTING_BYTES: u32 = 512 * 1024;
 
 /// The most papers the library will hold.
 ///
-/// An application may hold [`kobo_sdk::MAX_STORE_KEYS`] durable keys, and this
-/// library spends two of them on each paper -- the reading position and the
-/// catalogue entry -- alongside a blob on the shelf. The ceiling is what is
-/// left once the registry itself and a margin for the reading positions of
-/// papers merely visited are taken out.
+/// An application may hold [`kobo_sdk::MAX_STORE_KEYS`] durable keys. The
+/// catalogue, the index of what is on the shelf, the saved searches and the
+/// followed subjects are one key each, and every paper read costs one more for
+/// its reading position, kept or not; the paper itself and its figures are one
+/// file on the shelf and cost no key at all. The ceiling is what is left once
+/// those four and a margin for the reading positions of papers merely visited
+/// are taken out.
 ///
 /// There is deliberately no eviction. A paper is in the library because
 /// somebody put it there, and a library that quietly throws away the oldest
@@ -79,33 +83,211 @@ const MAX_KEPT: usize = 96;
 /// indistinguishable from one that ended.
 const FULL_TEXT_BYTES: u32 = 768 * 1024;
 
-/// The subjects offered on the way in.
+/// The headings arXiv's subjects are offered under, in arXiv's own order.
 ///
-/// arXiv has upwards of a hundred and fifty categories and no reader wants to
-/// scroll them. These are the ones a person holding an e-reader is plausibly
-/// browsing, named as arXiv names them so the identifier on a paper's page
-/// matches the list it was found in.
-const SUBJECTS: &[(&str, &str)] = &[
-    ("cs.AI", "Artificial Intelligence"),
-    ("cs.LG", "Machine Learning"),
-    ("cs.CL", "Computation and Language"),
-    ("cs.CV", "Computer Vision"),
-    ("cs.CR", "Cryptography and Security"),
-    ("cs.DS", "Data Structures and Algorithms"),
-    ("cs.SE", "Software Engineering"),
-    ("cs.PL", "Programming Languages"),
-    ("cs.DC", "Distributed and Parallel Computing"),
-    ("cs.HC", "Human-Computer Interaction"),
-    ("cs.OS", "Operating Systems"),
-    ("math.CO", "Combinatorics"),
-    ("math.NT", "Number Theory"),
-    ("math.PR", "Probability"),
-    ("stat.ML", "Machine Learning (Statistics)"),
-    ("quant-ph", "Quantum Physics"),
-    ("astro-ph.EP", "Earth and Planetary Astrophysics"),
-    ("q-bio.NC", "Neurons and Cognition"),
-    ("econ.GN", "General Economics"),
-    ("physics.hist-ph", "History and Philosophy of Physics"),
+/// arXiv files its hundred and fifty-odd categories under eight subjects, and
+/// Physics under thirteen archives of its own. Physics is opened out here, one
+/// heading per archive, because fifty-one categories behind one heading is six
+/// screens of turning to find Optics, and an archive name like Astrophysics or
+/// Condensed Matter is already the word a physicist is looking for.
+const GROUPS: &[&str] = &[
+    "Computer Science",
+    "Economics",
+    "Electrical Engineering and Systems Science",
+    "Mathematics",
+    "Astrophysics",
+    "Condensed Matter",
+    "General Relativity and Quantum Cosmology",
+    "High Energy Physics",
+    "Mathematical Physics",
+    "Nonlinear Sciences",
+    "Nuclear Physics",
+    "Physics",
+    "Quantum Physics",
+    "Quantitative Biology",
+    "Quantitative Finance",
+    "Statistics",
+];
+
+/// Every arXiv category, with the heading it is offered under.
+///
+/// The whole of arXiv's taxonomy rather than a selection. Twenty hand-picked
+/// subjects meant that somebody who reads Fluid Dynamics or Algebraic Geometry
+/// found nothing for them and no way to ask, because a category
+/// cannot be typed into the search box. Named exactly as arXiv names them, so
+/// the identifier under each matches the one printed on a paper.
+const SUBJECTS: &[(&str, &str, usize)] = &[
+    ("cs.AI", "Artificial Intelligence", 0),
+    ("cs.AR", "Hardware Architecture", 0),
+    ("cs.CC", "Computational Complexity", 0),
+    (
+        "cs.CE",
+        "Computational Engineering, Finance, and Science",
+        0,
+    ),
+    ("cs.CG", "Computational Geometry", 0),
+    ("cs.CL", "Computation and Language", 0),
+    ("cs.CR", "Cryptography and Security", 0),
+    ("cs.CV", "Computer Vision and Pattern Recognition", 0),
+    ("cs.CY", "Computers and Society", 0),
+    ("cs.DB", "Databases", 0),
+    ("cs.DC", "Distributed, Parallel, and Cluster Computing", 0),
+    ("cs.DL", "Digital Libraries", 0),
+    ("cs.DM", "Discrete Mathematics", 0),
+    ("cs.DS", "Data Structures and Algorithms", 0),
+    ("cs.ET", "Emerging Technologies", 0),
+    ("cs.FL", "Formal Languages and Automata Theory", 0),
+    ("cs.GL", "General Literature", 0),
+    ("cs.GR", "Graphics", 0),
+    ("cs.GT", "Computer Science and Game Theory", 0),
+    ("cs.HC", "Human-Computer Interaction", 0),
+    ("cs.IR", "Information Retrieval", 0),
+    ("cs.IT", "Information Theory", 0),
+    ("cs.LG", "Machine Learning", 0),
+    ("cs.LO", "Logic in Computer Science", 0),
+    ("cs.MA", "Multiagent Systems", 0),
+    ("cs.MM", "Multimedia", 0),
+    ("cs.MS", "Mathematical Software", 0),
+    ("cs.NA", "Numerical Analysis", 0),
+    ("cs.NE", "Neural and Evolutionary Computing", 0),
+    ("cs.NI", "Networking and Internet Architecture", 0),
+    ("cs.OH", "Other Computer Science", 0),
+    ("cs.OS", "Operating Systems", 0),
+    ("cs.PF", "Performance", 0),
+    ("cs.PL", "Programming Languages", 0),
+    ("cs.RO", "Robotics", 0),
+    ("cs.SC", "Symbolic Computation", 0),
+    ("cs.SD", "Sound", 0),
+    ("cs.SE", "Software Engineering", 0),
+    ("cs.SI", "Social and Information Networks", 0),
+    ("cs.SY", "Systems and Control", 0),
+    ("econ.EM", "Econometrics", 1),
+    ("econ.GN", "General Economics", 1),
+    ("econ.TH", "Theoretical Economics", 1),
+    ("eess.AS", "Audio and Speech Processing", 2),
+    ("eess.IV", "Image and Video Processing", 2),
+    ("eess.SP", "Signal Processing", 2),
+    ("eess.SY", "Systems and Control", 2),
+    ("math.AC", "Commutative Algebra", 3),
+    ("math.AG", "Algebraic Geometry", 3),
+    ("math.AP", "Analysis of PDEs", 3),
+    ("math.AT", "Algebraic Topology", 3),
+    ("math.CA", "Classical Analysis and ODEs", 3),
+    ("math.CO", "Combinatorics", 3),
+    ("math.CT", "Category Theory", 3),
+    ("math.CV", "Complex Variables", 3),
+    ("math.DG", "Differential Geometry", 3),
+    ("math.DS", "Dynamical Systems", 3),
+    ("math.FA", "Functional Analysis", 3),
+    ("math.GM", "General Mathematics", 3),
+    ("math.GN", "General Topology", 3),
+    ("math.GR", "Group Theory", 3),
+    ("math.GT", "Geometric Topology", 3),
+    ("math.HO", "History and Overview", 3),
+    ("math.IT", "Information Theory", 3),
+    ("math.KT", "K-Theory and Homology", 3),
+    ("math.LO", "Logic", 3),
+    ("math.MG", "Metric Geometry", 3),
+    ("math.MP", "Mathematical Physics", 3),
+    ("math.NA", "Numerical Analysis", 3),
+    ("math.NT", "Number Theory", 3),
+    ("math.OA", "Operator Algebras", 3),
+    ("math.OC", "Optimization and Control", 3),
+    ("math.PR", "Probability", 3),
+    ("math.QA", "Quantum Algebra", 3),
+    ("math.RA", "Rings and Algebras", 3),
+    ("math.RT", "Representation Theory", 3),
+    ("math.SG", "Symplectic Geometry", 3),
+    ("math.SP", "Spectral Theory", 3),
+    ("math.ST", "Statistics Theory", 3),
+    ("astro-ph.CO", "Cosmology and Nongalactic Astrophysics", 4),
+    ("astro-ph.EP", "Earth and Planetary Astrophysics", 4),
+    ("astro-ph.GA", "Astrophysics of Galaxies", 4),
+    ("astro-ph.HE", "High Energy Astrophysical Phenomena", 4),
+    (
+        "astro-ph.IM",
+        "Instrumentation and Methods for Astrophysics",
+        4,
+    ),
+    ("astro-ph.SR", "Solar and Stellar Astrophysics", 4),
+    (
+        "cond-mat.dis-nn",
+        "Disordered Systems and Neural Networks",
+        5,
+    ),
+    ("cond-mat.mes-hall", "Mesoscale and Nanoscale Physics", 5),
+    ("cond-mat.mtrl-sci", "Materials Science", 5),
+    ("cond-mat.other", "Other Condensed Matter", 5),
+    ("cond-mat.quant-gas", "Quantum Gases", 5),
+    ("cond-mat.soft", "Soft Condensed Matter", 5),
+    ("cond-mat.stat-mech", "Statistical Mechanics", 5),
+    ("cond-mat.str-el", "Strongly Correlated Electrons", 5),
+    ("cond-mat.supr-con", "Superconductivity", 5),
+    ("gr-qc", "General Relativity and Quantum Cosmology", 6),
+    ("hep-ex", "High Energy Physics - Experiment", 7),
+    ("hep-lat", "High Energy Physics - Lattice", 7),
+    ("hep-ph", "High Energy Physics - Phenomenology", 7),
+    ("hep-th", "High Energy Physics - Theory", 7),
+    ("math-ph", "Mathematical Physics", 8),
+    ("nlin.AO", "Adaptation and Self-Organizing Systems", 9),
+    ("nlin.CD", "Chaotic Dynamics", 9),
+    ("nlin.CG", "Cellular Automata and Lattice Gases", 9),
+    ("nlin.PS", "Pattern Formation and Solitons", 9),
+    ("nlin.SI", "Exactly Solvable and Integrable Systems", 9),
+    ("nucl-ex", "Nuclear Experiment", 10),
+    ("nucl-th", "Nuclear Theory", 10),
+    ("physics.acc-ph", "Accelerator Physics", 11),
+    ("physics.ao-ph", "Atmospheric and Oceanic Physics", 11),
+    ("physics.app-ph", "Applied Physics", 11),
+    ("physics.atm-clus", "Atomic and Molecular Clusters", 11),
+    ("physics.atom-ph", "Atomic Physics", 11),
+    ("physics.bio-ph", "Biological Physics", 11),
+    ("physics.chem-ph", "Chemical Physics", 11),
+    ("physics.class-ph", "Classical Physics", 11),
+    ("physics.comp-ph", "Computational Physics", 11),
+    (
+        "physics.data-an",
+        "Data Analysis, Statistics and Probability",
+        11,
+    ),
+    ("physics.ed-ph", "Physics Education", 11),
+    ("physics.flu-dyn", "Fluid Dynamics", 11),
+    ("physics.gen-ph", "General Physics", 11),
+    ("physics.geo-ph", "Geophysics", 11),
+    ("physics.hist-ph", "History and Philosophy of Physics", 11),
+    ("physics.ins-det", "Instrumentation and Detectors", 11),
+    ("physics.med-ph", "Medical Physics", 11),
+    ("physics.optics", "Optics", 11),
+    ("physics.plasm-ph", "Plasma Physics", 11),
+    ("physics.pop-ph", "Popular Physics", 11),
+    ("physics.soc-ph", "Physics and Society", 11),
+    ("physics.space-ph", "Space Physics", 11),
+    ("quant-ph", "Quantum Physics", 12),
+    ("q-bio.BM", "Biomolecules", 13),
+    ("q-bio.CB", "Cell Behavior", 13),
+    ("q-bio.GN", "Genomics", 13),
+    ("q-bio.MN", "Molecular Networks", 13),
+    ("q-bio.NC", "Neurons and Cognition", 13),
+    ("q-bio.OT", "Other Quantitative Biology", 13),
+    ("q-bio.PE", "Populations and Evolution", 13),
+    ("q-bio.QM", "Quantitative Methods", 13),
+    ("q-bio.SC", "Subcellular Processes", 13),
+    ("q-bio.TO", "Tissues and Organs", 13),
+    ("q-fin.CP", "Computational Finance", 14),
+    ("q-fin.EC", "Economics", 14),
+    ("q-fin.GN", "General Finance", 14),
+    ("q-fin.MF", "Mathematical Finance", 14),
+    ("q-fin.PM", "Portfolio Management", 14),
+    ("q-fin.PR", "Pricing of Securities", 14),
+    ("q-fin.RM", "Risk Management", 14),
+    ("q-fin.ST", "Statistical Finance", 14),
+    ("q-fin.TR", "Trading and Market Microstructure", 14),
+    ("stat.AP", "Applications", 15),
+    ("stat.CO", "Computation", 15),
+    ("stat.ME", "Methodology", 15),
+    ("stat.ML", "Machine Learning", 15),
+    ("stat.OT", "Other Statistics", 15),
+    ("stat.TH", "Statistics Theory", 15),
 ];
 
 /// Percent-encodes the parts of a query that are not safe in a URL.
@@ -292,6 +474,8 @@ enum Awaiting {
 enum View {
     #[default]
     Subjects,
+    /// The categories under one heading of the subject list.
+    Group,
     Search,
     Listing,
     Paper,
@@ -355,10 +539,16 @@ impl AbstractBlock {
 #[derive(Debug, Default)]
 struct Arxiv {
     view: View,
-    keyboard: Keyboard,
-    /// The subject list's own page, because twenty subjects is more than one
-    /// screen of rows.
+    /// The words of a search, typed on the reader's own keyboard.
+    entry: TextEntry,
+    /// The subject list's own page, because the headings and followed
+    /// subjects together are more than one screen of rows.
     subject_page: usize,
+    /// The heading whose categories are showing, or were showing when a
+    /// listing was opened from it, so Back from that listing goes back to
+    /// the heading rather than all the way to the start.
+    group: Option<usize>,
+    group_page: usize,
     query: Option<Query>,
     papers: Vec<Paper>,
     /// What arXiv says the query matches in total, so "25 of 1204" can be
@@ -408,16 +598,36 @@ struct Arxiv {
     /// Whether the saved list is removing rather than running: Manage turns
     /// every row into the removal of itself, and Done turns them back.
     managing: bool,
-    /// The rendering of the open paper, held while it is on the panel so that
-    /// keeping it does not mean fetching it a second time.
+    /// The rendering of the open paper, cut to the paper, held while it is on
+    /// the panel so that keeping it does not mean fetching it a second time.
     ///
     /// Dropped with everything else when the paper closes: a stored copy is
     /// the point of keeping, and a copy of a paper nobody kept is a megabyte
     /// spent on nothing.
-    fetched: Option<Vec<u8>>,
-    /// A rendering on its way to or from the shelf.
-    keeping: Option<ShelfUpload>,
+    fetched: Option<String>,
+    /// Kept papers, each one file on the shelf holding the rendering and its
+    /// figures.
+    ///
+    /// The figures used to be left behind. A kept paper was its markup alone,
+    /// so on the train every plot was its caption, and online every figure was
+    /// fetched again on every reading.
+    keeper: Keeper,
+    /// Papers whose file is still being written, figures and all.
+    ///
+    /// Listed in the library from the tap, so the control answers it, but not
+    /// called offline until the device has acknowledged the file and the
+    /// index naming it: a paper marked offline is one that opens on a train.
+    pending: BTreeSet<String>,
+    /// Papers kept before figures were, being rewritten with them. Their old
+    /// rendering stays on the shelf until the new file is acknowledged.
+    upgrading: BTreeSet<String>,
+    /// The kept paper being read back from the shelf, by identifier.
+    opening: Option<String>,
+    /// A rendering kept before figures were, on its way off the shelf.
     loading: Option<ShelfDownload>,
+    /// Whether the rendering being read came from that older kind of file,
+    /// which is the moment to rewrite it with its figures.
+    from_legacy: bool,
     /// Which paper the transfer in flight is for, since a shelf answer names
     /// only the blob.
     transferring: Option<String>,
@@ -477,11 +687,14 @@ fn decode_list(bytes: &[u8]) -> Vec<String> {
 
 /// What a kept paper's row says under its title.
 fn kept_summary(kept: &Kept) -> String {
-    let size = kept.bytes / 1024;
+    // Rounded the way the library's line about everything kept is, so one
+    // paper on its own does not read as a different size in the row and in
+    // the total above it.
+    let size = kobo_bookview::offline::size(u64::from(kept.bytes));
     let facts = if kept.authors.is_empty() {
-        format!("{} \u{b7} {size} KB", kept.id)
+        format!("{} \u{b7} {size}", kept.id)
     } else {
-        format!("{} \u{b7} {} \u{b7} {size} KB", kept.id, kept.authors)
+        format!("{} \u{b7} {} \u{b7} {size}", kept.id, kept.authors)
     };
     // Progress leads, for the same reason the offline badge does: the
     // row clamps to one line, and the tail is what the clamp eats.
@@ -577,6 +790,15 @@ fn key_safe(id: &str) -> String {
         .collect()
 }
 
+/// The catalogue indices of every category under one heading, in arXiv's
+/// order.
+fn group_subjects(group: usize) -> impl Iterator<Item = usize> {
+    SUBJECTS
+        .iter()
+        .enumerate()
+        .filter_map(move |(index, (_, _, under))| (*under == group).then_some(index))
+}
+
 const SEARCH: &str = "search";
 const SUBJECTS_BACK: &str = "subjects-back";
 const SUBJECTS_NEXT: &str = "subjects-next";
@@ -588,6 +810,9 @@ const MORE: &str = "more";
 const FULL_TEXT: &str = "full-text";
 const ABSTRACT: &str = "abstract";
 const SUBJECT: &str = "subject-";
+const GROUP: &str = "group-";
+const GROUP_BACK: &str = "group-back";
+const GROUP_NEXT: &str = "group-next";
 const PAPER: &str = "paper-";
 const LIBRARY: &str = "library";
 const LIB_BACK: &str = "library-back";
@@ -606,6 +831,8 @@ const SSEARCH: &str = "ssearch-";
 const FROW: &str = "frow-";
 const SAVED_BACK: &str = "saved-back";
 const SAVED_NEXT: &str = "saved-next";
+const RETRY_KEPT: &str = "retry-kept";
+const RETRY_LISTING: &str = "retry-listing";
 
 impl Arxiv {
     fn paper(&self) -> Option<&Paper> {
@@ -791,8 +1018,11 @@ impl Arxiv {
     }
 
     fn abstract_prefix(&self) -> ScreenBuilder {
+        // The title rather than the identifier. "2401.00001v2" says nothing to
+        // somebody who put the reader down mid-paper and picked it up again,
+        // and the bar ends a long title with an ellipsis on its own.
         let mut screen = ScreenBuilder::new("arxiv-paper")
-            .top_bar(self.paper().map_or("", |paper| paper.id.as_str()));
+            .top_bar(self.paper().map_or("", |paper| paper.title.as_str()));
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -812,32 +1042,49 @@ impl Arxiv {
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
-        // Followed subjects lead, in the order they were followed, and carry
-        // the follow mark; the rest keep the catalogue's own order behind
-        // them. The row ids still name the catalogue index, so the action
-        // that opens a subject does not care where the row stood.
-        let order: Vec<usize> = self
+        // Followed subjects lead, in the order they were followed, and open
+        // their listing in one tap; arXiv's headings follow them. The row ids
+        // name the catalogue index, so the action that opens a subject does
+        // not care where the row stood.
+        let followed: Vec<usize> = self
             .followed
             .iter()
-            .filter_map(|code| SUBJECTS.iter().position(|(known, _)| known == code))
-            .chain(
-                SUBJECTS
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, (code, _))| {
-                        (!self.followed.iter().any(|followed| followed == code)).then_some(index)
-                    }),
-            )
+            .filter_map(|code| SUBJECTS.iter().position(|(known, _, _)| known == code))
             .collect();
-        let rows: Vec<(&str, &str)> = order
+        let mut rows: Vec<(String, String, String, Glyph)> = followed
             .iter()
             .map(|index| {
-                let (code, name) = SUBJECTS[*index];
-                (name, code)
+                let (code, name, _) = SUBJECTS[*index];
+                (
+                    format!("{SUBJECT}{index}"),
+                    context.one_line_row(name, false),
+                    code.to_owned(),
+                    Glyph::Heart,
+                )
             })
             .collect();
+        rows.extend(GROUPS.iter().enumerate().map(|(group, name)| {
+            let inside: Vec<usize> = group_subjects(group).collect();
+            // A heading with one category in it is that category, so its row
+            // opens the listing and says which category it is, rather than
+            // leading to a list of one.
+            let detail = match inside.as_slice() {
+                [only] => SUBJECTS[*only].0.to_owned(),
+                _ => format!("{} subjects", inside.len()),
+            };
+            (
+                format!("{GROUP}{group}"),
+                context.one_line_row(name, false),
+                detail,
+                Glyph::Folder,
+            )
+        }));
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
+            .collect();
         let pages = context.paginate_rows_under(
-            &rows,
+            &borrowed,
             true,
             kobo_sdk::Position::AtTheFoot,
             &screen.clone().build(),
@@ -846,20 +1093,13 @@ impl Arxiv {
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen
             .rows(shown.iter().filter_map(|position| {
-                let index = *order.get(*position)?;
-                SUBJECTS.get(index).map(|(code, name)| {
-                    let lead = if self.followed.iter().any(|followed| followed == code) {
-                        Glyph::Heart
-                    } else {
-                        Glyph::Note
-                    };
-                    (
-                        format!("{SUBJECT}{index}"),
-                        (*name).to_owned(),
-                        (*code).to_owned(),
-                        RowLead::Icon(lead),
-                    )
-                })
+                let (id, title, detail, glyph) = rows.get(*position)?;
+                Some((
+                    id.clone(),
+                    title.clone(),
+                    detail.clone(),
+                    RowLead::Icon(*glyph),
+                ))
             }))
             .top_bar_glyph(LIBRARY, "Library", Glyph::Bookmark)
             .top_bar_glyph(SAVED, "Saved", Glyph::Heart)
@@ -869,14 +1109,70 @@ impl Arxiv {
             .build()
     }
 
-    fn search(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("arxiv-search").top_bar("Search arXiv");
+    /// The categories under one of arXiv's headings.
+    fn group_screen(&self, context: &Context) -> Screen {
+        let group = self.group.unwrap_or_default();
+        let title = GROUPS.get(group).copied().unwrap_or("Preprints");
+        let mut screen = ScreenBuilder::new("arxiv-group").top_bar(title);
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
+        let inside: Vec<usize> = group_subjects(group).collect();
+        let rows: Vec<(String, &str)> = inside
+            .iter()
+            .map(|index| {
+                let (code, name, _) = SUBJECTS[*index];
+                (context.one_line_row(name, false), code)
+            })
+            .collect();
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(title, code)| (title.as_str(), *code))
+            .collect();
+        let pages = context.paginate_rows_under(
+            &borrowed,
+            true,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
+        let page = self.group_page.min(pages.len().saturating_sub(1));
+        let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
         screen
-            .typed(&self.keyboard, "A phrase, an author, a title")
-            .keyboard(&self.keyboard, "Search")
+            .rows(shown.iter().filter_map(|position| {
+                let index = *inside.get(*position)?;
+                let (title, code) = rows.get(*position)?;
+                let (known, _, _) = SUBJECTS[index];
+                let lead = if self.followed.iter().any(|followed| followed == known) {
+                    Glyph::Heart
+                } else {
+                    Glyph::Note
+                };
+                Some((
+                    format!("{SUBJECT}{index}"),
+                    title.clone(),
+                    (*code).to_owned(),
+                    RowLead::Icon(lead),
+                ))
+            }))
+            .page_turns(GROUP_BACK, GROUP_NEXT)
+            .page_position(page_number(page), page_total(pages.len()))
+            .build()
+    }
+
+    /// The search field, which the runtime draws over this screen.
+    ///
+    /// The runtime keeps this screen's title in its top bar and puts the
+    /// prompt under it, so the title names the application and the prompt
+    /// says what is being asked, rather than both saying "Search arXiv".
+    fn search(&self) -> Screen {
+        ScreenBuilder::new("arxiv-search")
+            .top_bar("Preprints")
+            .text_entry_with_hint(
+                &self.entry,
+                "Search arXiv",
+                "A phrase, an author, a title",
+                "Search",
+            )
             .build()
     }
 
@@ -887,6 +1183,16 @@ impl Arxiv {
     /// any paper open to ask it from.
     fn library(&self, context: &Context) -> Screen {
         let mut screen = ScreenBuilder::new("arxiv-library").top_bar("Library");
+        if self.keeper.failed {
+            // The way out of the failure sits on the banner that names it,
+            // where it used to be a top bar mark the words had to point at.
+            screen = screen
+                .banner(
+                    BannerLevel::Error,
+                    "The list of papers kept on this reader could not be read or saved.",
+                )
+                .banner_action(RETRY_KEPT, "Try again");
+        }
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
@@ -894,11 +1200,15 @@ impl Arxiv {
             return screen
                 .splash(
                     Some(Glyph::Bookmark),
-                    "No saved papers",
-                    "Save a paper to read it later.",
+                    "No papers kept yet",
+                    "Open a paper and tap Keep for offline. It waits here with its \
+                     figures, ready to read without a connection.",
                 )
                 .build();
         }
+        // What is on the reader, said the way every reading application on
+        // the device says it, above the papers it counts.
+        screen = screen.secondary(self.ready_offline());
         // Clamped here rather than left to the renderer: a real title runs
         // to two dozen words, and a row's text that does not fit is a screen
         // the renderer refuses outright. Two lines for the title, one for
@@ -907,9 +1217,17 @@ impl Arxiv {
             .library
             .iter()
             .map(|kept| {
+                // Still being written says so first, where the one-line clamp
+                // cannot eat it: a paper that is not on the reader yet must
+                // not look like one that is.
+                let summary = if self.pending.contains(&kept.id) {
+                    format!("Downloading for offline \u{b7} {}", kept_summary(kept))
+                } else {
+                    kept_summary(kept)
+                };
                 (
                     context.clamped_row(&kept.title, 2, false),
-                    context.one_line_row(&kept_summary(kept), false),
+                    context.one_line_row(&summary, false),
                 )
             })
             .collect();
@@ -978,8 +1296,8 @@ impl Arxiv {
             .chain(self.followed.iter().filter_map(|code| {
                 SUBJECTS
                     .iter()
-                    .find(|(known, _)| known == code)
-                    .map(|(code, name)| (context.one_line_row(name, false), (*code).to_owned()))
+                    .find(|(known, _, _)| known == code)
+                    .map(|(code, name, _)| (context.one_line_row(name, false), (*code).to_owned()))
             }))
             .collect();
         let borrowed: Vec<(&str, &str)> = rows
@@ -1026,16 +1344,36 @@ impl Arxiv {
             .as_ref()
             .map_or_else(|| "Preprints".to_owned(), Query::title);
         let mut screen = ScreenBuilder::new("arxiv-listing").top_bar(title);
+        let failed = self.papers.is_empty() && self.trouble.is_some();
         if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+            let level = if failed {
+                BannerLevel::Error
+            } else {
+                BannerLevel::Attention
+            };
+            screen = screen.banner(level, trouble.clone());
         }
         if self.waiting_for(Awaiting::Listing) {
-            return screen.skeleton(6).build();
+            return placeholder(context, &screen);
+        }
+        if failed {
+            // The one thing that can change a listing that never arrived goes
+            // on the banner saying why, rather than in a button of its own
+            // under it.
+            screen = screen.banner_action(RETRY_LISTING, "Try again");
         }
         // The window control carries its own state as its label, so the
         // one button is both the way to change the reach of the listing and
         // the only place that says what the reach currently is.
         let narrowing = (WINDOW, self.window.label(), Glyph::Filter);
+        if failed {
+            // A listing that never arrived is not a listing with nothing in
+            // it. The banner says why and carries the retry, rather than
+            // advice about search words that were never the problem.
+            return screen
+                .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
+                .build();
+        }
         if self.papers.is_empty() {
             return screen
                 .splash(
@@ -1129,7 +1467,7 @@ impl Arxiv {
         if self.waiting_for(Awaiting::FullText) {
             return screen.activity("Fetching the full text", None).build();
         }
-        if self.loading.is_some() {
+        if self.loading.is_some() || self.opening.is_some() {
             return screen.activity("Opening the kept paper", None).build();
         }
         let page = self.page.min(self.pages.len().saturating_sub(1));
@@ -1165,7 +1503,7 @@ impl Arxiv {
     fn full_text(&self) -> Screen {
         let title = self
             .paper()
-            .map_or_else(|| "Preprints".to_owned(), |paper| paper.id.clone());
+            .map_or_else(|| "Preprints".to_owned(), |paper| paper.title.clone());
         self.book.screen(&title).unwrap_or_else(|| self.reading())
     }
 
@@ -1177,11 +1515,13 @@ impl Arxiv {
         if self.view == View::Paper
             && !self.waiting_for(Awaiting::FullText)
             && self.loading.is_none()
+            && self.opening.is_none()
         {
             self.reflow_abstract(context);
         }
         let screen = match self.view {
             View::Subjects => self.subjects(context),
+            View::Group => self.group_screen(context),
             View::Search => self.search(),
             View::Listing => self.listing(context),
             View::Paper => self.reading(),
@@ -1199,6 +1539,7 @@ impl Arxiv {
     fn turn(&mut self, context: &mut Context, forward: bool) {
         let screen = match self.view {
             View::Subjects => self.subjects(context),
+            View::Group => self.group_screen(context),
             View::Listing => self.listing(context),
             View::Library => self.library(context),
             View::Saved => self.saved(context),
@@ -1211,6 +1552,7 @@ impl Arxiv {
             .map_or(0, |(_, total)| usize::from(total).saturating_sub(1));
         let page = match self.view {
             View::Subjects => &mut self.subject_page,
+            View::Group => &mut self.group_page,
             View::Listing => &mut self.listing_page,
             View::Library => &mut self.library_page,
             View::Saved => &mut self.saved_page,
@@ -1250,7 +1592,12 @@ impl Arxiv {
         let Some(paper) = self.paper().cloned() else {
             return;
         };
-        let body = paper_body(html);
+        let legacy = std::mem::take(&mut self.from_legacy);
+        // Cut by the same rule every reader of web pages on this device uses,
+        // which for arXiv is the `<article>` LaTeXML wraps the paper in.
+        // Whether the paper arrived whole is still read from that tag: a
+        // rendering cut off at the byte ceiling has no closing one.
+        let body = kobo_html::article::main_content(html);
         // Handed to the reader whole. It parses the markup into the paper's
         // own structure -- its sections, its emphasis, its figures and their
         // captions -- and fetches the figures itself, one at a time, against
@@ -1271,7 +1618,7 @@ impl Arxiv {
         // that outran it opens at the top, which is where it would have
         // opened anyway.
         let memory = self.place.take().unwrap_or_default();
-        if !self.book.open_html(context, body, &origin, memory) {
+        if !self.book.open_html(context, &body, &origin, memory) {
             self.formulae_as_text = false;
             self.trouble =
                 Some("arXiv has no readable rendering of this paper, only a PDF.".to_owned());
@@ -1281,7 +1628,7 @@ impl Arxiv {
         // A rendering cut off at the byte ceiling has no closing tag, which is
         // the honest signal: the fetched bytes are markup, and a paper can sit
         // at the transport limit with every word of it delivered.
-        self.truncated = !body.contains("</article>");
+        self.truncated = !paper_body(html).contains("</article>");
         self.book.mark_truncated(self.truncated);
         self.page = 0;
         self.view = View::FullText;
@@ -1289,11 +1636,14 @@ impl Arxiv {
         // Only worth holding what could actually be kept: a rendering that
         // arrived truncated is not a paper, and storing one would make the
         // library quietly full of halves.
-        self.fetched = if self.truncated {
-            None
-        } else {
-            Some(bytes.to_vec())
-        };
+        self.fetched = if self.truncated { None } else { Some(body) };
+        // A paper kept before figures were is rewritten with them the first
+        // time it is read, which is the one moment its rendering is already
+        // in hand. Online, the figures come with it; offline, the new file is
+        // no worse than the old one.
+        if legacy && !self.truncated && self.keep_on_device(context, &paper.id) {
+            self.upgrading.insert(paper.id.clone());
+        }
         if std::mem::take(&mut self.keep_when_fetched) {
             if self.fetched.is_some() {
                 self.keep_paper(context);
@@ -1320,7 +1670,7 @@ impl Arxiv {
         // one line can never eat it: an "offline" the row no longer
         // shows is a kept paper the reader cannot find again without
         // a network.
-        if self.is_kept(&paper.id) {
+        if self.is_offline(&paper.id) {
             format!("offline \u{b7} {}", row_summary(paper))
         } else {
             row_summary(paper)
@@ -1374,13 +1724,21 @@ impl Arxiv {
         if self.is_kept(&paper.id) {
             return;
         }
-        if self.library.len() >= MAX_KEPT {
+        if self.library.len() >= MAX_KEPT || self.keeper.is_full() {
             self.trouble = Some(
                 "The library is full. Remove a paper from it before keeping another.".to_owned(),
             );
             return;
         }
-        let Some(bytes) = self.fetched.clone() else {
+        if self.keeper.failed {
+            self.trouble = Some(
+                "Nothing new can be kept until the library is saved. Open Library and tap \
+                 Try again."
+                    .to_owned(),
+            );
+            return;
+        }
+        let Some(size) = self.fetched.as_ref().map(String::len) else {
             // What gets kept is the rendering, and from the abstract there
             // is not one yet. Rather than telling somebody to press Full
             // text and then press Keep again, fetch it and keep it when it
@@ -1389,31 +1747,79 @@ impl Arxiv {
             self.ask_full_text(context);
             return;
         };
-        let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
-        let mut upload = ShelfUpload::new(blob_key(&paper.id), bytes);
-        upload.start(context);
-        self.keeping = Some(upload);
-        self.transferring = Some(paper.id.clone());
-        // Listed as soon as the transfer starts rather than when it finishes,
-        // so the button answers the tap. A transfer that fails takes the entry
-        // back out again, which is the only way round that never leaves a
-        // paper kept with nothing behind it.
+        if !self.keep_on_device(context, &paper.id) {
+            // Refused because the reader is full, the one reason left by the
+            // time the checks above have passed.
+            self.trouble = Some(NO_ROOM.to_owned());
+            return;
+        }
+        self.pending.insert(paper.id.clone());
+        // Listed as soon as the work starts rather than when it finishes, so
+        // the button answers the tap. The row says it is still downloading
+        // until the file is acknowledged, and a keep that fails takes the
+        // entry back out again, so the library never names a paper with
+        // nothing behind it.
         self.library.insert(
             0,
             Kept {
                 id: paper.id.clone(),
                 title: paper.title.clone(),
                 authors: paper.byline(),
-                bytes: size,
+                bytes: u32::try_from(size).unwrap_or(u32::MAX),
                 progress: None,
             },
         );
         self.save_library(context);
     }
 
-    /// Takes a paper back out of the library, and its rendering off the shelf.
+    /// Hands the open paper's rendering to the keeper, which fetches its
+    /// figures beside it and writes the lot to the shelf as one file.
+    fn keep_on_device(&mut self, context: &mut Context, id: &str) -> bool {
+        let Some(body) = self.fetched.as_deref() else {
+            return false;
+        };
+        // The same address the rendering was read from, so the figures it
+        // names resolve exactly as they do when the paper is open.
+        let origin = format!("{}/{}", html_base(), escape_path(id));
+        self.keeper.keep_markup(context, id, &origin, body)
+    }
+
+    /// Whether a kept paper opens with no network.
+    ///
+    /// A paper still being written does not, and nor does one whose file was
+    /// refused. A paper kept before figures were does, without its figures.
+    fn is_offline(&self, id: &str) -> bool {
+        self.is_kept(id) && !self.pending.contains(id)
+    }
+
+    /// The library's line about what is on the reader.
+    ///
+    /// Counted from the library rather than the keeper alone, because a paper
+    /// kept before figures were is on the reader too and opens offline.
+    fn ready_offline(&self) -> String {
+        let mut count = 0;
+        let mut bytes = self.keeper.bytes();
+        for kept in &self.library {
+            if !self.is_offline(&kept.id) {
+                continue;
+            }
+            count += 1;
+            if !self.keeper.is_kept(&kept.id) {
+                bytes += u64::from(kept.bytes);
+            }
+        }
+        kobo_bookview::offline::ready_offline(count, bytes, "paper", "papers")
+    }
+
+    /// Takes a paper back out of the library, and its file off the shelf.
     fn discard_paper(&mut self, context: &mut Context, id: &str) {
         self.library.retain(|kept| kept.id != id);
+        self.pending.remove(id);
+        self.upgrading.remove(id);
+        self.keeper.remove(context, id);
+        // The rendering a paper kept before figures were is stored under. A
+        // paper kept since has none, and removing what is not there costs a
+        // refusal nobody sees.
         context.shelf().remove(blob_key(id));
         self.save_library(context);
     }
@@ -1489,11 +1895,21 @@ impl Arxiv {
         self.open = Some(0);
         self.trouble = None;
         self.ask_place(context, &kept.id);
-        let mut download = ShelfDownload::new(blob_key(&kept.id)).at_most(FULL_TEXT_BYTES as usize);
+        self.view = View::Paper;
+        if self.keeper.open(context, &kept.id) {
+            self.opening = Some(kept.id);
+        } else {
+            self.open_legacy(context, &kept.id);
+        }
+    }
+
+    /// Reads a paper kept before figures were, which is its rendering alone.
+    fn open_legacy(&mut self, context: &mut Context, id: &str) {
+        let mut download = ShelfDownload::new(blob_key(id)).at_most(FULL_TEXT_BYTES as usize);
         download.start(context);
         self.loading = Some(download);
-        self.transferring = Some(kept.id);
-        self.view = View::Paper;
+        self.transferring = Some(id.to_owned());
+        self.from_legacy = true;
     }
 
     /// Gives back everything the open paper was costing.
@@ -1501,6 +1917,8 @@ impl Arxiv {
         // The place goes down before the document it points into goes away.
         self.save_place(context);
         self.book.close(context);
+        self.opening = None;
+        self.keeper.stop_opening();
         self.truncated = false;
         self.formulae_as_text = false;
         self.fetched = None;
@@ -1590,6 +2008,24 @@ fn escape_path(id: &str) -> String {
     id.split('/').map(escape).collect::<Vec<_>>().join("/")
 }
 
+/// A listing on its way: the lines that stand in for its rows.
+///
+/// As many as the panel has room for under what is already there, up to six.
+/// A fixed six ran under the foot of the panel at the largest text sizes, and
+/// the renderer refused the whole screen.
+fn placeholder(context: &Context, screen: &ScreenBuilder) -> Screen {
+    let metrics = context.metrics();
+    (1..=6)
+        .rev()
+        .map(|lines| screen.clone().skeleton(lines).build())
+        .find(|candidate| {
+            !candidate
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                .has_errors()
+        })
+        .unwrap_or_else(|| screen.clone().build())
+}
+
 /// Page numbers on the panel are counted from one, and a list with nothing in
 /// it is still on page one of one rather than page zero of zero.
 fn page_number(index: usize) -> u16 {
@@ -1605,44 +2041,54 @@ impl KoboApp for Arxiv {
         context.store().load(LIBRARY_KEY);
         context.store().load(SEARCHES_KEY);
         context.store().load(FOLLOWED_KEY);
+        self.keeper.start(context);
         self.show(context);
     }
 
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        // The keyboard first: while the search screen is up it owns the panel,
-        // and every letter on it would otherwise fall through to the checks
-        // below.
-        if self.view == View::Search {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let typed = self.keyboard.text().trim().to_owned();
-                    if typed.is_empty() {
-                        return;
-                    }
+        // The search field first: while it is open the runtime holds the
+        // panel, and its answer arrives as an action like any other.
+        if let Some(typing) = self.entry.handle(action) {
+            match typing {
+                Typing::Submitted(typed) => {
                     self.papers.clear();
+                    self.group = None;
                     self.view = View::Listing;
                     self.ask_listing(context, Query::Words(typed), 0);
-                    self.show(context);
-                    return;
                 }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    self.show(context);
-                    return;
+                // Backing out of the keyboard is Back from the search, which
+                // has only ever led to the subject list.
+                Typing::Cancelled | Typing::Saved | Typing::Refused(_)
+                    if self.view == View::Search =>
+                {
+                    self.view = View::Subjects;
                 }
-                None => {}
+                _ => {}
             }
+            self.show(context);
+            return;
         }
 
         if action == ActionId::BACK {
             self.trouble = None;
             match self.view {
                 View::Subjects => return,
-                View::Search | View::Listing | View::Library | View::Saved => {
-                    self.view = View::Subjects;
+                // A listing opened from one of arXiv's headings goes back to
+                // that heading, at the page it was left on, rather than all
+                // the way back to the start.
+                View::Listing if self.group.is_some() => {
+                    self.view = View::Group;
                     self.listing_page = 0;
                 }
+                View::Search | View::Listing | View::Library | View::Saved | View::Group => {
+                    self.view = View::Subjects;
+                    self.listing_page = 0;
+                    self.group = None;
+                }
                 View::Paper => {
+                    self.opening = None;
+                    self.keeper.stop_opening();
                     // A paper opened out of the library goes back to the
                     // library, because the listing behind it is the one
                     // synthesised to hold it and has nothing else in it.
@@ -1739,7 +2185,7 @@ impl KoboApp for Arxiv {
         }
 
         if action == action_id(SEARCH) {
-            self.keyboard.clear();
+            self.entry.open();
             self.trouble = None;
             self.view = View::Search;
             self.show(context);
@@ -1784,7 +2230,23 @@ impl KoboApp for Arxiv {
             return;
         }
 
+        if action == action_id(RETRY_LISTING) {
+            if let Some(query) = self.query.clone() {
+                self.listing_page = 0;
+                self.ask_listing(context, query, self.offset);
+            }
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(RETRY_KEPT) {
+            self.keeper.retry(context);
+            self.show(context);
+            return;
+        }
+
         if action == action_id(SUBJECTS_BACK)
+            || action == action_id(GROUP_BACK)
             || action == action_id(LIST_BACK)
             || action == action_id(SAVED_BACK)
         {
@@ -1792,6 +2254,7 @@ impl KoboApp for Arxiv {
             return;
         }
         if action == action_id(SUBJECTS_NEXT)
+            || action == action_id(GROUP_NEXT)
             || action == action_id(LIST_NEXT)
             || action == action_id(SAVED_NEXT)
         {
@@ -1843,9 +2306,46 @@ impl KoboApp for Arxiv {
             return;
         }
 
-        for (index, (code, name)) in SUBJECTS.iter().enumerate() {
+        for group in 0..GROUPS.len() {
+            if action == action_id(&format!("{GROUP}{group}")) {
+                let inside: Vec<usize> = group_subjects(group).collect();
+                self.group = Some(group);
+                if let [only] = inside.as_slice() {
+                    let (code, name, _) = SUBJECTS[*only];
+                    self.papers.clear();
+                    self.listing_page = 0;
+                    self.view = View::Listing;
+                    // Back from a heading of one goes to the start, not to a
+                    // list of one it never showed.
+                    self.group = None;
+                    self.ask_listing(
+                        context,
+                        Query::Subject {
+                            code: code.to_owned(),
+                            name: name.to_owned(),
+                        },
+                        0,
+                    );
+                } else {
+                    self.group_page = 0;
+                    self.view = View::Group;
+                }
+                self.trouble = None;
+                self.show(context);
+                return;
+            }
+        }
+
+        for (index, (code, name, _)) in SUBJECTS.iter().enumerate() {
             if action == action_id(&format!("{SUBJECT}{index}")) {
+                // Remembered only when the subject was chosen under its
+                // heading; a followed subject on the first screen goes back
+                // to the first screen.
+                if self.view != View::Group {
+                    self.group = None;
+                }
                 self.papers.clear();
+                self.listing_page = 0;
                 self.view = View::Listing;
                 self.ask_listing(
                     context,
@@ -1870,6 +2370,7 @@ impl KoboApp for Arxiv {
                 }
                 let words = self.saved[index].clone();
                 self.papers.clear();
+                self.group = None;
                 self.listing_page = 0;
                 self.managing = false;
                 self.view = View::Listing;
@@ -1892,11 +2393,12 @@ impl KoboApp for Arxiv {
                 let code = self.followed[index].clone();
                 let Some((code, name)) = SUBJECTS
                     .iter()
-                    .find(|(known, _)| *known == code)
-                    .map(|(code, name)| ((*code).to_owned(), (*name).to_owned()))
+                    .find(|(known, _, _)| *known == code)
+                    .map(|(code, name, _)| ((*code).to_owned(), (*name).to_owned()))
                 else {
                     return;
                 };
+                self.group = None;
                 self.papers.clear();
                 self.listing_page = 0;
                 self.managing = false;
@@ -1951,64 +2453,29 @@ impl KoboApp for Arxiv {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        // The reader's own sleep, which is what carries a figure from bytes to
-        // pixels a half-step at a time.
-        match self.book.woke(context, task, &outcome) {
-            Step::Elsewhere => {}
-            Step::Quiet => return,
-            Step::Repaint => {
-                self.show(context);
-                return;
-            }
+        let heard = self.keeper.task(context, task, &outcome);
+        if !matches!(heard, Heard::Elsewhere) {
+            self.heard(context, heard);
+            return;
         }
+        self.took_task(context, task, outcome);
+        // A lane the keeper could not have a moment ago may be free now.
+        self.keeper.pump(context);
+    }
 
-        let Some((waiting, awaiting)) = self.task else {
-            return;
-        };
-        if waiting != task {
-            return;
-        }
-        self.task = None;
-        match outcome {
-            TaskOutcome::Completed(bytes) => match awaiting {
-                Awaiting::Listing => self.took_listing(&bytes),
-                Awaiting::FullText => self.took_full_text(context, &bytes),
-            },
-            TaskOutcome::Failed(error) => self.trouble = Some(explain(error, awaiting)),
-            TaskOutcome::Cancelled => {}
-        }
-        self.show(context);
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        self.answered(context, Asked::Load, key, result);
+    }
+
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        self.answered(context, Asked::Save, key, result);
+    }
+
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        self.answered(context, Asked::Shelf, name, result);
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
-        // A rendering on its way onto the shelf. Nothing is drawn for it:
-        // the paper is already listed, and a progress bar over a write that
-        // takes two hundred milliseconds is noise.
-        if let Some(upload) = &mut self.keeping {
-            match upload.advance(context, &result) {
-                ShelfProgress::Done => {
-                    self.keeping = None;
-                    self.transferring = None;
-                    return;
-                }
-                ShelfProgress::Failed(_) => {
-                    // The entry went in when the transfer started, so it has
-                    // to come back out: a library naming a paper with nothing
-                    // behind it is worse than one that failed loudly.
-                    if let Some(id) = self.transferring.take() {
-                        self.library.retain(|kept| kept.id != id);
-                        self.save_library(context);
-                    }
-                    self.keeping = None;
-                    self.trouble =
-                        Some("That paper could not be kept. There may be no room.".to_owned());
-                    self.show(context);
-                    return;
-                }
-                ShelfProgress::Moving { .. } => return,
-                ShelfProgress::Elsewhere => {}
-            }
-        }
         if let Some(download) = &mut self.loading {
             match download.advance(context, &result) {
                 ShelfProgress::Done => {
@@ -2021,6 +2488,7 @@ impl KoboApp for Arxiv {
                 ShelfProgress::Failed(_) => {
                     self.loading = None;
                     self.transferring = None;
+                    self.from_legacy = false;
                     self.trouble =
                         Some("That kept paper could not be read back from the card.".to_owned());
                     self.show(context);
@@ -2064,6 +2532,180 @@ impl KoboApp for Arxiv {
     }
 }
 
+/// Which kind of request a store answer is answering.
+#[derive(Clone, Copy)]
+enum Asked {
+    Load,
+    Save,
+    Shelf,
+}
+
+impl Arxiv {
+    /// Offers a store answer to the keeper, and to the rest of the
+    /// application when it is not the keeper's.
+    ///
+    /// Routed on what the answer itself names wherever it names anything,
+    /// and on what was asked only for a refusal, which names nothing.
+    fn answered(
+        &mut self,
+        context: &mut Context,
+        asked: Asked,
+        asked_for: &str,
+        result: StoreResult,
+    ) {
+        let heard = match (&result, asked) {
+            (StoreResult::Loaded { key, .. }, _) => self.keeper.loaded(context, key, &result),
+            (StoreResult::Saved { key }, _) => self.keeper.saved(context, key, &result),
+            (
+                StoreResult::ShelfWritten { name, .. }
+                | StoreResult::ShelfRead { name, .. }
+                | StoreResult::ShelfRemoved { name },
+                _,
+            ) => self.keeper.shelf(context, name, &result),
+            (StoreResult::Denied(_), Asked::Load) => {
+                self.keeper.loaded(context, asked_for, &result)
+            }
+            (StoreResult::Denied(_), Asked::Save) => self.keeper.saved(context, asked_for, &result),
+            (StoreResult::Denied(_), Asked::Shelf) => {
+                self.keeper.shelf(context, asked_for, &result)
+            }
+            _ => Heard::Elsewhere,
+        };
+        if matches!(heard, Heard::Elsewhere) {
+            self.on_store(context, result);
+        } else {
+            self.heard(context, heard);
+        }
+    }
+
+    /// Acts on what the keeper made of an answer.
+    fn heard(&mut self, context: &mut Context, heard: Heard) {
+        match heard {
+            Heard::Elsewhere | Heard::Quiet => return,
+            Heard::Changed => self.kept_changed(context),
+            Heard::Opened(id, kept) => {
+                if self.opening.as_deref() != Some(id.as_str())
+                    || self.paper().is_none_or(|paper| paper.id != id)
+                {
+                    return;
+                }
+                self.opening = None;
+                let memory = self.place.take().unwrap_or_default();
+                if self.book.open_kept(context, kept, memory) {
+                    self.truncated = false;
+                    self.formulae_as_text = self.book.formulae_as_text();
+                    self.page = 0;
+                    self.view = View::FullText;
+                } else {
+                    self.trouble =
+                        Some("That kept paper has nothing in it that can be read.".to_owned());
+                }
+            }
+            Heard::Unreadable(id) => {
+                if self.opening.as_deref() == Some(id.as_str()) {
+                    self.opening = None;
+                    // A paper kept before figures were may still have its
+                    // rendering on the shelf under its older name.
+                    self.open_legacy(context, &id);
+                }
+            }
+            Heard::Failed(id, why) => {
+                self.upgrading.remove(&id);
+                if self.pending.remove(&id) {
+                    self.library.retain(|kept| kept.id != id);
+                    self.save_library(context);
+                    self.trouble = Some(if why == NO_ROOM {
+                        NO_ROOM.to_owned()
+                    } else {
+                        format!("That paper could not be kept. {why}")
+                    });
+                }
+            }
+        }
+        self.show(context);
+    }
+
+    /// Catches the library up with what the keeper has acknowledged.
+    fn kept_changed(&mut self, context: &mut Context) {
+        let landed: Vec<String> = self
+            .pending
+            .iter()
+            .chain(&self.upgrading)
+            .filter(|id| self.keeper.is_kept(id))
+            .cloned()
+            .collect();
+        let mut rewrite = false;
+        for id in landed {
+            // The row says what the paper costs with its figures, which is
+            // what removing it would give back.
+            if let (Some(size), Some(kept)) = (
+                self.keeper.size(&id),
+                self.library.iter_mut().find(|kept| kept.id == id),
+            ) {
+                kept.bytes = u32::try_from(size).unwrap_or(u32::MAX);
+                rewrite = true;
+            }
+            self.pending.remove(&id);
+            if self.upgrading.remove(&id) {
+                // The figures are on the shelf with the paper now, so the
+                // older file holding the rendering alone can go.
+                context.shelf().remove(blob_key(&id));
+            }
+        }
+        // A reader that filled up while papers waited lets the waiting ones
+        // go without a word. Each is taken back out of the library here, with
+        // the reason, rather than left saying it is downloading for ever.
+        if self.keeper.is_full() && !self.keeper.is_busy() {
+            let dropped: Vec<String> = self
+                .pending
+                .iter()
+                .filter(|id| !self.keeper.is_kept(id))
+                .cloned()
+                .collect();
+            for id in dropped {
+                self.pending.remove(&id);
+                self.library.retain(|kept| kept.id != id);
+                rewrite = true;
+                self.trouble = Some(NO_ROOM.to_owned());
+            }
+            self.upgrading.retain(|id| self.keeper.is_kept(id));
+        }
+        if rewrite {
+            self.save_library(context);
+        }
+    }
+
+    fn took_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        // The reader's own sleep, which is what carries a figure from bytes to
+        // pixels a half-step at a time.
+        match self.book.woke(context, task, &outcome) {
+            Step::Elsewhere => {}
+            Step::Quiet => return,
+            Step::Repaint => {
+                self.show(context);
+                return;
+            }
+        }
+
+        let Some((waiting, awaiting)) = self.task else {
+            return;
+        };
+        if waiting != task {
+            return;
+        }
+        self.task = None;
+        match outcome {
+            TaskOutcome::Completed(bytes) => match awaiting {
+                Awaiting::Listing => self.took_listing(&bytes),
+                Awaiting::FullText => self.took_full_text(context, &bytes),
+            },
+            TaskOutcome::Failed(error) => self.trouble = Some(explain(error, awaiting)),
+            TaskOutcome::Cancelled => {}
+        }
+        self.show(context);
+    }
+}
+
 /// Says what went wrong in terms of what was being asked for.
 ///
 /// A paper with no HTML rendering answers 404, and "not found" against a paper
@@ -2078,6 +2720,9 @@ fn explain(error: TaskError, awaiting: Awaiting) -> String {
         }
         (TaskError::Denied, _) => "This application may not reach the network.".to_owned(),
         (TaskError::NotFound, Awaiting::Listing) => "arXiv had nothing at that address.".to_owned(),
+        // No network at all is the reader's to fix, not arXiv's, and the SDK
+        // says so in the words every other application uses.
+        (TaskError::Offline, _) => kobo_sdk::Failure::of(error).advice.to_owned(),
         _ => "arXiv could not be reached. Check the connection and try again.".to_owned(),
     }
 }
@@ -2100,7 +2745,9 @@ mod tests {
         View, Window, ABSTRACT, DISCARD, DONE, FOLLOW, FOLLOWED_KEY, FULL_TEXT, KEEP, LIBRARY_KEY,
         MANAGE, MAX_SAVED, SAVED, SAVE_SEARCH, SEARCHES_KEY, SSEARCH, SUBJECTS, UNFOLLOW, WINDOW,
     };
+    use super::{group_subjects, GROUP, GROUPS, LIBRARY, SUBJECT};
     use crate::atom::Paper;
+    use kobo_bookview::offline::{Kept as KeptFile, INDEX_KEY};
     use kobo_read::Memory;
     use kobo_sdk::StoreResult;
     use kobo_sdk::{
@@ -2167,8 +2814,11 @@ mod tests {
             app.saved = (0..12)
                 .map(|index| format!("river measurements {index}"))
                 .collect();
+            // The library's own failure and its retry go above the trouble
+            // notice, so the kept papers are paged under both.
+            app.keeper.failed = true;
             for (view, prefix, count) in [
-                (View::Subjects, super::SUBJECT, SUBJECTS.len()),
+                (View::Subjects, GROUP, GROUPS.len()),
                 (View::Listing, super::PAPER, 12),
                 (View::Library, super::KEPT, 12),
                 (View::Saved, SSEARCH, 12),
@@ -2381,7 +3031,7 @@ mod tests {
     /// has nothing to do with the subject.
     #[test]
     fn every_subject_offered_is_one_that_can_be_opened() {
-        for (index, (code, _)) in SUBJECTS.iter().enumerate() {
+        for (index, (code, _, _)) in SUBJECTS.iter().enumerate() {
             let mut runner = AppRunner::new(Arxiv::default());
             runner.start();
             let commands = runner.action(action_id(&format!("subject-{index}")));
@@ -2394,6 +3044,299 @@ mod tests {
             };
             assert!(url.contains(&format!("search_query=cat:{code}")), "{url}");
         }
+    }
+
+    /// The whole taxonomy, each category once, each under a heading that
+    /// exists and no heading left empty.
+    #[test]
+    fn every_arxiv_category_is_offered_once_under_a_heading() {
+        let codes: std::collections::BTreeSet<_> =
+            SUBJECTS.iter().map(|(code, _, _)| *code).collect();
+        assert_eq!(codes.len(), SUBJECTS.len(), "a category is offered twice");
+        assert!(SUBJECTS.len() >= 150, "only {} categories", SUBJECTS.len());
+        for (group, name) in GROUPS.iter().enumerate() {
+            assert!(group_subjects(group).count() > 0, "{name} is empty");
+        }
+        assert!(SUBJECTS.iter().all(|(_, _, group)| *group < GROUPS.len()));
+        for code in [
+            "cs.AI",
+            "math.AG",
+            "physics.flu-dyn",
+            "q-fin.TR",
+            "eess.SP",
+            "hep-th",
+        ] {
+            assert!(codes.contains(code), "{code} is missing");
+        }
+    }
+
+    /// Every category is on exactly one page of its heading, tappable where
+    /// it is drawn, at every text size the reader offers.
+    #[test]
+    fn every_category_is_reachable_on_its_headings_pages_at_every_text_size() {
+        for metrics in text_size_metrics() {
+            let context = AppRunner::with_metrics(Arxiv::default(), metrics).context();
+            for (group, heading) in GROUPS.iter().enumerate() {
+                let inside: Vec<usize> = group_subjects(group).collect();
+                if inside.len() < 2 {
+                    continue;
+                }
+                let mut app = Arxiv {
+                    view: View::Group,
+                    group: Some(group),
+                    ..Arxiv::default()
+                };
+                let pages = app
+                    .group_screen(&context)
+                    .page_turns
+                    .and_then(|turns| turns.position)
+                    .map_or(1, |(_, total)| usize::from(total));
+                let mut seen = vec![0; inside.len()];
+                for page in 0..pages {
+                    app.group_page = page;
+                    let screen = app.group_screen(&context);
+                    assert_eq!(
+                        screen.top_bar.as_ref().map(|bar| bar.title.as_str()),
+                        Some(*heading)
+                    );
+                    let diagnostics =
+                        screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{:?} {}: {:?}",
+                        metrics.text_scale,
+                        heading,
+                        diagnostics.issues
+                    );
+                    for (at, index) in inside.iter().enumerate() {
+                        let action = action_id(&format!("{SUBJECT}{index}"));
+                        if diagnostics.layout.rect_of_action(action).is_some() {
+                            seen[at] += 1;
+                        }
+                    }
+                }
+                assert_eq!(seen, vec![1; inside.len()], "{heading}");
+            }
+        }
+    }
+
+    /// A heading opens its categories, a category opens its listing, and Back
+    /// retraces those steps rather than jumping to the start.
+    #[test]
+    fn a_heading_leads_to_its_categories_and_back_retraces_the_way() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.action(action_id(&format!("{GROUP}3")));
+        assert_eq!(runner.app().view, View::Group);
+        let first = group_subjects(3)
+            .next()
+            .expect("Mathematics has categories");
+        let commands = runner.action(action_id(&format!("{SUBJECT}{first}")));
+        assert_eq!(runner.app().view, View::Listing);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("cat:math.AC")
+        )));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Group);
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Subjects);
+    }
+
+    /// A heading that holds a single category is that category.
+    #[test]
+    fn a_heading_of_one_category_opens_its_listing_directly() {
+        let only = (0..GROUPS.len())
+            .find(|group| group_subjects(*group).count() == 1)
+            .expect("arXiv has archives of one category");
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        let commands = runner.action(action_id(&format!("{GROUP}{only}")));
+        assert_eq!(runner.app().view, View::Listing);
+        let code = SUBJECTS[group_subjects(only).next().expect("one")].0;
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Spawn { work: Task::Fetch { url, .. }, .. }
+                if url.contains(&format!("cat:{}", escape(code)))
+        )));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Subjects);
+    }
+
+    /// A listing that could not be fetched offers to try again, and does not
+    /// pretend the subject published nothing.
+    #[test]
+    fn a_listing_that_never_arrived_offers_to_try_again_rather_than_no_papers() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.action(action_id("subject-0"));
+        // The request is retried before it is given up on, so it fails as
+        // many times as it is asked.
+        for _ in 0..8 {
+            let Some((task, _)) = runner.app().task else {
+                break;
+            };
+            runner.task_outcome(task, TaskOutcome::Failed(TaskError::Offline));
+        }
+        assert!(runner.app().task.is_none(), "the listing never gave up");
+        let context = runner.context();
+        let rendered = format!("{:?}", runner.app().listing(&context));
+        assert!(rendered.contains("not on a network"), "{rendered}");
+        assert!(rendered.contains("Try again"), "{rendered}");
+        assert!(!rendered.contains("No papers found"), "{rendered}");
+        let commands = runner.action(action_id(super::RETRY_LISTING));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("cat:cs.AI")
+        )));
+    }
+
+    /// A search is typed on the reader's own keyboard, and what comes back
+    /// is the question arXiv is asked. Backing out is Back from the search.
+    #[test]
+    fn a_search_is_typed_on_the_readers_keyboard_and_backing_out_returns_to_the_subjects() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        let commands = runner.action(action_id(super::SEARCH));
+        let Some(kobo_sdk::DeviceRequest::TypeText {
+            prompt,
+            hint,
+            submit,
+            ..
+        }) = kobo_sdk::keyboard::testing::asked(&commands).cloned()
+        else {
+            panic!("the reader's keyboard was not asked for: {commands:?}")
+        };
+        assert_eq!(
+            (prompt.as_str(), hint.as_str(), submit.as_str()),
+            ("Search arXiv", "A phrase, an author, a title", "Search")
+        );
+        let commands = runner.type_text("  neural fields ");
+        assert_eq!(runner.app().view, View::Listing);
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Spawn { work: Task::Fetch { url, .. }, .. } if url.contains("neural")
+        )));
+
+        runner.action(ActionId::BACK);
+        runner.action(action_id(super::SEARCH));
+        runner.cancel_text();
+        assert_eq!(runner.app().view, View::Subjects);
+    }
+
+    /// The retry for a library that could not be read or saved is on the
+    /// banner that says so, not in the top bar away from it.
+    #[test]
+    fn a_library_that_could_not_be_saved_offers_its_retry_on_the_banner() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        runner.app_mut().keeper.failed = true;
+        runner.app_mut().view = View::Library;
+        let context = runner.context();
+        let screen = runner.app().library(&context);
+        let retry = action_id(super::RETRY_KEPT);
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Banner { level: kobo_sdk::BannerLevel::Error, action: Some(action), .. }
+                if action.action == retry
+        )));
+        assert!(
+            screen
+                .top_bar
+                .as_ref()
+                .is_none_or(|bar| bar.actions.iter().all(|a| a.action != retry)),
+            "the retry is still in the top bar as well"
+        );
+    }
+
+    /// While a listing is on its way its placeholder fits the panel at every
+    /// text size held either way, with or without a notice above it.
+    #[test]
+    fn a_listing_on_its_way_fits_its_placeholder_at_every_text_size_held_either_way() {
+        for metrics in text_size_metrics() {
+            for orientation in [
+                kobo_sdk::Orientation::Portrait,
+                kobo_sdk::Orientation::Landscape,
+            ] {
+                let metrics = metrics.oriented(orientation);
+                let context = AppRunner::with_metrics(Arxiv::default(), metrics).context();
+                for trouble in [None, Some("The archive is slow to answer. Still asking.")] {
+                    let app = Arxiv {
+                        view: View::Listing,
+                        query: Some(Query::Words("neural fields".into())),
+                        trouble: trouble.map(str::to_owned),
+                        task: Some((TaskId(1), super::Awaiting::Listing)),
+                        ..Arxiv::default()
+                    };
+                    let screen = app.listing(&context);
+                    let diagnostics =
+                        screen.diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?} {trouble:?}: {:?}",
+                        diagnostics.issues
+                    );
+                    assert!(
+                        screen
+                            .nodes
+                            .iter()
+                            .any(|node| matches!(node, kobo_sdk::Node::Skeleton { .. })),
+                        "{metrics:?}: no placeholder"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A listing that never arrived says so with its retry on the banner,
+    /// and the banner, its action and the date window fit at every size.
+    #[test]
+    fn a_listing_that_never_arrived_fits_its_retry_at_every_text_size() {
+        for metrics in text_size_metrics() {
+            let context = AppRunner::with_metrics(Arxiv::default(), metrics).context();
+            let app = Arxiv {
+                view: View::Listing,
+                query: Some(Query::Words("neural fields".into())),
+                trouble: Some(
+                    "This reader is not on a network. Connect to Wi-Fi and try again.".into(),
+                ),
+                ..Arxiv::default()
+            };
+            let diagnostics = app
+                .listing(&context)
+                .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true));
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{:?}: {:?}",
+                metrics.text_scale,
+                diagnostics.issues
+            );
+            let retry = action_id(super::RETRY_LISTING);
+            let rect = diagnostics
+                .layout
+                .rect_of_action(retry)
+                .expect("the retry is drawn");
+            assert_eq!(
+                diagnostics
+                    .layout
+                    .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                Some(retry)
+            );
+        }
+    }
+
+    /// The bar over a paper says which paper it is in words.
+    #[test]
+    fn the_top_bar_names_the_paper_rather_than_its_number() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().papers = vec![paper()];
+        runner.start();
+        runner.action(action_id("paper-0"));
+        let screen = runner.app().reading();
+        assert_eq!(
+            screen.top_bar.map(|bar| bar.title).as_deref(),
+            Some(paper().title.as_str())
+        );
     }
 
     /// While the full text is in the air, the paper screen says so.
@@ -3031,7 +3974,7 @@ mod tests {
         };
         let summary = kept_summary(&kept);
         assert!(summary.contains("2401.00001v2"), "{summary}");
-        assert!(summary.contains("89 KB"), "{summary}");
+        assert!(summary.contains("90 KB"), "{summary}");
         assert!(summary.starts_with("42% \u{b7} "), "{summary}");
         // Never opened says nothing, rather than claiming nought percent.
         let unread = Kept {
@@ -3301,27 +4244,69 @@ mod tests {
         );
     }
 
+    /// Answers the keeper's request for its index as a reader with nothing
+    /// kept yet would.
+    fn keeper_ready(runner: &mut AppRunner<Arxiv>) {
+        runner.store_result(StoreResult::Loaded {
+            key: INDEX_KEY.into(),
+            value: None,
+        });
+    }
+
+    /// The last file written to the shelf, by name and bytes.
+    fn written(commands: &[Command]) -> Option<(String, Vec<u8>)> {
+        commands.iter().rev().find_map(|command| match command {
+            Command::Store(StoreRequest::ShelfWrite { name, bytes, .. }) => {
+                Some((name.clone(), bytes.clone()))
+            }
+            _ => None,
+        })
+    }
+
+    /// Lets the shelf and the store acknowledge a kept paper's file, and
+    /// answers with what the application asked for as they did.
+    fn acknowledge(runner: &mut AppRunner<Arxiv>, name: &str, bytes: &[u8]) -> Vec<Command> {
+        let mut commands = runner.store_result(StoreResult::ShelfWritten {
+            name: name.to_owned(),
+            size: u32::try_from(bytes.len()).expect("a small file"),
+        });
+        commands.extend(runner.store_result(StoreResult::Saved {
+            key: INDEX_KEY.into(),
+        }));
+        commands
+    }
+
+    /// One grey pixel, as a whole PNG file.
+    fn png() -> Vec<u8> {
+        vec![
+            137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1,
+            8, 0, 0, 0, 0, 58, 126, 155, 85, 0, 0, 0, 10, 73, 68, 65, 84, 120, 156, 99, 104, 0, 0,
+            0, 130, 0, 129, 119, 205, 114, 182, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+        ]
+    }
+
     /// Keeping a paper puts the rendering somewhere it can be read again with
-    /// no network, and says so in the catalogue.
+    /// no network, and says so in the catalogue, but calls it offline only
+    /// once the device has acknowledged the file.
     #[test]
     fn keeping_a_paper_writes_it_to_the_shelf_and_lists_it() {
         let rendering = "<article><h2>1 Introduction</h2><p>Words.</p></article>";
         let mut runner = AppRunner::new(Arxiv::default());
         let _ = opened_on(&mut runner, rendering);
+        keeper_ready(&mut runner);
 
         let commands = runner.action(action_id(KEEP));
         assert!(
             runner.app().is_kept(&paper().id),
             "the paper was not listed in the library"
         );
-        let wrote = commands.iter().any(|command| {
-            matches!(
-                command,
-                Command::Store(kobo_sdk::StoreRequest::ShelfWrite { name, .. })
-                    if *name == blob_key(&paper().id)
-            )
-        });
-        assert!(wrote, "nothing was written to the shelf");
+        assert!(
+            !runner.app().is_offline(&paper().id),
+            "the paper was called offline before anything was written"
+        );
+        let (name, bytes) = written(&commands).expect("nothing was written to the shelf");
+        let kept = KeptFile::decode(&bytes).expect("the file is a whole paper");
+        assert!(kept.html.contains("Words."));
 
         // And the catalogue goes down too, or the library is empty next time.
         let listed = commands.iter().any(|command| {
@@ -3331,27 +4316,167 @@ mod tests {
             )
         });
         assert!(listed, "the catalogue was not saved");
+
+        acknowledge(&mut runner, &name, &bytes);
+        assert!(runner.app().is_offline(&paper().id));
+        assert!(runner
+            .app()
+            .listing_summary(&paper())
+            .starts_with("offline"));
+    }
+
+    /// The figures go onto the reader with the paper, and a kept paper opens
+    /// with them from the file, asking the network for nothing.
+    #[test]
+    fn a_kept_paper_keeps_its_figures_and_opens_with_them_offline() {
+        let rendering = "<article><p>Before the figure.</p>\
+            <figure><img src=\"2401.00001v2/x1.png\" alt=\"A plot\">\
+            <figcaption>Figure 1.</figcaption></figure><p>After.</p></article>";
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(&mut runner, rendering);
+        keeper_ready(&mut runner);
+        let commands = runner.action(action_id(KEEP));
+        let figure = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn {
+                    task,
+                    work: Task::Fetch { url, .. },
+                } if url == "https://arxiv.org/html/2401.00001v2/x1.png" => Some(*task),
+                _ => None,
+            })
+            .expect("keeping the paper did not fetch its figure");
+        let commands = runner.task_outcome(figure, TaskOutcome::Completed(png()));
+        let (name, bytes) = written(&commands).expect("the paper was not written");
+        let kept = KeptFile::decode(&bytes).expect("the file is a whole paper");
+        assert_eq!(
+            kept.pictures,
+            vec![("2401.00001v2/x1.png".to_owned(), png())],
+            "the figure was left behind"
+        );
+        acknowledge(&mut runner, &name, &bytes);
+        let library = runner.app().library.clone();
+        assert_eq!(
+            u64::from(library[0].bytes),
+            bytes.len() as u64,
+            "the library row does not say what the kept file weighs"
+        );
+
+        // A fresh start, with the network gone.
+        let mut again = AppRunner::new(Arxiv::default());
+        again.start();
+        again.store_result(StoreResult::Loaded {
+            key: LIBRARY_KEY.into(),
+            value: Some(super::encode_library(&library)),
+        });
+        let index = format!("kept-index-v1\n{}\t{}\n", paper().id, bytes.len());
+        again.store_result(StoreResult::Loaded {
+            key: INDEX_KEY.into(),
+            value: Some(index.into_bytes()),
+        });
+        let context = again.context();
+        let line = format!("{:?}", again.app().library(&context));
+        assert!(line.contains("Ready offline: 1 paper"), "{line}");
+        again.action(action_id(LIBRARY));
+        let commands = again.action(action_id("kept-0"));
+        let read = commands
+            .iter()
+            .any(|command| matches!(command, Command::Store(StoreRequest::ShelfRead { name: read, .. }) if *read == name));
+        assert!(read, "the kept file was not read back");
+        let size = u32::try_from(bytes.len()).expect("a small file");
+        let commands = again.store_result(StoreResult::ShelfRead {
+            name: name.clone(),
+            offset: 0,
+            bytes: bytes.clone(),
+            size,
+        });
+        assert_eq!(again.app().view, View::FullText);
+        assert!(
+            !commands.iter().any(|command| matches!(
+                command,
+                Command::Spawn {
+                    work: Task::Fetch { .. },
+                    ..
+                }
+            )),
+            "a kept figure was asked of the network"
+        );
+        assert!(
+            again.app().book.missing_pictures().is_empty(),
+            "the figure did not come out of the kept file"
+        );
+        let full = again.app().full_text();
+        assert_eq!(
+            full.top_bar.map(|bar| bar.title).as_deref(),
+            Some(paper().title.as_str())
+        );
+    }
+
+    /// A paper kept before figures were still opens from its old file, and
+    /// reading it is the moment it is rewritten with its figures.
+    #[test]
+    fn a_paper_kept_before_figures_were_still_opens_and_is_rewritten_with_them() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.start();
+        keeper_ready(&mut runner);
+        runner.app_mut().library = vec![Kept {
+            id: paper().id.clone(),
+            title: paper().title.clone(),
+            authors: "Ada Lovelace".into(),
+            bytes: 40,
+            progress: None,
+        }];
+        runner.action(action_id(LIBRARY));
+        let commands = runner.action(action_id("kept-0"));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(StoreRequest::ShelfRead { name, .. }) if *name == blob_key(&paper().id)
+        )));
+        let old = b"<article><p>Kept long ago.</p></article>".to_vec();
+        let commands = runner.store_result(StoreResult::ShelfRead {
+            name: blob_key(&paper().id),
+            offset: 0,
+            size: u32::try_from(old.len()).expect("small"),
+            bytes: old,
+        });
+        assert_eq!(runner.app().view, View::FullText);
+        let (name, bytes) = written(&commands).expect("the old paper was not rewritten");
+        let commands = acknowledge(&mut runner, &name, &bytes);
+        assert!(runner.app().keeper.is_kept(&paper().id));
+        assert!(
+            commands.iter().any(|command| matches!(
+                command,
+                Command::Store(StoreRequest::ShelfRemove { name }) if *name == blob_key(&paper().id)
+            )),
+            "the old file was left on the shelf beside the new one"
+        );
     }
 
     /// Discarding takes back the space as well as the entry. A library that
     /// forgets a paper but keeps its megabyte is a leak with a nice name.
     #[test]
-    fn discarding_a_paper_takes_its_rendering_off_the_shelf_too() {
+    fn discarding_a_paper_takes_its_file_off_the_shelf_too() {
         let rendering = "<article><p>Words.</p></article>";
         let mut runner = AppRunner::new(Arxiv::default());
         let _ = opened_on(&mut runner, rendering);
-        runner.action(action_id(KEEP));
+        keeper_ready(&mut runner);
+        let commands = runner.action(action_id(KEEP));
+        let (name, bytes) = written(&commands).expect("nothing was written");
+        acknowledge(&mut runner, &name, &bytes);
 
         let commands = runner.action(action_id(DISCARD));
         assert!(!runner.app().is_kept(&paper().id), "still listed");
-        let removed = commands.iter().any(|command| {
-            matches!(
-                command,
-                Command::Store(kobo_sdk::StoreRequest::ShelfRemove { name })
-                    if *name == blob_key(&paper().id)
-            )
-        });
-        assert!(removed, "the rendering was left on the shelf");
+        let removed: Vec<&str> = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Store(kobo_sdk::StoreRequest::ShelfRemove { name }) => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            removed.contains(&name.as_str()),
+            "the kept file was left on the shelf"
+        );
     }
 
     /// Keeping from the abstract fetches the paper rather than refusing.
@@ -3362,6 +4487,7 @@ mod tests {
         runner.app_mut().open = Some(0);
         runner.app_mut().view = View::Paper;
         runner.start();
+        keeper_ready(&mut runner);
 
         let commands = runner.action(action_id(KEEP));
         let asked = commands.iter().any(|command| {
@@ -3380,13 +4506,28 @@ mod tests {
             runner.app().is_kept(&paper().id),
             "the fetch it started did not end in the library"
         );
-        assert!(
-            commands.iter().any(|command| matches!(
-                command,
-                Command::Store(kobo_sdk::StoreRequest::ShelfWrite { .. })
-            )),
-            "nothing reached the shelf"
+        assert!(written(&commands).is_some(), "nothing reached the shelf");
+    }
+
+    /// A file the reader refuses takes the paper back out of the library
+    /// and says why, rather than leaving a row with nothing behind it.
+    #[test]
+    fn a_paper_the_reader_has_no_room_for_leaves_the_library_and_says_so() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(&mut runner, "<article><p>Words.</p></article>");
+        keeper_ready(&mut runner);
+        let commands = runner.action(action_id(KEEP));
+        let (name, _) = written(&commands).expect("nothing was written");
+        let mut context = runner.context();
+        runner.app_mut().answered(
+            &mut context,
+            super::Asked::Shelf,
+            &name,
+            StoreResult::Denied(kobo_sdk::StoreError::NoRoom),
         );
+        assert!(!runner.app().is_kept(&paper().id));
+        let trouble = runner.app().trouble.clone().unwrap_or_default();
+        assert!(trouble.contains("no room"), "{trouble}");
     }
 
     /// A paper that arrived in pieces is not a paper to keep.
@@ -3529,7 +4670,7 @@ mod tests {
     #[test]
     fn a_followed_subject_leads_the_subject_list() {
         let last = SUBJECTS.len() - 1;
-        let (code, name) = SUBJECTS[last];
+        let (code, name, _) = SUBJECTS[last];
         let mut runner = AppRunner::new(Arxiv::default());
         runner.start();
         runner.app_mut().view = View::Listing;
@@ -3565,8 +4706,8 @@ mod tests {
         let screen = runner.app().subjects(&context);
         assert_eq!(
             row_titles(&screen).first().map(String::as_str),
-            Some(SUBJECTS[0].1),
-            "the catalogue's order did not come back"
+            Some(GROUPS[0]),
+            "the headings did not come back to the top"
         );
     }
 

@@ -6,6 +6,9 @@ tap Spells
 expect 2014
 tap Filters
 tap Class
+wait-for Show only
+clean
+shot spell-class-choices
 tap-id filters-next
 tap Wizard
 expect Wizard
@@ -18,3 +21,48 @@ tap View results
 expect Spells
 clean
 shot spell-results
+# A party member's hit points move five at a time, and a spell level holds
+# several slots that a long rest gives back.
+tap Back
+tap-id party
+tap-id party-add
+type moss
+tap-id kb.enter
+type 14
+tap-id kb.enter
+type 20
+tap-id kb.enter
+type 20
+tap-id kb.enter
+wait-for moss
+tap moss
+tap-id hp-down-5
+expect 15/20
+tap-id next
+tap-id slots-setup
+tap-id slot-0
+tap-id slot-0
+tap-id slots-spend
+tap-id slot-0
+expect 1st · 1 of 2 left
+clean
+shot party-slots
+tap Long rest
+expect 1st · 2 of 2 left
+# A combatant's hit points may be left blank. Putting the keyboard away at
+# that step asks which was meant, and the search lets go on Back.
+tap Back
+tap Back
+tap-id initiative
+tap-id init-add
+type kobold
+tap-id kb.enter
+type 9
+tap-id kb.enter
+wait-for Hit points, or leave blank
+tap Back
+wait-for Leave hit points blank
+clean
+shot combatant-blank-hit-points
+tap Leave hit points blank
+wait-for kobold

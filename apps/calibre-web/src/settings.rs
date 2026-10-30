@@ -52,6 +52,11 @@ impl Settings {
         self.state = State::Ready;
         true
     }
+    /// Whether a newly added library is waiting for its first catalog to
+    /// answer, which is the last step of adding it.
+    pub fn checking(&self) -> bool {
+        self.state == State::Ready && self.candidate.is_some() && self.writing.is_none()
+    }
     pub fn verified(&mut self, c: &mut Context) {
         if self.state != State::Ready || self.writing.is_some() {
             return;

@@ -2,12 +2,12 @@
   "id": "arxiv",
   "display_name": "Preprints",
   "short_label": "Preprints",
-  "summary": "Browse and search arXiv, keep preprints, and read their HTML versions on your Kobo.",
-  "version": "1.4.4",
+  "summary": "Browse every arXiv category, keep preprints with their figures, and read them offline on your Kobo.",
+  "version": "1.4.7",
   "glyph": "note",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Recovery notices no longer cover subject, paper or saved-item rows. Long titles, paper facts and abstracts remain complete across pages at every text size.",
-  "page_description": "Browse a subject's newest arXiv preprints or search the archive, then read the abstract and the paper's HTML rendering on the panel instead of downloading a PDF. Keep preprints for offline reading on your Kobo. Preprints is an unofficial reader and is not affiliated with or endorsed by arXiv. Thank you to arXiv for use of its open access interoperability."
+  "release_notes": "Search is typed on Cobalt's own keyboard, and Try again sits on the message that says what failed. A listing still loading no longer stops the screen drawing at the largest text sizes.",
+  "page_description": "Browse the newest arXiv preprints in any category, grouped under arXiv's own headings, or search the archive, then read the abstract and the paper's HTML rendering on the panel instead of downloading a PDF. Keep preprints with their figures for offline reading on your Kobo. Preprints is an unofficial reader and is not affiliated with or endorsed by arXiv. Thank you to arXiv for use of its open access interoperability."
 }

@@ -44,6 +44,12 @@ use std::process::ExitCode;
 /// under the keys would move the keys, and the reader's finger is already
 /// there.
 const RESTART: &str = "restart";
+/// Shows output that has scrolled off the top, and brings the newest back.
+///
+/// Also in the top bar, for the same reason, and in words: there is no
+/// picture of "up" that would not be mistaken for a page turn.
+const EARLIER: &str = "earlier";
+const LATEST: &str = "latest";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Status {
@@ -59,14 +65,38 @@ impl Status {
     /// Status in the flow above the terminal would move the grid the moment it
     /// changed, and a grid that moves is a shell whose output no longer lines
     /// up with what it was told its width was.
+    ///
+    /// Said in words. "exited 1" read as an error code from the terminal
+    /// itself, when what it meant was that the shell had closed and the last
+    /// thing run in it had failed, which the output above already shows. Kept
+    /// short enough to sit whole beside Restart and Earlier on a Clara.
+    /// A word or two for the same status, for a top bar too narrow for the
+    /// sentence: at the largest text sizes the title has room for about
+    /// eight letters beside two actions, and "Shell closed after an error"
+    /// cut to "Shell cl…" says less than "Error" does.
+    const fn short_title(self) -> &'static str {
+        match self {
+            Self::Starting | Self::Running => "Terminal",
+            Self::Ended(0) => "Closed",
+            Self::Ended(status) if status > 0 => "Error",
+            Self::Ended(_) => "Stopped",
+            Self::Refused(ShellError::NotPermitted) => "Refused",
+            Self::Refused(ShellError::Unavailable) => "No shell",
+            Self::Refused(_) => "Failed",
+        }
+    }
+
     fn title(self) -> String {
         match self {
-            Self::Starting => "Terminal".to_string(),
-            Self::Running => "Terminal - sh".to_string(),
-            Self::Ended(status) => format!("Terminal - exited {status}"),
-            Self::Refused(ShellError::NotPermitted) => "Terminal - not permitted".to_string(),
-            Self::Refused(ShellError::Unavailable) => "Terminal - unavailable here".to_string(),
-            Self::Refused(error) => format!("Terminal - refused ({error:?})"),
+            Self::Starting | Self::Running => "Terminal".to_string(),
+            Self::Ended(0) => "Shell closed".to_string(),
+            Self::Ended(status) if status > 0 => "Shell closed after an error".to_string(),
+            Self::Ended(_) => "Shell was stopped".to_string(),
+            Self::Refused(ShellError::NotPermitted) => {
+                "Terminal is not allowed on this reader".to_string()
+            }
+            Self::Refused(ShellError::Unavailable) => "No shell on this reader".to_string(),
+            Self::Refused(_) => "The shell could not start".to_string(),
         }
     }
 
@@ -86,6 +116,9 @@ struct App {
     /// screen per chunk to a runtime that is showing something else is traffic
     /// for no picture, so the screen is rebuilt once on the way back instead.
     visible: bool,
+    /// The panel, as last measured, so the top bar can tell whether its
+    /// title fits beside its actions.
+    metrics: Option<kobo_sdk::DisplayMetrics>,
 }
 
 impl Default for App {
@@ -99,6 +132,7 @@ impl Default for App {
             grid: (0, 0),
             status: Status::Starting,
             visible: true,
+            metrics: None,
         }
     }
 }
@@ -111,22 +145,75 @@ impl App {
     /// changes size, which is what keeps a key under the finger that is about
     /// to press it again.
     fn compose(&self, rows: Vec<String>, cursor: Option<Caret>) -> Screen {
-        let mut builder = ScreenBuilder::new("terminal").top_bar(self.status.title());
-        if self.status.finished() {
-            builder = builder.top_bar_glyph(RESTART, "restart", kobo_sdk::Glyph::Refresh);
-        }
-        builder
+        let looking_back = self.terminal.lines_back() > 0;
+        let title = if looking_back {
+            "Earlier output".to_string()
+        } else {
+            self.status.title()
+        };
+        // Where the sentence would be cut beside the actions, the short form
+        // says the same thing whole.
+        let title = if self.title_fits(&title) {
+            title
+        } else if looking_back {
+            "History".to_string()
+        } else {
+            self.status.short_title().to_string()
+        };
+        self.bar(title)
             .terminal(rows, cursor)
             .terminal_keys(&self.keys)
             .build()
     }
 
+    /// The top bar with its actions. At most two controls fit beside the
+    /// title. Looking back takes both, because the way forward matters more
+    /// than a restart that is one tap away again as soon as the newest output
+    /// is showing.
+    fn bar(&self, title: String) -> ScreenBuilder {
+        let mut builder = ScreenBuilder::new("terminal")
+            .top_bar(title)
+            .top_bar_action(EARLIER, "Earlier");
+        if self.terminal.lines_back() > 0 {
+            builder = builder.top_bar_action(LATEST, "Latest");
+        } else if self.status.finished() {
+            builder = builder.top_bar_action(RESTART, "Restart");
+        }
+        builder
+    }
+
+    /// Whether `title` is drawn whole beside the actions on the panel last
+    /// measured. Before the first measurement there is nothing to measure
+    /// against, and the full title is kept.
+    fn title_fits(&self, title: &str) -> bool {
+        let Some(metrics) = self.metrics else {
+            return true;
+        };
+        // Nothing but the bar is on this screen, so the title is drawn whole
+        // exactly when some line of it says the title in full.
+        self.bar(title.to_owned())
+            .build()
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+            .layout
+            .nodes
+            .iter()
+            .any(|node| node.text_lines.first().map(String::as_str) == Some(title))
+    }
+
+    /// The screen as it stands. A shell that has closed gets no cursor: there
+    /// is nothing left to type into until Restart.
     fn view(&self) -> Screen {
-        self.compose(self.terminal.rows(), self.terminal.cursor())
+        let cursor = if self.status.finished() {
+            None
+        } else {
+            self.terminal.cursor()
+        };
+        self.compose(self.terminal.rows(), cursor)
     }
 
     /// Asks the layout engine, not arithmetic, how big the grid is.
-    fn measure(&self, context: &Context) -> (u16, u16) {
+    fn measure(&mut self, context: &Context) -> (u16, u16) {
+        self.metrics = Some(context.metrics());
         let empty = self.compose(Vec::<String>::new(), None);
         kobo_sdk::terminal_grid_for(&empty, &context.metrics())
     }
@@ -136,6 +223,12 @@ impl App {
             let screen = self.view();
             context.set_screen(screen);
         }
+    }
+
+    /// How far one tap on Earlier or Latest moves: half a screen, so the line
+    /// that was at the top is still in view to read on from.
+    fn step(&self) -> usize {
+        usize::from(self.grid.1 / 2).max(1)
     }
 
     fn start(&mut self, context: &mut Context) {
@@ -164,27 +257,58 @@ impl KoboApp for App {
             }
             return;
         }
+        if action == action_id(EARLIER) || action == action_id(LATEST) {
+            self.on_page_turn(context, action == action_id(LATEST));
+            return;
+        }
         let Some(typed) = self.keys.press(action) else {
             return;
         };
         match typed {
             // Sent, and nothing drawn. The answer to a keystroke is what the
             // program prints, and painting an echo of our own would either
-            // duplicate it or race it.
-            Typed::Send(bytes) => context.shell().input(bytes),
+            // duplicate it or race it. Typing while looking back goes back to
+            // the newest output first, where what is typed will appear.
+            Typed::Send(bytes) => {
+                if self.terminal.lines_back() > 0 {
+                    self.terminal.show_latest();
+                    self.repaint(context);
+                }
+                context.shell().input(bytes);
+            }
             // A modifier moved, so every label changed and nothing was sent.
             Typed::Changed => self.repaint(context),
         }
     }
 
     fn on_shell_event(&mut self, context: &mut Context, event: ShellEvent) {
+        let ended = matches!(event, ShellEvent::Closed { .. } | ShellEvent::Refused(_));
         match event {
             ShellEvent::Opened => self.status = Status::Running,
             ShellEvent::Output(bytes) => self.terminal.feed(&bytes),
             ShellEvent::Closed { status } => self.status = Status::Ended(status),
             ShellEvent::Refused(error) => self.status = Status::Refused(error),
         }
+        // The whole sentence goes under the output as well, where a large
+        // text size cannot cut it short the way it cuts the title.
+        if ended {
+            self.terminal
+                .feed(format!("\r\n{}.\r\n", self.status.title()).as_bytes());
+        }
         self.repaint(context);
+    }
+
+    /// The page buttons look back through earlier output and forward again.
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        let before = self.terminal.lines_back();
+        if forward {
+            self.terminal.scroll_forward(self.step());
+        } else {
+            self.terminal.scroll_back(self.step());
+        }
+        if self.terminal.lines_back() != before {
+            self.repaint(context);
+        }
     }
 
     fn on_background(&mut self, _context: &mut Context) {
@@ -217,7 +341,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Status, RESTART};
+    use super::{App, Status, EARLIER, LATEST, RESTART};
     use kobo_sdk::terminal::Typed;
     use kobo_sdk::{action_id, AppRunner, Command, ShellError, ShellEvent};
     use kobo_ui::{Chrome, LayoutKind, Rect, Screen, CLARA_BW_METRICS};
@@ -340,7 +464,14 @@ mod tests {
         let commands = runner.shell_event(ShellEvent::Refused(ShellError::NotPermitted));
         let screen = screens(&commands).pop().expect("a refusal redraws");
         let title = screen.top_bar.as_ref().map(|bar| bar.title.clone());
-        assert_eq!(title.as_deref(), Some("Terminal - not permitted"));
+        // Beside Earlier and Restart the sentence does not fit even at the
+        // default size, so the bar says it in a word and the sentence is
+        // written whole under the output.
+        assert_eq!(title.as_deref(), Some("Refused"));
+        assert!(
+            format!("{screen:?}").contains("Terminal is not allowed on this reader."),
+            "{screen:?}"
+        );
         assert!(
             layout(&screen).rect_of_action(action_id(RESTART)).is_some(),
             "a refused terminal offers to try again"
@@ -400,11 +531,77 @@ mod tests {
     }
 
     #[test]
-    fn a_status_says_what_happened() {
-        assert_eq!(Status::Ended(1).title(), "Terminal - exited 1");
-        assert!(Status::Running.title().contains("sh"));
+    fn a_status_says_what_happened_in_words_rather_than_an_exit_code() {
+        assert_eq!(Status::Ended(0).title(), "Shell closed");
+        assert_eq!(Status::Ended(1).title(), "Shell closed after an error");
+        assert_eq!(Status::Ended(-1).title(), "Shell was stopped");
+        for status in [Status::Ended(1), Status::Ended(127), Status::Ended(-9)] {
+            assert!(
+                !status
+                    .title()
+                    .chars()
+                    .any(|character| character.is_ascii_digit()),
+                "{} shows a number",
+                status.title()
+            );
+        }
+        assert_eq!(Status::Running.title(), "Terminal");
         assert!(!Status::Starting.finished());
         assert!(Status::Ended(0).finished());
+    }
+
+    /// Output that scrolled off the top can be brought back without moving
+    /// the keys, and typing returns to the newest line before it is sent.
+    #[test]
+    fn earlier_output_can_be_read_and_typing_returns_to_the_newest() {
+        let (mut runner, commands) = started();
+        let first = screens(&commands).pop().expect("a first screen");
+        let key = action_id("kb.r0c0");
+        let keys_at = layout(&first).rect_of_action(key);
+        runner.shell_event(ShellEvent::Opened);
+        let lines = (1..=200).fold(String::new(), |mut lines, line| {
+            lines.push_str("line ");
+            lines.push_str(&line.to_string());
+            lines.push_str("\r\n");
+            lines
+        });
+        runner.shell_event(ShellEvent::Output(lines.into_bytes()));
+
+        let back = screens(&runner.action(action_id(EARLIER)))
+            .pop()
+            .expect("looking back redraws");
+        assert_eq!(
+            back.top_bar.as_ref().map(|bar| bar.title.as_str()),
+            Some("Earlier output")
+        );
+        assert_eq!(layout(&back).rect_of_action(key), keys_at);
+        assert!(layout(&back).rect_of_action(action_id(LATEST)).is_some());
+        assert!(runner.app().terminal.lines_back() > 0);
+
+        let commands = runner.action(key);
+        assert_eq!(runner.app().terminal.lines_back(), 0);
+        assert_eq!(sent(&commands), vec![b"q".to_vec()]);
+        let latest = screens(&commands).pop().expect("returning redraws");
+        assert_eq!(
+            latest.top_bar.as_ref().map(|bar| bar.title.as_str()),
+            Some("Terminal")
+        );
+    }
+
+    #[test]
+    fn a_closed_shell_offers_a_restart_in_words() {
+        let (mut runner, _commands) = started();
+        let screen = screens(&runner.shell_event(ShellEvent::Closed { status: 1 }))
+            .pop()
+            .expect("closing redraws");
+        let bar = screen.top_bar.as_ref().expect("a top bar");
+        let restart = bar
+            .actions
+            .iter()
+            .find(|action| action.action == action_id(RESTART))
+            .expect("a way to start again");
+        assert_eq!(restart.label, "Restart");
+        assert!(restart.glyph.is_none());
     }
 
     /// A build that ran long enough to fill the panel still leaves the battery

@@ -24,15 +24,20 @@ time.
 
 ## Setup
 
-1. In Mealie, create a long-lived API token.
-2. Save the token to a private file and install it on the reader under the
-   secret name `mealie`:
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. In Mealie, create an API token.
+3. Connect from your computer:
 
    ```sh
-   kobo secret set mealie --from TOKEN_FILE --device IP
+   kobo connect kitchencard
    ```
 
+   It asks for the Mealie address and the token, checks them, and sets the
+   app up. Open Kitchen Card, or tap **Check again**.
+
 The runtime attaches the token to requests itself, so the app never sees it.
+A refused token is reported as a token problem, never as a wrong address, and
+saved recipes keep cooking.
 
 ## Permissions
 

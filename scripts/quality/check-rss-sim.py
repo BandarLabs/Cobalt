@@ -138,10 +138,12 @@ def main():
                 capture('09-search-entry')
                 drive('type quartz', 'tap-id kb.enter', 'expect No saved articles match')
                 capture('11-no-matches')
-                drive('tap-id search-articles', 'tap-id clear-search', 'tap-id search-articles',
+                # Back widens a narrowed list before it leaves the feed: the
+                # reader's own keyboard has no room for the Clear it once had.
+                drive('tap Back', 'wait-for-id item-0', 'tap-id search-articles',
                       'type reeds', 'tap-id kb.enter', 'wait-for-id item-0')
                 capture('10-search-results')
-                drive('tap-id search-articles', 'tap-id clear-search')
+                drive('tap Back', 'wait-for-id search-articles')
                 drive('tap-id item-0', 'wait-for-id reader-forward')
                 capture('03-html-article')
                 drive('tap-id reader-forward')
@@ -174,9 +176,9 @@ def main():
                 drive('tap Back', 'tap Back', 'tap-id add', 'tap-id import-opml',
                       'wait-for-id import-file-0', 'tap-id import-file-0', 'wait-for-id import-confirm',
                       'expect 1 new feed')
-                drive('expect Second journal', 'expect https://example.com/', 'expect second.xml',
-                      'tap-id import-toggle-1', 'expect Not selected',
-                      'tap-id import-toggle-1', 'expect Selected', 'wait-for-id import-confirm')
+                drive('expect Second journal', 'expect example.com', 'expect-missing second.xml',
+                      'tap-id import-toggle-1', 'expect None selected',
+                      'tap-id import-toggle-1', 'expect 1 selected', 'wait-for-id import-confirm')
                 capture('12-opml-preview')
                 before_import = (state/'feeds').read_bytes()
                 drive('scenario storage-full', 'tap-id import-confirm', 'wait-idle',
@@ -199,7 +201,9 @@ def main():
                 address = start()
                 drive('wait-for-id feed-0')
                 assert (state/'feeds').read_bytes()==before_import
-                drive('expect 0 unread')
+                # A feed read to the end carries no unread badge, and the
+                # count is no longer written into its summary.
+                drive('expect Updated', 'expect-missing unread')
                 capture('17-subscriptions-reopened')
                 stop()
                 damaged = b'\xfforiginal subscriptions must survive'
@@ -212,7 +216,13 @@ def main():
                 (state/'feeds').write_bytes(before_import)
                 drive('tap-id retry-load-subscriptions', 'wait-for-id feed-0')
                 capture('19-subscriptions-reloaded')
-                drive('tap-id add', 'tap-id browse-feeds', 'expect BBC Science', 'expect NASA Science')
+                # An address that is not HTTPS comes back in the field with
+                # the reason under it, and nothing is fetched.
+                drive('tap-id add', 'tap-id feed-address', 'type http://example.com/feed.xml',
+                      'tap-id kb.enter', 'wait-for Use an HTTPS feed address.',
+                      'expect http://example.com/feed.xml')
+                capture('19b-http-address-refused')
+                drive('tap-id browse-feeds', 'expect Science + Tech', 'expect NASA Science')
                 capture('20-browse-feeds')
                 drive('scenario offline', 'tap-id starter-0', 'wait-for This reader is not on a network')
                 assert (state/'feeds').read_bytes()==before_import
@@ -222,7 +232,7 @@ def main():
                     'status': 'passed', 'checks': ['saved feed opens without network', 'saved body search, no matches and clearing without network',
                     'HTML reading and page turn with a verified offline image', 'offline refresh retains articles',
                     'process restart reopens saved body at saved page', 'original snapshot unchanged',
-                    'no server mutations', 'failed progress write preserves prior state', 'explicit save retry persists latest position', 'OPML preview supports selection and skips duplicate and HTTP entries', 'OPML save failure preserves subscriptions and retry adds only new feed', 'failed unfollow preserves disk state and retry survives restart', 'unreadable subscriptions survive retry and a repaired file can reload', 'starter browsing sends no requests and offline selection does not subscribe',
+                    'no server mutations', 'failed progress write preserves prior state', 'explicit save retry persists latest position', 'OPML preview supports selection and skips duplicate and HTTP entries', 'OPML save failure preserves subscriptions and retry adds only new feed', 'failed unfollow preserves disk state and retry survives restart', 'unreadable subscriptions survive retry and a repaired file can reload', 'an HTTP address stays in the field with its reason and fetches nothing', 'starter browsing sends no requests and offline selection does not subscribe',
                     'the computer stages a checked OPML list into the Feeds shelf'], 'fixture': 'original-rss-journal',
                     'limits': ['Image snapshot is seeded locally; network download and image-save failure need separate coverage'],
                 }, indent=2)+'\n')

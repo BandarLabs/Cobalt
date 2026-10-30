@@ -5,9 +5,9 @@ mod zvm;
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, Chrome, Context, DisplayMetrics, Glyph, KoboApp, LayoutIssueKind,
-    ParagraphPresentation, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload,
-    StoreResult, TileShape,
+    action_id, ActionId, BannerLevel, Chrome, Context, DisplayMetrics, Glyph, KoboApp,
+    LayoutIssueKind, ParagraphPresentation, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
+    ShelfUpload, StoreResult, TileShape,
 };
 use std::fmt::Write as _;
 use std::process::ExitCode;
@@ -50,9 +50,16 @@ struct Parser {
     pages_keyboard_open: Option<bool>,
     page: usize,
     keyboard: Keyboard,
-    message: Option<String>,
+    /// What the last thing done came to, with how it is drawn: a save that
+    /// finished is a success, a save that could not be written is an error,
+    /// and an empty slot is only news. Drawn at one level, a good save and a
+    /// failed one looked the same on the slots screen.
+    message: Option<(BannerLevel, String)>,
     slot_action: SlotAction,
     keyboard_open: bool,
+    /// A verb tapped without its object, waiting for the reader to choose
+    /// what to read, open or take.
+    asking: Option<&'static str>,
 }
 
 impl Default for Parser {
@@ -80,6 +87,7 @@ impl Default for Parser {
             message: None,
             slot_action: SlotAction::Save,
             keyboard_open: false,
+            asking: None,
         }
     }
 }
@@ -127,8 +135,8 @@ impl Parser {
         let mut builder = ScreenBuilder::new("parser")
             .top_bar("Parser")
             .heading("Interactive fiction");
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+        if let Some((level, message)) = &self.message {
+            builder = builder.banner(*level, message);
         }
         builder
     }
@@ -142,17 +150,45 @@ impl Parser {
         )
     }
 
+    /// An empty shelf, said the way Vault and Music Stand say theirs: what is
+    /// missing, the command to type on the computer under its own heading,
+    /// and the check directly under the command, so the owner who has just
+    /// typed it finds the next step beside it rather than at the foot.
+    ///
+    /// Held sideways at the larger sizes, a message over it pushed Check for
+    /// stories off the panel, so the mark gives way first and then the
+    /// sentence; the title, the command and the check always stay.
+    fn empty_library(&self, context: &Context) -> Screen {
+        let screen = |glyph: Option<Glyph>, body: &str| {
+            let mut builder = ScreenBuilder::new("parser").top_bar("Parser");
+            if let Some((level, message)) = &self.message {
+                builder = builder.banner(*level, message);
+            }
+            builder
+                .splash(glyph, "No stories yet", body)
+                .section("On your computer")
+                .command("kobo parser push story.z5")
+                .button("refresh", "Check for stories")
+                .build()
+        };
+        let body = "Send a .z3, .z5 or .z8 story from a computer. Stories play without Wi-Fi.";
+        let metrics = context.metrics();
+        [(Some(Glyph::Book), body), (None, body), (None, "")]
+            .into_iter()
+            .map(|(glyph, body)| screen(glyph, body))
+            .find(|candidate| {
+                !candidate
+                    .diagnostics(&metrics, &Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| screen(None, ""))
+    }
+
     fn library_screen(&self, context: &Context) -> Screen {
-        let builder = self.library_prefix();
         if self.stories.is_empty() {
-            return builder
-                .empty_state(
-                    "No stories yet. Push a .z3, .z5 or .z8 story with \
-                     kobo parser push FILE; stories play completely offline.",
-                )
-                .bottom_action("refresh", "Refresh library")
-                .build();
+            return self.empty_library(context);
         }
+        let builder = self.library_prefix();
         let pages = self.library_pages(context);
         let page = self.library_page.min(pages.len().saturating_sub(1));
         let mut builder = builder.tile_grid(
@@ -175,7 +211,7 @@ impl Parser {
                     u16::try_from(pages.len()).unwrap_or(u16::MAX),
                 );
         }
-        builder.bottom_action("refresh", "Refresh library").build()
+        builder.build()
     }
 
     fn play_screen(&self) -> Screen {
@@ -232,6 +268,18 @@ impl Parser {
         );
         builder = if self.keyboard_open {
             builder.keyboard(&self.keyboard, "Run")
+        } else if let Some(verb) = self.asking {
+            let mut choices: Vec<(String, String)> = self
+                .objects(text)
+                .into_iter()
+                .enumerate()
+                .map(|(index, word)| (format!("object-{index}"), word.to_uppercase()))
+                .collect();
+            choices.push(("object-type".to_owned(), "TYPE IT".to_owned()));
+            choices.push(("object-cancel".to_owned(), "CANCEL".to_owned()));
+            builder
+                .secondary(verb_question(verb))
+                .grid(4, false, choices)
         } else {
             builder.grid(
                 4,
@@ -245,10 +293,46 @@ impl Parser {
             u16::try_from(page).unwrap_or(u16::MAX),
             u16::try_from(pages).unwrap_or(u16::MAX),
         );
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+        if let Some((level, message)) = &self.message {
+            builder = builder.banner(*level, message);
         }
         builder.build()
+    }
+
+    /// The things on the page a verb could be applied to: words the story's
+    /// own dictionary knows, without the verbs, directions and small words
+    /// that are never what an owner means. At most eight, in page order.
+    fn objects(&self, text: &str) -> Vec<String> {
+        let Some(machine) = self.machine.as_ref() else {
+            return Vec::new();
+        };
+        let mut found: Vec<String> = Vec::new();
+        for (_, _, _, word) in word_links(text) {
+            let word = word
+                .trim_matches(|character: char| !character.is_alphanumeric())
+                .to_lowercase();
+            if word.chars().count() < 3
+                || NOT_OBJECTS.contains(&word.as_str())
+                || CHIPS.iter().any(|(probe, ..)| *probe == word)
+                || found.contains(&word)
+                || !machine.knows_word(&word)
+            {
+                continue;
+            }
+            found.push(word);
+            if found.len() == 8 {
+                break;
+            }
+        }
+        found
+    }
+
+    fn page_text(&self) -> &str {
+        let page = self.page.min(self.pages.len().saturating_sub(1));
+        self.pages
+            .get(page)
+            .and_then(|&(start, end)| self.transcript.get(start..end))
+            .unwrap_or("")
     }
 
     fn slot_rows(&self) -> Vec<(String, String, String, Glyph)> {
@@ -308,8 +392,8 @@ impl Parser {
             .top_bar(title)
             .owns_back(true)
             .text(guidance);
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+        if let Some((level, message)) = &self.message {
+            builder = builder.banner(*level, message);
         }
         builder
     }
@@ -386,7 +470,7 @@ impl Parser {
                 self.show(context);
             }
             Err(error) => {
-                self.message = Some(error.to_string());
+                self.message = Some((BannerLevel::Error, error.to_string()));
                 self.view = View::Library;
                 self.show(context);
             }
@@ -409,7 +493,7 @@ impl Parser {
             }
             Err(error) => {
                 self.transcript.push_str(&machine.take_output());
-                self.message = Some(error.to_string());
+                self.message = Some((BannerLevel::Error, error.to_string()));
                 self.repaginate(context);
             }
         }
@@ -438,7 +522,7 @@ impl Parser {
                 }
             }
             Err(error) => {
-                self.message = Some(error.to_string());
+                self.message = Some((BannerLevel::Error, error.to_string()));
                 self.repaginate(context);
             }
         }
@@ -475,14 +559,17 @@ impl Parser {
                 match machine.complete_save(true) {
                     Ok(state) => {
                         self.transcript.push_str(&machine.take_output());
-                        self.message = Some("Saved the story checkpoint.".to_owned());
+                        self.message = Some((
+                            BannerLevel::Success,
+                            "Saved the story checkpoint.".to_owned(),
+                        ));
                         self.repaginate(context);
                         self.page = self.last_content_page();
                         if !matches!(state, RunState::Halted | RunState::NeedInput { .. }) {
                             self.finish_file_request(context, &state);
                         }
                     }
-                    Err(error) => self.message = Some(error.to_string()),
+                    Err(error) => self.message = Some((BannerLevel::Error, error.to_string())),
                 }
             }
         } else if *state == RunState::NeedRestore {
@@ -492,7 +579,10 @@ impl Parser {
             self.slot_action = SlotAction::Restore;
             self.view = View::Slots;
             self.slots_page = 0;
-            self.message = Some("The story asked to restore a game - pick a slot.".to_owned());
+            self.message = Some((
+                BannerLevel::Info,
+                "The story asked to restore a game. Pick a slot.".to_owned(),
+            ));
         }
     }
 
@@ -640,10 +730,25 @@ impl KoboApp for Parser {
         self.show(context);
     }
 
+    /// A story pushed while the reader slept is on the shelf when it wakes,
+    /// so the library is read again instead of waiting for a tap.
+    fn on_resume(&mut self, context: &mut Context) {
+        context.shelf().list();
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        context.shelf().list();
+    }
+
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK && self.view == View::Play && self.keyboard_open {
             self.keyboard_open = false;
+            self.show(context);
+            return;
+        }
+        if action == ActionId::BACK && self.view == View::Play && self.asking.is_some() {
+            self.asking = None;
             self.show(context);
             return;
         }
@@ -714,7 +819,8 @@ impl KoboApp for Parser {
                         match self.slot_action {
                             SlotAction::Save => {
                                 self.begin_save(context, name);
-                                self.message = Some(format!("Saved in slot {slot}."));
+                                self.message =
+                                    Some((BannerLevel::Success, format!("Saved in slot {slot}.")));
                             }
                             SlotAction::Restore => {
                                 if self.saves.contains(&name) {
@@ -725,7 +831,8 @@ impl KoboApp for Parser {
                                     self.message = None;
                                     self.view = View::Play;
                                 } else {
-                                    self.message = Some(format!("Slot {slot} is empty."));
+                                    self.message =
+                                        Some((BannerLevel::Info, format!("Slot {slot} is empty.")));
                                 }
                             }
                         }
@@ -812,11 +919,36 @@ impl KoboApp for Parser {
             self.show(context);
             return;
         }
+        if let Some(verb) = self.asking {
+            let objects = self.objects(self.page_text());
+            if let Some(object) = (0..objects.len())
+                .find(|index| action == action_id(&format!("object-{index}")))
+                .map(|index| objects[index].clone())
+            {
+                self.asking = None;
+                self.command(context, &format!("{verb} {object}"));
+                return;
+            }
+            if action == action_id("object-type") {
+                self.asking = None;
+                self.keyboard = Keyboard::with_text(format!("{verb} "));
+                self.keyboard_open = true;
+                self.show(context);
+                return;
+            }
+            if action == action_id("object-cancel") {
+                self.asking = None;
+                self.show(context);
+                return;
+            }
+        }
         for &(_, name, _, command) in CHIPS {
             if action == action_id(name) {
-                if command.ends_with(' ') {
-                    self.keyboard = Keyboard::with_text(command);
-                    self.keyboard_open = true;
+                if let Some(verb) = command.strip_suffix(' ') {
+                    // A verb needs its object: asking which thing, from the
+                    // ones on the page, is a tap away from the story's own
+                    // "What do you want to read?".
+                    self.asking = Some(verb);
                     self.show(context);
                 } else {
                     self.command(context, command);
@@ -871,6 +1003,7 @@ impl KoboApp for Parser {
         self.autosave(context);
     }
 
+    #[allow(clippy::too_many_lines)]
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Shelf(items) = &result {
             self.stories = items
@@ -902,8 +1035,10 @@ impl KoboApp for Parser {
                 }
                 ShelfProgress::Failed(_) => {
                     self.saving = None;
-                    self.message =
-                        Some("The save could not be written. Check free space.".to_owned());
+                    self.message = Some((
+                        BannerLevel::Error,
+                        "The save could not be written. Check free space.".to_owned(),
+                    ));
                     self.show(context);
                     return;
                 }
@@ -921,7 +1056,10 @@ impl KoboApp for Parser {
                 }
                 ShelfProgress::Failed(_) => {
                     self.loading = None;
-                    self.message = Some("That story could not be read from storage.".to_owned());
+                    self.message = Some((
+                        BannerLevel::Error,
+                        "That story could not be read from storage.".to_owned(),
+                    ));
                     self.show(context);
                     return;
                 }
@@ -941,7 +1079,9 @@ impl KoboApp for Parser {
                     if let Some(machine) = &mut self.machine {
                         match machine.restore_quetzal(&bytes) {
                             Ok(()) => restored = true,
-                            Err(error) => self.message = Some(error.to_string()),
+                            Err(error) => {
+                                self.message = Some((BannerLevel::Error, error.to_string()));
+                            }
                         }
                     }
                     if restored {
@@ -958,7 +1098,10 @@ impl KoboApp for Parser {
                 }
                 ShelfProgress::Failed(_) => {
                     self.pending_restore = None;
-                    self.message = Some("The saved game could not be restored.".to_owned());
+                    self.message = Some((
+                        BannerLevel::Error,
+                        "The saved game could not be restored.".to_owned(),
+                    ));
                     self.advance_story(context);
                 }
                 ShelfProgress::Moving { .. } | ShelfProgress::Elsewhere => {}
@@ -1024,10 +1167,10 @@ const CHIPS: &[(&str, &str, &str, &str)] = &[
     ("west", "west", "W", "west"),
     ("up", "up", "UP", "up"),
     ("down", "down", "DOWN", "down"),
-    ("drop", "drop", "DROP", "drop"),
-    ("open", "open", "OPEN", "open"),
-    ("read", "read", "READ", "read"),
-    ("light", "light", "LIGHT", "light"),
+    ("drop", "drop", "DROP", "drop "),
+    ("open", "open", "OPEN", "open "),
+    ("read", "read", "READ", "read "),
+    ("light", "light", "LIGHT", "light "),
     ("undo", "undo", "UNDO", "undo"),
     ("again", "again", "AGAIN", "again"),
 ];
@@ -1047,6 +1190,78 @@ fn palette(machine: Option<&Machine>) -> Vec<(&'static str, &'static str)> {
     commands
 }
 
+/// Words that turn up on every page and are never the thing an owner wants
+/// to read, open or take.
+const NOT_OBJECTS: &[&str] = &[
+    "the",
+    "and",
+    "you",
+    "your",
+    "are",
+    "was",
+    "were",
+    "with",
+    "from",
+    "this",
+    "that",
+    "there",
+    "here",
+    "into",
+    "onto",
+    "for",
+    "but",
+    "not",
+    "can",
+    "see",
+    "has",
+    "have",
+    "its",
+    "it's",
+    "all",
+    "out",
+    "off",
+    "over",
+    "under",
+    "through",
+    "what",
+    "which",
+    "who",
+    "one",
+    "some",
+    "small",
+    "large",
+    "old",
+    "new",
+    "room",
+    "northeast",
+    "northwest",
+    "southeast",
+    "southwest",
+    "inventory",
+    "examine",
+    "again",
+    "undo",
+    "save",
+    "restore",
+    "carrying",
+    "nothing",
+    "taken",
+    "dropped",
+];
+
+fn verb_question(verb: &str) -> String {
+    let mut letters = verb.chars();
+    let verb = letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect::<String>())
+        .unwrap_or_default();
+    format!("{verb} what? Choose a thing on the page, or type it.")
+}
+
+/// A story's name for the library. Pushed stories are filed as
+/// `story-<title>-<release>-<serial>-<checksum>.z5` so two releases of one
+/// story never overwrite each other; that tail tells a computer which copy
+/// it is, and is no use to a person choosing what to play.
 fn display_name(name: &str) -> String {
     let bare = name.trim_start_matches(STORY_PREFIX);
     let bare = bare
@@ -1054,6 +1269,20 @@ fn display_name(name: &str) -> String {
         .or_else(|| bare.strip_suffix(".z5"))
         .or_else(|| bare.strip_suffix(".z8"))
         .unwrap_or(bare);
+    let mut parts = bare.rsplitn(4, '-');
+    let bare = match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(checksum), Some(serial), Some(release), Some(title))
+            if checksum.len() <= 4
+                && checksum.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && serial.len() == 6
+                && serial.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                && !release.is_empty()
+                && release.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            title
+        }
+        _ => bare,
+    };
     bare.replace(['_', '-'], " ")
         .split(' ')
         .map(|word| {
@@ -1206,6 +1435,56 @@ mod tests {
 
     fn story_fixture() -> Vec<u8> {
         include_bytes!("../fixtures/lamplight.z3").to_vec()
+    }
+
+    #[test]
+    fn pushed_stories_are_listed_by_title_not_by_file_name() {
+        assert_eq!(display_name("story-lost-pig-2-080406-a1b2.z8"), "Lost Pig");
+        assert_eq!(display_name("story-first-light.z3"), "First Light");
+        assert_eq!(display_name("story-zork-2-0.z5"), "Zork 2 0");
+    }
+
+    #[test]
+    fn a_verb_without_an_object_asks_which_thing_on_the_page() {
+        install_real_face();
+        let mut app = Parser::default();
+        let mut context = Context::default();
+        app.start_story(
+            &mut context,
+            "story-lamplight.z3".to_owned(),
+            story_fixture(),
+        );
+        app.on_store(
+            &mut context,
+            StoreResult::Denied(kobo_sdk::StoreError::Missing),
+        );
+        assert!(app.transcript.contains("crate"), "{}", app.transcript);
+        let sent = app.transcript.len();
+        app.on_action(&mut context, action_id("open"));
+        assert_eq!(app.asking, Some("open"));
+        assert_eq!(
+            app.transcript.len(),
+            sent,
+            "nothing is sent without an object"
+        );
+        let objects = app.objects(app.page_text());
+        assert!(objects.contains(&"crate".to_owned()), "{objects:?}");
+        assert!(!objects.contains(&"the".to_owned()));
+        let index = objects
+            .iter()
+            .position(|word| word == "crate")
+            .expect("crate");
+        app.on_action(&mut context, action_id(&format!("object-{index}")));
+        assert_eq!(app.asking, None);
+        assert!(
+            app.transcript.contains("> open crate"),
+            "{}",
+            app.transcript
+        );
+        app.on_action(&mut context, action_id("read"));
+        app.on_action(&mut context, action_id("object-type"));
+        assert!(app.keyboard_open);
+        assert_eq!(app.keyboard.text(), "read ");
     }
 
     #[test]
@@ -1408,7 +1687,10 @@ mod tests {
             ..Parser::default()
         };
         parser.slot_action = SlotAction::Restore;
-        parser.message = Some("The story asked to restore a game - pick a slot.".to_owned());
+        parser.message = Some((
+            BannerLevel::Info,
+            "The story asked to restore a game. Pick a slot.".to_owned(),
+        ));
         for scale in TextScale::STEPS {
             let scaled = DisplayMetrics {
                 text_scale: scale,
@@ -1474,10 +1756,16 @@ mod tests {
                         pixels_per_inch: ppi,
                         text_scale: scale,
                     };
+                    // The library is paged by the context it is built with,
+                    // so it is built for the panel and size it is measured on.
+                    // A default context paged it for a portrait Clara at the
+                    // default size whatever was being checked.
+                    let context =
+                        kobo_sdk::AppRunner::with_metrics(Parser::default(), metrics).context();
                     for keyboard_open in [false, true] {
                         parser.keyboard_open = keyboard_open;
                         for (name, screen) in [
-                            ("library", parser.library_screen(&Context::default())),
+                            ("library", parser.library_screen(&context)),
                             ("play", parser.play_screen()),
                         ] {
                             let diagnostics = screen.diagnostics(&metrics, &Chrome::default());

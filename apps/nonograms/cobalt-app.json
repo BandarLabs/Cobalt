@@ -2,10 +2,10 @@
   "id": "nonograms",
   "display_name": "Nonograms",
   "short_label": "Nonograms",
-  "summary": "Solve 18 original picture puzzles with attached clues, saved undo and larger grids.",
+  "summary": "Solve 78 picture and pattern puzzles, or make your own from photos.",
   "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
-  "version": "0.1.10",
-  "release_notes": "Photo puzzle instructions name the full command, and the setup guide lists the steps.",
+  "version": "0.1.13",
+  "release_notes": "Guided checking and run entry are now switches in Options that show whether each is on, and the empty Photos tab shows the command to add a photo at every text size.",
   "glyph": "grid",
   "capabilities": [],
   "setup": {
@@ -14,11 +14,11 @@
         "text": "The bundled puzzles play straight away. To make one from a photo:"
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Turn a photo into a puzzle and send it.",
+        "text": "Turn a photo into a puzzle and send it. It appears under Photos, beside the ones sent before.",
         "command": "kobo nonograms push photo.jpg --name Garden --size 9"
       }
     ]

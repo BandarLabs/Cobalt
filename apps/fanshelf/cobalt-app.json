@@ -4,8 +4,8 @@
   "short_label": "Fanshelf",
   "summary": "Save public AO3 works to a shelf made for offline reading.",
   "page_description": "Add AO3 works to a shelf, download them as EPUB and read them offline on your Kobo. Check works in progress for new chapters and follow tags. Fanshelf is unofficial and not affiliated with the Organization for Transformative Works.",
-  "version": "0.3.4",
-  "release_notes": "Shelf, fandoms, followed tags, feeds and updates now fit the selected text size, with reachable page controls and clearer shelf buttons at larger sizes.",
+  "version": "0.3.7",
+  "release_notes": "Work addresses and tags are typed on Cobalt's own keyboard, with a mistyped address explained under it. Read and Download stay at the foot of a work, and Check for new chapters is in its menu.",
   "glyph": "book",
   "capabilities": [
     "network"

@@ -68,6 +68,10 @@ pub fn handle_install(
 /// read back, so "is it there?" is the only question an application may
 /// ask, and only about names its reviewed policy may set. `None` means
 /// this request belongs to another device service.
+///
+/// A key counts wherever a request would find it, including the owner-wide
+/// copy `kobo secret set` writes. That command is what every app's README
+/// tells the owner to run, and it removes the app's own copy as it goes.
 #[must_use]
 pub fn handle_check(
     root: &Path,
@@ -78,15 +82,19 @@ pub fn handle_check(
     let DeviceRequest::CheckSecrets { names } = request else {
         return None;
     };
-    if names.is_empty() || names.iter().any(|name| !may_set(app, name)) {
+    // A server-bound account (Readeck, Library, Digest, Post) is the app's own
+    // as much as a plain key is. Refusing to say whether one is installed left
+    // "Check again" unable to notice a sign-in made from the computer.
+    if names.is_empty()
+        || names
+            .iter()
+            .any(|name| !may_set(app, name) && !servers::may_set(app, name))
+    {
         return Some(DeviceResult::Denied(DenyReason::PolicyRejected));
     }
     let present = names
         .iter()
-        .filter(|name| {
-            app_secret_path(root, app, name).is_some_and(|path| path.is_file())
-                || servers::path(root, app, name).is_some_and(|path| path.is_file())
-        })
+        .filter(|name| crate::tasks::secret_resolves(root, app, name))
         .cloned()
         .collect();
     Some(DeviceResult::Secrets { present })
@@ -250,6 +258,7 @@ pub fn may_set(app: &str, name: &str) -> bool {
     match app {
         "audiobook" => matches!(name, "exa" | "openai" | "elevenlabs"),
         "chat" => matches!(name, "openai" | "anthropic" | "gemini"),
+        "lichess" => name == "lichess",
         "zotero-reader" => name == "zotero",
         _ => false,
     }
@@ -314,6 +323,9 @@ pub fn allowed_request(
     }
     if app == "zotero-reader" {
         return usage == CredentialUse::Fetch && zotero_credential_allowed(credential, url);
+    }
+    if app == "rss-miniflux" {
+        return miniflux::allowed_unbound(credential, url, usage, body, content_type);
     }
     if let Some(allowed) = store_app_credential_allowed(app, credential, url, usage, body) {
         return allowed;
@@ -417,23 +429,51 @@ fn lichess_credential_allowed(
     }
 }
 
+/// The clocks the Lichess app offers, as minutes and increment seconds.
+///
+/// Seeks and challenges are matched against these exact bodies rather than a
+/// pattern, so a token handed to Lichess can start the games the app shows
+/// and nothing a crafted body could ask for.
+const LICHESS_CLOCKS: [(u32, u32); 9] = [
+    (3, 0),
+    (3, 2),
+    (5, 0),
+    (5, 3),
+    (10, 0),
+    (10, 5),
+    (15, 10),
+    (30, 0),
+    (30, 20),
+];
+
 fn lichess_post(path: &str, body: &str) -> bool {
     if path == "/api/board/seek" {
-        return [
-            "rated=true&time=3&increment=0&variant=standard&color=random",
-            "rated=true&time=3&increment=2&variant=standard&color=random",
-            "rated=true&time=5&increment=0&variant=standard&color=random",
-            "rated=true&time=5&increment=3&variant=standard&color=random",
-            "rated=true&time=10&increment=0&variant=standard&color=random",
-            "rated=true&time=10&increment=5&variant=standard&color=random",
-            "rated=true&time=15&increment=10&variant=standard&color=random",
-            "rated=true&time=30&increment=0&variant=standard&color=random",
-            "rated=true&time=30&increment=20&variant=standard&color=random",
-        ]
-        .contains(&body);
+        // Casual games as well as rated ones: an owner learning the game, or
+        // one who just wants a game, should not have to put a rating on it.
+        return LICHESS_CLOCKS.iter().any(|(minutes, increment)| {
+            ["true", "false"].iter().any(|rated| {
+                body == format!(
+                    "rated={rated}&time={minutes}&increment={increment}&variant=standard&color=random"
+                )
+            })
+        });
     }
     let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
     match parts.as_slice() {
+        // Challenging a named player. The app has always offered it, and the
+        // policy refused every one, so the button could only ever fail.
+        ["api", "challenge", username] => {
+            lichess_username(username)
+                && LICHESS_CLOCKS.iter().any(|(minutes, increment)| {
+                    ["white", "black", "random"].iter().any(|color| {
+                        body == format!(
+                            "rated=false&clock.limit={}&clock.increment={increment}\
+                             &variant=standard&color={color}",
+                            minutes * 60
+                        )
+                    })
+                })
+        }
         ["api", "board", "game", game, "move", movement] => {
             body.is_empty() && lichess_id(game) && uci_move(movement)
         }
@@ -450,6 +490,13 @@ fn lichess_post(path: &str, body: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn lichess_username(value: &str) -> bool {
+    (2..=30).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 fn lichess_id(value: &str) -> bool {
@@ -564,19 +611,6 @@ fn store_app_credential_allowed(
                         wallabag_entry_document(&path) && wallabag_flag_body(body)
                     }
                     CredentialUse::Put => false,
-                })
-        }
-        "rss-miniflux" => {
-            credential.secret == "miniflux"
-                && matches!(
-                    &credential.header,
-                    SecretHeader::Named(header) if header.eq_ignore_ascii_case("x-auth-token")
-                )
-                && parsed_path(url).is_some_and(|path| match usage {
-                    CredentialUse::Fetch => {
-                        clean_path(&path).ends_with("/v1/entries") && path.contains("status=unread")
-                    }
-                    CredentialUse::Post | CredentialUse::Put | CredentialUse::Patch => false,
                 })
         }
         _ => return None,
@@ -800,6 +834,65 @@ mod tests {
         // Requests for other services fall through.
         let other = DeviceRequest::ReadBattery;
         assert_eq!(super::handle_check(&root, "audiobook", &other), None);
+        // An app may ask after its own server-bound account, and only its own.
+        let account = DeviceRequest::CheckSecrets {
+            names: vec!["readeck".into()],
+        };
+        assert_eq!(
+            super::handle_check(&root, "readeck", &account),
+            Some(DeviceResult::Secrets { present: vec![] })
+        );
+        assert_eq!(
+            super::handle_check(&root, "post", &account),
+            Some(DeviceResult::Denied(DenyReason::PolicyRejected))
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_key_set_from_the_computer_counts_as_present_wherever_a_request_would_find_it() {
+        use kobo_protocol::{DeviceRequest, DeviceResult};
+        let root = std::env::temp_dir().join(format!(
+            "cobalt-credential-check-owner-{}",
+            std::process::id()
+        ));
+        let _ignored = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        let request = DeviceRequest::CheckSecrets {
+            names: vec!["exa".into(), "openai".into(), "elevenlabs".into()],
+        };
+        // `kobo secret set` writes the owner-wide file with a trailing newline
+        // and leaves no copy under the app.
+        std::fs::write(root.join("openai"), b"sk-owner\n").unwrap();
+        std::fs::write(root.join("elevenlabs"), b"xi-owner\n").unwrap();
+        // A file of nothing but whitespace is not a key to a request, so it is
+        // not one to the check either.
+        std::fs::write(root.join("exa"), b" \n").unwrap();
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets {
+                present: vec!["openai".into(), "elevenlabs".into()]
+            })
+        );
+        // A link is never followed by a request, so it never counts here.
+        std::fs::remove_file(root.join("exa")).unwrap();
+        std::os::unix::fs::symlink(root.join("openai"), root.join("exa")).unwrap();
+        install_app_secret(&root, "audiobook", "exa", "typed-on-the-reader")
+            .expect("install the app's own copy");
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets {
+                present: vec!["exa".into(), "openai".into(), "elevenlabs".into()]
+            }),
+            "the app's own copy counts, ahead of the link beside it"
+        );
+        std::fs::remove_file(root.join("apps/audiobook/exa")).unwrap();
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets {
+                present: vec!["openai".into(), "elevenlabs".into()]
+            })
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -808,8 +901,9 @@ mod tests {
         assert!(may_set("zotero-reader", "zotero"));
         assert!(may_set("chat", "anthropic"));
         assert!(may_set("audiobook", "elevenlabs"));
+        assert!(may_set("lichess", "lichess"));
         assert!(!may_set("zotero-reader", "openai"));
-        assert!(!may_set("lichess", "lichess"));
+        assert!(!may_set("lichess", "zotero"));
         assert!(!may_set("other", "zotero"));
     }
 
@@ -1254,6 +1348,49 @@ mod tests {
     }
 
     #[test]
+    fn lichess_allows_casual_seeks_and_challenges_only_with_the_apps_own_clocks() {
+        let token = Credential::bearer("lichess");
+        let post = |url: &str, body: &str| {
+            allowed_request(
+                "lichess",
+                &token,
+                url,
+                CredentialUse::Post,
+                Some(body),
+                Some("application/x-www-form-urlencoded"),
+            )
+        };
+        assert!(post(
+            "https://lichess.org/api/board/seek",
+            "rated=false&time=15&increment=10&variant=standard&color=random"
+        ));
+        assert!(post(
+            "https://lichess.org/api/challenge/Reader-Two",
+            "rated=false&clock.limit=600&clock.increment=5&variant=standard&color=white"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/board/seek",
+            "rated=false&time=1&increment=0&variant=standard&color=random"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/challenge/Reader-Two",
+            "rated=true&clock.limit=600&clock.increment=5&variant=standard&color=white"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/challenge/Reader-Two",
+            "rated=false&clock.limit=600&clock.increment=5&variant=chess960&color=white"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/challenge/a/b",
+            "rated=false&clock.limit=600&clock.increment=5&variant=standard&color=white"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/challenge/x",
+            "rated=false&clock.limit=600&clock.increment=5&variant=standard&color=white"
+        ));
+    }
+
+    #[test]
     fn lichess_policy_refuses_origin_path_method_and_body_expansion() {
         let token = Credential::bearer("lichess");
         for url in [
@@ -1272,11 +1409,6 @@ mod tests {
             );
         }
         for (url, body, content_type) in [
-            (
-                "https://lichess.org/api/board/seek",
-                "rated=false&time=10&increment=0&variant=standard&color=random",
-                "application/x-www-form-urlencoded",
-            ),
             (
                 "https://lichess.org/api/board/seek",
                 "rated=true&time=10&increment=0&variant=standard&color=random&extra=1",

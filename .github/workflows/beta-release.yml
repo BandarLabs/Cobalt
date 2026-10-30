@@ -411,7 +411,11 @@ jobs:
           CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
           CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
         run: |
-          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          # The Sidekick helper ships beside kobo: `kobo sidekick init` and
+          # `run` look for it there, and without it Sidekick and Deck cannot
+          # be set up at all.
+          cargo build --locked --release -p kobo-cli -p kobo-sidekickd \
+            --target "${{ matrix.target }}"
           # The importer intentionally owns a separate Rust 1.88 workspace and
           # lockfile so Anki's host-only graph never enters the reader/CLI graph.
           if [ "${{ runner.os }}" = macOS ]; then
@@ -424,20 +428,23 @@ jobs:
         run: |
           mkdir -p host
           cp "target/${{ matrix.target }}/release/kobo" host/kobo
+          cp "target/${{ matrix.target }}/release/kobo-sidekickd" host/kobo-sidekickd
           cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
             host/flashcards-import
       - name: Smoke the staged binaries
         # A file that exists is not a binary that runs: link errors show up
         # here, on CI, instead of on an owner's machine.
         run: |
-          file host/kobo host/flashcards-import
+          file host/kobo host/kobo-sidekickd host/flashcards-import
           host/kobo --version
+          host/kobo-sidekickd --version
           host/flashcards-import --version
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: host-${{ matrix.platform }}
           path: |
             host/kobo
+            host/kobo-sidekickd
             host/flashcards-import
           if-no-files-found: error
 
@@ -464,10 +471,13 @@ jobs:
         run: |
           for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
             test -f "dist/host-binaries/host-${platform}/kobo"
+            test -f "dist/host-binaries/host-${platform}/kobo-sidekickd"
             test -f "dist/host-binaries/host-${platform}/flashcards-import"
             mkdir -p "dist/host-binaries/${platform}"
             mv "dist/host-binaries/host-${platform}/kobo" \
               "dist/host-binaries/${platform}/kobo"
+            mv "dist/host-binaries/host-${platform}/kobo-sidekickd" \
+              "dist/host-binaries/${platform}/kobo-sidekickd"
             mv "dist/host-binaries/host-${platform}/flashcards-import" \
               "dist/host-binaries/${platform}/flashcards-import"
           done

@@ -27,27 +27,35 @@ Save links with Wallabag's own browser or phone tools, then sync them here.
 
 ## Setup
 
-1. On your Wallabag server, create an API client (on wallabag.it: **Settings →
-   API clients**) and save its client secret to a private file.
-2. Sign in from your computer. The password is read from
-   `KOBO_WALLABAG_PASSWORD`, or from `--password-env VAR` or
-   `--password-file PATH`, and never appears on the command line.
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. On your Wallabag server, create an API client (on wallabag.it: **Settings,
+   API clients**).
+3. Sign in from your computer:
 
    ```sh
-   kobo readlater login --server https://wallabag.example \
-     --client-id ID --client-secret-file SECRET_FILE \
-     --username you@example.com --device IP
+   kobo connect readlater
    ```
 
-This completes Wallabag's sign-in and sends the session to the reader, which
-renews it on its own. The token can only be sent to your Wallabag server, and
-the password is not stored on the reader. The client secret and refresh token
-remain in private app state so the reader can renew the session. Run it again
-only if you revoke access.
+   It asks for the server, the client ID and secret, your username and your
+   password (typed without being shown), completes Wallabag's sign-in, and
+   sends the session to the reader. Open Read Later, or tap **Check again** if
+   it is already open. No restart is needed.
 
-Alternatively, install a bearer token with
-`kobo secret set wallabag --from TOKEN_FILE --device IP` and enter your HTTPS
-server address in Settings.
+For scripts, the same sign-in takes flags and reads the password from
+`KOBO_WALLABAG_PASSWORD`, `--password-env VAR` or `--password-file PATH`:
+
+```sh
+kobo readlater login --server https://wallabag.example \
+  --client-id ID --client-secret-file SECRET_FILE --username you@example.com
+```
+
+The reader renews the session on its own. The token can only be sent to your
+Wallabag server, and the password is not stored on the reader. The client
+secret and refresh token remain in private app state so the reader can renew
+the session. Run it again only if you revoke access.
+
+When something fails, the list stays readable and a banner says why: a
+refused sign-in, a server that did not answer, or no Wi-Fi.
 
 ## Permissions
 

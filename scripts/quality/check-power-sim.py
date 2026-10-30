@@ -20,8 +20,9 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, mode=0o700)
-    cli = ROOT / 'target/debug/kobo'
-    fixture = ROOT / 'target/debug/examples/power'
+    target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target')).resolve()
+    cli = target / 'debug/kobo'
+    fixture = target / 'debug/examples/power'
     revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     with tempfile.TemporaryDirectory(prefix='cobalt-power-', dir='/tmp') as private:
         env = dict(os.environ, TMPDIR=private, KOBO_SIM_PROFILE='clara-bw-391',
@@ -31,7 +32,7 @@ def main():
         env.pop('KOBO_SIM_APP_STORE', None)
         with (args.output / 'simulator.log').open('w') as log:
             process = subprocess.Popen([str(fixture), '127.0.0.1:0', str(Path(private) / 'sdk.sock'),
-                                        str(ROOT / 'target/debug/kobo-launcher')], cwd=ROOT,
+                                        str(target / 'debug/kobo-launcher')], cwd=ROOT,
                                        env=env, stdout=log, stderr=log, start_new_session=True)
             try:
                 deadline = time.monotonic() + 20

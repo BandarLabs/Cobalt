@@ -1,0 +1,31 @@
+{
+  "id": "readeck",
+  "display_name": "Readeck",
+  "short_label": "Readeck",
+  "summary": "Read and search your saved Readeck articles. Needs an account.",
+  "version": "0.1.2",
+  "release_notes": "Your API token, server address and searches are typed on Cobalt's own keyboard, and the reader saves the token without the app seeing it. Connecting shows its three steps, and a QR code opens the token page on a phone.",
+  "glyph": "bookmark",
+  "capabilities": [
+    "network",
+    "frontlight-control"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Set up the reader once over USB, if you have not already. Readeck must be reachable over HTTPS.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "In Readeck, create an API token that can read and update bookmarks (Settings, API tokens)."
+      },
+      {
+        "text": "Connect Readeck from your computer. It asks for the server and the token, checks them, and saves both on the reader while Cobalt runs. Open Readeck, or tap Check again if it is already open.",
+        "command": "kobo connect readeck"
+      },
+      {
+        "text": "Articles you open are kept on the reader, so they read the same without Wi-Fi."
+      }
+    ]
+  }
+}

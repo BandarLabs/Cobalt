@@ -2,8 +2,8 @@
   "id": "audiobook",
   "display_name": "Audiobook Studio",
   "short_label": "Audiobooks",
-  "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-  "version": "1.0.16",
+  "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account.",
+  "version": "1.0.19",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,5 +11,31 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "The composer keeps topic entry, language choices, Resume and validation readable at larger text sizes. Back returns to the shelf without clearing an unsubmitted topic or language."
+  "release_notes": "The topic is typed on Cobalt's own keyboard, with a topic that is too short explained under it. The player keeps every control on the panel at every text size, and Bluetooth is a switch in the headphone picker.",
+  "setup": {
+    "steps": [
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "A book is researched by Exa, written by OpenAI and narrated by ElevenLabs, on your own accounts. Create an API key with each and save them in private files: ~/.exa, ~/.openai and ~/.elevenlabs."
+      },
+      {
+        "text": "Install the research key.",
+        "command": "kobo secret set exa"
+      },
+      {
+        "text": "Install the writing key.",
+        "command": "kobo secret set openai"
+      },
+      {
+        "text": "Install the narration key.",
+        "command": "kobo secret set elevenlabs"
+      },
+      {
+        "text": "Open Audiobook Studio and type a topic. It shows the time and cost before anything is spent: about 3 to 8 minutes and $1 to $5 a book. The free sample plays with no keys."
+      }
+    ]
+  }
 }

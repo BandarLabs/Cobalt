@@ -12,7 +12,11 @@ expect Row 1
 clean
 shot project
 tap Change section
-expect Sleeve
+expect Which section are you knitting?
+clean
+shot sections
+tap Sleeve
+wait-for Sleeve
 expect Row 0
 tap Projects
 expect Row counter
@@ -22,7 +26,8 @@ shot projects
 tap-id project-0
 expect Row 0
 expect Sleeve
-tap Read synced pattern
+expect Read a pattern
+tap Read a pattern
 wait 1500
 clean
 shot reading-chart
@@ -30,9 +35,45 @@ tap Back
 expect Winter socks
 expect Cuff
 tap Change section
-expect Leg
+expect Which section are you knitting?
+tap Leg
+wait-for Leg
 clean
 shot project-imported
 tap Projects
 expect Winter socks
 expect Leg - row 0
+# The second sleeve: the section starts again at row 0, and Undo puts the
+# old count back.
+tap-id project-1
+wait-for Leg
+tap +1 row
+tap +1 row
+wait-for Row 2
+tap Start section again
+wait-for Undo brings back row 2
+expect Row 0
+clean
+shot project-restarted-section
+tap Undo
+wait-for Row 2
+# The repeat length is a choice: one tap goes straight to it and the place
+# in the repeat is kept.
+tap Repeat length
+expect Rows in the repeat
+clean
+shot repeat-length
+tap 8 rows
+wait-for row 2 of 8
+# Held sideways, the count stands beside its controls.
+tap More
+expect Use landscape
+tap Use landscape
+wait 1500
+expect Row 2
+expect +1 row
+clean
+shot project-landscape
+tap More
+tap Use portrait
+wait-for Row 2

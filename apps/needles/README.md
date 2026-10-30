@@ -15,17 +15,26 @@ Row counters and your Ravelry library, with patterns you own readable offline.
 ## Features
 
 - A separate row and repeat counter for each section of a project.
-- **+1 row** saves on every tap. **Undo -1 row** reverses the last count.
+  **Change section** lists the sections with each one's row, and **Repeat
+  length** sets the repeat to 4, 8, 12 or 16 rows in one tap.
+- **+1 row** saves on every tap. **Undo** reverses the last count.
+- **Start section again** sets the section back to row 0 for the second
+  sleeve or the second sock. Undo brings the old count back.
+- Keep several patterns. Each opens on the page you left it at.
 - Following a project keeps the screen on.
-- Browse your Ravelry Library, Queue and Favorites.
+- **Use landscape**, under More, turns the counter on its side with the
+  count beside its controls.
+- Browse your Ravelry Library, Queue and Favorites (More, then Ravelry
+  library).
 - Counters, Ravelry details and patterns stay available offline.
 
 ## Setup
 
-Install your Ravelry credential on the reader:
+Set up the reader once over USB with `kobo setup`, if you have not already.
+For Ravelry, install your credential on the reader:
 
 ```sh
-kobo secret set ravelry --device <address>
+kobo secret set ravelry
 ```
 
 Needles can only use it for Ravelry's read-only Library, Queue and Favorites
@@ -38,9 +47,14 @@ endpoints, and never sees it.
 ```sh
 kobo needles preview PATTERN.pdf                     # outline, charts and first lines
 kobo needles prepare PATTERN.pdf --out PATTERN.md    # keep the Markdown to review
-kobo needles push PATTERN.pdf --device <address>     # send it to the reader
+kobo needles push PATTERN.pdf                        # send it to the reader
 kobo needles push PATTERN.md --sim                   # or to the simulator
 ```
+
+Each push adds the pattern to the ones on the reader and prints the list. A
+pattern with the same title replaces the old copy. `--replace` leaves only
+the pattern you send. Needles shows a new pattern the next time it opens or
+the reader wakes; **Read a pattern** lists them all.
 
 PDFs are converted with Poppler's `pdftotext`, which `kobo needles setup`
 installs. Scanned, encrypted or damaged PDFs are refused with a reason, and
@@ -52,7 +66,8 @@ Charts travel as PNG files next to the pattern. A pattern that refers to
 ## Limits
 
 - Charts are not extracted from PDFs. Export them as PNG files and keep them
-  next to the pattern.
+  next to the pattern. Give charts of different patterns different names:
+  they share one folder on the reader.
 - Project notes cannot be written back to Ravelry. Edit them on ravelry.com.
 
 ## Permissions

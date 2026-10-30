@@ -60,6 +60,7 @@ def drive_sample(cli, environment, root, code, output, scale):
                 assert not [issue for issue in diagnostics['issues'] if issue['severity']=='error'], diagnostics
                 (output/(name+'.layout.json')).write_text(json.dumps(get('layout'), indent=2)+'\n')
             drive('wait-for Pair with your computer')
+            drive('tap-id address.box', 'wait-idle')
             type_text('127.0.0.1:9331')
             drive('tap Next', 'wait-idle')
             type_text(code)

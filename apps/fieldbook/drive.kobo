@@ -1,4 +1,5 @@
 wait-for 2 packs, 10 species.
+expect-missing —
 clean
 shot home
 tap Packs
@@ -32,3 +33,33 @@ tap-id sightings
 wait-for American Robin ×1
 clean
 shot sightings
+# Sightings are ticked for removal, and nothing goes until Delete is confirmed.
+tap American Robin ×1
+wait-for 1 selected
+clean
+shot sightings-ticked
+tap-id delete-ticked
+wait-for Delete sighting?
+clean
+shot sightings-confirm
+tap Keep sighting
+wait-for 1 selected
+tap-id delete-ticked
+wait-for Delete sighting?
+tap-id delete-sighting
+wait-for Sighting deleted.
+expect-missing American Robin ×1
+clean
+shot sightings-deleted
+tap Undo delete
+wait-for American Robin ×1
+expect-missing Sighting deleted.
+# Every species in the pack is one tap away, a page at a time.
+tap Back
+wait-for Open outing
+tap Resume tally
+wait-for lake merced
+tap-id outing-next
+wait-for 2 of
+clean
+shot tally-page-two

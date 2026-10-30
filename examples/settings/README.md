@@ -16,15 +16,21 @@ Wi-Fi, Bluetooth, battery details and Cobalt updates.
 
 - Each row shows its state, such as **Wi-Fi: Connected** or **Battery: 95%,
   discharging**, so you can check at a glance.
-- **Wi-Fi**: turn the radio on or off, scan, join and disconnect. Disconnecting
-  ends any session that reaches the reader over Wi-Fi.
-- **Bluetooth**: scan for devices and connect to them by name. When
-  Bluetooth is off, the screen says so rather than showing an empty list.
+- **Wi-Fi**: turn the radio on or off with its switch, scan, join and
+  disconnect. Disconnecting ends any session that reaches the reader over
+  Wi-Fi.
+- **Bluetooth**: turn it on or off with its switch, scan for devices and
+  connect to them by name. When Bluetooth is off, the screen says so rather
+  than showing an empty list.
 - **Battery**: charge, status and time remaining, plus capacity, chemistry,
   temperature, voltage, current and charge figures from the fuel gauge.
   **Read again** refreshes them.
-- **Software update**: checks for and installs Cobalt updates, and switches
-  between the Stable and Beta channels.
+- **Software update**: checks for and installs Cobalt updates. A check with
+  no network offers **Join Wi-Fi**. **Channel and automatic updates** picks
+  the Stable or Beta channel and has switches for updating Cobalt and apps on
+  their own.
+- **About**: the model and versions, the reader's Wi-Fi address when the
+  runtime provides it, and how `kobo` on a computer finds the reader.
 
 Brightness, time zone, accounts and firmware stay in the Kobo's own settings.
 

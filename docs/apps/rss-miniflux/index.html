@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/rss-miniflux.png">
 <meta name="twitter:image:alt" content="A Miniflux article open on a Kobo with text-size and front-light controls.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-3h43pC7T5bO5qmB23TO9xMUuWZUH6a81dZGDmCA6ENg='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-MrFEkUxMJHN4UUN4F3IP3rOQ7Sp/VeP6E5hKcPW6yWs='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "ReferenceApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.5",
+      "softwareVersion": "0.1.8",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -92,16 +92,16 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="rss-miniflux" data-minimum-cobalt-version="0.3.18">
+<main class="wrap" data-app-id="rss-miniflux" data-minimum-cobalt-version="0.3.31">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Reading</p>
       <h1>Digest</h1>
       <p class="summary">Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.5</dd></div>
+        <div><dt>Version</dt><dd>0.1.8</dd></div>
         <div><dt>Permissions</dt><dd>network</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 0.3.31</dd></div>
       </dl>
       <a class="cta" href="#setup-panel">Install on your Kobo</a>
       <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/rss-miniflux">Source code on GitHub</a></p>
@@ -117,19 +117,23 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.1.5</h2>
-    <p>Connecting Miniflux lists the commands to run on your computer, with no address to look up.</p>
+    <h2>New in 0.1.8</h2>
+    <p>The server address is typed on Cobalt's own keyboard, Retry saving sits on the message that says what was not saved, and the connect screen keeps every control on the panel at the largest text size.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Have an HTTPS Miniflux instance, self-hosted or hosted, and create an API token in its settings.</li>
-      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
-        <code class="setup-command">kobo pair</code></li>
-      <li>Install the token under the name miniflux, then add the address in the app.
-        <code class="setup-command">kobo secret set miniflux</code></li>
+      <li>Set up the reader once over USB, if you have not already. Miniflux must be reachable over HTTPS.
+        <code class="setup-command">kobo setup</code></li>
+      <li>In Miniflux, create an API key (Settings, API Keys).</li>
+      <li>Connect Digest from your computer. It asks for the server and the key, checks them, ties the key to your server, and fills in the address. Open Digest, or tap Check again.
+        <code class="setup-command">kobo connect rss-miniflux</code></li>
+      <li>With the key in a file instead, the same setup is one command.
+        <code class="setup-command">kobo secret set miniflux --app rss-miniflux --server https://miniflux.example --from key.txt</code></li>
     </ol>
+    <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
+      <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">

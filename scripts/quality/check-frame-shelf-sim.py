@@ -160,16 +160,44 @@ def main():
                 drive("tap Next", "wait 2500", "tap-at 536 724", "wait-for city-skyline.jpg", "expect 20 Jan 2025")
                 capture("frame-next")
                 drive("tap Exit", "wait-for Photographs")
-                drive("tap-at 536 724", "wait-for Settings", "expect Frame mode")
+                # Settings are a named control in the bar, not only a tap in
+                # the middle of the photo that nothing on screen mentions.
+                drive("tap Settings", "wait-for Change the photo every",
+                      "expect Frame mode", "expect Slow slideshow", "expect 15 minutes",
+                      "expect Shuffle")
                 capture("frame-settings")
-                drive("tap-at 536 724", "wait-for Photographs")
+                drive("tap 1 hour", "wait 600")
+                capture("frame-settings-hour")
+                drive("tap Back", "wait-for Photographs")
                 result["checks"].append(dict(
                     name="shelf-driven journey",
                     detail="CLI pushed a 6-photo album in two passes (crop then pad); the "
                            "app listed the album with count, name and taken date, showed "
                            "the pad-fit panorama letterboxed, reported the photo verified "
                            "against the transfer manifest, advanced to the next photo and "
-                           "opened settings",
+                           "opened settings from the bar",
+                    status="passed"))
+                # A push while Frame is open reaches the frame when it comes
+                # back, with no restart, and keeps every photo already there.
+                later = private / "later"
+                later.mkdir()
+                # Different bytes from every photo already sent, so the push
+                # adds a photo rather than recognising one it has.
+                (later / "harbour-light.jpg").write_bytes(
+                    (FIXTURES / "lighthouse.jpg").read_bytes() + b"\0")
+                added = subprocess.run([str(push_cli), "frame", "push", str(later), "--sim",
+                                        "--album", "Later"],
+                                       cwd=ROOT, env=env, check=True, capture_output=True,
+                                       text=True)
+                assert "Now on the reader: 7 photos in 2 albums." in added.stdout, added.stdout
+                drive("lifecycle background", "wait 300", "lifecycle foreground",
+                      "wait-for of 7", "wait 1500", "wait-idle")
+                capture("frame-after-push")
+                result["checks"].append(dict(
+                    name="push picked up on return",
+                    detail="a seventh photo pushed while Frame was open appeared after the "
+                           "app came back to the foreground, without a restart, and the "
+                           "six earlier photos stayed",
                     status="passed"))
                 result["status"] = "passed"
             finally:

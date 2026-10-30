@@ -17,13 +17,73 @@ mod model;
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, cache_key, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder,
-    StoreResult, Task, TaskId, TaskOutcome,
+    StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use model::PAD_COLUMNS;
 use model::{decode, decode_result, pad_cells, Deck, RunResult};
 use std::process::ExitCode;
 const PAIRED: &str = "paired";
 const CACHE: &str = "deck-cache";
+
+/// The port `kobo sidekick run` listens on for the reader. Filled in when an
+/// address is typed without one, because the address the computer prints is
+/// the part people copy and the port is the part they leave off: a bare
+/// address used to be dialled on the HTTPS default and never connected.
+const DEFAULT_PORT: &str = "9331";
+
+/// How many characters `kobo sidekick init` puts in a pairing code.
+const CODE_LENGTH: usize = 6;
+
+/// Why the computer did not give the deck what it asked for.
+///
+/// One cause, one sentence. The deck used to say "Check that Sidekick is
+/// open" for everything, which sent somebody with a stale pairing code to
+/// restart a helper that was running perfectly well.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Trouble {
+    /// This reader has no network.
+    Offline,
+    /// Nothing answered at the address, or the answer could not be trusted.
+    Unreachable,
+    /// The computer answered too slowly.
+    Slow,
+    /// The computer answered, and refused the pairing code.
+    Refused,
+    /// The computer answered, and has no deck.toml.
+    NoDeck,
+    /// Anything else the computer said that the deck could not use.
+    Unreadable,
+}
+
+impl Trouble {
+    const fn of(error: TaskError) -> Self {
+        match error {
+            TaskError::Offline => Self::Offline,
+            TaskError::Unreachable => Self::Unreachable,
+            TaskError::TimedOut => Self::Slow,
+            TaskError::Unauthorized => Self::Refused,
+            TaskError::NotFound => Self::NoDeck,
+            _ => Self::Unreadable,
+        }
+    }
+
+    /// The banner: what happened and what fixes it.
+    const fn advice(self) -> &'static str {
+        match self {
+            Self::Offline => "This reader is not on Wi-Fi. Join a network in Cobalt Settings, then tap Refresh.",
+            Self::Unreachable => "Your computer is not answering. Start kobo sidekick run on it. After a first pairing, reopen Cobalt once.",
+            Self::Slow => "Your computer took too long to answer. It may be asleep. Wake it, then tap Refresh.",
+            Self::Refused => "Your computer did not accept this pairing code. Run kobo sidekick init on it, or tap Pairing to enter the code again.",
+            Self::NoDeck => NO_DECK,
+            Self::Unreadable => "Deck could not use your computer's answer. Tap Refresh to try again.",
+        }
+    }
+}
+
+/// Said both for a failed look at the deck and for a press the computer
+/// could not place, because they are the same missing file.
+const NO_DECK: &str =
+    "Your computer has no deck yet. In your project folder on it, run kobo deck init --preset build.";
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum View {
     Opening,
@@ -42,6 +102,9 @@ enum Pending {
     /// Reading what a watched key said, only for the line under the deck.
     Note(String),
 }
+
+/// Said when the runtime has no room for one more request just now.
+const STILL_TALKING: &str = "Deck is still waiting on your computer. Tap again in a moment.";
 
 /// How long to leave the computer alone between looks.
 ///
@@ -66,13 +129,21 @@ struct App {
     /// The key this reader started, until its finish is acknowledged.
     watching: Option<String>,
     result: Option<(String, RunResult)>,
+    /// The key whose result is on screen, so it can be run again from there.
+    result_key: Option<String>,
     result_page: usize,
-    /// Whether the computer answered the last thing it was asked.
+    /// Why the computer did not answer the last thing it was asked, if it
+    /// did not.
     ///
     /// A deck whose computer has gone away looks exactly like a deck whose
     /// computer is idle, and the difference is the whole question a reader has
     /// when a key does nothing.
-    reachable: bool,
+    trouble: Option<Trouble>,
+    /// The pairing in use before Change pairing was chosen, so backing out of
+    /// the typing returns to a deck that still works.
+    previous: Option<(String, String)>,
+    /// Why the last typed address or code was not accepted.
+    entry_error: Option<&'static str>,
     /// What the last key that finished did, for the line under the deck.
     ///
     /// Kept beside the full result rather than instead of it: this is the one
@@ -94,8 +165,11 @@ impl Default for App {
             confirming: None,
             watching: None,
             result: None,
+            result_key: None,
             result_page: 0,
-            reachable: true,
+            trouble: None,
+            previous: None,
+            entry_error: None,
             last: None,
         }
     }
@@ -115,27 +189,55 @@ impl App {
             // heading and a paragraph above it fit at the default text size
             // and are refused outright at 170%, which left a reader who had
             // turned the type up with a blank panel and no way to pair.
+            //
+            // The reader's keyboard covers this screen while the owner types,
+            // so where the address and code come from is said in the field's
+            // own hint, which the runtime keeps under the prompt.
             View::Address if self.entry.is_open() => ScreenBuilder::new("deck-address")
-                .text_entry(&self.entry, "Computer address", "Next")
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Computer address",
+                    "The address kobo sidekick init printed, like 192.168.1.20.",
+                    "Next",
+                )
                 .build(),
-            View::Address => ScreenBuilder::new("deck-address")
-                .top_bar("Deck")
-                .heading("Pair with your computer")
-                .text("On your computer, run these. The first prints an address and a code.")
-                .command("kobo sidekick init")
-                .command("kobo trust set sidekick")
-                .command("kobo sidekick run")
-                .primary_button("enter-address", "Enter the address")
-                .build(),
+            View::Address => {
+                let mut screen = ScreenBuilder::new("deck-address")
+                    .top_bar("Deck")
+                    .owns_back(self.previous.is_some())
+                    .heading("Pair with your computer");
+                if let Some(error) = self.entry_error {
+                    screen = screen.banner(BannerLevel::Error, error);
+                }
+                screen
+                    .text("On your computer, run these two.")
+                    .command("kobo sidekick init")
+                    .command("kobo sidekick run")
+                    .secondary("If the first cannot reach this reader, enter the address and code it prints.")
+                    .primary_button("enter-address", "Enter the address")
+                    .build()
+            }
             View::Code if self.entry.is_open() => ScreenBuilder::new("deck-code")
-                .text_entry(&self.entry, "Pairing code", "Pair")
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Pairing code",
+                    "The six letters and digits kobo sidekick init printed.",
+                    "Pair",
+                )
                 .build(),
-            View::Code => ScreenBuilder::new("deck-code")
-                .top_bar("Deck")
-                .heading("Now the pairing code")
-                .text("The six characters Sidekick is showing beside the address.")
-                .primary_button("enter-code", "Enter the code")
-                .build(),
+            View::Code => {
+                let mut screen = ScreenBuilder::new("deck-code")
+                    .top_bar("Deck")
+                    .owns_back(true)
+                    .heading("Now the pairing code");
+                if let Some(error) = self.entry_error {
+                    screen = screen.banner(BannerLevel::Error, error);
+                }
+                screen
+                    .text("The six characters kobo sidekick init printed beside the address.")
+                    .primary_button("enter-code", "Enter the code")
+                    .build()
+            }
             View::Grid => self.grid(),
             View::Result => self.result_screen(context),
         }
@@ -162,7 +264,13 @@ impl App {
         if self.address == "local" {
             screen = screen.top_bar_action("pair-preview", "Pair");
         } else {
-            screen = screen.top_bar_glyph("retry", "Refresh", Glyph::Refresh);
+            // A pairing that has gone wrong needs a way out from the deck
+            // itself, not only from a fresh install.
+            screen = screen.top_bar_action("repair", "Pairing").top_bar_glyph(
+                "retry",
+                "Refresh",
+                Glyph::Refresh,
+            );
         }
         if let Some(note) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, note);
@@ -201,11 +309,52 @@ impl App {
         if self.address.is_empty() {
             return "Not paired with a computer yet.".to_owned();
         }
-        if self.reachable {
-            format!("Paired with {}.", self.address)
-        } else {
-            format!("{} is not answering.", self.address)
+        match self.trouble {
+            None => format!("Paired with {}.", self.address),
+            Some(Trouble::Offline) => "This reader is not on Wi-Fi.".to_owned(),
+            Some(Trouble::Unreachable) => format!("{} is not answering.", self.address),
+            Some(Trouble::Slow) => format!("{} is slow to answer.", self.address),
+            Some(Trouble::Refused) => format!("{} refused this pairing.", self.address),
+            Some(Trouble::NoDeck) => format!("{} has no deck yet.", self.address),
+            Some(Trouble::Unreadable) => {
+                format!("{} sent an answer Deck cannot use.", self.address)
+            }
         }
+    }
+
+    /// The address as typed, cleaned, with the helper's port filled in when
+    /// none was given. `None` when it could not be an address.
+    fn accept_address(typed: &str) -> Option<String> {
+        let typed: String = typed.split_whitespace().collect();
+        let typed = typed
+            .strip_prefix("https://")
+            .unwrap_or(&typed)
+            .trim_end_matches('/')
+            .to_owned();
+        if typed.is_empty()
+            || !typed
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'))
+        {
+            return None;
+        }
+        let has_port = if typed.starts_with('[') {
+            typed.contains("]:")
+        } else {
+            typed.contains(':')
+        };
+        Some(if has_port {
+            typed
+        } else {
+            format!("{typed}:{DEFAULT_PORT}")
+        })
+    }
+
+    /// The code as typed, if it is one `kobo sidekick init` could have made.
+    fn accept_code(typed: &str) -> Option<String> {
+        let code = typed.trim().to_ascii_lowercase();
+        (code.chars().count() == CODE_LENGTH && code.chars().all(|c| c.is_ascii_alphanumeric()))
+            .then_some(code)
     }
 
     fn result_prefix(&self) -> ScreenBuilder {
@@ -266,6 +415,11 @@ impl App {
                 screen = screen.text(paragraph);
             }
         }
+        // Tapping a key that has just run opens what it said, so this is the
+        // way to run it again from here rather than waiting out the result.
+        if self.result_key.is_some() && self.address != "local" {
+            screen = screen.button("run-again", "Run again");
+        }
         if pages.len() > 1 {
             screen = screen
                 .page_turns("result-previous", "result-next")
@@ -310,6 +464,21 @@ impl App {
             self.notice = Some("Preview only. Pair with your computer to use these pads.".into());
             return;
         }
+        let task = cx.spawn(Task::Post {
+            url: format!("https://{}/deck/press?token={}", self.address, self.code),
+            body: format!("{{\"key\":\"{id}\",\"confirmed\":{confirmed}}}"),
+            content_type: "application/json".into(),
+            credential: None,
+            headers: vec![],
+            max_bytes: 4096,
+        });
+        // A tap either goes out or says why it did not. The key used to turn
+        // to "running" and stay that way when the runtime had no room for
+        // another request, with nothing sent at all.
+        let Some(task) = task else {
+            self.notice = Some(STILL_TALKING.into());
+            return;
+        };
         if let Some(key) = self
             .deck
             .pages
@@ -319,18 +488,12 @@ impl App {
         {
             "running".clone_into(&mut key.state);
         }
-        self.task = cx.spawn(Task::Post {
-            url: format!("https://{}/deck/press?token={}", self.address, self.code),
-            body: format!("{{\"key\":\"{id}\",\"confirmed\":{confirmed}}}"),
-            content_type: "application/json".into(),
-            credential: None,
-            headers: vec![],
-            max_bytes: 4096,
-        });
+        self.notice = None;
+        self.task = Some(task);
         self.pending = Some(Pending::Press(id.to_owned()));
     }
     fn result(&mut self, cx: &mut Context, id: &str) {
-        self.task = cx.spawn(Task::Fetch {
+        let task = cx.spawn(Task::Fetch {
             url: format!(
                 "https://{}/deck/result?key={id}&token={}",
                 self.address, self.code
@@ -340,7 +503,146 @@ impl App {
             credential: None,
             headers: vec![],
         });
+        if task.is_none() {
+            self.notice = Some(STILL_TALKING.into());
+            return;
+        }
+        self.task = task;
         self.pending = Some(Pending::Result(id.to_owned()));
+    }
+
+    /// The pairing screens' taps, and Pairing in the deck's top bar.
+    fn pairing_action(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        if matches!(self.view, View::Address | View::Code) {
+            if let Some(event) = self.entry.handle(a) {
+                if let Typing::Submitted(text) = event {
+                    self.submitted(cx, &text);
+                }
+                self.show(cx);
+                return true;
+            }
+            if a == ActionId::BACK {
+                // Back steps out of the typing: code to address, and address
+                // to the deck that was working before Pairing was chosen.
+                if self.view == View::Code {
+                    self.view = View::Address;
+                } else if let Some((address, code)) = self.previous.take() {
+                    self.address = address;
+                    self.code = code;
+                    self.view = View::Grid;
+                    self.poll(cx);
+                }
+                self.entry_error = None;
+                self.show(cx);
+                return true;
+            }
+        }
+        if a == action_id("enter-address") {
+            // Opened with what is known, because the usual repair is a new
+            // code for the same computer.
+            let known = self
+                .previous
+                .as_ref()
+                .map(|(address, _)| address.clone())
+                .unwrap_or_default();
+            // An address has no spaces and needs its dots and colon, so its
+            // field opens on the keys the runtime keeps for addresses.
+            self.entry.close();
+            self.entry = TextEntry::new().address();
+            self.entry.open_with(known);
+            self.show(cx);
+            return true;
+        }
+        if a == action_id("enter-code") {
+            self.entry.close();
+            self.entry = TextEntry::new();
+            self.entry.open();
+            self.show(cx);
+            return true;
+        }
+        if a == action_id("repair") && self.view == View::Grid {
+            self.change_pairing(cx);
+            return true;
+        }
+        false
+    }
+
+    /// Run again under a result: the same press the key would have made,
+    /// asking first when the key asks first.
+    fn run_again(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        if a == action_id("run-again") && self.view == View::Result {
+            if let Some(id) = self.result_key.take() {
+                self.view = View::Grid;
+                self.result = None;
+                self.result_page = 0;
+                let confirm = self
+                    .deck
+                    .pages
+                    .iter()
+                    .flat_map(|page| page.keys.iter())
+                    .find(|key| key.id == id)
+                    .map(|key| key.confirm);
+                match confirm {
+                    Some(true) => self.confirming = Some(id),
+                    Some(false) => self.press(cx, &id, false),
+                    None => {
+                        self.notice = Some(
+                            "That pad changed on your computer. The deck is refreshing.".into(),
+                        );
+                        self.poll(cx);
+                    }
+                }
+            }
+            self.show(cx);
+            return true;
+        }
+        false
+    }
+
+    /// Starts typing a new pairing, keeping the one in use to come back to.
+    fn change_pairing(&mut self, cx: &mut Context) {
+        if !self.address.is_empty() && self.address != "local" {
+            self.previous = Some((self.address.clone(), self.code.clone()));
+        }
+        self.entry.close();
+        self.entry_error = None;
+        self.notice = None;
+        self.view = View::Address;
+        self.show(cx);
+    }
+
+    /// Takes a typed address or code. A refused one stays on its own step with
+    /// the reason above it, instead of being saved and failing later as an
+    /// unreachable computer.
+    fn submitted(&mut self, cx: &mut Context, text: &str) {
+        if self.view == View::Address {
+            if let Some(address) = Self::accept_address(text) {
+                self.address = address;
+                self.entry_error = None;
+                self.view = View::Code;
+            } else {
+                self.entry_error = Some("That is not an address. Enter the one kobo sidekick init printed, like 192.168.1.20.");
+            }
+            return;
+        }
+        let Some(code) = Self::accept_code(text) else {
+            self.entry_error = Some("A pairing code is six letters and digits. Enter the one kobo sidekick init printed.");
+            return;
+        };
+        self.code = code;
+        self.entry_error = None;
+        self.previous = None;
+        self.trouble = None;
+        self.notice = None;
+        // What the last key did on the old pairing says nothing about this one.
+        self.last = None;
+        cx.store()
+            .save(PAIRED, format!("{}|{}", self.address, self.code));
+        self.view = View::Grid;
+        // Whatever was in flight belongs to the old pairing.
+        self.task = None;
+        self.pending = None;
+        self.poll(cx);
     }
 
     fn poll_landed(&mut self, cx: &mut Context, raw: &str) {
@@ -402,16 +704,26 @@ impl KoboApp for App {
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
         if let StoreResult::Loaded { key, value } = result {
             if key == PAIRED {
-                if let Some(raw) = value.and_then(|v| String::from_utf8(v).ok()) {
-                    if let Some((address, code)) = raw.split_once('|') {
-                        self.address = address.into();
-                        self.code = code.into();
-                        self.view = View::Grid;
-                        self.poll(cx);
-                    } else {
-                        self.view = View::Address;
-                    }
-                } else {
+                // Both halves are trimmed and a bare address gets the port,
+                // so a pairing saved by an older Deck, or written by the
+                // computer, opens the same way a freshly typed one does.
+                let remembered = value
+                    .and_then(|v| String::from_utf8(v).ok())
+                    .and_then(|raw| {
+                        let (address, code) = raw.split_once('|')?;
+                        let code = code.trim();
+                        if address.trim() == "local" {
+                            return Some(("local".to_owned(), code.to_owned()));
+                        }
+                        Some((Self::accept_address(address)?, code.to_owned()))
+                    })
+                    .filter(|(_, code)| !code.is_empty());
+                if let Some((address, code)) = remembered {
+                    self.address = address;
+                    self.code = code;
+                    self.view = View::Grid;
+                    self.poll(cx);
+                } else if self.view == View::Opening {
                     self.view = View::Address;
                 }
             } else if key == cache_key(CACHE) {
@@ -424,6 +736,19 @@ impl KoboApp for App {
             self.show(cx);
         }
     }
+    fn on_foreground(&mut self, cx: &mut Context) {
+        match self.view {
+            // A look that was cancelled while the panel was elsewhere would
+            // otherwise leave a deck that never updates again.
+            View::Grid if self.task.is_none() => self.poll(cx),
+            // `kobo sidekick init` may have paired this reader while Deck
+            // sat on its pairing screen. Nothing is lost by looking.
+            View::Address if self.previous.is_none() && !self.entry.is_open() => {
+                cx.store().load(PAIRED);
+            }
+            _ => {}
+        }
+    }
     fn on_task(&mut self, cx: &mut Context, task: TaskId, outcome: TaskOutcome) {
         if self.task != Some(task) {
             return;
@@ -432,7 +757,9 @@ impl KoboApp for App {
         let pending = self.pending.take();
         match outcome {
             TaskOutcome::Completed(bytes) => {
-                self.reachable = true;
+                if self.trouble.take().is_some() {
+                    self.notice = None;
+                }
                 let raw = String::from_utf8_lossy(&bytes).into_owned();
                 match pending {
                     Some(Pending::Poll) => {
@@ -456,9 +783,18 @@ impl KoboApp for App {
                             }
                             "needs-confirm" => self.confirming = Some(id),
                             "busy" => self.notice = Some("That command is still running.".into()),
+                            "full" => {
+                                self.notice = Some(
+                                    "Four commands are already running. Tap again when one finishes."
+                                        .into(),
+                                );
+                            }
+                            "unavailable" => self.notice = Some(NO_DECK.into()),
                             _ => {
-                                self.notice =
-                                    Some("That control changed. Refreshing the deck.".into());
+                                self.notice = Some(
+                                    "That pad changed on your computer. The deck is refreshing."
+                                        .into(),
+                                );
                             }
                         }
                         self.poll(cx);
@@ -477,6 +813,7 @@ impl KoboApp for App {
                                 .map_or_else(|| "Command".to_owned(), |key| key.label.clone());
                             self.last = Some(summarise(&label, &result));
                             self.result = Some((label, result));
+                            self.result_key = Some(id);
                             self.result_page = 0;
                             self.view = View::Result;
                         } else {
@@ -486,8 +823,9 @@ impl KoboApp for App {
                     None => {}
                 }
             }
-            TaskOutcome::Failed(_) => {
-                self.reachable = false;
+            TaskOutcome::Failed(error) => {
+                let trouble = Trouble::of(error);
+                self.trouble = Some(trouble);
                 // Still worth looking again, but not immediately: a computer
                 // that is not there answers a request a second just as fast
                 // as it answers none.
@@ -505,8 +843,7 @@ impl KoboApp for App {
                         "idle".clone_into(&mut key.state);
                     }
                 }
-                self.notice =
-                    Some("Can't reach your computer. Check that Sidekick is open.".into());
+                self.notice = Some(trouble.advice().into());
             }
             TaskOutcome::Cancelled => {}
         }
@@ -519,27 +856,7 @@ impl KoboApp for App {
             self.show(cx);
             return;
         }
-        if matches!(self.view, View::Address | View::Code) {
-            if let Some(event) = self.entry.handle(a) {
-                if let Typing::Submitted(text) = event {
-                    if self.view == View::Address {
-                        self.address = text;
-                        self.view = View::Code;
-                    } else {
-                        self.code = text;
-                        cx.store()
-                            .save(PAIRED, format!("{}|{}", self.address, self.code));
-                        self.view = View::Grid;
-                        self.poll(cx);
-                    }
-                }
-                self.show(cx);
-                return;
-            }
-        }
-        if a == action_id("enter-address") || a == action_id("enter-code") {
-            self.entry.open();
-            self.show(cx);
+        if self.pairing_action(cx, a) || self.run_again(cx, a) {
             return;
         }
         if a == action_id("confirm-run") {
@@ -576,6 +893,7 @@ impl KoboApp for App {
         if a == action_id("back") || (a == ActionId::BACK && self.view == View::Result) {
             self.view = View::Grid;
             self.result = None;
+            self.result_key = None;
             self.result_page = 0;
             self.poll(cx);
             self.show(cx);
@@ -635,7 +953,9 @@ fn main() -> ExitCode {
 mod tests {
     use super::{summarise, App, Pending, View, BETWEEN_LOOKS, PAIRED};
     use crate::model::{decode, RunResult};
-    use kobo_sdk::{action_id, AppRunner, Command, StoreResult, Task, TaskId, TaskOutcome};
+    use kobo_sdk::{
+        action_id, ActionId, AppRunner, Command, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    };
 
     const LAYOUT: &str = r#"{"version":"2","pages":[{"name":"Build","keys":[
         {"id":"test","label":"Test","detail":"cargo test","confirm":false,"state":"idle"},
@@ -691,7 +1011,7 @@ mod tests {
 
         let unreachable = App {
             address: "192.168.1.5:8080".into(),
-            reachable: false,
+            trouble: Some(super::Trouble::Unreachable),
             ..App::default()
         };
         assert!(unreachable.connection().contains("not answering"));
@@ -809,6 +1129,214 @@ mod tests {
         assert_eq!(runner.app().last.as_deref(), Some("Test finished."));
         let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
         assert!(drawn.contains("14 tests passed"), "{drawn}");
+    }
+
+    #[test]
+    fn a_bare_address_is_dialled_on_the_helpers_port() {
+        assert_eq!(
+            App::accept_address(" 192.168.1.20 ").as_deref(),
+            Some("192.168.1.20:9331")
+        );
+        assert_eq!(
+            App::accept_address("192.168.1.20:9400").as_deref(),
+            Some("192.168.1.20:9400")
+        );
+        assert_eq!(
+            App::accept_address("https://studio.local/").as_deref(),
+            Some("studio.local:9331")
+        );
+        assert_eq!(
+            App::accept_address("[fe80::1]").as_deref(),
+            Some("[fe80::1]:9331")
+        );
+        assert_eq!(App::accept_address("not an/address"), None);
+        assert_eq!(App::accept_code(" ABC234 ").as_deref(), Some("abc234"));
+        assert_eq!(App::accept_code("abc"), None);
+    }
+
+    #[test]
+    fn a_pairing_saved_without_a_port_still_connects() {
+        let mut runner = AppRunner::new(App::default());
+        runner.start();
+        let commands = runner.store_result(StoreResult::Loaded {
+            key: PAIRED.into(),
+            value: Some(b"192.168.1.5|abc234\n".to_vec()),
+        });
+        match started(&commands) {
+            Some(Task::Fetch { url, .. }) => {
+                assert!(url.starts_with("https://192.168.1.5:9331/deck?"), "{url}");
+                assert!(url.ends_with("token=abc234"), "{url}");
+            }
+            other => panic!("expected the deck to be fetched, started {other:?}"),
+        }
+    }
+
+    #[test]
+    fn each_failure_names_its_own_cause_and_fix() {
+        let (mut runner, _) = paired();
+        let cases = [
+            (TaskError::Unauthorized, "pairing code", "refused"),
+            (TaskError::NotFound, "kobo deck init", "no deck"),
+            (TaskError::Unreachable, "kobo sidekick run", "not answering"),
+            (TaskError::Offline, "Wi-Fi", "not on Wi-Fi"),
+            (TaskError::TimedOut, "asleep", "slow"),
+        ];
+        let mut seen = Vec::new();
+        for (error, advice, line) in cases {
+            runner.action(action_id("retry"));
+            let task = in_flight(&runner).expect("a look is in flight");
+            runner.task_outcome(task, TaskOutcome::Failed(error));
+            let notice = runner.app().notice.clone().expect("a notice");
+            assert!(notice.contains(advice), "{error:?}: {notice}");
+            assert!(runner.app().connection().contains(line), "{error:?}");
+            assert!(!seen.contains(&notice), "two causes share {notice}");
+            seen.push(notice);
+        }
+        // A pairing problem is never blamed on the network or the address.
+        assert!(!seen[0].contains("Wi-Fi") && !seen[0].contains("not answering"));
+    }
+
+    #[test]
+    fn change_pairing_starts_from_the_deck_and_back_returns_to_it() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("repair"));
+        assert_eq!(runner.app().view, View::Address);
+        runner.action(action_id("enter-address"));
+        assert_eq!(runner.app().entry.text(), "192.168.1.5:8080");
+        runner.cancel_text();
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Grid);
+        assert_eq!(runner.app().code, "code");
+    }
+
+    #[test]
+    fn the_address_opens_on_the_address_keys_and_both_fields_say_where_their_answer_comes_from() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("repair"));
+        let asked = runner.action(action_id("enter-address"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, hint, .. }) =
+            kobo_sdk::keyboard::testing::asked(&asked)
+        else {
+            panic!("the reader's keyboard was not asked for the address")
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Address);
+        assert!(hint.contains("kobo sidekick init"), "{hint}");
+        runner.type_text("192.168.1.9");
+        let asked = runner.action(action_id("enter-code"));
+        let Some(kobo_sdk::DeviceRequest::TypeText { kind, hint, .. }) =
+            kobo_sdk::keyboard::testing::asked(&asked)
+        else {
+            panic!("the reader's keyboard was not asked for the code")
+        };
+        assert_eq!(*kind, kobo_sdk::FieldKind::Text);
+        assert!(hint.contains("six letters and digits"), "{hint}");
+        runner.type_text("NEW234");
+        assert_eq!(runner.app().view, View::Grid);
+    }
+
+    #[test]
+    fn a_new_code_typed_after_change_pairing_is_saved_and_used() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("repair"));
+        runner
+            .app_mut()
+            .submitted(&mut kobo_sdk::Context::default(), "192.168.1.9");
+        assert_eq!(runner.app().view, View::Code);
+        let mut context = kobo_sdk::Context::default();
+        runner.app_mut().submitted(&mut context, "zz");
+        assert!(runner.app().entry_error.is_some(), "a short code was taken");
+        runner.app_mut().submitted(&mut context, "NEW234");
+        assert_eq!(runner.app().view, View::Grid);
+        let saved = context.take_commands().into_iter().any(|command| {
+            matches!(
+                command,
+                Command::Store(kobo_sdk::StoreRequest::Save { key, value })
+                    if key == PAIRED && value == b"192.168.1.9:9331|new234"
+            )
+        });
+        assert!(saved, "the new pairing was not saved");
+    }
+
+    #[test]
+    fn a_finished_key_can_be_run_again_from_its_result() {
+        let (mut runner, _) = paired();
+        for key in runner
+            .app_mut()
+            .deck
+            .pages
+            .iter_mut()
+            .flat_map(|page| page.keys.iter_mut())
+        {
+            "ok".clone_into(&mut key.state);
+        }
+        runner.action(action_id("press-test"));
+        let task = in_flight(&runner).expect("the result read");
+        runner.task_outcome(
+            task,
+            TaskOutcome::Completed(br#"{"status":"ok","exit":0,"tail":"done"}"#.to_vec()),
+        );
+        assert_eq!(runner.app().view, View::Result);
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert!(drawn.contains("Run again"), "{drawn}");
+        let commands = runner.action(action_id("run-again"));
+        match started(&commands) {
+            Some(Task::Post { url, body, .. }) => {
+                assert!(url.contains("/deck/press"), "{url}");
+                assert!(body.contains("\"confirmed\":false"), "{body}");
+            }
+            other => panic!("Run again did not press the key: {other:?}"),
+        }
+        assert_eq!(runner.app().view, View::Grid);
+    }
+
+    #[test]
+    fn a_full_computer_is_told_apart_from_a_busy_key() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("press-test"));
+        let post = in_flight(&runner).expect("the press went out");
+        runner.task_outcome(
+            post,
+            TaskOutcome::Completed(br#"{"outcome":"full"}"#.to_vec()),
+        );
+        let notice = runner.app().notice.clone().unwrap_or_default();
+        assert!(notice.contains("Four commands"), "{notice}");
+    }
+
+    #[test]
+    fn pairing_screens_fit_the_panel_at_every_text_size() {
+        use kobo_ui::{Chrome, DisplayMetrics, TextScale, CLARA_BW_METRICS};
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            // Built through a runner, as on a reader. The runner installs the
+            // face the runtime measures with; without one, a run that reached
+            // this test first measured in the bitmap fallback and passed a
+            // screen that ran off the panel in the real face.
+            let runner = kobo_sdk::AppRunner::with_metrics(App::default(), metrics);
+            let context = runner.context();
+            for (view, error) in [
+                (View::Address, None),
+                (View::Address, Some("That is not an address. Enter the one kobo sidekick init printed, like 192.168.1.20.")),
+                (View::Code, Some("A pairing code is six letters and digits. Enter the one kobo sidekick init printed.")),
+            ] {
+                let app = App {
+                    view,
+                    entry_error: error,
+                    previous: Some(("192.168.1.5:9331".into(), "abc234".into())),
+                    ..App::default()
+                };
+                let screen = app.screen(&context);
+                let errors: Vec<_> = screen
+                    .diagnostics(&metrics, &Chrome::measuring(true))
+                    .issues
+                    .into_iter()
+                    .filter(|issue| issue.severity == kobo_sdk::DiagnosticSeverity::Error)
+                    .collect();
+                assert!(errors.is_empty(), "{view:?} {text_scale:?}: {errors:#?}");
+            }
+        }
     }
 
     #[test]

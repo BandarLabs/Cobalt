@@ -21,7 +21,7 @@ impl Time {
                     .ok_or_else(|| io::Error::other("invalid simulator UTC offset"))
             })
             .transpose()?
-            .unwrap_or(0);
+            .unwrap_or_else(crate::session_offset_minutes);
         let Some(value) = std::env::var_os("KOBO_SIM_CLOCK_MILLIS") else {
             return SystemClock::new(offset)
                 .map(|clock| Self::Real(Arc::new(clock)))

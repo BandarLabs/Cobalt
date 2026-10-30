@@ -10,39 +10,61 @@ fn running_match() -> Game {
     };
     game.roll();
     game.played.push("White 13/7 8/5".into());
-    game.turn_moves.push("6/3".into());
-    game.view = View::Match;
+    game.turn_plays.push(Move {
+        from: Some(5),
+        to: Some(2),
+        die: 3,
+    });
     game
 }
 
-#[test]
-fn the_visible_new_match_action_opens_a_confirmation_without_changing_progress() {
+/// New game from the menu, the way a finger reaches it: the dots, then the
+/// first entry of the menu they open.
+fn choose_new_game(game: &mut Game) -> Option<bool> {
     let _runner = kobo_sdk::AppRunner::new(Game::default());
-    let mut game = running_match();
-    let before = game.encode();
-    let layout = screen(&game, None).layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+    assert_eq!(game.apply_action(action_id(game::MORE)), Some(false));
+    let screen = screen(game, None);
+    let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
     let rect = layout
-        .rect_of_action(action_id("new-match"))
-        .expect("visible New match");
+        .rect_of_action(action_id(game::NEW_GAME))
+        .expect("New game is in the open menu");
     let hit = layout
         .hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2)
         .unwrap();
-    assert_eq!(game.apply_action(hit), Some(false));
+    game.apply_action(hit)
+}
+
+#[test]
+fn new_game_during_a_match_asks_first_without_changing_progress() {
+    let mut game = running_match();
+    let before = game.encode();
+    assert_eq!(choose_new_game(&mut game), Some(false));
     assert_eq!(game.view, View::NewMatch);
     assert_eq!(game.encode(), before);
     assert!(screen(&game, None).owns_back);
 }
 
 #[test]
-fn back_or_keep_match_preserves_the_exact_game_and_score() {
+fn new_game_before_anything_is_played_starts_at_once() {
+    let mut game = Game::default();
+    assert_eq!(choose_new_game(&mut game), Some(false));
+    assert_eq!(
+        game.view,
+        View::Board,
+        "nothing would be lost, so nothing is asked"
+    );
+}
+
+#[test]
+fn back_or_keep_playing_preserves_the_exact_game_and_score() {
     for cancel in [ActionId::BACK, action_id("cancel-new-match")] {
         let mut game = running_match();
         let before = game.encode();
-        game.apply_action(action_id("new-match"));
+        choose_new_game(&mut game);
         assert_eq!(game.apply_action(action_id("roll")), None);
         assert_eq!(game.encode(), before);
         assert_eq!(game.apply_action(cancel), Some(false));
-        assert_eq!(game.view, View::Match);
+        assert_eq!(game.view, View::Board);
         assert_eq!(game.encode(), before);
     }
 }
@@ -51,8 +73,8 @@ fn back_or_keep_match_preserves_the_exact_game_and_score() {
 fn confirmation_clears_the_match_once_and_keeps_the_selected_rules() {
     let mut game = running_match();
     game.mode = Mode::Solo;
-    game.turn = Player::Black;
-    game.apply_action(action_id("new-match"));
+    game.turn = Player::White;
+    choose_new_game(&mut game);
     assert_eq!(
         game.apply_action(action_id("confirm-new-match")),
         Some(true)
@@ -66,7 +88,7 @@ fn confirmation_clears_the_match_once_and_keeps_the_selected_rules() {
     assert!(game.dice.is_empty());
     assert!(game.history.is_empty());
     assert!(game.played.is_empty());
-    assert!(game.turn_moves.is_empty());
+    assert!(game.turn_plays.is_empty());
     let after = game.encode();
     assert_eq!(game.apply_action(action_id("confirm-new-match")), None);
     assert_eq!(game.encode(), after);
@@ -75,9 +97,8 @@ fn confirmation_clears_the_match_once_and_keeps_the_selected_rules() {
 
 #[test]
 fn confirmation_controls_fit_and_are_tappable_at_every_text_size_and_pose() {
-    let _runner = kobo_sdk::AppRunner::new(Game::default());
     let mut game = running_match();
-    game.apply_action(action_id("new-match"));
+    choose_new_game(&mut game);
     for pose in [(1072, 1448), (1448, 1072)] {
         for text_scale in kobo_ui::TextScale::STEPS {
             let metrics = kobo_ui::DisplayMetrics {
@@ -103,6 +124,72 @@ fn confirmation_controls_fit_and_are_tappable_at_every_text_size_and_pose() {
                 assert_eq!(
                     layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
                     Some(action)
+                );
+            }
+        }
+    }
+}
+
+/// Offering the cube, answering an offer and dropping it are the same kind
+/// of question as New match, so they are drawn the same way: the question as
+/// the screen's heading, what follows under it, and the two answers, each a
+/// whole-width button under a finger at every text size.
+#[test]
+fn the_cube_questions_are_asked_like_new_match_at_every_text_size() {
+    let questions = [
+        (
+            Phase::ConfirmDouble,
+            "Offer the cube at 2?",
+            ["confirm-double", "cancel-double"],
+        ),
+        (
+            Phase::Offered(Player::Black),
+            "Black offers the cube at 2",
+            ["take", "drop"],
+        ),
+        (
+            Phase::ConfirmDrop(Player::Black),
+            "Drop Black's double?",
+            ["confirm-drop", "cancel-drop"],
+        ),
+    ];
+    for (phase, question, answers) in questions {
+        let game = Game {
+            phase,
+            mode: Mode::PassAndPlay,
+            ..Game::default()
+        };
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(Game::default(), metrics);
+            let screen = screen_for(&game, None, &runner.context());
+            let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+            assert!(
+                diagnostics.issues.is_empty(),
+                "{phase:?} {text_scale:?}: {:?}",
+                diagnostics.issues
+            );
+            let layout = screen.layout_with(&metrics, &Chrome::measuring(true));
+            let heading = layout
+                .nodes
+                .iter()
+                .find(|node| matches!(node.kind, kobo_ui::LayoutKind::Heading(_)))
+                .map(|node| node.text_lines.join(" "));
+            assert_eq!(heading.as_deref(), Some(question), "{text_scale:?}");
+            for answer in answers {
+                let action = action_id(answer);
+                let rect = layout.rect_of_action(action).expect("an answer");
+                assert!(
+                    rect.height >= metrics.touch_target_minimum(),
+                    "{answer} {text_scale:?}"
+                );
+                assert_eq!(
+                    layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                    Some(action),
+                    "{answer} {text_scale:?}"
                 );
             }
         }

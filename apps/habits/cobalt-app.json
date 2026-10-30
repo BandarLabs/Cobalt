@@ -4,8 +4,8 @@
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline habit tracker for daily and weekday habits, with streaks, weekly statistics and a backup you can copy to your computer.",
-  "version": "0.1.9",
-  "release_notes": "Today says that tapping a habit marks it done, and the skip buttons sit under a heading that says what they are for. Buttons in a row are now the same width, headings are set in a serif, and dialogs show their two answers side by side.",
+  "version": "0.1.12",
+  "release_notes": "Habit names are typed on Cobalt's own keyboard with the length limit in view, and a habit's schedule is picked from a list that marks the current one.",
   "glyph": "check",
   "capabilities": []
 }

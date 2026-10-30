@@ -1,0 +1,419 @@
+# Pub Quiz bundled questions. Written for Pub Quiz; not from Open Trivia DB.
+# One question per line, tab separated:
+#   category, difficulty (easy, medium or hard), question, four answers.
+# The right answer starts with *. Lines starting with # are comments.
+# Keep the first 30 questions first: they are the original set.
+Science	easy	Which planet has the shortest year?	*Mercury	Mars	Venus	Earth
+Science	easy	What is the chemical symbol for gold?	Ag	Gd	*Au	Go
+Science	easy	Which gas do plants take from the air to make sugar?	Oxygen	Nitrogen	*Carbon dioxide	Helium
+Science	medium	How many bones are in the adult human body?	186	*206	226	246
+Science	medium	What is the hardest natural mineral?	Quartz	Topaz	Corundum	*Diamond
+Geography	easy	What is the capital of Finland?	Oslo	*Helsinki	Tallinn	Stockholm
+Geography	easy	Which river runs through Budapest?	Rhine	*Danube	Seine	Tagus
+Geography	easy	Which is the largest ocean?	Atlantic	Indian	Arctic	*Pacific
+Geography	medium	What is the capital of Australia?	Sydney	Melbourne	*Canberra	Perth
+Geography	hard	Which country has the most natural lakes?	*Canada	Russia	Finland	United States
+History	hard	Which ship carried Charles Darwin on his voyage?	*Beagle	Endeavour	Victory	Resolution
+History	medium	In which year did the Berlin Wall fall?	1987	*1989	1991	1993
+History	easy	Who was the first person to walk on the Moon?	Buzz Aldrin	Yuri Gagarin	*Neil Armstrong	Michael Collins
+History	medium	Which civilisation built Machu Picchu?	Aztec	Maya	*Inca	Olmec
+History	medium	Who was the first emperor of Rome?	Julius Caesar	*Augustus	Nero	Caligula
+Arts & Literature	medium	Who painted The Persistence of Memory?	Miró	*Dalí	Picasso	Kahlo
+Arts & Literature	medium	Who wrote Frankenstein?	*Mary Shelley	George Eliot	Jane Austen	Emily Brontë
+Arts & Literature	easy	How many strings does a standard violin have?	Three	*Four	Five	Six
+Arts & Literature	medium	Who wrote One Hundred Years of Solitude?	Jorge Luis Borges	*Gabriel García Márquez	Isabel Allende	Pablo Neruda
+Arts & Literature	medium	In which city is the Rijksmuseum?	Brussels	*Amsterdam	Copenhagen	Vienna
+Nature	medium	Which is the largest living bird?	Emu	Albatross	*Ostrich	Condor
+Nature	easy	How many legs does a spider have?	Six	*Eight	Ten	Twelve
+Nature	easy	What is a baby kangaroo called?	Cub	Kit	*Joey	Calf
+Nature	easy	Which tree grows acorns?	*Oak	Beech	Maple	Ash
+Nature	easy	Which is the fastest land animal?	Lion	Pronghorn	*Cheetah	Greyhound
+Sport & Games	easy	How many players does a football team start with?	Nine	Ten	*Eleven	Twelve
+Sport & Games	easy	How many squares are on a chessboard?	36	49	*64	81
+Sport & Games	easy	In which sport does love mean a score of zero?	Golf	*Tennis	Basketball	Cricket
+Sport & Games	medium	How many points is the black ball worth in snooker?	Five	Six	*Seven	Eight
+Sport & Games	medium	Which country hosted the first modern Olympic Games?	France	*Greece	England	United States
+Science	easy	What is the chemical formula for water?	H2O2	CO2	*H2O	CH4
+Science	easy	Which planet is known as the Red Planet?	Venus	Saturn	*Mars	Jupiter
+Science	easy	What force keeps us on the ground?	Friction	Inertia	Magnetism	*Gravity
+Science	easy	At what temperature does water boil at sea level?	90 °C	*100 °C	110 °C	120 °C
+Science	easy	What is the freezing point of water in degrees Celsius?	-10 °C	*0 °C	4 °C	32 °C
+Science	easy	Which organ pumps blood around the body?	Kidneys	*Heart	Lungs	Liver
+Science	easy	What is the largest planet in the Solar System?	Neptune	Earth	*Jupiter	Saturn
+Science	easy	Which gas do people need to breathe in to stay alive?	Hydrogen	*Oxygen	Carbon dioxide	Nitrogen
+Science	easy	What is the closest star to Earth?	Polaris	*The Sun	Sirius	Proxima Centauri
+Science	easy	What is the centre of an atom called?	Orbit	*Nucleus	Shell	Electron
+Science	easy	What does a thermometer measure?	Air pressure	Wind speed	*Temperature	Humidity
+Science	easy	What do we call a scientist who studies rocks?	Astronomer	Botanist	Biologist	*Geologist
+Science	easy	How many sides does a hexagon have?	Five	*Six	Seven	Eight
+Science	easy	Which blood cells carry oxygen around the body?	White blood cells	Platelets	*Red blood cells	Plasma cells
+Science	easy	Which instrument is used to look at distant stars?	Stethoscope	Periscope	*Telescope	Microscope
+Science	easy	Which planet is famous for its bright rings?	*Saturn	Mars	Venus	Mercury
+Science	easy	What is the name of our galaxy?	Orion's Belt	The Southern Cross	The Great Bear	*The Milky Way
+Science	easy	Which part of the body has a cornea and a retina?	*Eye	Heart	Skin	Ear
+Science	easy	What is the chemical symbol for oxygen?	Oz	*O	Ox	Os
+Science	easy	Roughly how many hours does Earth take to spin once on its axis?	12	*24	36	48
+Science	medium	What is the main gas in the air we breathe?	Oxygen	*Nitrogen	Carbon dioxide	Argon
+Science	medium	Which metal is liquid at room temperature?	Tin	*Mercury	Lead	Zinc
+Science	medium	What is the chemical symbol for iron?	In	*Fe	Ir	I
+Science	medium	What is the chemical symbol for sodium?	Sd	S	So	*Na
+Science	medium	Who developed the theory of general relativity?	Max Planck	*Albert Einstein	Niels Bohr	Isaac Newton
+Science	medium	Roughly how fast does light travel, in kilometres per second?	30,000	150,000	*300,000	3,000,000
+Science	medium	What does DNA stand for?	Diribonucleic acid	Dinucleic amino acid	*Deoxyribonucleic acid	Deoxyribonitric acid
+Science	medium	Which planet rotates almost on its side?	Neptune	*Uranus	Venus	Saturn
+Science	medium	How many chambers does the human heart have?	Two	Three	*Four	Six
+Science	medium	Who described the three laws of motion in 1687?	Galileo Galilei	*Isaac Newton	Albert Einstein	Robert Hooke
+Science	medium	What is the largest organ of the human body?	Liver	Lungs	Brain	*Skin
+Science	medium	Which element has the atomic number 1?	*Hydrogen	Oxygen	Helium	Carbon
+Science	medium	What kind of energy does a moving object have?	Potential	*Kinetic	Nuclear	Thermal
+Science	medium	In what unit is electrical resistance measured?	*Ohm	Volt	Watt	Ampere
+Science	medium	Which vitamin does the skin make in sunlight?	Vitamin A	Vitamin C	*Vitamin D	Vitamin K
+Science	medium	What is the smallest prime number?	0	1	*2	3
+Science	medium	What do the angles of a triangle add up to?	90 degrees	*180 degrees	270 degrees	360 degrees
+Science	medium	Which blood vessels carry blood away from the heart?	Veins	*Arteries	Venules	Capillaries
+Science	medium	What does a seismograph record?	Rainfall	Wind speed	Sunlight	*Earthquakes
+Science	medium	Which is the hottest planet in the Solar System?	Mercury	*Venus	Jupiter	Mars
+Science	medium	What is the everyday name for sodium chloride?	Chalk	Baking soda	*Table salt	Vinegar
+Science	hard	What is the chemical symbol for tungsten?	Ts	Tu	Tn	*W
+Science	hard	What is the chemical symbol for potassium?	P	*K	Pt	Po
+Science	hard	Who discovered penicillin in 1928?	Joseph Lister	Edward Jenner	Louis Pasteur	*Alexander Fleming
+Science	hard	What is the most abundant element in Earth's crust?	Aluminium	Silicon	Iron	*Oxygen
+Science	hard	Which particle in an atom has no electric charge?	*Neutron	Electron	Proton	Positron
+Science	hard	What is absolute zero on the Celsius scale, to the nearest degree?	-459 °C	*-273 °C	-180 °C	-100 °C
+Science	hard	What is the boundary around a black hole beyond which nothing can escape?	Accretion disc	*Event horizon	Photon sphere	Singularity
+Science	hard	Who described the three laws of planetary motion?	Galileo Galilei	Nicolaus Copernicus	Tycho Brahe	*Johannes Kepler
+Science	hard	What is the SI unit of energy?	Watt	Newton	*Joule	Pascal
+Science	hard	What is the SI unit of frequency?	Henry	Coulomb	Tesla	*Hertz
+Science	hard	Which gas makes up most of the atmosphere of Mars?	Nitrogen	*Carbon dioxide	Methane	Argon
+Science	hard	Which part of a cell releases energy from food?	Golgi body	Ribosomes	*Mitochondria	Vacuole
+Science	hard	How many pairs of chromosomes do people normally have?	21	*23	24	46
+Science	hard	Which is the nearest large spiral galaxy to our own?	*Andromeda	Whirlpool	Sombrero	Pinwheel
+Science	hard	Which scientist is known for the uncertainty principle?	*Werner Heisenberg	Erwin Schrödinger	Niels Bohr	Paul Dirac
+Science	hard	What kind of chemical bond shares electrons between atoms?	Metallic	Hydrogen	Ionic	*Covalent
+Science	hard	Which is the smallest bone in the human body?	Incus	Malleus	Hyoid	*Stapes
+Science	hard	What is the process by which a cell divides into two identical cells?	*Mitosis	Meiosis	Osmosis	Fusion
+Science	hard	Which element has the symbol Pb?	Phosphorus	Lithium	*Lead	Platinum
+Science	hard	Who discovered radium and polonium with her husband Pierre?	Ada Lovelace	Lise Meitner	Rosalind Franklin	*Marie Curie
+Science	hard	What is the study of fungi called?	Ecology	Virology	*Mycology	Botany
+Science	hard	In E = mc², what does the c stand for?	*The speed of light	Electric charge	The gravity constant	Heat capacity
+Science	hard	What is the atomic number of carbon?	*6	8	12	14
+Geography	easy	What is the capital of Spain?	Valencia	Seville	*Madrid	Barcelona
+Geography	easy	On which continent is Kenya?	Oceania	*Africa	South America	Asia
+Geography	easy	Which country is shaped like a boot?	Chile	*Italy	Portugal	Greece
+Geography	easy	In which country are the pyramids of Giza?	*Egypt	Peru	Mexico	Sudan
+Geography	easy	Which is the largest continent?	North America	Europe	*Asia	Africa
+Geography	easy	Which ocean lies between Europe and North America?	Indian	*Atlantic	Arctic	Pacific
+Geography	easy	What is the capital of the United Kingdom?	*London	Manchester	Edinburgh	Birmingham
+Geography	easy	In which country is the city of Rio de Janeiro?	Argentina	Portugal	Mexico	*Brazil
+Geography	easy	What is the capital of Germany?	Hamburg	Munich	Frankfurt	*Berlin
+Geography	easy	Which mountain range contains Mount Everest?	Rockies	Andes	Alps	*Himalayas
+Geography	easy	In which city is the Eiffel Tower?	Lyon	Rome	*Paris	Brussels
+Geography	easy	What is the capital of Russia?	Saint Petersburg	Kyiv	Minsk	*Moscow
+Geography	easy	In which country is the Taj Mahal?	Pakistan	*India	Bangladesh	Iran
+Geography	easy	What is the capital of the United States?	*Washington, D.C.	Boston	New York	Philadelphia
+Geography	easy	Which desert covers much of northern Africa?	Kalahari	Gobi	Atacama	*Sahara
+Geography	easy	Which country is also a whole continent?	New Zealand	Greenland	Antarctica	*Australia
+Geography	easy	What is the capital of China?	Shanghai	Hong Kong	*Beijing	Guangzhou
+Geography	easy	Which US state is a group of islands in the Pacific?	*Hawaii	Florida	California	Alaska
+Geography	easy	In which city does the Statue of Liberty stand?	Boston	Chicago	*New York	Washington
+Geography	easy	Which is the coldest continent?	Europe	*Antarctica	North America	Asia
+Geography	medium	What is the capital of Canada?	Vancouver	Montreal	*Ottawa	Toronto
+Geography	medium	What is the capital of New Zealand?	Christchurch	Dunedin	Auckland	*Wellington
+Geography	medium	What is the capital of Brazil?	Salvador	São Paulo	Rio de Janeiro	*Brasília
+Geography	medium	What is the capital of Portugal?	Faro	Porto	Coimbra	*Lisbon
+Geography	medium	What is the capital of Argentina?	*Buenos Aires	Montevideo	Córdoba	Santiago
+Geography	medium	Which river flows through London?	Severn	Avon	*Thames	Trent
+Geography	medium	Which river flows through Rome?	*Tiber	Arno	Adige	Po
+Geography	medium	In which country is Mount Kilimanjaro?	Kenya	*Tanzania	Ethiopia	Uganda
+Geography	medium	Which is the smallest country in the world by area?	Liechtenstein	San Marino	Monaco	*Vatican City
+Geography	medium	Which strait separates Spain from Morocco?	Strait of Dover	Bosphorus	*Strait of Gibraltar	Strait of Hormuz
+Geography	medium	In which country is the city of Kraków?	*Poland	Czech Republic	Hungary	Slovakia
+Geography	medium	Which line of latitude divides Earth into north and south?	Prime Meridian	Arctic Circle	*Equator	Tropic of Cancer
+Geography	medium	What is the capital of Kenya?	Kisumu	Mombasa	Kampala	*Nairobi
+Geography	medium	Which sea lies between Europe and Africa?	Baltic Sea	Red Sea	Black Sea	*Mediterranean Sea
+Geography	medium	What is the capital of Ireland?	Cork	Belfast	*Dublin	Galway
+Geography	medium	In which country is Angkor Wat?	*Cambodia	Laos	Vietnam	Thailand
+Geography	medium	Which mountains are often taken as a border between Europe and Asia?	Apennines	Pyrenees	Carpathians	*Urals
+Geography	medium	What is the capital of South Korea?	*Seoul	Busan	Pyongyang	Incheon
+Geography	medium	Which mountain range runs down the west of South America?	Appalachians	Rockies	Atlas	*Andes
+Geography	medium	What is the capital of Thailand?	Pattaya	*Bangkok	Phuket	Chiang Mai
+Geography	medium	Which US city is known as the Windy City?	Denver	Detroit	Seattle	*Chicago
+Geography	medium	What is Africa's largest lake?	Lake Tanganyika	*Lake Victoria	Lake Malawi	Lake Chad
+Geography	hard	What is the capital of Mongolia?	*Ulaanbaatar	Bishkek	Astana	Tashkent
+Geography	hard	What is the capital of Bhutan?	*Thimphu	Dhaka	Kathmandu	Lhasa
+Geography	hard	What is the capital of Iceland?	Tórshavn	Nuuk	*Reykjavík	Akureyri
+Geography	hard	In which country is the city of Timbuktu?	Niger	Mauritania	*Mali	Chad
+Geography	hard	What is the deepest lake in the world?	*Lake Baikal	Lake Tanganyika	Caspian Sea	Lake Superior
+Geography	hard	What is the deepest known point in the oceans?	Puerto Rico Trench	Java Trench	Tonga Trench	*Challenger Deep
+Geography	hard	Which country shares Lake Titicaca with Bolivia?	*Peru	Argentina	Ecuador	Chile
+Geography	hard	In which country is Angel Falls?	Guyana	Brazil	*Venezuela	Colombia
+Geography	hard	Which river flows through Baghdad?	Jordan	Nile	*Tigris	Euphrates
+Geography	hard	What is the capital of Peru?	Quito	*Lima	Arequipa	La Paz
+Geography	hard	What is the largest island in the world that is not a continent?	Borneo	Madagascar	*Greenland	New Guinea
+Geography	hard	What is the capital of Vietnam?	Ho Chi Minh City	Da Nang	*Hanoi	Hue
+Geography	hard	Which strait separates Asia from North America?	Davis Strait	Strait of Malacca	Cook Strait	*Bering Strait
+Geography	hard	What is the capital of Morocco?	Casablanca	Marrakesh	Fez	*Rabat
+Geography	hard	The Atacama Desert lies mainly in which country?	Argentina	Peru	*Chile	Bolivia
+Geography	hard	What is the capital of Ethiopia?	Djibouti	Asmara	Khartoum	*Addis Ababa
+Geography	hard	Which two countries share the world's longest international border?	Chile and Argentina	India and Bangladesh	*Canada and United States	Russia and China
+Geography	hard	Which city lies on both sides of the Bosphorus?	Izmir	Athens	*Istanbul	Ankara
+Geography	hard	In which country is Mount Aconcagua?	Chile	Bolivia	*Argentina	Peru
+Geography	hard	What is the capital of Croatia?	Dubrovnik	Split	*Zagreb	Ljubljana
+Geography	hard	Which river forms much of the border between the United States and Mexico?	Mississippi	*Rio Grande	Pecos	Colorado
+Geography	hard	Which country is completely surrounded by South Africa?	Botswana	*Lesotho	Eswatini	Namibia
+History	easy	Who was the first President of the United States?	John Adams	*George Washington	Benjamin Franklin	Thomas Jefferson
+History	easy	Which ship sank on its first voyage in 1912?	Lusitania	*Titanic	Britannic	Olympic
+History	easy	Which wall did the Romans build across northern England?	The Great Wall	Antonine Wall	Offa's Dyke	*Hadrian's Wall
+History	easy	Which French emperor was defeated at Waterloo?	Louis XIV	*Napoleon Bonaparte	Charles de Gaulle	Louis XVI
+History	easy	In which year did the Second World War end?	1918	1939	1944	*1945
+History	easy	In which year did the First World War begin?	1910	1912	*1914	1916
+History	easy	Which people built the Colosseum?	*The Romans	The Greeks	The Egyptians	The Etruscans
+History	easy	Which country gave the Statue of Liberty to the United States?	United Kingdom	*France	Italy	Spain
+History	easy	Who became British Prime Minister in 1940 and led the country in the war?	Neville Chamberlain	Clement Attlee	*Winston Churchill	Anthony Eden
+History	easy	What was the first artificial satellite, launched in 1957?	Explorer	Telstar	Vostok	*Sputnik
+History	easy	Which explorer reached the Americas in 1492?	James Cook	John Cabot	*Christopher Columbus	Amerigo Vespucci
+History	easy	Which British queen came to the throne in 1837?	Elizabeth I	*Victoria	Mary I	Anne
+History	easy	Who led India's non-violent campaign for independence?	*Mahatma Gandhi	Sardar Patel	B. R. Ambedkar	Subhas Chandra Bose
+History	easy	Which seafaring people from Scandinavia raided Europe in longships?	The Saxons	The Celts	*The Vikings	The Normans
+History	easy	Who was President of the United States during the American Civil War?	*Abraham Lincoln	Ulysses S. Grant	Theodore Roosevelt	Andrew Jackson
+History	easy	In which city was President John F. Kennedy shot in 1963?	*Dallas	Houston	Chicago	Los Angeles
+History	easy	Which country did Nelson Mandela lead as President?	Namibia	*South Africa	Zimbabwe	Kenya
+History	easy	On which ship did the Pilgrims sail to America in 1620?	Golden Hind	Santa María	Endeavour	*Mayflower
+History	easy	Which Roman town was buried by Vesuvius in AD 79?	Troy	Carthage	Athens	*Pompeii
+History	easy	Which nurse was known as the Lady with the Lamp?	Clara Barton	*Florence Nightingale	Mary Seacole	Edith Cavell
+History	easy	The Great Wall was built along the north of which country?	Japan	Korea	India	*China
+History	easy	Who made the first powered aeroplane flight in 1903?	*The Wright brothers	Charles Lindbergh	The Lumière brothers	The Montgolfier brothers
+History	medium	Who was the first woman to fly solo across the Atlantic?	*Amelia Earhart	Harriet Quimby	Amy Johnson	Bessie Coleman
+History	medium	In which year did the French Revolution begin?	1776	*1789	1799	1815
+History	medium	Which English king had six wives?	Richard III	Henry VII	Edward VI	*Henry VIII
+History	medium	What name is usually given to the Eastern Roman Empire?	*Byzantine Empire	Holy Roman Empire	Ottoman Empire	Carolingian Empire
+History	medium	Who wrote The Communist Manifesto with Friedrich Engels?	Mikhail Bakunin	Leon Trotsky	Vladimir Lenin	*Karl Marx
+History	medium	In which year did people first land on the Moon?	1965	1967	*1969	1972
+History	medium	What was the capital city of the Aztec Empire?	*Tenochtitlan	Chichen Itza	Teotihuacan	Tikal
+History	medium	What was the long period of tension between the USA and the USSR after 1945 called?	The Phoney War	*The Cold War	The Hundred Years' War	The Great Game
+History	medium	Which document did King John agree to in 1215?	Domesday Book	Act of Union	*Magna Carta	Bill of Rights
+History	medium	Which famous battle was fought in England in 1066?	Battle of Culloden	Battle of Bosworth	Battle of Agincourt	*Battle of Hastings
+History	medium	Which Egyptian queen was the ally of Mark Antony?	Hatshepsut	Nefertiti	Tiye	*Cleopatra
+History	medium	Who was the first Prime Minister of India?	*Jawaharlal Nehru	Sardar Patel	Indira Gandhi	Rajendra Prasad
+History	medium	The Spanish Armada of 1588 was sent to invade which country?	Ireland	Portugal	France	*England
+History	medium	Who led the Soviet Union during the Second World War?	Nikita Khrushchev	Vladimir Lenin	*Joseph Stalin	Leonid Brezhnev
+History	medium	Who was the first European to sail from Europe to India around Africa?	Abel Tasman	Henry Hudson	*Vasco da Gama	Bartolomeu Dias
+History	medium	Which Greek city-state fought Athens in the Peloponnesian War?	*Sparta	Carthage	Troy	Babylon
+History	medium	Who brought printing with movable type to Europe around 1440?	Martin Luther	*Johannes Gutenberg	Leonardo da Vinci	William Caxton
+History	medium	Which country was ruled for centuries by military leaders called shoguns?	*Japan	China	Mongolia	Korea
+History	medium	Who led the first expedition to reach the South Pole?	Ernest Shackleton	Robert Falcon Scott	Edmund Hillary	*Roald Amundsen
+History	medium	Which country was known as Persia until 1935?	Iraq	Afghanistan	*Iran	Turkey
+History	hard	Who was the first emperor of a unified China?	Kublai Khan	Puyi	Sun Yat-sen	*Qin Shi Huang
+History	hard	Which treaty of 1919 set the peace terms for Germany after the First World War?	Treaty of Utrecht	Treaty of Vienna	Treaty of Paris	*Treaty of Versailles
+History	hard	In which year was the Battle of Waterloo?	1805	1812	*1815	1821
+History	hard	Who was the last Tsar of Russia?	Ivan IV	Alexander III	Peter the Great	*Nicholas II
+History	hard	Whose nearly intact tomb did Howard Carter find in 1922?	Khufu	Ramesses II	Akhenaten	*Tutankhamun
+History	hard	Which Carthaginian general crossed the Alps with elephants?	*Hannibal	Hamilcar	Scipio	Hanno
+History	hard	Which Frankish king was crowned emperor by the Pope on Christmas Day 800?	Clovis	Pepin the Short	*Charlemagne	Charles Martel
+History	hard	In which year is the Western Roman Empire usually said to have fallen?	395	410	*476	527
+History	hard	Which civil wars were fought between the Houses of Lancaster and York?	Hundred Years' War	English Civil War	Thirty Years' War	*Wars of the Roses
+History	hard	Who founded the Mongol Empire?	Tamerlane	Attila	*Genghis Khan	Kublai Khan
+History	hard	Which 1494 treaty divided newly found lands between Spain and Portugal?	Treaty of Ghent	*Treaty of Tordesillas	Treaty of Westphalia	Treaty of Utrecht
+History	hard	Which ancient wonder stood in the harbour of Alexandria?	The Hanging Gardens	The Mausoleum	*The Lighthouse	The Colossus
+History	hard	Who was the British king during the American War of Independence?	*George III	Edward VII	William IV	George II
+History	hard	In which year was the United States Declaration of Independence adopted?	1765	*1776	1781	1783
+History	hard	What was the pre-war alliance of Germany, Austria-Hungary and Italy called?	Axis	Central Powers	*Triple Alliance	Triple Entente
+History	hard	Which Roman emperor made Christianity legal in 313?	Hadrian	Diocletian	Nero	*Constantine
+History	hard	Whose expedition was the first to sail all the way around the world?	Abel Tasman	James Cook	Francis Drake	*Ferdinand Magellan
+History	hard	Which naval battle of 1805 was a famous British victory?	*Trafalgar	Copenhagen	The Nile	Jutland
+History	hard	Which country gave women the vote in national elections in 1893?	*New Zealand	Norway	Finland	Australia
+History	hard	Which Mughal emperor built the Taj Mahal?	Babur	*Shah Jahan	Aurangzeb	Akbar
+History	hard	What was the American plan of aid to rebuild Europe after 1945 called?	Monroe Plan	*Marshall Plan	Dawes Plan	Truman Plan
+History	hard	Which English king was executed in 1649?	James I	Charles II	*Charles I	Richard III
+Arts & Literature	easy	Who painted the Mona Lisa?	Raphael	Titian	Giotto	*Leonardo da Vinci
+Arts & Literature	easy	Who wrote Romeo and Juliet?	Ben Jonson	Thomas Kyd	*William Shakespeare	Christopher Marlowe
+Arts & Literature	easy	Which author created Sherlock Holmes?	Wilkie Collins	Dorothy L. Sayers	*Arthur Conan Doyle	G. K. Chesterton
+Arts & Literature	easy	Who wrote the Harry Potter books?	Philip Pullman	Roald Dahl	Terry Pratchett	*J. K. Rowling
+Arts & Literature	easy	Who wrote Oliver Twist?	Jane Austen	*Charles Dickens	Robert Louis Stevenson	Thomas Hardy
+Arts & Literature	easy	Who painted The Starry Night?	Georges Seurat	Paul Gauguin	Paul Cézanne	*Vincent van Gogh
+Arts & Literature	easy	Which hobbit inherits the One Ring from Bilbo?	Meriadoc Brandybuck	Samwise Gamgee	*Frodo Baggins	Peregrin Took
+Arts & Literature	easy	In which book does Captain Ahab hunt a white whale?	*Moby-Dick	Robinson Crusoe	Treasure Island	Kidnapped
+Arts & Literature	easy	How many musicians play in a quartet?	Three	*Four	Five	Six
+Arts & Literature	easy	Which Disney film features the song Let It Go?	Brave	Tangled	Moana	*Frozen
+Arts & Literature	easy	Who wrote The Adventures of Tom Sawyer?	John Steinbeck	Herman Melville	*Mark Twain	Jack London
+Arts & Literature	easy	What do we call a picture an artist paints of themselves?	Landscape	Still life	Mural	*Self-portrait
+Arts & Literature	easy	Which large orchestral instrument is played by plucking its strings?	Oboe	Tuba	Timpani	*Harp
+Arts & Literature	easy	Who wrote The Chronicles of Narnia?	J. R. R. Tolkien	Roald Dahl	Lewis Carroll	*C. S. Lewis
+Arts & Literature	easy	Who wrote the fairy tale The Little Mermaid?	*Hans Christian Andersen	Aesop	The Brothers Grimm	Charles Perrault
+Arts & Literature	easy	What is the Japanese art of folding paper called?	Calligraphy	Bonsai	*Origami	Ikebana
+Arts & Literature	easy	Which Shakespeare play has the line To be or not to be?	King Lear	Macbeth	*Hamlet	Othello
+Arts & Literature	easy	In the fairy tale, what does Jack swap for magic beans?	A goat	*A cow	A horse	A pig
+Arts & Literature	easy	Which bear from children's books lives in the Hundred Acre Wood?	Baloo	Rupert	Paddington	*Winnie-the-Pooh
+Arts & Literature	easy	What colour do you get by mixing blue and yellow paint?	Orange	Purple	Brown	*Green
+Arts & Literature	easy	Which writer created the detective Hercule Poirot?	P. D. James	*Agatha Christie	Ngaio Marsh	Dorothy L. Sayers
+Arts & Literature	easy	Who painted the ceiling of the Sistine Chapel?	*Michelangelo	Donatello	Raphael	Caravaggio
+Arts & Literature	medium	How many keys are on a standard piano?	72	76	*88	96
+Arts & Literature	medium	How many lines does a sonnet have?	10	12	*14	16
+Arts & Literature	medium	Who composed the music for the ballet Swan Lake?	Sergei Rachmaninoff	Nikolai Rimsky-Korsakov	Sergei Prokofiev	*Pyotr Tchaikovsky
+Arts & Literature	medium	Who wrote Jane Eyre?	Emily Brontë	*Charlotte Brontë	Anne Brontë	George Eliot
+Arts & Literature	medium	Who wrote Animal Farm and Nineteen Eighty-Four?	Ray Bradbury	Aldous Huxley	H. G. Wells	*George Orwell
+Arts & Literature	medium	Who painted Girl with a Pearl Earring?	Pieter de Hooch	*Johannes Vermeer	Frans Hals	Jan Steen
+Arts & Literature	medium	Who composed The Four Seasons?	Georg Philipp Telemann	George Frideric Handel	Arcangelo Corelli	*Antonio Vivaldi
+Arts & Literature	medium	The opera house designed by Jørn Utzon is in which city?	Melbourne	*Sydney	Copenhagen	Oslo
+Arts & Literature	medium	Which artist painted a long series of water lilies in his garden?	*Claude Monet	Edgar Degas	Pierre-Auguste Renoir	Édouard Manet
+Arts & Literature	medium	Who wrote War and Peace?	Anton Chekhov	Ivan Turgenev	Nikolai Gogol	*Leo Tolstoy
+Arts & Literature	medium	Which ancient poet is traditionally credited with the Odyssey?	Virgil	*Homer	Ovid	Sophocles
+Arts & Literature	medium	Which composer went deaf but kept writing music, including his Ninth Symphony?	Franz Schubert	*Ludwig van Beethoven	Joseph Haydn	Johannes Brahms
+Arts & Literature	medium	Who made the sculpture The Thinker?	Michelangelo	Donatello	*Auguste Rodin	Antonio Canova
+Arts & Literature	medium	What is a word that reads the same backwards as forwards called?	Anagram	*Palindrome	Acronym	Homophone
+Arts & Literature	medium	In which Shakespeare play does Shylock appear?	The Tempest	Twelfth Night	*The Merchant of Venice	Othello
+Arts & Literature	medium	Who wrote The Great Gatsby?	William Faulkner	Ernest Hemingway	*F. Scott Fitzgerald	John Steinbeck
+Arts & Literature	medium	Who wrote Don Quixote?	*Miguel de Cervantes	Benito Pérez Galdós	Lope de Vega	Federico García Lorca
+Arts & Literature	medium	Who painted The Scream?	*Edvard Munch	Gustav Klimt	Egon Schiele	Wassily Kandinsky
+Arts & Literature	medium	In music, what does forte mean?	Soft	*Loud	Fast	Slow
+Arts & Literature	hard	Who wrote The Divine Comedy?	Giovanni Boccaccio	*Dante Alighieri	Petrarch	Virgil
+Arts & Literature	hard	Who composed the opera The Magic Flute?	*Wolfgang Amadeus Mozart	Giacomo Puccini	Christoph Gluck	Gioachino Rossini
+Arts & Literature	hard	Who composed the opera La Traviata?	*Giuseppe Verdi	Giacomo Puccini	Vincenzo Bellini	Gaetano Donizetti
+Arts & Literature	hard	Who wrote Crime and Punishment?	Anton Chekhov	*Fyodor Dostoevsky	Alexander Pushkin	Mikhail Bulgakov
+Arts & Literature	hard	Who painted The Night Watch?	Peter Paul Rubens	Frans Hals	Anthony van Dyck	*Rembrandt
+Arts & Literature	hard	Which James Joyce novel is set in Dublin on 16 June 1904?	*Ulysses	Dubliners	Finnegans Wake	Exiles
+Arts & Literature	hard	Who painted Guernica?	*Pablo Picasso	Diego Velázquez	Joan Miró	Francisco Goya
+Arts & Literature	hard	Who wrote the novel Things Fall Apart?	*Chinua Achebe	Ben Okri	Wole Soyinka	Nadine Gordimer
+Arts & Literature	hard	Who composed The Rite of Spring?	Maurice Ravel	Béla Bartók	*Igor Stravinsky	Claude Debussy
+Arts & Literature	hard	Who wrote the poem The Raven?	Emily Dickinson	Robert Frost	*Edgar Allan Poe	Walt Whitman
+Arts & Literature	hard	Who painted The Birth of Venus?	Giotto	*Sandro Botticelli	Caravaggio	Titian
+Arts & Literature	hard	What is a Japanese poem of three lines with five, seven and five syllables?	Tanka	Sonnet	*Haiku	Limerick
+Arts & Literature	hard	Who composed the Brandenburg Concertos?	Georg Philipp Telemann	Joseph Haydn	George Frideric Handel	*Johann Sebastian Bach
+Arts & Literature	hard	Who wrote the play A Doll's House?	August Strindberg	Anton Chekhov	George Bernard Shaw	*Henrik Ibsen
+Arts & Literature	hard	Who painted The Garden of Earthly Delights?	Pieter Bruegel the Elder	*Hieronymus Bosch	Albrecht Dürer	Jan van Eyck
+Arts & Literature	hard	Who composed the cycle of four operas called The Ring?	Gustav Mahler	Richard Strauss	*Richard Wagner	Anton Bruckner
+Arts & Literature	hard	What is the name of the bell-ringer of Notre-Dame in Victor Hugo's novel?	Frollo	Gringoire	*Quasimodo	Esmeralda
+Arts & Literature	hard	In which novel does Holden Caulfield appear?	On the Road	The Bell Jar	Of Mice and Men	*The Catcher in the Rye
+Arts & Literature	hard	Who wrote Paradise Lost?	John Donne	*John Milton	Alexander Pope	William Blake
+Arts & Literature	hard	What is the painting technique that uses small dots of colour called?	Fresco	Impasto	*Pointillism	Sfumato
+Arts & Literature	hard	Which architect designed the Sagrada Família in Barcelona?	Le Corbusier	*Antoni Gaudí	Santiago Calatrava	Frank Lloyd Wright
+Arts & Literature	hard	Which writer created the detective Jules Maigret?	*Georges Simenon	Maurice Leblanc	Gaston Leroux	Émile Zola
+Arts & Literature	hard	What is an elaborate solo song in an opera called?	Chorus	Libretto	*Aria	Overture
+Nature	easy	What do bees make from nectar?	*Honey	Pollen	Royal jelly	Wax
+Nature	easy	What is a young frog with a tail called?	*Tadpole	Squab	Fry	Kit
+Nature	easy	What do caterpillars turn into?	*Butterflies or moths	Bees	Beetles	Dragonflies
+Nature	easy	Which bird is a common symbol of peace?	Eagle	*Dove	Swan	Owl
+Nature	easy	What is the largest mammal?	African elephant	Sperm whale	Fin whale	*Blue whale
+Nature	easy	Which is the tallest living animal?	Moose	*Giraffe	Camel	African elephant
+Nature	easy	What do giant pandas mainly eat?	Fish	*Bamboo	Berries	Grass
+Nature	easy	Which lizard is famous for changing colour?	*Chameleon	Gecko	Iguana	Skink
+Nature	easy	What is a group of wolves called?	Flock	Herd	*Pack	School
+Nature	easy	Which flightless bird lives in Antarctica?	Puffin	*Penguin	Kiwi	Emu
+Nature	easy	Which part of a plant makes seeds?	Leaf	*Flower	Stem	Root
+Nature	easy	What do herbivores eat?	*Plants	Meat	Fish	Insects
+Nature	easy	Which tree's leaf is on the flag of Canada?	Birch	*Maple	Pine	Oak
+Nature	easy	Which sea creature has eight arms?	Crab	*Octopus	Jellyfish	Starfish
+Nature	easy	What is a baby sheep called?	*Lamb	Foal	Calf	Cub
+Nature	easy	Which African animal has black and white stripes?	Leopard	*Zebra	Giraffe	Warthog
+Nature	easy	What do we call an animal that is active at night?	Dormant	Diurnal	*Nocturnal	Migratory
+Nature	easy	Which bird is best known for copying human speech?	Pigeon	*Parrot	Heron	Owl
+Nature	easy	Frogs, newts and salamanders are all what?	Reptiles	Fish	Mammals	*Amphibians
+Nature	medium	What is a group of lions called?	*Pride	Colony	Herd	Troop
+Nature	medium	Which is the only mammal that can truly fly?	Sugar glider	Flying squirrel	Colugo	*Bat
+Nature	medium	What is an animal that eats both plants and meat called?	Insectivore	Carnivore	Herbivore	*Omnivore
+Nature	medium	What is a male duck called?	Gander	Cob	Cockerel	*Drake
+Nature	medium	What do koalas mainly eat?	Grass	Insects	Acacia leaves	*Eucalyptus leaves
+Nature	medium	Which is the largest species of shark?	Hammerhead shark	*Whale shark	Great white shark	Tiger shark
+Nature	medium	What is the process by which plants make food from sunlight?	*Photosynthesis	Respiration	Germination	Pollination
+Nature	medium	What is a baby swan called?	Eaglet	Gosling	Duckling	*Cygnet
+Nature	medium	What is a tree that loses its leaves every year called?	*Deciduous	Coniferous	Evergreen	Perennial
+Nature	medium	Which insect spreads malaria?	*Mosquito	Housefly	Flea	Tsetse fly
+Nature	medium	What kind of animal is a Komodo dragon?	Turtle	Crocodile	*Lizard	Snake
+Nature	medium	Which animal's young is called a kid?	Horse	Cow	*Goat	Sheep
+Nature	medium	What is the outer layer of a tree trunk called?	Xylem	Sap	Pith	*Bark
+Nature	medium	Which animal is known for building dams across streams?	*Beaver	Badger	Otter	Muskrat
+Nature	medium	What is a group of crows called?	A gaggle	A murmuration	A colony	*A murder
+Nature	medium	Which sea mammal is also called a sea cow?	Walrus	Seal	*Manatee	Dolphin
+Nature	medium	What is a scientist who studies birds called?	Entomologist	Ichthyologist	*Ornithologist	Lepidopterist
+Nature	medium	Which of these mammals lays eggs?	Koala	Dolphin	*Platypus	Hedgehog
+Nature	medium	Which bird lays its eggs in other birds' nests?	Magpie	*Cuckoo	Starling	Wren
+Nature	medium	What is the young of a male donkey and a female horse called?	Zebroid	Hinny	Pony	*Mule
+Nature	medium	What kind of creature is a black widow?	Snake	Beetle	Scorpion	*Spider
+Nature	medium	What are mammals that carry their young in a pouch called?	Monotremes	Primates	*Marsupials	Rodents
+Nature	hard	What is the largest living reptile?	Leatherback turtle	Nile crocodile	American alligator	*Saltwater crocodile
+Nature	hard	Roughly how long is an African elephant's pregnancy?	9 months	12 months	16 months	*22 months
+Nature	hard	What is a group of owls called?	*A parliament	A colony	A gaggle	A herd
+Nature	hard	Natural vanilla comes from which kind of plant?	*An orchid	A lily	A rose	A palm
+Nature	hard	What kind of animal is a gharial?	A lizard	*A crocodilian	A fish	A turtle
+Nature	hard	What is the scientific study of trees and other woody plants called?	*Dendrology	Pomology	Bryology	Limnology
+Nature	hard	Which bird is able to fly backwards?	Sunbird	*Hummingbird	Kingfisher	Swift
+Nature	hard	What is a baby hare called?	Calf	Fawn	Cub	*Leveret
+Nature	hard	How many compartments does a cow's stomach have?	One	Two	Three	*Four
+Nature	hard	What are young eels called?	Parr	Grilse	Smolts	*Elvers
+Nature	hard	Which part of a flower receives pollen?	Filament	Anther	*Stigma	Sepal
+Nature	hard	What is the common name of Helianthus annuus?	Dandelion	Daisy	Marigold	*Sunflower
+Nature	hard	Which is the largest species of cat?	Leopard	Lion	*Tiger	Jaguar
+Nature	hard	Which is the longest species of snake?	Green anaconda	Boa constrictor	King cobra	*Reticulated python
+Nature	hard	Which animal eats ants and termites and has no teeth?	*Giant anteater	Meerkat	Aardvark	Armadillo
+Nature	hard	What is the scientific word for a snake shedding its skin?	Metamorphosis	*Ecdysis	Aestivation	Hibernation
+Nature	hard	Which is the largest living primate?	Chimpanzee	Orangutan	*Gorilla	Bonobo
+Nature	hard	What is a plant that lives for two years called?	Annual	Perennial	Ephemeral	*Biennial
+Nature	hard	Which fish swims back up the river where it hatched in order to spawn?	Herring	Tuna	*Salmon	Cod
+Nature	hard	Wolves, foxes and dogs belong to which family?	Ursids	Felids	Mustelids	*Canids
+Nature	hard	The drug quinine comes from the bark of which tree?	Willow	Birch	*Cinchona	Cedar
+Nature	hard	What does a herpetologist study?	Fungi	Fish	Insects	*Reptiles and amphibians
+Nature	hard	Which bird of prey is also called the fish hawk?	Kite	Kestrel	*Osprey	Harrier
+Sport & Games	easy	How many players does a basketball team have on court?	Four	*Five	Six	Seven
+Sport & Games	easy	In which sport do players hit a shuttlecock?	*Badminton	Volleyball	Table tennis	Squash
+Sport & Games	easy	On a standard six-sided die, what do opposite faces add up to?	Six	*Seven	Eight	Twelve
+Sport & Games	easy	How many cards are in a standard deck without jokers?	48	*52	54	56
+Sport & Games	easy	Which chess piece can only move diagonally?	*Bishop	Queen	Rook	Knight
+Sport & Games	easy	How many holes are played in a standard round of golf?	9	12	*18	20
+Sport & Games	easy	In which sport do players score a try?	Hockey	Baseball	*Rugby	Cricket
+Sport & Games	easy	What is the highest score possible with three darts?	150	170	*180	200
+Sport & Games	easy	How many rings are on the Olympic flag?	Four	*Five	Six	Seven
+Sport & Games	easy	In ten-pin bowling, what is knocking down every pin with the first ball called?	Turkey	Split	*Strike	Spare
+Sport & Games	easy	In golf, what is a score of one under par on a hole called?	Par	*Birdie	Ace	Bogey
+Sport & Games	easy	What is it called when one player scores three goals in a football match?	Treble	Triple	Brace	*Hat-trick
+Sport & Games	easy	How many pawns does each player start with in chess?	Six	Seven	*Eight	Ten
+Sport & Games	easy	What is the area where a boxing match takes place called?	Rink	Pitch	*Ring	Court
+Sport & Games	easy	In basketball, how many points is a shot from beyond the arc worth?	Two	*Three	Four	Five
+Sport & Games	easy	The Tour de France is a race in which sport?	Motor racing	Running	*Cycling	Sailing
+Sport & Games	easy	In which board game do players buy streets and build houses and hotels?	Risk	Trivial Pursuit	Cluedo	*Monopoly
+Sport & Games	easy	In which game do players make words with letter tiles on a board?	Mahjong	Boggle	Dominoes	*Scrabble
+Sport & Games	easy	In football, which player may handle the ball in their own penalty area?	Striker	Captain	*Goalkeeper	Defender
+Sport & Games	easy	How long is a standard football match, not counting stoppages?	60 minutes	80 minutes	*90 minutes	100 minutes
+Sport & Games	medium	In which sport is the Stanley Cup awarded?	Baseball	*Ice hockey	Basketball	American football
+Sport & Games	medium	What is the highest possible score in a game of ten-pin bowling?	200	250	*300	400
+Sport & Games	medium	How many players does an indoor volleyball team have on court?	Four	Five	*Six	Seven
+Sport & Games	medium	How many red balls are on the table at the start of a snooker frame?	10	12	*15	21
+Sport & Games	medium	In which sport is the Ryder Cup played?	Polo	Cricket	Tennis	*Golf
+Sport & Games	medium	How long is an Olympic swimming pool?	25 metres	*50 metres	75 metres	100 metres
+Sport & Games	medium	How many players does a rugby union team have on the field?	11	12	13	*15
+Sport & Games	medium	How many events are in a decathlon?	Five	Eight	*Ten	Twelve
+Sport & Games	medium	In cricket, how many balls are in a standard over?	Five	*Six	Eight	Ten
+Sport & Games	medium	In which sport would you see a Fosbury Flop?	Pole vault	Long jump	Diving	*High jump
+Sport & Games	medium	How long is a marathon, to the nearest kilometre?	26 km	35 km	*42 km	50 km
+Sport & Games	medium	In chess, what is the move involving the king and a rook called?	*Castling	Promotion	Fianchetto	Check
+Sport & Games	medium	How many players does an ice hockey team have on the ice, including the goalkeeper?	Five	*Six	Seven	Eleven
+Sport & Games	medium	In standard poker, which of these hands beats a flush?	Straight	Three of a kind	Two pair	*Full house
+Sport & Games	medium	How many dominoes are in a standard double-six set?	21	*28	32	36
+Sport & Games	medium	In which sport do teams race for the America's Cup?	Golf	*Sailing	Rowing	Polo
+Sport & Games	medium	In chess, what is the draw where the player to move has no legal move but is not in check?	Checkmate	Perpetual check	Zugzwang	*Stalemate
+Sport & Games	medium	How many points is a touchdown worth in American football?	Three	Five	*Six	Seven
+Sport & Games	medium	How many players does a netball team have on court?	Five	Six	*Seven	Nine
+Sport & Games	medium	In which sport is the Ashes series played?	Golf	*Cricket	Tennis	Rugby
+Sport & Games	medium	What is the highest-ranking hand in standard poker?	*Royal flush	Four of a kind	Straight	Flush
+Sport & Games	hard	What is the maximum break in snooker without a free ball?	120	140	*147	155
+Sport & Games	hard	Which martial art's name means the gentle way?	Aikido	Taekwondo	Kendo	*Judo
+Sport & Games	hard	Which martial art's name means empty hand?	Sumo	Kung fu	Jujutsu	*Karate
+Sport & Games	hard	In fencing, which weapon may score a hit anywhere on the body?	Rapier	Sabre	Foil	*Épée
+Sport & Games	hard	How many players does a water polo team have in the water, including the goalkeeper?	Six	*Seven	Eight	Nine
+Sport & Games	hard	How many players does each team have in outdoor polo?	Three	*Four	Five	Six
+Sport & Games	hard	How long is a cricket pitch?	18 yards	20 yards	*22 yards	24 yards
+Sport & Games	hard	In sumo, what is the highest rank?	Komusubi	Ozeki	Sekiwake	*Yokozuna
+Sport & Games	hard	How many hurdles are in a 110 metres hurdles race?	Eight	*Ten	Eleven	Twelve
+Sport & Games	hard	In golf, what is a score of three under par on one hole called?	Condor	*Albatross	Eagle	Hawk
+Sport & Games	hard	In which town were the first Winter Olympics held, in 1924?	St. Moritz	Oslo	*Chamonix	Lake Placid
+Sport & Games	hard	In which sport do England and Scotland play for the Calcutta Cup?	*Rugby union	Golf	Polo	Cricket
+Sport & Games	hard	On a standard Go board, how many lines run in each direction?	15	17	*19	21
+Sport & Games	hard	How many checkers does each player have in backgammon?	12	*15	16	18
+Sport & Games	hard	How many cards are in a standard tarot deck?	64	72	*78	84
+Sport & Games	hard	In chess, what is the French term for capturing a pawn that has just moved two squares?	Gambit	*En passant	Fianchetto	Zugzwang
+Sport & Games	hard	What colour is the outermost ring of a standard archery target?	Black	Blue	*White	Red
+Sport & Games	hard	How many events are in a heptathlon?	Five	Six	*Seven	Eight
+Sport & Games	hard	Which city hosted the 1964 Summer Olympics?	Rome	*Tokyo	Mexico City	Munich
+Sport & Games	hard	In darts, how much is the outer bull worth?	10	20	*25	50
+Sport & Games	hard	In which sport might a bowler deliver a googly?	Baseball	Hurling	*Cricket	Croquet
+Sport & Games	hard	In which sport is the Grey Cup the championship trophy?	Lacrosse	Ice hockey	*Canadian football	Curling
+Sport & Games	hard	In bridge, how many cards is each player dealt?	10	12	*13	14

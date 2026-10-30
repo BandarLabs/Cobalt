@@ -20,15 +20,22 @@ offline.
 
 ## Features
 
-- Rated games with a random colour at 10+0, 10+5, 15+10, 30+0 and 30+20.
+- Rated or casual games with a random colour at 10+0, 10+5, 15+10, 30+0 and
+  30+20. Choose rated or casual in **Account/Games**; each time tile says
+  which it seeks.
 - Casual challenges to a player by username, with time control and side.
 - Accept or decline incoming challenges with standard clocks.
-- Offline play against the computer, with no account needed. An unfinished
-  game resumes from the home screen.
+- Offline play against the computer, with no account needed. Play White,
+  Black or a random side, with no clock or a 10 or 30 minute clock. An
+  unfinished game resumes from the home screen.
 - Offline puzzles. Solving them does not affect your Lichess rating.
 - Two-tap moves, castling, en passant and promotion. The board turns to your
   side.
+- The last move is outlined on the board. A move you send is outlined too,
+  with "Move sent" in the status line, until Lichess confirms it.
 - Clocks above and below the board. The filled clock shows whose turn it is.
+- A time tile always answers a tap. If a game cannot start yet, it says why,
+  or opens Account/Games when the account needs connecting.
 - Offer, accept and decline draws, resign, claim victory when the opponent
   leaves, and abort before both players have moved.
 - If a game starts without the reader being told, the app finds it within ten
@@ -40,28 +47,43 @@ offline.
 
 ## Setup
 
+Computer games and puzzles need no account. To play people:
+
 1. Create a Lichess
    [personal access token](https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt)
    with only the `board:play` scope.
-2. Save it to a file and install it under the secret name `lichess`:
+   A phone works.
+2. On the reader, open Lichess, tap **Account/Games**, then
+   **Connect Lichess**, and type the token.
 
-   ```sh
-   kobo secret set lichess --from <token-file> --device <address>
-   ```
+Or install it from a computer with the
+[`kobo` command](../../docs/INSTALL.md#1-install-the-kobo-command). Set up the
+reader once over USB, if you have not already, then save the token in a
+private file and install it under the secret name `lichess`:
+
+```sh
+kobo setup
+kobo secret set lichess --from token.txt
+```
 
 The runtime keeps the token and attaches it only to the official Lichess Board
-API over HTTPS. The app never sees it, and it is never shown, saved by the app
-or logged.
+API over HTTPS. A token typed on the reader passes through the app once, on its
+way to the runtime. After that the app cannot read it, and it is never shown or
+logged.
 
-Cobalt 0.3.18 or newer is required.
+Cobalt 0.3.18 or newer is required. Typing the token on the reader needs a
+newer Cobalt, and the app says so if yours is too old.
 
 ## Limits
 
 - No chat.
 - No takebacks. A takeback made elsewhere reloads the game from Lichess.
 - Outgoing challenges are casual. Only standard clocks are accepted.
+- Casual time tiles and challenges to a player need a Cobalt newer than 0.3.30.
+  On an older Cobalt the app says so, and Rated still works.
 - Only lichess.org is supported, not other servers.
-- The offline computer is modest: it searches four moves ahead.
+- The offline computer is modest: it searches four moves ahead. Its games
+  are not saved when the app closes.
 
 ## Permissions
 

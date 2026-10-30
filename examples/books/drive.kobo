@@ -1,7 +1,30 @@
-# On the simulator the card is empty; the device lists real files and
-# the stock Kobo library. This script is the empty-shelf path.
-expect Books
-expect No books yet
-expect-missing The Open Sea
-shot books-empty
-dump
+# The sweep seeds River.epub into the simulator's library. Books opens it,
+# turns two pages, sets the text larger, closes it and opens it again: the
+# book has to come back on the same page at the same size.
+wait-for River
+expect-missing No books yet
+expect-missing could not be read
+shot books-shelf
+tap River
+wait-for Marker 1
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+expect-missing Marker 1
+tap-id reader-controls
+wait-for 100%
+# The plus of the size stepper names the next size, Medium (wire value 5).
+tap-id reader-size-5
+wait-for 110%
+shot books-larger
+# Back closes the book from the open panel.
+tap-id 4294967295
+wait-for Books
+shot books-closed
+tap River
+wait-idle 1500
+expect-missing Marker 1
+tap-id reader-controls
+wait-for 110%
+shot books-reopened

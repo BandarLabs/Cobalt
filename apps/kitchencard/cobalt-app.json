@@ -2,10 +2,10 @@
   "id": "kitchencard",
   "display_name": "Kitchen Card",
   "short_label": "Kitchen",
-  "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
+  "summary": "Keep Mealie recipes handy in a counter-friendly cooking view. Needs an account.",
   "page_description": "A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.",
-  "version": "0.1.7",
-  "release_notes": "Connecting Mealie lists the commands to run on your computer, with no address to look up.",
+  "version": "0.1.10",
+  "release_notes": "Ingredients are ticked off in checkboxes, servings change with minus and plus, and the Mealie address is typed on Cobalt's own keyboard. Tonight's recipe and the connect screen fit the largest text size.",
   "glyph": "reader",
   "capabilities": [
     "network",
@@ -14,15 +14,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Create an API token in Mealie's user settings."
+        "text": "Set up the reader once over USB, if you have not already. Mealie must be reachable over HTTPS.",
+        "command": "kobo setup"
       },
       {
-        "text": "Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.",
-        "command": "kobo pair"
+        "text": "In Mealie, create an API token (your profile, API Tokens)."
       },
       {
-        "text": "Install the token under the name mealie, then add the address in the app.",
-        "command": "kobo secret set mealie"
+        "text": "Connect Kitchen Card from your computer. It asks for the address and the token, checks them, and sets the app up. Open Kitchen Card, or tap Check again.",
+        "command": "kobo connect kitchencard"
       }
     ]
   }

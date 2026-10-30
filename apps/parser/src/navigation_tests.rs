@@ -92,7 +92,10 @@ fn every_library_story_is_reachable_at_each_text_size_and_pose() {
             };
             for message in [
                 None,
-                Some("That story could not be read from storage.".into()),
+                Some((
+                    BannerLevel::Error,
+                    "That story could not be read from storage.".into(),
+                )),
             ] {
                 parser.message = message;
                 let pages = parser.library_pages(&context);
@@ -123,7 +126,6 @@ fn every_library_story_is_reachable_at_each_text_size_and_pose() {
                             Some(action)
                         );
                     }
-                    assert!(layout.rect_of_action(action_id("refresh")).is_some());
                 }
             }
         }
@@ -251,4 +253,115 @@ fn audit_latest_story_selection_wins_over_pending_other_download() {
         Some("story-lamplight.z3"),
         "late B must not replace selected A"
     );
+}
+
+/// The banner a message draws, as the slots screen draws it.
+fn banner_on(screen: &Screen) -> Option<(BannerLevel, String)> {
+    screen.nodes.iter().find_map(|node| match node {
+        kobo_ui::Node::Banner { level, text, .. } => Some((*level, text.clone())),
+        _ => None,
+    })
+}
+
+/// A save that finished and a save that could not be written used to be
+/// drawn alike, so the slots screen gave no sign of which had happened.
+#[test]
+fn a_saved_slot_reads_as_a_success_a_failed_write_as_an_error_and_an_empty_slot_as_news() {
+    let _runner = AppRunner::new(Parser::default());
+    let mut parser = ready_story();
+    let mut context = Context::default();
+    parser.slot_action = SlotAction::Save;
+    parser.view = View::Slots;
+    parser.on_action(&mut context, action_id("slot-3"));
+    assert_eq!(
+        banner_on(&parser.slots_screen()),
+        Some((BannerLevel::Success, "Saved in slot 3.".to_owned()))
+    );
+    parser.on_store(
+        &mut context,
+        StoreResult::Denied(kobo_sdk::StoreError::Unwritable),
+    );
+    assert_eq!(
+        banner_on(&parser.slots_screen()),
+        Some((
+            BannerLevel::Error,
+            "The save could not be written. Check free space.".to_owned()
+        ))
+    );
+    parser.slot_action = SlotAction::Restore;
+    parser.view = View::Slots;
+    parser.on_action(&mut context, action_id("slot-7"));
+    assert_eq!(
+        banner_on(&parser.slots_screen()),
+        Some((BannerLevel::Info, "Slot 7 is empty.".to_owned()))
+    );
+}
+
+/// An empty library is shaped like Vault's and Music Stand's: the command
+/// under "On your computer" and the check directly under the command, on the
+/// panel at every size held either way, with or without a message over it.
+#[test]
+fn the_empty_library_puts_the_command_on_your_computer_and_the_check_under_it_at_every_size_held_either_way(
+) {
+    for orientation in [
+        kobo_ui::Orientation::Portrait,
+        kobo_ui::Orientation::Landscape,
+    ] {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            }
+            .oriented(orientation);
+            let runner = AppRunner::with_metrics(Parser::default(), metrics);
+            kobo_text::install(metrics).expect("bundled font installs");
+            let context = runner.context();
+            for message in [
+                None,
+                Some((
+                    BannerLevel::Error,
+                    "That story could not be read from storage.".to_owned(),
+                )),
+            ] {
+                let parser = Parser {
+                    message: message.clone(),
+                    ..Parser::default()
+                };
+                let at = format!("{text_scale:?} {orientation:?} {message:?}");
+                let screen = parser.library_screen(&context);
+                let chrome = Chrome::measuring(true);
+                let diagnostics = screen.diagnostics(&metrics, &chrome);
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{at}: {:?}",
+                    diagnostics.issues
+                );
+                let at_section = screen
+                    .nodes
+                    .iter()
+                    .position(|node| {
+                        matches!(node, kobo_ui::Node::Section { title, .. } if title == "On your computer")
+                    })
+                    .unwrap_or_else(|| panic!("{at}: no On your computer"));
+                assert!(
+                    format!("{:?}", screen.nodes[at_section + 1])
+                        .contains("kobo parser push story.z5"),
+                    "{at}: {:?}",
+                    screen.nodes[at_section + 1]
+                );
+                assert!(
+                    format!("{:?}", screen.nodes[at_section + 2]).contains("Check for stories"),
+                    "{at}: {:?}",
+                    screen.nodes[at_section + 2]
+                );
+                assert!(
+                    diagnostics
+                        .layout
+                        .rect_of_action(action_id("refresh"))
+                        .is_some(),
+                    "{at}"
+                );
+            }
+        }
+    }
 }

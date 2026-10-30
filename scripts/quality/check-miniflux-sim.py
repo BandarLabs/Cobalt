@@ -54,6 +54,8 @@ class Account:
 
     def __init__(self, origin):
         self.origin = origin
+        self.token = TOKEN
+        self.down = False
         self.requests = []
         self.drop_next_update = False
         self.entries = {
@@ -110,11 +112,32 @@ def handler_for(account):
             self.end_headers()
             self.wfile.write(body)
 
+        def gone(self):
+            if account.down:
+                self.close_connection = True
+            return account.down
+
+        def refused(self):
+            # A key that is not this account's is refused the way Miniflux
+            # refuses it, so the reader's copy for a rotated key is checked.
+            if self.headers.get('X-Auth-Token') == account.token:
+                return False
+            self.send_response(401)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return True
+
         def do_GET(self):
+            if self.gone():
+                return
             self.record('GET')
             path, _, query = self.path.partition('?')
             if path == '/ridge.png':
                 self.reply(PICTURE, 'image/png')
+            elif self.refused():
+                pass
+            elif path == '/v1/me':
+                self.reply({'id': 1, 'username': 'reader'})
             elif path == '/v1/entries':
                 self.reply(account.listing(query))
             elif path == '/v1/categories':
@@ -129,6 +152,8 @@ def handler_for(account):
         def do_PUT(self):
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])) or b'{}')
             self.record('PUT', body)
+            if self.refused():
+                return
             if self.path != '/v1/entries':
                 self.send_error(404)
                 return
@@ -174,7 +199,7 @@ def main():
                    KOBO_SIM_FIXTURE='original-miniflux-account', KOBO_SIM_SEED='0')
         config = private/'config'
         env.update(KOBO_STREAM_CONFIG_DIR=str(config), KOBO_SIM_TRUST_DIR=str(config/'trust'))
-        subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'], cwd=ROOT,
+        subprocess.run([str(cli), 'stream', 'init', '--sim', '--host', '127.0.0.1'], cwd=ROOT,
                        env=env, check=True, capture_output=True, timeout=60)
 
         account = Account('https://127.0.0.1:0')
@@ -186,18 +211,15 @@ def main():
         origin = f'https://127.0.0.1:{server.server_port}'
         account.__init__(origin)
 
-        # The token and the one server it may be sent to are installed the way
-        # the computer-side CLI installs them, and never reach the application.
-        secrets = private/'cobalt-sim-secrets/apps/rss-miniflux'
-        (secrets/'servers').mkdir(parents=True)
-        (secrets/'servers/miniflux').write_text(f'cobalt-server-account-v1\n{origin}\n{TOKEN}')
-        os.chmod(secrets/'servers/miniflux', 0o600)
-
         state = private/'cobalt-sim-state/rss-miniflux'
         shelf = private/'cobalt-sim-data/rss-miniflux'
-        state.mkdir(parents=True)
         shelf.mkdir(parents=True)
-        (state/'config').write_text(f'{origin}\nminiflux')
+
+        def connect(token):
+            """The owner's one computer step, exactly as the setup guide words it."""
+            return subprocess.run([str(cli), 'connect', 'rss-miniflux', '--sim', '--server', origin,
+                                   '--stdin'], cwd=ROOT, env=env, input=token, text=True,
+                                  capture_output=True, timeout=60)
         batch_key = hashlib.sha256(f'miniflux-articles-v1:{origin}\nminiflux'.encode()).hexdigest()
         image_key = hashlib.sha256(f'rss-image:{origin}/ridge.png'.encode()).hexdigest()
         log_path = output/'simulator.log'
@@ -277,7 +299,11 @@ def main():
                 # Joined, because a sentence on the panel is wrapped into as
                 # many lines as it needs and no assertion should know how many.
                 drawn = ' '.join(str(line) for node in layout['nodes'] for line in node['lines'])
-                return text in ' '.join(drawn.split())
+                # A command is drawn with non-breaking hyphens and word joiners.
+                drawn = drawn.replace('\u2011', '-').replace('\u2060', '')
+                # A word broken at its hyphen across two lines reads whole.
+                drawn = ' '.join(drawn.split()).replace('- ', '-')
+                return text in drawn
 
             def paths(method=None):
                 return [r['path'] for r in account.requests if method in (None, r['method'])]
@@ -285,9 +311,35 @@ def main():
             try:
                 address = start()
 
-                # A reader who has installed the token and typed the address in,
-                # opening the application for the first time.
-                drive('wait-for-id sync')
+                # First run: nothing is set up, and the screen names the one
+                # command that does it.
+                drive('wait-for-id check-again')
+                unconnected = capture('00-connect-from-the-computer')
+                assert says(unconnected, 'kobo connect rss-miniflux'), unconnected
+                drive('tap-id check-again')
+                nothing = capture('00b-check-again-before-connecting')
+                assert says(nothing, 'No account has arrived yet'), nothing
+
+                # A mistyped key is refused on the computer, and nothing is
+                # installed on the reader.
+                wrong = connect('not-the-key')
+                assert wrong.returncode != 0, wrong
+                assert 'did not accept the token' in wrong.stderr, wrong.stderr
+                assert not (state/'config').exists(), 'a refused key was installed'
+
+                # The real key: checked, bound to the server, address filled in.
+                done = connect(TOKEN)
+                assert done.returncode == 0, done.stderr
+                assert (state/'config').read_text() == f'{origin}\nminiflux'
+                bound = (private/'cobalt-sim-secrets/apps/rss-miniflux/servers/miniflux').read_text()
+                assert bound == f'cobalt-server-account-v1\n{origin}\n{TOKEN}', 'unexpected record'
+                checks.append('kobo connect refuses a wrong key and installs the right one')
+                # Only the computer has spoken to Miniflux so far.
+                assert [r['path'] for r in account.requests] == ['/v1/me', '/v1/me'], account.requests
+                account.requests.clear()
+
+                # Check again picks it up without a restart.
+                drive('tap-id check-again', 'wait-for-id sync')
                 first = capture('01-before-the-first-sync')
                 assert says(first, 'No unread articles'), first
                 assert not account.requests, 'the application called Miniflux unasked'
@@ -440,6 +492,33 @@ def main():
 
                 assert paths('GET').count('/ridge.png') == images, \
                     'the saved picture was downloaded again'
+                # The key is rotated on the server: the reader blames the key,
+                # names the command, and keeps every saved article.
+                account.token = 'rotated-token'
+                drive('tap Back', 'tap Back', 'wait-for-id sync', 'tap-id sync')
+                refused = capture('20-rotated-key-refused')
+                assert says(refused, 'did not accept your account'), refused
+                assert says(refused, 'kobo connect rss-miniflux'), refused
+                assert not says(refused, 'Wi-Fi'), refused
+                assert says(refused, 'Unread'), refused
+                fixed = connect('rotated-token')
+                assert fixed.returncode == 0, fixed.stderr
+                drive('tap-id sync')
+                recovered_key = capture('21-new-key-syncs')
+                assert not says(recovered_key, 'did not accept'), recovered_key
+                checks.append('a rotated key is reported as the key and fixed from the computer')
+
+                # The server stops answering: the home-network hint, saved
+                # articles still listed.
+                # Every connection is dropped unanswered, pooled ones included,
+                # which is what a server that has gone away looks like.
+                account.down = True
+                drive('tap-id sync', 'wait-for did not answer')
+                down = capture('22-server-down')
+                assert says(down, 'did not answer'), down
+                assert says(down, 'home network'), down
+                checks.append('a server that does not answer gets the home-network hint')
+
                 (output/'result.json').write_text(json.dumps({
                     'status': 'passed', 'scale': args.scale,
                     'fixture': 'original-miniflux-account',

@@ -228,10 +228,17 @@ pub fn store_path() -> PathBuf {
 /// Resolves a saved nickname to an address that provably is that reader.
 ///
 /// Stored addresses are tried first, but an answer is accepted only when the
-/// serial behind it matches - an address is a lease, not an identity. When
+/// serial behind it matches: an address is a lease, not an identity. When
 /// none of them answers as this reader, the local network is swept and the
 /// serial is looked up fresh, which is how a reader is found after its
 /// address changed. Nothing here ever falls back to the first reader found.
+///
+/// A reader that is nowhere to be found is almost always asleep, so the sweep
+/// is repeated for as long as `pause` allows: the first pause tells the owner
+/// to wake it, and the reader is usually back before the second. Only the
+/// sweep is repeated, because a reader that wakes on its old lease answers it
+/// as well, and the sweep costs a fraction of a second per silent address
+/// where an SSH attempt on a saved one costs ten.
 ///
 /// `probe` reads the serial answering at one address; `sweep` reads every
 /// serial answering on the local network beside its address.
@@ -240,6 +247,7 @@ pub fn resolve_saved(
     nickname: &str,
     mut probe: impl FnMut(&str) -> Option<String>,
     mut sweep: impl FnMut() -> Vec<(String, String)>,
+    mut pause: impl FnMut() -> bool,
 ) -> Result<String, String> {
     let Some(reader) = store.find(nickname) else {
         let known = store
@@ -247,13 +255,15 @@ pub fn resolve_saved(
             .iter()
             .map(|reader| reader.nickname.as_str())
             .collect::<Vec<_>>();
-        let hint = if known.is_empty() {
-            "no readers are saved on this computer yet".to_owned()
-        } else {
-            format!("saved readers: {}", known.join(", "))
-        };
+        if known.is_empty() {
+            return Err(crate::console::target(format!(
+                "No reader is saved as \"{nickname}\". {}",
+                crate::targets::SAVE_A_READER
+            )));
+        }
         return Err(crate::console::target(format!(
-            "no reader is saved as \"{nickname}\" ({hint})"
+            "No reader is saved as \"{nickname}\". Saved readers: {}.",
+            known.join(", ")
         )));
     };
     let serial = reader.serial.clone();
@@ -262,24 +272,30 @@ pub fn resolve_saved(
             return Ok(address);
         }
     }
-    let found = sweep();
-    for (address, serial_found) in &found {
-        if *serial_found == serial {
+    let mut waited = false;
+    let seen = loop {
+        let found = sweep();
+        if let Some((address, _)) = found.iter().find(|(_, found)| *found == serial) {
             store.remember(&serial, address, None);
             return Ok(address.clone());
         }
-    }
-    Err(crate::console::target(crate::console::Console::with_details(
-        format!(
-            "\"{nickname}\" (serial {}…) is not answering at its saved address or anywhere on this network",
-            serial.get(..4).unwrap_or(&serial)
-        ),
+        if !pause() {
+            break found.len();
+        }
+        waited = true;
+    };
+    let error = crate::targets::not_answering(Some(nickname), waited);
+    Err(crate::console::Console::with_details(
+        error,
         &format!(
-            "tried saved addresses [{}]; the sweep saw {} Kobo(s)",
-            store.find(nickname).map(|r| r.addresses.join(", ")).unwrap_or_default(),
-            found.len()
+            "serial {}…; tried saved addresses [{}]; the last sweep saw {seen} Kobo(s)",
+            serial.get(..4).unwrap_or(&serial),
+            store
+                .find(nickname)
+                .map(|r| r.addresses.join(", "))
+                .unwrap_or_default(),
         ),
-    )))
+    ))
 }
 
 #[cfg(test)]
@@ -363,6 +379,7 @@ mod tests {
             "clara",
             |_| Some("N418999999999".to_owned()),
             Vec::new,
+            || false,
         );
         assert!(
             wrong.is_err(),
@@ -373,6 +390,7 @@ mod tests {
             "clara",
             |a| (a == "192.168.1.23").then(|| "N365410043013".to_owned()),
             Vec::new,
+            || false,
         );
         assert_eq!(right.unwrap(), "192.168.1.23");
     }
@@ -390,6 +408,7 @@ mod tests {
                     ("192.168.1.71".to_owned(), "N365410043013".to_owned()),
                 ]
             },
+            || false,
         );
         assert_eq!(found.unwrap(), "192.168.1.71");
         assert_eq!(store.find("clara").unwrap().addresses[0], "192.168.1.71");
@@ -398,16 +417,79 @@ mod tests {
     #[test]
     fn an_unknown_name_is_a_target_error_that_names_the_known_readers() {
         let mut store = store();
-        let error = resolve_saved(&mut store, "nobody", |_| None, Vec::new).unwrap_err();
+        let error = resolve_saved(&mut store, "nobody", |_| None, Vec::new, || false).unwrap_err();
         assert!(error.starts_with("target: "), "{error}");
         assert!(error.contains("clara, beckett"), "{error}");
     }
 
     #[test]
-    fn a_missing_reader_is_a_target_error_not_a_guess() {
+    fn a_missing_reader_is_a_target_error_that_says_to_wake_it() {
         let mut store = store();
-        let error = resolve_saved(&mut store, "clara", |_| None, Vec::new).unwrap_err();
+        let error = resolve_saved(&mut store, "clara", |_| None, Vec::new, || false).unwrap_err();
         assert!(error.starts_with("target: "), "{error}");
-        assert!(error.contains("not answering"), "{error}");
+        assert!(error.contains("\"clara\" is not answering"), "{error}");
+        assert!(error.contains("Wake it (press power)"), "{error}");
+        assert!(error.contains("Cobalt Settings"), "{error}");
+        assert!(!error.contains("router"), "{error}");
+    }
+
+    #[test]
+    fn a_reader_that_wakes_during_the_wait_is_found_without_running_again() {
+        let mut store = store();
+        let mut sweeps = 0;
+        let mut pauses = 0;
+        let found = resolve_saved(
+            &mut store,
+            "clara",
+            |_| None,
+            || {
+                sweeps += 1;
+                if sweeps < 3 {
+                    Vec::new()
+                } else {
+                    vec![("192.168.1.80".to_owned(), "N365410043013".to_owned())]
+                }
+            },
+            || {
+                pauses += 1;
+                true
+            },
+        );
+        assert_eq!(found.unwrap(), "192.168.1.80");
+        assert_eq!(pauses, 2, "one pause between each of the three sweeps");
+    }
+
+    #[test]
+    fn the_wait_ends_when_its_time_is_spent() {
+        let mut store = store();
+        let mut sweeps = 0;
+        let mut left = 3;
+        let error = resolve_saved(
+            &mut store,
+            "clara",
+            |_| None,
+            || {
+                sweeps += 1;
+                Vec::new()
+            },
+            || {
+                left -= 1;
+                left > 0
+            },
+        )
+        .unwrap_err();
+        assert_eq!(sweeps, 3);
+        assert_eq!(
+            crate::console::category_of(&error),
+            crate::console::EXIT_TARGET
+        );
+    }
+
+    #[test]
+    fn a_name_on_a_computer_with_nothing_saved_says_how_to_save_one() {
+        let mut empty = Store::default();
+        let error = resolve_saved(&mut empty, "clara", |_| None, Vec::new, || false).unwrap_err();
+        assert!(error.contains("\"clara\""), "{error}");
+        assert!(error.contains(crate::targets::SAVE_A_READER), "{error}");
     }
 }

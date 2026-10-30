@@ -121,6 +121,40 @@ impl Capability {
         }
     }
 
+    /// What holding this capability means, said to the owner of the reader.
+    ///
+    /// The Store on the reader, the launcher's starting screen and `kobo apps`
+    /// on the computer all describe the same grant to the same person, and
+    /// they had drifted apart: the computer said "Can keep the reader awake
+    /// while in use" while the reader printed `keep-awake`. One wording, kept
+    /// beside the manifest spelling it explains, is what keeps a new
+    /// capability from reaching an owner as a bare identifier.
+    ///
+    /// A phrase without a full stop, so a list can set each one on its own
+    /// line and a summary can join several into sentences.
+    #[must_use]
+    pub const fn plain_wording(self) -> &'static str {
+        match self {
+            Self::Network => "Connects to online services",
+            Self::BackgroundNetwork => "Can go online while you are not using it",
+            Self::HoldWifi => "Can keep Wi-Fi connected while in use",
+            Self::KeepAwake => "Can keep the reader awake while in use",
+            Self::ScheduledWake => "Can wake the reader on a schedule",
+            Self::BatteryRead => "Can read the battery level",
+            Self::FrontlightControl => "Can adjust the front light",
+            Self::BluetoothControl => "Can turn on Bluetooth and pair devices",
+            Self::BluetoothAudio => "Can play sound through Bluetooth headphones or speakers",
+            Self::WifiControl => "Can turn Wi-Fi on or off and join networks",
+            Self::Audio => "Can play sound",
+            Self::SleepScreen => "Can draw the sleep screen",
+            Self::Notifications => "Can show notifications",
+            Self::SharedFiles => "Can read and write files in a shared folder",
+            Self::Library => "Can read the books already on this reader",
+            Self::CoverSensor => "Can tell when the cover opens or closes",
+            Self::Shell => "Can run any command on this reader, and changes can survive a restart",
+        }
+    }
+
     /// Parses the exact manifest spelling. Unknown names are rejected rather
     /// than ignored, so a typo can never silently drop a permission.
     #[must_use]
@@ -386,6 +420,29 @@ mod tests {
         assert_eq!(Capability::parse("root"), None);
         assert_eq!(Capability::parse("Network"), None);
         assert_eq!(Capability::parse(""), None);
+    }
+
+    #[test]
+    fn every_capability_is_described_in_plain_words_rather_than_its_identifier() {
+        for capability in Capability::ALL {
+            let wording = capability.plain_wording();
+            // A hyphenated name is an identifier, never a word an owner uses.
+            for other in Capability::ALL {
+                let name = other.manifest_name();
+                assert!(
+                    !name.contains('-') || !wording.contains(name),
+                    "{capability} is described with the identifier {name}: {wording}"
+                );
+            }
+            assert!(
+                wording.starts_with(char::is_uppercase) && !wording.ends_with('.'),
+                "{capability} does not read as one phrase: {wording}"
+            );
+        }
+        assert_eq!(
+            Capability::KeepAwake.plain_wording(),
+            "Can keep the reader awake while in use"
+        );
     }
 
     #[test]

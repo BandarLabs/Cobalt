@@ -17,7 +17,7 @@ cargo metadata --format-version 1 --all-features
 | Selected licence | Crates |
 | --- | --- |
 | Apache-2.0 | dependencies that offer Apache-2.0 as an alternative, including `image`, `http`, `rustls`, `libc`, `png`, `flate2`, `ttf-parser`, and their transitive dependencies |
-| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `simd-adler32`, `slice-ring-buffer`, `vt100`, `zip` |
+| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `qrcodegen`, `simd-adler32`, `slice-ring-buffer`, `vt100`, `zip` |
 | Apache-2.0 and ISC | `ring` |
 | ISC | `rustls-webpki`, `untrusted` |
 | BSD-3-Clause | `subtle` |
@@ -34,6 +34,14 @@ notices in `licenses/LICENSE-Rust-dependencies.txt`. That includes `ring`'s
 Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
 CA data bundled by `webpki-roots`. The GPL-3.0-or-later terms selected for
 `shakmaty` ship separately in `licenses/LICENSE-shakmaty.txt`.
+
+## QR code dependency
+
+The runtime draws the code node with `qrcodegen` 1.8.0 (MIT) by Project
+Nayuki. It is pure Rust, forbids unsafe code and has no dependencies of its
+own. `kobo-ui` reaches it only from the renderer, so an application that
+never draws a screen itself links none of it. Its notice is included in the
+Rust dependency notices above.
 
 ## Comic archive dependency
 
@@ -55,7 +63,7 @@ resource limits, remaining release checks and the dependency assessment.
 | Application | Content | Terms |
 | --- | --- | --- |
 | `grimoire` | Excerpts from the System Reference Document 5.1 and 5.2 by Wizards of the Coast LLC | Creative Commons Attribution 4.0 International; attribution is also included in the app |
-| `pubquiz` | Starter questions sourced from Open Trivia DB | Creative Commons Attribution-ShareAlike 4.0; the app carries `QUESTION-DATA-LICENSE.md` |
+| `pubquiz` | Question packs the owner downloads from Open Trivia DB (the bundled questions are original) | Creative Commons Attribution-ShareAlike 4.0; the app carries `QUESTION-DATA-LICENSE.md` and stores it beside each cached pack |
 | `verses` | Short poems by Emily Dickinson, William Blake and Percy Bysshe Shelley | Public domain; source and publication year are retained with each poem |
 
 ## Test fixtures

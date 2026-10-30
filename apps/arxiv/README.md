@@ -19,7 +19,9 @@ Browse and search arXiv preprints, and read them on your Kobo.
 
 ## Features
 
-- Browse twenty subjects, newest first, or search the whole archive.
+- Browse every arXiv category, newest first, under arXiv's own headings
+  (Computer Science, Mathematics, Astrophysics and the rest), or search the
+  whole archive.
 - Papers open on their abstract. **Full text** opens arXiv's HTML version,
   available for papers submitted since December 2023. Older papers say that no
   full text is available.
@@ -30,10 +32,13 @@ Browse and search arXiv preprints, and read them on your Kobo.
   is stacked with its headings. Long tables repeat their headings on each
   page.
 - Figures load after the text, fitted to the screen with their captions.
-- **Keep for offline** saves a paper to **Library**, where it opens without a
-  connection. **Remove from library** undoes it.
+- **Keep for offline** puts a paper and its figures in **Library**, where it
+  opens without a connection. A paper says it is offline only once it is
+  fully on the reader. **Remove from library** undoes it. Library shows how
+  many papers are ready offline and how much room they take.
 - **Save this search** and **Follow this subject** add shortcuts to **Saved**.
-  Followed subjects move to the top of the subject list.
+  Followed subjects also sit at the top of the first screen.
+- The bar over a paper shows its title.
 - Results come 25 at a time. **Older papers** appears when there are more.
 
 ## Permissions

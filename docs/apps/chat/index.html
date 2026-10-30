@@ -4,12 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Command Center for Kobo e-readers | Cobalt</title>
-<meta name="description" content="Ask a question, then read and navigate the answer with touch controls. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="description" content="Ask a question, then read and navigate the answer with touch controls. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/chat/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:title" content="AI Command Center for Kobo e-readers | Cobalt">
-<meta property="og:description" content="Ask a question, then read and navigate the answer with touch controls. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:description" content="Ask a question, then read and navigate the answer with touch controls. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/chat/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/chat.png">
@@ -18,17 +18,17 @@
 <meta property="og:image:alt" content="An answer displayed for touch-friendly reading on a Kobo">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="AI Command Center for Kobo e-readers | Cobalt">
-<meta name="twitter:description" content="Ask a question, then read and navigate the answer with touch controls. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:description" content="Ask a question, then read and navigate the answer with touch controls. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/chat.png">
 <meta name="twitter:image:alt" content="An answer displayed for touch-friendly reading on a Kobo">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-wekR2n3Hs/mv6t5ExWLemfZqAdrhhRIR7ePDgddUXbM='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-mRQ9ilGn1/aE4J2fUB5mWc3HVWae8b1dyJDHifJufaQ='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "AI Command Center",
-      "description": "Ask a question, then read and navigate the answer with touch controls.",
+      "description": "Ask a question, then read and navigate the answer with touch controls. Needs an account.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/chat/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "1.0.13",
+      "softwareVersion": "1.0.16",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -92,16 +92,16 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="chat" data-minimum-cobalt-version="0.3.18">
+<main class="wrap" data-app-id="chat" data-minimum-cobalt-version="0.3.31">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Developer</p>
       <h1>AI Command Center</h1>
-      <p class="summary">Ask a question, then read and navigate the answer with touch controls.</p>
+      <p class="summary">Ask a question, then read and navigate the answer with touch controls. Needs an account.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>1.0.13</dd></div>
+        <div><dt>Version</dt><dd>1.0.16</dd></div>
         <div><dt>Permissions</dt><dd>network</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 0.3.31</dd></div>
       </dl>
       <a class="cta" href="#setup-panel">Install on your Kobo</a>
       <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/chat">Source code on GitHub</a></p>
@@ -117,8 +117,22 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 1.0.13</h2>
-    <p>Service selection keeps complete provider and model names readable, with a clear current-service mark. Transcript pages measure notices, offers and navigation on the current panel.</p>
+    <h2>New in 1.0.16</h2>
+    <p>Messages are typed on Cobalt's own keyboard, which names the service that will answer, and the service list marks the one in use.</p>
+  </section>
+  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
+    <p class="eyebrow">App setup</p>
+    <h2 id="prerequisites-title">Before you install</h2>
+    <ol>
+      <li>Set up the reader once over USB, if you have not already.
+        <code class="setup-command">kobo setup</code></li>
+      <li>Create an API key with OpenAI, Anthropic or Google Gemini. Save it in a private file named for the service: ~/.openai, ~/.anthropic or ~/.gemini.</li>
+      <li>Install the key on the reader under the same name: openai, anthropic or gemini.
+        <code class="setup-command">kobo secret set openai</code></li>
+      <li>Open AI Command Center. If the key is not for OpenAI, tap Service and choose its service, then tap Type and ask.</li>
+    </ol>
+    <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
+      <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">

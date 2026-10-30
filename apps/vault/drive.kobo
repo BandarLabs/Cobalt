@@ -12,3 +12,12 @@ tap Welcome
 expect home note of the fixture
 clean
 shot note
+# Wiki links read as their words, never as [[brackets]], and the note's
+# heading is set as a heading above them.
+expect Alpha
+expect-missing [[
+tap Back
+wait-for Welcome
+tap Back
+wait-for notes
+expect-missing kobo vault init

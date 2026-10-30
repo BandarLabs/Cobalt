@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Mirror a terminal session from your computer onto e-ink. The shell, credentials, and scrollback stay on the computer; the Kobo renders the session over a paired connection. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/paperterm.png">
 <meta name="twitter:image:alt" content="Paperterm showing a laptop terminal session in portrait, with the keyboard open.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-fRukB+cIpyKPfRa8cj9dmBdE2zK4Udu9eELPREyogh0='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-iHQJKMGRGtsm6wmC172i6OCrQwZUJ/4GJY1dOeYmwlY='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.10",
+      "softwareVersion": "0.1.14",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -92,16 +92,16 @@
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="paperterm" data-minimum-cobalt-version="0.3.18">
+<main class="wrap" data-app-id="paperterm" data-minimum-cobalt-version="0.3.31">
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Devices</p>
       <h1>Paperterm</h1>
       <p class="summary">Mirror a terminal session from your computer onto e-ink. The shell, credentials, and scrollback stay on the computer; the Kobo renders the session over a paired connection.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.10</dd></div>
+        <div><dt>Version</dt><dd>0.1.14</dd></div>
         <div><dt>Permissions</dt><dd>network</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.18</dd></div>
+        <div><dt>Requires</dt><dd>Cobalt 0.3.31</dd></div>
       </dl>
       <a class="cta" href="#setup-panel">Install on your Kobo</a>
       <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/paperterm">Source code on GitHub</a></p>
@@ -119,20 +119,22 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.1.10</h2>
-    <p>Connecting a computer shows each command set apart and complete, with shorter steps.</p>
+    <h2>New in 0.1.14</h2>
+    <p>The pairing address and code fields say what goes in them, a refused entry says why in place of the guidance, and a pairing that could not be saved offers Retry saving on its message.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
-      <li>Once per reader: with it plugged in over USB, run kobo setup --enable-ssh. Then save it so the commands below find it on Wi-Fi without an address.
-        <code class="setup-command">kobo pair</code></li>
-      <li>Pair Paperterm. This trusts the computer and prints the address and code to enter on the reader.
+      <li>Set up the reader once over USB, if you have not already.
+        <code class="setup-command">kobo setup</code></li>
+      <li>Pair this computer with the reader. There is nothing to type on the reader. The first time, close Cobalt and open it again afterwards.
         <code class="setup-command">kobo stream init</code></li>
-      <li>Start a session and leave the terminal open.
-        <code class="setup-command">kobo stream --interactive -- /bin/sh</code></li>
+      <li>Share a terminal and leave it open, then open Paperterm on the reader.
+        <code class="setup-command">kobo stream terminal</code></li>
     </ol>
+    <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
+      <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">

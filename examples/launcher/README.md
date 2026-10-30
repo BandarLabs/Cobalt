@@ -5,9 +5,10 @@ back to the Kobo reader.
 
 ## Features
 
-- Four tabs: **Apps**, **Books**, **Settings** and **Kobo reader**.
-- Apps are shown as a paged grid. **Previous** and **More apps** appear only
-  when there is a page in that direction.
+- Four tabs: **Apps**, **Books**, **Settings** and **Kobo reader**. Books and
+  Settings open from their tabs, so the grid holds only apps.
+- Apps are shown as a paged grid. The page arrows appear only when there is
+  a page in that direction.
 - A recently opened app shows a **Resume** mark.
 - **Kobo reader** ends the Cobalt session and returns to the stock reader.
 

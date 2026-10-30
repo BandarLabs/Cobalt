@@ -1,9 +1,9 @@
 //! Reusable audiobook player UI and Bluetooth-output handoff.
 
 use crate::{
-    action_id, ActionId, AudioPlaybackState, AudioSource, BannerLevel, BluetoothDevice,
+    action_id, ActionId, AudioPlaybackState, AudioSource, BandAlign, BannerLevel, BluetoothDevice,
     BluetoothDeviceKind, Context, DenyReason, DeviceError, DeviceRequest, DeviceResult, Glyph,
-    RowLead, Screen, ScreenBuilder, Task, TaskId, TaskOutcome, TilePicture,
+    RowLead, Screen, ScreenBuilder, SlotWidth, Task, TaskId, TaskOutcome, TilePicture,
 };
 use std::time::Duration;
 
@@ -15,7 +15,8 @@ const VOLUME_UP: &str = "audio-volume-up";
 const OUTPUT: &str = "audio-output";
 const BLUETOOTH_TOGGLE: &str = "audio-bluetooth-toggle";
 const BLUETOOTH_SCAN: &str = "audio-bluetooth-scan";
-const MORE_DEVICES: &str = "audio-more-devices";
+const DEVICES_PREVIOUS: &str = "audio-devices-previous";
+const DEVICES_NEXT: &str = "audio-devices-next";
 const DEVICE_ACTIONS: [&str; 6] = [
     "audio-device-0",
     "audio-device-1",
@@ -24,7 +25,6 @@ const DEVICE_ACTIONS: [&str; 6] = [
     "audio-device-4",
     "audio-device-5",
 ];
-const PAGE_SIZE: usize = 4;
 const POLL_SECONDS: u32 = 5;
 const SCAN_SECONDS: u32 = 3;
 
@@ -92,6 +92,40 @@ enum PlayIntent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum PendingBluetooth {
     Connect(String),
+}
+
+/// How much of the player gives way so it fits the panel, from nothing to
+/// the most. See [`AudioPlayer::screen_for`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Shape {
+    cover: bool,
+    one_row: bool,
+    side_by_side: bool,
+}
+
+impl Shape {
+    const FULL: Self = Self {
+        cover: true,
+        one_row: false,
+        side_by_side: false,
+    };
+    const IN_ORDER: [Self; 4] = [
+        Self::FULL,
+        Self {
+            cover: false,
+            ..Self::FULL
+        },
+        Self {
+            cover: false,
+            one_row: true,
+            side_by_side: false,
+        },
+        Self {
+            cover: false,
+            one_row: true,
+            side_by_side: true,
+        },
+    ];
 }
 
 /// A complete audiobook surface: album art, transport controls, position,
@@ -230,18 +264,54 @@ impl AudioPlayer {
         Duration::from_millis(self.duration_ms as u64)
     }
 
+    /// The player as it is drawn when nothing has to give way: cover,
+    /// transport and volume each in their own place. Prefer
+    /// [`Self::screen_for`], which knows the panel and the text size.
     #[must_use]
     pub fn screen(&self) -> Screen {
         match self.view {
-            View::Player => self.player_screen(),
-            View::Bluetooth => self.bluetooth_screen(),
+            View::Player => self.player_screen(Shape::FULL),
+            View::Bluetooth => self.bluetooth_screen(&Context::default()),
         }
     }
 
-    fn player_screen(&self) -> Screen {
+    /// The player shaped for the panel and text size in `context`.
+    ///
+    /// At a large text size the full player is taller than a six inch panel,
+    /// and the runtime refuses a screen that runs off it, which leaves the
+    /// owner who needs big type with no player at all. So the parts that say
+    /// the least give way first, one at a time and only as far as the panel
+    /// needs: the cover, which repeats the title in a picture, and then the
+    /// separate volume row, whose two buttons join the transport and whose
+    /// level becomes a fact beside the output it applies to. Every word and
+    /// every control stays on the screen.
+    #[must_use]
+    pub fn screen_for(&self, context: &Context) -> Screen {
+        if self.view == View::Bluetooth {
+            return self.bluetooth_screen(context);
+        }
+        let metrics = context.metrics();
+        let chrome = crate::Chrome::measuring(true);
+        let mut shaped = None;
+        for shape in Shape::IN_ORDER {
+            let screen = self.player_screen(shape);
+            let fits = !screen
+                .diagnostics(&metrics, &chrome)
+                .issues
+                .iter()
+                .any(|issue| issue.severity == crate::DiagnosticSeverity::Error);
+            shaped = Some(screen);
+            if fits {
+                break;
+            }
+        }
+        shaped.unwrap_or_else(|| self.player_screen(Shape::FULL))
+    }
+
+    fn player_screen(&self, shape: Shape) -> Screen {
         let output = self
             .connected_output()
-            .map_or("No Bluetooth audio device", |device| device.name.as_str());
+            .map_or("Not connected", |device| device.name.as_str());
         // The author is the hero's byline, immediately under the title, which is
         // where a reader looks for it. Repeating it as an "Author" fact two lines
         // lower says the same sentence twice and reads like a bug, so the facts
@@ -251,6 +321,75 @@ impl AudioPlayer {
             facts.push(("Chapter", chapter.to_owned()));
         }
         facts.push(("Output", output.to_owned()));
+        let controls_shown = self.audio_available != Availability::Unavailable;
+        if controls_shown && shape.one_row {
+            facts.push(("Volume", format!("{}%", self.volume)));
+        }
+        let mut screen = ScreenBuilder::new("audio-player")
+            .top_bar("Now playing")
+            .owns_back(self.owns_back);
+        // The unavailable/trouble banner leads the content: appended last it
+        // lands under the volume controls, where the fixed bottom bar clips
+        // it on the smallest panels at extra-large text. Leading, it reads
+        // first and the hero absorbs the space pressure instead.
+        if self.audio_available == Availability::Unavailable {
+            screen = screen.banner(BannerLevel::Attention, "This firmware cannot play audio.");
+        } else if let Some(trouble) = &self.trouble {
+            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        }
+        let hero = |screen: ScreenBuilder| {
+            screen.hero(
+                self.cover.filter(|_| shape.cover),
+                26,
+                &self.metadata.title,
+                self.metadata.author.clone(),
+                facts,
+            )
+        };
+        let transport = |screen: ScreenBuilder| self.transport(screen, shape);
+        screen = if shape.side_by_side {
+            // Held sideways the panel is wide and short, so the book and its
+            // controls stand beside each other rather than one above the
+            // other. On a panel too narrow for two readable columns the band
+            // stacks itself, which is the shape before this one.
+            screen.band(
+                BandAlign::Top,
+                [
+                    (
+                        SlotWidth::Fill,
+                        Box::new(hero) as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
+                    ),
+                    (SlotWidth::Fill, Box::new(transport)),
+                ],
+            )
+        } else {
+            transport(hero(screen))
+        };
+        // Marked, because these are the two verbs a player screen offers and
+        // both have a picture everyone already reads. The words stay: they are
+        // what the control is called in a test, a log and a preview.
+        screen = match &self.secondary_action {
+            Some((name, label, glyph)) => screen.action_bar_marked([
+                (
+                    OUTPUT.to_owned(),
+                    "Bluetooth output".to_owned(),
+                    Some(Glyph::Bluetooth),
+                ),
+                (name.clone(), label.clone(), Some(*glyph)),
+            ]),
+            None => screen.bottom_action_marked(OUTPUT, "Bluetooth audio output", Glyph::Bluetooth),
+        };
+        screen.build()
+    }
+
+    /// The progress, the position and the controls under the book.
+    ///
+    /// Where playback is unavailable (no audio hardware, as on the
+    /// black-and-white panels), the transport and volume controls would be
+    /// inert replicas of what the banner already says, and their two rows
+    /// push the screen past the small panels at extra-large text. The
+    /// position and progress stay: they are the saved state, not controls.
+    fn transport(&self, screen: ScreenBuilder, shape: Shape) -> ScreenBuilder {
         let progress = if self.duration_ms == 0 {
             0
         } else {
@@ -284,95 +423,57 @@ impl AudioPlayer {
         } else {
             format!("{} / {}", clock(self.position_ms), clock(self.duration_ms))
         };
-        let mut screen = ScreenBuilder::new("audio-player")
-            .top_bar("Now playing")
-            .owns_back(self.owns_back);
-        // The unavailable/trouble banner leads the content: appended last it
-        // lands under the volume controls, where the fixed bottom bar clips
-        // it on the smallest panels at extra-large text. Leading, it reads
-        // first and the hero absorbs the space pressure instead.
-        if self.audio_available == Availability::Unavailable {
-            screen = screen.banner(
-                BannerLevel::Attention,
-                "Audio playback is unavailable on this firmware.",
-            );
-        } else if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
-        }
-        screen = screen
-            .hero(
-                self.cover,
-                26,
-                &self.metadata.title,
-                self.metadata.author.clone(),
-                facts,
-            )
+        let controls_shown = self.audio_available != Availability::Unavailable;
+        let screen = screen
             .progress(progress)
             .section_with_value("Position", position);
-        // Where playback is unavailable (no audio hardware, as on the
-        // black-and-white panels), the transport and volume controls would be
-        // inert replicas of what the banner already says, and their two rows
-        // push the screen past the small panels at extra-large text. The
-        // position and progress stay: they are the saved state, not controls.
-        if self.audio_available != Availability::Unavailable {
-            screen = screen
-                .controls(
-                    3,
-                    [
-                        (BACK_THIRTY, "Back 30 sec", Glyph::Rewind30),
-                        (PLAY, play_label, play_glyph),
-                        (FORWARD_THIRTY, "Forward 30 sec", Glyph::Forward30),
-                    ],
-                )
-                // The volume is stated once, above the pair, rather than printed on
-                // both buttons. Two buttons carrying the same number is the same
-                // fault as a byline stated twice: it reads as two facts.
-                .section_with_value("Volume", format!("{}%", self.volume))
-                .controls(
-                    2,
-                    [
-                        (VOLUME_DOWN, "Quieter", Glyph::VolumeDown),
-                        (VOLUME_UP, "Louder", Glyph::VolumeUp),
-                    ],
-                );
+        if !controls_shown {
+            return screen;
         }
-        // Marked, because these are the two verbs a player screen offers and
-        // both have a picture everyone already reads. The words stay: they are
-        // what the control is called in a test, a log and a preview.
-        screen = match &self.secondary_action {
-            Some((name, label, glyph)) => screen.action_bar_marked([
-                (
-                    OUTPUT.to_owned(),
-                    "Bluetooth output".to_owned(),
-                    Some(Glyph::Bluetooth),
-                ),
-                (name.clone(), label.clone(), Some(*glyph)),
-            ]),
-            None => screen.bottom_action_marked(OUTPUT, "Bluetooth audio output", Glyph::Bluetooth),
-        };
-        screen.build()
+        if shape.one_row {
+            // Quieter and Louder at the two ends, where a thumb finds
+            // them without looking, and the transport in the middle as
+            // before.
+            return screen.controls(
+                5,
+                [
+                    (VOLUME_DOWN, "Quieter", Glyph::VolumeDown),
+                    (BACK_THIRTY, "Back 30 sec", Glyph::Rewind30),
+                    (PLAY, play_label, play_glyph),
+                    (FORWARD_THIRTY, "Forward 30 sec", Glyph::Forward30),
+                    (VOLUME_UP, "Louder", Glyph::VolumeUp),
+                ],
+            );
+        }
+        screen
+            .controls(
+                3,
+                [
+                    (BACK_THIRTY, "Back 30 sec", Glyph::Rewind30),
+                    (PLAY, play_label, play_glyph),
+                    (FORWARD_THIRTY, "Forward 30 sec", Glyph::Forward30),
+                ],
+            )
+            // The volume is stated once, above the pair, rather than
+            // printed on both buttons. Two buttons carrying the same
+            // number is the same fault as a byline stated twice: it reads
+            // as two facts.
+            .section_with_value("Volume", format!("{}%", self.volume))
+            .controls(
+                2,
+                [
+                    (VOLUME_DOWN, "Quieter", Glyph::VolumeDown),
+                    (VOLUME_UP, "Louder", Glyph::VolumeUp),
+                ],
+            )
     }
 
-    fn bluetooth_screen(&self) -> Screen {
+    /// Everything on the output screen above the list of devices.
+    fn bluetooth_header(&self) -> ScreenBuilder {
+        let on = self.bluetooth_enabled == Switch::On;
         let mut screen = ScreenBuilder::new("audio-output")
             .top_bar("Bluetooth audio")
-            .owns_back(true)
-            .section_with_value(
-                "Bluetooth",
-                if self.bluetooth_enabled == Switch::On {
-                    "On"
-                } else {
-                    "Off"
-                },
-            )
-            .button(
-                BLUETOOTH_TOGGLE,
-                if self.bluetooth_enabled == Switch::On {
-                    "Turn Bluetooth off"
-                } else {
-                    "Turn Bluetooth on"
-                },
-            );
+            .owns_back(true);
         if self.bluetooth_available == Availability::Unavailable {
             screen = screen.banner(
                 BannerLevel::Attention,
@@ -387,52 +488,89 @@ impl AudioPlayer {
             // indistinguishable from a crash, which is exactly how it was read.
             screen = screen.banner(
                 BannerLevel::Info,
-                "Bluetooth shares one radio with Wi-Fi on this reader, and it can only start once per boot. Your reader will restart itself when you leave this app. Nothing you have saved is lost.",
+                "The reader will restart itself when you leave. Nothing saved is lost.",
             );
         }
-        if self.bluetooth_enabled == Switch::On {
-            let devices = self.audio_devices().collect::<Vec<_>>();
-            if devices.is_empty() {
-                screen = screen.text(
-                    "Put headphones or a speaker in pairing mode, then scan for audio devices.",
-                );
-            } else {
-                let pages = page_count(devices.len());
-                screen = screen
-                    .section_with_value("Audio devices", format!("{} / {pages}", self.page + 1))
-                    .rows(
-                        devices
-                            .into_iter()
-                            .skip(self.page * PAGE_SIZE)
-                            .take(PAGE_SIZE)
-                            .enumerate()
-                            .map(|(index, device)| {
-                                let state = if device.connected {
-                                    "Connected · Ready to listen"
-                                } else if device.paired {
-                                    "Paired · Tap to connect"
-                                } else {
-                                    "Available · Tap to pair"
-                                };
-                                (
-                                    DEVICE_ACTIONS[index],
-                                    device.name.as_str(),
-                                    state,
-                                    RowLead::from(if device.connected {
-                                        Glyph::Check
-                                    } else {
-                                        Glyph::Circle
-                                    }),
-                                )
-                            }),
-                    );
-                if pages > 1 {
-                    screen = screen.button(MORE_DEVICES, "More devices");
-                }
-            }
-            screen = screen.button(BLUETOOTH_SCAN, "Scan for headphones and speakers");
+        // One switch that shows its state, in place of a line saying "On"
+        // and a button saying the opposite. Switched on, the list under it
+        // says what is connected, so the switch says nothing more and leaves
+        // that line to the list.
+        let summary = if on {
+            ""
+        } else {
+            "Turn on to find headphones and speakers"
+        };
+        screen.toggle(BLUETOOTH_TOGGLE, "Bluetooth", summary, on)
+    }
+
+    /// The devices on each page of the output screen, as many as the panel
+    /// holds under the switch and over the scan button at this text size.
+    fn device_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let devices = self.audio_devices().collect::<Vec<_>>();
+        if devices.is_empty() {
+            return vec![Vec::new()];
         }
-        screen.build()
+        let rows = devices
+            .iter()
+            .map(|device| (device.name.as_str(), device_state(device)))
+            .collect::<Vec<_>>();
+        let placed = self.bluetooth_header().section("Audio devices").build();
+        let pages = context
+            .paginate_rows_under(&rows, true, crate::Position::AtTheFoot, &placed)
+            .into_iter()
+            .flat_map(|page| {
+                page.chunks(DEVICE_ACTIONS.len())
+                    .map(<[usize]>::to_vec)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|page| !page.is_empty())
+            .collect::<Vec<_>>();
+        if pages.is_empty() {
+            vec![Vec::new()]
+        } else {
+            pages
+        }
+    }
+
+    fn bluetooth_screen(&self, context: &Context) -> Screen {
+        let mut screen = self.bluetooth_header();
+        if self.bluetooth_enabled != Switch::On {
+            return screen.build();
+        }
+        let devices = self.audio_devices().collect::<Vec<_>>();
+        if devices.is_empty() {
+            screen = screen
+                .text("Put headphones or a speaker in pairing mode, then scan for audio devices.");
+        } else {
+            let pages = self.device_pages(context);
+            let page = self.page.min(pages.len() - 1);
+            screen = screen
+                .section("Audio devices")
+                .rows(pages[page].iter().enumerate().map(|(slot, &index)| {
+                    let device = devices[index];
+                    (
+                        DEVICE_ACTIONS[slot],
+                        device.name.as_str(),
+                        device_state(device),
+                        RowLead::from(if device.connected {
+                            Glyph::Check
+                        } else {
+                            Glyph::Circle
+                        }),
+                    )
+                }));
+            if pages.len() > 1 {
+                screen = screen
+                    .page_turns(DEVICES_PREVIOUS, DEVICES_NEXT)
+                    .page_position(
+                        u16::try_from(page + 1).unwrap_or(u16::MAX),
+                        u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                    );
+            }
+        }
+        screen
+            .bottom_action(BLUETOOTH_SCAN, "Scan for headphones and speakers")
+            .build()
     }
 
     /// Handles one action if it belongs to the player. Returns whether it was
@@ -500,19 +638,25 @@ impl AudioPlayer {
             self.scan(context);
             return true;
         }
-        if action == action_id(MORE_DEVICES) {
-            self.page = (self.page + 1) % page_count(self.audio_devices().count());
+        let pages = self.device_pages(context);
+        if action == action_id(DEVICES_PREVIOUS) {
+            self.page = self.page.saturating_sub(1);
             return true;
         }
-        let Some(index) = DEVICE_ACTIONS
+        if action == action_id(DEVICES_NEXT) {
+            self.page = (self.page + 1).min(pages.len() - 1);
+            return true;
+        }
+        let Some(slot) = DEVICE_ACTIONS
             .iter()
             .position(|name| action == action_id(name))
         else {
             return false;
         };
-        let Some(device) = self
-            .audio_devices()
-            .nth(self.page * PAGE_SIZE + index)
+        let Some(device) = pages
+            .get(self.page.min(pages.len() - 1))
+            .and_then(|page| page.get(slot))
+            .and_then(|&index| self.audio_devices().nth(index))
             .cloned()
         else {
             return true;
@@ -672,7 +816,7 @@ impl AudioPlayer {
                 // a warning the reader has already been given.
                 self.restart_on_exit |= *restart_on_exit;
                 self.devices.clone_from(devices);
-                self.page = self.page.min(page_count(self.audio_devices().count()) - 1);
+                self.page = self.page.min(self.device_pages(context).len() - 1);
                 self.trouble = None;
 
                 if matches!(request, DeviceRequest::PairBluetooth { .. }) {
@@ -777,8 +921,15 @@ const fn poll_worthy(state: AudioPlaybackState) -> bool {
     )
 }
 
-fn page_count(items: usize) -> usize {
-    items.max(1).div_ceil(PAGE_SIZE)
+/// What a device row says under the device's name.
+const fn device_state(device: &BluetoothDevice) -> &'static str {
+    if device.connected {
+        "Connected · Ready to listen"
+    } else if device.paired {
+        "Paired · Tap to connect"
+    } else {
+        "Available · Tap to pair"
+    }
 }
 
 fn clock(milliseconds: u32) -> String {
@@ -922,6 +1073,186 @@ mod tests {
 
         player.view = super::View::Bluetooth;
         assert!(player.screen().validate(&CLARA_BW_METRICS).is_empty());
+    }
+
+    /// An application that shows the player, so the player is measured
+    /// through a runner's context, at the size and against the type the
+    /// runtime will draw it with.
+    struct Shows;
+
+    impl crate::KoboApp for Shows {
+        fn on_start(&mut self, _context: &mut crate::Context) {}
+        fn on_action(&mut self, _context: &mut crate::Context, _action: crate::ActionId) {}
+    }
+
+    /// Every state the player is drawn in, at its longest: a title of two
+    /// lines, a byline, a chapter, a connected output, a trouble banner, and
+    /// the secondary action beside the output picker.
+    fn every_player() -> Vec<(&'static str, AudioPlayer)> {
+        let full = || {
+            let mut player = AudioPlayer::shelf("book.mp3z", "The Quiet Shelf")
+                .metadata(
+                    AudioMetadata::new("A History of the Moon")
+                        .author("Made on this reader")
+                        .chapter("Part 3 of 12"),
+                )
+                .cover(TilePicture::new(PictureHandle(1), 240, 320))
+                .secondary_action("another", "Create another", crate::Glyph::Plus);
+            player.position_ms = 3_675_000;
+            player.duration_ms = 7_200_000;
+            player.bluetooth_enabled = super::Switch::On;
+            player.devices = vec![headphones(true)];
+            player
+        };
+        let playing = {
+            let mut player = full();
+            player.playback = AudioPlaybackState::Playing;
+            player
+        };
+        let unavailable = {
+            let mut player = full();
+            player.audio_available = super::Availability::Unavailable;
+            player.devices.clear();
+            player
+        };
+        let trouble = {
+            let mut player = full();
+            player.trouble = Some("The Bluetooth audio service stopped responding.".to_owned());
+            player
+        };
+        let alone = AudioPlayer::shelf("book.mp3z", "The Quiet Shelf").cover(TilePicture::new(
+            PictureHandle(1),
+            240,
+            320,
+        ));
+        vec![
+            ("playing", playing),
+            ("unavailable", unavailable),
+            ("trouble", trouble),
+            ("without a secondary action", alone),
+        ]
+    }
+
+    #[test]
+    fn the_player_keeps_every_control_on_a_clara_at_every_text_size_held_either_way() {
+        use kobo_ui::{Chrome, DiagnosticSeverity, DisplayMetrics, Orientation, TextScale};
+        for text_scale in TextScale::STEPS {
+            for orientation in [Orientation::Portrait, Orientation::Landscape] {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let context = crate::AppRunner::with_metrics(Shows, metrics).context();
+                for (state, player) in every_player() {
+                    let at = format!("{state}, {text_scale:?}, {orientation:?}");
+                    let screen = player.screen_for(&context);
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                    let errors = diagnostics
+                        .issues
+                        .iter()
+                        .filter(|issue| issue.severity == DiagnosticSeverity::Error)
+                        .collect::<Vec<_>>();
+                    assert!(errors.is_empty(), "{at}: {errors:?}");
+                    let mut wanted = vec![super::OUTPUT];
+                    if player.audio_available == super::Availability::Available {
+                        wanted.extend([
+                            super::PLAY,
+                            super::BACK_THIRTY,
+                            super::FORWARD_THIRTY,
+                            super::VOLUME_DOWN,
+                            super::VOLUME_UP,
+                        ]);
+                    }
+                    for name in wanted {
+                        assert!(
+                            diagnostics.layout.rect_of_action(action_id(name)).is_some(),
+                            "{at}: {name} is not on the screen"
+                        );
+                    }
+                    let drawn = format!("{screen:?}");
+                    if player.audio_available == super::Availability::Available {
+                        assert!(drawn.contains(&format!("{}%", player.volume)), "{at}");
+                    }
+                    if text_scale == TextScale::Default && orientation == Orientation::Portrait {
+                        // Where the panel has the room, nothing gives way.
+                        assert_eq!(screen, player.screen(), "{at}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_output_screen_pages_its_devices_to_fit_a_clara_at_every_text_size_held_either_way() {
+        use kobo_ui::{Chrome, DiagnosticSeverity, DisplayMetrics, Orientation, TextScale};
+        let device = |index: usize| BluetoothDevice {
+            address: format!("AA:BB:CC:DD:EE:{index:02}"),
+            name: format!("Travel headphones {index}"),
+            kind: BluetoothDeviceKind::Audio,
+            paired: index < 2,
+            connected: index == 0,
+        };
+        for text_scale in TextScale::STEPS {
+            for orientation in [Orientation::Portrait, Orientation::Landscape] {
+                let metrics = DisplayMetrics {
+                    text_scale,
+                    ..CLARA_BW_METRICS
+                }
+                .oriented(orientation);
+                let runner = crate::AppRunner::with_metrics(Shows, metrics);
+                for (state, restart, trouble, count) in [
+                    ("restart owed", true, false, 9),
+                    ("trouble", false, true, 9),
+                    ("one device", true, false, 1),
+                    ("nothing found", true, false, 0),
+                ] {
+                    let at = format!("{state}, {text_scale:?}, {orientation:?}");
+                    let mut player = AudioPlayer::shelf("book.mp3z", "Book");
+                    player.view = super::View::Bluetooth;
+                    player.bluetooth_enabled = super::Switch::On;
+                    player.restart_on_exit = restart;
+                    if trouble {
+                        player.trouble =
+                            Some("The Bluetooth audio service stopped responding.".to_owned());
+                    }
+                    player.devices = (0..count).map(device).collect();
+                    let mut seen = Vec::new();
+                    loop {
+                        let context = runner.context();
+                        let screen = player.screen_for(&context);
+                        let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
+                        let errors = diagnostics
+                            .issues
+                            .iter()
+                            .filter(|issue| issue.severity == DiagnosticSeverity::Error)
+                            .collect::<Vec<_>>();
+                        assert!(errors.is_empty(), "{at}: {errors:?}");
+                        for name in [super::BLUETOOTH_TOGGLE, super::BLUETOOTH_SCAN] {
+                            assert!(
+                                diagnostics.layout.rect_of_action(action_id(name)).is_some(),
+                                "{at}: {name}"
+                            );
+                        }
+                        let drawn = format!("{screen:?}");
+                        seen.extend((0..count).filter(|&index| {
+                            drawn.contains(&format!("\"Travel headphones {index}\""))
+                        }));
+                        if diagnostics
+                            .layout
+                            .rect_of_action(action_id(super::DEVICES_NEXT))
+                            .is_none()
+                        {
+                            break;
+                        }
+                        assert!(player.press(&mut runner.context(), action_id(super::DEVICES_NEXT)));
+                    }
+                    seen.sort_unstable();
+                    seen.dedup();
+                    assert_eq!(seen, (0..count).collect::<Vec<_>>(), "{at}");
+                }
+            }
+        }
     }
 
     #[test]
