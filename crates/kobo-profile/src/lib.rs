@@ -519,7 +519,7 @@ pub const CLARA_2E_386: DeviceProfile = DeviceProfile {
     serial_prefix: "N506",
     firmware_versions: &["4.38.23828"],
     kernel_release: "4.1.15",
-    write_ready: false,
+    write_ready: true,
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     colour_panel: false,
