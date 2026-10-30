@@ -4,10 +4,10 @@
   "short_label": "Components",
   "summary": "See every Cobalt UI component on the device in one reference app.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "glyph": "chart",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK."
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger."
 }

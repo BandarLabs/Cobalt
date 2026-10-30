@@ -3,12 +3,12 @@
   "display_name": "AI Command Center",
   "short_label": "AI Chat",
   "summary": "Ask a question, then read and navigate the answer with touch controls. Needs an account.",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "glyph": "chat",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "setup": {
     "steps": [
       {

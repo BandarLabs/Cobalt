@@ -4,8 +4,8 @@
   "short_label": "Parlor",
   "summary": "Play Reversi, Draughts, Nine Men's Morris and Kalah on one Kobo.",
   "page_description": "Four classic board games against the computer at three levels, which marks its last move on the board, or for two players passing one Kobo. Every move is saved.",
-  "version": "0.1.11",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.12",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "glyph": "circle",
   "capabilities": []
 }

@@ -4,8 +4,8 @@
   "short_label": "Sync",
   "summary": "Sync folders between your computer and your Kobo with Syncthing. Needs your computer.",
   "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.",
-  "version": "0.3.8",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.3.9",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "glyph": "refresh",
   "capabilities": [
     "scheduled-wake"

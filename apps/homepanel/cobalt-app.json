@@ -4,8 +4,8 @@
   "short_label": "Home",
   "summary": "Control saved Home Assistant tiles from a low-power panel. Needs an account. Home Assistant must be on HTTPS.",
   "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
-  "version": "0.2.9",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.2.10",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "glyph": "light",
   "capabilities": [
     "network"

@@ -3,8 +3,8 @@
   "display_name": "Todo",
   "short_label": "Todo",
   "summary": "Keep a simple to-do list that stays on your Kobo.",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "glyph": "check",
   "capabilities": [],
-  "release_notes": "Rebuilt with the current Cobalt SDK."
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar."
 }

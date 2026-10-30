@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.20",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "1.0.21",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "glyph": "grid",
   "capabilities": [
     "network",

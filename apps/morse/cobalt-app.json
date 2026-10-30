@@ -3,12 +3,12 @@
   "display_name": "Morse",
   "short_label": "Morse",
   "summary": "Type a message and send it in Morse code with the front light.",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "glyph": "light",
   "capabilities": [
     "frontlight-control",
     "keep-awake"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "page_description": "Type a message and send it in Morse code on the reader's front light, a letter at a time, with the outgoing letter drawn across the whole panel."
 }

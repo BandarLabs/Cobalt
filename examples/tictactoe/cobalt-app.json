@@ -3,8 +3,8 @@
   "display_name": "Tic-tac-toe",
   "short_label": "Tic-tac-toe",
   "summary": "Play tic-tac-toe together on one Kobo.",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "glyph": "grid",
   "capabilities": [],
-  "release_notes": "Rebuilt with the current Cobalt SDK."
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar."
 }

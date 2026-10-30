@@ -3,11 +3,11 @@
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
   "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "glyph": "clock",
   "capabilities": [
     "network",
     "scheduled-wake"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK."
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar."
 }

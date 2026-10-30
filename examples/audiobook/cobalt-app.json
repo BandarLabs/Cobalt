@@ -3,7 +3,7 @@
   "display_name": "Audiobook Studio",
   "short_label": "Audiobooks",
   "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account.",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,7 +11,7 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "setup": {
     "steps": [
       {

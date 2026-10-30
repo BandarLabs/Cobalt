@@ -3,10 +3,10 @@
   "display_name": "Sudoku",
   "short_label": "Sudoku",
   "summary": "Play 600 original Sudoku puzzles with pencil notes, undo and saved games.",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "glyph": "grid",
   "capabilities": [],
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "minimum_cobalt_version": "0.3.18",
   "page_description": "Play 600 original Sudoku puzzles, 200 at each of three difficulties, each with exactly one solution. Pencil notes, undo, an optional mistakes check, and saved games survive reopening."
 }

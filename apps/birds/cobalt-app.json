@@ -4,8 +4,8 @@
   "short_label": "Birds",
   "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.",
   "page_description": "See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.",
-  "version": "0.1.11",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.12",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "glyph": "app",
   "capabilities": [
     "keep-awake"

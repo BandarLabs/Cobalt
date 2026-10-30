@@ -4,8 +4,8 @@
   "short_label": "Post",
   "summary": "Read and reply to letters from Hermes. Needs an account.",
   "page_description": "Read and reply to letters from your own Hermes Agent. The inbox and your drafts stay readable offline, and replies are sent when the gateway is back.",
-  "version": "0.2.9",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.2.10",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "glyph": "chat",
   "capabilities": [
     "network"

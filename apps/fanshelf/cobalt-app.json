@@ -4,8 +4,8 @@
   "short_label": "Fanshelf",
   "summary": "Save public AO3 works to a shelf made for offline reading.",
   "page_description": "Add AO3 works to a shelf, download them as EPUB and read them offline on your Kobo. Check works in progress for new chapters and follow tags. Fanshelf is unofficial and not affiliated with the Organization for Transformative Works.",
-  "version": "0.3.8",
-  "release_notes": "A page that opens a chapter is filled to the foot again. Works whose headings carry their own spacing ended those pages several lines early.",
+  "version": "0.3.9",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "glyph": "book",
   "capabilities": [
     "network"

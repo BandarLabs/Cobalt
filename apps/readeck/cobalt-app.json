@@ -3,8 +3,8 @@
   "display_name": "Readeck",
   "short_label": "Readeck",
   "summary": "Read and search your saved Readeck articles. Needs an account.",
-  "version": "0.1.3",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.4",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "glyph": "bookmark",
   "capabilities": [
     "network",

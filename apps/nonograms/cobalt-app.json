@@ -4,8 +4,8 @@
   "short_label": "Nonograms",
   "summary": "Solve 78 picture and pattern puzzles, or make your own from photos.",
   "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
-  "version": "0.1.14",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.15",
+  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
   "glyph": "grid",
   "capabilities": [],
   "setup": {

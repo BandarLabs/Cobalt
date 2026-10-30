@@ -4,8 +4,8 @@
   "short_label": "Grimoire",
   "summary": "Browse offline SRD references and manage tabletop combat.",
   "page_description": "Offline SRD reference and table tools for spell lookups, monster stat blocks, dice, initiative, and party HP.",
-  "version": "0.1.8",
-  "release_notes": "Rebuilt with the current Cobalt SDK.",
+  "version": "0.1.9",
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
   "glyph": "book",
   "capabilities": []
 }

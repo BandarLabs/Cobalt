@@ -3,10 +3,10 @@
   "display_name": "Hacker News",
   "short_label": "Hacker News",
   "summary": "Read Top, New, Ask, and Show stories with complete comment threads.",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "glyph": "news",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK."
+  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar."
 }
