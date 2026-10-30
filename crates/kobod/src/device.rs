@@ -217,6 +217,12 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 /// changed.
 const STATUS_POLL: Duration = Duration::from_secs(2);
 
+/// How long teardown waits for a Sync window to stop before ending it.
+///
+/// The window looks for the request every two seconds and gives the engine
+/// ten to shut down cleanly; this is both, with a little to spare.
+const SYNC_STOP_PATIENCE: Duration = Duration::from_secs(15);
+
 /// How often the runtime looks at whether a scheduled sync is due.
 ///
 /// The shortest schedule the Sync app offers is an hour, so a minute late is
@@ -232,7 +238,9 @@ const SYNC_CHECK: Duration = Duration::from_secs(60);
 /// is open and caught up when it next opens.
 #[derive(Default)]
 struct SyncWindows {
-    running: Option<Child>,
+    /// The window this session started, with why, so a window that has to be
+    /// ended can be put back to run again.
+    running: Option<(Child, crate::syncthing::Due)>,
     checked: Option<Instant>,
     /// Set when the Sync app saved something that may make a window due now,
     /// so a tap is answered at once rather than within the minute.
@@ -246,7 +254,7 @@ impl SyncWindows {
         }
         self.asked = false;
         self.checked = Some(Instant::now());
-        if let Some(window) = &mut self.running {
+        if let Some((window, _)) = &mut self.running {
             if matches!(window.try_wait(), Ok(None)) {
                 return;
             }
@@ -263,6 +271,7 @@ impl SyncWindows {
             }
             return;
         }
+        crate::syncthing::forget_stop_request();
         let started = std::env::current_exe().and_then(|runtime| {
             use std::os::unix::process::CommandExt;
             Command::new(runtime)
@@ -279,10 +288,47 @@ impl SyncWindows {
         match started {
             Ok(window) => {
                 trace(&format!("sync window started ({due:?})"));
-                self.running = Some(window);
+                self.running = Some((window, due));
             }
             Err(error) => trace(&format!("sync window could not start: {error}")),
         }
+    }
+
+    /// Ends the window this session started, before the reader is handed back.
+    ///
+    /// Asked first, so the engine shuts down cleanly and the window records
+    /// that the sync carries on next time. A window that has not stopped by
+    /// the deadline is ended with its whole group, the engine included,
+    /// because nothing Cobalt started may still be running once the reader is.
+    fn finish(&mut self) {
+        let Some((mut window, due)) = self.running.take() else {
+            return;
+        };
+        if !matches!(window.try_wait(), Ok(None)) {
+            return;
+        }
+        if let Err(error) = crate::syncthing::ask_window_to_stop() {
+            trace(&format!("could not ask the sync window to stop: {error}"));
+        }
+        let deadline = Instant::now() + SYNC_STOP_PATIENCE;
+        while matches!(window.try_wait(), Ok(None)) {
+            if Instant::now() >= deadline {
+                let _ignored =
+                    kobo_abi::process_group::signal(window.id(), kobo_abi::process_group::SIGKILL);
+                let _ignored = window.wait();
+                trace("sync window did not stop in time and was ended");
+                // Ended before it could say so: most likely still fetching the
+                // engine, after it had already recorded the attempt and taken
+                // the owner's request. Put both back here instead, or a Sync
+                // now tap is lost and a schedule waits out a sync that never ran.
+                if let Err(error) = crate::syncthing::put_back(due) {
+                    trace(&format!("could not put the stopped sync back: {error}"));
+                }
+                return;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        trace("sync window stopped with the session");
     }
 }
 
@@ -965,6 +1011,9 @@ pub fn present(
         None => true,
     };
 
+    // Held out here rather than in the session, so that teardown can stop a
+    // sync still running while the watchdog is fed and the radio is still up.
+    let mut sync_windows = SyncWindows::default();
     let application_outcome = if consented {
         host_applications(
             application,
@@ -978,6 +1027,7 @@ pub fn present(
             &network_settled,
             launch_painter,
             launch_started,
+            &mut sync_windows,
         )
     } else {
         // Not an error. The owner was asked and answered, and everything below
@@ -1005,6 +1055,10 @@ pub fn present(
     // Without this the recovery watchdog would conclude the runtime had died
     // and restart a reader that is already starting.
     let teardown = KeepBeating::start(&watchdog);
+    // Before the radio is released and before the reader starts: a sync left
+    // running would write to the card the reader is about to scan, on a core
+    // it needs to start, through a radio that is about to go.
+    sync_windows.finish();
     // A session closed within seconds of opening can still be inside the
     // recovery's settle window, so this may wait. It waits beating, and it has
     // to: the radio cannot be handed back while it is still being restored.
@@ -2070,6 +2124,7 @@ fn host_applications(
     network_settled: &AtomicBool,
     launch_painter: Option<Painter>,
     launch_started: Instant,
+    sync_windows: &mut SyncWindows,
 ) -> Result<String, String> {
     // Keep the pre-takeover capture alive across every ordinary return. The
     // independent watchdog uses its saved record if this process cannot unwind.
@@ -2234,7 +2289,6 @@ fn host_applications(
         let mut power = kobod::power::Power::default();
         let mut power_button = kobod::power::Button::default();
         let mut consume_wake_touch = false;
-        let mut sync_windows = SyncWindows::default();
 
         loop {
             let now = Instant::now();
