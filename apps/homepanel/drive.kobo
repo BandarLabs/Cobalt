@@ -1,7 +1,7 @@
 # The setup screen names the token command and the HTTPS requirement before
 # anything has failed, and the address field takes typed input.
 wait-for Home Panel
-expect kobo connect homepanel
+wait-for kobo connect homepanel
 expect must be on HTTPS
 clean
 shot homepanel-setup
