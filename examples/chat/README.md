@@ -10,7 +10,7 @@ Kobo.
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/start.png" alt="A new conversation"><br>A new conversation</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/type.png" alt="The keyboard"><br>The keyboard</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/type.png" alt="Typing a question"><br>Typing a question</td>
 </tr>
 </table>
 

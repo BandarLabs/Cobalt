@@ -12,7 +12,7 @@ A read-only, offline reader for your Obsidian notes.
 <td width="50%" valign="top"><img width="300" src="screenshots/tags.png" alt="Tags with note counts"><br>Tags with note counts</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/search.png" alt="A search result opened at the matching line"><br>A search result opened at the matching line</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/search.png" alt="Search results with the matching line"><br>Search results with the matching line</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/backlinks.png" alt="Notes linking to the open note"><br>Notes linking to the open note</td>
 </tr>
 </table>

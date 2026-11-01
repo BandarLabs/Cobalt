@@ -4,7 +4,7 @@ A shell on your Kobo, with a touch keyboard.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/shell.png" alt="A shell listing the reader's files"><br>A shell listing the reader's files</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/shell.png" alt="A shell listing the books on the reader"><br>A shell listing the books on the reader</td>
 </tr>
 </table>
 

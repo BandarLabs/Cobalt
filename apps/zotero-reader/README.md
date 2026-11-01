@@ -4,7 +4,7 @@ Browse your Zotero collections and read papers on your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading a paper with its Zotero details"><br>Reading a paper with its Zotero details</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading the indexed text of a book from a Zotero library"><br>Reading the indexed text of a book from a Zotero library</td>
 </tr>
 </table>
 

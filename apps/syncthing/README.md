@@ -6,11 +6,11 @@ you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/syncthing-folders.png" alt="The four sync folders"><br>The four sync folders</td>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/syncthing/sync-first-complete.png" alt="The first sync, with what it imported"><br>The first sync, with what it imported</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/first-sync.png" alt="The first sync, with what it imported"><br>The first sync, with what it imported</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/syncthing/sync-running.png" alt="A sync in progress"><br>A sync in progress</td>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/syncthing/sync-conflict.png" alt="Files that did not sync, tried again next time"><br>Files that did not sync, tried again next time</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/running.png" alt="A sync in progress"><br>A sync in progress</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/conflict.png" alt="Files that did not sync, tried again next time"><br>Files that did not sync, tried again next time</td>
 </tr>
 </table>
 

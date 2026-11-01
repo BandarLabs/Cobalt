@@ -5,14 +5,14 @@ Follow websites and read their articles offline.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/articles.png" alt="Unread articles from a feed"><br>Unread articles from a feed</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading an article"><br>Reading an article</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="An article with its photo and caption"><br>An article with its photo and caption</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/browse-feeds.png" alt="Browsing suggested feeds"><br>Browsing suggested feeds</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/search-articles.png" alt="Searching saved articles"><br>Searching saved articles</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/import-opml.png" alt="Importing subscriptions from OPML"><br>Importing subscriptions from OPML</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/import-opml.png" alt="Choosing feeds to import from an OPML file"><br>Choosing feeds to import from an OPML file</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/save-articles.png" alt="Retrying a save that failed"><br>Retrying a save that failed</td>
 </tr>
 </table>

@@ -5,10 +5,10 @@ Row counters and your Ravelry library, with patterns you own readable offline.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/project.png" alt="A section's row counter"><br>A section's row counter</td>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/needles-companion-side-by-side/02-cli-driven-reader.png" alt="Reading a pattern sent from the computer"><br>Reading a pattern sent from the computer</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/pattern.png" alt="Reading a pattern sent from the computer"><br>Reading a pattern sent from the computer</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/needles-companion-section/02-cli-selected-section.png" alt="A pattern opened at its section"><br>A pattern opened at its section</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/section.png" alt="A pattern opened at its section"><br>A pattern opened at its section</td>
 </tr>
 </table>
 

@@ -5,7 +5,7 @@ turns.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/stand.png" alt="A full page at reading size"><br>A full page at reading size</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/stand.png" alt="The top half of a page at reading size"><br>The top half of a page at reading size</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/half-turn.png" alt="A half-page turn keeps the current line in view"><br>A half-page turn keeps the current line in view</td>
 </tr>
 <tr>
