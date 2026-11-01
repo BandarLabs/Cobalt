@@ -588,7 +588,7 @@ for (const app of systemApps) {
     <figure class="app-shot">
       <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
     </figure>
-  </div>
+  </div>${gallery(app, name)}
   <section class="panel setup">
     <p class="eyebrow">Included with Cobalt</p>
     <h2>No separate install</h2>
