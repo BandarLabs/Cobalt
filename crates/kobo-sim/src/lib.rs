@@ -1583,7 +1583,10 @@ impl AppState {
             )),
             self.hardware.charging,
             signal,
-            true,
+            // A reader draws the headphones only while something is
+            // connected over Bluetooth, and nothing ever connects to the
+            // simulator, so every capture showing them was wrong.
+            false,
         );
         self.chrome = kobo_ui::Chrome::for_screen(
             &self.base_screen(),
