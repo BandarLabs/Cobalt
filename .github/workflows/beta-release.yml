@@ -326,7 +326,7 @@ jobs:
             helper-target: x86_64-apple-darwin
             cc: ""
           - platform: macos-arm64
-            runner: macos-14
+            runner: macos-15
             target: aarch64-apple-darwin
             helper-target: aarch64-apple-darwin
             cc: ""
