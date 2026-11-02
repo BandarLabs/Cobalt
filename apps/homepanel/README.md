@@ -8,7 +8,7 @@ Home Assistant controls on a Kobo, for a desk or a wall.
 <td width="50%" valign="top"><img width="300" src="screenshots/climate.png" alt="Climate controls"><br>Climate controls</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/edit.png" alt="Editing tiles"><br>Editing tiles</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/edit.png" alt="The grid after removing a tile"><br>The grid after removing a tile</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/wall.png" alt="The one-column wall layout"><br>The one-column wall layout</td>
 </tr>
 <tr>

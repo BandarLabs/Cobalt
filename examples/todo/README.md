@@ -4,7 +4,7 @@ A simple to-do list that stays on your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/list.png" alt="The list, with an item still to do"><br>The list, with an item still to do</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/list.png" alt="The list, with four items to do and one done"><br>The list, with four items to do and one done</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/compose.png" alt="Adding items one after another"><br>Adding items one after another</td>
 </tr>
 </table>

@@ -8,8 +8,8 @@ Four classic board games against the computer, or for two players passing one Ko
 <td width="50%" valign="top"><img width="300" src="screenshots/reversi.png" alt="Reversi against the computer, its last move marked"><br>Reversi against the computer, its last move marked</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/draughts.png" alt="Draughts, with the computer's reply marked"><br>Draughts, with the computer's reply marked</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/morris.png" alt="Nine Men's Morris"><br>Nine Men's Morris</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/draughts.png" alt="Draughts, with the computer's capture marked along the squares it jumped"><br>Draughts, with the computer's capture marked along the squares it jumped</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/morris.png" alt="Nine Men's Morris while placing pieces, with the computer's last piece marked"><br>Nine Men's Morris while placing pieces, with the computer's last piece marked</td>
 </tr>
 </table>
 

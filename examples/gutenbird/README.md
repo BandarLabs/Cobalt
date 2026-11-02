@@ -4,8 +4,8 @@ Browse free book libraries and read their books on your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/shelf.png" alt="A shelf of covers from a library"><br>A shelf of covers from a library</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/book.png" alt="A book, ready to read"><br>A book, ready to read</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/shelf.png" alt="Popular Project Gutenberg books with their covers"><br>Popular Project Gutenberg books with their covers</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/book.png" alt="A book with its cover, edition and description"><br>A book with its cover, edition and description</td>
 </tr>
 </table>
 

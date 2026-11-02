@@ -4,11 +4,11 @@ Run commands, open apps and open links on your computer from your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/deck.png" alt="A Build page with Test, Format and Deploy"><br>A Build page with Test, Format and Deploy</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/deck.png" alt="A Build page with Test, Format, Lint, Docs and Deploy"><br>A Build page with Test, Format, Lint, Docs and Deploy</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/run-finished.png" alt="A command's result after it runs"><br>A command's result after it runs</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/deck-fifteen-pads/preview.png" alt="A full page of fifteen pads"><br>A full page of fifteen pads</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/fifteen-pads.png" alt="A full page of fifteen pads"><br>A full page of fifteen pads</td>
 </tr>
 </table>
 

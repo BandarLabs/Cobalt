@@ -6,10 +6,10 @@ read them offline.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/shelf.png" alt="The shelf, with an unread update"><br>The shelf, with an unread update</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/work.png" alt="A work, with its last update check"><br>A work, with its last update check</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/work.png" alt="A work with new chapters found"><br>A work with new chapters found</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/updates.png" alt="Works with unread updates"><br>Works with unread updates</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/updates.png" alt="Each work with its update status"><br>Each work with its update status</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/fandom-filter.png" alt="The shelf filtered to one fandom"><br>The shelf filtered to one fandom</td>
 </tr>
 <tr>

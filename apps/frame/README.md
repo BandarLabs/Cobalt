@@ -111,4 +111,6 @@ The simulator check builds the app, opens it in a fresh simulator and plays
 
 Images are prepared and decoded with the `image` crate (MIT or Apache-2.0).
 The sample photograph is [Blue Marble](https://svs.gsfc.nasa.gov/30613) by the
-NASA Johnson Space Center Earth Science and Remote Sensing Unit.
+NASA Johnson Space Center Earth Science and Remote Sensing Unit. The screenshots
+show Ansel Adams's The Tetons and the Snake River (1942), a public-domain
+photograph from the U.S. National Archives.

@@ -10,7 +10,7 @@ built from the SRD.
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/magic-items.png" alt="Magic items by category and rarity"><br>Magic items by category and rarity</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/party-member.png" alt="A party member's health and death saves"><br>A party member's health and death saves</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/party-member.png" alt="A party member at 0 hit points, with death saves and hit point steps"><br>A party member at 0 hit points, with death saves and hit point steps</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/spell-filters.png" alt="Spells filtered by class, level and school"><br>Spells filtered by class, level and school</td>

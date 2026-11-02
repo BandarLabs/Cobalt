@@ -5,8 +5,8 @@ your own photos.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/play.png" alt="Marking a run on the board"><br>Marking a run on the board</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/large-board.png" alt="A 25×25 board, zoomed"><br>A 25×25 board, zoomed</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/play.png" alt="Runs filled in on the board, with the selected square's clues outlined"><br>Runs filled in on the board, with the selected square's clues outlined</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/large-board.png" alt="A 25×25 board, played through a movable window"><br>A 25×25 board, played through a movable window</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/picture-completed.png" alt="A finished picture"><br>A finished picture</td>

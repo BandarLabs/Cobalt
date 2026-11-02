@@ -8,11 +8,11 @@ Sixty-one offline crosswords, each with its own saved progress.
 <td width="50%" valign="top"><img width="300" src="screenshots/clue-entry.png" alt="Entering an answer below its clue"><br>Entering an answer below its clue</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/crossword-midi.png" alt="A 7 by 7 crossword"><br>A 7 by 7 crossword</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/crossword-midi.png" alt="The puzzle list, where 7 by 7 Midi puzzles sit among the minis"><br>The puzzle list, where 7 by 7 Midi puzzles sit among the minis</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/crossword-menu.png" alt="New game, checking and revealing under More"><br>New game, checking and revealing under More</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/completed.png" alt="A completed puzzle"><br>A completed puzzle</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/completed.png" alt="A completed puzzle with its check and reveal counts"><br>A completed puzzle with its check and reveal counts</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/save-recovery.png" alt="Retrying a save that failed"><br>Retrying a save that failed</td>
 </tr>
 </table>

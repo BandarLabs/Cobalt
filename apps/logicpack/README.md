@@ -6,11 +6,11 @@ and Minesweeper.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/collection.png" alt="The four games, with how many of each are solved"><br>The four games, with how many of each are solved</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/slitherlink.png" alt="Slitherlink"><br>Slitherlink</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/slitherlink.png" alt="Slitherlink, with part of the loop drawn"><br>Slitherlink, with part of the loop drawn</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/hashi.png" alt="Hashi, with single and double bridges"><br>Hashi, with single and double bridges</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/kakuro.png" alt="Kakuro"><br>Kakuro</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/kakuro.png" alt="Kakuro, with the first digits entered"><br>Kakuro, with the first digits entered</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/entry.png" alt="Entering a Kakuro digit, with both sums shown"><br>Entering a Kakuro digit, with both sums shown</td>

@@ -5,7 +5,7 @@ time.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/sending.png" alt="The letter S filling the screen while it is sent"><br>The letter S filling the screen while it is sent</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/sending.png" alt="The letter S filling the screen while it is sent, with its code in the top bar"><br>The letter S filling the screen while it is sent, with its code in the top bar</td>
 </tr>
 </table>
 
