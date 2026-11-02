@@ -520,6 +520,11 @@ pub mod action {
     /// One internal link target, distinct from a TOC/mark jump because it
     /// records an origin that Back can return to.
     pub const LINK: &str = "reader-link-";
+    /// Turns a list drawn over the book (the contents, the notes, the links
+    /// on a page) back a page.
+    pub const LIST_BACK: &str = "reader-list-back";
+    /// Turns a list drawn over the book on a page.
+    pub const LIST_NEXT: &str = "reader-list-next";
 }
 
 /// One bounded in-book search match.
@@ -555,6 +560,8 @@ pub struct Reader {
     pages: Vec<Vec<Piece>>,
     page: usize,
     chrome: Chrome,
+    /// Which page of the list in front of the book is showing, when one is.
+    list_page: usize,
     problem: Option<String>,
     panel: DisplayMetrics,
     /// Whether the last page is the end of the book or merely where it stopped.
@@ -602,6 +609,7 @@ impl Reader {
             pages: Vec::new(),
             page: 0,
             chrome: Chrome::Hidden,
+            list_page: 0,
             problem: None,
             panel: *panel,
             cut: false,
@@ -1254,8 +1262,16 @@ impl Reader {
         // open changes how much room the book has. This used to reserve a bar,
         // and opening the controls reflowed the book under the reader's
         // finger.
-        let _ = panel;
         self.chrome = chrome;
+        // A list opens where the reader is in it. For the contents that is
+        // the chapter being read, which in a book of a hundred and thirty-five
+        // chapters is a long way past the first page of them.
+        self.list_page = self.list().map_or(0, |list| {
+            list.pages(panel)
+                .iter()
+                .position(|shown| shown.contains(&list.current))
+                .unwrap_or(0)
+        });
     }
 
     /// Says something went wrong, on the next repaint.
@@ -1356,6 +1372,8 @@ impl Reader {
                 self.set_chrome(Chrome::Marking, panel);
                 Outcome::Repaint
             }
+            action::LIST_BACK => self.turn_list(false, panel),
+            action::LIST_NEXT => self.turn_list(true, panel),
             action::LARGER => {
                 let changed = self.larger(panel);
                 self.resized(changed, "That is the largest size.")
@@ -1401,6 +1419,19 @@ impl Reader {
         }
     }
 
+    /// Turns the list in front of the book a page, stopping at either end.
+    fn turn_list(&mut self, forward: bool, panel: &DisplayMetrics) -> Outcome {
+        self.list_page = if forward {
+            let last = self
+                .list()
+                .map_or(0, |list| list.pages(panel).len().saturating_sub(1));
+            (self.list_page + 1).min(last)
+        } else {
+            self.list_page.saturating_sub(1)
+        };
+        Outcome::Repaint
+    }
+
     /// Gives the page the panel, or gives the bar back.
     ///
     /// The panel goes away with it: the setting is about what the page looks
@@ -1443,6 +1474,8 @@ impl Reader {
             action::MARKING.into(),
             action::CONTENTS.into(),
             action::LINKS.into(),
+            action::LIST_BACK.into(),
+            action::LIST_NEXT.into(),
         ];
         // Every size there is, rather than a hard-coded three. The stepper's
         // ends name the size either side of the one in force, so a range that
@@ -1458,6 +1491,12 @@ impl Reader {
         }
         for block in self.memory.highlights.iter().chain(&self.memory.bookmarks) {
             names.push(format!("{}{block}", action::GO));
+        }
+        // A note leads back to where its passage starts, and that paragraph
+        // need not be marked or bookmarked as well, so it is named here in its
+        // own right. Left out, a note in the list was a row that did nothing.
+        for annotation in self.memory.annotations.values() {
+            names.push(format!("{}{}", action::GO, annotation.range.start.block));
         }
         for entry in &self.document.contents {
             names.push(format!("{}{}", action::GO, entry.block));
@@ -1486,12 +1525,20 @@ impl Reader {
     /// Draws whatever the reader should be looking at.
     #[must_use]
     pub fn screen(&self, title: &str) -> Screen {
+        match self.list() {
+            Some(list) => list.screen(title, self.list_page, &self.panel),
+            None => self.book_screen(title),
+        }
+    }
+
+    /// The list drawn in place of the page, when one is.
+    fn list(&self) -> Option<List> {
         match self.chrome {
-            Chrome::Highlights => self.marks_screen(title),
-            Chrome::Contents => self.contents_screen(title),
-            Chrome::Links => self.links_screen(title),
-            Chrome::Marking => self.marking_screen(title),
-            Chrome::Controls | Chrome::Light | Chrome::Hidden => self.book_screen(title),
+            Chrome::Highlights => Some(self.marks_list()),
+            Chrome::Contents => Some(self.contents_list()),
+            Chrome::Links => Some(self.links_list()),
+            Chrome::Marking => Some(self.marking_list()),
+            Chrome::Controls | Chrome::Light | Chrome::Hidden => None,
         }
     }
 
@@ -1779,18 +1826,21 @@ impl Reader {
     /// the marker; what this gives is every destination on the page at a size
     /// nobody has to aim at, which is the same answer the marking screen
     /// already gives for choosing a paragraph.
-    fn links_screen(&self, title: &str) -> Screen {
-        let mut screen = ScreenBuilder::new("reader-links").top_bar(title);
-        let here = self.links_here();
-        if here.is_empty() {
-            return screen
-                .secondary("Nothing on this page points anywhere else in the book.")
-                .build();
+    fn links_list(&self) -> List {
+        let entries: Vec<Entry> = self
+            .links_here()
+            .into_iter()
+            .map(|(text, block)| Entry::new(None, format!("{}{block}", action::LINK), &text))
+            .collect();
+        List {
+            name: "reader-links",
+            intro: entries
+                .is_empty()
+                .then_some("Nothing on this page points anywhere else in the book."),
+            entries,
+            bar: Vec::new(),
+            current: 0,
         }
-        for (text, block) in here {
-            screen = screen.button(format!("{}{block}", action::LINK), text);
-        }
-        screen.build()
     }
 
     /// Where inside one paragraph the links are, and what each one answers.
@@ -1864,59 +1914,72 @@ impl Reader {
     /// Nesting is drawn with an indent rather than a heading per level: a
     /// reference work nests three deep, and a heading for every part would
     /// leave a screen that is mostly headings.
-    fn contents_screen(&self, title: &str) -> Screen {
-        let mut screen = ScreenBuilder::new("reader-contents").top_bar(title);
-        for entry in &self.document.contents {
-            let indent = "    ".repeat(entry.depth as usize);
-            screen = screen.button(
-                format!("{}{}", action::GO, entry.block),
-                format!("{indent}{}", entry.title),
-            );
+    fn contents_list(&self) -> List {
+        let top = usize::try_from(self.top()).unwrap_or(usize::MAX);
+        List {
+            name: "reader-contents",
+            intro: None,
+            entries: self
+                .document
+                .contents
+                .iter()
+                .map(|entry| {
+                    let indent = "    ".repeat(entry.depth as usize);
+                    Entry::new(
+                        None,
+                        format!("{}{}", action::GO, entry.block),
+                        &format!("{indent}{}", entry.title),
+                    )
+                })
+                .collect(),
+            bar: Vec::new(),
+            // The chapter being read is the last one to start at or before
+            // the top of the page.
+            current: self
+                .document
+                .contents
+                .iter()
+                .rposition(|entry| entry.block <= top)
+                .unwrap_or(0),
         }
-        screen.build()
     }
 
-    fn marks_screen(&self, title: &str) -> Screen {
-        let mut screen = ScreenBuilder::new("reader-marks").top_bar(title);
+    fn marks_list(&self) -> List {
         let marks = self.highlights();
         let places = self.bookmarks();
         let annotations = self.annotations();
-        if marks.is_empty() && places.is_empty() && annotations.is_empty() {
-            screen = screen.secondary(
-                "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.",
+        let mut entries = Vec::new();
+        for annotation in annotations {
+            let selected = self.text_in(annotation.range).map_or_else(
+                || "Unavailable passage".to_owned(),
+                |text| first_words(&text),
             );
+            let label = annotation.note.as_ref().map_or(selected.clone(), |note| {
+                format!("{selected} — {}", first_words(note))
+            });
+            entries.push(Entry::new(
+                Some("Highlights & marginalia"),
+                format!("{}{}", action::GO, annotation.range.start.block),
+                &label,
+            ));
         }
-        if !annotations.is_empty() {
-            screen = screen.heading("Highlights & marginalia");
-            for annotation in annotations {
-                let selected = self.text_in(annotation.range).map_or_else(
-                    || "Unavailable passage".to_owned(),
-                    |text| first_words(&text),
-                );
-                let label = annotation.note.as_ref().map_or(selected.clone(), |note| {
-                    format!("{selected} — {}", first_words(note))
-                });
-                screen = screen.button(
-                    format!("{}{}", action::GO, annotation.range.start.block),
-                    label,
-                );
-            }
+        for (block, text) in marks {
+            entries.push(Entry::new(
+                Some("Marked passages"),
+                format!("{}{block}", action::GO),
+                &text,
+            ));
         }
-        if !marks.is_empty() {
-            screen = screen.heading("Marked passages");
-            for (block, text) in marks {
-                screen = screen.button(format!("{}{block}", action::GO), text);
-            }
-        }
-        if !places.is_empty() {
-            // Kept apart because they answer different questions: a passage is
-            // something a reader wanted to keep, a bookmark is somewhere they
-            // meant to come back to. Run together, the list of one buries the
-            // other.
-            screen = screen.heading("Bookmarks");
-            for (block, text) in places {
-                screen = screen.button(format!("{}{block}", action::GO), text);
-            }
+        // Kept apart because they answer different questions: a passage is
+        // something a reader wanted to keep, a bookmark is somewhere they
+        // meant to come back to. Run together, the list of one buries the
+        // other.
+        for (block, text) in places {
+            entries.push(Entry::new(
+                Some("Bookmarks"),
+                format!("{}{block}", action::GO),
+                &text,
+            ));
         }
         let mut bar = vec![
             (action::CONTROLS, "Back to the book"),
@@ -1936,35 +1999,205 @@ impl Reader {
             // the person about to make another.
             bar.push((action::MARKING, "Mark a paragraph"));
         }
-        screen.action_bar(bar).build()
+        List {
+            name: "reader-marks",
+            intro: entries.is_empty().then_some(
+                "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.",
+            ),
+            entries,
+            bar,
+            current: 0,
+        }
     }
 
     /// The paragraphs on this page, each a tap away from being marked.
-    fn marking_screen(&self, title: &str) -> Screen {
-        let mut screen = ScreenBuilder::new("reader-marking")
-            .top_bar(title)
-            .secondary("Tap a paragraph to mark it, or to take the mark off.");
-        for (block, text) in self.markable() {
-            let marked = self.memory.highlights.contains(&block);
-            // The state is in the row, because the list is the only place it
-            // can be seen: the page underneath is not on screen while this is.
-            // Said in words rather than with a tick: the reading face has no
-            // check mark in it, and a screen carrying a character the face
-            // cannot draw is refused outright -- correctly, because the
-            // alternative is an empty box where the answer should be.
-            let label = if marked {
-                format!("Marked: {text}")
-            } else {
-                text
-            };
-            screen = screen.button(format!("{}{block}", action::MARK), label);
-        }
-        screen
-            .action_bar([
+    fn marking_list(&self) -> List {
+        let entries = self
+            .markable()
+            .into_iter()
+            .map(|(block, text)| {
+                let marked = self.memory.highlights.contains(&block);
+                // The state is in the row, because the list is the only place
+                // it can be seen: the page underneath is not on screen while
+                // this is. Said in words rather than with a tick: the reading
+                // face has no check mark in it, and a screen carrying a
+                // character the face cannot draw is refused outright --
+                // correctly, because the alternative is an empty box where the
+                // answer should be.
+                let label = if marked {
+                    format!("Marked: {text}")
+                } else {
+                    text
+                };
+                Entry::new(None, format!("{}{block}", action::MARK), &label)
+            })
+            .collect();
+        List {
+            name: "reader-marking",
+            intro: Some("Tap a paragraph to mark it, or to take the mark off."),
+            entries,
+            bar: vec![
                 (action::CONTROLS, "Back to the book"),
                 (action::HIGHLIGHTS, "Notes"),
-            ])
-            .build()
+            ],
+            current: 0,
+        }
+    }
+}
+
+/// A list the reader draws in place of the page: the contents, the notes, the
+/// links on a page, the paragraphs that can be marked.
+///
+/// Paged, because every one of them can outgrow the panel. Pride and
+/// Prejudice lists sixty-three chapters, and drawn as one screen the panel
+/// showed nine and dropped the other fifty-four without a word: the chapters
+/// past the fold were in the book and could not be reached from here.
+struct List {
+    name: &'static str,
+    /// Said above the entries, on every page of them.
+    intro: Option<&'static str>,
+    entries: Vec<Entry>,
+    bar: Vec<(&'static str, &'static str)>,
+    /// The entry the list opens showing.
+    current: usize,
+}
+
+/// One line of a [`List`].
+struct Entry {
+    /// The heading it sits under, said again at the top of a page the
+    /// section spills onto: a page of bookmarks under no heading reads as
+    /// more of whatever the last page was.
+    section: Option<&'static str>,
+    action: String,
+    label: String,
+}
+
+impl Entry {
+    /// The label is the book's words, so a letter no face can draw is put as
+    /// the box the page draws for it rather than refusing the list.
+    fn new(section: Option<&'static str>, action: String, label: &str) -> Self {
+        Self {
+            section,
+            action,
+            label: kobo_ui::drawable_in(label, Face::Text).into_owned(),
+        }
+    }
+}
+
+impl List {
+    /// Page `page` of this list, or its last page when there are fewer.
+    fn screen(&self, title: &str, page: usize, panel: &DisplayMetrics) -> Screen {
+        let pages = self.pages(panel);
+        let page = page.min(pages.len() - 1);
+        let position = (pages.len() > 1).then_some((page, pages.len()));
+        self.build(title, pages[page].clone(), position)
+    }
+
+    fn build(
+        &self,
+        title: &str,
+        shown: std::ops::Range<usize>,
+        position: Option<(usize, usize)>,
+    ) -> Screen {
+        // The book's title is the book's words too.
+        let mut screen =
+            ScreenBuilder::new(self.name).top_bar(kobo_ui::drawable_in(title, Face::Text));
+        if let Some(intro) = self.intro {
+            screen = screen.secondary(intro);
+        }
+        let mut section = None;
+        for entry in &self.entries[shown] {
+            if let Some(heading) = entry.section.filter(|_| entry.section != section) {
+                screen = screen.heading(heading);
+            }
+            section = entry.section;
+            screen = screen.button(&entry.action, entry.label.as_str());
+        }
+        if let Some((page, of)) = position {
+            screen = screen
+                .page_turns(action::LIST_BACK, action::LIST_NEXT)
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(of).unwrap_or(u16::MAX),
+                );
+        }
+        if !self.bar.is_empty() {
+            screen = screen.action_bar(self.bar.iter().copied());
+        }
+        screen.build()
+    }
+
+    /// The entries, cut into pages that each show whole. Never empty.
+    ///
+    /// Measured by laying the screen out rather than by adding up heights, so
+    /// a heading repeated at the top of a page, a label that wraps and the
+    /// strip that says which page this is are all counted the way they are
+    /// drawn.
+    fn pages(&self, panel: &DisplayMetrics) -> Vec<std::ops::Range<usize>> {
+        let count = self.entries.len();
+        if count == 0 || self.fits(0..count, None, panel) {
+            return std::iter::once(0..count).collect();
+        }
+        // Measured with the strip from here on. Two pages is enough to give
+        // it its widest number for any list a reader will page through.
+        let strip = Some((0, 2));
+        let mut pages = Vec::new();
+        let mut start = 0;
+        while start < count {
+            // At least one entry a page, whatever it measures, because the
+            // alternative is an entry that can never be reached. Then the end
+            // is found by doubling and halving: a page holds a dozen entries
+            // and a contents can hold hundreds, so trying every end in turn
+            // would lay the same page out a dozen times.
+            let mut fit = start + 1;
+            let mut over = None;
+            let mut step = 1;
+            while fit < count {
+                let end = (fit + step).min(count);
+                if self.fits(start..end, strip, panel) {
+                    fit = end;
+                    step *= 2;
+                } else {
+                    over = Some(end);
+                    break;
+                }
+            }
+            if let Some(mut over) = over {
+                while over - fit > 1 {
+                    let middle = fit + (over - fit) / 2;
+                    if self.fits(start..middle, strip, panel) {
+                        fit = middle;
+                    } else {
+                        over = middle;
+                    }
+                }
+            }
+            pages.push(start..fit);
+            start = fit;
+        }
+        pages
+    }
+
+    fn fits(
+        &self,
+        shown: std::ops::Range<usize>,
+        position: Option<(usize, usize)>,
+        panel: &DisplayMetrics,
+    ) -> bool {
+        let screen = self.build("", shown, position);
+        kobo_ui::with_text_scale(panel.text_scale, || {
+            screen.diagnostics(panel, &kobo_ui::Chrome::measuring(true))
+        })
+        .issues
+        .iter()
+        .all(|issue| {
+            !matches!(
+                issue.kind,
+                kobo_ui::LayoutIssueKind::ContentOverflow { .. }
+                    | kobo_ui::LayoutIssueKind::InteractiveOffscreen
+                    | kobo_ui::LayoutIssueKind::Clipped
+            )
+        })
     }
 }
 
@@ -6004,5 +6237,182 @@ mod tests {
             );
         }
         no_cell_falls_off_a_page(&reader);
+    }
+
+    /// A book of a hundred and forty chapters, each named in its contents.
+    fn long_contents() -> Document {
+        let mut blocks = Vec::new();
+        let mut contents = Vec::new();
+        for chapter in 0..140 {
+            contents.push(kobo_doc::Contents {
+                title: format!("Chapter {chapter:03}"),
+                block: blocks.len(),
+                depth: 0,
+            });
+            blocks.push(Block::Heading {
+                level: 1,
+                text: format!("Chapter {chapter:03}"),
+            });
+            blocks.push(Block::Paragraph(format!(
+                "The whole of chapter {chapter}, which is long enough to be a page of its own."
+            )));
+        }
+        Document {
+            title: Some("Moby-Dick".into()),
+            blocks,
+            contents,
+            ..Document::default()
+        }
+    }
+
+    /// The labels of the buttons a screen draws, in order.
+    fn buttons(screen: &Screen) -> Vec<String> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Button { label, .. } => Some(label.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Whether the layout engine dropped or cut anything on this screen.
+    fn overflows(screen: &Screen) -> bool {
+        screen
+            .diagnostics(&panel(), &kobo_ui::Chrome::measuring(true))
+            .issues
+            .iter()
+            .any(|issue| {
+                matches!(
+                    issue.kind,
+                    kobo_ui::LayoutIssueKind::ContentOverflow { .. }
+                        | kobo_ui::LayoutIssueKind::InteractiveOffscreen
+                        | kobo_ui::LayoutIssueKind::Clipped
+                )
+            })
+    }
+
+    /// Every chapter of a long book can be reached from its contents.
+    ///
+    /// Moby-Dick's contents run to a hundred and forty-five entries. Drawn as
+    /// one screen, the panel showed the first few and dropped the rest without
+    /// a word, so most of the book could only be reached by turning to it a
+    /// page at a time.
+    #[test]
+    fn every_chapter_of_a_long_book_can_be_reached_from_its_contents() {
+        let mut reader = Reader::open(long_contents(), Memory::default(), &panel());
+        reader.act(action::CONTENTS, &panel());
+
+        let mut seen = Vec::new();
+        let mut pages = 0;
+        loop {
+            let screen = reader.screen("Moby-Dick");
+            assert!(
+                !overflows(&screen),
+                "page {pages} of the contents overflows"
+            );
+            let shown = buttons(&screen);
+            assert!(!shown.is_empty(), "page {pages} of the contents is empty");
+            if seen.last() == shown.last() {
+                break;
+            }
+            seen.extend(shown);
+            pages += 1;
+            assert_eq!(reader.act(action::LIST_NEXT, &panel()), Outcome::Repaint);
+        }
+        let expected: Vec<String> = (0..140)
+            .map(|chapter| format!("Chapter {chapter:03}"))
+            .collect();
+        assert_eq!(seen, expected);
+        assert!(
+            pages > 1,
+            "a hundred and forty chapters fitted on one screen"
+        );
+    }
+
+    /// The contents open on the chapter being read, not on the first one.
+    #[test]
+    fn the_contents_open_where_the_reader_is() {
+        let mut reader = Reader::open(long_contents(), Memory::default(), &panel());
+        let chapter_100 = reader.document().contents[100].block;
+        reader.act(&format!("{}{chapter_100}", action::GO), &panel());
+        reader.act(action::CONTENTS, &panel());
+
+        assert!(
+            buttons(&reader.screen("Moby-Dick")).contains(&"Chapter 100".to_owned()),
+            "the contents opened somewhere other than chapter 100"
+        );
+        // And the way back to the start is still there.
+        for _ in 0..20 {
+            reader.act(action::LIST_BACK, &panel());
+        }
+        assert_eq!(
+            buttons(&reader.screen("Moby-Dick"))
+                .first()
+                .map(String::as_str),
+            Some("Chapter 000")
+        );
+    }
+
+    /// A heading is said again at the top of a page its section spills onto.
+    #[test]
+    fn a_long_list_of_bookmarks_keeps_its_heading_on_every_page() {
+        let memory = Memory {
+            bookmarks: (0..80).map(|chapter| chapter * 2 + 1).collect(),
+            ..Memory::default()
+        };
+        let mut reader = Reader::open(long_contents(), memory, &panel());
+        reader.act(action::HIGHLIGHTS, &panel());
+
+        let first = reader.screen("Moby-Dick");
+        assert!(!overflows(&first));
+        reader.act(action::LIST_NEXT, &panel());
+        let second = reader.screen("Moby-Dick");
+        assert!(!overflows(&second));
+        assert_ne!(buttons(&first), buttons(&second), "the notes did not turn");
+        assert!(
+            second.nodes.iter().any(|node| matches!(
+                node,
+                kobo_ui::Node::Heading { text, .. } if text == "Bookmarks"
+            )),
+            "the second page of bookmarks is under no heading"
+        );
+    }
+
+    /// A note leads back to its passage even when nothing else marks it.
+    ///
+    /// An application handed hashed identifiers goes through `act_on`, which
+    /// only answers names it was told about. Notes were never among them, so
+    /// a note on an unmarked paragraph was a row that did nothing.
+    #[test]
+    fn a_note_on_an_unmarked_paragraph_can_be_followed() {
+        let mut reader = Reader::open(long_contents(), Memory::default(), &panel());
+        let passage = TextPosition {
+            block: 101,
+            offset: 0,
+        };
+        reader
+            .create_annotation(
+                1,
+                TextRange {
+                    start: passage,
+                    end: TextPosition {
+                        block: 101,
+                        offset: 9,
+                    },
+                },
+                Some("Ahab"),
+                &panel(),
+            )
+            .expect("a note");
+        reader.act(action::HIGHLIGHTS, &panel());
+
+        let go = kobo_sdk::action_id(&format!("{}101", action::GO));
+        assert_eq!(reader.act_on(go, &panel()), Outcome::Save);
+        assert!(
+            reader.page().iter().any(|piece| piece.block == 101),
+            "the note did not lead to its passage"
+        );
     }
 }

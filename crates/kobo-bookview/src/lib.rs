@@ -1946,4 +1946,76 @@ mod tests {
         assert!(!view.provide_picture("x1.png", plate_bytes()));
         assert!(!view.settle_pictures(&mut context));
     }
+
+    /// Moby-Dick's Etymology page glosses "whale" in a dozen languages, and
+    /// the first of them is Hebrew.
+    fn etymology() -> Document {
+        Document {
+            title: Some("Moby-Dick".into()),
+            blocks: vec![
+                Block::Heading {
+                    level: 1,
+                    text: "ETYMOLOGY.".into(),
+                },
+                Block::Paragraph("\u{5d7}\u{5d5}, Hebrew.".into()),
+                Block::Paragraph("WHALE, English.".into()),
+            ],
+            contents: vec![
+                kobo_doc::Contents {
+                    title: "ETYMOLOGY.".into(),
+                    block: 0,
+                    depth: 0,
+                },
+                kobo_doc::Contents {
+                    title: "\u{5d7}\u{5d5}".into(),
+                    block: 1,
+                    depth: 1,
+                },
+            ],
+            ..Document::default()
+        }
+    }
+
+    /// A letter no installed face carries does not close the book.
+    ///
+    /// No face on the reader has a Hebrew letter, and turning to Moby-Dick's
+    /// Etymology page stopped the application: the check that keeps an
+    /// application's own labels drawable was applied to the author's words
+    /// as well. The page, the contents that name it and the notes that quote
+    /// it are all shown, with the letter as a box.
+    #[test]
+    fn a_letter_no_installed_face_carries_does_not_close_the_book() {
+        let _ = kobo_text::install(kobo_sdk::DisplayMetrics::default());
+        for face in [kobo_ui::Face::Text, kobo_ui::Face::Reading] {
+            assert!(
+                kobo_ui::undrawable_in("\u{5d7}", face).is_some(),
+                "the {face:?} face can draw Hebrew now, so this no longer tests anything"
+            );
+        }
+        let mut context = Context::default();
+        let mut view = BookView::new();
+        view.open(&mut context, etymology(), Memory::default());
+        context.set_screen(view.screen("Moby-Dick").expect("a book"));
+
+        let mark = format!("{}1", kobo_read::action::MARK);
+        for name in [
+            kobo_read::action::CONTENTS,
+            kobo_read::action::MARKING,
+            &mark,
+            kobo_read::action::HIGHLIGHTS,
+        ] {
+            assert!(
+                view.act(&mut context, kobo_sdk::action_id(name)).is_some(),
+                "{name} was not answered"
+            );
+            let screen = view.screen("Moby-Dick").expect("a book");
+            if name == kobo_read::action::CONTENTS {
+                assert!(
+                    format!("{screen:?}").contains('\u{25a1}'),
+                    "the contents do not show the Hebrew entry as a box"
+                );
+            }
+            context.set_screen(screen);
+        }
+    }
 }
