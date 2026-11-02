@@ -562,6 +562,10 @@ pub struct Reader {
     chrome: Chrome,
     /// Which page of the list in front of the book is showing, when one is.
     list_page: usize,
+    /// How that list was last cut into pages. Laying out a long contents is
+    /// the expensive part of showing it, and without this every turn of the
+    /// list laid out all of it twice.
+    list_paging: Option<Paging>,
     problem: Option<String>,
     panel: DisplayMetrics,
     /// Whether the last page is the end of the book or merely where it stopped.
@@ -610,6 +614,7 @@ impl Reader {
             page: 0,
             chrome: Chrome::Hidden,
             list_page: 0,
+            list_paging: None,
             problem: None,
             panel: *panel,
             cut: false,
@@ -1263,15 +1268,33 @@ impl Reader {
         // and opening the controls reflowed the book under the reader's
         // finger.
         self.chrome = chrome;
+        self.list_page = 0;
+        let Some(list) = self.list() else {
+            self.list_paging = None;
+            return;
+        };
+        let paging = self.paging_of(&list, panel).into_owned();
         // A list opens where the reader is in it. For the contents that is
         // the chapter being read, which in a book of a hundred and thirty-five
         // chapters is a long way past the first page of them.
-        self.list_page = self.list().map_or(0, |list| {
-            list.pages(panel)
-                .iter()
-                .position(|shown| shown.contains(&list.current))
-                .unwrap_or(0)
-        });
+        self.list_page = paging
+            .pages
+            .iter()
+            .position(|shown| shown.contains(&list.current))
+            .unwrap_or(0);
+        self.list_paging = Some(paging);
+    }
+
+    /// How `list` falls into pages on `panel`, measured again only when it
+    /// has changed since it was last measured.
+    fn paging_of(&self, list: &List, panel: &DisplayMetrics) -> std::borrow::Cow<'_, Paging> {
+        let key = list.key(panel);
+        match &self.list_paging {
+            Some(paging) if paging.key == key && paging.covers(list.entries.len()) => {
+                std::borrow::Cow::Borrowed(paging)
+            }
+            _ => std::borrow::Cow::Owned(list.paging(key, panel)),
+        }
     }
 
     /// Says something went wrong, on the next repaint.
@@ -1421,14 +1444,22 @@ impl Reader {
 
     /// Turns the list in front of the book a page, stopping at either end.
     fn turn_list(&mut self, forward: bool, panel: &DisplayMetrics) -> Outcome {
-        self.list_page = if forward {
-            let last = self
-                .list()
-                .map_or(0, |list| list.pages(panel).len().saturating_sub(1));
-            (self.list_page + 1).min(last)
-        } else {
-            self.list_page.saturating_sub(1)
+        let Some(list) = self.list() else {
+            return Outcome::Repaint;
         };
+        let paging = self.paging_of(&list, panel).into_owned();
+        // From the page showing in the list as it is now. One that has lost
+        // pages since it opened (a larger type size, a mark taken off) still
+        // remembers the old page, and turning back from there went through
+        // pages that no longer exist before the screen changed at all.
+        let final_page = paging.pages.len() - 1;
+        let page = self.list_page.min(final_page);
+        self.list_page = if forward {
+            (page + 1).min(final_page)
+        } else {
+            page.saturating_sub(1)
+        };
+        self.list_paging = Some(paging);
         Outcome::Repaint
     }
 
@@ -1526,7 +1557,7 @@ impl Reader {
     #[must_use]
     pub fn screen(&self, title: &str) -> Screen {
         match self.list() {
-            Some(list) => list.screen(title, self.list_page, &self.panel),
+            Some(list) => list.screen(title, self.list_page, &self.paging_of(&list, &self.panel)),
             None => self.book_screen(title),
         }
     }
@@ -2084,13 +2115,55 @@ impl Entry {
     }
 }
 
+/// How a [`List`] falls into pages on one panel.
+#[derive(Clone, Debug)]
+struct Paging {
+    /// What it was measured from: the entries, what is drawn round them and
+    /// the panel. A list with the same key measures the same, so turning a
+    /// page does not lay every entry out again.
+    key: u64,
+    /// Never empty: a list with nothing in it is one page saying so.
+    pages: Vec<std::ops::Range<usize>>,
+    /// Labels cut short to fit a page on their own, by entry.
+    shortened: BTreeMap<usize, String>,
+}
+
+impl Paging {
+    /// Whether these pages are of a list of `count` entries, which a list
+    /// whose key happened to match one of a different length would not be.
+    fn covers(&self, count: usize) -> bool {
+        self.pages.last().is_some_and(|shown| shown.end == count)
+    }
+}
+
 impl List {
-    /// Page `page` of this list, or its last page when there are fewer.
-    fn screen(&self, title: &str, page: usize, panel: &DisplayMetrics) -> Screen {
-        let pages = self.pages(panel);
-        let page = page.min(pages.len() - 1);
-        let position = (pages.len() > 1).then_some((page, pages.len()));
-        self.build(title, pages[page].clone(), position)
+    /// Page `page` of this list as `paging` cut it, or its last page when
+    /// there are fewer.
+    fn screen(&self, title: &str, page: usize, paging: &Paging) -> Screen {
+        let page = page.min(paging.pages.len() - 1);
+        let position = (paging.pages.len() > 1).then_some((page, paging.pages.len()));
+        self.build(
+            title,
+            paging.pages[page].clone(),
+            position,
+            &paging.shortened,
+        )
+    }
+
+    /// What [`Self::paging`] depends on.
+    fn key(&self, panel: &DisplayMetrics) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.name.hash(&mut hasher);
+        self.intro.hash(&mut hasher);
+        self.bar.hash(&mut hasher);
+        for entry in &self.entries {
+            entry.section.hash(&mut hasher);
+            entry.action.hash(&mut hasher);
+            entry.label.hash(&mut hasher);
+        }
+        panel.hash(&mut hasher);
+        hasher.finish()
     }
 
     fn build(
@@ -2098,6 +2171,7 @@ impl List {
         title: &str,
         shown: std::ops::Range<usize>,
         position: Option<(usize, usize)>,
+        shortened: &BTreeMap<usize, String>,
     ) -> Screen {
         // The book's title is the book's words too.
         let mut screen =
@@ -2106,12 +2180,14 @@ impl List {
             screen = screen.secondary(intro);
         }
         let mut section = None;
-        for entry in &self.entries[shown] {
+        for index in shown {
+            let entry = &self.entries[index];
             if let Some(heading) = entry.section.filter(|_| entry.section != section) {
                 screen = screen.heading(heading);
             }
             section = entry.section;
-            screen = screen.button(&entry.action, entry.label.as_str());
+            let label = shortened.get(&index).unwrap_or(&entry.label);
+            screen = screen.button(&entry.action, label.as_str());
         }
         if let Some((page, of)) = position {
             screen = screen
@@ -2132,11 +2208,17 @@ impl List {
     /// Measured by laying the screen out rather than by adding up heights, so
     /// a heading repeated at the top of a page, a label that wraps and the
     /// strip that says which page this is are all counted the way they are
-    /// drawn.
-    fn pages(&self, panel: &DisplayMetrics) -> Vec<std::ops::Range<usize>> {
+    /// drawn. `key` is [`Self::key`], passed in by a caller that has already
+    /// worked it out to see whether this was needed.
+    fn paging(&self, key: u64, panel: &DisplayMetrics) -> Paging {
         let count = self.entries.len();
-        if count == 0 || self.fits(0..count, None, panel) {
-            return std::iter::once(0..count).collect();
+        let mut shortened = BTreeMap::new();
+        if count == 0 || self.fits(0..count, None, panel, &shortened) {
+            return Paging {
+                key,
+                pages: std::iter::once(0..count).collect(),
+                shortened,
+            };
         }
         // Measured with the strip from here on. Two pages is enough to give
         // it its widest number for any list a reader will page through.
@@ -2144,17 +2226,27 @@ impl List {
         let mut pages = Vec::new();
         let mut start = 0;
         while start < count {
+            // Every other entry can wait for the next page, but one taller
+            // than a page by itself has nowhere else to go: drawn whole, it
+            // ran off the foot and its destination could not be tapped. It is
+            // cut short until it fits.
+            let after = start + 1;
+            if !self.fits(start..after, strip, panel, &shortened) {
+                if let Some(label) = self.shortened_to_fit(start, strip, panel) {
+                    shortened.insert(start, label);
+                }
+            }
             // At least one entry a page, whatever it measures, because the
             // alternative is an entry that can never be reached. Then the end
             // is found by doubling and halving: a page holds a dozen entries
             // and a contents can hold hundreds, so trying every end in turn
             // would lay the same page out a dozen times.
-            let mut fit = start + 1;
+            let mut fit = after;
             let mut over = None;
             let mut step = 1;
             while fit < count {
                 let end = (fit + step).min(count);
-                if self.fits(start..end, strip, panel) {
+                if self.fits(start..end, strip, panel, &shortened) {
                     fit = end;
                     step *= 2;
                 } else {
@@ -2165,7 +2257,7 @@ impl List {
             if let Some(mut over) = over {
                 while over - fit > 1 {
                     let middle = fit + (over - fit) / 2;
-                    if self.fits(start..middle, strip, panel) {
+                    if self.fits(start..middle, strip, panel, &shortened) {
                         fit = middle;
                     } else {
                         over = middle;
@@ -2175,7 +2267,32 @@ impl List {
             pages.push(start..fit);
             start = fit;
         }
-        pages
+        Paging {
+            key,
+            pages,
+            shortened,
+        }
+    }
+
+    /// An opening of entry `index`'s label short enough to fit a page on its
+    /// own, found by halving, or `None` when not even a word of it does.
+    fn shortened_to_fit(
+        &self,
+        index: usize,
+        position: Option<(usize, usize)>,
+        panel: &DisplayMetrics,
+    ) -> Option<String> {
+        let label = &self.entries[index].label;
+        let after = index + 1;
+        let mut most = label.chars().count();
+        while most > 1 {
+            most /= 2;
+            let trial = BTreeMap::from([(index, opening(label, most))]);
+            if self.fits(index..after, position, panel, &trial) {
+                return trial.into_values().next();
+            }
+        }
+        None
     }
 
     fn fits(
@@ -2183,8 +2300,9 @@ impl List {
         shown: std::ops::Range<usize>,
         position: Option<(usize, usize)>,
         panel: &DisplayMetrics,
+        shortened: &BTreeMap<usize, String>,
     ) -> bool {
-        let screen = self.build("", shown, position);
+        let screen = self.build("", shown, position, shortened);
         kobo_ui::with_text_scale(panel.text_scale, || {
             screen.diagnostics(panel, &kobo_ui::Chrome::measuring(true))
         })
@@ -2212,16 +2330,21 @@ pub fn target_of(name: &str) -> Option<Locator> {
 
 /// The opening of a paragraph, for a list that has to fit on one row.
 fn first_words(text: &str) -> String {
-    const MOST: usize = 60;
+    opening(text, 60)
+}
+
+/// At most `most` characters from the start of `text`, and an ellipsis when
+/// that is not all of it.
+fn opening(text: &str, most: usize) -> String {
     let trimmed = text.trim();
-    if trimmed.chars().count() <= MOST {
+    if trimmed.chars().count() <= most {
         return trimmed.to_owned();
     }
-    let mut out: String = trimmed.chars().take(MOST).collect();
+    let mut out: String = trimmed.chars().take(most).collect();
     // Cut at a word rather than mid-syllable, unless there is no space late
     // enough to cut at -- which is what a long URL looks like.
     if let Some(space) = out.rfind(' ') {
-        if space > MOST / 2 {
+        if space > most / 2 {
             out.truncate(space);
         }
     }
@@ -6331,6 +6454,84 @@ mod tests {
         );
     }
 
+    /// An entry too long for a page of its own is shortened, not lost.
+    ///
+    /// Every other entry can be pushed to the next page, but one that is
+    /// taller than the panel by itself has nowhere to go: drawn whole, it ran
+    /// off the foot and its destination could not be tapped at all.
+    #[test]
+    fn a_contents_entry_taller_than_the_panel_can_still_be_tapped() {
+        let mut document = long_contents();
+        document.contents.truncate(3);
+        document.contents[1].title = "an endless chapter title ".repeat(200);
+        let target = document.contents[1].block;
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader.act(action::CONTENTS, &panel());
+
+        let go = kobo_sdk::action_id(&format!("{}{target}", action::GO));
+        let mut reached = false;
+        for _ in 0..3 {
+            let screen = reader.screen("Moby-Dick");
+            assert!(!overflows(&screen), "a page of the contents overflows");
+            let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::measuring(true));
+            if let Some(rect) = layout.rect_of_action(go) {
+                assert!(
+                    rect.y >= layout.content.y
+                        && rect.y + rect.height <= layout.content.y + layout.content.height,
+                    "the long entry is drawn past the content area"
+                );
+                reached = true;
+            }
+            reader.act(action::LIST_NEXT, &panel());
+        }
+        assert!(reached, "the long entry was never tappable");
+    }
+
+    fn bookmarked(count: Locator) -> Memory {
+        Memory {
+            bookmarks: (0..count).map(|chapter| chapter * 2 + 1).collect(),
+            ..Memory::default()
+        }
+    }
+
+    /// A list that lost pages while it was open turns back from the page it
+    /// is showing, not from the one it used to be on.
+    #[test]
+    fn a_list_that_shrank_while_open_turns_back_at_once() {
+        let mut reader = Reader::open(long_contents(), bookmarked(80), &panel());
+        reader.act(action::HIGHLIGHTS, &panel());
+        for _ in 0..40 {
+            reader.act(action::LIST_NEXT, &panel());
+        }
+        // The kept place arrives from the store with fewer bookmarks in it,
+        // the way it does when another copy of the book was read since.
+        reader.restore(bookmarked(20), &panel());
+        let before = buttons(&reader.screen("Moby-Dick"));
+        reader.act(action::LIST_BACK, &panel());
+        assert_ne!(
+            buttons(&reader.screen("Moby-Dick")),
+            before,
+            "turning back stayed on the same page"
+        );
+    }
+
+    /// Turning a list goes by the pages already measured.
+    ///
+    /// Laying out a long contents is the expensive part of showing it, and
+    /// measuring it again on every tap made reading through it quadratic.
+    #[test]
+    fn turning_a_list_goes_by_the_pages_already_measured() {
+        let mut reader = Reader::open(long_contents(), Memory::default(), &panel());
+        reader.act(action::CONTENTS, &panel());
+        // Cut by hand into pages the measurement would never make, so a
+        // screen drawn from a fresh measurement cannot pass.
+        let paging = reader.list_paging.as_mut().expect("measured on opening");
+        paging.pages = vec![0..1, 1..2, 2..140];
+        reader.act(action::LIST_NEXT, &panel());
+
+        assert_eq!(buttons(&reader.screen("Moby-Dick")), ["Chapter 001"]);
+    }
+
     /// The contents open on the chapter being read, not on the first one.
     #[test]
     fn the_contents_open_where_the_reader_is() {
@@ -6358,11 +6559,7 @@ mod tests {
     /// A heading is said again at the top of a page its section spills onto.
     #[test]
     fn a_long_list_of_bookmarks_keeps_its_heading_on_every_page() {
-        let memory = Memory {
-            bookmarks: (0..80).map(|chapter| chapter * 2 + 1).collect(),
-            ..Memory::default()
-        };
-        let mut reader = Reader::open(long_contents(), memory, &panel());
+        let mut reader = Reader::open(long_contents(), bookmarked(80), &panel());
         reader.act(action::HIGHLIGHTS, &panel());
 
         let first = reader.screen("Moby-Dick");
