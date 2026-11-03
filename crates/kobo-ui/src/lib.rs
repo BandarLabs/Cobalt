@@ -14957,7 +14957,20 @@ fn paint_layout(
         .iter()
         .find(|node| matches!(node.kind, LayoutKind::TopBar))
         .map(|bar| bar.rect.y.saturating_add(bar.rect.height));
-    for node in layout.nodes {
+    // For each quote, where the quote above it ends and how deep it is. A
+    // thread is drawn as paragraphs with air between them, and a depth rule
+    // that stopped at each paragraph's edge came out as a dashed line down
+    // the page, broken at every byline. Worked out before the clip is
+    // applied, so a partial repaint joins the rules the way a full one does.
+    let mut quote_above = vec![None; layout.nodes.len()];
+    let mut last_quote: Option<(i32, u8)> = None;
+    for (index, node) in layout.nodes.iter().enumerate() {
+        if let LayoutKind::Quote(depth, _) = node.kind {
+            quote_above[index] = last_quote;
+            last_quote = Some((node.rect.y.saturating_add(node.rect.height), depth));
+        }
+    }
+    for (index, node) in layout.nodes.into_iter().enumerate() {
         if node.rect.intersection(clip).is_none() {
             continue;
         }
@@ -15598,14 +15611,34 @@ fn paint_layout(
                 // Depth becomes something to count rather than to measure.
                 let step = metrics.space(Space::Small);
                 let thickness = metrics.rule_thickness();
+                // A level the quote above also had carries on through the gap
+                // between them; a level that starts here starts at this
+                // quote's own top. Never across more than the space between
+                // two blocks, so a thread split by anything else stays split.
+                let joined = quote_above[index].filter(|(bottom, _)| {
+                    node.rect.y >= *bottom
+                        && node.rect.y.saturating_sub(*bottom) <= metrics.space(Space::Medium)
+                });
                 for back in 1..=i32::from(depth) {
+                    // `back` counts outwards from this quote's own rule, so
+                    // the level it draws, counted from the outermost, is
+                    // depth - back + 1.
+                    let level = i32::from(depth) - back + 1;
+                    let top = match joined {
+                        Some((bottom, above)) if i32::from(above) >= level => bottom,
+                        _ => node.rect.y,
+                    };
                     fill_clipped(
                         surface,
                         Rect {
                             x: node.rect.x - step * back,
-                            y: node.rect.y,
+                            y: top,
                             width: thickness,
-                            height: node.rect.height,
+                            height: node
+                                .rect
+                                .y
+                                .saturating_add(node.rect.height)
+                                .saturating_sub(top),
                         },
                         tone::RULE,
                         clip,
@@ -15716,7 +15749,8 @@ fn paint_layout(
                 // theirs. Drawing only; the section keeps its room.
                 let opens_page = !legacy_typography()
                     && bar_foot.is_some_and(|foot| {
-                        node.rect.y.saturating_sub(foot) <= metrics.tenth_mm(SECTION_UNDER_BAR_TENTH_MM)
+                        node.rect.y.saturating_sub(foot)
+                            <= metrics.tenth_mm(SECTION_UNDER_BAR_TENTH_MM)
                     });
                 if rule_end > rule_start && !opens_page {
                     fill_clipped(

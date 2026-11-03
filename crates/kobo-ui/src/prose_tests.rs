@@ -917,6 +917,70 @@ fn depth_is_counted_in_rules_rather_than_left_to_the_indent() {
 }
 
 #[test]
+fn depth_rules_run_unbroken_down_a_reply_and_stop_where_the_reply_does() {
+    // A thread is a byline and its paragraphs with air between them. Drawn
+    // per block, the rules stopped at every edge and came out as a dashed
+    // line down the page; a level both blocks share carries on through the
+    // gap, and a level the lower block opens starts at its own top.
+    let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+    let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+    let quote = |id: u32, depth: u8, role: QuoteRole, text: &str| Node::Quote {
+        id: NodeId(id),
+        depth,
+        role,
+        fold: None,
+        text: text.to_owned(),
+    };
+    let screen = Screen::new(
+        1,
+        vec![
+            quote(1, 1, QuoteRole::Byline, "someone \u{b7} 3h ago"),
+            quote(2, 1, QuoteRole::Body, "The first paragraph of a reply."),
+            quote(3, 1, QuoteRole::Body, "Its second paragraph."),
+            quote(4, 2, QuoteRole::Byline, "another \u{b7} 2h ago"),
+            quote(5, 2, QuoteRole::Body, "A reply to the reply."),
+        ],
+    );
+    let quotes = screen
+        .layout()
+        .nodes
+        .into_iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Quote(..)))
+        .collect::<Vec<_>>();
+    assert_eq!(quotes.len(), 5);
+    let mut surface = Surface::new(stride, height);
+    surface.clear(tone::PAPER);
+    render(&screen, &mut surface, None);
+    let step = CLARA_BW_METRICS.space(Space::Small);
+    let ruled = |x: i32, y: i32| {
+        let at = usize::try_from(y).expect("on the panel") * stride
+            + usize::try_from(x).expect("on the panel");
+        surface.pixels[at] == tone::RULE
+    };
+    // The outer rule, one step left of the depth-one text, from the first
+    // byline's top to the last reply's foot without a gap.
+    let outer = quotes[0].rect.x - step + CLARA_BW_METRICS.rule_thickness() / 2;
+    let top = quotes[0].rect.y;
+    let foot = quotes[4].rect.y + quotes[4].rect.height;
+    let gaps = (top..foot).filter(|&y| !ruled(outer, y)).count();
+    assert_eq!(
+        gaps, 0,
+        "the depth-one rule broke {gaps} times down the reply"
+    );
+    // The inner rule belongs to the reply-to-a-reply alone: nothing of it
+    // above that reply's own byline.
+    let inner = quotes[3].rect.x - step + CLARA_BW_METRICS.rule_thickness() / 2;
+    assert!(
+        ruled(inner, quotes[3].rect.y + 1),
+        "the depth-two rule is missing"
+    );
+    assert!(
+        !ruled(inner, quotes[3].rect.y - 1),
+        "the depth-two rule reached up into the reply above it"
+    );
+}
+
+#[test]
 fn a_byline_is_set_apart_from_what_it_introduces() {
     // The author line was emitted as an ordinary paragraph: same size,
     // same ink, so a thread read as one undifferentiated column and a page
