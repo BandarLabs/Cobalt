@@ -981,6 +981,65 @@ fn depth_rules_run_unbroken_down_a_reply_and_stop_where_the_reply_does() {
 }
 
 #[test]
+fn a_repaint_of_only_the_gap_between_two_quotes_keeps_their_rule() {
+    // A refresh can be as small as the strip between two paragraphs. That
+    // strip is cleared to paper first, and the rule running through it
+    // belongs to the quote below, whose own rectangle starts lower down; if
+    // that quote is skipped as outside the repaint, the strip stays blank and
+    // the thread is broken on the panel though a full repaint would join it.
+    let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+    let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+    let quote = |id: u32, role: QuoteRole, text: &str| Node::Quote {
+        id: NodeId(id),
+        depth: 1,
+        role,
+        fold: None,
+        text: text.to_owned(),
+    };
+    let screen = Screen::new(
+        1,
+        vec![
+            quote(1, QuoteRole::Byline, "someone \u{b7} 3h ago"),
+            quote(2, QuoteRole::Body, "The first paragraph of a reply."),
+        ],
+    );
+    let quotes = screen
+        .layout()
+        .nodes
+        .into_iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Quote(..)))
+        .collect::<Vec<_>>();
+    let gap_top = quotes[0].rect.y + quotes[0].rect.height;
+    let gap_bottom = quotes[1].rect.y;
+    assert!(gap_bottom > gap_top, "the two blocks have air between them");
+    let mut full = Surface::new(stride, height);
+    full.clear(tone::PAPER);
+    render(&screen, &mut full, None);
+    // Only the column the rule runs down: the strip either side of it also
+    // holds the descenders of the byline above, which this is not about.
+    let step = CLARA_BW_METRICS.space(Space::Small);
+    let thickness = CLARA_BW_METRICS.rule_thickness();
+    let gap = Rect {
+        x: quotes[1].rect.x - step - thickness,
+        y: gap_top,
+        width: thickness * 3,
+        height: gap_bottom - gap_top,
+    };
+    let mut partial = full.clone();
+    render(&screen, &mut partial, Some(gap));
+    let mut blank = full.clone();
+    blank.fill_rect(gap, tone::PAPER);
+    assert!(
+        full.pixels != blank.pixels,
+        "a full repaint draws the rule through the gap"
+    );
+    assert!(
+        full.pixels == partial.pixels,
+        "repainting only the gap left it different from a full repaint"
+    );
+}
+
+#[test]
 fn a_byline_is_set_apart_from_what_it_introduces() {
     // The author line was emitted as an ordinary paragraph: same size,
     // same ink, so a thread read as one undifferentiated column and a page

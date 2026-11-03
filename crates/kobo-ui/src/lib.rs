@@ -14957,21 +14957,46 @@ fn paint_layout(
         .iter()
         .find(|node| matches!(node.kind, LayoutKind::TopBar))
         .map(|bar| bar.rect.y.saturating_add(bar.rect.height));
-    // For each quote, where the quote above it ends and how deep it is. A
-    // thread is drawn as paragraphs with air between them, and a depth rule
-    // that stopped at each paragraph's edge came out as a dashed line down
-    // the page, broken at every byline. Worked out before the clip is
-    // applied, so a partial repaint joins the rules the way a full one does.
-    let mut quote_above = vec![None; layout.nodes.len()];
+    // For each quote that carries its rules up through the gap above it,
+    // where that gap begins and how deep the quote above is. A thread is drawn
+    // as paragraphs with air between them, and a depth rule that stopped at
+    // each paragraph's edge came out as a dashed line down the page, broken at
+    // every byline. Never across more than the space between two blocks, so a
+    // thread split by anything else stays split.
+    let mut quote_join = vec![None; layout.nodes.len()];
     let mut last_quote: Option<(i32, u8)> = None;
     for (index, node) in layout.nodes.iter().enumerate() {
         if let LayoutKind::Quote(depth, _) = node.kind {
-            quote_above[index] = last_quote;
+            quote_join[index] = last_quote.filter(|(bottom, _)| {
+                node.rect.y >= *bottom
+                    && node.rect.y.saturating_sub(*bottom) <= metrics.space(Space::Medium)
+            });
             last_quote = Some((node.rect.y.saturating_add(node.rect.height), depth));
         }
     }
     for (index, node) in layout.nodes.into_iter().enumerate() {
-        if node.rect.intersection(clip).is_none() {
+        // A quote draws its depth rules left of its own rectangle, and a
+        // joined one up into the gap above it too. A repaint of only that
+        // column or that gap clears it to paper first, so it has to reach the
+        // quote or nothing puts the rule back.
+        let reach = match node.kind {
+            LayoutKind::Quote(depth, _) => {
+                let left = metrics.space(Space::Small) * i32::from(depth);
+                let top = quote_join[index].map_or(node.rect.y, |(top, _)| top);
+                Rect {
+                    x: node.rect.x.saturating_sub(left),
+                    y: top,
+                    width: node.rect.width.saturating_add(left),
+                    height: node
+                        .rect
+                        .y
+                        .saturating_add(node.rect.height)
+                        .saturating_sub(top),
+                }
+            }
+            _ => node.rect,
+        };
+        if reach.intersection(clip).is_none() {
             continue;
         }
         match node.kind {
@@ -15613,12 +15638,8 @@ fn paint_layout(
                 let thickness = metrics.rule_thickness();
                 // A level the quote above also had carries on through the gap
                 // between them; a level that starts here starts at this
-                // quote's own top. Never across more than the space between
-                // two blocks, so a thread split by anything else stays split.
-                let joined = quote_above[index].filter(|(bottom, _)| {
-                    node.rect.y >= *bottom
-                        && node.rect.y.saturating_sub(*bottom) <= metrics.space(Space::Medium)
-                });
+                // quote's own top.
+                let joined = quote_join[index];
                 for back in 1..=i32::from(depth) {
                     // `back` counts outwards from this quote's own rule, so
                     // the level it draws, counted from the outermost, is
