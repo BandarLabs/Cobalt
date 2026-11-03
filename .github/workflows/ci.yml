@@ -348,6 +348,23 @@ jobs:
           # under .cargo/ as a build input and would rebuild every Store app.
           # Re-check when the device toolchain reaches 1.88 or the anki pin moves.
           #
+          # RUSTSEC-2026-0429 is the same function again: ZipArchive::extract
+          # aborts the process on a symlink entry with a large declared size.
+          # Nothing audited here calls it, for the reasons above, and the fix
+          # is the same zip 9. Re-check on the same conditions.
+          #
+          # pulldown-cmark before 0.13.6 has RUSTSEC-2026-0433: nested image
+          # wikilinks parse in quadratic time, and only with
+          # Options::ENABLE_WIKILINKS. No parser here sets it. kobo-doc
+          # enables tables, strikethrough, footnotes and YAML metadata,
+          # kobo-cli's vault export tables, footnotes, strikethrough and task
+          # lists, and anki's rslib at the pinned revision calls Parser::new,
+          # which enables nothing. 0.13.6 is the real fix, but a lockfile
+          # change to a crate kobo-doc uses marks every Store app that reads
+          # documents as changed, so it belongs in a release, not here.
+          # Re-check if any parser turns wikilinks on, and take 0.13.6 with the
+          # next release that rebuilds the readers anyway.
+          #
           # crypto-bigint before 0.7.6 has RUSTSEC-2026-0387: subtraction,
           # division and Montgomery multiplication may branch on secret values.
           # kobod reaches 0.5.5 through p256 0.13 for the app-link device key.
@@ -387,6 +404,8 @@ jobs:
             --ignore RUSTSEC-2026-0367
             --ignore RUSTSEC-2026-0368
             --ignore RUSTSEC-2026-0369
+            --ignore RUSTSEC-2026-0429
+            --ignore RUSTSEC-2026-0433
             --ignore RUSTSEC-2026-0387
             --ignore RUSTSEC-2025-0044
             --ignore RUSTSEC-2026-0391
