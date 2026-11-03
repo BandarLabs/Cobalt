@@ -144,6 +144,24 @@ async function readReaderIdentity(handle) {
   }
 }
 
+// NickelMenu is the only way into Cobalt from the reader's own menus, and it
+// can only hook the 4.x firmware. On any other generation an installation
+// would be written and could never be started, so this is a refusal rather
+// than a caution an owner may wave through. The same rule, and the same
+// refusal of a version that cannot be read, as kobo_profile's
+// launchable_generation and `kobo setup`.
+const SUPPORTED_FIRMWARE_GENERATION = 4;
+
+function firmwareBranch(version) {
+  const match = /^(\d+)\.(\d+)(?:\.|$)/.exec((version || "").trim());
+  return match ? `${match[1]}.${match[2]}` : null;
+}
+
+function launchableGeneration(version) {
+  const branch = firmwareBranch(version);
+  return branch !== null && Number(branch.split(".")[0]) === SUPPORTED_FIRMWARE_GENERATION;
+}
+
 async function readTestedDevices() {
   try {
     const response = await fetch("devices.json", { cache: "no-store" });
@@ -197,13 +215,33 @@ async function chooseDrive() {
     }
   }
 
+  // Checked before anything else is read or offered, and before the drive is
+  // kept: nothing after this point should be reachable for a reader that
+  // could never start what would be written to it.
+  const reading = await readReaderIdentity(handle);
+  if (!reading || !launchableGeneration(reading.firmware)) {
+    const found = reading && reading.firmware ? `firmware ${escapeText(reading.firmware)}` : "a firmware version that could not be read";
+    pickNote.innerHTML =
+      `<span class="bad">This Kobo has ${found}. Cobalt can only be started on ${SUPPORTED_FIRMWARE_GENERATION}.x firmware: ` +
+      "NickelMenu, the way into Cobalt from the Kobo's menu, does not work on newer firmware, so an installation " +
+      'here could never be opened. Nothing was written. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md">Supported devices</a></span>';
+    // A reader chosen earlier in this visit must not stay armed behind the
+    // refusal, or Write would still go to it.
+    drive = null;
+    delete step.connect.dataset.state;
+    enable(step.download, false);
+    fetchButton.disabled = true;
+    writeButton.disabled = true;
+    return;
+  }
+
   drive = handle;
   // Read before anything is offered, so somebody can see whether this is a
   // first install, an update, or the version they already have, rather than
   // finding out from what the reader does afterwards.
   installed = await readInstalledVersion(handle);
   installedApps = await readInstalledApps(handle);
-  identity = await readReaderIdentity(handle);
+  identity = reading;
   const where = `Reader found on <strong>${escapeText(handle.name)}</strong>`;
   const said = installed
     ? `${where}, with Cobalt ${escapeText(installed)} installed.`
@@ -217,15 +255,32 @@ async function chooseDrive() {
   let caution = "";
   const tested = await readTestedDevices();
   if (identity && identity.model && tested.length > 0) {
-    const match = tested.find(device => device.code === identity.model);
+    // A profile names a model and the firmware branches it was measured on,
+    // and a model can have several. Only a ready profile on this reader's
+    // branch counts as tested; the same model on another branch, or a profile
+    // still awaiting review, is the same kind of risk as an unknown model.
+    const branch = firmwareBranch(identity.firmware);
+    const sameModel = tested.filter(device => device.code === identity.model);
+    const match = sameModel.find(device => device.ready !== false &&
+      (device.firmware || []).some(version => firmwareBranch(version) === branch));
+    const consentBox = '<label class="consent"><input type="checkbox" id="untested-ok"> Install anyway on this untested Kobo</label>';
     if (match) {
-      caution = `<span class="note">${escapeText(match.model)}, firmware ${escapeText(identity.firmware || "unknown")}. This model has been tested.</span>`;
+      caution = `<span class="note">${escapeText(match.model)}, firmware ${escapeText(identity.firmware)}. This model and firmware have been tested.</span>`;
+    } else if (sameModel.length > 0) {
+      const known = [...new Set(sameModel.filter(device => device.ready !== false)
+        .flatMap(device => device.firmware || []).map(firmwareBranch).filter(Boolean))];
+      caution =
+        `<span class="note">${escapeText(sameModel[0].model)}, firmware ${escapeText(identity.firmware)}. ` +
+        (known.length > 0
+          ? `This model has been tested on firmware ${escapeText(known.map(b => b + ".x").join(", "))}, not on this one. It may work.`
+          : "This model has not been fully tested yet. It may work.") +
+        "</span>" + consentBox;
     } else {
       caution =
         `<span class="note">Model ${escapeText(identity.model)}, firmware ${escapeText(identity.firmware || "unknown")}. ` +
         "This model has not been tested with Cobalt. It may work and it may not, " +
-        `and the ones that have been tested are: ${escapeText([...new Set(tested.map(d => d.model))].join(", "))}.</span>` +
-        '<label class="consent"><input type="checkbox" id="untested-ok"> Install anyway on this untested model</label>';
+        `and the ones that have been tested are: ${escapeText([...new Set(tested.filter(d => d.ready !== false).map(d => d.model))].join(", "))}.</span>` +
+        consentBox;
     }
   }
   pickNote.innerHTML = `<span class="ok">${said}</span>${caution}`;
