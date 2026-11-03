@@ -40,6 +40,11 @@ pub const MAX_CHOICE_OPTIONS: usize = 6;
 /// until the line has room to be one. Five millimetres is about a thumbnail's
 /// width and is the point at which it stops looking like a stray mark.
 pub const MIN_SECTION_RULE_TENTH_MM: i32 = 50;
+/// How close under the top bar's rule a [`Node::Section`] may begin and still
+/// count as the one opening the page, whose own hairline is then left out.
+/// The room below the bar and a section's lead together are five millimetres;
+/// six leaves a little over without reaching a section that follows content.
+pub const SECTION_UNDER_BAR_TENTH_MM: i32 = 60;
 /// Folio's physical composition scale.  Components use [`Space`] for their
 /// existing rhythm; these named values are available to new compositions that
 /// need to state their physical intent without inventing pixel gaps.
@@ -828,6 +833,10 @@ pub const MIN_NAV_DESTINATIONS: usize = 2;
 /// that reaches for all five is a screen where two of them are the same grey
 /// and the distinction the fifth was carrying is invisible.
 pub const MAX_TONES_PER_SCREEN: usize = 4;
+
+/// The shortest bar marking the current destination of a [`NavBar`], in
+/// tenths of a millimetre. It is otherwise as wide as the destination's name.
+pub const NAV_SELECTION_MIN_TENTH_MM: i32 = 80;
 
 /// The most verbs an action bar will draw. See [`BarStyle::Actions`].
 pub const MAX_ACTION_BAR_ACTIONS: usize = 3;
@@ -3008,6 +3017,25 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
         } else {
             slot
         };
+        // A short upright hairline between two verbs, so a row of words
+        // reads as separate buttons rather than one caption. Inset top and
+        // bottom so it divides the words without dividing the bar. Drawing
+        // only: the verbs keep the slots they had.
+        if index > 0 && nav_bar.style == BarStyle::Actions && !legacy_typography() {
+            let inset = height / 4;
+            let thickness = metrics.rule_thickness();
+            layout.nodes.push(LayoutNode {
+                id: nav_bar.id,
+                rect: Rect {
+                    x: x.saturating_sub(thickness / 2),
+                    y: top + inset,
+                    width: thickness,
+                    height: height - inset * 2,
+                },
+                kind: LayoutKind::RowRule,
+                text_lines: Vec::new(),
+            });
+        }
         layout.nodes.push(LayoutNode {
             id: nav_bar.id,
             rect: Rect {
@@ -14921,8 +14949,54 @@ fn paint_layout(
 ) {
     let palette = Palette::new(chrome.appearance, screen.accent.chosen());
     let prose = layout.prose_face;
-    for node in layout.nodes {
-        if node.rect.intersection(clip).is_none() {
+    // Where the bar's own closing rule is, so a section that opens the page
+    // straight under it does not draw a second line a few millimetres below
+    // the first.
+    let bar_foot = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::TopBar))
+        .map(|bar| bar.rect.y.saturating_add(bar.rect.height));
+    // For each quote that carries its rules up through the gap above it,
+    // where that gap begins and how deep the quote above is. A thread is drawn
+    // as paragraphs with air between them, and a depth rule that stopped at
+    // each paragraph's edge came out as a dashed line down the page, broken at
+    // every byline. Never across more than the space between two blocks, so a
+    // thread split by anything else stays split.
+    let mut quote_join = vec![None; layout.nodes.len()];
+    let mut last_quote: Option<(i32, u8)> = None;
+    for (index, node) in layout.nodes.iter().enumerate() {
+        if let LayoutKind::Quote(depth, _) = node.kind {
+            quote_join[index] = last_quote.filter(|(bottom, _)| {
+                node.rect.y >= *bottom
+                    && node.rect.y.saturating_sub(*bottom) <= metrics.space(Space::Medium)
+            });
+            last_quote = Some((node.rect.y.saturating_add(node.rect.height), depth));
+        }
+    }
+    for (index, node) in layout.nodes.into_iter().enumerate() {
+        // A quote draws its depth rules left of its own rectangle, and a
+        // joined one up into the gap above it too. A repaint of only that
+        // column or that gap clears it to paper first, so it has to reach the
+        // quote or nothing puts the rule back.
+        let reach = match node.kind {
+            LayoutKind::Quote(depth, _) => {
+                let left = metrics.space(Space::Small) * i32::from(depth);
+                let top = quote_join[index].map_or(node.rect.y, |(top, _)| top);
+                Rect {
+                    x: node.rect.x.saturating_sub(left),
+                    y: top,
+                    width: node.rect.width.saturating_add(left),
+                    height: node
+                        .rect
+                        .y
+                        .saturating_add(node.rect.height)
+                        .saturating_sub(top),
+                }
+            }
+            _ => node.rect,
+        };
+        if reach.intersection(clip).is_none() {
             continue;
         }
         match node.kind {
@@ -15562,14 +15636,30 @@ fn paint_layout(
                 // Depth becomes something to count rather than to measure.
                 let step = metrics.space(Space::Small);
                 let thickness = metrics.rule_thickness();
+                // A level the quote above also had carries on through the gap
+                // between them; a level that starts here starts at this
+                // quote's own top.
+                let joined = quote_join[index];
                 for back in 1..=i32::from(depth) {
+                    // `back` counts outwards from this quote's own rule, so
+                    // the level it draws, counted from the outermost, is
+                    // depth - back + 1.
+                    let level = i32::from(depth) - back + 1;
+                    let top = match joined {
+                        Some((bottom, above)) if i32::from(above) >= level => bottom,
+                        _ => node.rect.y,
+                    };
                     fill_clipped(
                         surface,
                         Rect {
                             x: node.rect.x - step * back,
-                            y: node.rect.y,
+                            y: top,
                             width: thickness,
-                            height: node.rect.height,
+                            height: node
+                                .rect
+                                .y
+                                .saturating_add(node.rect.height)
+                                .saturating_sub(top),
                         },
                         tone::RULE,
                         clip,
@@ -15673,7 +15763,17 @@ fn paint_layout(
                 // type belongs. Sitting it on the baseline turns the title into
                 // something underlined.
                 let rule_start = node.rect.x.saturating_add(title_width).saturating_add(gap);
-                if rule_end > rule_start {
+                // Two parallel hairlines a few millimetres apart read as a
+                // printing fault, not as structure: the bar's rule already
+                // says where the page begins, so the first section under it
+                // is set off by its title alone. Sections further down keep
+                // theirs. Drawing only; the section keeps its room.
+                let opens_page = !legacy_typography()
+                    && bar_foot.is_some_and(|foot| {
+                        node.rect.y.saturating_sub(foot)
+                            <= metrics.tenth_mm(SECTION_UNDER_BAR_TENTH_MM)
+                    });
+                if rule_end > rule_start && !opens_page {
                     fill_clipped(
                         surface,
                         Rect {
@@ -17023,10 +17123,18 @@ fn draw_nav_label(
     // dominate the content it is meant to be subordinate to.
     if selected {
         let thickness = metrics.rule_thickness() * 2;
+        // As wide as the word it marks, and never shorter than a fingertip.
+        // Two millimetres was the size of a hyphen at this density: on the
+        // panel it read as a mark on the glass rather than as the answer to
+        // "where am I".
         let width = if legacy_typography() {
             rect.width.saturating_sub(2 * metrics.space(Space::Medium))
         } else {
-            metrics.tenth_mm(20)
+            let word = lines
+                .first()
+                .map_or(0, |line| measure_text(line, FontSize::Caption).0);
+            max(word, metrics.tenth_mm(NAV_SELECTION_MIN_TENTH_MM))
+                .min(rect.width.saturating_sub(2 * metrics.space(Space::Small)))
         };
         fill_clipped(
             surface,

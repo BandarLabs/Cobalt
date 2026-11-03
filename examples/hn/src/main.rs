@@ -812,6 +812,7 @@ impl Hn {
                     "The article is saved on this reader, and the book at the top opens it now.",
                 ),
                 Some(_) => None,
+                None if story.job => Some("Job postings on Hacker News have no discussion."),
                 None => Some("No comments yet."),
             };
             if let Some(said) = said {
@@ -2095,8 +2096,12 @@ fn story_facts(story: &Story, now: i64) -> Vec<(&'static str, String)> {
     if let Some(site) = &story.site {
         facts.push(("Domain", site.clone()));
     }
-    facts.push(("Score", model::score(story)));
-    facts.push(("Comments", story.comments.to_string()));
+    if story.job {
+        facts.push(("Kind", "Job posting".to_owned()));
+    } else {
+        facts.push(("Score", model::score(story)));
+        facts.push(("Comments", story.comments.to_string()));
+    }
     facts.push(("Age", model::age(now, story.created)));
     facts
 }
@@ -2648,6 +2653,7 @@ mod tests {
                 text: None,
                 link: Some(format!("https://example.com/{index}")),
                 site: Some("example.com".into()),
+                job: false,
             })
             .collect();
         application.repaginate_list(&context);
@@ -3258,6 +3264,7 @@ mod tests {
                 text: None,
                 link: None,
                 site: None,
+                job: false,
             }],
             open: Some(0),
             comments: depths
