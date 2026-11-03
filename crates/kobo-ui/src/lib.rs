@@ -10541,6 +10541,44 @@ pub fn undrawable_in(text: &str, face: Face) -> Option<char> {
     })?
 }
 
+/// `text` with every character the installed face cannot draw put as a box
+/// the face can.
+///
+/// For words that belong to someone else: a chapter title, a passage quoted
+/// back from a book, a name on a shelf. [`undrawable_in`] is right to refuse a
+/// symbol an application chose, but nobody here chose the Hebrew in Moby-Dick's
+/// Etymology, and refusing the list that quotes it closes the book over a
+/// letter. The page draws such a letter as the font's own empty box; this
+/// draws the same box on purpose, so the list agrees with the page and the
+/// check that guards an application's own labels stays on for everything else.
+///
+/// A white square where the face has one, and a question mark where it has
+/// not. Unchanged, and not copied, when everything in it can be drawn.
+#[must_use]
+pub fn drawable_in(text: &str, face: Face) -> std::borrow::Cow<'_, str> {
+    let replaced = with_typesetter(face, |typesetter| {
+        let lacks =
+            |character: char| !character.is_whitespace() && !typesetter.has_glyph(character, face);
+        if !text.chars().any(lacks) {
+            return None;
+        }
+        let stand_in = if lacks('\u{25a1}') { '?' } else { '\u{25a1}' };
+        Some(
+            text.chars()
+                .map(|character| {
+                    if lacks(character) {
+                        stand_in
+                    } else {
+                        character
+                    }
+                })
+                .collect::<String>(),
+        )
+    })
+    .flatten();
+    replaced.map_or(std::borrow::Cow::Borrowed(text), std::borrow::Cow::Owned)
+}
+
 /// The size of one monospace cell: what a character grid is built from.
 ///
 /// Returns width and height together because a caller that needs one always
@@ -13167,6 +13205,18 @@ fn diagnose_layout(
     validate_content_bounds(&nodes, &layout, metrics, &mut issues);
     validate_layout_nodes(&layout, metrics, &mut issues);
     validate_composition(screen, &nodes, &layout, &mut issues);
+    // A reading screen's words are a book's, and a letter no installed face
+    // carries is the author's choice, not the application's mistake. It is
+    // drawn as the empty box every reader draws for one, so it is worth
+    // knowing about and not worth failing a check over: failing it made the
+    // Etymology page of Moby-Dick a defect in every application that reads.
+    if screen.reading {
+        for issue in &mut issues {
+            if matches!(issue.kind, LayoutIssueKind::UnsupportedCharacter { .. }) {
+                issue.severity = DiagnosticSeverity::Warning;
+            }
+        }
+    }
     LayoutDiagnostics { layout, issues }
 }
 

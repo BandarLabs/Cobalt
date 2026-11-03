@@ -4,8 +4,8 @@
   "short_label": "Library",
   "summary": "Browse and read books from your calibre-web library. Needs an account.",
   "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.",
-  "version": "0.1.10",
-  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
+  "version": "0.1.11",
+  "release_notes": "A long table of contents now turns in pages, so every chapter can be reached, and opens at the chapter you are reading. Notes and links turn in pages too, and tapping a note goes to its passage.",
   "glyph": "book",
   "capabilities": [
     "network"

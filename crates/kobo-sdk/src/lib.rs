@@ -495,6 +495,18 @@ fn stable_id(value: &str) -> u32 {
     ActionId::from_name(value).0
 }
 
+/// Words from somewhere else, as an ordinary screen can draw them.
+///
+/// A book's title, a feed's headline, a name typed on another device: the
+/// application did not choose their letters, so [`Context::set_screen`]
+/// refusing one the face cannot draw only stops the application. Each such
+/// character comes back as a box the interface face can draw, the way a
+/// reading page draws it.
+#[must_use]
+pub fn drawable(text: &str) -> std::borrow::Cow<'_, str> {
+    kobo_ui::drawable_in(text, kobo_ui::Face::Text)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
     SetScreen(Screen),
@@ -1408,7 +1420,9 @@ impl Context {
     ///
     /// In debug builds only, on a screen the wire would refuse or one carrying
     /// a character the installed face cannot draw. Both are defects that are
-    /// silent on the panel and obvious here.
+    /// silent on the panel and obvious here. A reading screen is exempt from
+    /// the second: its words are a book's, not the application's, and words
+    /// from elsewhere on an ordinary screen go through [`drawable`].
     pub fn set_screen(&mut self, screen: Screen) {
         // A screen the wire refuses is not a rendering problem, it is a dead
         // connection: the runtime's reader stops at the malformed frame and
@@ -1436,25 +1450,21 @@ impl Context {
         // broken renderer rather than as a missing character. Checked against
         // what will actually be drawn, so an application that marks its own
         // state with a symbol fails its own tests instead of shipping.
+        //
+        // Not on a reading screen. Its words are a book's, and a letter no
+        // installed face carries is drawn as the box every reader draws for
+        // one. Stopping here was the application closing on Moby-Dick's
+        // Etymology page, over a Hebrew word its author put there.
         #[cfg(debug_assertions)]
-        {
+        if !screen.reading {
             let layout = screen.layout_for(&self.metrics);
             for node in &layout.nodes {
                 for line in &node.text_lines {
-                    let Some(character) = kobo_ui::undrawable_in(line, kobo_ui::Face::Text) else {
-                        continue;
-                    };
-                    // Reading prose is drawn in the publisher face, not the
-                    // system face, so a character the system face lacks is
-                    // still fine when the screen's reading face has it.
-                    let readable = screen.reading
-                        && kobo_ui::with_reading_font(screen.reading_font, || {
-                            kobo_ui::undrawable_in(line, kobo_ui::Face::Reading).is_none()
-                        });
-                    assert!(
-                        readable,
-                        "this screen carries {character:?}, which the installed face cannot draw: {line:?}"
-                    );
+                    if let Some(character) = kobo_ui::undrawable_in(line, kobo_ui::Face::Text) {
+                        panic!(
+                            "this screen carries {character:?}, which the installed face cannot draw: {line:?}"
+                        );
+                    }
                 }
             }
         }
