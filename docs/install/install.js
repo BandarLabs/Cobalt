@@ -152,14 +152,40 @@ async function readReaderIdentity(handle) {
 // launchable_generation and `kobo setup`.
 const SUPPORTED_FIRMWARE_GENERATION = 4;
 
+// `major.minor`, or null unless the version also names a build. Written to
+// match kobo_profile::firmware_branch exactly: a version file cut short at
+// "4.38" or "4.38." is not a branch, and treating it as one would match it to
+// a tested profile on the strength of the part that survived.
 function firmwareBranch(version) {
-  const match = /^(\d+)\.(\d+)(?:\.|$)/.exec((version || "").trim());
-  return match ? `${match[1]}.${match[2]}` : null;
+  const text = version || "";
+  const first = text.indexOf(".");
+  if (first < 0) return null;
+  const second = text.indexOf(".", first + 1);
+  if (second < 0) return null;
+  const major = text.slice(0, first);
+  const minor = text.slice(first + 1, second);
+  const build = text.slice(second + 1);
+  if (!major || !minor || !build) return null;
+  return `${major}.${minor}`;
 }
 
 function launchableGeneration(version) {
   const branch = firmwareBranch(version);
-  return branch !== null && Number(branch.split(".")[0]) === SUPPORTED_FIRMWARE_GENERATION;
+  if (branch === null) return false;
+  const major = branch.split(".")[0];
+  return /^\+?\d+$/.test(major) && Number(major) === SUPPORTED_FIRMWARE_GENERATION;
+}
+
+// Forgets the reader chosen so far and everything that would write to it.
+// Every refusal ends here: a drive chosen earlier in this visit must not stay
+// armed behind a message about a different one.
+function disarm() {
+  drive = null;
+  untestedAcknowledged = false;
+  delete step.connect.dataset.state;
+  enable(step.download, false);
+  fetchButton.disabled = true;
+  writeButton.disabled = true;
 }
 
 async function readTestedDevices() {
@@ -191,6 +217,12 @@ async function chooseDrive() {
     return;
   }
 
+  // A different reader is being chosen. Nothing may be written until it has
+  // been read and, where it asks for one, agreed to, so Write goes dark now
+  // rather than when the checks below finish.
+  writeButton.disabled = true;
+  untestedAcknowledged = false;
+
   // A Kobo has a .kobo folder holding a version file. Checking for it means an
   // ordinary USB stick chosen by mistake is refused here rather than written
   // to and left with a KoboRoot.tgz on it.
@@ -201,6 +233,7 @@ async function chooseDrive() {
     pickNote.innerHTML =
       '<span class="bad">That drive has no <code>.kobo/version</code>, so it is not a Kobo. ' +
       "Choose the drive named KOBOeReader.</span>";
+    disarm();
     return;
   }
 
@@ -211,6 +244,7 @@ async function chooseDrive() {
         (await handle.requestPermission({ mode: "readwrite" })) === "granted");
     if (!granted) {
       pickNote.innerHTML = '<span class="bad">Writing was not allowed, so nothing was installed.</span>';
+      disarm();
       return;
     }
   }
@@ -225,13 +259,7 @@ async function chooseDrive() {
       `<span class="bad">This Kobo has ${found}. Cobalt can only be started on ${SUPPORTED_FIRMWARE_GENERATION}.x firmware: ` +
       "NickelMenu, the way into Cobalt from the Kobo's menu, does not work on newer firmware, so an installation " +
       'here could never be opened. Nothing was written. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md">Supported devices</a></span>';
-    // A reader chosen earlier in this visit must not stay armed behind the
-    // refusal, or Write would still go to it.
-    drive = null;
-    delete step.connect.dataset.state;
-    enable(step.download, false);
-    fetchButton.disabled = true;
-    writeButton.disabled = true;
+    disarm();
     return;
   }
 
@@ -301,6 +329,9 @@ async function chooseDrive() {
   done(step.connect);
   enable(step.download, true);
   fetchButton.disabled = false;
+  // A release downloaded for an earlier reader is still good for this one;
+  // whether it may be written is this reader's consent, decided above.
+  writeButton.disabled = !untestedAcknowledged || archive === null;
 }
 
 async function fetchRelease() {
@@ -365,6 +396,9 @@ async function fetchRelease() {
 }
 
 async function writeToReader() {
+  // The button is the usual guard; this is the one that holds if the button
+  // and the state ever disagree.
+  if (drive === null || archive === null || !untestedAcknowledged) return;
   writeButton.disabled = true;
   try {
     writeNote.textContent = "Writing the release…";
