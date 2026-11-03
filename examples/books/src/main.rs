@@ -384,9 +384,9 @@ impl Books {
             return;
         }
         if let Some(title) = &known.title {
-            document.title.clone_from(title);
+            document.title = drawable(title);
         }
-        document.author.clone_from(&known.author);
+        document.author = known.author.as_deref().map(drawable);
     }
 
     fn show(&mut self, context: &mut Context) {
@@ -1502,6 +1502,15 @@ fn megabytes(bytes: u32) -> String {
 /// identifies it, and only that, so a library path never reaches the file.
 /// The prefix keeps a book from ever sharing a record with anything else
 /// that might one day be kept in the same file.
+/// A book's name as the shelf can draw it.
+///
+/// Titles and authors come from whoever made the file, in whatever script
+/// they wrote in. A letter no installed face carries is put as a box, the way
+/// the page draws it, rather than refusing the shelf that lists the book.
+fn drawable(text: &str) -> String {
+    kobo_sdk::drawable(text).into_owned()
+}
+
 fn position_id(document: &str) -> String {
     kobo_bookview::positions::identity(&format!("books:{document}"))
 }
@@ -1520,7 +1529,7 @@ fn from_entry(entry: LibraryEntry) -> Option<Document> {
         id: entry.id,
         preview: entry.title.clone(),
         listed: entry.title.clone(),
-        title: entry.title,
+        title: drawable(&entry.title),
         author: None,
         kind,
         on_card: entry.on_card,
@@ -1922,6 +1931,38 @@ mod tests {
             "a different book at the same path and size kept the first one's record"
         );
         assert_eq!(runner.app().documents[0].title, "The Second Book");
+    }
+
+    /// A book named in a script no installed face carries is still shelved.
+    ///
+    /// The name is the file's, not the application's, so the check that
+    /// refuses a symbol an application chose for itself has no business
+    /// refusing it: the shelf shows the letters it cannot draw as boxes, as
+    /// the page does, and every other book on it stays in reach.
+    #[test]
+    fn a_book_named_in_a_script_no_face_carries_is_still_shelved() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        answer_start(&mut runner, None, None, None);
+        assert!(
+            kobo_ui::undrawable_in("\u{5d7}", kobo_ui::Face::Text).is_some(),
+            "the face can draw Hebrew now, so this no longer tests anything"
+        );
+        runner.device_result(DeviceResult::Library {
+            entries: vec![
+                entry("0/whale.epub", "\u{5d7}\u{5d5}", 1, 4096, true),
+                entry("0/pride.epub", "Pride and Prejudice", 1, 4096, true),
+            ],
+            truncated: false,
+        });
+        let titles: Vec<&str> = runner
+            .app()
+            .documents
+            .iter()
+            .map(|document| document.title.as_str())
+            .collect();
+        assert!(titles.contains(&"\u{25a1}\u{25a1}"), "{titles:?}");
+        assert!(titles.contains(&"Pride and Prejudice"), "{titles:?}");
     }
 
     #[test]
