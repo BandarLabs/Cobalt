@@ -695,9 +695,21 @@ if (unencoded.size > 0) {
 const storeApps = [...catalog.apps].sort((a, b) =>
   a.display_name.localeCompare(b.display_name)
 );
+// Some Store apps began as examples and still live under examples/, so the
+// link follows the package to wherever it is rather than assuming apps/. A
+// cell that points at a README which is not there is a 404 on the project's
+// front page, so the generator refuses to write one.
+const readmeHrefFor = app => {
+  const dir = sourceDirFor(app.id);
+  const href = dir && `${dir}/${app.id}/README.md`;
+  if (!href || !existsSync(resolve(root, href))) {
+    throw new Error(`${app.id} is in the README table but has no README.md under apps/ or examples/`);
+  }
+  return href;
+};
 const readmeCell = app => {
   const [screenshot, screenshotAlt] = screenshotFor(app);
-  const href = `apps/${app.id}/README.md`;
+  const href = readmeHrefFor(app);
   return `<td width="33%" valign="top"><a href="${href}"><img width="230" src="docs/media/site/apps/${screenshot}" alt="${escape(screenshotAlt)}"></a><br><b><a href="${href}">${escape(app.display_name)}</a></b><br>${escape(app.summary)}</td>`;
 };
 const readmeRows = [];
