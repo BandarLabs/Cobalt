@@ -1308,10 +1308,17 @@ impl AudioPlayer {
         if let Some(task) = self.sleep_task.take() {
             context.cancel(task);
         }
-        self.sleep_until = None;
+        // A timer set in minutes keeps counting from where it was: a seek
+        // or a new speed changes when a chapter ends, not when the
+        // listener asked to stop.
+        let remaining = self.sleep_until.take().map(|until| {
+            u32::try_from(until.saturating_duration_since(Instant::now()).as_secs())
+                .unwrap_or(u32::MAX)
+                .max(1)
+        });
         let seconds = match self.sleep {
             Sleep::Off => return,
-            Sleep::Minutes(minutes) => u32::from(minutes) * 60,
+            Sleep::Minutes(minutes) => remaining.unwrap_or(u32::from(minutes) * 60),
             Sleep::EndOfChapter => {
                 if self.playback != AudioPlaybackState::Playing {
                     // Scheduled once the book plays, from wherever it is then.

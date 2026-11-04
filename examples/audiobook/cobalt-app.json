@@ -2,7 +2,7 @@
   "id": "audiobook",
   "display_name": "Audiobooks",
   "short_label": "Audiobooks",
-  "summary": "Play the audiobooks on your Kobo: MP3, M4B, M4A, OGG, FLAC and WAV, with chapters, speed, a sleep timer and your place kept. Or make one from a topic with your own accounts.",
+  "summary": "Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.",
   "version": "2.0.0",
   "glyph": "headphones",
   "capabilities": [

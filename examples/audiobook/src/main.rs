@@ -512,19 +512,7 @@ impl Audiobook {
             );
         }
         if let Some(player) = self.player.as_ref() {
-            let title = self
-                .playing
-                .as_deref()
-                .and_then(|id| self.place_of(id))
-                .map(|place| place.title.clone())
-                .filter(|title| !title.is_empty())
-                .or_else(|| {
-                    player
-                        .detail()
-                        .map(|detail| detail.title.clone())
-                        .filter(|title| !title.is_empty())
-                })
-                .unwrap_or_else(|| self.title.clone());
+            let title = self.playing_title();
             let left = player
                 .duration()
                 .saturating_sub(player.position())
@@ -545,6 +533,31 @@ impl Audiobook {
             )]);
         }
         screen
+    }
+
+    /// What the book playing is called, by the same rules as its row: the
+    /// studio's name for it, else what it said, else its file name.
+    fn playing_title(&self) -> String {
+        let Some(id) = self.playing.as_deref() else {
+            return String::new();
+        };
+        if let Some(book) = self
+            .library
+            .as_ref()
+            .and_then(|books| books.iter().find(|book| same_book(&book.id, id)))
+        {
+            return self.title_of(book);
+        }
+        let stand_in = Book {
+            id: id.to_owned(),
+            title: id
+                .strip_prefix("shelf:")
+                .and_then(|name| name.strip_suffix(ARCHIVE_SUFFIX))
+                .unwrap_or(id)
+                .replace('-', " "),
+            ..Book::default()
+        };
+        self.title_of(&stand_in)
     }
 
     /// What a library row says under a book's title: who it is by and how
@@ -602,7 +615,7 @@ impl Audiobook {
     }
 
     fn place_of(&self, id: &str) -> Option<&Place> {
-        self.places.iter().find(|place| place.id == id)
+        self.places.iter().find(|place| same_book(&place.id, id))
     }
 
     fn has_books(&self) -> bool {
@@ -881,17 +894,20 @@ impl Audiobook {
             title: detail_title,
             author: detail_author,
         };
-        self.places.retain(|kept| kept.id != id);
+        self.places.retain(|kept| !same_book(&kept.id, &id));
         self.places.push(place);
         self.saved_position_ms = position_ms;
         context.store().save(PLACES_KEY, write_places(&self.places));
     }
 
     /// Back from the player to the library. The book keeps playing: the
-    /// library's first row is the way back to it.
+    /// library's first row is the way back to it. The studio starts afresh,
+    /// as it did when leaving the player meant stopping the book: a finished
+    /// creation is not a draft to come back to.
     fn leave_player(&mut self, context: &mut Context) {
         self.note_place(context, true);
         self.clock.stop(context);
+        self.reset();
         self.open_library(context);
     }
 
@@ -1919,6 +1935,21 @@ fn size_on_disk(bytes: u64) -> String {
         format!("{} MB", bytes / MEGABYTE)
     } else {
         format!("{} KB", (bytes / 1024).max(1))
+    }
+}
+
+/// Whether two identifiers name one book. A book made here is first played
+/// off the shelf as `shelf:name` and later listed by the runtime under a
+/// path ending in that name; the place is one place either way.
+fn same_book(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let shelf_name = |id: &str| id.strip_prefix("shelf:").map(str::to_owned);
+    match (shelf_name(left), shelf_name(right)) {
+        (Some(name), None) => right.ends_with(&format!("/{name}")),
+        (None, Some(name)) => left.ends_with(&format!("/{name}")),
+        _ => false,
     }
 }
 

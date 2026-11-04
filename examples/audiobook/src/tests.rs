@@ -249,6 +249,24 @@ fn places_round_trip_and_a_broken_line_loses_only_itself() {
     assert!(parse_places(b"").is_empty());
 }
 
+/// A book first played off the shelf and later listed by the runtime is
+/// one book with one place.
+#[test]
+fn a_shelf_book_and_its_listing_share_a_place() {
+    let app = Audiobook {
+        places: vec![Place {
+            id: "shelf:the-moon.mp3z".to_owned(),
+            position_ms: 90_000,
+            ..Place::default()
+        }],
+        ..Audiobook::default()
+    };
+    assert!(app.place_of("0/Audiobooks/the-moon.mp3z").is_some());
+    assert!(app.place_of("1/audiobook/the-moon.mp3z").is_some());
+    assert!(app.place_of("0/Audiobooks/the-moon.m4b").is_none());
+    assert!(app.place_of("shelf:other.mp3z").is_none());
+}
+
 /// Coming back to a book after a while starts a little before where it
 /// stopped, and more the longer it has been.
 #[test]
@@ -292,14 +310,41 @@ fn a_book_opens_where_it_was_left_and_keeps_playing_behind_the_library() {
     let drawn = format!("{:?}", app.screen(&context));
     assert!(drawn.contains("Night"), "{drawn}");
     assert!(drawn.contains("Ada Example"), "{drawn}");
-    // Back keeps the player and the book, and the library leads back to it.
+    // Back keeps the player and the book, and the library leads back to it;
+    // the composer starts afresh.
+    app.topic = "the moon".to_owned();
     app.on_action(&mut context, kobo_sdk::ActionId::BACK);
     assert_eq!(app.stage, Stage::Library);
     assert!(app.player.is_some());
+    assert!(app.topic.is_empty());
     let drawn = format!("{:?}", app.screen(&context));
     assert!(drawn.contains("Now playing"), "{drawn}");
+    assert!(drawn.contains("\"Night\""), "{drawn}");
     app.on_action(&mut context, action_id(NOW_PLAYING));
     assert_eq!(app.stage, Stage::Player);
+}
+
+/// A book made here, playing off the shelf, is named in the library's
+/// playing row by the title the studio saved, not its archive's slug.
+#[test]
+fn the_playing_row_names_a_studio_book_by_its_saved_title() {
+    let app = Audiobook {
+        titles: vec![("the-moon.mp3z".to_owned(), "The Moon".to_owned())],
+        player: Some(kobo_sdk::audio::AudioPlayer::shelf(
+            "the-moon.mp3z",
+            "The Moon",
+        )),
+        playing: Some("shelf:the-moon.mp3z".to_owned()),
+        library: Some(Vec::new()),
+        ..Audiobook::default()
+    };
+    assert_eq!(app.playing_title(), "The Moon");
+    let unnamed = Audiobook {
+        player: Some(kobo_sdk::audio::AudioPlayer::shelf("stray.mp3z", "stray")),
+        playing: Some("shelf:stray.mp3z".to_owned()),
+        ..Audiobook::default()
+    };
+    assert_eq!(unnamed.playing_title(), "stray");
 }
 
 /// A pause writes the place at once; a reading that only moved the clock

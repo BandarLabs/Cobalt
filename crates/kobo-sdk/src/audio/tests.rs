@@ -867,6 +867,29 @@ fn the_sleep_timer_pauses_when_it_fires_and_says_so() {
     assert!(!format!("{:?}", player.screen()).contains("Paused by the sleep timer"));
 }
 
+/// A seek or a new speed must not hand the listener a fresh half hour.
+#[test]
+fn a_timer_in_minutes_keeps_counting_across_a_seek() {
+    let mut player = loaded(12);
+    player.playback = AudioPlaybackState::Playing;
+    let mut context = crate::Context::default();
+    player.sleep = Sleep::Minutes(30);
+    player.sleep_until = Some(Instant::now() + Duration::from_secs(10 * 60));
+    player.seek(&mut context, 100_000);
+    let seconds = context
+        .take_commands()
+        .into_iter()
+        .find_map(|command| match command {
+            Command::Spawn {
+                work: crate::Task::Sleep { seconds },
+                ..
+            } => Some(seconds),
+            _ => None,
+        })
+        .expect("the timer is set again");
+    assert!((595..=600).contains(&seconds), "{seconds}");
+}
+
 #[test]
 fn an_end_of_chapter_timer_is_set_from_where_the_book_is_at_its_speed() {
     let mut player = loaded(12);
