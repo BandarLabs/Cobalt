@@ -1,9 +1,9 @@
 {
   "id": "audiobook",
-  "display_name": "Audiobook Studio",
+  "display_name": "Audiobooks",
   "short_label": "Audiobooks",
-  "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account.",
-  "version": "1.0.21",
+  "summary": "Play the audiobooks on your Kobo: MP3, M4B, M4A, OGG, FLAC and WAV, with chapters, speed, a sleep timer and your place kept. Or make one from a topic with your own accounts.",
+  "version": "2.0.0",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,7 +11,7 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
+  "release_notes": "Plays the audiobooks on the reader: MP3, M4B, M4A, OGG, Opus, FLAC and WAV, and a folder of numbered files as one book. Cover, author and chapters, speed from half to three times, a sleep timer, and your place kept in every book.",
   "setup": {
     "steps": [
       {
@@ -19,22 +19,14 @@
         "command": "kobo setup"
       },
       {
-        "text": "A book is researched by Exa, written by OpenAI and narrated by ElevenLabs, on your own accounts. Create an API key with each and save them in private files: ~/.exa, ~/.openai and ~/.elevenlabs."
+        "text": "Plug the reader in, open its storage and copy audiobooks into a folder called Audiobooks: an .m4b, .m4a, .mp3, .ogg, .opus, .flac or .wav file is one book, and a folder of numbered files is one book with a part per file."
       },
       {
-        "text": "Install the research key.",
+        "text": "Open Audiobooks, tap a book, and connect headphones or a speaker when asked. Tapping a book later carries on where you left it."
+      },
+      {
+        "text": "To make a book from a topic instead, create an API key with Exa, OpenAI and ElevenLabs, save them in ~/.exa, ~/.openai and ~/.elevenlabs, and install each with its command. It shows the time and cost before anything is spent.",
         "command": "kobo secret set exa"
-      },
-      {
-        "text": "Install the writing key.",
-        "command": "kobo secret set openai"
-      },
-      {
-        "text": "Install the narration key.",
-        "command": "kobo secret set elevenlabs"
-      },
-      {
-        "text": "Open Audiobook Studio and type a topic. It shows the time and cost before anything is spent: about 3 to 8 minutes and $1 to $5 a book. The free sample plays with no keys."
       }
     ]
   }

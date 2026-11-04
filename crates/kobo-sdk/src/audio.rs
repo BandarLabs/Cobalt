@@ -238,6 +238,11 @@ pub struct AudioPlayer {
     /// What the book said about itself, once the runtime has been asked.
     detail: Option<AudioDetail>,
     detail_asked: bool,
+    /// A load has been answered and the book has not been seen ready yet.
+    /// The runtime answers a load with Loading and says Ready later, or with
+    /// Ready at once; the work that follows a load happens exactly once
+    /// either way.
+    pending_ready: bool,
     /// A cover the book carried, waiting for the application to draw it.
     cover_bytes: Option<Vec<u8>>,
     /// Where to go once the book is ready, before it plays.
@@ -269,6 +274,10 @@ pub struct AudioPlayer {
     trouble: Option<String>,
     secondary_action: Option<(String, String, Glyph)>,
     owns_back: bool,
+    /// Whether the title the application gave stands even when the book
+    /// says another. A listing names a book by its file; a book made by
+    /// the application itself has a name its files do not carry.
+    keep_title: bool,
 }
 
 impl AudioPlayer {
@@ -287,6 +296,7 @@ impl AudioPlayer {
             loaded: LoadState::Unloaded,
             detail: None,
             detail_asked: false,
+            pending_ready: false,
             cover_bytes: None,
             resume_ms: None,
             paused_since: None,
@@ -310,6 +320,7 @@ impl AudioPlayer {
             trouble: None,
             secondary_action: None,
             owns_back: false,
+            keep_title: false,
         }
     }
 
@@ -373,6 +384,16 @@ impl AudioPlayer {
         glyph: Glyph,
     ) -> Self {
         self.secondary_action = Some((name.into(), label.into(), glyph));
+        self
+    }
+
+    /// Keeps the title given even when the book says another: for a book
+    /// whose name the application knows better than the file's tags do,
+    /// such as one it made itself. Without this the book's own title wins,
+    /// which is right for a file named by whoever copied it over.
+    #[must_use]
+    pub const fn keep_title(mut self) -> Self {
+        self.keep_title = true;
         self
     }
 
@@ -556,6 +577,9 @@ impl AudioPlayer {
     }
 
     fn title(&self) -> &str {
+        if self.keep_title && !self.metadata.title.is_empty() {
+            return &self.metadata.title;
+        }
         self.detail
             .as_ref()
             .map(|detail| detail.title.as_str())
@@ -1465,6 +1489,8 @@ impl AudioPlayer {
                     } else {
                         LoadState::Loaded
                     };
+                    self.pending_ready = self.loaded == LoadState::Loaded;
+                    self.detail_asked = false;
                 }
                 // Position and duration describe whatever the backend last
                 // loaded, which before our own load is the previous book. A
@@ -1486,7 +1512,8 @@ impl AudioPlayer {
                 } else if *state == AudioPlaybackState::Playing {
                     self.paused_since = None;
                 }
-                if was == AudioPlaybackState::Loading && *state != AudioPlaybackState::Loading {
+                if self.pending_ready && *state != AudioPlaybackState::Loading {
+                    self.pending_ready = false;
                     let resuming = self.resume_ms.is_some();
                     self.just_loaded(context);
                     if resuming {
@@ -1591,10 +1618,11 @@ impl AudioPlayer {
                         return;
                     }
                 }
-                if matches!(request, DeviceRequest::ConnectBluetooth { .. })
-                    && self.connected_output().is_some()
-                    && self.autoplay == PlayIntent::Autoplay
-                {
+                if self.autoplay == PlayIntent::Autoplay && self.connected_output().is_some() {
+                    // Whatever brought the headphones: a connect that was
+                    // asked for, a radio switched on that found its old
+                    // pair, or a scan that saw them arrive. The Play that
+                    // was waiting for an output has one.
                     self.begin_audio(context);
                 } else if matches!(request, DeviceRequest::SetBluetooth { enabled: true }) {
                     self.scan(context);

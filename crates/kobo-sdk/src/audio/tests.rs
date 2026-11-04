@@ -683,9 +683,40 @@ fn a_ready_book_is_described_sped_up_and_resumed_before_it_plays() {
     assert!(sent(&mut context)
         .iter()
         .any(|request| matches!(request, DeviceRequest::PlayAudio)));
-    // The description is asked for once, however many times the book is
-    // reloaded.
     assert!(player.detail_asked);
+
+    // A runtime that answers a load with Ready at once, as the simulator
+    // does, gets the same three requests from that one answer.
+    let mut at_once = AudioPlayer::library("0/night.m4b", "Night")
+        .speed(150)
+        .resuming_at(Duration::from_secs(3_600));
+    at_once.on_device_result(
+        &mut context,
+        &DeviceRequest::LoadAudio {
+            source: AudioSource::Library("0/night.m4b".to_owned()),
+        },
+        &DeviceResult::Audio {
+            available: true,
+            state: AudioPlaybackState::Ready,
+            position_ms: 0,
+            duration_ms: 7_200_000,
+            volume: 70,
+        },
+    );
+    let requests = sent(&mut context);
+    assert!(
+        matches!(
+            requests.as_slice(),
+            [
+                DeviceRequest::ReadAudioDetail,
+                DeviceRequest::SetAudioSpeed { percent: 150 },
+                DeviceRequest::SeekAudio {
+                    position_ms: 3_600_000
+                }
+            ]
+        ),
+        "{requests:?}"
+    );
 }
 
 #[test]
@@ -705,6 +736,10 @@ fn the_description_brings_chapters_and_hands_the_cover_over_once() {
     );
     assert_eq!(player.chapters().len(), 4);
     assert_eq!(player.title(), "Night");
+    // An application that knows the name keeps it over the file's.
+    let mut named = loaded(0).keep_title();
+    named.detail = player.detail.clone();
+    assert_eq!(named.title(), "A History of the Moon");
     assert_eq!(player.take_cover_bytes(), Some(vec![0xff, 0xd8]));
     assert_eq!(player.take_cover_bytes(), None);
     // An older runtime that cannot describe the book is not trouble.

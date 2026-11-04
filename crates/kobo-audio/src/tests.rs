@@ -54,7 +54,9 @@ fn an_m4b_tells_its_title_author_cover_and_nero_chapters() {
     let description = book.description();
     assert_eq!(description.title.as_deref(), Some("The Quiet Shelf"));
     assert_eq!(description.author.as_deref(), Some("Ada Example"));
-    assert_eq!(description.narrator.as_deref(), Some("Read by Ada Example"));
+    // The composer tag says "Read by Ada Example", which is the author's own
+    // name once the words in front of it go, so there is no narrator to add.
+    assert_eq!(description.narrator, None);
     assert!(description
         .cover
         .as_ref()

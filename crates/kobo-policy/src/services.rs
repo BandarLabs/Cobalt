@@ -618,7 +618,22 @@ impl DeviceServices {
             || DeviceResult::Bluetooth {
                 available: true,
                 enabled: self.bluetooth_enabled,
-                devices: Vec::new(),
+                // A pair of headphones, paired and connected, the moment the
+                // radio is on. Without one no player under the simulator
+                // ever plays: Play opens the picker, the scan finds nothing,
+                // and the one path every audio application takes could not
+                // be tried off the reader.
+                devices: if self.bluetooth_enabled {
+                    vec![kobo_protocol::BluetoothDevice {
+                        address: "00:11:22:33:44:55".to_owned(),
+                        name: "Simulated headphones".to_owned(),
+                        kind: kobo_protocol::BluetoothDeviceKind::Audio,
+                        paired: true,
+                        connected: true,
+                    }]
+                } else {
+                    Vec::new()
+                },
                 // The simulated host hands the panel back by returning, so
                 // nothing here ever reboots.
                 restart_on_exit: false,

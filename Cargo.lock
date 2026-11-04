@@ -838,6 +838,7 @@ name = "kobo-audiobook"
 version = "0.3.32"
 dependencies = [
  "kobo-doc",
+ "kobo-image",
  "kobo-json",
  "kobo-sdk",
 ]

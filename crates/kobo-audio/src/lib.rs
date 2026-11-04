@@ -19,6 +19,7 @@ pub mod resample;
 pub mod stretch;
 
 mod mp4;
+#[cfg(feature = "opus")]
 mod opus;
 mod tags;
 
@@ -59,6 +60,7 @@ pub const MAX_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 static CODECS: LazyLock<CodecRegistry> = LazyLock::new(|| {
     let mut registry = CodecRegistry::new();
     symphonia::default::register_enabled_codecs(&mut registry);
+    #[cfg(feature = "opus")]
     registry.register_audio_decoder::<opus::Adapter>();
     registry
 });
@@ -411,8 +413,9 @@ impl Book {
         }
         drop(archive);
         drop(bytes);
-        // One member is a book in a box; several are chapters of one.
-        let title = (parts.len() > 1).then_some(title);
+        // One member is a book in a box, called what the box is called
+        // unless it says otherwise; several are chapters of one.
+        let title = (parts.len() > 1 || parts[0].tags.title.is_none()).then_some(title);
         Ok(Self::from_parts(parts, title.as_deref()))
     }
 
@@ -950,8 +953,23 @@ impl Tags {
         self.narrator = candidates
             .into_iter()
             .flatten()
+            .map(|name| unprefixed_narrator(&name))
+            .filter(|name| !name.is_empty())
             .find(|name| Some(name.as_str()) != author);
     }
+}
+
+/// A narrator's name without the "Read by" or "Narrated by" some tags put
+/// in front of it, so a byline does not end up saying it twice.
+fn unprefixed_narrator(name: &str) -> String {
+    let trimmed = name.trim();
+    let lowered = trimmed.to_ascii_lowercase();
+    for prefix in ["read by ", "narrated by ", "narrator: ", "narrator "] {
+        if lowered.starts_with(prefix) {
+            return trimmed[prefix.len()..].trim().to_owned();
+        }
+    }
+    trimmed.to_owned()
 }
 
 /// Reads a `Seek + Read` source at a position, for the atom and tag parsers.

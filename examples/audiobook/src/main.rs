@@ -576,21 +576,29 @@ impl Audiobook {
         }
     }
 
-    /// What a book is called: what it said when it was opened, else the
-    /// title the studio saved it under, else its file name.
+    /// What a book is called: the title the studio saved it under, else
+    /// what it said when it was opened, else its file name.
     fn title_of(&self, book: &Book) -> String {
-        if let Some(title) = self
-            .place_of(&book.id)
-            .map(|place| place.title.as_str())
-            .filter(|title| !title.is_empty())
-        {
+        if let Some(title) = self.studio_title(book) {
             return title.to_owned();
         }
-        let file = book.id.rsplit('/').next().unwrap_or_default();
+        self.place_of(&book.id)
+            .map(|place| place.title.as_str())
+            .filter(|title| !title.is_empty())
+            .map_or_else(|| book.title.clone(), str::to_owned)
+    }
+
+    /// The title a book made here was saved under, which its files do not
+    /// carry: the narration arrives without tags.
+    fn studio_title(&self, book: &Book) -> Option<&str> {
+        let file = book
+            .id
+            .strip_prefix("shelf:")
+            .unwrap_or_else(|| book.id.rsplit('/').next().unwrap_or_default());
         self.titles
             .iter()
             .find(|(name, _)| name == file)
-            .map_or_else(|| book.title.clone(), |(_, title)| title.clone())
+            .map(|(_, title)| title.as_str())
     }
 
     fn place_of(&self, id: &str) -> Option<&Place> {
@@ -710,9 +718,15 @@ impl Audiobook {
         if !place.author.is_empty() {
             metadata = metadata.author(place.author.clone());
         }
-        let mut player = AudioPlayer::library(&book.id, &title)
-            .metadata(metadata)
-            .owns_back(true);
+        let mut player = match book.id.strip_prefix("shelf:") {
+            Some(name) => AudioPlayer::shelf(name, &title),
+            None => AudioPlayer::library(&book.id, &title),
+        }
+        .metadata(metadata)
+        .owns_back(true);
+        if self.studio_title(&book).is_some() {
+            player = player.keep_title();
+        }
         if place.speed_percent > 0 {
             player = player.speed(place.speed_percent);
         }
@@ -743,9 +757,10 @@ impl Audiobook {
         SAMPLE_TITLE.clone_into(&mut self.title);
         SAMPLE_NAME.clone_into(&mut self.archive_name);
         let already_saved = self.library.as_ref().is_some_and(|books| {
-            books
-                .iter()
-                .any(|book| book.id.ends_with(&format!("/{SAMPLE_NAME}")))
+            books.iter().any(|book| {
+                book.id.ends_with(&format!("/{SAMPLE_NAME}"))
+                    || book.id == format!("shelf:{SAMPLE_NAME}")
+            })
         });
         if already_saved {
             self.open_shelf_player(context);
@@ -777,7 +792,8 @@ impl Audiobook {
                 AudioMetadata::new(&title)
                     .author("Researched, written and narrated on this reader"),
             )
-            .owns_back(true);
+            .owns_back(true)
+            .keep_title();
         player.set_cover(context.put_picture(
             PictureHandle(1),
             COVER_WIDTH,
@@ -1710,6 +1726,33 @@ impl KoboApp for Audiobook {
                     self.show(context);
                 }
             }
+            StoreResult::Shelf(blobs) => {
+                let entries = blobs
+                    .iter()
+                    .filter(|(name, _)| name.ends_with(ARCHIVE_SUFFIX))
+                    .map(|(name, bytes)| AudioEntry {
+                        id: format!("shelf:{name}"),
+                        title: name
+                            .strip_suffix(ARCHIVE_SUFFIX)
+                            .unwrap_or(name)
+                            .replace('-', " "),
+                        kind: 7,
+                        parts: 1,
+                        bytes: u64::from(*bytes),
+                    })
+                    .collect::<Vec<_>>();
+                self.listed(context, &entries, false);
+                if self.stage == Stage::Library {
+                    self.show(context);
+                }
+            }
+            StoreResult::Denied(_) if self.library.is_none() => {
+                self.shelf_unreadable = true;
+                self.library = Some(Vec::new());
+                if self.stage == Stage::Library {
+                    self.show(context);
+                }
+            }
             _ => {}
         }
     }
@@ -1733,7 +1776,12 @@ impl KoboApp for Audiobook {
                 DeviceResult::AudioLibrary { entries, truncated } => {
                     self.listed(context, entries, *truncated);
                 }
-                DeviceResult::Denied(_) | DeviceResult::Failed(_) => {
+                // A runtime that cannot list the reader's audiobooks, as a
+                // simulator without an audio backend cannot, can still list
+                // this application's own shelf, where the books made here
+                // and the sample live.
+                DeviceResult::Denied(_) => context.shelf().list(),
+                DeviceResult::Failed(_) => {
                     if self.library.is_none() {
                         self.shelf_unreadable = true;
                         self.library = Some(Vec::new());

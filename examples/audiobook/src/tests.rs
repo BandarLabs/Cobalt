@@ -376,6 +376,42 @@ fn the_place_is_written_at_a_pause_and_once_a_minute_while_playing() {
     assert_eq!(app.places[0].position_ms, 0);
 }
 
+/// A runtime that cannot list the reader's audiobooks still lists the
+/// books made here, from the shelf, and plays them from the shelf.
+#[test]
+fn without_a_listing_the_shelf_is_the_library() {
+    let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+    let mut context = runner.context();
+    let mut app = Audiobook {
+        titles: vec![("moon.mp3z".to_owned(), "The Moon".to_owned())],
+        ..Audiobook::default()
+    };
+    app.on_device_result(
+        &mut context,
+        kobo_sdk::DeviceRequest::ListAudio,
+        kobo_sdk::DeviceResult::Denied(kobo_sdk::DenyReason::Unsupported),
+    );
+    assert!(context.take_commands().iter().any(|command| matches!(
+        command,
+        kobo_sdk::Command::Store(kobo_sdk::StoreRequest::ShelfList)
+    )));
+    app.on_store(
+        &mut context,
+        StoreResult::Shelf(vec![
+            ("moon.mp3z".to_owned(), 4_000_000),
+            ("moon.part-001".to_owned(), 900_000),
+            ("notes.txt".to_owned(), 12),
+        ]),
+    );
+    let books = app.library.clone().expect("the shelf answered");
+    assert_eq!(books.len(), 1);
+    assert_eq!(app.title_of(&books[0]), "The Moon");
+    app.play(&mut context, 0);
+    assert_eq!(app.playing.as_deref(), Some("shelf:moon.mp3z"));
+    let drawn = format!("{:?}", app.screen(&context));
+    assert!(drawn.contains("The Moon"), "{drawn}");
+}
+
 /// An audiobook took four minutes and fourteen narration calls to make.
 /// Cancelling the next one must not lose it, or the book playing.
 #[test]

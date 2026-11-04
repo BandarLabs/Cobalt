@@ -9,8 +9,14 @@ publish = false
 [dependencies]
 kobo-doc = { path = "../kobo-doc" }
 kobo-protocol = { path = "../kobo-protocol" }
-rusty-opus = "1.0.2"
+rusty-opus = { version = "1.0.2", optional = true }
 symphonia = { version = "0.6.1", default-features = false, features = ["aac", "flac", "id3v1", "id3v2", "isomp4", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+
+[features]
+default = ["opus"]
+# Ogg Opus, through a pure Rust port of libopus. A feature so a build can
+# leave it out and list Opus books as unplayable instead.
+opus = ["dep:rusty-opus"]
 
 [lints]
 workspace = true
