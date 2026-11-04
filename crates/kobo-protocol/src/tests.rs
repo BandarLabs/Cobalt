@@ -119,6 +119,12 @@ fn every_device_request_round_trips() {
         },
         DeviceRequest::StopAudio,
         DeviceRequest::SetAudioVolume { percent: 65 },
+        DeviceRequest::LoadAudio {
+            source: AudioSource::Library("0/Audiobooks/The Quiet Shelf.m4b".to_owned()),
+        },
+        DeviceRequest::ListAudio,
+        DeviceRequest::ReadAudioDetail,
+        DeviceRequest::SetAudioSpeed { percent: 125 },
         DeviceRequest::ReadBatteryDetail,
         DeviceRequest::ReadCover,
         DeviceRequest::Update {
@@ -306,6 +312,44 @@ fn every_device_result_round_trips() {
             }],
             truncated: false,
         },
+        DeviceResult::AudioLibrary {
+            entries: vec![
+                AudioEntry {
+                    id: "0/Audiobooks/The Quiet Shelf.m4b".to_owned(),
+                    title: "The Quiet Shelf".to_owned(),
+                    kind: 2,
+                    parts: 1,
+                    bytes: 412_000_000,
+                },
+                AudioEntry {
+                    id: "0/Audiobooks/Dune".to_owned(),
+                    title: "Dune".to_owned(),
+                    kind: 1,
+                    parts: 42,
+                    bytes: 5_000_000_000,
+                },
+            ],
+            truncated: true,
+        },
+        DeviceResult::AudioDetail(AudioDetail {
+            title: "The Quiet Shelf".to_owned(),
+            author: "Ada Example".to_owned(),
+            narrator: String::new(),
+            album: "The Quiet Shelf".to_owned(),
+            format: "AAC 64 kbps, 22 kHz mono".to_owned(),
+            duration_ms: 29_000_000,
+            chapters: vec![
+                AudioChapter {
+                    start_ms: 0,
+                    title: "One".to_owned(),
+                },
+                AudioChapter {
+                    start_ms: 1_800_000,
+                    title: String::new(),
+                },
+            ],
+            cover: vec![0xff, 0xd8, 0xff],
+        }),
         DeviceResult::LibraryDocument {
             id: "0/notes.md".to_owned(),
             bytes: b"hello".to_vec(),

@@ -1,16 +1,21 @@
-//! Runtime-owned MP3 playback through Kobo's AOSP A2DP HAL.
+//! Runtime-owned audiobook playback through Kobo's AOSP A2DP HAL.
 //!
 //! Bluetooth connection ownership stays with the firmware's `btservice`.
 //! Once an audio device is connected it exposes the standard AOSP
 //! `audio_a2dp_hw` control and data sockets. The player sends CHECK_READY,
-//! START and STOP on the control socket and paced, 48 kHz stereo S16LE PCM
-//! on the data socket. No Nickel process or audio command-line utility is
-//! required.
+//! START and STOP on the control socket and paced S16LE PCM on the data
+//! socket, at the rate the stack asks for. No Nickel process or audio
+//! command-line utility is required.
+//!
+//! A book is decoded as it plays, a chunk ahead of the sink, by
+//! [`kobo_audio`]. What this module owns is the clock, the sockets, the
+//! volume, and the facts about the sink that nothing else can learn.
 
-use kobo_doc::zip::Archive;
+use kobo_audio::resample::Resampler;
+use kobo_audio::stretch::Stretcher;
+use kobo_audio::{Book, Description, Fault};
 use kobo_protocol::{AudioPlaybackState, DeviceError, DeviceResult};
-use minimp3::{Decoder, Error as Mp3Error};
-use std::fs;
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -24,27 +29,40 @@ pub const DATA_SOCKET: &str = "/tmp/audio.a2dp_data";
 const COMMAND_CHECK_READY: u8 = 0x01;
 const COMMAND_START: u8 = 0x02;
 const COMMAND_STOP: u8 = 0x03;
+/// Asks the stack what it reads from the data socket: a rate and a channel
+/// count, after the acknowledgement. AOSP's own HAL asks this of its sink
+/// stream, and it is the only way to know rather than guess.
+const COMMAND_GET_AUDIO_CONFIG: u8 = 0x05;
 const ACK_SUCCESS: u8 = 0x00;
-/// What the firmware's Bluetooth encoder consumes. Found empirically on the
-/// Clara BW: a 44.1 kHz sine over the data socket stutters and plays sharp,
-/// the same tone generated at 48 kHz plays clean and true, so the encoder
-/// reads the stream as 48 kHz no matter what it is fed.
-const TARGET_RATE: u64 = 48_000;
-const TARGET_RATE_I64: i64 = 48_000;
-const CHUNK_FRAMES: usize = 2_400;
-const LEAD_IN_FRAMES: usize = 24_000;
+/// What the firmware's Bluetooth encoder consumes when it will not say.
+/// Found empirically on the Clara BW: a 44.1 kHz sine over the data socket
+/// stutters and plays sharp, the same tone generated at 48 kHz plays clean
+/// and true, so the encoder reads the stream as 48 kHz unless it answers
+/// [`COMMAND_GET_AUDIO_CONFIG`] with something else.
+const DEFAULT_RATE: u32 = 48_000;
 /// How much audio one chunk carries, and therefore the write cadence.
 const WRITE_PERIOD: Duration = Duration::from_millis(50);
+const CHUNK_MS: u32 = 50;
+/// Silence written ahead of the first chunk, so a late chunk is a late
+/// chunk and not a click.
+const LEAD_IN_MS: u32 = 500;
 /// A schedule this far behind is a stall, not jitter, and is restarted
 /// rather than caught up with a burst of writes.
 const RESYNC_LIMIT: Duration = Duration::from_millis(500);
+/// How long a paused book keeps the stream open with silence.
+///
+/// Headphones switch themselves off after a few minutes without a stream
+/// and the stack closes its data socket the moment the stream stops, so a
+/// pause keeps the stream alive with silence, which is what makes
+/// resuming instant. It cannot keep it alive forever: silence costs the
+/// radio and the headphones' battery as much as speech does. After this
+/// long the stream is released, and the next Play opens it again.
+const PAUSE_KEEPALIVE: Duration = Duration::from_secs(300);
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
 const DATA_CONNECT_TIMEOUT: Duration = Duration::from_millis(750);
-const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
-const MAX_TRACK_BYTES: usize = 8 * 1024 * 1024;
-const MAX_TRACK_FRAMES: usize = 8_000_000;
-const MAX_TRACK_FRAMES_U64: u64 = 8_000_000;
-const _: () = assert!(MAX_TRACK_FRAMES * 4 <= 32 * 1024 * 1024);
+/// The largest stream cached before playing. A stream is fetched whole
+/// because the runtime's fetch is a range of bytes, not a socket.
+const MAX_STREAM_BYTES: usize = 64 * 1024 * 1024;
 const FETCH_CHUNK: u32 = 512 * 1024;
 
 const BACKEND_MARKERS: [&str; 8] = [
@@ -64,9 +82,16 @@ const BACKEND_MARKERS: [&str; 8] = [
 /// transport, keeping credentials and sockets out of SDK applications.
 pub type StreamFetcher = Arc<dyn Fn(&str, u32, u32) -> Result<Vec<u8>, DeviceError> + Send + Sync>;
 
+/// Where a book comes from.
 #[derive(Clone, Debug)]
 pub enum Source {
+    /// One file: a single book, or an `.mp3z` of parts.
     File(PathBuf),
+    /// A folder's files, in playing order, as one book called `title`.
+    Parts {
+        title: String,
+        paths: Vec<PathBuf>,
+    },
     Stream(String),
 }
 
@@ -85,15 +110,18 @@ pub struct SinkEvidence {
     pub connected: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct State {
     playback: AudioPlaybackState,
     position_ms: u32,
     duration_ms: u32,
     volume: u8,
+    speed_percent: u16,
     error: Option<DeviceError>,
     /// What the last attempt to use the A2DP sink proved, if anything.
     sink: Option<SinkEvidence>,
+    /// What the loaded book says about itself.
+    description: Option<Arc<Description>>,
 }
 
 impl Default for State {
@@ -103,8 +131,10 @@ impl Default for State {
             position_ms: 0,
             duration_ms: 0,
             volume: 70,
+            speed_percent: 100,
             error: None,
             sink: None,
+            description: None,
         }
     }
 }
@@ -116,6 +146,7 @@ enum Command {
     Seek(u32),
     Stop,
     Volume(u8),
+    Speed(u16),
     Shutdown,
 }
 
@@ -174,9 +205,28 @@ impl Audio {
         locked(&self.state).sink
     }
 
+    /// Whether a book is playing right now, which is the one thing about
+    /// playback the power policy needs to know.
+    #[must_use]
+    pub fn is_playing(&self) -> bool {
+        locked(&self.state).playback == AudioPlaybackState::Playing
+    }
+
+    /// What the loaded book says about itself, once it is loaded.
+    #[must_use]
+    pub fn detail(&self) -> Option<Arc<Description>> {
+        locked(&self.state).description.clone()
+    }
+
+    /// The speed the book plays at, as a percentage.
+    #[must_use]
+    pub fn speed_percent(&self) -> u16 {
+        locked(&self.state).speed_percent
+    }
+
     #[must_use]
     pub fn state(&self) -> DeviceResult {
-        let state = *locked(&self.state);
+        let state = locked(&self.state);
         state.error.map_or(
             DeviceResult::Audio {
                 available: true,
@@ -197,6 +247,7 @@ impl Audio {
             state.position_ms = 0;
             state.duration_ms = 0;
             state.error = None;
+            state.description = None;
         }
         self.send(Command::Load(source))
     }
@@ -205,7 +256,10 @@ impl Audio {
     pub fn play(&self) -> DeviceResult {
         let restart = {
             let mut state = locked(&self.state);
-            if state.playback == AudioPlaybackState::Idle {
+            if matches!(
+                state.playback,
+                AudioPlaybackState::Idle | AudioPlaybackState::Loading
+            ) {
                 return DeviceResult::Failed(DeviceError::NotFound);
             }
             let restart = state.playback == AudioPlaybackState::Finished;
@@ -235,7 +289,10 @@ impl Audio {
     pub fn seek(&self, position_ms: u32) -> DeviceResult {
         {
             let mut state = locked(&self.state);
-            if state.playback == AudioPlaybackState::Idle {
+            if matches!(
+                state.playback,
+                AudioPlaybackState::Idle | AudioPlaybackState::Loading
+            ) {
                 return DeviceResult::Failed(DeviceError::NotFound);
             }
             state.position_ms = position_ms.min(state.duration_ms);
@@ -270,6 +327,22 @@ impl Audio {
         self.send(Command::Volume(percent))
     }
 
+    /// Sets the playing speed as a percentage, within what the stretcher
+    /// does well. The state answered says the speed that was kept.
+    #[must_use]
+    pub fn set_speed(&self, percent: u16) -> DeviceResult {
+        let percent = percent.clamp(
+            kobo_audio::stretch::MIN_SPEED_PERCENT,
+            kobo_audio::stretch::MAX_SPEED_PERCENT,
+        );
+        {
+            let mut state = locked(&self.state);
+            state.speed_percent = percent;
+            state.error = None;
+        }
+        self.send(Command::Speed(percent))
+    }
+
     fn send(&self, command: Command) -> DeviceResult {
         if self.sender.send(command).is_err() {
             return DeviceResult::Failed(DeviceError::Backend);
@@ -293,358 +366,367 @@ fn locked(state: &Mutex<State>) -> MutexGuard<'_, State> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-struct Track {
-    encoded: Vec<u8>,
-    frames: u64,
-}
-
+/// A book and the stages between it and the sink: the resampler to the
+/// sink's rate, the stretcher for the chosen speed, and the frames made
+/// ready ahead of the next write.
 struct Media {
-    tracks: Vec<Track>,
-    starts: Vec<u64>,
-    total_frames: u64,
-    track: usize,
-    pcm: Vec<i16>,
-    frame: usize,
+    book: Book,
+    sink_rate: u32,
+    resampler: Resampler,
+    stretcher: Stretcher,
+    native: Vec<i16>,
+    resampled: Vec<i16>,
+    stretched: Vec<i16>,
+    /// Interleaved stereo at `sink_rate`, ready to write.
+    ready: VecDeque<i16>,
 }
 
 impl Media {
-    fn from_bytes(bytes: Vec<u8>) -> Result<Self, DeviceError> {
-        let encoded = if bytes.starts_with(b"PK\x03\x04") {
-            let archive = Archive::open(&bytes).map_err(|_| DeviceError::InvalidInput)?;
-            let names = archive
-                .names()
-                .filter(|name| name.to_ascii_lowercase().ends_with(".mp3"))
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
-            if names.is_empty() {
-                return Err(DeviceError::InvalidInput);
-            }
-            names
-                .iter()
-                .map(|name| archive.read(name).map_err(|_| DeviceError::InvalidInput))
-                .collect::<Result<Vec<_>, _>>()?
-        } else {
-            vec![bytes]
-        };
-
-        let mut tracks = Vec::with_capacity(encoded.len());
-        let mut starts = Vec::with_capacity(encoded.len());
-        let mut total_frames = 0_u64;
-        for bytes in encoded {
-            if bytes.is_empty() || bytes.len() > MAX_TRACK_BYTES {
-                return Err(DeviceError::InvalidInput);
-            }
-            starts.push(total_frames);
-            let frames = inspect_frames(&bytes)?;
-            if frames == 0 || frames > MAX_TRACK_FRAMES_U64 {
-                return Err(DeviceError::InvalidInput);
-            }
-            total_frames = total_frames
-                .checked_add(frames)
-                .ok_or(DeviceError::InvalidInput)?;
-            tracks.push(Track {
-                encoded: bytes,
-                frames,
-            });
+    fn new(book: Book, sink_rate: u32, speed_percent: u16) -> Self {
+        let mut stretcher = Stretcher::new(sink_rate);
+        stretcher.set_speed(speed_percent);
+        Self {
+            book,
+            sink_rate,
+            resampler: Resampler::new(sink_rate, sink_rate),
+            stretcher,
+            native: Vec::new(),
+            resampled: Vec::new(),
+            stretched: Vec::new(),
+            ready: VecDeque::new(),
         }
-        Ok(Self {
-            tracks,
-            starts,
-            total_frames,
-            track: 0,
-            pcm: Vec::new(),
-            frame: 0,
-        })
     }
 
-    fn duration_ms(&self) -> u32 {
-        frames_to_ms(self.total_frames)
-    }
-
-    fn position_frames(&self) -> u64 {
-        self.starts
-            .get(self.track)
-            .copied()
-            .unwrap_or(self.total_frames)
-            .saturating_add(self.frame as u64)
-            .min(self.total_frames)
-    }
-
-    fn ensure_decoded(&mut self) -> Result<(), DeviceError> {
-        if self.pcm.is_empty() && self.track < self.tracks.len() {
-            self.pcm = decode_track(&self.tracks[self.track].encoded)?;
-            let actual = u64::try_from(self.pcm.len() / 2).unwrap_or(u64::MAX);
-            let expected = self.tracks[self.track].frames;
-            if actual.abs_diff(expected) > TARGET_RATE * 2 {
-                return Err(DeviceError::Backend);
-            }
-            self.tracks[self.track].frames = actual;
+    /// Follows the sink to a different rate, throwing away what was made
+    /// for the old one.
+    fn retune(&mut self, sink_rate: u32) {
+        if sink_rate == self.sink_rate {
+            return;
         }
-        Ok(())
+        let speed = self.stretcher.speed_percent();
+        self.sink_rate = sink_rate;
+        self.resampler = Resampler::new(self.resampler.from_rate(), sink_rate);
+        self.stretcher = Stretcher::new(sink_rate);
+        self.stretcher.set_speed(speed);
+        self.ready.clear();
     }
 
     fn seek(&mut self, position_ms: u32) -> Result<(), DeviceError> {
-        let wanted = u64::from(position_ms)
-            .saturating_mul(TARGET_RATE)
-            .checked_div(1_000)
-            .unwrap_or(0)
-            .min(self.total_frames);
-        let track = self
-            .starts
-            .iter()
-            .enumerate()
-            .rfind(|(_, start)| **start <= wanted)
-            .map_or(0, |(index, _)| index);
-        if track != self.track {
-            self.track = track;
-            self.pcm.clear();
-        }
-        self.ensure_decoded()?;
-        self.frame = usize::try_from(wanted.saturating_sub(self.starts[self.track]))
-            .unwrap_or(usize::MAX)
-            .min(self.pcm.len() / 2);
+        self.book.seek(position_ms).map_err(fault_error)?;
+        self.resampler.reset();
+        self.stretcher.reset();
+        self.ready.clear();
         Ok(())
     }
 
-    fn advance_track(&mut self) -> Result<bool, DeviceError> {
-        if self.frame < self.pcm.len() / 2 {
-            return Ok(true);
+    /// Makes at least `frames` frames ready, or everything the book has
+    /// left. Returns whether anything at all is ready.
+    fn fill(&mut self, frames: usize) -> Result<bool, DeviceError> {
+        while self.ready.len() / 2 < frames {
+            self.native.clear();
+            let sound = self
+                .book
+                .read(frames, &mut self.native)
+                .map_err(fault_error)?;
+            if sound.frames == 0 {
+                // The stretcher keeps up to one frame it cannot match yet;
+                // a book's last thirty milliseconds are its silence anyway.
+                break;
+            }
+            if sound.rate != self.resampler.from_rate() {
+                self.resampler = Resampler::new(sound.rate, self.sink_rate);
+            }
+            self.resampled.clear();
+            self.resampler.push(&self.native, &mut self.resampled);
+            self.stretched.clear();
+            self.stretcher.push(&self.resampled, &mut self.stretched);
+            self.ready.extend(self.stretched.iter().copied());
         }
-        if self.track + 1 >= self.tracks.len() {
-            self.frame = self.pcm.len() / 2;
-            return Ok(false);
-        }
-        self.track += 1;
-        self.frame = 0;
-        self.pcm.clear();
-        self.ensure_decoded()?;
-        Ok(true)
+        Ok(!self.ready.is_empty())
+    }
+
+    /// Takes up to `frames` ready frames as a contiguous slice.
+    fn take(&mut self, frames: usize, out: &mut Vec<i16>) {
+        out.clear();
+        let take = frames.min(self.ready.len() / 2) * 2;
+        out.extend(self.ready.drain(..take));
     }
 }
 
+fn fault_error(fault: Fault) -> DeviceError {
+    match fault {
+        Fault::Unreadable => DeviceError::NotFound,
+        Fault::Unsupported => DeviceError::InvalidInput,
+        Fault::Damaged => DeviceError::Backend,
+    }
+}
+
+/// Everything the worker thread holds between commands.
+struct Worker<'a> {
+    state: &'a Mutex<State>,
+    fetcher: Option<&'a StreamFetcher>,
+    media: Option<Media>,
+    sink: Option<A2dpSink>,
+    next_write: Instant,
+    /// When the book was paused, while the stream is kept alive.
+    paused_at: Option<Instant>,
+    chunk: Vec<i16>,
+}
+
 fn run(receiver: &mpsc::Receiver<Command>, state: &Mutex<State>, fetcher: Option<&StreamFetcher>) {
-    let mut media: Option<Media> = None;
-    let mut sink: Option<A2dpSink> = None;
-    let mut next_write = Instant::now();
+    let mut worker = Worker {
+        state,
+        fetcher,
+        media: None,
+        sink: None,
+        next_write: Instant::now(),
+        paused_at: None,
+        chunk: Vec::new(),
+    };
     loop {
         let playback = locked(state).playback;
-        let wait = if matches!(
-            playback,
-            AudioPlaybackState::Playing | AudioPlaybackState::Paused
-        ) {
-            next_write.saturating_duration_since(Instant::now())
+        let ticking = match playback {
+            AudioPlaybackState::Playing => true,
+            AudioPlaybackState::Paused => worker.sink.is_some(),
+            _ => false,
+        };
+        let wait = if ticking {
+            worker.next_write.saturating_duration_since(Instant::now())
         } else {
             Duration::from_secs(86_400)
         };
         match receiver.recv_timeout(wait) {
             Ok(Command::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                stop_sink(&mut sink);
+                stop_sink(&mut worker.sink);
                 break;
             }
-            Ok(command) => handle_command(
-                command,
-                state,
-                fetcher,
-                &mut media,
-                &mut sink,
-                &mut next_write,
-            ),
+            Ok(command) => worker.handle(command),
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                let current = locked(state).playback;
-                let result = match current {
-                    AudioPlaybackState::Playing => play_chunk(state, &mut media, &mut sink),
-                    AudioPlaybackState::Paused => keepalive(state, &mut sink),
-                    _ => Ok(()),
-                };
-                if let Err(error) = result {
-                    fail(state, error);
-                    stop_sink(&mut sink);
-                }
-                next_write = next_deadline(next_write, Instant::now());
+                worker.tick();
+                worker.next_write = next_deadline(worker.next_write, Instant::now());
             }
         }
     }
 }
 
-fn handle_command(
-    command: Command,
-    state: &Mutex<State>,
-    fetcher: Option<&StreamFetcher>,
-    media: &mut Option<Media>,
-    sink: &mut Option<A2dpSink>,
-    next_write: &mut Instant,
-) {
-    match command {
-        Command::Load(source) => {
-            stop_sink(sink);
-            match load_source(source, fetcher).and_then(Media::from_bytes) {
-                Ok(loaded) => {
-                    let duration_ms = loaded.duration_ms();
-                    *media = Some(loaded);
-                    let mut observed = locked(state);
-                    observed.playback = AudioPlaybackState::Ready;
-                    observed.position_ms = 0;
-                    observed.duration_ms = duration_ms;
-                    observed.error = None;
+impl Worker<'_> {
+    fn handle(&mut self, command: Command) {
+        match command {
+            Command::Load(source) => self.load(source),
+            Command::Play { restart } => self.play(restart),
+            Command::Pause => {
+                let mut observed = locked(self.state);
+                if observed.playback == AudioPlaybackState::Playing {
+                    observed.playback = AudioPlaybackState::Paused;
                 }
-                Err(error) => fail(state, error),
+                drop(observed);
+                self.paused_at = Some(Instant::now());
+            }
+            Command::Seek(position_ms) => self.seek(position_ms),
+            Command::Stop => {
+                stop_sink(&mut self.sink);
+                self.paused_at = None;
+                if let Some(media) = self.media.as_mut() {
+                    let _ = media.seek(0);
+                }
+                let mut observed = locked(self.state);
+                observed.position_ms = 0;
+                observed.playback = if self.media.is_some() {
+                    AudioPlaybackState::Ready
+                } else {
+                    AudioPlaybackState::Idle
+                };
+                observed.error = None;
+            }
+            Command::Volume(percent) => {
+                let mut observed = locked(self.state);
+                observed.volume = percent;
+                observed.error = None;
+            }
+            Command::Speed(percent) => {
+                if let Some(media) = self.media.as_mut() {
+                    media.stretcher.set_speed(percent);
+                }
+                let mut observed = locked(self.state);
+                observed.speed_percent = percent;
+                observed.error = None;
+            }
+            Command::Shutdown => {}
+        }
+    }
+
+    fn load(&mut self, source: Source) {
+        stop_sink(&mut self.sink);
+        self.paused_at = None;
+        self.media = None;
+        let speed = locked(self.state).speed_percent;
+        match open_source(source, self.fetcher) {
+            Ok(book) => {
+                let description = Arc::new(book.description().clone());
+                let duration_ms = book.duration_ms();
+                self.media = Some(Media::new(book, DEFAULT_RATE, speed));
+                let mut observed = locked(self.state);
+                observed.playback = AudioPlaybackState::Ready;
+                observed.position_ms = 0;
+                observed.duration_ms = duration_ms;
+                observed.description = Some(description);
+                observed.error = None;
+            }
+            Err(error) => fail(self.state, error),
+        }
+    }
+
+    fn play(&mut self, restart: bool) {
+        let Some(media) = self.media.as_mut() else {
+            fail(self.state, DeviceError::NotFound);
+            return;
+        };
+        if restart {
+            if let Err(error) = media.seek(0) {
+                pause_with(self.state, error);
+                return;
             }
         }
-        Command::Play { restart } => {
-            let Some(loaded) = media.as_mut() else {
-                fail(state, DeviceError::NotFound);
-                return;
-            };
-            if restart {
-                if let Err(error) = loaded.seek(0) {
-                    fail(state, error);
+        self.paused_at = None;
+        if self.sink.is_none() {
+            match A2dpSink::open_and_start() {
+                Ok(mut opened) => {
+                    media.retune(opened.rate);
+                    if let Err(error) = opened.write_silence(opened.frames_in_ms(LEAD_IN_MS)) {
+                        record_sink(self.state, false);
+                        pause_with(self.state, error);
+                        return;
+                    }
+                    self.sink = Some(opened);
+                    record_sink(self.state, true);
+                    // The silence above is the cushion. Writing the first
+                    // real chunk right behind it keeps the cushion full;
+                    // waiting it out would start playback with an empty
+                    // buffer and a click on the first late chunk.
+                    self.next_write = Instant::now();
+                }
+                Err(error) => {
+                    record_sink(self.state, false);
+                    pause_with(self.state, error);
                     return;
                 }
             }
-            if sink.is_none() {
-                match A2dpSink::open_and_start() {
-                    Ok(mut opened) => {
-                        if let Err(error) = opened.write_silence(LEAD_IN_FRAMES) {
-                            record_sink(state, false);
-                            fail(state, error);
-                            return;
-                        }
-                        *sink = Some(opened);
-                        record_sink(state, true);
-                        // The silence above is the cushion. Writing the first
-                        // real chunk right behind it keeps the cushion full;
-                        // waiting it out would start playback with an empty
-                        // buffer and a click on the first late chunk.
-                        *next_write = Instant::now();
-                    }
-                    Err(error) => {
-                        record_sink(state, false);
-                        fail(state, error);
-                        return;
-                    }
+        }
+        let mut observed = locked(self.state);
+        observed.playback = AudioPlaybackState::Playing;
+        observed.error = None;
+    }
+
+    fn seek(&mut self, position_ms: u32) {
+        let Some(media) = self.media.as_mut() else {
+            fail(self.state, DeviceError::NotFound);
+            return;
+        };
+        match media.seek(position_ms) {
+            Ok(()) => {
+                let mut observed = locked(self.state);
+                observed.position_ms = media.book.position_ms();
+                if observed.playback == AudioPlaybackState::Finished {
+                    observed.playback = AudioPlaybackState::Paused;
                 }
+                observed.error = None;
             }
-            let mut observed = locked(state);
-            observed.playback = AudioPlaybackState::Playing;
-            observed.error = None;
+            Err(error) => pause_with(self.state, error),
         }
-        Command::Pause => {
-            let mut observed = locked(state);
-            if observed.playback == AudioPlaybackState::Playing {
-                observed.playback = AudioPlaybackState::Paused;
-            }
+    }
+
+    /// One write period has passed: the next chunk of the book, or of
+    /// silence while paused, goes to the sink.
+    fn tick(&mut self) {
+        let playback = locked(self.state).playback;
+        let result = match playback {
+            AudioPlaybackState::Playing => self.play_chunk(),
+            AudioPlaybackState::Paused => self.keepalive(),
+            _ => Ok(()),
+        };
+        if let Err(error) = result {
+            // A sink that stopped taking sound is headphones that went
+            // away, and a book that cannot be decoded is a damaged book.
+            // Neither loses the place: the book stays loaded and paused,
+            // and Play tries again from here.
+            pause_with(self.state, error);
+            stop_sink(&mut self.sink);
+            self.paused_at = None;
         }
-        Command::Seek(position_ms) => {
-            let Some(loaded) = media.as_mut() else {
-                fail(state, DeviceError::NotFound);
-                return;
-            };
-            match loaded.seek(position_ms) {
-                Ok(()) => {
-                    let mut observed = locked(state);
-                    observed.position_ms = frames_to_ms(loaded.position_frames());
-                    observed.playback = if observed.playback == AudioPlaybackState::Finished {
-                        AudioPlaybackState::Paused
-                    } else {
-                        observed.playback
-                    };
-                    observed.error = None;
-                }
-                Err(error) => fail(state, error),
-            }
+    }
+
+    fn play_chunk(&mut self) -> Result<(), DeviceError> {
+        let sink = self.sink.as_mut().ok_or(DeviceError::Unreachable)?;
+        let media = self.media.as_mut().ok_or(DeviceError::NotFound)?;
+        let frames = sink.frames_in_ms(CHUNK_MS);
+        if !media.fill(frames)? {
+            let mut observed = locked(self.state);
+            observed.position_ms = observed.duration_ms;
+            observed.playback = AudioPlaybackState::Finished;
+            drop(observed);
+            stop_sink(&mut self.sink);
+            return Ok(());
         }
-        Command::Stop => {
-            stop_sink(sink);
-            if let Some(loaded) = media.as_mut() {
-                let _ = loaded.seek(0);
-            }
-            let mut observed = locked(state);
-            observed.position_ms = 0;
-            observed.playback = if media.is_some() {
-                AudioPlaybackState::Ready
-            } else {
-                AudioPlaybackState::Idle
-            };
-            observed.error = None;
+        media.take(frames, &mut self.chunk);
+        let volume = locked(self.state).volume;
+        let written = sink.write_samples(&self.chunk, volume);
+        sink_write(self.state, written)?;
+        locked(self.state).position_ms = media.book.position_ms();
+        Ok(())
+    }
+
+    fn keepalive(&mut self) -> Result<(), DeviceError> {
+        if self
+            .paused_at
+            .is_some_and(|since| since.elapsed() >= PAUSE_KEEPALIVE)
+        {
+            stop_sink(&mut self.sink);
+            self.paused_at = None;
+            return Ok(());
         }
-        Command::Volume(percent) => {
-            let mut observed = locked(state);
-            observed.volume = percent;
-            observed.error = None;
-        }
-        Command::Shutdown => {}
+        let sink = self.sink.as_mut().ok_or(DeviceError::Unreachable)?;
+        let frames = sink.frames_in_ms(CHUNK_MS);
+        let written = sink.write_silence(frames);
+        sink_write(self.state, written)
     }
 }
 
-fn load_source(source: Source, fetcher: Option<&StreamFetcher>) -> Result<Vec<u8>, DeviceError> {
+fn open_source(source: Source, fetcher: Option<&StreamFetcher>) -> Result<Book, DeviceError> {
     match source {
-        Source::File(path) => {
-            let size = fs::metadata(&path)
-                .map_err(|_| DeviceError::NotFound)?
-                .len();
-            if size > MAX_SOURCE_BYTES as u64 {
-                return Err(DeviceError::InvalidInput);
-            }
-            fs::read(path).map_err(|_| DeviceError::NotFound)
-        }
+        Source::File(path) => Book::open(&path).map_err(fault_error),
+        Source::Parts { title, paths } => Book::open_parts(&title, &paths).map_err(fault_error),
         Source::Stream(url) => {
-            let fetcher = fetcher.ok_or(DeviceError::Unreachable)?;
-            let mut bytes = Vec::new();
-            loop {
-                let offset = u32::try_from(bytes.len()).map_err(|_| DeviceError::InvalidInput)?;
-                let chunk = fetcher(&url, offset, FETCH_CHUNK)?;
-                let done = chunk.len() < FETCH_CHUNK as usize;
-                if bytes.len().saturating_add(chunk.len()) > MAX_SOURCE_BYTES {
-                    return Err(DeviceError::InvalidInput);
-                }
-                bytes.extend_from_slice(&chunk);
-                if done {
-                    break;
-                }
-            }
-            if bytes.is_empty() {
-                Err(DeviceError::NotFound)
-            } else {
-                Ok(bytes)
-            }
+            let bytes = fetch_stream(&url, fetcher)?;
+            let name = url
+                .rsplit('/')
+                .next()
+                .filter(|name| kobo_audio::Container::from_name(name).is_some())
+                .unwrap_or("stream.mp3");
+            Book::open_bytes(bytes, name).map_err(fault_error)
         }
     }
 }
 
-fn play_chunk(
-    state: &Mutex<State>,
-    media: &mut Option<Media>,
-    sink: &mut Option<A2dpSink>,
-) -> Result<(), DeviceError> {
-    let loaded = media.as_mut().ok_or(DeviceError::NotFound)?;
-    loaded.ensure_decoded()?;
-    if !loaded.advance_track()? {
-        let mut observed = locked(state);
-        observed.position_ms = observed.duration_ms;
-        observed.playback = AudioPlaybackState::Finished;
-        stop_sink(sink);
-        return Ok(());
+fn fetch_stream(url: &str, fetcher: Option<&StreamFetcher>) -> Result<Vec<u8>, DeviceError> {
+    let fetcher = fetcher.ok_or(DeviceError::Unreachable)?;
+    let mut bytes = Vec::new();
+    loop {
+        let offset = u32::try_from(bytes.len()).map_err(|_| DeviceError::InvalidInput)?;
+        let chunk = fetcher(url, offset, FETCH_CHUNK)?;
+        let done = chunk.len() < FETCH_CHUNK as usize;
+        if bytes.len().saturating_add(chunk.len()) > MAX_STREAM_BYTES {
+            return Err(DeviceError::InvalidInput);
+        }
+        bytes.extend_from_slice(&chunk);
+        if done {
+            break;
+        }
     }
-    let start = loaded.frame.saturating_mul(2);
-    let frames = CHUNK_FRAMES.min(loaded.pcm.len() / 2 - loaded.frame);
-    let end = start + frames * 2;
-    let volume = locked(state).volume;
-    let written = sink
-        .as_mut()
-        .ok_or(DeviceError::Unreachable)?
-        .write_samples(&loaded.pcm[start..end], volume);
-    sink_write(state, written)?;
-    loaded.frame += frames;
-    locked(state).position_ms = frames_to_ms(loaded.position_frames());
-    Ok(())
-}
-
-fn keepalive(state: &Mutex<State>, sink: &mut Option<A2dpSink>) -> Result<(), DeviceError> {
-    let written = sink
-        .as_mut()
-        .ok_or(DeviceError::Unreachable)?
-        .write_silence(CHUNK_FRAMES);
-    sink_write(state, written)
+    if bytes.is_empty() {
+        Err(DeviceError::NotFound)
+    } else {
+        Ok(bytes)
+    }
 }
 
 /// Records one new observation of the sink.
@@ -663,7 +745,7 @@ fn record_sink(state: &Mutex<State>, connected: bool) {
 /// the headphones going away.
 ///
 /// Only a failed write is that evidence. Playback can also fail before it
-/// writes anything, decoding a damaged later track for instance, and taking
+/// writes anything, decoding a damaged later part for instance, and taking
 /// the headphones off the band then would describe a fault in the book as a
 /// change in the hardware.
 fn sink_write(state: &Mutex<State>, written: Result<(), DeviceError>) -> Result<(), DeviceError> {
@@ -673,20 +755,30 @@ fn sink_write(state: &Mutex<State>, written: Result<(), DeviceError>) -> Result<
     written
 }
 
+/// Nothing is loaded any more: a load that failed.
 fn fail(state: &Mutex<State>, error: DeviceError) {
     let mut observed = locked(state);
     observed.error = Some(error);
     observed.playback = AudioPlaybackState::Idle;
+    observed.description = None;
+}
+
+/// The book is still loaded and its place is kept; only the sound stopped.
+fn pause_with(state: &Mutex<State>, error: DeviceError) {
+    let mut observed = locked(state);
+    observed.error = Some(error);
+    if matches!(
+        observed.playback,
+        AudioPlaybackState::Playing | AudioPlaybackState::Finished
+    ) {
+        observed.playback = AudioPlaybackState::Paused;
+    }
 }
 
 fn stop_sink(sink: &mut Option<A2dpSink>) {
     if let Some(mut active) = sink.take() {
         let _ = active.stop();
     }
-}
-
-fn frames_to_ms(frames: u64) -> u32 {
-    u32::try_from(frames.saturating_mul(1_000) / TARGET_RATE).unwrap_or(u32::MAX)
 }
 
 /// When the write after the one just made is due.
@@ -707,130 +799,28 @@ fn next_deadline(previous: Instant, now: Instant) -> Instant {
     }
 }
 
-fn inspect_frames(encoded: &[u8]) -> Result<u64, DeviceError> {
-    let mut decoder = Decoder::new(std::io::Cursor::new(encoded));
-    let mut source_frames = 0_u64;
-    let mut rate = None;
-    loop {
-        match decoder.next_frame() {
-            Ok(frame) => {
-                let frame_rate = positive_rate(frame.sample_rate)?;
-                if rate.is_some_and(|known| known != frame_rate) || frame.channels == 0 {
-                    return Err(DeviceError::InvalidInput);
-                }
-                rate = Some(frame_rate);
-                source_frames = source_frames.saturating_add(
-                    u64::try_from(frame.data.len() / frame.channels).unwrap_or(u64::MAX),
-                );
-            }
-            Err(Mp3Error::Eof) => break,
-            Err(Mp3Error::Io(_)) => return Err(DeviceError::Backend),
-            Err(Mp3Error::InsufficientData | Mp3Error::SkippedData) => {}
-        }
-    }
-    Ok(source_frames.saturating_mul(TARGET_RATE) / rate.ok_or(DeviceError::InvalidInput)?)
-}
-
-fn decode_track(encoded: &[u8]) -> Result<Vec<i16>, DeviceError> {
-    let mut decoder = Decoder::new(std::io::Cursor::new(encoded));
-    let mut native = Vec::new();
-    let mut rate = None;
-    loop {
-        match decoder.next_frame() {
-            Ok(frame) => {
-                let frame_rate = positive_rate(frame.sample_rate)?;
-                if rate.is_some_and(|known| known != frame_rate) || frame.channels == 0 {
-                    return Err(DeviceError::InvalidInput);
-                }
-                rate = Some(frame_rate);
-                for samples in frame.data.chunks(frame.channels) {
-                    let left = samples[0];
-                    let right = samples.get(1).copied().unwrap_or(left);
-                    native.extend_from_slice(&[left, right]);
-                    if native.len() / 2 > MAX_TRACK_FRAMES {
-                        return Err(DeviceError::InvalidInput);
-                    }
-                }
-            }
-            Err(Mp3Error::Eof) => break,
-            Err(Mp3Error::Io(_)) => return Err(DeviceError::Backend),
-            Err(Mp3Error::InsufficientData | Mp3Error::SkippedData) => {}
-        }
-    }
-    let rate = rate.ok_or(DeviceError::InvalidInput)?;
-    if native.is_empty() {
-        return Err(DeviceError::InvalidInput);
-    }
-    if rate == TARGET_RATE {
-        return Ok(native);
-    }
-    resample_stereo(&native, rate)
-}
-
-fn positive_rate(rate: i32) -> Result<u64, DeviceError> {
-    u64::try_from(rate)
-        .ok()
-        .filter(|rate| *rate > 0)
-        .ok_or(DeviceError::InvalidInput)
-}
-
-fn resample_stereo(native: &[i16], rate: u64) -> Result<Vec<i16>, DeviceError> {
-    let input_frames = native.len() / 2;
-    let output_frames = u64::try_from(input_frames)
-        .unwrap_or(u64::MAX)
-        .saturating_mul(TARGET_RATE)
-        .checked_div(rate)
-        .ok_or(DeviceError::InvalidInput)?;
-    let output_frames = usize::try_from(output_frames).map_err(|_| DeviceError::InvalidInput)?;
-    if output_frames > MAX_TRACK_FRAMES {
-        return Err(DeviceError::InvalidInput);
-    }
-    let mut output = Vec::with_capacity(output_frames.saturating_mul(2));
-    for frame in 0..output_frames {
-        let numerator = u64::try_from(frame)
-            .unwrap_or(u64::MAX)
-            .saturating_mul(rate);
-        let first = usize::try_from(numerator / TARGET_RATE)
-            .unwrap_or(usize::MAX)
-            .min(input_frames - 1);
-        let second = (first + 1).min(input_frames - 1);
-        let fraction = i64::try_from(numerator % TARGET_RATE).unwrap_or(0);
-        for channel in 0..2 {
-            let from = i64::from(native[first * 2 + channel]);
-            let to = i64::from(native[second * 2 + channel]);
-            let sample = from + (to - from) * fraction / TARGET_RATE_I64;
-            output.push(
-                i16::try_from(sample.clamp(i64::from(i16::MIN), i64::from(i16::MAX)))
-                    .expect("the sample was clamped to i16"),
-            );
-        }
-    }
-    Ok(output)
-}
-
 struct A2dpSink {
     control: UnixStream,
     data: Option<UnixStream>,
     started: bool,
     bytes: Vec<u8>,
+    /// What the stack reads from the data socket.
+    rate: u32,
+    channels: u8,
 }
 
 impl A2dpSink {
     fn open_and_start() -> Result<Self, DeviceError> {
-        let control = UnixStream::connect(CONTROL_SOCKET).map_err(io_error)?;
-        control
-            .set_read_timeout(Some(IO_TIMEOUT))
-            .map_err(io_error)?;
-        control
-            .set_write_timeout(Some(IO_TIMEOUT))
-            .map_err(io_error)?;
         let mut sink = Self {
-            control,
+            control: connect_control()?,
             data: None,
             started: false,
             bytes: Vec::new(),
+            rate: DEFAULT_RATE,
+            channels: 2,
         };
         sink.command(COMMAND_CHECK_READY, true)?;
+        sink.read_config();
         sink.command(COMMAND_START, true)?;
         // START has changed btservice state even before the data listener is
         // reachable. Mark it now so a failed data connect still sends STOP
@@ -850,6 +840,48 @@ impl A2dpSink {
         }
     }
 
+    /// Asks the stack for its rate and channel count, and keeps the
+    /// defaults when it will not say.
+    ///
+    /// A stack that does not know the command acknowledges it with a
+    /// failure and nothing else, which is read and left. A stack that
+    /// answers nothing at all, or answers with a rate no encoder uses, has
+    /// left the control socket in a state nothing here can trust, so the
+    /// socket is opened again before START.
+    fn read_config(&mut self) {
+        match self.query_config() {
+            Ok(Some((rate, channels))) => {
+                self.rate = rate;
+                self.channels = channels;
+            }
+            Ok(None) => {}
+            Err(_) => {
+                if let Ok(control) = connect_control() {
+                    self.control = control;
+                }
+            }
+        }
+    }
+
+    fn query_config(&mut self) -> Result<Option<(u32, u8)>, DeviceError> {
+        self.control
+            .write_all(&[COMMAND_GET_AUDIO_CONFIG])
+            .map_err(io_error)?;
+        let mut ack = [0_u8; 1];
+        self.control.read_exact(&mut ack).map_err(io_error)?;
+        if ack[0] != ACK_SUCCESS {
+            return Ok(None);
+        }
+        let mut answer = [0_u8; 5];
+        self.control.read_exact(&mut answer).map_err(io_error)?;
+        let rate = u32::from_ne_bytes([answer[0], answer[1], answer[2], answer[3]]);
+        let channels = answer[4];
+        if !(8_000..=192_000).contains(&rate) || !(1..=2).contains(&channels) {
+            return Err(DeviceError::Backend);
+        }
+        Ok(Some((rate, channels)))
+    }
+
     fn command(&mut self, command: u8, check_ack: bool) -> Result<(), DeviceError> {
         self.control.write_all(&[command]).map_err(io_error)?;
         let mut ack = [0_u8; 1];
@@ -860,16 +892,33 @@ impl A2dpSink {
         Ok(())
     }
 
-    fn write_samples(&mut self, samples: &[i16], volume: u8) -> Result<(), DeviceError> {
+    /// How many frames `ms` milliseconds hold at the sink's rate.
+    fn frames_in_ms(&self, ms: u32) -> usize {
+        usize::try_from(u64::from(self.rate) * u64::from(ms) / 1_000).unwrap_or(0)
+    }
+
+    /// Writes interleaved stereo frames, scaled to `volume`, in the channel
+    /// layout the stack asked for.
+    fn write_samples(&mut self, stereo: &[i16], volume: u8) -> Result<(), DeviceError> {
         self.bytes.clear();
-        self.bytes.reserve(samples.len().saturating_mul(2));
-        for sample in samples {
-            let scaled = i32::from(*sample) * i32::from(volume) / 100;
-            self.bytes.extend_from_slice(
-                &i16::try_from(scaled)
-                    .expect("a percentage cannot enlarge an i16 sample")
-                    .to_le_bytes(),
-            );
+        self.bytes.reserve(stereo.len().saturating_mul(2));
+        let scale = |sample: i16| -> [u8; 2] {
+            let scaled = i32::from(sample) * i32::from(volume) / 100;
+            i16::try_from(scaled)
+                .expect("a percentage cannot enlarge an i16 sample")
+                .to_le_bytes()
+        };
+        if self.channels == 1 {
+            for frame in stereo.chunks_exact(2) {
+                let mixed = (i32::from(frame[0]) + i32::from(frame[1])) / 2;
+                self.bytes.extend_from_slice(&scale(
+                    i16::try_from(mixed).expect("the mean of two i16 is an i16"),
+                ));
+            }
+        } else {
+            for sample in stereo {
+                self.bytes.extend_from_slice(&scale(*sample));
+            }
         }
         self.data
             .as_mut()
@@ -880,7 +929,8 @@ impl A2dpSink {
 
     fn write_silence(&mut self, frames: usize) -> Result<(), DeviceError> {
         self.bytes.clear();
-        self.bytes.resize(frames.saturating_mul(4), 0);
+        self.bytes
+            .resize(frames.saturating_mul(2 * usize::from(self.channels)), 0);
         self.data
             .as_mut()
             .ok_or(DeviceError::Unreachable)?
@@ -906,6 +956,17 @@ impl Drop for A2dpSink {
     }
 }
 
+fn connect_control() -> Result<UnixStream, DeviceError> {
+    let control = UnixStream::connect(CONTROL_SOCKET).map_err(io_error)?;
+    control
+        .set_read_timeout(Some(IO_TIMEOUT))
+        .map_err(io_error)?;
+    control
+        .set_write_timeout(Some(IO_TIMEOUT))
+        .map_err(io_error)?;
+    Ok(control)
+}
+
 fn io_error(error: std::io::Error) -> DeviceError {
     let kind = error.kind();
     drop(error);
@@ -920,9 +981,37 @@ fn io_error(error: std::io::Error) -> DeviceError {
 
 #[cfg(test)]
 mod tests {
-    use super::{frames_to_ms, next_deadline, resample_stereo, Audio, BACKEND_MARKERS};
+    use super::{next_deadline, Audio, Source, BACKEND_MARKERS};
     use super::{RESYNC_LIMIT, WRITE_PERIOD};
-    use std::time::Instant;
+    use kobo_protocol::{AudioPlaybackState, DeviceError, DeviceResult};
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    fn fixture(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../kobo-audio/fixtures")
+            .join(name)
+    }
+
+    /// Waits for the worker to leave `Loading`, which it does on its own
+    /// thread.
+    fn settled(audio: &Audio) -> DeviceResult {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = audio.state();
+            let loading = matches!(
+                state,
+                DeviceResult::Audio {
+                    state: AudioPlaybackState::Loading,
+                    ..
+                }
+            );
+            if !loading || Instant::now() > deadline {
+                return state;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 
     #[test]
     fn clara_bw_stable_a2dp_hal_marker_is_known() {
@@ -946,65 +1035,115 @@ mod tests {
     }
 
     #[test]
-    fn resampling_preserves_channels_and_duration() {
-        let input = [100_i16, -100].repeat(24_000);
-        let output = resample_stereo(&input, 24_000).expect("resample");
-        assert_eq!(output.len(), 48_000 * 2);
-        assert_eq!(&output[..2], &[100, -100]);
-    }
-
-    #[test]
-    fn frames_are_reported_in_milliseconds_without_overflow() {
-        assert_eq!(frames_to_ms(48_000), 1_000);
-        assert_eq!(frames_to_ms(u64::MAX), u32::MAX);
-    }
-
-    #[test]
     fn nothing_is_known_about_the_headphones_until_playback_tries() {
         let audio = Audio::simulated();
         assert_eq!(audio.sink_evidence(), None);
     }
 
     #[test]
-    fn a_sink_that_will_not_open_is_evidence_the_headphones_are_gone() {
-        // No A2DP control socket exists on a host, which is exactly the state
-        // of a reader with no headphones connected.
-        assert!(!std::path::Path::new(super::CONTROL_SOCKET).exists());
-        let state = std::sync::Mutex::new(super::State::default());
-        let mut media = Some(super::Media {
-            tracks: Vec::new(),
-            starts: Vec::new(),
-            total_frames: 0,
-            track: 0,
-            pcm: Vec::new(),
-            frame: 0,
+    fn a_book_loads_with_its_length_and_what_it_says_about_itself() {
+        let audio = Audio::simulated();
+        let _ = audio.load(Source::File(fixture("chapters.m4b")));
+        let DeviceResult::Audio {
+            state,
+            duration_ms,
+            position_ms,
+            ..
+        } = settled(&audio)
+        else {
+            panic!("a load answers with the transport state");
+        };
+        assert_eq!(state, AudioPlaybackState::Ready);
+        assert!((5_900..=6_100).contains(&duration_ms), "{duration_ms}");
+        assert_eq!(position_ms, 0);
+        let detail = audio.detail().expect("the book describes itself");
+        assert_eq!(detail.title.as_deref(), Some("The Quiet Shelf"));
+        assert_eq!(detail.chapters.len(), 3);
+    }
+
+    #[test]
+    fn a_folder_loads_as_one_book_with_a_chapter_a_file() {
+        let audio = Audio::simulated();
+        let _ = audio.load(Source::Parts {
+            title: "Two Tones".to_owned(),
+            paths: vec![fixture("pcm.wav"), fixture("lossless.flac")],
         });
-        super::handle_command(
-            super::Command::Play { restart: false },
-            &state,
-            None,
-            &mut media,
-            &mut None,
-            &mut Instant::now(),
-        );
+        let DeviceResult::Audio { duration_ms, .. } = settled(&audio) else {
+            panic!("a load answers with the transport state");
+        };
+        assert!((3_900..=4_100).contains(&duration_ms), "{duration_ms}");
+        let detail = audio.detail().expect("described");
+        assert_eq!(detail.title.as_deref(), Some("Two Tones"));
+        assert_eq!(detail.chapters.len(), 2);
+    }
+
+    #[test]
+    fn a_file_that_is_not_a_book_fails_the_load_and_loads_nothing() {
+        let audio = Audio::simulated();
+        let _ = audio.load(Source::File(fixture("cover.png")));
         assert_eq!(
-            super::locked(&state)
-                .sink
-                .map(|evidence| evidence.connected),
+            settled(&audio),
+            DeviceResult::Failed(DeviceError::InvalidInput)
+        );
+        assert!(audio.detail().is_none());
+        assert_eq!(audio.play(), DeviceResult::Failed(DeviceError::NotFound));
+    }
+
+    /// No A2DP control socket exists on a host, which is exactly the state
+    /// of a reader with no headphones connected. Pressing Play then proves
+    /// the headphones are gone, and keeps the book and its place so the
+    /// next Play, with headphones, carries on from here.
+    #[test]
+    fn playing_without_headphones_keeps_the_place_and_says_so() {
+        assert!(!std::path::Path::new(super::CONTROL_SOCKET).exists());
+        let audio = Audio::simulated();
+        let _ = audio.load(Source::File(fixture("chapters.mp3")));
+        settled(&audio);
+        let _ = audio.seek(2_000);
+        let _ = audio.play();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while audio.sink_evidence().is_none() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            audio.sink_evidence().map(|evidence| evidence.connected),
             Some(false)
         );
+        assert_eq!(
+            audio.state(),
+            DeviceResult::Failed(DeviceError::Unreachable)
+        );
+        assert!(!audio.is_playing());
+        // The place survives: a pause clears the complaint and the position
+        // is still where the seek put it.
+        let DeviceResult::Audio {
+            state, position_ms, ..
+        } = audio.pause()
+        else {
+            panic!("the book is still loaded");
+        };
+        assert_eq!(state, AudioPlaybackState::Paused);
+        assert!((1_500..=2_100).contains(&position_ms), "{position_ms}");
+    }
+
+    #[test]
+    fn speed_is_kept_within_what_sounds_acceptable() {
+        let audio = Audio::simulated();
+        let _ = audio.set_speed(175);
+        assert_eq!(audio.speed_percent(), 175);
+        let _ = audio.set_speed(900);
+        assert_eq!(audio.speed_percent(), 300);
+        let _ = audio.set_speed(1);
+        assert_eq!(audio.speed_percent(), 50);
     }
 
     #[test]
     fn a_media_fault_is_not_evidence_the_headphones_left() {
-        // Playback fails here before it writes anything, as it would on a
-        // damaged later track. The headphones were last seen connected and
-        // nothing has said otherwise.
+        // A fault before anything is written says nothing about the sink.
         let state = std::sync::Mutex::new(super::State::default());
         super::record_sink(&state, true);
         let before = super::locked(&state).sink;
-        assert!(super::play_chunk(&state, &mut None, &mut None).is_err());
-        assert!(super::keepalive(&state, &mut None).is_err());
+        super::pause_with(&state, DeviceError::Backend);
         assert_eq!(super::locked(&state).sink, before);
     }
 
@@ -1012,7 +1151,7 @@ mod tests {
     fn a_failed_sink_write_is_evidence_the_headphones_left() {
         let state = std::sync::Mutex::new(super::State::default());
         super::record_sink(&state, true);
-        let written = super::sink_write(&state, Err(kobo_protocol::DeviceError::Unreachable));
+        let written = super::sink_write(&state, Err(DeviceError::Unreachable));
         assert!(written.is_err());
         assert_eq!(
             super::locked(&state)
