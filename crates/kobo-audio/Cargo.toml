@@ -1,0 +1,15 @@
+[package]
+name = "kobo-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+kobo-doc = { path = "../kobo-doc" }
+rusty-opus = "1.0.2"
+symphonia = { version = "0.6.1", default-features = false, features = ["aac", "flac", "id3v1", "id3v2", "isomp4", "mp3", "ogg", "pcm", "vorbis", "wav"] }
+
+[lints]
+workspace = true
