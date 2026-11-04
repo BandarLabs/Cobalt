@@ -172,6 +172,42 @@ pub struct Description {
     pub duration_ms: u32,
 }
 
+impl Description {
+    /// The description as the wire carries it, each text cut to what the
+    /// wire allows and the cover dropped when it is too large to send.
+    #[must_use]
+    pub fn to_wire(&self) -> kobo_protocol::AudioDetail {
+        let text = |value: &Option<String>| {
+            clip(
+                value.as_deref().unwrap_or_default(),
+                kobo_protocol::MAX_AUDIO_TEXT_LEN,
+            )
+        };
+        kobo_protocol::AudioDetail {
+            title: text(&self.title),
+            author: text(&self.author),
+            narrator: text(&self.narrator),
+            album: text(&self.album),
+            format: clip(&self.format, kobo_protocol::MAX_AUDIO_TEXT_LEN),
+            duration_ms: self.duration_ms,
+            chapters: self
+                .chapters
+                .iter()
+                .take(kobo_protocol::MAX_AUDIO_CHAPTERS)
+                .map(|chapter| kobo_protocol::AudioChapter {
+                    start_ms: chapter.start_ms,
+                    title: clip(&chapter.title, kobo_protocol::MAX_AUDIO_CHAPTER_TITLE_LEN),
+                })
+                .collect(),
+            cover: self
+                .cover
+                .clone()
+                .filter(|cover| cover.len() <= kobo_protocol::MAX_AUDIO_COVER_BYTES)
+                .unwrap_or_default(),
+        }
+    }
+}
+
 /// Tags read from one file, before they are shaped into a description.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Tags {

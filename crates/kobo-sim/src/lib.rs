@@ -832,7 +832,8 @@ impl AppServer {
             kobo_policy::PowerPolicy::DEFAULT,
             kobo_policy::Backends::with(configured_backends()?.iter()),
         )
-        .with_library_roots(simulated_library_roots());
+        .with_library_roots(simulated_library_roots())
+        .with_audio_opener(simulated_audio_opener(&name));
         initial.hardware.magnet_present =
             matches!(std::env::var("KOBO_MAGNET").as_deref(), Ok("1" | "present"));
         initial.observe_hardware();
@@ -4050,6 +4051,43 @@ fn simulated_folder(temporary: &str, chosen: &str) -> std::path::PathBuf {
 #[must_use]
 pub fn simulated_library_root() -> std::path::PathBuf {
     simulated_data_root("library")
+}
+
+/// How the simulator opens an audio source: the real file, read the way the
+/// reader reads it, so a load under the simulator has the length, chapters
+/// and cover the device would show. A shelf name is looked up in the
+/// application's simulated shelf and a library identifier in the simulated
+/// library; a stream is left to the half-hour stand-in.
+fn simulated_audio_opener(app: &str) -> kobo_policy::services::AudioOpener {
+    let shelf = simulated_data_root(app);
+    let roots = simulated_library_roots();
+    kobo_policy::services::AudioOpener(std::sync::Arc::new(move |source| {
+        let book = match source {
+            kobo_protocol::AudioSource::Shelf(name) => kobo_audio::Book::open(&shelf.join(name)),
+            kobo_protocol::AudioSource::Library(id) => {
+                match kobo_policy::audio_library::resolve_in(&roots, id)? {
+                    kobo_policy::audio_library::Location::File(path) => {
+                        kobo_audio::Book::open(&path)
+                    }
+                    kobo_policy::audio_library::Location::Parts { title, paths } => {
+                        kobo_audio::Book::open_parts(&title, &paths)
+                    }
+                }
+            }
+            kobo_protocol::AudioSource::Stream(_) => return None,
+        };
+        Some(
+            book.map(|book| kobo_policy::services::SimulatedBook {
+                duration_ms: book.duration_ms(),
+                detail: book.description().to_wire(),
+            })
+            .map_err(|fault| match fault {
+                kobo_audio::Fault::Unreadable => kobo_protocol::DeviceError::NotFound,
+                kobo_audio::Fault::Unsupported => kobo_protocol::DeviceError::InvalidInput,
+                kobo_audio::Fault::Damaged => kobo_protocol::DeviceError::Backend,
+            }),
+        )
+    }))
 }
 
 /// Every folder the simulator's library is listed from, in the reader's order.

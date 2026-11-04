@@ -828,6 +828,7 @@ name = "kobo-audio"
 version = "0.3.32"
 dependencies = [
  "kobo-doc",
+ "kobo-protocol",
  "rusty-opus",
  "symphonia",
 ]
@@ -1569,6 +1570,7 @@ version = "0.3.32"
 dependencies = [
  "kobo-abi",
  "kobo-app-store",
+ "kobo-audio",
  "kobo-catalog",
  "kobo-frame-plan",
  "kobo-hal",

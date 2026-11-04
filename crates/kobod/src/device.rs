@@ -2273,7 +2273,7 @@ fn host_applications(
         // otherwise install a different version than the one the user saw.
         let mut store_channel = crate::autoupdate::preferences(Path::new(COBALT_ROOT)).channel;
         let mut visited: Vec<String> = Vec::new();
-        let ceiling = Instant::now() + limits.ceiling;
+        let mut ceiling = Instant::now() + limits.ceiling;
         let mut last_activity = Instant::now();
         // Set when Back has been handed to an application that asked for it,
         // and cleared by the next screen that application draws. The reader's
@@ -2354,6 +2354,17 @@ fn host_applications(
                         })?;
                     }
                 }
+            }
+            // A book playing is somebody listening. It restarts the idle
+            // clock as a tap would, and it moves the ceiling on: the ceiling
+            // exists to end a wedged session, and a session that is
+            // delivering sound every fifty milliseconds is not wedged.
+            if audio
+                .as_ref()
+                .is_some_and(kobo_hal::audio::Audio::is_playing)
+            {
+                last_activity = now;
+                ceiling = now + limits.ceiling;
             }
             if now >= ceiling {
                 return Ok(finish(
@@ -3322,10 +3333,52 @@ fn host_applications(
                                                         )
                                                     }
                                                 }
+                                                kobo_protocol::AudioSource::Library(id) => {
+                                                    audio_library_source(id).map_or(
+                                                        kobo_protocol::DeviceResult::Failed(
+                                                            kobo_protocol::DeviceError::NotFound,
+                                                        ),
+                                                        |source| audio.load(source),
+                                                    )
+                                                }
                                             },
                                         )
                                     }
+                                    kobo_protocol::DeviceRequest::ReadAudioDetail => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |audio| {
+                                                audio.detail().map_or(
+                                                    kobo_protocol::DeviceResult::Failed(
+                                                        kobo_protocol::DeviceError::NotFound,
+                                                    ),
+                                                    |description| {
+                                                        kobo_protocol::DeviceResult::AudioDetail(
+                                                            description.to_wire(),
+                                                        )
+                                                    },
+                                                )
+                                            },
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::SetAudioSpeed { percent } => {
+                                        audio.as_ref().map_or(
+                                            kobo_protocol::DeviceResult::Denied(
+                                                kobo_protocol::DenyReason::Unsupported,
+                                            ),
+                                            |audio| audio.set_speed(*percent),
+                                        )
+                                    }
                                     kobo_protocol::DeviceRequest::PlayAudio => {
+                                        // A scan left running under a stream
+                                        // starves it: the MediaTek stack has
+                                        // been seen to drop audio eleven
+                                        // seconds in while discovery ran.
+                                        if let Some(bluetooth) = bluetooth.as_ref() {
+                                            bluetooth.settle_scan();
+                                        }
                                         audio.as_ref().map_or(
                                             kobo_protocol::DeviceResult::Denied(
                                                 kobo_protocol::DenyReason::Unsupported,
@@ -3848,6 +3901,17 @@ fn begin_power(
         reason,
         conditions,
     )
+}
+
+/// Where a listed audiobook's identifier leads, as a source the player
+/// takes: one file, or a folder's files as one book.
+fn audio_library_source(id: &str) -> Option<kobo_hal::audio::Source> {
+    Some(match kobo_policy::audio_library::resolve(id)? {
+        kobo_policy::audio_library::Location::File(path) => kobo_hal::audio::Source::File(path),
+        kobo_policy::audio_library::Location::Parts { title, paths } => {
+            kobo_hal::audio::Source::Parts { title, paths }
+        }
+    })
 }
 
 fn power_conditions(

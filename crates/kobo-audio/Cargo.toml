@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 kobo-doc = { path = "../kobo-doc" }
+kobo-protocol = { path = "../kobo-protocol" }
 rusty-opus = "1.0.2"
 symphonia = { version = "0.6.1", default-features = false, features = ["aac", "flac", "id3v1", "id3v2", "isomp4", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 

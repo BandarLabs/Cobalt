@@ -954,6 +954,8 @@ fn is_audio_request(request: &DeviceRequest) -> bool {
             | DeviceRequest::SeekAudio { .. }
             | DeviceRequest::StopAudio
             | DeviceRequest::SetAudioVolume { .. }
+            | DeviceRequest::ReadAudioDetail
+            | DeviceRequest::SetAudioSpeed { .. }
     )
 }
 

@@ -265,6 +265,25 @@ impl Bluetooth {
         bluetooth_result(true, Vec::new())
     }
 
+    /// Ends a scan this backend started and no reading has collected yet.
+    ///
+    /// A scan is normally ended by the state read that follows it a few
+    /// seconds later. An application that scanned and then played, or left
+    /// the screen, can leave discovery running, and discovery running under
+    /// an A2DP stream has been seen to starve it on the `MediaTek` stack.
+    /// Only a scan this backend started is touched: stopping one it did
+    /// not would mark the stack as used, and the reboot that follows, for
+    /// nothing.
+    pub fn settle_scan(&self) {
+        if !self.scanning.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        let _ = match &self.backend {
+            Backend::Dbus { .. } => self.dbus_call(ADAPTER, &["org.bluez.Adapter1.StopDiscovery"]),
+            Backend::Bluetoothctl(_) => self.ctl(&["scan", "off"]),
+        };
+    }
+
     #[must_use]
     pub fn pair(&self, address: &str) -> DeviceResult {
         if !valid_address(address) {
