@@ -606,6 +606,57 @@ export function releaseLockPackageIdentities(
     : changedLockPackageIdentities(previousSource, currentSource);
 }
 
+// A package that left the lockfile has no consumers in the current metadata,
+// so nothing there can say what it affected. The previous lockfile can: its
+// dependency lists name whoever depended on the package, up to the workspace
+// members that compiled it in, and those are the identities the change
+// belongs to. A removed package no workspace member reached, or one that was
+// itself a workspace member, is left as it was, which fails closed below.
+export function lockChangesResolvedAgainstBase(previousSource, lockChanges, currentPackageNames) {
+  const parts = lockfileParts(previousSource);
+  const dependents = new Map();
+  const workspace = new Set();
+  for (const packageBlock of parts?.packages || []) {
+    const parsed = lockPackage(packageBlock);
+    if (!parsed.source) workspace.add(parsed.name);
+    const list = /^dependencies = \[\n([\s\S]*?)^\]$/m.exec(packageBlock)?.[1] || "";
+    for (const line of list.split("\n")) {
+      const dependency = /^\s*"([^"\s]+)/.exec(line)?.[1];
+      if (!dependency) continue;
+      const names = dependents.get(dependency) || new Set();
+      names.add(parsed.name);
+      dependents.set(dependency, names);
+    }
+  }
+  const resolved = new Set();
+  for (const identity of lockChanges) {
+    const [name] = JSON.parse(identity);
+    if (currentPackageNames.has(name)) {
+      resolved.add(identity);
+      continue;
+    }
+    const reached = new Set();
+    const pending = [name];
+    while (pending.length > 0) {
+      const next = pending.pop();
+      for (const dependent of dependents.get(next) || []) {
+        if (reached.has(dependent)) continue;
+        reached.add(dependent);
+        pending.push(dependent);
+      }
+    }
+    const members = [...reached].filter(dependent => workspace.has(dependent));
+    if (members.length === 0 || workspace.has(name)) {
+      resolved.add(identity);
+      continue;
+    }
+    for (const member of members) {
+      resolved.add(packageIdentity(member, "<workspace-version>", ""));
+    }
+  }
+  return resolved;
+}
+
 export function registeredConsumers(
   metadata,
   registeredPackages,
@@ -855,12 +906,20 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
   }
 
   if (changedPaths.includes("Cargo.lock")) {
+    const previousLock = command("git", ["show", `${baseRevision}:Cargo.lock`]);
     const lockChanges = releaseLockPackageIdentities(
-      command("git", ["show", `${baseRevision}:Cargo.lock`]),
+      previousLock,
       readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8"),
       compatiblePaths
     );
-    for (const identity of lockChanges) changedIdentities.add(identity);
+    const currentPackageNames = new Set(metadata.packages.map(package_ => package_.name));
+    for (const identity of lockChangesResolvedAgainstBase(
+      previousLock,
+      lockChanges,
+      currentPackageNames
+    )) {
+      changedIdentities.add(identity);
+    }
   }
 
   return {
