@@ -40,6 +40,11 @@ pub const MAX_CHOICE_OPTIONS: usize = 6;
 /// until the line has room to be one. Five millimetres is about a thumbnail's
 /// width and is the point at which it stops looking like a stray mark.
 pub const MIN_SECTION_RULE_TENTH_MM: i32 = 50;
+/// How close under the top bar's rule a [`Node::Section`] may begin and still
+/// count as the one opening the page, whose own hairline is then left out.
+/// The room below the bar and a section's lead together are five millimetres;
+/// six leaves a little over without reaching a section that follows content.
+pub const SECTION_UNDER_BAR_TENTH_MM: i32 = 60;
 /// Folio's physical composition scale.  Components use [`Space`] for their
 /// existing rhythm; these named values are available to new compositions that
 /// need to state their physical intent without inventing pixel gaps.
@@ -139,6 +144,9 @@ pub fn row_names_the_columns(cells: &[String]) -> bool {
 mod folio_tests;
 
 #[cfg(test)]
+mod quiet_tests;
+
+#[cfg(test)]
 mod responsive_profile_tests;
 
 /// A stacked cell written with the heading its column was under.
@@ -219,6 +227,16 @@ pub enum QuoteRole {
     Body,
     /// Who said it, and when. Smaller, and in the muted tone.
     Byline,
+    /// Something the owner types on a computer, exactly as written.
+    ///
+    /// Setup screens told the owner what to run with a quotation: a rule at
+    /// the left and the words in the interface face, which is how a reply to
+    /// a comment is drawn. A command is not a reply. It is set in the
+    /// fixed-pitch face on a grey panel the width of the column, with no rule
+    /// and no indent, which is how every manual and terminal the owner has
+    /// seen sets one. Protocol 17; an earlier runtime draws it as a
+    /// quotation.
+    Command,
 }
 
 impl QuoteRole {
@@ -229,7 +247,7 @@ impl QuoteRole {
     #[must_use]
     pub const fn size(self) -> FontSize {
         match self {
-            Self::Body => FontSize::Body,
+            Self::Body | Self::Command => FontSize::Body,
             Self::Byline => FontSize::Caption,
         }
     }
@@ -238,8 +256,17 @@ impl QuoteRole {
     #[must_use]
     pub const fn tone(self) -> u8 {
         match self {
-            Self::Body => tone::INK,
+            Self::Body | Self::Command => tone::INK,
             Self::Byline => tone::MUTED,
+        }
+    }
+
+    /// The face it is measured and drawn in, inside a column set in `prose`.
+    #[must_use]
+    pub fn face(self, prose: Face) -> Face {
+        match self {
+            Self::Body | Self::Byline => prose,
+            Self::Command => Face::Mono,
         }
     }
 }
@@ -807,11 +834,20 @@ pub const MIN_NAV_DESTINATIONS: usize = 2;
 /// and the distinction the fifth was carrying is invisible.
 pub const MAX_TONES_PER_SCREEN: usize = 4;
 
+/// The shortest bar marking the current destination of a [`NavBar`], in
+/// tenths of a millimetre. It is otherwise as wide as the destination's name.
+pub const NAV_SELECTION_MIN_TENTH_MM: i32 = 80;
+
 /// The most verbs an action bar will draw. See [`BarStyle::Actions`].
 pub const MAX_ACTION_BAR_ACTIONS: usize = 3;
 
+mod colour;
 mod environment;
 pub mod vector;
+
+pub use colour::{
+    Accent, Appearance, Paint, Palette, ScreenAccent, Shades, LOW_BATTERY_PERCENT, PANEL_LEVEL,
+};
 
 /// Grayscale values used by the built-in monochrome design system.
 ///
@@ -961,6 +997,13 @@ pub struct Chrome {
     /// `None` while reading and on any screen that has claimed the panel, so
     /// a book is a book and not a book with a clock on it.
     pub status: Option<Status>,
+    /// Whether the panel being painted can show colour.
+    ///
+    /// Known to the runtime from the device profile and to nothing else, so it
+    /// lives here with the rest of what an application cannot say about the
+    /// screen it is drawn on. Grey by default: a caller that does not know, or
+    /// is only measuring, gets the frame the grey design has always produced.
+    pub appearance: Appearance,
 }
 
 impl Chrome {
@@ -970,17 +1013,29 @@ impl Chrome {
         Self {
             back: !at_home || screen.owns_back,
             status: if screen.reading { None } else { status },
+            appearance: Appearance::Grey,
         }
     }
 
     #[must_use]
     pub const fn with_back(back: bool) -> Self {
-        Self { back, status: None }
+        Self {
+            back,
+            status: None,
+            appearance: Appearance::Grey,
+        }
     }
 
     #[must_use]
     pub fn with_status(mut self, status: Status) -> Self {
         self.status = Some(status);
+        self
+    }
+
+    /// Says which kind of panel this chrome will be painted on.
+    #[must_use]
+    pub const fn with_appearance(mut self, appearance: Appearance) -> Self {
+        self.appearance = appearance;
         self
     }
 
@@ -1009,6 +1064,7 @@ impl Chrome {
                 Signal::Strong,
                 true,
             )),
+            appearance: Appearance::Grey,
         }
     }
 }
@@ -1272,6 +1328,12 @@ pub enum CellStyle {
     Board,
     /// A shaded playable square on a conventional draughts board.
     BoardDark,
+    /// A light square on a chess or draughts board, where selection means
+    /// the square in hand and is shown as a tinted field. Kept apart from
+    /// [`Self::Board`] because a plain grid's selection means whatever its
+    /// application says it means, Minesweeper's covered squares among them,
+    /// and a field of colour under fifteen covered squares is not a mark.
+    BoardLight,
     /// A point on a conventional backgammon board, broad at the panel edge.
     BackgammonTop,
     /// A point on a conventional backgammon board, broad at the panel edge.
@@ -1667,9 +1729,10 @@ pub struct Screen {
     /// the interface face is chosen so that a label glanced at once cannot be
     /// misread, which is a different job and a different answer.
     pub reading: bool,
-    /// Protocol-11 screens keep the Atkinson display metrics they measured
-    /// against. This is runtime-local compatibility state, never wire data.
-    pub legacy_typography: bool,
+    /// The type and spacing the application measured this screen against.
+    /// Runtime-local compatibility state, decided from the protocol version a
+    /// frame arrived in, never wire data. See [`Typography`].
+    pub typography: Typography,
 
     /// A publisher font already held by the runtime for this application.
     ///
@@ -1710,6 +1773,18 @@ pub struct Screen {
     /// carry two overlays, cannot bury one inside a card, and cannot place one
     /// halfway down the page.
     pub overlay: Option<Box<Overlay>>,
+
+    /// The screen's colour, when it has one. See [`Accent`] and
+    /// [`ScreenAccent`].
+    ///
+    /// Carried by the screen rather than agreed once per session, so the
+    /// runtime can draw a screen it is holding for a background application
+    /// without remembering anything else about it, and so a reading page can
+    /// leave its accent off while the list that opened it keeps one. On a
+    /// greyscale panel it changes nothing at all. A screen made with
+    /// [`Screen::new`] is plain; the SDK's builder leaves the choice to the
+    /// application unless the screen makes one.
+    pub accent: ScreenAccent,
 }
 
 /// What paging means on a laid-out screen right now.
@@ -1843,12 +1918,22 @@ impl Screen {
             page_turns: None,
             owns_back: false,
             reading: false,
-            legacy_typography: false,
+            typography: Typography::CURRENT,
             reading_font: None,
             text_scale: None,
             hold: None,
             overlay: None,
+            accent: ScreenAccent::Plain,
         }
+    }
+
+    /// Decides this screen's colour: an accent of its own, or none at all.
+    /// See [`Accent`]. Either answer is final, where a screen from the SDK's
+    /// builder that has not made one inherits its application's.
+    #[must_use]
+    pub const fn with_accent(mut self, accent: Option<Accent>) -> Self {
+        self.accent = ScreenAccent::decided(accent);
+        self
     }
 
     /// Sends `action` when a finger is held still on the content area.
@@ -1884,7 +1969,18 @@ impl Screen {
     /// Uses the pre-Folio Atkinson display cuts for a decoded legacy frame.
     #[must_use]
     pub const fn with_legacy_typography(mut self, legacy: bool) -> Self {
-        self.legacy_typography = legacy;
+        self.typography = if legacy {
+            Typography::Paperback
+        } else {
+            Typography::CURRENT
+        };
+        self
+    }
+
+    /// Lays the screen out in the type an older application measured with.
+    #[must_use]
+    pub const fn with_typography(mut self, typography: Typography) -> Self {
+        self.typography = typography;
         self
     }
 
@@ -1962,14 +2058,55 @@ impl Screen {
     #[must_use]
     pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
         let _environment = environment::TextEnvironment::enter(self, metrics);
-        with_legacy_typography(self.legacy_typography, || {
+        with_typography(self.typography, || {
             with_reading_font(self.reading_font, || {
                 self.layout_with_selected_font(metrics, chrome)
             })
         })
     }
 
+    /// Lays the screen out, giving back the quiet edition's extra room when
+    /// the screen does not fit with it.
+    ///
+    /// Space is the first thing a full screen gives up. The room protocol 17
+    /// adds under the bar, above a section and above a button is a few
+    /// millimetres, and at the largest text sizes a screen that Folio fitted
+    /// exactly no longer did: the paragraph above two commands lost every
+    /// line. So the screen is laid out once with the room and, only if
+    /// something was cut short, again with Folio's one-millimetre gaps and
+    /// secondary lines at caption size. Both passes run in the application
+    /// and in the runtime alike, so the two still agree on what was drawn.
     fn layout_with_selected_font(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        if typography() != Typography::Quiet {
+            return self.layout_once(metrics, chrome);
+        }
+        if room_given_up() {
+            return self.layout_without_room(metrics, chrome);
+        }
+        // A board is sized to every millimetre it is given, so room above it
+        // is taken out of its squares, and the number in the corner of a
+        // crossword square is the first thing that stops fitting. A screen
+        // built round one keeps Folio's gaps rather than learning that a
+        // square at a time.
+        if self.nodes.iter().any(fills_the_room) {
+            return self.layout_without_room(metrics, chrome);
+        }
+        let outer = CUT_SHORT.with(|cut| cut.replace(false));
+        let spaced = self.layout_once(metrics, chrome);
+        let cut = CUT_SHORT.with(|slot| slot.replace(outer));
+        if !cut {
+            return spaced;
+        }
+        self.layout_without_room(metrics, chrome)
+    }
+
+    fn layout_without_room(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        let mut layout = with_room_given_up(|| self.layout_once(metrics, chrome));
+        layout.room_given_up = true;
+        layout
+    }
+
+    fn layout_once(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
         let margin = metrics.screen_margin();
         let gap = metrics.space(Space::Tight);
         let prose = if self.reading {
@@ -1994,7 +2131,7 @@ impl Screen {
         cursor = cursor.saturating_add(band);
         if let Some(top_bar) = &self.top_bar {
             cursor = layout_top_bar(top_bar, chrome, metrics, band, &mut layout);
-            cursor = cursor.saturating_add(gap);
+            cursor = cursor.saturating_add(metrics.below_top_bar(prose));
         }
         let content_top = cursor;
 
@@ -2031,7 +2168,7 @@ impl Screen {
         // A rail belongs to the collection it precedes, not to the whole
         // screen. Reserve its gutter from every following flow node so it
         // cannot be painted through by an unrelated card or row.
-        let rail_reserved = if !self.legacy_typography
+        let rail_reserved = if self.typography != Typography::Paperback
             && self
                 .nodes
                 .iter()
@@ -2045,8 +2182,16 @@ impl Screen {
 
         for (position, node) in self.nodes.iter().enumerate() {
             if layout.nodes.len() >= MAX_LAYOUT_NODES || cursor >= content_bottom {
+                if self.nodes[position..]
+                    .iter()
+                    .any(|node| !matches!(node, Node::Flex { .. }))
+                {
+                    note_cut_short();
+                }
                 break;
             }
+            let previous = position.checked_sub(1).map(|before| &self.nodes[before]);
+            cursor = cursor.saturating_add(space_before(previous, node, metrics, prose));
             // A splash centres itself in the band it is handed, and the band
             // it is handed is everything that is left. That is right when it
             // is the last thing on the screen and wrong the moment a recovery
@@ -2065,6 +2210,7 @@ impl Screen {
                     metrics,
                     prose,
                     gap,
+                    Some(node),
                 );
                 // Fills share the room between them, so content set between
                 // two of them is centred on the page: a twelve line poem in
@@ -2092,6 +2238,7 @@ impl Screen {
                 metrics,
                 prose,
                 gap,
+                true,
             );
             cursor = with_flow_height_bound(bottom < content_bottom, || {
                 layout_flow_node(
@@ -2107,6 +2254,9 @@ impl Screen {
                 )
             });
             layout.flow_height = cursor.saturating_sub(content_top).max(0);
+            if cursor > content_bottom {
+                note_cut_short();
+            }
             cursor = cursor.saturating_add(gap);
         }
 
@@ -2315,6 +2465,8 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         if scratch.nodes.len() >= MAX_LAYOUT_NODES {
             break;
         }
+        let previous = position.checked_sub(1).map(|before| &overlay.nodes[before]);
+        cursor = cursor.saturating_add(space_before(previous, node, metrics, prose));
         let bottom = flow_node_bottom(
             node,
             &overlay.nodes[position + 1..],
@@ -2324,6 +2476,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
             metrics,
             prose,
             gap,
+            true,
         );
         cursor = with_flow_height_bound(bottom < overlay_bottom, || {
             layout_flow_node(
@@ -2491,6 +2644,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         node.rect.x += x;
         node.rect.y += y;
         if node.rect.y + node.rect.height > bottom {
+            note_cut_short();
             continue;
         }
         if layout.nodes.len() >= MAX_LAYOUT_NODES {
@@ -2863,6 +3017,25 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
         } else {
             slot
         };
+        // A short upright hairline between two verbs, so a row of words
+        // reads as separate buttons rather than one caption. Inset top and
+        // bottom so it divides the words without dividing the bar. Drawing
+        // only: the verbs keep the slots they had.
+        if index > 0 && nav_bar.style == BarStyle::Actions && !legacy_typography() {
+            let inset = height / 4;
+            let thickness = metrics.rule_thickness();
+            layout.nodes.push(LayoutNode {
+                id: nav_bar.id,
+                rect: Rect {
+                    x: x.saturating_sub(thickness / 2),
+                    y: top + inset,
+                    width: thickness,
+                    height: height - inset * 2,
+                },
+                kind: LayoutKind::RowRule,
+                text_lines: Vec::new(),
+            });
+        }
         layout.nodes.push(LayoutNode {
             id: nav_bar.id,
             rect: Rect {
@@ -4874,8 +5047,10 @@ pub enum LayoutKind {
     /// A row's overflow mark: a finger-wide target against the right edge,
     /// hit-tested ahead of the row it sits in because it is pushed after it.
     RowMenu(ActionId),
-    /// A text field's border and its tap target.
-    Field(ActionId),
+    /// A text field's border and its tap target, and whether its value was
+    /// refused, which a colour panel shows as a tinted field under the note
+    /// that says why.
+    Field(ActionId, bool),
     /// What is in the field, or its placeholder when it is empty. The bool is
     /// which, because the two are drawn in different tones and the drawing
     /// pass must not have to consult the tree to find out.
@@ -5111,7 +5286,7 @@ impl LayoutKind {
             | Self::NavDestination(action, ..)
             | Self::NavDestinationSelected(action, ..)
             | Self::Tile(action, ControlState::Enabled)
-            | Self::Field(action)
+            | Self::Field(action, _)
             | Self::FieldClear(action)
             | Self::Chip(action, _)
             | Self::Tab(action, _)
@@ -5171,6 +5346,21 @@ pub struct Layout {
     /// text wrapped in one face and drawn in another does not end where the
     /// wrapping said it would.
     pub prose_face: Face,
+    /// Whether the quiet edition's extra room was given back to fit this
+    /// screen. Painting and checking it have to be done in the same sizes it
+    /// was laid out in, and a secondary line is a step smaller without the
+    /// room; see [`Typography::Quiet`].
+    pub room_given_up: bool,
+}
+
+/// Runs `body` in the sizes a layout was made in, with the quiet edition's
+/// room or without it.
+fn in_room<T>(given_up: bool, body: impl FnOnce() -> T) -> T {
+    if given_up {
+        with_room_given_up(body)
+    } else {
+        body()
+    }
 }
 
 /// How urgently a screen diagnostic should be treated.
@@ -5415,7 +5605,7 @@ impl Layout {
                         | LayoutKind::RowMenu(_)
                         | LayoutKind::Cell(..)
                         | LayoutKind::Tile(_, ControlState::Enabled)
-                        | LayoutKind::Field(_)
+                        | LayoutKind::Field(..)
                         | LayoutKind::FieldClear(_)
                         | LayoutKind::Chip(_, _)
                         | LayoutKind::Tab(_, _)
@@ -5724,7 +5914,7 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
             measure_text(text, FontSize::for_heading_level(*level)).0
         }
         Node::Text { text, .. } => measure_text_in(text, FontSize::Body, prose).0,
-        Node::Secondary { text, .. } => measure_text(text, FontSize::Caption).0,
+        Node::Secondary { text, .. } => measure_text(text, FontSize::Note).0,
         // The same padding the button lays itself out with, not a smaller one
         // that looks similar. A menu measured with two millimetres a side and
         // drawn with four is two words wide and four millimetres short, which
@@ -6105,10 +6295,11 @@ fn layout_node(
             } else {
                 usize::try_from(max(0, bottom.saturating_sub(y)) / line_height).unwrap_or(0)
             };
-            let ranges = wrap_ranges(text, width, FontSize::Body, prose)
-                .into_iter()
-                .take(visible_lines)
-                .collect::<Vec<_>>();
+            let mut ranges = wrap_ranges(text, width, FontSize::Body, prose);
+            if ranges.len() > visible_lines {
+                note_cut_short();
+                ranges.truncate(visible_lines);
+            }
             let lines: Vec<String> = if ranges.is_empty() {
                 if text.is_empty() && visible_lines > 0 {
                     vec![String::new()]
@@ -6201,6 +6392,9 @@ fn layout_node(
                 )
                 .unwrap_or(0)
             };
+            if ranges.len() > visible_lines {
+                note_cut_short();
+            }
             let mut line_y = y.saturating_add(before);
             for (line_index, &(from, to)) in ranges.iter().take(visible_lines).enumerate() {
                 if layout.nodes.len() >= rich_text_limit {
@@ -6427,8 +6621,8 @@ fn layout_node(
             // in MIN_TEXT_HEIGHT is there so a control is never smaller than a
             // finger; metadata is not touched, and applying it puts a blank
             // line between a caption and the thing it captions.
-            let lines = wrap_text(text, width, FontSize::Caption);
-            let height = lines.len() as i32 * FontSize::Caption.line_height();
+            let lines = wrap_text(text, width, FontSize::Note);
+            let height = lines.len() as i32 * FontSize::Note.line_height();
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -6535,28 +6729,44 @@ fn layout_node(
             text,
             fold,
         } => {
-            let depth = (*depth).min(MAX_QUOTE_DEPTH);
+            // A command answers nothing, so it has no depth to show.
+            let depth = if *role == QuoteRole::Command {
+                0
+            } else {
+                (*depth).min(MAX_QUOTE_DEPTH)
+            };
             let (offset, full_width) = quote_offsets(metrics, width, depth);
             let text_x = x.saturating_add(offset);
             let size = role.size();
+            let face = role.face(prose);
             // Only a byline folds, and only a byline gives up room for the
             // mark. A body that shortened its measure to leave space for a
             // control it does not have would ragged the whole comment.
             let fold = match role {
                 QuoteRole::Byline => *fold,
-                QuoteRole::Body => None,
+                QuoteRole::Body | QuoteRole::Command => None,
             };
             let mark = fold.map_or(0, |_| fold_mark_width(metrics));
-            let text_width = max(1, full_width - mark);
-            let lines = wrap_text_in(text, text_width, size, prose);
+            let inset = if *role == QuoteRole::Command {
+                command_inset(metrics).0
+            } else {
+                0
+            };
+            let text_width = max(1, full_width - mark - 2 * inset);
+            let lines = if *role == QuoteRole::Command {
+                wrap_command(text, text_width, size)
+            } else {
+                wrap_text_in(text, text_width, size, face)
+            };
             // A byline is one short line and is allowed to be shorter than a
             // finger: it is not a control, and forcing it to the minimum text
             // height is what put a comment's author a whole blank line away
             // from the comment.
-            let measured = lines.len() as i32 * size.line_height_in(prose);
+            let measured = lines.len() as i32 * size.line_height_in(face);
             let height = match role {
                 QuoteRole::Body => max(MIN_TEXT_HEIGHT, measured),
                 QuoteRole::Byline => byline_height(measured, metrics),
+                QuoteRole::Command => command_height(measured, metrics),
             };
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -6719,7 +6929,7 @@ fn layout_node(
                     width,
                     height,
                 },
-                kind: LayoutKind::Field(*action),
+                kind: LayoutKind::Field(*action, error.is_some()),
                 text_lines: Vec::new(),
             });
             // The cross is a control in its own right and must clear a finger,
@@ -7002,6 +7212,7 @@ fn layout_node(
                     metrics,
                     prose,
                     inner_gap,
+                    false,
                 );
                 cursor = with_flow_height_bound(child_bottom < bottom, || {
                     layout_flow_node(
@@ -7116,6 +7327,7 @@ fn layout_node(
                             metrics,
                             prose,
                             gap,
+                            false,
                         );
                         cursor = with_flow_height_bound(node_bottom < bottom, || {
                             with_band_slot(|| {
@@ -7156,6 +7368,7 @@ fn layout_node(
                             metrics,
                             prose,
                             gap,
+                            false,
                         );
                         end = with_flow_height_bound(node_bottom < bottom, || {
                             with_band_slot(|| {
@@ -7383,6 +7596,7 @@ fn layout_node(
                 // What every node does when it runs out of panel: the facts
                 // that cannot fit whole are dropped, never drawn half-cut.
                 if cursor.saturating_add(height) > bottom {
+                    note_cut_short();
                     break;
                 }
                 layout.nodes.push(LayoutNode {
@@ -7409,7 +7623,15 @@ fn layout_node(
                 });
                 cursor = cursor.saturating_add(height).saturating_add(gap / 2);
             }
-            cursor
+            // The half gap is between two facts, not after the last. Counted
+            // after it too, a list whose last fact fitted ran its node past
+            // the bound it was fitted to by those few pixels, and a band
+            // holding it was clipped at the foot of the panel.
+            if typography() == Typography::Quiet && cursor > y {
+                cursor.saturating_sub(gap / 2)
+            } else {
+                cursor
+            }
         }
         // Nothing is drawn and nothing is reserved. The screen loop has
         // already moved the cursor down; anywhere else -- inside a card, an
@@ -7471,13 +7693,16 @@ fn layout_node(
             } else {
                 usize::try_from(max(0, bottom.saturating_sub(y)) / line_height).unwrap_or(0)
             };
-            let lines = items
+            let mut lines = items
                 .iter()
                 .skip(start)
                 .take(per_page)
                 .flat_map(|item| wrap_text(item, width, FontSize::Body))
-                .take(visible_lines)
                 .collect::<Vec<_>>();
+            if lines.len() > visible_lines {
+                note_cut_short();
+                lines.truncate(visible_lines);
+            }
             let natural_height = max(MIN_TEXT_HEIGHT, lines.len() as i32 * line_height);
             let height = if legacy_typography() && !flow_height_bound() {
                 natural_height
@@ -7694,6 +7919,8 @@ fn layout_node(
                     CellStyle::Plain
                 } else if (draughts_board || chess_board) && (row + column) % 2 == 1 {
                     CellStyle::BoardDark
+                } else if draughts_board || chess_board {
+                    CellStyle::BoardLight
                 } else {
                     style
                 };
@@ -7751,7 +7978,7 @@ fn layout_node(
                 } else {
                     match cell.glyph {
                         Some(glyph) if style == CellStyle::Pad => {
-                            let inset = metrics.tenth_mm(PAD_BORDER_TENTH_MM);
+                            let inset = metrics.tenth_mm(pad_border_tenth_mm());
                             let mark = min(cell_height, cell_width) * 2 / 5;
                             layout.nodes.push(LayoutNode {
                                 id: *id,
@@ -8273,6 +8500,7 @@ fn layout_node(
                 // fit them. When it cannot, the grid stops rather than drawing
                 // over whatever the band was reserved for.
                 if cell_y.saturating_add(cell_height) > bottom {
+                    note_cut_short();
                     break;
                 }
                 rows = row + 1;
@@ -9288,7 +9516,7 @@ fn options_per_page_at_current_scale(metrics: &DisplayMetrics, summaries: bool) 
             .status_band_height()
             .saturating_add(metrics.top_bar_height())
             .saturating_add(metrics.rule_thickness())
-            .saturating_add(gap)
+            .saturating_add(metrics.below_top_bar(Face::Text))
             .saturating_add(metrics.nav_bar_height());
         let prompt = FontSize::Body
             .line_height()
@@ -9659,6 +9887,11 @@ pub enum FontSize {
     /// Dense monospace terminal text; interface labels retain their usual sizes.
     Terminal,
     Caption,
+    /// A line about the content set beside it: [`Node::Secondary`], which
+    /// applications use for metadata and for the sentence telling the owner
+    /// what to do. The caption's size until protocol 17, and a step above it
+    /// since; see [`FontSize::tenth_mm`].
+    Note,
     Body,
     Title,
     Heading,
@@ -9697,14 +9930,36 @@ impl FontSize {
     /// one did at 6.8 mm, and takes a third less of the panel doing it. The
     /// weight is chosen inside the typesetter from the size, so nothing here
     /// and nothing in an application asks for it.
+    ///
+    /// Protocol 17 took the top of the scale down again and the bottom up. A
+    /// 5.4 mm bold serif under a 3.1 mm bar title gave most screens two titles,
+    /// and the larger one was the page's least important line: "Pair with
+    /// your computer" over the two commands that actually pair it. At 4.6 mm
+    /// it still leads the page and no longer competes with the bar. Caption
+    /// went the other way for a secondary line, from 2.4 to 2.7 mm, because
+    /// applications set their instructions in one ("Tick the sightings to
+    /// remove.") and at caption size in the muted tone those read as
+    /// footnotes. Captions proper stay where they were: a tab, a chip, a
+    /// destination's name and the number in the corner of a crossword square
+    /// are fitted to the room they have, and are read at a glance. Body is
+    /// unchanged: it is the size every line of every list is set in, and it
+    /// was never the problem. A secondary line goes back to caption size on a
+    /// screen that has to give room back (see [`Typography::Quiet`]), which
+    /// is every screen built round a board: there the step was taken out of
+    /// the squares. Screens measured against the earlier sizes keep them; see
+    /// [`Typography`].
     #[must_use]
-    pub const fn tenth_mm(self) -> i32 {
-        match self {
-            Self::Terminal => 18,
-            Self::Caption => 24,
-            Self::Body => 31,
-            Self::Title => 42,
-            Self::Heading => 54,
+    pub fn tenth_mm(self) -> i32 {
+        match (self, typography()) {
+            (Self::Terminal, _) => 18,
+            (Self::Caption, _) => 24,
+            (Self::Note, Typography::Quiet) if !room_given_up() => 27,
+            (Self::Note, _) => 24,
+            (Self::Body, _) => 31,
+            (Self::Title, Typography::Quiet) => 38,
+            (Self::Title, _) => 42,
+            (Self::Heading, Typography::Quiet) => 46,
+            (Self::Heading, _) => 54,
         }
     }
 
@@ -9729,7 +9984,7 @@ impl FontSize {
     #[must_use]
     pub const fn scale(self) -> i32 {
         match self {
-            Self::Terminal | Self::Caption => 2,
+            Self::Terminal | Self::Caption | Self::Note => 2,
             Self::Body => 3,
             Self::Title => 4,
             Self::Heading => 5,
@@ -9786,7 +10041,7 @@ impl FontSize {
 
     const fn unscaled_fallback_line_height(self) -> i32 {
         match self {
-            Self::Terminal | Self::Caption => 18,
+            Self::Terminal | Self::Caption | Self::Note => 18,
             Self::Body => 27,
             Self::Title => 36,
             Self::Heading => 45,
@@ -9925,7 +10180,9 @@ static BOOK_TYPESETTERS: OnceLock<Mutex<BTreeMap<FontHandle, Box<dyn Typesetter>
 
 thread_local! {
     static READING_FONT: std::cell::Cell<Option<FontHandle>> = const { std::cell::Cell::new(None) };
-    static LEGACY_TYPOGRAPHY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static TYPOGRAPHY: std::cell::Cell<Typography> = const { std::cell::Cell::new(Typography::CURRENT) };
+    static CUT_SHORT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ROOM_GIVEN_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FLOW_HEIGHT_BOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static IN_BAND_SLOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -9973,31 +10230,119 @@ fn flow_height_bound() -> bool {
     FLOW_HEIGHT_BOUND.with(std::cell::Cell::get)
 }
 
-/// Runs layout or painting with pre-Folio interface typography selected.
+/// The generation of interface type and spacing a screen was measured in.
 ///
-/// Only the protocol decoder uses this for version-11 screens. Keeping the
-/// choice scoped to one frame prevents an old app's local text measurements
-/// from drifting when a 0.3.5 runtime also renders Folio screens.
-pub fn with_legacy_typography<T>(legacy: bool, body: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
+/// An application lays its screens out in its own process, with the kobo-ui it
+/// was built against, and the runtime refuses a screen whose text it would
+/// draw past the space the application fitted it to. So the runtime cannot
+/// draw every screen in its newest type: a line an older application measured
+/// at one size would be drawn at another, and its last line would land under
+/// the button below it. Each edition is kept for the applications that
+/// measured against it, and the protocol decoder chooses one from the version
+/// a frame arrived in.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Typography {
+    /// Protocol 11 and older: the Atkinson display cuts, and a scale set
+    /// against a printed paperback.
+    Paperback,
+    /// Protocols 12 to 16: the Folio scale, with every block one millimetre
+    /// from the next.
+    Folio,
+    /// Protocol 17: headings a step quieter, secondary lines large enough to
+    /// carry an instruction, and room under the top bar, above a section and
+    /// above a button. A screen that does not fit with that room is laid out
+    /// again without it, the secondary lines back at caption size, before a
+    /// line of it is lost; a screen built round a board always is. See
+    /// [`FontSize::tenth_mm`] and [`DisplayMetrics::below_top_bar`].
+    Quiet,
+}
+
+impl Typography {
+    /// The edition applications built against this crate measure in.
+    pub const CURRENT: Self = Self::Quiet;
+}
+
+impl Default for Typography {
+    fn default() -> Self {
+        Self::CURRENT
+    }
+}
+
+/// Runs layout or painting in one edition of the interface type.
+///
+/// The protocol decoder chooses it for a decoded frame. Keeping the choice
+/// scoped to one frame prevents an old app's local text measurements from
+/// drifting when the runtime also renders screens of its own in the current
+/// edition.
+pub fn with_typography<T>(typography: Typography, body: impl FnOnce() -> T) -> T {
+    struct Restore(Typography);
     impl Drop for Restore {
         fn drop(&mut self) {
-            LEGACY_TYPOGRAPHY.with(|slot| slot.set(self.0));
+            TYPOGRAPHY.with(|slot| slot.set(self.0));
         }
     }
-    let previous = LEGACY_TYPOGRAPHY.with(|slot| {
-        let previous = slot.get();
-        slot.set(legacy);
-        previous
-    });
+    let previous = TYPOGRAPHY.with(|slot| slot.replace(typography));
     let _restore = Restore(previous);
     body()
+}
+
+/// The edition the frame being laid out or drawn was measured in.
+#[must_use]
+pub fn typography() -> Typography {
+    TYPOGRAPHY.with(std::cell::Cell::get)
+}
+
+/// Runs layout or painting with pre-Folio interface typography selected, or
+/// with the current edition when `legacy` is false.
+pub fn with_legacy_typography<T>(legacy: bool, body: impl FnOnce() -> T) -> T {
+    with_typography(
+        if legacy {
+            Typography::Paperback
+        } else {
+            Typography::CURRENT
+        },
+        body,
+    )
 }
 
 /// Whether the currently laid-out frame must use protocol-11 type metrics.
 #[must_use]
 pub fn legacy_typography() -> bool {
-    LEGACY_TYPOGRAPHY.with(std::cell::Cell::get)
+    typography() == Typography::Paperback
+}
+
+/// Records that the frame being laid out did not hold everything it was
+/// given: a paragraph lost lines at its bound, or a node found no room.
+fn note_cut_short() {
+    CUT_SHORT.with(|cut| cut.set(true));
+}
+
+/// Whether the quiet edition's extra room has been given back for this frame.
+fn room_given_up() -> bool {
+    ROOM_GIVEN_UP.with(std::cell::Cell::get)
+}
+
+/// Runs `body` with the room the quiet edition adds taken back out: the space
+/// under the top bar, above a section and above a button, and the step a
+/// secondary line is set above caption size.
+///
+/// Layout does this by itself for a screen that does not fit with the room,
+/// and for any screen built round a board. It is public for an application
+/// that measures part of such a screen before it builds the rest: the
+/// controls under a puzzle, laid out without the board to find how much of
+/// the panel the board can have. Measured with the room, they claim more of
+/// the panel than they will take, and the board is fitted smaller than the
+/// screen it is drawn on.
+pub fn with_room_given_up<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ROOM_GIVEN_UP.with(|slot| slot.set(self.0));
+        }
+    }
+    let previous = ROOM_GIVEN_UP.with(|slot| slot.replace(true));
+    let _restore = Restore(previous);
+    body()
 }
 
 /// Installs or replaces one bounded publisher face.
@@ -10224,6 +10569,44 @@ pub fn undrawable_in(text: &str, face: Face) -> Option<char> {
     })?
 }
 
+/// `text` with every character the installed face cannot draw put as a box
+/// the face can.
+///
+/// For words that belong to someone else: a chapter title, a passage quoted
+/// back from a book, a name on a shelf. [`undrawable_in`] is right to refuse a
+/// symbol an application chose, but nobody here chose the Hebrew in Moby-Dick's
+/// Etymology, and refusing the list that quotes it closes the book over a
+/// letter. The page draws such a letter as the font's own empty box; this
+/// draws the same box on purpose, so the list agrees with the page and the
+/// check that guards an application's own labels stays on for everything else.
+///
+/// A white square where the face has one, and a question mark where it has
+/// not. Unchanged, and not copied, when everything in it can be drawn.
+#[must_use]
+pub fn drawable_in(text: &str, face: Face) -> std::borrow::Cow<'_, str> {
+    let replaced = with_typesetter(face, |typesetter| {
+        let lacks =
+            |character: char| !character.is_whitespace() && !typesetter.has_glyph(character, face);
+        if !text.chars().any(lacks) {
+            return None;
+        }
+        let stand_in = if lacks('\u{25a1}') { '?' } else { '\u{25a1}' };
+        Some(
+            text.chars()
+                .map(|character| {
+                    if lacks(character) {
+                        stand_in
+                    } else {
+                        character
+                    }
+                })
+                .collect::<String>(),
+        )
+    })
+    .flatten();
+    replaced.map_or(std::borrow::Cow::Borrowed(text), std::borrow::Cow::Owned)
+}
+
 /// The size of one monospace cell: what a character grid is built from.
 ///
 /// Returns width and height together because a caller that needs one always
@@ -10333,11 +10716,31 @@ impl DisplayMetrics {
     /// text can flow through.
     #[must_use]
     pub fn prose_area(&self, top_bar: bool, nav_bar: bool) -> ProseArea {
+        self.prose_area_in(top_bar, nav_bar, Face::Text)
+    }
+
+    /// The room between the top bar's rule and the first thing under it.
+    ///
+    /// One millimetre until protocol 17, the same gap as between any two
+    /// blocks, which is what made content look jammed under the bar: a
+    /// heading's ascenders sat closer to the rule than to the line under
+    /// them. Three millimetres now, except on a page of a book, where every
+    /// line the bar takes from the page is a line the reader turns for.
+    #[must_use]
+    pub fn below_top_bar(&self, face: Face) -> i32 {
+        if typography() == Typography::Quiet && face != Face::Reading && !room_given_up() {
+            self.tenth_mm(30)
+        } else {
+            self.space(Space::Tight)
+        }
+    }
+
+    fn prose_area_with_face(&self, top_bar: bool, nav_bar: bool, face: Face) -> ProseArea {
         let margin = self.screen_margin();
         let gap = self.space(Space::Tight);
         let mut top = margin;
         if top_bar {
-            top = self.top_bar_height() + self.rule_thickness() + gap;
+            top = self.top_bar_height() + self.rule_thickness() + self.below_top_bar(face);
         }
         let bottom = if nav_bar {
             self.height - self.nav_bar_height()
@@ -10352,7 +10755,7 @@ impl DisplayMetrics {
             },
             height: max_i32(0, bottom - top),
             gap,
-            face: Face::Text,
+            face,
         }
     }
 
@@ -10381,10 +10784,7 @@ impl DisplayMetrics {
     /// last lines off the bottom.
     #[must_use]
     pub fn prose_area_in(&self, top_bar: bool, nav_bar: bool, face: Face) -> ProseArea {
-        ProseArea {
-            face,
-            ..self.prose_area(top_bar, nav_bar)
-        }
+        self.prose_area_with_face(top_bar, nav_bar, face)
     }
 }
 
@@ -10514,7 +10914,13 @@ pub fn paginate_tagged_below(
     for (tag, depth, role, paragraph) in paragraphs {
         let tag = *tag;
         let depth = (*depth).min(MAX_QUOTE_DEPTH);
-        let role = *role;
+        // A thread is paginated a line at a time, and a command split across
+        // two pages is two commands. One reaching a thread is set as what was
+        // said, which is all it is there.
+        let role = match *role {
+            QuoteRole::Command => QuoteRole::Body,
+            role => role,
+        };
         let size = role.size();
         let line_height = size.line_height_in(area.face);
         let (_, width) = quote_offsets(metrics, area.width, depth);
@@ -10555,6 +10961,7 @@ pub fn paginate_tagged_below(
                     + match role {
                         QuoteRole::Body => max_i32(MIN_TEXT_HEIGHT, measured),
                         QuoteRole::Byline => byline_height(measured, metrics),
+                        QuoteRole::Command => command_height(measured, metrics),
                     };
                 page.push((tag, depth, role, lines.join(" ")));
                 break;
@@ -11252,6 +11659,59 @@ pub fn paginate_rows_with_edges(
 /// same wrapping and spacing the layout engine uses, so a page that fits here
 /// is a page that will be drawn whole.
 #[must_use]
+/// Whether a node sizes itself to all the room it is handed: a board, a grid
+/// of squares or a terminal, here or in a band beside other things.
+fn fills_the_room(node: &Node) -> bool {
+    match node {
+        Node::Grid { square: true, .. }
+        | Node::Board { .. }
+        | Node::PencilBoard { .. }
+        | Node::Terminal { .. } => true,
+        Node::Band { slots, .. } => slots
+            .iter()
+            .any(|slot| slot.nodes.iter().any(fills_the_room)),
+        _ => false,
+    }
+}
+
+/// Room left above `node` beyond the gap every block gets, given the block
+/// laid out before it.
+///
+/// Folio set every block one millimetre from the next. A heading opening a
+/// second section sat as close to the paragraph above it, which it ends, as to
+/// the one under it, which it introduces, and a button sat on the last line of
+/// the sentence explaining it. Protocol 17 groups by space instead: a heading
+/// that follows anything is set four millimetres below it, and the first
+/// button after anything that is not a button two. A run of buttons stays one
+/// millimetre apart, because a stack of them is one group. A page of a book is
+/// left alone, for the reason [`DisplayMetrics::below_top_bar`] gives.
+fn space_before(
+    previous: Option<&Node>,
+    node: &Node,
+    metrics: &DisplayMetrics,
+    prose: Face,
+) -> i32 {
+    if typography() != Typography::Quiet || prose == Face::Reading || room_given_up() {
+        return 0;
+    }
+    let Some(previous) = previous else {
+        return 0;
+    };
+    // A fill or a spacer has already said how far apart the two should be.
+    if matches!(previous, Node::Flex { .. } | Node::Spacer { .. }) {
+        return 0;
+    }
+    let action = |node: &Node| matches!(node, Node::Button { .. } | Node::Band { .. });
+    let wanted = match node {
+        Node::Heading { .. } if !matches!(previous, Node::Heading { .. }) => Space::Medium,
+        _ if action(node) && !action(previous) => Space::Small,
+        _ => return 0,
+    };
+    metrics
+        .space(wanted)
+        .saturating_sub(metrics.space(Space::Tight))
+}
+
 /// How much room trailing nodes need, so flexible content can leave it.
 ///
 /// Measured by laying them out into a layout that is thrown away, which is the
@@ -11266,6 +11726,7 @@ fn flow_node_bottom(
     metrics: &DisplayMetrics,
     prose: Face,
     gap: i32,
+    rhythm: bool,
 ) -> i32 {
     let flexible = matches!(
         node,
@@ -11279,13 +11740,24 @@ fn flow_node_bottom(
     let protects_interaction = following.iter().any(node_has_enabled_interaction);
     if matches!(node, Node::Splash { .. }) || (flexible && protects_interaction) {
         bottom.saturating_sub(trailing_height(
-            following, margin, width, bottom, metrics, prose, gap,
+            following,
+            margin,
+            width,
+            bottom,
+            metrics,
+            prose,
+            gap,
+            rhythm.then_some(node),
         ))
     } else {
         bottom
     }
 }
 
+///
+/// `after` is the node the trailing ones follow, in a flow spaced by
+/// [`space_before`], and `None` in one that is not, so this pays for exactly
+/// the space the flow will leave.
 #[allow(clippy::too_many_arguments)]
 fn trailing_height(
     nodes: &[Node],
@@ -11295,15 +11767,24 @@ fn trailing_height(
     metrics: &DisplayMetrics,
     prose: Face,
     gap: i32,
+    after: Option<&Node>,
 ) -> i32 {
     if nodes.is_empty() {
         return 0;
     }
+    // A scratch pass measures; it is not the frame. What it cuts short says
+    // nothing about whether the frame fits.
+    let outer = CUT_SHORT.with(std::cell::Cell::get);
     let mut scratch = Layout::default();
-    let mut cursor = 0;
+    let mut cursor: i32 = 0;
+    let mut previous = after;
     for node in nodes {
         if scratch.nodes.len() >= MAX_LAYOUT_NODES {
             break;
+        }
+        if after.is_some() {
+            cursor = cursor.saturating_add(space_before(previous, node, metrics, prose));
+            previous = Some(node);
         }
         cursor = layout_flow_node(
             node,
@@ -11318,6 +11799,7 @@ fn trailing_height(
         );
         cursor = cursor.saturating_add(gap);
     }
+    CUT_SHORT.with(|cut| cut.set(outer));
     cursor
 }
 
@@ -11800,9 +12282,24 @@ pub const BUTTON_RADIUS_TENTH_MM: i32 = 10;
 /// Corner radius of a command-deck pad. Larger than a keyboard key so a
 /// fifteen-key grid reads as recessed hardware rather than a ruled board.
 pub const PAD_RADIUS_TENTH_MM: i32 = 28;
-/// Bezel of a command-deck pad, in tenths of a millimetre. Heavier than a
-/// rule so the key sits in a dark frame the way a Stream Deck key does.
+/// Bezel of a command-deck pad, in tenths of a millimetre, for screens
+/// measured in Folio. Heavier than a rule so the key sits in a dark frame the
+/// way a Stream Deck key does.
 pub const PAD_BORDER_TENTH_MM: i32 = 12;
+
+/// The bezel a pad is drawn with in the edition being laid out.
+///
+/// Half a millimetre from protocol 17. At 1.2 mm two keys on a page were the
+/// heaviest ink on the panel, heavier than the bar and every button, and a
+/// label as long as "Example" ran into the frame. A pad is still a rounded
+/// square in ink, which is what separates it from a ruled board.
+fn pad_border_tenth_mm() -> i32 {
+    if typography() == Typography::Quiet {
+        5
+    } else {
+        PAD_BORDER_TENTH_MM
+    }
+}
 
 /// How far a press mark sits inside the control it acknowledges, in tenths of
 /// a millimetre. Enough to clear a row separator and the screen margin, not so
@@ -11977,6 +12474,48 @@ impl Surface {
             if let Some(colour) = chroma.get_mut(index * 3..index * 3 + 3) {
                 for channel in colour {
                     *channel = u8::MAX - *channel;
+                }
+            }
+        }
+    }
+
+    /// [`Self::fill_rect`] in a [`Paint`]: a grey lands in both planes as it
+    /// always has, and a colour brings the colour plane into being and keeps
+    /// the grey plane at the colour's luminance, as [`Self::blend_colour`]
+    /// does for one pixel.
+    pub fn fill_rect_paint(&mut self, rect: Rect, paint: Paint) {
+        match paint {
+            Paint::Grey(value) => self.fill_rect(rect, value),
+            Paint::Colour(colour) => {
+                let bounds = Rect {
+                    x: 0,
+                    y: 0,
+                    width: i32::try_from(self.width).unwrap_or(i32::MAX),
+                    height: i32::try_from(self.height).unwrap_or(i32::MAX),
+                };
+                let Some(clipped) = rect.intersection(bounds) else {
+                    return;
+                };
+                let grey = luma(colour);
+                let width = self.width;
+                let chroma = self.chroma_mut();
+                for y in clipped.y..clipped.y + clipped.height {
+                    let row = usize::try_from(y).unwrap_or(0).saturating_mul(width);
+                    for x in clipped.x..clipped.x + clipped.width {
+                        let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
+                        if let Some(target) = chroma.get_mut(index * 3..index * 3 + 3) {
+                            target.copy_from_slice(&colour);
+                        }
+                    }
+                }
+                for y in clipped.y..clipped.y + clipped.height {
+                    let row = usize::try_from(y).unwrap_or(0).saturating_mul(width);
+                    for x in clipped.x..clipped.x + clipped.width {
+                        let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
+                        if let Some(pixel) = self.pixels.get_mut(index) {
+                            *pixel = grey;
+                        }
+                    }
                 }
             }
         }
@@ -12619,8 +13158,14 @@ fn diagnose_screen(
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
     let _environment = environment::TextEnvironment::enter(screen, metrics);
-    with_reading_font(screen.reading_font, || {
-        diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
+    // In the type the screen was measured in, as layout and painting are. A
+    // screen from an application built against Folio checked against the
+    // current edition's sizes would be reported as overflowing type it was
+    // never drawn in.
+    with_typography(screen.typography, || {
+        with_reading_font(screen.reading_font, || {
+            diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
+        })
     })
 }
 
@@ -12631,6 +13176,17 @@ fn diagnose_screen_with_selected_font(
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
     let layout = screen.layout_with_selected_font(metrics, chrome);
+    in_room(layout.room_given_up, || {
+        diagnose_layout(screen, layout, metrics, pictures)
+    })
+}
+
+fn diagnose_layout(
+    screen: &Screen,
+    layout: Layout,
+    metrics: &DisplayMetrics,
+    pictures: Option<&dyn Pictures>,
+) -> LayoutDiagnostics {
     let mut issues = Vec::new();
     let mut nodes = Vec::new();
     collect_nodes(&screen.nodes, 0, &mut nodes, &mut issues);
@@ -12677,6 +13233,18 @@ fn diagnose_screen_with_selected_font(
     validate_content_bounds(&nodes, &layout, metrics, &mut issues);
     validate_layout_nodes(&layout, metrics, &mut issues);
     validate_composition(screen, &nodes, &layout, &mut issues);
+    // A reading screen's words are a book's, and a letter no installed face
+    // carries is the author's choice, not the application's mistake. It is
+    // drawn as the empty box every reader draws for one, so it is worth
+    // knowing about and not worth failing a check over: failing it made the
+    // Etymology page of Moby-Dick a defect in every application that reads.
+    if screen.reading {
+        for issue in &mut issues {
+            if matches!(issue.kind, LayoutIssueKind::UnsupportedCharacter { .. }) {
+                issue.severity = DiagnosticSeverity::Warning;
+            }
+        }
+    }
     LayoutDiagnostics { layout, issues }
 }
 
@@ -13590,7 +14158,7 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             });
         }
         let style = match node.kind {
-            LayoutKind::Quote(_, role) => Some((role.size(), layout.prose_face)),
+            LayoutKind::Quote(_, role) => Some((role.size(), role.face(layout.prose_face))),
             _ => layout_text_style(node),
         };
         let Some((size, face)) = style else {
@@ -13663,7 +14231,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::RowMenu(_)
             | LayoutKind::Cell(..)
             | LayoutKind::Tile(..)
-            | LayoutKind::Field(_)
+            | LayoutKind::Field(..)
             | LayoutKind::FieldClear(_)
             | LayoutKind::Chip(_, _)
             | LayoutKind::Tab(_, _)
@@ -13776,8 +14344,8 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
             }
         }
         LayoutKind::OverlayTitle => FontSize::Title,
+        LayoutKind::Secondary => FontSize::Note,
         LayoutKind::BoardClue
-        | LayoutKind::Secondary
         | LayoutKind::Section
         | LayoutKind::TableHeaderCell
         | LayoutKind::FactLabel
@@ -14341,7 +14909,7 @@ pub fn render_all(
     dirty: Option<Rect>,
 ) {
     let _environment = environment::TextEnvironment::enter(screen, metrics);
-    with_legacy_typography(screen.legacy_typography, || {
+    with_typography(screen.typography, || {
         with_reading_font(screen.reading_font, || {
             render_all_with_selected_font(screen, metrics, chrome, pictures, surface, dirty);
         });
@@ -14364,9 +14932,71 @@ fn render_all_with_selected_font(
     });
     surface.fill_rect(clip, tone::PAPER);
     let layout = screen.layout_with(metrics, chrome);
+    in_room(layout.room_given_up, || {
+        paint_layout(screen, layout, metrics, chrome, pictures, surface, clip);
+    });
+}
+
+#[allow(clippy::too_many_lines)]
+fn paint_layout(
+    screen: &Screen,
+    layout: Layout,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    pictures: &dyn Pictures,
+    surface: &mut Surface,
+    clip: Rect,
+) {
+    let palette = Palette::new(chrome.appearance, screen.accent.chosen());
     let prose = layout.prose_face;
-    for node in layout.nodes {
-        if node.rect.intersection(clip).is_none() {
+    // Where the bar's own closing rule is, so a section that opens the page
+    // straight under it does not draw a second line a few millimetres below
+    // the first.
+    let bar_foot = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::TopBar))
+        .map(|bar| bar.rect.y.saturating_add(bar.rect.height));
+    // For each quote that carries its rules up through the gap above it,
+    // where that gap begins and how deep the quote above is. A thread is drawn
+    // as paragraphs with air between them, and a depth rule that stopped at
+    // each paragraph's edge came out as a dashed line down the page, broken at
+    // every byline. Never across more than the space between two blocks, so a
+    // thread split by anything else stays split.
+    let mut quote_join = vec![None; layout.nodes.len()];
+    let mut last_quote: Option<(i32, u8)> = None;
+    for (index, node) in layout.nodes.iter().enumerate() {
+        if let LayoutKind::Quote(depth, _) = node.kind {
+            quote_join[index] = last_quote.filter(|(bottom, _)| {
+                node.rect.y >= *bottom
+                    && node.rect.y.saturating_sub(*bottom) <= metrics.space(Space::Medium)
+            });
+            last_quote = Some((node.rect.y.saturating_add(node.rect.height), depth));
+        }
+    }
+    for (index, node) in layout.nodes.into_iter().enumerate() {
+        // A quote draws its depth rules left of its own rectangle, and a
+        // joined one up into the gap above it too. A repaint of only that
+        // column or that gap clears it to paper first, so it has to reach the
+        // quote or nothing puts the rule back.
+        let reach = match node.kind {
+            LayoutKind::Quote(depth, _) => {
+                let left = metrics.space(Space::Small) * i32::from(depth);
+                let top = quote_join[index].map_or(node.rect.y, |(top, _)| top);
+                Rect {
+                    x: node.rect.x.saturating_sub(left),
+                    y: top,
+                    width: node.rect.width.saturating_add(left),
+                    height: node
+                        .rect
+                        .y
+                        .saturating_add(node.rect.height)
+                        .saturating_sub(top),
+                }
+            }
+            _ => node.rect,
+        };
+        if reach.intersection(clip).is_none() {
             continue;
         }
         match node.kind {
@@ -14382,13 +15012,18 @@ fn render_all_with_selected_font(
             // The border is the whole control: a field with only a baseline
             // under it reads as an underlined word, and one with a fill reads
             // as a button that has already been pressed.
-            LayoutKind::Field(_) => stroke_clipped(
-                surface,
-                node.rect,
-                tone::RULE,
-                metrics.rule_thickness(),
-                clip,
-            ),
+            LayoutKind::Field(_, error) => {
+                if error {
+                    fill_clipped(surface, node.rect, palette.field_error(), clip);
+                }
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
             LayoutKind::FieldValue(empty) => draw_lines(
                 surface,
                 &node.text_lines,
@@ -14418,7 +15053,7 @@ fn render_all_with_selected_font(
             // not one anybody reads at arm's length on a reflective panel.
             LayoutKind::Chip(_, selected) => {
                 if selected {
-                    fill_clipped(surface, node.rect, tone::INK, clip);
+                    fill_clipped(surface, node.rect, palette.emphasis(), clip);
                 } else {
                     stroke_clipped(
                         surface,
@@ -14459,7 +15094,7 @@ fn render_all_with_selected_font(
                             width: node.rect.width,
                             height: thickness,
                         },
-                        tone::INK,
+                        palette.emphasis(),
                         clip,
                     );
                 }
@@ -14669,7 +15304,7 @@ fn render_all_with_selected_font(
                     surface,
                     node.rect,
                     metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
-                    tone::INK,
+                    palette.emphasis(),
                     clip,
                 );
                 draw_centered(
@@ -14729,7 +15364,7 @@ fn render_all_with_selected_font(
             // looks like a mistake.
             LayoutKind::Cell(_, CellStyle::Crossword, selected) => {
                 if selected {
-                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
                 }
                 // Two edges rather than four. Crossword squares are drawn
                 // touching, so a box around each one puts two rules along
@@ -14770,6 +15405,27 @@ fn render_all_with_selected_font(
             LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
             }
+            // The square in hand on a board with light and dark squares takes
+            // the accent's tint. A plain grid's selected cell keeps the quiet
+            // grey, because what selection means there is the application's
+            // business and is not always one cell.
+            LayoutKind::Cell(_, CellStyle::BoardLight, true) => {
+                fill_clipped(surface, node.rect, palette.selection_field(), clip);
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
+            LayoutKind::Cell(_, CellStyle::BoardLight, false) => stroke_clipped(
+                surface,
+                node.rect,
+                tone::RULE,
+                metrics.rule_thickness(),
+                clip,
+            ),
             LayoutKind::Cell(_, CellStyle::Board, true) => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 stroke_clipped(
@@ -14788,7 +15444,7 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::Cell(_, CellStyle::BoardDark, selected) => {
-                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                fill_clipped(surface, node.rect, palette.board_dark(), clip);
                 stroke_clipped(
                     surface,
                     node.rect,
@@ -14798,10 +15454,10 @@ fn render_all_with_selected_font(
                 );
             }
             LayoutKind::Cell(_, CellStyle::BackgammonTop, _) => {
-                draw_backgammon_point(surface, node.rect, true, metrics, clip);
+                draw_backgammon_point(surface, node.rect, true, metrics, palette, clip);
             }
             LayoutKind::Cell(_, CellStyle::BackgammonBottom, _) => {
-                draw_backgammon_point(surface, node.rect, false, metrics, clip);
+                draw_backgammon_point(surface, node.rect, false, metrics, palette, clip);
             }
             LayoutKind::BackgammonStack(glyph, count, from_top) => {
                 draw_backgammon_stack(surface, glyph, count, from_top, node.rect, clip);
@@ -14844,7 +15500,7 @@ fn render_all_with_selected_font(
                     } else {
                         tone::RULE
                     },
-                    metrics.tenth_mm(PAD_BORDER_TENTH_MM),
+                    metrics.tenth_mm(pad_border_tenth_mm()),
                     clip,
                 );
             }
@@ -14872,6 +15528,7 @@ fn render_all_with_selected_font(
                         box_mask,
                     },
                     metrics,
+                    palette,
                     clip,
                 );
             }
@@ -14932,33 +15589,32 @@ fn render_all_with_selected_font(
             }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),
             LayoutKind::RowRule => fill_clipped(surface, node.rect, tone::RULE_LIGHT, clip),
+            // A grey track with the done part in ink, both a millimetre tall
+            // and centred in the bar's two. It was a black outline the width of
+            // the page with the fill butted against it, which on the panel was
+            // a heavy black box louder than the title it sat under, and at a
+            // few per cent read as an empty box rather than as progress.
             LayoutKind::Progress => {
-                stroke_clipped(
-                    surface,
-                    node.rect,
-                    tone::INK,
-                    metrics.rule_thickness(),
-                    clip,
-                );
                 let value = node
                     .text_lines
                     .first()
                     .and_then(|value| value.parse::<i32>().ok())
                     .unwrap_or(0);
+                let thickness = min(node.rect.height, metrics.tenth_mm(10));
+                let track = Rect {
+                    x: node.rect.x,
+                    y: node.rect.y + (node.rect.height - thickness) / 2,
+                    width: node.rect.width,
+                    height: thickness,
+                };
+                fill_clipped(surface, track, tone::RULE, clip);
                 fill_clipped(
                     surface,
                     Rect {
-                        x: node.rect.x + 2,
-                        y: node.rect.y + 2,
-                        width: node
-                            .rect
-                            .width
-                            .saturating_sub(4)
-                            .saturating_mul(min(100, value))
-                            / 100,
-                        height: max(0, node.rect.height - 4),
+                        width: track.width.saturating_mul(value.clamp(0, 100)) / 100,
+                        ..track
                     },
-                    tone::INK,
+                    palette.emphasis(),
                     clip,
                 );
             }
@@ -14980,14 +15636,30 @@ fn render_all_with_selected_font(
                 // Depth becomes something to count rather than to measure.
                 let step = metrics.space(Space::Small);
                 let thickness = metrics.rule_thickness();
+                // A level the quote above also had carries on through the gap
+                // between them; a level that starts here starts at this
+                // quote's own top.
+                let joined = quote_join[index];
                 for back in 1..=i32::from(depth) {
+                    // `back` counts outwards from this quote's own rule, so
+                    // the level it draws, counted from the outermost, is
+                    // depth - back + 1.
+                    let level = i32::from(depth) - back + 1;
+                    let top = match joined {
+                        Some((bottom, above)) if i32::from(above) >= level => bottom,
+                        _ => node.rect.y,
+                    };
                     fill_clipped(
                         surface,
                         Rect {
                             x: node.rect.x - step * back,
-                            y: node.rect.y,
+                            y: top,
                             width: thickness,
-                            height: node.rect.height,
+                            height: node
+                                .rect
+                                .y
+                                .saturating_add(node.rect.height)
+                                .saturating_sub(top),
                         },
                         tone::RULE,
                         clip,
@@ -15004,22 +15676,36 @@ fn render_all_with_selected_font(
                 // The strip runs the width of the column and is inset only by
                 // the padding, so it also draws the left edge of the comment
                 // for the eye to run down.
-                let top = if role == QuoteRole::Byline {
-                    // Exactly the rectangle, because the height already
-                    // includes the air. Painting outside it would run into the
-                    // paragraph underneath.
-                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
-                    metrics.space(Space::Tight)
-                } else {
-                    0
+                let (left, top) = match role {
+                    QuoteRole::Byline => {
+                        // Exactly the rectangle, because the height already
+                        // includes the air. Painting outside it would run into
+                        // the paragraph underneath.
+                        fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                        (0, metrics.space(Space::Tight))
+                    }
+                    // The same grey as a key on the keyboard, and the same
+                    // corners as a button, so the panel reads as part of this
+                    // interface rather than as a picture of a terminal.
+                    QuoteRole::Command => {
+                        fill_rounded_clipped(
+                            surface,
+                            node.rect,
+                            metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                            tone::SURFACE,
+                            clip,
+                        );
+                        command_inset(metrics)
+                    }
+                    QuoteRole::Body => (0, 0),
                 };
                 draw_lines_in(
                     surface,
                     &node.text_lines,
-                    node.rect.x,
+                    node.rect.x + left,
                     node.rect.y + top,
                     role.size(),
-                    prose,
+                    role.face(prose),
                     role.tone(),
                     clip,
                 );
@@ -15034,7 +15720,7 @@ fn render_all_with_selected_font(
                 &node.text_lines,
                 node.rect.x,
                 node.rect.y,
-                FontSize::Caption,
+                FontSize::Note,
                 tone::MUTED,
                 clip,
             ),
@@ -15077,7 +15763,17 @@ fn render_all_with_selected_font(
                 // type belongs. Sitting it on the baseline turns the title into
                 // something underlined.
                 let rule_start = node.rect.x.saturating_add(title_width).saturating_add(gap);
-                if rule_end > rule_start {
+                // Two parallel hairlines a few millimetres apart read as a
+                // printing fault, not as structure: the bar's rule already
+                // says where the page begins, so the first section under it
+                // is set off by its title alone. Sections further down keep
+                // theirs. Drawing only; the section keeps its room.
+                let opens_page = !legacy_typography()
+                    && bar_foot.is_some_and(|foot| {
+                        node.rect.y.saturating_sub(foot)
+                            <= metrics.tenth_mm(SECTION_UNDER_BAR_TENTH_MM)
+                    });
+                if rule_end > rule_start && !opens_page {
                     fill_clipped(
                         surface,
                         Rect {
@@ -15148,9 +15844,13 @@ fn render_all_with_selected_font(
             // The bars themselves are only a background. Drawing them as
             // separate nodes is what lets a tab switch repaint the content
             // area and two small bands instead of the entire panel.
-            LayoutKind::TopBar | LayoutKind::NavBar => {
-                fill_clipped(surface, node.rect, tone::PAPER, clip);
-            }
+            // The bar wears the application's colour on a panel that has
+            // one, with its title and controls still in ink on it; the bottom
+            // bar stays paper, because two coloured bands would frame every
+            // screen in the same colour and the content between them would
+            // be the quietest thing on the panel.
+            LayoutKind::TopBar => fill_clipped(surface, node.rect, palette.bar(), clip),
+            LayoutKind::NavBar => fill_clipped(surface, node.rect, tone::PAPER, clip),
             // Paper, not surface. The band is the quietest thing on the panel
             // and a tinted strip across the top of every screen is a permanent
             // horizontal line the eye has to learn to ignore.
@@ -15166,7 +15866,7 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::StatusMark(mark) => {
-                draw_status_mark(surface, mark, node.rect, metrics, clip);
+                draw_status_mark(surface, mark, node.rect, metrics, palette, clip);
             }
             LayoutKind::TopBarTitle => draw_lines(
                 surface,
@@ -15248,6 +15948,7 @@ fn render_all_with_selected_font(
                     metrics,
                     false,
                     glyph,
+                    palette,
                     clip,
                 );
             }
@@ -15259,6 +15960,7 @@ fn render_all_with_selected_font(
                     metrics,
                     true,
                     glyph,
+                    palette,
                     clip,
                 );
             }
@@ -15614,7 +16316,7 @@ fn render_all_with_selected_font(
                 // What separates the two levels now is a heavy bar down the
                 // leading edge, the same mark a printed page uses to flag a
                 // paragraph, readable at a glance and cheap to draw.
-                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                fill_clipped(surface, node.rect, palette.banner(level), clip);
                 let mut text_x = node.rect.x + padding;
                 // A success and an error carry a mark ahead of the words, in a
                 // column the layout set aside for it, so the level can be told
@@ -15652,7 +16354,7 @@ fn render_all_with_selected_font(
                             width: bar,
                             ..node.rect
                         },
-                        tone::INK,
+                        palette.banner_edge(),
                         clip,
                     );
                     text_x = text_x.saturating_add(bar);
@@ -15819,10 +16521,13 @@ fn render_all_with_selected_font(
                     on,
                     state,
                     metrics,
+                    palette,
                     clip,
                 );
             }
-            LayoutKind::RowCheck(state) => draw_check_box(surface, node.rect, state, metrics, clip),
+            LayoutKind::RowCheck(state) => {
+                draw_check_box(surface, node.rect, state, metrics, palette, clip);
+            }
             // An outline the height of a line of type and its air, centred in
             // the finger-high target, so the row keeps one quiet button rather
             // than a slab as tall as the row.
@@ -16002,7 +16707,7 @@ fn render_all_with_selected_font(
                             height: inner,
                         },
                         inner / 2,
-                        tone::INK,
+                        palette.emphasis(),
                         clip,
                     );
                 }
@@ -16045,7 +16750,7 @@ fn render_all_with_selected_font(
                     tone::INK,
                     clip,
                 );
-                draw_step_marks(surface, node.rect, current, total, metrics, clip);
+                draw_step_marks(surface, node.rect, current, total, metrics, palette, clip);
             }
         }
     }
@@ -16064,12 +16769,21 @@ fn draw_toggle_switch(
     on: bool,
     state: ControlState,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let ink = if state.is_enabled() {
         tone::INK
     } else {
         tone::RULE
+    };
+    // Only the filled track takes the accent. Off is drawn in ink whatever
+    // the panel, so the two states differ in colour as well as in shape and
+    // a switch is never a coloured ring with a coloured knob.
+    let on_track = if state.is_enabled() {
+        palette.emphasis()
+    } else {
+        Paint::Grey(tone::RULE)
     };
     let radius = track.height / 2;
     let border = metrics.button_border();
@@ -16087,7 +16801,7 @@ fn draw_toggle_switch(
         height: knob,
     };
     if on {
-        fill_rounded_clipped(surface, track, radius, ink, clip);
+        fill_rounded_clipped(surface, track, radius, on_track, clip);
         fill_rounded_clipped(surface, knob, knob.height / 2, tone::PAPER, clip);
     } else {
         stroke_rounded_clipped(surface, track, radius, ink, border, clip);
@@ -16106,6 +16820,7 @@ fn draw_check_box(
     rect: Rect,
     state: RowState,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let side = min(rect.width, rect.height);
@@ -16119,7 +16834,7 @@ fn draw_check_box(
     let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM).min(side / 4);
     match state {
         RowState::Checked => {
-            fill_rounded_clipped(surface, rect, radius, tone::INK, clip);
+            fill_rounded_clipped(surface, rect, radius, palette.emphasis(), clip);
             // Whole pixels of paper rather than a blended tick, so the box
             // turning over is a two-level change the panel's fast waveform
             // can make.
@@ -16245,12 +16960,14 @@ fn draw_code(surface: &mut Surface, rect: Rect, payload: &str, clip: Rect) {
 
 /// The marks at a step indicator's trailing edge: filled for the steps done,
 /// a heavy ring for the one the reader is on, and a light ring for the rest.
+#[allow(clippy::too_many_arguments)]
 fn draw_step_marks(
     surface: &mut Surface,
     rect: Rect,
     current: u8,
     total: u8,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let (mark, gap) = steps_mark(metrics);
@@ -16265,10 +16982,17 @@ fn draw_step_marks(
         };
         match step.cmp(&current) {
             std::cmp::Ordering::Less => {
-                fill_rounded_clipped(surface, dot, mark / 2, tone::INK, clip);
+                fill_rounded_clipped(surface, dot, mark / 2, palette.emphasis(), clip);
             }
             std::cmp::Ordering::Equal => {
-                stroke_rounded_clipped(surface, dot, mark / 2, tone::INK, max(2, mark / 4), clip);
+                stroke_rounded_clipped(
+                    surface,
+                    dot,
+                    mark / 2,
+                    palette.emphasis(),
+                    max(2, mark / 4),
+                    clip,
+                );
             }
             std::cmp::Ordering::Greater => stroke_rounded_clipped(
                 surface,
@@ -16326,6 +17050,7 @@ fn draw_centered(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_nav_label(
     surface: &mut Surface,
     lines: &[String],
@@ -16333,6 +17058,7 @@ fn draw_nav_label(
     metrics: &DisplayMetrics,
     selected: bool,
     glyph: Option<Glyph>,
+    palette: Palette,
     clip: Rect,
 ) {
     // A mark sits above the word rather than instead of it. This band is a
@@ -16397,10 +17123,18 @@ fn draw_nav_label(
     // dominate the content it is meant to be subordinate to.
     if selected {
         let thickness = metrics.rule_thickness() * 2;
+        // As wide as the word it marks, and never shorter than a fingertip.
+        // Two millimetres was the size of a hyphen at this density: on the
+        // panel it read as a mark on the glass rather than as the answer to
+        // "where am I".
         let width = if legacy_typography() {
             rect.width.saturating_sub(2 * metrics.space(Space::Medium))
         } else {
-            metrics.tenth_mm(20)
+            let word = lines
+                .first()
+                .map_or(0, |line| measure_text(line, FontSize::Caption).0);
+            max(word, metrics.tenth_mm(NAV_SELECTION_MIN_TENTH_MM))
+                .min(rect.width.saturating_sub(2 * metrics.space(Space::Small)))
         };
         fill_clipped(
             surface,
@@ -16414,7 +17148,7 @@ fn draw_nav_label(
                 width: width.min(rect.width),
                 height: thickness,
             },
-            tone::INK,
+            palette.emphasis(),
             clip,
         );
     }
@@ -16566,6 +17300,7 @@ fn draw_status_mark(
     mark: StatusMark,
     rect: Rect,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let size = rect.height * 7 / 10;
@@ -16577,7 +17312,14 @@ fn draw_status_mark(
     };
     match mark {
         StatusMark::Signal(strength) => {
-            blit_vector_crisp(surface, &vector::wifi(strength), size, square, clip);
+            blit_vector_crisp_in(
+                surface,
+                &vector::wifi(strength),
+                size,
+                square,
+                clip,
+                palette.signal(strength),
+            );
         }
         StatusMark::Bluetooth => {
             blit_vector_crisp(
@@ -16599,7 +17341,14 @@ fn draw_status_mark(
                 ..square
             };
             let shapes = vector::battery(level, charging);
-            blit_vector_crisp(surface, &shapes, glyph.width, glyph, clip);
+            blit_vector_crisp_in(
+                surface,
+                &shapes,
+                glyph.width,
+                glyph,
+                clip,
+                palette.battery(level, charging),
+            );
             // Set against the battery, so a short number leaves its spare room
             // on the side away from the glyph rather than between them.
             let text = format!("{}%", level.get());
@@ -16694,11 +17443,12 @@ fn blit_vector_crisp_in(
     size: i32,
     rect: Rect,
     clip: Rect,
-    tone: u8,
+    paint: impl Into<Paint>,
 ) {
     if size <= 0 {
         return;
     }
+    let paint = paint.into();
     let coverage = vector::render(shapes, size);
     let origin_x = rect.x + (rect.width - size) / 2;
     let origin_y = rect.y + (rect.height - size) / 2;
@@ -16711,7 +17461,10 @@ fn blit_vector_crisp_in(
             if x < clip.x || y < clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height {
                 continue;
             }
-            surface.blend(x, y, tone, 255);
+            match paint {
+                Paint::Grey(tone) => surface.blend(x, y, tone, 255),
+                Paint::Colour(colour) => surface.blend_colour(x, y, colour, 255),
+            }
         }
     }
 }
@@ -16742,6 +17495,115 @@ fn blit_vector_crisp_in(
 /// keeps a byline shorter than a paragraph, which is the thing being claimed.
 fn byline_height(measured: i32, _metrics: &DisplayMetrics) -> i32 {
     measured + 2 * (measured / 6)
+}
+
+/// The paper between a command's panel and its words: beside them, and
+/// above and below them.
+///
+/// Two millimetres at the sides, the padding of a list row, so a command's
+/// words start where a row's title would and the eye does not have to find a
+/// new margin. One above and below, because a line of type already carries
+/// its own leading and a panel twice that height read as a button. The one
+/// above and below goes with the rest of the room when a screen has to give it
+/// back, and the leading alone keeps the words off the panel's edges.
+fn command_inset(metrics: &DisplayMetrics) -> (i32, i32) {
+    let above = if room_given_up() {
+        0
+    } else {
+        metrics.space(Space::Tight)
+    };
+    (metrics.space(Space::Small), above)
+}
+
+/// Breaks a command into lines at its spaces and nowhere else.
+///
+/// The line breaker is written for prose, and in prose a slash or a hyphen is
+/// a fair place to break. In a command it is not: "~/" at the end of one line
+/// and "Pictures" at the start of the next is a path nobody can type back,
+/// and joining characters to stop it each take a column of their own in a
+/// fixed-pitch face. A word wider than the column is the one exception, and it
+/// is broken between two characters, the way a terminal wraps it, so every
+/// character is still drawn; the words after it start a fresh line.
+///
+/// Everything else is kept as written. The spaces inside a line are the
+/// command's own, and two of them inside quotes are an argument, so only the
+/// run a line breaks at is dropped. A line break the application wrote is a
+/// line break here too.
+fn wrap_command(text: &str, width: i32, size: FontSize) -> Vec<String> {
+    let fits = |line: &str| measure_text_in(line, size, Face::Mono).0 <= width;
+    let mut lines = Vec::new();
+    for written in text.split('\n') {
+        let mut line = String::new();
+        // Whether this written line has been broken yet. Spaces leading the
+        // line are its indent; spaces a break fell at belong to no line.
+        let mut broken = false;
+        let mut rest = written.trim_end();
+        while !rest.is_empty() {
+            let after_gap = rest.trim_start();
+            let gap = if broken && line.is_empty() {
+                ""
+            } else {
+                &rest[..rest.len() - after_gap.len()]
+            };
+            let word_end = after_gap
+                .find(char::is_whitespace)
+                .unwrap_or(after_gap.len());
+            let word = &after_gap[..word_end];
+            rest = &after_gap[word_end..];
+            let joined = format!("{line}{gap}{word}");
+            if fits(&joined) {
+                line = joined;
+                continue;
+            }
+            broken = true;
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            if fits(word) {
+                line = word.to_owned();
+                continue;
+            }
+            let mut piece = word;
+            while !piece.is_empty() && !fits(piece) {
+                // The longest run of whole characters that fits, and never
+                // less than one, so a column narrower than a letter still ends.
+                let mut end = piece.chars().next().map_or(piece.len(), char::len_utf8);
+                for (index, character) in piece.char_indices().skip(1) {
+                    let next = index + character.len_utf8();
+                    if !fits(&piece[..next]) {
+                        break;
+                    }
+                    end = next;
+                }
+                lines.push(piece[..end].to_owned());
+                piece = &piece[end..];
+            }
+            // The end of a broken word stands alone, so the words after it
+            // start a line of their own and "-- /bin/sh" is not split from
+            // its "--".
+            if !piece.is_empty() {
+                lines.push(piece.to_owned());
+            }
+        }
+        if !line.is_empty() || written.trim().is_empty() {
+            lines.push(line);
+        }
+    }
+    // A blank line between two commands is the application's; one before the
+    // first or after the last is a stray line break.
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    let leading = lines.iter().take_while(|line| line.is_empty()).count();
+    lines.drain(..leading);
+    lines
+}
+
+/// How tall a command's panel is, given its lines: the lines and the inset
+/// above and below them, with the floor a paragraph has.
+fn command_height(measured: i32, metrics: &DisplayMetrics) -> i32 {
+    let (_, above) = command_inset(metrics);
+    max(MIN_TEXT_HEIGHT, measured.saturating_add(2 * above))
 }
 
 fn fold_mark_width(metrics: &DisplayMetrics) -> i32 {
@@ -16789,9 +17651,9 @@ fn draw_caret(surface: &mut Surface, rect: Rect, side: Side, clip: Rect) {
     }
 }
 
-fn fill_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
+fn fill_clipped(surface: &mut Surface, rect: Rect, paint: impl Into<Paint>, clip: Rect) {
     if let Some(rect) = rect.intersection(clip) {
-        surface.fill_rect(rect, tone);
+        surface.fill_rect_paint(rect, paint.into());
     }
 }
 
@@ -16803,7 +17665,14 @@ fn fill_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
 /// every ruled box looked washed out while dividers, which have always used
 /// the real rule thickness, looked correct. Both now come from the same
 /// physical measurement.
-fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, clip: Rect) {
+fn stroke_clipped(
+    surface: &mut Surface,
+    rect: Rect,
+    paint: impl Into<Paint>,
+    thickness: i32,
+    clip: Rect,
+) {
+    let paint = paint.into();
     // A border cannot be thicker than half the thing it surrounds, or the two
     // opposite edges overlap and the box fills in.
     let thickness = thickness
@@ -16836,7 +17705,7 @@ fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, c
             height: rect.height,
         },
     ] {
-        fill_clipped(surface, edge, tone, clip);
+        fill_clipped(surface, edge, paint, clip);
     }
 }
 
@@ -16887,13 +17756,14 @@ fn draw_backgammon_point(
     rect: Rect,
     from_top: bool,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let paper_point = (rect.x / rect.width.max(1)).rem_euclid(2) == 0;
     let fill = if paper_point {
-        tone::SURFACE
+        palette.board_dark()
     } else {
-        tone::PAPER
+        Paint::Grey(tone::PAPER)
     };
     let height = rect.height.max(1);
     let centre = rect.x + rect.width / 2;
@@ -17035,10 +17905,17 @@ fn rounded_row(rect: Rect, radius: i32, row: i32) -> Option<Rect> {
 }
 
 /// Fills a rectangle whose corners have been taken off.
-fn fill_rounded_clipped(surface: &mut Surface, rect: Rect, radius: i32, tone: u8, clip: Rect) {
+fn fill_rounded_clipped(
+    surface: &mut Surface,
+    rect: Rect,
+    radius: i32,
+    paint: impl Into<Paint>,
+    clip: Rect,
+) {
+    let paint = paint.into();
     for row in 0..rect.height {
         if let Some(span) = rounded_row(rect, radius, row) {
-            fill_clipped(surface, span, tone, clip);
+            fill_clipped(surface, span, paint, clip);
         }
     }
 }
@@ -17053,10 +17930,11 @@ fn stroke_rounded_clipped(
     surface: &mut Surface,
     rect: Rect,
     radius: i32,
-    tone: u8,
+    paint: impl Into<Paint>,
     thickness: i32,
     clip: Rect,
 ) {
+    let paint = paint.into();
     let thickness = thickness
         .max(1)
         .min(rect.width.max(1) / 2)
@@ -17079,7 +17957,7 @@ fn stroke_rounded_clipped(
                         width: hole.x - outer.x,
                         ..outer
                     },
-                    tone,
+                    paint,
                     clip,
                 );
                 let right = hole.x.saturating_add(hole.width);
@@ -17090,11 +17968,11 @@ fn stroke_rounded_clipped(
                         width: outer.x + outer.width - right,
                         ..outer
                     },
-                    tone,
+                    paint,
                     clip,
                 );
             }
-            None => fill_clipped(surface, outer, tone, clip),
+            None => fill_clipped(surface, outer, paint, clip),
         }
     }
 }
@@ -17545,3 +18423,6 @@ mod figure_tests;
 #[cfg(test)]
 #[path = "colour_orientation_tests.rs"]
 mod colour_orientation_tests;
+
+#[cfg(test)]
+mod colour_tests;

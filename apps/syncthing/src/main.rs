@@ -613,6 +613,12 @@ fn about_screen() -> Screen {
 }
 
 impl KoboApp for Sync {
+    /// Syncthing's own blue, from its mark, kept apart from the platform's
+    /// cobalt so the two are not mistaken for one another.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Blue)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(CONFIG);
         context.store().load(META);

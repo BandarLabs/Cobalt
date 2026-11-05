@@ -1,7 +1,7 @@
 # sweep: --bare
 # Honest first-run: the shelf is empty until the host CLI pushes photos.
 expect Frame
-expect Your frame is empty
+wait-for Your frame is empty
 expect kobo frame
 clean
 shot empty

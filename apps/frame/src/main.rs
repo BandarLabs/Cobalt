@@ -620,7 +620,14 @@ impl Frame {
             }
             self.verified.insert(id.to_owned());
         }
-        let picture = kobo_image::decode(bytes).and_then(|picture| {
+        // In colour on a reader that shows it. A photograph is the one thing
+        // on this panel that is worth every byte of colour it costs.
+        let decoded = if context.panel_shows_colour() {
+            kobo_image::decode_colour(bytes)
+        } else {
+            kobo_image::decode(bytes)
+        };
+        let picture = decoded.and_then(|picture| {
             if picture.width() == self.panel_width && picture.height() == self.panel_height {
                 Ok(picture)
             } else if fit == FitChoice::Pad {
@@ -631,12 +638,10 @@ impl Frame {
         });
         match picture {
             Ok(picture) => {
-                self.picture = context.put_picture(
-                    PHOTO,
-                    picture.width(),
-                    picture.height(),
-                    picture.into_grey(),
-                );
+                let (width, height) = (picture.width(), picture.height());
+                let colour = picture.colour().map(<[u8]>::to_vec);
+                self.picture =
+                    context.put_picture_shown(PHOTO, width, height, picture.into_grey(), colour);
                 if self.picture.is_none() {
                     self.skip_unreadable(
                         context,

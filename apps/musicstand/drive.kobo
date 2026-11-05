@@ -1,6 +1,6 @@
 # An empty stand points at the companion push command.
 wait-for Music Stand
-expect Your stand is empty
+wait-for Your stand is empty
 clean
 shot musicstand-empty
 # The empty stand names only the push: setup and pairing are the setup steps.

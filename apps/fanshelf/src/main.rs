@@ -829,10 +829,7 @@ impl Fanshelf {
         let page = self.summary_page.min(pages.len().saturating_sub(1));
         let mut screen = self.summary_head(page == 0);
         for (_, depth, role, paragraph) in pages.get(page).into_iter().flatten() {
-            screen = match role {
-                QuoteRole::Body => screen.quote(*depth, paragraph),
-                QuoteRole::Byline => screen.byline(*depth, paragraph),
-            };
+            screen = screen.quote_as(*depth, *role, paragraph);
         }
         if pages.len() > 1 {
             screen = screen

@@ -18,11 +18,12 @@ wait-for 100%
 tap-id reader-size-5
 wait-for 110%
 shot books-larger
-# Back closes the book from the open panel.
+# Back closes the book from the open panel, and the home screen offers it
+# again with Continue reading.
 tap-id 4294967295
-wait-for Books
+wait-for Continue reading
 shot books-closed
-tap River
+tap Continue reading
 wait-idle 1500
 expect-missing Marker 1
 tap-id reader-controls

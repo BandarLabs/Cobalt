@@ -83,6 +83,5 @@ Before Stable promotion, install that package on a Kobo and verify that an
 update preserves the account and reading position. Local contributor previews
 use a public test key and must not be trusted as official Store releases.
 
-The [listing image](screenshots/inbox.png) uses synthetic articles rendered by
-Cobalt at Clara BW dimensions. It is not device-test evidence. Its reproducible
-capture is in `tools/review-captures/apps/readeck/`.
+The [listing image](screenshots/inbox.png) shows public-domain essays served to
+the app in the simulator by a local test server. It is not device-test evidence.

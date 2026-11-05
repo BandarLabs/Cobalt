@@ -1,7 +1,7 @@
 # The gateway setup names the guided command, Check again answers, and the
 # address field takes typed input on the on-screen keyboard.
 wait-for Post
-expect Connect a gateway
+wait-for Connect a gateway
 expect kobo connect post
 clean
 shot post-setup

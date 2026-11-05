@@ -240,11 +240,14 @@ impl Field {
             id
         };
         let bar_title = match shape.title {
+            // The prompt names the field, not the page: the bar already says
+            // whose screen this is. Set at the first level it was a second
+            // title, larger than the first, over a single line of input.
             Some(title) => {
                 nodes.push(Node::Heading {
                     id: id(),
                     text: self.prompt.clone(),
-                    level: 1,
+                    level: 2,
                 });
                 title.to_owned()
             }

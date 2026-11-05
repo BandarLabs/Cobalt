@@ -9,7 +9,7 @@ time.
 <td width="50%" valign="top"><img width="300" src="screenshots/cooking.png" alt="Cooking, one step at a time"><br>Cooking, one step at a time</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/ingredients.png" alt="Ingredients, one tap away"><br>Ingredients, one tap away</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/ingredients.png" alt="Ingredients, ticked off as you go"><br>Ingredients, ticked off as you go</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/browse.png" alt="Every synced recipe, available offline"><br>Every synced recipe, available offline</td>
 </tr>
 </table>

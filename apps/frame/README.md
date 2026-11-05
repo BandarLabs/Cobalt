@@ -45,6 +45,8 @@ Commands use the reader `kobo setup` saved. Add `--device IP` for another
 reader, or `--sim` to try a command on the simulator.
 
 - JPEG, PNG, GIF and WebP are accepted, and camera orientation is applied.
+- On a Clara Colour or Libra Colour, photos keep their colour. On other
+  readers they are reduced to grey on the computer before they are sent.
 - Photos are cropped to fill the screen by default. `--fit pad` keeps the
   whole photo with white borders.
 - Each push adds to the frame. `--album NAME` names the album; otherwise the
@@ -109,4 +111,6 @@ The simulator check builds the app, opens it in a fresh simulator and plays
 
 Images are prepared and decoded with the `image` crate (MIT or Apache-2.0).
 The sample photograph is [Blue Marble](https://svs.gsfc.nasa.gov/30613) by the
-NASA Johnson Space Center Earth Science and Remote Sensing Unit.
+NASA Johnson Space Center Earth Science and Remote Sensing Unit. The screenshots
+show Ansel Adams's The Tetons and the Snake River (1942), a public-domain
+photograph from the U.S. National Archives.

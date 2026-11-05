@@ -33,54 +33,54 @@ const systemApps = [
 const screenshots = {
   arxiv: ["arxiv.png", "The newest Artificial Intelligence preprints listed newest first in the Preprints app on a Kobo"],
   audiobook: ["audiobook.png", "An audiobook player with cover art and playback controls on a Kobo"],
-  backgammon: ["backgammon.png", "Backgammon board on a Kobo after Black opened with 4 and 6, with dice, cube and match score."],
+  backgammon: ["backgammon.png", "Backgammon on a Kobo in the middle of a game against the computer, with its last move marked on the board and described below it."],
   birds: ["birds.png", "A labelled collage of public-domain bird plates filling a Kobo screen."],
   brief: ["brief.png", "A numbered daily news brief on a Kobo"],
-  "calibre-web": ["calibre-web.png", "A book from a calibre-web library open on a Kobo, with text-size and front-light controls and the page count."],
+  "calibre-web": ["calibre-web.png", "The first page of Pride and Prejudice from a calibre-web library on a Kobo, with text-size and front-light controls and the page count."],
   chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
-  crossword: ["crossword.png", "Crossword grid on a Kobo with the first answer filled in and numbered cells."],
-  deck: ["deck.png", "Deck paired with a computer, showing Test, Format and Deploy command pads."],
-  fanshelf: ["fanshelf.png", "A followed work in Fanshelf naming its author, fandom, rating and chapter count, with Read and Check updates controls."],
-  fieldbook: ["fieldbook.png", "Fieldbook tallying an American Robin during an outing."],
+  crossword: ["crossword.png", "Crossword grid on a Kobo with three answers filled in and the current clue above it."],
+  deck: ["deck.png", "Deck paired with a computer, showing Test, Format, Lint, Docs and Deploy command pads."],
+  fanshelf: ["fanshelf.png", "A followed work in Fanshelf naming its author, fandom, rating and chapter count, with a Download EPUB button."],
+  fieldbook: ["fieldbook.png", "Fieldbook during an outing at Lake Merced, listing the birds logged so far with a Finish outing button."],
   flashcards: ["flashcards.png", "A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons."],
-  frame: ["frame.png", "A full-area monochrome photograph in Frame on a Kobo Clara BW."],
+  frame: ["frame.png", "Ansel Adams's The Tetons and the Snake River filling the Frame screen on a Kobo Clara BW."],
   gallery: ["components.png", "Cobalt typography and interface components on a Kobo"],
   grimoire: ["grimoire.png", "Grimoire initiative order showing the active combatant and round counter on a Kobo."],
-  gutenbird: ["gutenbird.png", "A shelf of books from an OPDS library on a Kobo"],
+  gutenbird: ["gutenbird.png", "Popular Project Gutenberg books with their covers in Gutenbird on a Kobo"],
   habits: ["habits.png", "Habits today screen on a Kobo Clara BW, with daily and weekday streak tasks."],
-  hn: ["hackernews.png", "A ranked list of Hacker News stories on a Kobo"],
-  homepanel: ["homepanel.png", "Home Panel tile grid on a Kobo showing four Home Assistant tiles with the last refresh time."],
-  inkling: ["inkling.png", "A solved Inkling five-letter daily puzzle with grayscale shape feedback."],
+  hn: ["hackernews.png", "A ranked list of Show HN stories on a Kobo"],
+  homepanel: ["homepanel.png", "Home Panel tile grid on a Kobo showing six Home Assistant tiles with the last refresh time."],
+  inkling: ["inkling.png", "A solved Inkling puzzle in three guesses, with right-spot letters shaded and a wrong-spot letter in brackets."],
   kitchencard: ["kitchencard.png", "Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."],
   lichess: ["lichess.png", "Lichess on Kobo with Account/Games, Puzzles, Computer and How to play tiles above the rapid and classical time controls."],
-  logicpack: ["logicpack.png", "Logic Pack's Minesweeper board after a revealed cell and contradiction check."],
+  logicpack: ["logicpack.png", "A solved Hashi puzzle in Logic Pack, with sixteen islands joined by single and double bridges."],
   launcher: ["launcher.png", "The Cobalt launcher on its Apps tab, with Books, Settings and Kobo reader tabs below"],
   magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
   morse: ["morse.png", "A letter filling the Kobo screen while the front light sends Morse code"],
-  musicstand: ["musicstand.png", "Music Stand showing the Prelude from Bach's Cello Suite No. 1 as a full-page score."],
+  musicstand: ["musicstand.png", "Music Stand showing the opening of the Prelude from Bach's Cello Suite No. 1 at reading size."],
   needles: ["needles.png", "Needles row counter showing the current row, section and repeat progress, with +1 row and Undo."],
   nonograms: ["nonograms.png", "A Nonograms puzzle with the selected square and its row and column clues highlighted."],
   panels: ["panels.png", "The Panels comic shelf with a cover and saved progress, page 2 of 4."],
   paperterm: ["paperterm.png", "Paperterm showing a laptop terminal session in portrait, with the keyboard open."],
-  parlor: ["parlor.png", "Reversi opening board showing four legal moves, with Undo, Moves and New game."],
+  parlor: ["parlor.png", "Reversi against the computer on a Kobo, with the computer's last disc marked and the legal moves shown as small rings."],
   parser: ["parser.png", "Parser opening Lamplight, with tappable words in the story and command buttons for LOOK, TAKE and the compass directions."],
   post: ["post.png", "Post inbox listing Hermes letters newest first, with Newer and Older paging."],
-  pubquiz: ["pubquiz.png", "Pub Quiz pass-around question with four large answer choices for Ada."],
+  pubquiz: ["pubquiz.png", "Pub Quiz pass-around question on Ada's turn, with four numbered answer choices."],
   readlater: ["readlater.png", "Read Later's unread queue of synced Wallabag articles with reading times."],
-  readeck: ["readeck/inbox.png", "Readeck inbox with sample articles, rendered by Cobalt at Clara BW dimensions; not a device capture."],
-  rss: ["feeds.png", "Subscribed feeds and articles in the Feeds app on a Kobo"],
-  "rss-miniflux": ["rss-miniflux.png", "A Miniflux article open on a Kobo with text-size and front-light controls."],
+  readeck: ["readeck/inbox.png", "Readeck inbox on a Kobo listing four public-domain essays with their reading times."],
+  rss: ["feeds.png", "Unread articles from one subscribed feed in the Feeds app on a Kobo"],
+  "rss-miniflux": ["rss-miniflux.png", "An essay from Walden open in Digest on a Kobo, under an engraving of Thoreau's house."],
   settings: ["settings.png", "Cobalt Settings listing Bluetooth, Wi-Fi, Battery, Software update and About"],
   sidekick: ["sidekick.png", "Sidekick showing several coding-agent sessions and their pending approvals."],
   store: ["store.png", "The Cobalt App Store listing installed and available apps"],
   sudoku: ["sudoku.png", "An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"],
-  syncthing: ["syncthing.png", "Sync folders: vault, frame and books receive, out sends."],
+  syncthing: ["syncthing.png", "Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
-  todo: ["todo.png", "A to-do list with one open item on a Kobo"],
-  vault: ["vault.png", "Vault home on a Kobo with four synced notes and Browse, Tags, Recent and Search rows."],
-  verses: ["verses.png", "Verses displaying a public-domain daily poem in a spacious Kobo reading layout."],
-  "zotero-reader": ["zotero-reader.png", "Reading a paper with structured layout and Zotero metadata on a Kobo"]
+  todo: ["todo.png", "A to-do list with four open items and one done on a Kobo."],
+  vault: ["vault.png", "Vault home on a Kobo with eight notes and Browse, Tags, Recent and Search rows."],
+  verses: ["verses.png", "William Blake's The Tiger in Verses, set in a spacious Kobo reading layout."],
+  "zotero-reader": ["zotero-reader.png", "The opening of Darwin's On the Origin of Species, read from a Zotero library's indexed text on a Kobo"]
 };
 // Categories are a property of the listing, not of the app, so they live here
 // rather than in cobalt-app.json. A manifest field would ship inside every
@@ -588,7 +588,7 @@ for (const app of systemApps) {
     <figure class="app-shot">
       <img src="../../media/site/apps/${screenshot}" width="1072" height="1448" alt="${escape(screenshotAlt)}">
     </figure>
-  </div>
+  </div>${gallery(app, name)}
   <section class="panel setup">
     <p class="eyebrow">Included with Cobalt</p>
     <h2>No separate install</h2>
@@ -695,9 +695,21 @@ if (unencoded.size > 0) {
 const storeApps = [...catalog.apps].sort((a, b) =>
   a.display_name.localeCompare(b.display_name)
 );
+// Some Store apps began as examples and still live under examples/, so the
+// link follows the package to wherever it is rather than assuming apps/. A
+// cell that points at a README which is not there is a 404 on the project's
+// front page, so the generator refuses to write one.
+const readmeHrefFor = app => {
+  const dir = sourceDirFor(app.id);
+  const href = dir && `${dir}/${app.id}/README.md`;
+  if (!href || !existsSync(resolve(root, href))) {
+    throw new Error(`${app.id} is in the README table but has no README.md under apps/ or examples/`);
+  }
+  return href;
+};
 const readmeCell = app => {
   const [screenshot, screenshotAlt] = screenshotFor(app);
-  const href = `apps/${app.id}/README.md`;
+  const href = readmeHrefFor(app);
   return `<td width="33%" valign="top"><a href="${href}"><img width="230" src="docs/media/site/apps/${screenshot}" alt="${escape(screenshotAlt)}"></a><br><b><a href="${href}">${escape(app.display_name)}</a></b><br>${escape(app.summary)}</td>`;
 };
 const readmeRows = [];

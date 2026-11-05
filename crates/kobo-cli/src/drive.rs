@@ -157,7 +157,10 @@ pub struct CapturedFrame {
     pub metadata: serde_json::Value,
     pub width: u32,
     pub height: u32,
-    pub grey: Vec<u8>,
+    /// One byte a pixel of grey, or three of colour when `rgb` is set, which
+    /// a simulated colour panel's captures are.
+    pub pixels: Vec<u8>,
+    pub rgb: bool,
 }
 
 impl Driver {
@@ -643,15 +646,14 @@ impl Driver {
         } else {
             "/capture"
         })?;
-        let (metadata, width, height, grey) = parse_atomic_capture(&bytes)?;
-        if metadata["frame"]["format"] != "grey8" {
-            return Err("expected a grayscale recording frame".into());
-        }
+        let (metadata, width, height, pixels) = parse_atomic_capture(&bytes)?;
+        let rgb = metadata["frame"]["format"] == "rgb24";
         Ok(CapturedFrame {
             metadata,
             width,
             height,
-            grey: grey.to_vec(),
+            pixels: pixels.to_vec(),
+            rgb,
         })
     }
 
@@ -852,22 +854,26 @@ struct FrameLog {
 
 impl FrameLog {
     fn sample_capture(&mut self, millis: u32, capture: CapturedFrame) {
-        if self.sample(millis, capture.grey) {
+        if self.sample(millis, capture.pixels, capture.rgb) {
             self.provenance.push(capture.metadata);
         }
     }
 
     /// Offers one look at the panel, and says whether it was worth keeping.
-    fn sample(&mut self, millis: u32, grey: Vec<u8>) -> bool {
+    fn sample(&mut self, millis: u32, pixels: Vec<u8>, rgb: bool) -> bool {
         self.looked += 1;
         if self
             .frames
             .last()
-            .is_some_and(|last| last.grey.as_slice() == grey.as_slice())
+            .is_some_and(|last| last.pixels.as_slice() == pixels.as_slice())
         {
             return false;
         }
-        self.frames.push(RecordedFrame { millis, grey });
+        self.frames.push(RecordedFrame {
+            millis,
+            pixels,
+            rgb,
+        });
         true
     }
 }
@@ -1942,10 +1948,10 @@ mod tests {
     #[test]
     fn a_screen_that_did_not_move_is_recorded_once() {
         let mut log = FrameLog::default();
-        assert!(log.sample(0, vec![0xff; 4]));
-        assert!(!log.sample(250, vec![0xff; 4]));
-        assert!(!log.sample(500, vec![0xff; 4]));
-        assert!(log.sample(750, vec![0x40; 4]));
+        assert!(log.sample(0, vec![0xff; 4], false));
+        assert!(!log.sample(250, vec![0xff; 4], false));
+        assert!(!log.sample(500, vec![0xff; 4], false));
+        assert!(log.sample(750, vec![0x40; 4], false));
         assert_eq!(log.looked, 4);
         assert_eq!(log.frames.len(), 2);
         assert_eq!(
@@ -1961,9 +1967,9 @@ mod tests {
     #[test]
     fn a_screen_that_comes_back_is_recorded_again() {
         let mut log = FrameLog::default();
-        log.sample(0, vec![0xff; 4]);
-        log.sample(100, vec![0x40; 4]);
-        assert!(log.sample(200, vec![0xff; 4]));
+        log.sample(0, vec![0xff; 4], false);
+        log.sample(100, vec![0x40; 4], false);
+        assert!(log.sample(200, vec![0xff; 4], false));
         assert_eq!(log.frames.len(), 3);
     }
 
@@ -2017,17 +2023,17 @@ mod tests {
             .unwrap();
             assert_eq!(
                 metadata["frame"]["sha256"],
-                kobo_net::sha256::hex_digest(&frame.grey)
+                kobo_net::sha256::hex_digest(&frame.pixels)
             );
             assert_eq!(metadata["mode"], "counter-demo");
             assert_eq!(
-                frame.grey.len(),
+                frame.pixels.len(),
                 (FRAME_WIDTH as usize) * (FRAME_HEIGHT as usize),
                 "a frame is not the size of the panel"
             );
-            let first = frame.grey[0];
+            let first = frame.pixels[0];
             assert!(
-                frame.grey.iter().any(|grey| *grey != first),
+                frame.pixels.iter().any(|grey| *grey != first),
                 "the frame is one flat shade, so nothing was drawn on it"
             );
         }

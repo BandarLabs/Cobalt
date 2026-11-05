@@ -11,7 +11,10 @@ const release = {
   version: "0.3.10", archive: "cobalt-KoboRoot.tgz", bytes: payload.length,
   sha256: createHash("sha256").update(payload).digest("hex"), nickelmenu: "0.6.0"
 };
-const profiles = [{ code: "N249", model: "Kobo Clara HD", firmware: ["4.38.23697"], ready: true }];
+const profiles = [
+  { code: "N249", model: "Kobo Clara HD", firmware: ["4.38.23697"], ready: true },
+  { code: "N506", model: "Tolino Shine 5", firmware: ["4.38.23697"], ready: false }
+];
 
 // Exercise the shipped script and its registered click handlers without USB
 // hardware. Handles retain writes in memory and reject missing entries like
@@ -49,8 +52,8 @@ function directory(name, contents = {}) {
   };
 }
 
-function reader(extra = {}, serial = "N249000000000") {
-  return directory("KOBOeReader", { ".kobo": { version: `${serial},4.1.15,4.38.23697\n` }, ...extra });
+function reader(extra = {}, serial = "N249000000000", firmware = "4.38.23697") {
+  return directory("KOBOeReader", { ".kobo": { version: `${serial},4.1.15,${firmware}\n` }, ...extra });
 }
 
 function page(drive = reader(), { devices, pickerError } = {}) {
@@ -200,3 +203,144 @@ test("denied write permission leaves download disabled", async () => {
   assert.equal(ui.node("#fetch").disabled, true);
   assert.match(ui.node("#pick-note").innerHTML, /Writing was not allowed/);
 });
+
+for (const firmware of ["5.1.184318", "5.0.0", "3.19.5761", "", "unknown", "4.38", "4.38.", "4..23697", ".38.23697"]) {
+  test(`firmware ${JSON.stringify(firmware)} is refused before anything is offered`, async () => {
+    const drive = reader({}, "N249000000000", firmware);
+    const ui = page(drive);
+    await ui.click("#pick");
+    assert.notEqual(ui.node("#step-connect").dataset.state, "done");
+    assert.equal(ui.node("#fetch").disabled, true);
+    assert.equal(ui.node("#write").disabled, true);
+    assert.match(ui.node("#pick-note").innerHTML, /can only be started on 4\.x firmware/);
+    assert.match(ui.node("#pick-note").innerHTML, /Nothing was written/);
+    assert.doesNotMatch(ui.node("#pick-note").innerHTML, /untested-ok/);
+    assert.equal(ui.evaluate("drive"), null);
+    await assert.rejects(drive.getDirectoryHandle(".adds"), { name: "NotFoundError" });
+  });
+}
+
+test("a refused reader disarms one chosen earlier in the same visit", async () => {
+  let drive = reader();
+  const ui = page({
+    get name() { return drive.name; },
+    queryPermission: () => drive.queryPermission(),
+    getDirectoryHandle: (...args) => drive.getDirectoryHandle(...args),
+    getFileHandle: (...args) => drive.getFileHandle(...args),
+    entries: () => drive.entries()
+  });
+  await ui.click("#pick");
+  assertConnected(ui);
+  drive = reader({}, "N249000000000", "5.1.184318");
+  await ui.click("#pick");
+  assert.equal(ui.evaluate("drive"), null);
+  assert.equal(ui.node("#fetch").disabled, true);
+  assert.equal(ui.node("#step-download").attributes["aria-disabled"], "true");
+});
+
+test("a tested model on an untested firmware branch asks for consent", async () => {
+  const ui = page(reader({}, "N249000000000", "4.41.23145"));
+  await ui.click("#pick");
+  assertConnected(ui);
+  assert.match(ui.node("#pick-note").innerHTML, /tested on firmware 4\.38\.x, not on this one/);
+  await ui.click("#fetch");
+  assert.equal(ui.node("#write").disabled, true);
+  ui.consent.checked = true;
+  ui.consent.handlers.change();
+  assert.equal(ui.node("#write").disabled, false);
+});
+
+test("a profile still awaiting review is not called tested", async () => {
+  const ui = page(reader({}, "N506000000000"));
+  await ui.click("#pick");
+  assertConnected(ui);
+  assert.match(ui.node("#pick-note").innerHTML, /not been fully tested/);
+  await ui.click("#fetch");
+  assert.equal(ui.node("#write").disabled, true);
+});
+
+test("the untested-model message lists only ready models", async () => {
+  const ui = page(reader({}, "N999000000000"));
+  await ui.click("#pick");
+  assert.match(ui.node("#pick-note").innerHTML, /tested are: Kobo Clara HD\./);
+  assert.doesNotMatch(ui.node("#pick-note").innerHTML, /Tolino/);
+});
+
+// A drive whose contents can be swapped between picks, so one visit can choose
+// two readers in turn the way somebody with two Kobos would.
+function swappable(first) {
+  const current = { drive: first };
+  return {
+    current,
+    handle: {
+      get name() { return current.drive.name; },
+      queryPermission: () => current.drive.queryPermission(),
+      getDirectoryHandle: (...args) => current.drive.getDirectoryHandle(...args),
+      getFileHandle: (...args) => current.drive.getFileHandle(...args),
+      entries: () => current.drive.entries()
+    }
+  };
+}
+
+for (const [name, serial, firmware] of [
+  ["an untested firmware branch", "N249000000000", "4.41.23145"],
+  ["a profile awaiting review", "N506000000000", "4.38.23697"],
+  ["an unknown model", "N999000000000", "4.38.23697"]
+]) {
+  test(`choosing ${name} after a download disarms Write until consent`, async () => {
+    const tested = reader();
+    const swap = swappable(tested);
+    const ui = page(swap.handle);
+    await ui.click("#pick");
+    await ui.click("#fetch");
+    assert.equal(ui.node("#write").disabled, false);
+
+    const untested = reader({}, serial, firmware);
+    swap.current.drive = untested;
+    await ui.click("#pick");
+    assertConnected(ui);
+    assert.match(ui.node("#pick-note").innerHTML, /untested-ok/);
+    assert.equal(ui.node("#write").disabled, true);
+
+    // Even a click that reached the handler writes nothing without consent.
+    await ui.click("#write");
+    await assert.rejects(untested.getDirectoryHandle(".adds"), { name: "NotFoundError" });
+    const system = await untested.getDirectoryHandle(".kobo");
+    await assert.rejects(system.getFileHandle("KoboRoot.tgz"), { name: "NotFoundError" });
+
+    ui.consent.checked = true;
+    ui.consent.handlers.change();
+    assert.equal(ui.node("#write").disabled, false);
+  });
+}
+
+test("choosing a tested reader after a download keeps the release ready to write", async () => {
+  const swap = swappable(reader({}, "N999000000000"));
+  const ui = page(swap.handle);
+  await ui.click("#pick");
+  await ui.click("#fetch");
+  assert.equal(ui.node("#write").disabled, true);
+  swap.current.drive = reader();
+  await ui.click("#pick");
+  assert.doesNotMatch(ui.node("#pick-note").innerHTML, /untested-ok/);
+  assert.equal(ui.node("#write").disabled, false);
+});
+
+for (const [name, drive] of [
+  ["an ordinary drive", directory("USB")],
+  ["a reader that refuses writing", Object.assign(reader(), {
+    queryPermission: async () => "denied", requestPermission: async () => "denied"
+  })]
+]) {
+  test(`${name} chosen after a download disarms the reader before it`, async () => {
+    const swap = swappable(reader());
+    const ui = page(swap.handle);
+    await ui.click("#pick");
+    await ui.click("#fetch");
+    swap.current.drive = drive;
+    await ui.click("#pick");
+    assert.equal(ui.evaluate("drive"), null);
+    assert.equal(ui.node("#write").disabled, true);
+    assert.equal(ui.node("#fetch").disabled, true);
+  });
+}

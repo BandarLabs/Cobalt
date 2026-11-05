@@ -15,6 +15,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const APP_STATE: &str = "/mnt/onboard/.adds/cobalt/state/syncthing";
 const HOME: &str = "/var/lib/cobalt/syncthing";
+/// Left in the engine's home by a session that is ending, so the window it
+/// started, running in a process of its own, ends with it.
+const STOP: &str = "stop-window";
 const ENGINE: &str = "/mnt/onboard/.adds/cobalt/bin/syncthing";
 const ENGINE_SHA256: &str = "e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf";
 
@@ -177,6 +180,45 @@ impl Due {
     }
 }
 
+/// Asks the window this session started to stop, because the session is
+/// ending.
+///
+/// A window used to outlive its session on purpose, so a sync begun a minute
+/// before the owner left could finish. What it finished into was a card the
+/// stock reader had just started scanning, a single core the stock reader
+/// needed to start, and a radio the session was about to release. Plugged
+/// into a computer in those five minutes, the reader handed its card over
+/// with the engine still writing to it. So a window ends with its session,
+/// and the sync carries on the next time Cobalt opens.
+///
+/// # Errors
+///
+/// When the request cannot be written; the session then ends the window
+/// itself once it has waited.
+pub fn ask_window_to_stop() -> std::io::Result<()> {
+    fs::write(Path::new(HOME).join(STOP), b"")
+}
+
+/// Puts back a sync whose window the session had to end before it could do
+/// so itself, so it runs again at the next session.
+///
+/// # Errors
+///
+/// When the app's state cannot be written.
+pub fn put_back(due: Due) -> Result<(), String> {
+    let reason = match due {
+        Due::Owner => "owner",
+        Due::Scheduled => "scheduled",
+    };
+    stopped_with_the_session(Path::new(APP_STATE), Path::new(HOME), reason)
+}
+
+/// Clears a request left by a session that ended before its window saw it,
+/// so the next window is not stopped by it as it starts.
+pub fn forget_stop_request() {
+    let _ignored = fs::remove_file(Path::new(HOME).join(STOP));
+}
+
 /// Whether a window is due, read from what the Sync app and earlier windows
 /// left in the app's state.
 ///
@@ -257,6 +299,10 @@ fn run_window(app_state: &Path, requested: Duration, reason: &str) -> Result<(),
         write_status(app_state, &Status::quiet("failed", detail))?;
         return Ok(());
     }
+    // Fetching the engine can take most of a short session.
+    if home.join(STOP).exists() {
+        return stopped_with_the_session(app_state, home, reason);
+    }
     let mut child = match start(home) {
         Ok(child) => child,
         Err(detail) => {
@@ -271,6 +317,10 @@ fn run_window(app_state: &Path, requested: Duration, reason: &str) -> Result<(),
     let peers = read_peers(home)?;
     let mut reached = 0;
     loop {
+        if home.join(STOP).exists() {
+            stop(&mut child, &key);
+            return stopped_with_the_session(app_state, home, reason);
+        }
         if !Settings::load(app_state)?.enabled {
             stop(&mut child, &key);
             write_status(app_state, &Status::quiet("paused", "Sync was turned off."))?;
@@ -323,6 +373,31 @@ fn run_window(app_state: &Path, requested: Duration, reason: &str) -> Result<(),
         }
         std::thread::sleep(POLL);
     }
+}
+
+/// Puts a sync its session stopped back to be run again, and says so.
+///
+/// The attempt is taken back, so the next session syncs as soon as it is on
+/// Wi-Fi instead of waiting out the schedule for a sync that never finished,
+/// and a Sync now tap is asked for again. The engine picks up where it
+/// stopped, so a library too large for one session still gets there.
+fn stopped_with_the_session(app_state: &Path, home: &Path, reason: &str) -> Result<(), String> {
+    let _ignored = fs::remove_file(home.join(STOP));
+    match fs::remove_file(app_state.join(LAST_ATTEMPT)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("take back the Sync attempt: {error}")),
+    }
+    if reason == "owner" {
+        atomic_write(&app_state.join(REQUEST), &epoch_now().to_string(), 0o600)?;
+    }
+    write_status(
+        app_state,
+        &Status::quiet(
+            "stopped",
+            "Sync stopped when you left Cobalt. It carries on the next time you open Cobalt.",
+        ),
+    )
 }
 
 /// Records the attempt and answers the request, and says whether there is
@@ -1246,6 +1321,38 @@ mod tests {
         assert!(asks_for_a_window(REQUEST) && asks_for_a_window("sync-config"));
         assert!(!asks_for_a_window("sync-meta"));
         let _ignored = fs::remove_dir_all(&state);
+    }
+
+    #[test]
+    fn a_sync_stopped_with_its_session_is_due_again_at_the_next() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-sync-stop-test-{}", std::process::id()));
+        let _ignored = fs::remove_dir_all(&root);
+        let state = root.join("state");
+        let home = root.join("home");
+        fs::create_dir_all(&state).expect("state");
+        fs::create_dir_all(&home).expect("home");
+        let now = epoch_now();
+
+        // A scheduled sync: the attempt it recorded is taken back.
+        fs::write(state.join("sync-config"), "true\n1").expect("hourly");
+        fs::write(state.join(LAST_ATTEMPT), now.to_string()).expect("attempt");
+        fs::write(home.join(STOP), b"").expect("the session asked");
+        assert_eq!(
+            due_in(&state, now),
+            None,
+            "the attempt holds the schedule off"
+        );
+        stopped_with_the_session(&state, &home, "scheduled").expect("stopped");
+        assert_eq!(due_in(&state, now), Some(Due::Scheduled));
+        assert!(!home.join(STOP).exists(), "the request was answered");
+        assert!(read_status(&state).starts_with("stopped"));
+
+        // A Sync now tap on a manual schedule: the tap is asked for again.
+        fs::write(state.join("sync-config"), "true\n0").expect("manual");
+        stopped_with_the_session(&state, &home, "owner").expect("stopped");
+        assert_eq!(due_in(&state, now), Some(Due::Owner));
+        let _ignored = fs::remove_dir_all(&root);
     }
 
     #[test]

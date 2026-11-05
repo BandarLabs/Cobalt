@@ -1,23 +1,20 @@
 # Panels screenshots
 
-Actual SDK app in the Clara BW simulator, 1072 × 1448, extra-large interface,
+Actual SDK app in the Clara BW simulator, 1072 × 1448, default text size,
 original Cobalt artwork, ideal grayscale frame. These are not physical-device
 captures. No live Komga service or account appears in them.
 
-| Image | Source capture and provenance |
+| Image | What it shows |
 | --- | --- |
-| library.png | [Cover and saved position restored](../../../docs/quality/evidence/panels-previews/37-shelf-position-restored.capture.json) |
-| reader.png | [Reader after forced restart](../../../docs/quality/evidence/panels-recovery/44-recovered-after-restart.capture.json) |
-| download-recovery.png | [Complete offline checkpoint](../../../docs/quality/evidence/panels-recovery/40-completed-download.capture.json) |
-| import-guide.png | [USB folder step](../../../docs/quality/evidence/panels-docs/31-import-guide-folder.capture.json) |
+| library.png | The bundled sample comic on the shelf, saved at page 2 of 4 |
+| reader.png | Page 1 of the sample comic |
+| download-recovery.png | A completed download checkpoint, recovered offline |
+| import-guide.png | The folder step of the USB guide |
 
 The public app page uses the same library image at
-`docs/media/site/apps/panels.png`. Capture metadata records the source checkout,
-binary digest, fonts, profile, text scale, fixture and dirty-source status.
+`docs/media/site/apps/panels.png`.
 
-Reproduce with the built CLI and the same `CARGO_TARGET_DIR`:
-
-```sh
-python3 scripts/quality/check-comics-sim.py --output /tmp/panels-recovery --scale extra-large --download-recovery
-python3 scripts/quality/check-comics-sim.py --output /tmp/panels-docs --scale extra-large --server-setup --onboarding --reader-tools --shelf-previews
-```
+The shelf, reader and guide come from the sample comic, added with
+**Try a sample comic**. The download screen starts from the same completed
+checkpoint that `scripts/quality/check-comics-sim.py --download-recovery`
+writes before it opens the app.

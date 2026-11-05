@@ -5453,19 +5453,21 @@ fn reader_still_connected(expected: &setup::Mounted) -> Result<(), String> {
 fn confirmed_setup(
     options: &SetupOptions,
     reader: &setup::Mounted,
-    profile: &kobo_profile::DeviceProfile,
+    identified: &setup::Identified,
     payload: &SetupPayload,
 ) -> Result<bool, String> {
+    let tested = match identified.untested(reader) {
+        Some(note) if options.mode != SetupMode::Undo => format!("  Tested: {note}\n"),
+        _ => String::new(),
+    };
     println!(
-        "\nReady to {}:\n  Model: {} (device code {}, profile {})\n  Firmware: {}\n  Mount: {}\n  Release: {}\n  Changes: {}\n",
+        "\nReady to {}:\n  Model: {}\n  Firmware: {}\n{tested}  Mount: {}\n  Release: {}\n  Changes: {}\n",
         if options.mode == SetupMode::Undo {
             "remove Cobalt"
         } else {
             "install Cobalt"
         },
-        profile.model,
-        profile.device_code,
-        profile.id,
+        identified.describe(reader),
         reader.firmware,
         reader.volume.display(),
         payload.description(),
@@ -5551,14 +5553,14 @@ fn setup_device_with_confirmation(
     confirm: impl FnOnce(
         &SetupOptions,
         &setup::Mounted,
-        &kobo_profile::DeviceProfile,
+        &setup::Identified,
         &SetupPayload,
     ) -> Result<bool, String>,
 ) -> Result<(), String> {
     let options = parse_setup(arguments)?;
     let reader = wait_for_mounted_reader(options.volume.as_deref(), options.wait_for_reader)?;
-    let profile = if options.mode == SetupMode::Undo {
-        setup::undo_profile(&reader)?
+    let identified = if options.mode == SetupMode::Undo {
+        setup::undo_profile(&reader)
     } else {
         setup::install_profile(&reader)?
     };
@@ -5567,15 +5569,7 @@ fn setup_device_with_confirmation(
     } else {
         setup_payload(&options)?
     };
-    println!(
-        "found {} ({}, profile {}, device code {}) at {} · firmware {}",
-        profile.model,
-        reader.model_code(),
-        profile.id,
-        profile.device_code,
-        reader.volume.display(),
-        reader.firmware
-    );
+    println!("{}", identified.found(&reader));
 
     if options.dry_run {
         println!(
@@ -5583,9 +5577,15 @@ fn setup_device_with_confirmation(
             dry_run_plan(&options, &reader),
             payload.description()
         );
+        if let Some(note) = identified
+            .untested(&reader)
+            .filter(|_| options.mode != SetupMode::Undo)
+        {
+            println!("tested: {note}");
+        }
         return Ok(());
     }
-    if !confirm(&options, &reader, profile, &payload)? {
+    if !confirm(&options, &reader, &identified, &payload)? {
         println!("Declined; nothing was written.");
         return Ok(());
     }
@@ -7147,17 +7147,25 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
         index += 1;
     }
     let mut capture_metadata = None;
-    let (width, height, grey) = if let Some(host) = host {
+    let (width, height, pixels, rgb) = if let Some(host) = host {
         let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::capture())?;
-        drive::decode_capture(&transcript)?
+        let (width, height, grey) = drive::decode_capture(&transcript)?;
+        (width, height, grey, false)
     } else {
         let driver = drive::Driver::new(&address, Path::new(".")).ideal(ideal);
         let capture = driver.capture()?;
         capture_metadata = Some(capture.metadata);
-        (capture.width, capture.height, capture.grey)
+        (capture.width, capture.height, capture.pixels, capture.rgb)
     };
-    let png = kobo_image::encode_png_grey(width, height, &grey)
-        .map_err(|error| format!("encode the panel: {error}"))?;
+    // A simulated colour panel's capture arrives in colour and is kept that
+    // way, so a shot of a Clara Colour shows the bar and controls that reader
+    // would show rather than their luminance.
+    let png = if rgb {
+        kobo_image::encode_png_rgb(width, height, &pixels)
+    } else {
+        kobo_image::encode_png_grey(width, height, &pixels)
+    }
+    .map_err(|error| format!("encode the panel: {error}"))?;
     fs::write(&output, png).map_err(|error| format!("write {}: {error}", output.display()))?;
     if let Some(metadata) = capture_metadata {
         let sidecar = output.with_extension("json");
@@ -7299,7 +7307,11 @@ fn pull_recording(host: &str) -> Result<Vec<u8>, String> {
 /// One recorded frame: when it appeared, and what was on the panel.
 struct RecordedFrame {
     millis: u32,
-    grey: Vec<u8>,
+    /// Grey, one byte a pixel, or colour at three when `rgb` is set. A
+    /// device recording is always grey; a filmed simulated colour panel is
+    /// not.
+    pixels: Vec<u8>,
+    rgb: bool,
 }
 
 /// Reads the device's recording format.
@@ -7326,7 +7338,8 @@ fn decode_recording(raw: &[u8]) -> Result<(u32, u32, Vec<RecordedFrame>), String
         let millis = u32::from_le_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]]);
         frames.push(RecordedFrame {
             millis,
-            grey: raw[at + 4..at + 4 + pixels].to_vec(),
+            pixels: raw[at + 4..at + 4 + pixels].to_vec(),
+            rgb: false,
         });
         at += 4 + pixels;
     }
@@ -7356,8 +7369,12 @@ fn write_recording(
     fs::create_dir_all(directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     for (index, frame) in frames.iter().enumerate() {
-        let png = kobo_image::encode_png_grey(*width, *height, &frame.grey)
-            .map_err(|error| format!("encode frame {index}: {error}"))?;
+        let png = if frame.rgb {
+            kobo_image::encode_png_rgb(*width, *height, &frame.pixels)
+        } else {
+            kobo_image::encode_png_grey(*width, *height, &frame.pixels)
+        }
+        .map_err(|error| format!("encode frame {index}: {error}"))?;
         let path = directory.join(format!("frame-{index:04}.png"));
         fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
     }

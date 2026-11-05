@@ -91,8 +91,8 @@ The simulator check builds the app, opens it in a fresh simulator and plays
 
 Species photos come from Avicommons and are included only when their licence
 allows redistribution. Each pack carries attribution for its photos, and the
-detail screen shows the credit. The photo above is a Northern Cardinal by Adam
-Jackson (CC0), via Avicommons.
+detail screen shows the credit. The photo above is a House Finch by Nigel
+(CC BY 2.0), via Avicommons.
 
 eBird and the Cornell Lab of Ornithology are trademarks of their owners.
 Fieldbook is an unofficial companion.

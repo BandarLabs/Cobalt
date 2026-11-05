@@ -105,7 +105,7 @@ fn launch_logo_keeps_its_blue_and_a_legible_greyscale_plane() {
 
     let source = include_str!("../../../../assets/cobalt-logo.svg");
     assert!(source.contains("viewBox=\"0 0 264 111\""));
-    assert!(source.contains("#6E93D6"));
+    assert!(source.contains("#6699DD"));
 }
 
 #[test]
@@ -1033,20 +1033,20 @@ fn a_book_is_drawn_without_the_band_and_everything_else_with_it() {
     let mut status = super::StatusSource::new();
     let reading = Screen::new(1, Vec::new()).with_reading(true);
     assert!(
-        super::chrome_for(&reading, false, &mut status)
+        super::chrome_for(&reading, false, &mut status, kobo_ui::Appearance::Grey)
             .status
             .is_none(),
         "a clock was put above a book"
     );
     let listing = Screen::new(1, Vec::new());
     assert!(
-        super::chrome_for(&listing, false, &mut status)
+        super::chrome_for(&listing, false, &mut status, kobo_ui::Appearance::Grey)
             .status
             .is_some(),
         "an ordinary screen lost its status band"
     );
     // Home has no way back, and the band is independent of that.
-    let home = super::chrome_for(&listing, true, &mut status);
+    let home = super::chrome_for(&listing, true, &mut status, kobo_ui::Appearance::Grey);
     assert!(!home.back, "the launcher was given a way out of itself");
     assert!(home.status.is_some(), "the launcher lost its status band");
 }
@@ -1112,7 +1112,7 @@ fn a_rooted_applications_sub_screen_is_still_drawn_a_way_back() {
     let pane = Screen::new(1, Vec::new())
         .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(1), "Bluetooth"))
         .with_own_back(true);
-    let chrome = super::chrome_for(&pane, true, &mut status);
+    let chrome = super::chrome_for(&pane, true, &mut status, kobo_ui::Appearance::Grey);
     assert!(
         chrome.back,
         "a screen that owns back was left with no way to use it"
@@ -1121,7 +1121,7 @@ fn a_rooted_applications_sub_screen_is_still_drawn_a_way_back() {
     let rooted = Screen::new(1, Vec::new())
         .with_top_bar(kobo_ui::TopBar::new(kobo_ui::NodeId(1), "Settings"));
     assert!(
-        !super::chrome_for(&rooted, true, &mut status).back,
+        !super::chrome_for(&rooted, true, &mut status, kobo_ui::Appearance::Grey).back,
         "an application's own root still has nowhere to go back to"
     );
 }

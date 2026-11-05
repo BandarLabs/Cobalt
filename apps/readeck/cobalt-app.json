@@ -3,8 +3,8 @@
   "display_name": "Readeck",
   "short_label": "Readeck",
   "summary": "Read and search your saved Readeck articles. Needs an account.",
-  "version": "0.1.2",
-  "release_notes": "Your API token, server address and searches are typed on Cobalt's own keyboard, and the reader saves the token without the app seeing it. Connecting shows its three steps, and a QR code opens the token page on a phone.",
+  "version": "0.1.5",
+  "release_notes": "Notes and links in an article now turn in pages when they run long, and tapping a note goes to its passage.",
   "glyph": "bookmark",
   "capabilities": [
     "network",

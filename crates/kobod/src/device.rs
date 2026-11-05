@@ -44,7 +44,9 @@ use kobo_hal::touch::TouchEvent;
 use kobo_hal::{Rect, RefreshIntent, RefreshPlan, RegionSnapshot};
 use kobo_policy::{Backends, Capability, Declared, DeviceServices, PowerPolicy, TaskRunner};
 use kobo_protocol::{Frame, Lifecycle, Message, TaskOutcome};
-use kobo_ui::{ActionId, CellStyle, Chrome, Layout, LayoutKind, PictureCache, Screen, Surface};
+use kobo_ui::{
+    ActionId, Appearance, CellStyle, Chrome, Layout, LayoutKind, PictureCache, Screen, Surface,
+};
 use kobo_wifi_trace::{Lifecycle as WifiTraceEvent, TraceClient};
 use std::fs;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
@@ -215,6 +217,12 @@ const BATTERY_INTERVAL: Duration = Duration::from_secs(30);
 /// changed.
 const STATUS_POLL: Duration = Duration::from_secs(2);
 
+/// How long teardown waits for a Sync window to stop before ending it.
+///
+/// The window looks for the request every two seconds and gives the engine
+/// ten to shut down cleanly; this is both, with a little to spare.
+const SYNC_STOP_PATIENCE: Duration = Duration::from_secs(15);
+
 /// How often the runtime looks at whether a scheduled sync is due.
 ///
 /// The shortest schedule the Sync app offers is an hour, so a minute late is
@@ -230,7 +238,9 @@ const SYNC_CHECK: Duration = Duration::from_secs(60);
 /// is open and caught up when it next opens.
 #[derive(Default)]
 struct SyncWindows {
-    running: Option<Child>,
+    /// The window this session started, with why, so a window that has to be
+    /// ended can be put back to run again.
+    running: Option<(Child, crate::syncthing::Due)>,
     checked: Option<Instant>,
     /// Set when the Sync app saved something that may make a window due now,
     /// so a tap is answered at once rather than within the minute.
@@ -244,7 +254,7 @@ impl SyncWindows {
         }
         self.asked = false;
         self.checked = Some(Instant::now());
-        if let Some(window) = &mut self.running {
+        if let Some((window, _)) = &mut self.running {
             if matches!(window.try_wait(), Ok(None)) {
                 return;
             }
@@ -261,6 +271,7 @@ impl SyncWindows {
             }
             return;
         }
+        crate::syncthing::forget_stop_request();
         let started = std::env::current_exe().and_then(|runtime| {
             use std::os::unix::process::CommandExt;
             Command::new(runtime)
@@ -277,10 +288,47 @@ impl SyncWindows {
         match started {
             Ok(window) => {
                 trace(&format!("sync window started ({due:?})"));
-                self.running = Some(window);
+                self.running = Some((window, due));
             }
             Err(error) => trace(&format!("sync window could not start: {error}")),
         }
+    }
+
+    /// Ends the window this session started, before the reader is handed back.
+    ///
+    /// Asked first, so the engine shuts down cleanly and the window records
+    /// that the sync carries on next time. A window that has not stopped by
+    /// the deadline is ended with its whole group, the engine included,
+    /// because nothing Cobalt started may still be running once the reader is.
+    fn finish(&mut self) {
+        let Some((mut window, due)) = self.running.take() else {
+            return;
+        };
+        if !matches!(window.try_wait(), Ok(None)) {
+            return;
+        }
+        if let Err(error) = crate::syncthing::ask_window_to_stop() {
+            trace(&format!("could not ask the sync window to stop: {error}"));
+        }
+        let deadline = Instant::now() + SYNC_STOP_PATIENCE;
+        while matches!(window.try_wait(), Ok(None)) {
+            if Instant::now() >= deadline {
+                let _ignored =
+                    kobo_abi::process_group::signal(window.id(), kobo_abi::process_group::SIGKILL);
+                let _ignored = window.wait();
+                trace("sync window did not stop in time and was ended");
+                // Ended before it could say so: most likely still fetching the
+                // engine, after it had already recorded the attempt and taken
+                // the owner's request. Put both back here instead, or a Sync
+                // now tap is lost and a schedule waits out a sync that never ran.
+                if let Err(error) = crate::syncthing::put_back(due) {
+                    trace(&format!("could not put the stopped sync back: {error}"));
+                }
+                return;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        trace("sync window stopped with the session");
     }
 }
 
@@ -470,8 +518,28 @@ impl Reading {
 /// Bluetooth and then had nothing to return to Settings with. The screen had
 /// said `owns_back`, which is an application declaring it has somewhere of its
 /// own to go, so drawing the control is exactly what it asked for.
-fn chrome_for(screen: &Screen, at_home: bool, status: &mut StatusSource) -> Chrome {
-    Chrome::for_screen(screen, at_home, Some(status.get().clone()))
+fn chrome_for(
+    screen: &Screen,
+    at_home: bool,
+    status: &mut StatusSource,
+    appearance: Appearance,
+) -> Chrome {
+    Chrome::for_screen(screen, at_home, Some(status.get().clone())).with_appearance(appearance)
+}
+
+/// What the painter is told about the panel: colour where the session has a
+/// colour filter to drive, grey everywhere else.
+///
+/// Decided from the display session rather than the profile directly, because
+/// the session is what downgrades a colour write on a panel that cannot take
+/// one, and the painter should never be told to spend colour the session will
+/// then throw away.
+fn appearance_of(display: &DisplaySession) -> Appearance {
+    if display.colour().is_some() {
+        Appearance::Colour
+    } else {
+        Appearance::Grey
+    }
 }
 
 /// Assembles one reading of everything the band shows, and the radio state
@@ -943,6 +1011,9 @@ pub fn present(
         None => true,
     };
 
+    // Held out here rather than in the session, so that teardown can stop a
+    // sync still running while the watchdog is fed and the radio is still up.
+    let mut sync_windows = SyncWindows::default();
     let application_outcome = if consented {
         host_applications(
             application,
@@ -956,6 +1027,7 @@ pub fn present(
             &network_settled,
             launch_painter,
             launch_started,
+            &mut sync_windows,
         )
     } else {
         // Not an error. The owner was asked and answered, and everything below
@@ -983,6 +1055,10 @@ pub fn present(
     // Without this the recovery watchdog would conclude the runtime had died
     // and restart a reader that is already starting.
     let teardown = KeepBeating::start(&watchdog);
+    // Before the radio is released and before the reader starts: a sync left
+    // running would write to the card the reader is about to scan, on a core
+    // it needs to start, through a radio that is about to go.
+    sync_windows.finish();
     // A session closed within seconds of opening can still be inside the
     // recovery's settle window, so this may wait. It waits beating, and it has
     // to: the radio cannot be handed back while it is still being restored.
@@ -1315,7 +1391,10 @@ fn describe(limit: Duration) -> String {
     }
 }
 
-const COBALT_BLUE: [u8; 3] = [0x6e, 0x93, 0xd6];
+/// The blue the splash is painted in on a colour panel: the platform's own
+/// accent, defined once in the UI crate so the first frame a reader sees and
+/// the bar over every platform screen are the same colour.
+const COBALT_BLUE: [u8; 3] = kobo_ui::Accent::Cobalt.shades().tint;
 const LOGO_WIDTH: i32 = 264;
 const LOGO_HEIGHT: i32 = 111;
 
@@ -1505,7 +1584,7 @@ fn announce_reboot(
     kobo_ui::render_oriented(
         &screen,
         &metrics_for(&screen),
-        &Chrome::with_back(false),
+        &Chrome::with_back(false).with_appearance(appearance_of(display)),
         &(),
         &mut surface,
         None,
@@ -1542,12 +1621,20 @@ const CONSENT_PATIENCE: Duration = Duration::from_secs(120);
 /// answers are reachable, which is the property that matters and the one that
 /// cannot be checked by looking at a device.
 fn consent_screen(notice: &crate::consent::Notice) -> Screen {
-    let mut nodes = vec![kobo_ui::Node::Heading {
-        id: kobo_ui::NodeId(1),
-        text: notice.title.clone(),
-        level: 1,
-    }];
-    let mut next = 2;
+    // Centred between two fills. There is no bar on this screen to hang it
+    // from, and set from the top margin the notice filled the upper half of
+    // the panel and left the lower half blank under the buttons.
+    let mut nodes = vec![
+        kobo_ui::Node::Flex {
+            id: kobo_ui::NodeId(1),
+        },
+        kobo_ui::Node::Heading {
+            id: kobo_ui::NodeId(2),
+            text: notice.title.clone(),
+            level: 1,
+        },
+    ];
+    let mut next = 3;
     for line in &notice.body {
         nodes.push(kobo_ui::Node::Text {
             id: kobo_ui::NodeId(next),
@@ -1581,7 +1668,11 @@ fn consent_screen(notice: &crate::consent::Notice) -> Screen {
             id: kobo_ui::NodeId(next),
             text: "If taps do not work, press the power button to close.".to_owned(),
         });
+        next += 1;
     }
+    nodes.push(kobo_ui::Node::Flex {
+        id: kobo_ui::NodeId(next),
+    });
     Screen::new(0, nodes)
 }
 
@@ -1604,7 +1695,7 @@ fn ask_consent(
     notice: &crate::consent::Notice,
 ) -> crate::consent::Decision {
     let screen = consent_screen(notice);
-    let chrome = Chrome::with_back(false);
+    let chrome = Chrome::with_back(false).with_appearance(appearance_of(display));
     let metrics = metrics_for(&screen);
     let mut surface = Surface::new(
         usize::try_from(whole_screen.width).unwrap_or(0),
@@ -2045,6 +2136,7 @@ fn host_applications(
     network_settled: &AtomicBool,
     launch_painter: Option<Painter>,
     launch_started: Instant,
+    sync_windows: &mut SyncWindows,
 ) -> Result<String, String> {
     // Keep the pre-takeover capture alive across every ordinary return. The
     // independent watchdog uses its saved record if this process cannot unwind.
@@ -2209,7 +2301,6 @@ fn host_applications(
         let mut power = kobod::power::Power::default();
         let mut power_button = kobod::power::Button::default();
         let mut consume_wake_touch = false;
-        let mut sync_windows = SyncWindows::default();
 
         loop {
             let now = Instant::now();
@@ -2446,7 +2537,12 @@ fn host_applications(
                                         // uses it: laying out with a different
                                         // one resolves the press against a
                                         // screen the reader cannot see.
-                                        let chrome = chrome_for(current, at_home, &mut status);
+                                        let chrome = chrome_for(
+                                            current,
+                                            at_home,
+                                            &mut status,
+                                            appearance_of(display),
+                                        );
                                         let shown =
                                             shown_screen(&apps[index], current.clone(), &chrome);
                                         page_key_message(&shown, &chrome, forward)
@@ -2567,7 +2663,7 @@ fn host_applications(
                     // hit rectangle five millimetres off.
                     let chrome = screen.as_ref().map_or_else(
                         || Chrome::with_back(!at_home),
-                        |screen| chrome_for(screen, at_home, &mut status),
+                        |screen| chrome_for(screen, at_home, &mut status, appearance_of(display)),
                     );
                     // Laid out the way it was drawn. The retained screen is
                     // the one the application drew, so the bar the shell adds
@@ -2821,7 +2917,12 @@ fn host_applications(
                             }
                             redraw_field(&mut apps[index]);
                             let screen = visible(&apps[index]).unwrap_or(screen);
-                            let chrome = chrome_for(&screen, apps[index].path == home, &mut status);
+                            let chrome = chrome_for(
+                                &screen,
+                                apps[index].path == home,
+                                &mut status,
+                                appearance_of(display),
+                            );
                             let screen = shown_screen(&apps[index], screen, &chrome);
                             if is_front {
                                 trace(&format!("screen {} received", screen.id));
@@ -2868,8 +2969,12 @@ fn host_applications(
                             redraw_field(&mut apps[index]);
                             if id == front {
                                 if let Some(screen) = visible(&apps[index]) {
-                                    let chrome =
-                                        chrome_for(&screen, apps[index].path == home, &mut status);
+                                    let chrome = chrome_for(
+                                        &screen,
+                                        apps[index].path == home,
+                                        &mut status,
+                                        appearance_of(display),
+                                    );
                                     let screen = shown_screen(&apps[index], screen, &chrome);
                                     kobo_ui::render_oriented_with_turn(
                                         &screen,
@@ -3882,7 +3987,12 @@ fn repaint(
     let Some(screen) = visible(&apps[index]) else {
         return Ok(());
     };
-    let chrome = chrome_for(&screen, apps[index].path == home, status);
+    let chrome = chrome_for(
+        &screen,
+        apps[index].path == home,
+        status,
+        appearance_of(display),
+    );
     let screen = shown_screen(&apps[index], screen, &chrome);
     kobo_ui::render_oriented_with_turn(
         &screen,
@@ -4904,6 +5014,9 @@ fn greet(
                 pixels_per_inch: u16::try_from(crate::device_metrics().pixels_per_inch)
                     .unwrap_or(u16::MAX),
                 text_scale: crate::device_metrics().text_scale,
+                // Known from the same verified profile as the metrics, so an
+                // application is told about the panel it is actually on.
+                colour_panel: crate::device_colour_panel(),
             },
         },
     )

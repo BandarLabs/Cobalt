@@ -6,15 +6,15 @@ computer and send them to the reader over Wi-Fi.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/first-use.png" alt="First launch offers a sample deck"><br>First launch offers a sample deck</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/complete.png" alt="A finished review"><br>A finished review</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/complete.png" alt="A finished review, with when the next cards are due"><br>A finished review, with when the next cards are due</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/japanese.png" alt="A Japanese card"><br>A Japanese card</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/long-answer.png" alt="A long answer, with controls in place"><br>A long answer, with controls in place</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/media.png" alt="A card with an image"><br>A card with an image</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/preview.png" alt="Previewing a collection on the computer"><br>Previewing a collection on the computer</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/media.png" alt="A card with an image: a star chart and its answer"><br>A card with an image: a star chart and its answer</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/preview.png" alt="Previewing a card and its image on the computer"><br>Previewing a card and its image on the computer</td>
 </tr>
 </table>
 

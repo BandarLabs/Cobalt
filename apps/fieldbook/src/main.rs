@@ -336,15 +336,23 @@ impl Fieldbook {
         match load.advance(context, result) {
             ShelfProgress::Done => {
                 let bytes = self.photo_load.take().expect("active photo").take();
-                self.photo = kobo_image::decode(&bytes)
+                let decoded = if context.panel_shows_colour() {
+                    kobo_image::decode_colour(&bytes)
+                } else {
+                    kobo_image::decode(&bytes)
+                };
+                self.photo = decoded
                     .and_then(|decoded| decoded.fit(640, 480))
                     .map(|mut picture| {
                         picture.dither(kobo_image::PANEL_GREYS);
-                        context.put_picture(
+                        let (width, height) = (picture.width(), picture.height());
+                        let colour = picture.colour().map(<[u8]>::to_vec);
+                        context.put_picture_shown(
                             PICTURE_HANDLE,
-                            picture.width(),
-                            picture.height(),
+                            width,
+                            height,
                             picture.into_grey(),
+                            colour,
                         )
                     })
                     .unwrap_or(None);
@@ -1109,12 +1117,18 @@ impl Fieldbook {
         .build()
     }
 
+    /// One species: its name over its scientific name and banding code.
+    ///
+    /// The name leads, set as the page's heading, and the two references to
+    /// it follow on one quiet line, where they used to be three lines of one
+    /// paragraph at one size. The bar's Back is the way out; a second Back
+    /// across the foot of the panel said the same thing twice.
     fn detail_screen(&self) -> Screen {
         let mut s = self.top("Species");
         if let Some(species) = &self.detail {
-            s = s.text(format!(
-                "{}\n{}\nBanding code: {}",
-                species.common, species.scientific, species.code
+            s = s.heading(species.common.clone()).secondary(format!(
+                "{} · Banding code {}",
+                species.scientific, species.code
             ));
             if let Some(picture) = self.photo {
                 s = s.picture(picture, 45);
@@ -1130,7 +1144,7 @@ impl Fieldbook {
                 s = s.button("log-detail", "Log in the open outing");
             }
         }
-        s.bottom_action("back", "Back").build()
+        s.build()
     }
 
     fn screen(&self, context: &Context) -> Screen {

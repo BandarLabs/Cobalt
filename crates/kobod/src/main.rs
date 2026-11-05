@@ -12,6 +12,10 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 static VERIFIED_DEVICE_METRICS: OnceLock<kobo_ui::DisplayMetrics> = OnceLock::new();
+/// Whether the verified device's panel has a colour filter, remembered beside
+/// its metrics for the same reason: an application is told once, at the
+/// handshake, and the answer must not change under it.
+static VERIFIED_COLOUR_PANEL: OnceLock<bool> = OnceLock::new();
 
 fn metrics_for_profile(
     profile: &kobo_profile::DeviceProfile,
@@ -61,7 +65,20 @@ fn remember_device_profile(profile: &kobo_profile::DeviceProfile) -> Result<(), 
     }
     VERIFIED_DEVICE_METRICS
         .set(metrics)
-        .map_err(|_| "the verified device metrics could not be retained".to_owned())
+        .map_err(|_| "the verified device metrics could not be retained".to_owned())?;
+    VERIFIED_COLOUR_PANEL
+        .set(profile.colour_panel)
+        .map_err(|_| "the verified panel kind could not be retained".to_owned())
+}
+
+/// Whether the panel applications are told about at the handshake shows
+/// colour: the verified device's answer once a session has started, and the
+/// simulated profile's before then.
+pub fn device_colour_panel() -> bool {
+    VERIFIED_COLOUR_PANEL
+        .get()
+        .copied()
+        .unwrap_or_else(|| simulated_appearance() == kobo_ui::Appearance::Colour)
 }
 
 use std::process::ExitCode;
@@ -720,6 +737,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             version: hello.version,
             request_id: hello.request_id,
             message: Message::Welcome {
+                colour_panel: simulated_appearance() == kobo_ui::Appearance::Colour,
                 width: u16::try_from(metrics.width)?,
                 height: u16::try_from(metrics.height)?,
                 pixels_per_inch: u16::try_from(metrics.pixels_per_inch)?,
@@ -1111,6 +1129,23 @@ fn deliver_outcomes(
 /// title on real hardware while every frame rendered here looked right.
 fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
     kobo_ui::Chrome::for_screen(screen, name == HOME_APPLICATION, Some(simulated_status()))
+        .with_appearance(simulated_appearance())
+}
+
+/// Colour when the simulated reader's panel has it, so a frame written for a
+/// Clara Colour shows the bar and controls that reader would show, and one
+/// written for a Clara BW shows what it always did.
+fn simulated_appearance() -> kobo_ui::Appearance {
+    let colour = env::var("KOBO_SIM_PROFILE").is_ok_and(|requested| {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .any(|profile| profile.id == requested && profile.colour_panel)
+    });
+    if colour {
+        kobo_ui::Appearance::Colour
+    } else {
+        kobo_ui::Appearance::Grey
+    }
 }
 
 /// Everything the band shows, invented and fixed.

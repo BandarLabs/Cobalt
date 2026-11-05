@@ -4,7 +4,7 @@ A five-letter word puzzle, new each day, that works offline.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/solved.png" alt="A solved puzzle"><br>A solved puzzle</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/solved.png" alt="A puzzle solved in three guesses"><br>A puzzle solved in three guesses</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/knowledge.png" alt="The board above the keys, with known letters"><br>The board above the keys, with known letters</td>
 </tr>
 <tr>
@@ -12,7 +12,7 @@ A five-letter word puzzle, new each day, that works offline.
 <td width="50%" valign="top"><img width="300" src="screenshots/archive.png" alt="The archive of past days"><br>The archive of past days</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/help.png" alt="Rules"><br>Rules</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/help.png" alt="Rules, with the Hard mode switch"><br>Rules, with the Hard mode switch</td>
 </tr>
 </table>
 

@@ -5,7 +5,7 @@ offline.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/catalog.png" alt="Catalog sections"><br>Catalog sections</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/catalog.png" alt="A home library's sections and books"><br>A home library's sections and books</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/private-catalog.png" alt="A private library"><br>A private library</td>
 </tr>
 <tr>

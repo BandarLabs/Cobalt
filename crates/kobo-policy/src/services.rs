@@ -367,7 +367,7 @@ impl DeviceServices {
         let listing = self
             .library_roots
             .as_deref()
-            .map_or_else(crate::library::list, crate::library::list_in);
+            .map_or_else(crate::library::list, crate::library::list_with_stock_in);
         let truncated =
             listing.truncated || listing.entries.len() > kobo_protocol::MAX_LIBRARY_ENTRIES;
         DeviceResult::Library {
@@ -386,7 +386,7 @@ impl DeviceServices {
             return DeviceResult::Denied(reason);
         }
         let bytes = match self.library_roots.as_deref() {
-            Some(roots) => crate::library::read_in(roots, id),
+            Some(roots) => crate::library::read_with_stock_in(roots, id),
             None => crate::library::read(id),
         };
         match bytes {

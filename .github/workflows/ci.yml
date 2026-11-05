@@ -12,7 +12,7 @@ jobs:
   host:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The reviewed-change check compares Cargo.lock against the blob that
           # was reviewed, which a depth-1 clone does not contain. Without the
@@ -25,7 +25,7 @@ jobs:
         with:
           toolchain: 1.85.1
           components: clippy, rustfmt
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
       - name: Install the ARM cross-compiler the packaging tests look for
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
@@ -77,7 +77,7 @@ jobs:
           PYTHON
       - name: Upload simulator evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: simulator-${{ github.sha }}
           path: target/sim-check
@@ -92,7 +92,7 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: 1.88.0
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.88.0
@@ -104,14 +104,14 @@ jobs:
   device-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
           targets: armv7-unknown-linux-musleabihf
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
       - name: Install the ring C cross-compiler
@@ -279,7 +279,7 @@ jobs:
             target: x86_64-apple-darwin
             cc: ""
           - platform: macos-arm64
-            runner: macos-14
+            runner: macos-15
             target: aarch64-apple-darwin
             cc: ""
           - platform: linux-x86_64
@@ -292,7 +292,7 @@ jobs:
             cc: musl-gcc
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
@@ -318,12 +318,12 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: 1.88.0
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: RustSec/advisory-db
           path: advisory-db
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: RustSec/advisory-db
           ref: 309ad29d8fe448bf986019e05d47b9e0e29a2218
@@ -347,6 +347,23 @@ jobs:
           # .cargo/audit.toml, because check-app-versions counts every path
           # under .cargo/ as a build input and would rebuild every Store app.
           # Re-check when the device toolchain reaches 1.88 or the anki pin moves.
+          #
+          # RUSTSEC-2026-0429 is the same function again: ZipArchive::extract
+          # aborts the process on a symlink entry with a large declared size.
+          # Nothing audited here calls it, for the reasons above, and the fix
+          # is the same zip 9. Re-check on the same conditions.
+          #
+          # pulldown-cmark before 0.13.6 has RUSTSEC-2026-0433: nested image
+          # wikilinks parse in quadratic time, and only with
+          # Options::ENABLE_WIKILINKS. No parser here sets it. kobo-doc
+          # enables tables, strikethrough, footnotes and YAML metadata,
+          # kobo-cli's vault export tables, footnotes, strikethrough and task
+          # lists, and anki's rslib at the pinned revision calls Parser::new,
+          # which enables nothing. 0.13.6 is the real fix, but a lockfile
+          # change to a crate kobo-doc uses marks every Store app that reads
+          # documents as changed, so it belongs in a release, not here.
+          # Re-check if any parser turns wikilinks on, and take 0.13.6 with the
+          # next release that rebuilds the readers anyway.
           #
           # crypto-bigint before 0.7.6 has RUSTSEC-2026-0387: subtraction,
           # division and Montgomery multiplication may branch on secret values.
@@ -387,6 +404,8 @@ jobs:
             --ignore RUSTSEC-2026-0367
             --ignore RUSTSEC-2026-0368
             --ignore RUSTSEC-2026-0369
+            --ignore RUSTSEC-2026-0429
+            --ignore RUSTSEC-2026-0433
             --ignore RUSTSEC-2026-0387
             --ignore RUSTSEC-2025-0044
             --ignore RUSTSEC-2026-0391

@@ -20,6 +20,7 @@ mod clock;
 mod facts;
 mod hardware;
 mod input;
+pub mod kaleido;
 mod panel;
 mod radio;
 pub mod runtime;
@@ -179,6 +180,35 @@ static POSE: LazyLock<PanelPose<'static>> = LazyLock::new(|| {
 #[must_use]
 pub fn selected_profile() -> &'static DeviceProfile {
     *PROFILE
+}
+
+/// The pixels one capture carries, and whether they are three bytes a pixel.
+///
+/// A colour panel's captures are in colour, because that is what the panel
+/// shows: the ideal view is the renderer's own RGB, and the panel view is what
+/// the filter makes of the last committed frame, residue and all, by the
+/// model in [`kaleido`]. A greyscale panel's captures are the grey they have
+/// always been. Renderer colour asked for by name, on `/colour-capture`,
+/// answers three bytes a pixel on every profile, luminance in each channel on
+/// a greyscale one, so a script that asks the same question of every profile
+/// gets the same shape back.
+fn panel_capture(panel: &PanelPreview, ideal: bool, renderer_rgb: bool) -> (Vec<u8>, bool) {
+    if renderer_rgb || (ideal && PROFILE.colour_panel) {
+        (panel.ideal_rgb(PROFILE.colour_panel), true)
+    } else if PROFILE.colour_panel {
+        (panel.panel_rgb(), true)
+    } else {
+        (panel.frame(ideal).to_vec(), false)
+    }
+}
+
+/// What the painter is told about the selected reader's panel.
+fn profile_appearance() -> kobo_ui::Appearance {
+    if PROFILE.colour_panel {
+        kobo_ui::Appearance::Colour
+    } else {
+        kobo_ui::Appearance::Grey
+    }
 }
 
 fn profile_metrics() -> DisplayMetrics {
@@ -351,8 +381,8 @@ impl Simulator {
         self.panel.frame(ideal).to_vec()
     }
 
-    fn capture(&self, ideal: bool, rgb: bool) -> io::Result<Vec<u8>> {
-        let colour = rgb.then(|| self.panel.ideal_rgb(PROFILE.colour_panel));
+    fn capture(&self, ideal: bool, renderer_rgb: bool) -> io::Result<Vec<u8>> {
+        let (frame, rgb) = panel_capture(&self.panel, ideal, renderer_rgb);
         capture::View {
             app: "counter",
             mode: "counter-demo",
@@ -361,7 +391,7 @@ impl Simulator {
             paints: u64::from(self.counter),
             orientation: kobo_ui::Orientation::Portrait,
             simulation: self.simulation_json(),
-            frame: colour.as_deref().unwrap_or_else(|| self.panel.frame(ideal)),
+            frame: &frame,
             ideal,
             rgb,
         }
@@ -373,7 +403,7 @@ impl Simulator {
         kobo_ui::render_with(
             &self.screen,
             &profile_metrics(),
-            &kobo_ui::Chrome::default(),
+            &kobo_ui::Chrome::default().with_appearance(profile_appearance()),
             &mut surface,
             None,
         );
@@ -786,6 +816,7 @@ impl AppServer {
                     height: u16::try_from(PROFILE.height).unwrap_or(u16::MAX),
                     pixels_per_inch: PROFILE.pixels_per_inch,
                     text_scale: profile_metrics().text_scale,
+                    colour_panel: PROFILE.colour_panel,
                 },
             },
         )?;
@@ -801,7 +832,7 @@ impl AppServer {
             kobo_policy::PowerPolicy::DEFAULT,
             kobo_policy::Backends::with(configured_backends()?.iter()),
         )
-        .with_library_roots(vec![simulated_library_root()]);
+        .with_library_roots(simulated_library_roots());
         initial.hardware.magnet_present =
             matches!(std::env::var("KOBO_MAGNET").as_deref(), Ok("1" | "present"));
         initial.observe_hardware();
@@ -1552,13 +1583,17 @@ impl AppState {
             )),
             self.hardware.charging,
             signal,
-            true,
+            // A reader draws the headphones only while something is
+            // connected over Bluetooth, and nothing ever connects to the
+            // simulator, so every capture showing them was wrong.
+            false,
         );
         self.chrome = kobo_ui::Chrome::for_screen(
             &self.base_screen(),
             self.app_name == "launcher",
             Some(status),
-        );
+        )
+        .with_appearance(profile_appearance());
     }
 
     /// What the shell draws its chrome around: the open text field, if the
@@ -2118,8 +2153,8 @@ impl AppSession {
                         .lock()
                         .map_err(|_| io::Error::other("app state lock poisoned"))?;
                     let ideal = request.path != "/capture";
-                    let rgb = request.path == "/colour-capture";
-                    let colour = rgb.then(|| state.panel.ideal_rgb(PROFILE.colour_panel));
+                    let (frame, rgb) =
+                        panel_capture(&state.panel, ideal, request.path == "/colour-capture");
                     capture::View {
                         app: &state.app_name,
                         mode: if state.runtime_navigation {
@@ -2132,9 +2167,7 @@ impl AppSession {
                         paints: state.paints,
                         orientation: state.orientation,
                         simulation: state.simulation_json(),
-                        frame: colour
-                            .as_deref()
-                            .unwrap_or_else(|| state.panel.frame(ideal)),
+                        frame: &frame,
                         ideal,
                         rgb,
                     }
@@ -4017,6 +4050,17 @@ fn simulated_folder(temporary: &str, chosen: &str) -> std::path::PathBuf {
 #[must_use]
 pub fn simulated_library_root() -> std::path::PathBuf {
     simulated_data_root("library")
+}
+
+/// Every folder the simulator's library is listed from, in the reader's order.
+///
+/// The reader lists its card and then Cobalt's data folder, where each
+/// application keeps its shelf. Listing only the library folder here meant a
+/// book Gutenbird downloaded in the simulator never reached Books, so the one
+/// path an owner takes most often could not be tried without a reader.
+#[must_use]
+pub fn simulated_library_roots() -> Vec<std::path::PathBuf> {
+    vec![simulated_library_root(), simulated_data_root("")]
 }
 
 /// The offset from UTC an application under the simulator should be told.
@@ -6148,6 +6192,7 @@ mod tests {
                     height: u16::try_from(PROFILE.height).expect("profile height"),
                     pixels_per_inch: PROFILE.pixels_per_inch,
                     text_scale: kobo_ui::TextScale::Default,
+                    colour_panel: PROFILE.colour_panel,
                 }
             );
             write_protocol_frame(

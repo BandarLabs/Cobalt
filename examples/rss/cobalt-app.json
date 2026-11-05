@@ -3,7 +3,7 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.14",
+  "version": "1.0.18",
   "glyph": "rss",
   "capabilities": [
     "network"
@@ -27,5 +27,5 @@
       }
     ]
   },
-  "release_notes": "Addresses and searches are typed on Cobalt's own keyboard, feeds from an OPML file are ticked and added together, and each feed shows its unread count at the edge of its row."
+  "release_notes": "Notes and links in an article now turn in pages when they run long, and tapping a note goes to its passage."
 }

@@ -610,6 +610,7 @@ fn legacy_nav_glyph_is_half_a_touch_target() {
             &CLARA_BW_METRICS,
             false,
             Some(Glyph::App),
+            Palette::grey(),
             clip,
         );
         let line = FontSize::Caption.line_height();

@@ -812,6 +812,7 @@ impl Hn {
                     "The article is saved on this reader, and the book at the top opens it now.",
                 ),
                 Some(_) => None,
+                None if story.job => Some("Job postings on Hacker News have no discussion."),
                 None => Some("No comments yet."),
             };
             if let Some(said) = said {
@@ -1722,6 +1723,12 @@ impl Hn {
 }
 
 impl KoboApp for Hn {
+    /// Hacker News is orange. A reader who has seen the site once knows whose
+    /// bar this is before reading the title.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Orange)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         self.now = unix_now();
         // Asked for before the network is: what has been read is what makes
@@ -2089,8 +2096,12 @@ fn story_facts(story: &Story, now: i64) -> Vec<(&'static str, String)> {
     if let Some(site) = &story.site {
         facts.push(("Domain", site.clone()));
     }
-    facts.push(("Score", model::score(story)));
-    facts.push(("Comments", story.comments.to_string()));
+    if story.job {
+        facts.push(("Kind", "Job posting".to_owned()));
+    } else {
+        facts.push(("Score", model::score(story)));
+        facts.push(("Comments", story.comments.to_string()));
+    }
     facts.push(("Age", model::age(now, story.created)));
     facts
 }
@@ -2642,6 +2653,7 @@ mod tests {
                 text: None,
                 link: Some(format!("https://example.com/{index}")),
                 site: Some("example.com".into()),
+                job: false,
             })
             .collect();
         application.repaginate_list(&context);
@@ -3252,6 +3264,7 @@ mod tests {
                 text: None,
                 link: None,
                 site: None,
+                job: false,
             }],
             open: Some(0),
             comments: depths
