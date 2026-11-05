@@ -2,9 +2,18 @@
 # it is not, so the route asserts what both share: the day's heading and a
 # quote card made from the page on screen.
 wait-for Make a quote card
+# Today's poem is drawn again when PoetryDB answers, and a screen drawn
+# again starts with its bar out of sight, so the touch waits for it.
+wait-idle 3000
+# The bar is out of sight on a poem until the top is touched.
+tap-at 536,12
+wait-idle
 expect Today's poem
 clean
 shot verses-today
+# A touch on the page puts the bar away again, and does nothing else.
+tap-at 536,700
+wait-idle
 tap Make a quote card
 wait-for Save a copy
 expect Ready for your computer.
@@ -16,7 +25,8 @@ shot verses-card
 # line; unit tests hold both. The browse list takes more pages at the larger
 # sizes, so the route turns to the sonnet.
 tap Back
-wait-for Today's poem
+wait-for Make a quote card
+wait-idle 3000
 tap Browse
 wait-for Poems
 expect The Lamb

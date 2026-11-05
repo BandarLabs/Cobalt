@@ -35,5 +35,9 @@ tap Books on this device
 wait-for-id device-1
 tap-id device-1
 wait-for An Older Book
-# The reading bar shortens a long title with an ellipsis at large text sizes.
+# The reading bar stays hidden until the top of the page is touched, and it
+# shortens a long title with an ellipsis at large text sizes.
+expect-missing Book downloaded
+tap-at 536,12
+wait-idle
 expect Book downloaded

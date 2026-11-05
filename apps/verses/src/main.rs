@@ -1726,15 +1726,16 @@ impl Verses {
         if centred {
             screen = screen.fill();
         }
+        // A poem is read the way a book is: the sides of the page turn it,
+        // and the bar stays out of sight until a touch at the top calls it
+        // back over the page.
         if count > 1 {
-            screen = screen
-                .page_turns("poem-previous", "poem-next")
-                .page_position(
-                    u16::try_from(page + 1).unwrap_or(1),
-                    u16::try_from(count).unwrap_or(1),
-                );
+            screen = screen.page_turns("poem-previous", "poem-next");
         }
-        screen.bottom_action("card", "Make a quote card").build()
+        screen
+            .bottom_action("card", "Make a quote card")
+            .build()
+            .with_auto_hidden_top_bar(true)
     }
 
     /// Which lines go on which page, measured against the panel, and the size
@@ -1771,8 +1772,12 @@ impl Verses {
     }
 
     fn page_fits(context: &Context, screen: &Screen) -> bool {
+        // Measured with the chrome it is drawn with: a reading screen has no
+        // status band, and its bar, when called back, lies over the page.
+        let chrome =
+            kobo_sdk::Chrome::for_screen(screen, false, kobo_sdk::Chrome::measuring(true).status);
         screen
-            .diagnostics(&context.metrics(), &kobo_sdk::Chrome::measuring(true))
+            .diagnostics(&context.metrics(), &chrome)
             .issues
             .is_empty()
     }
@@ -1854,6 +1859,29 @@ impl Verses {
         if !current.is_empty() {
             pages.push(current);
         }
+        // Packed as the first of several, a page carries no attribution. It
+        // only comes out as one page when the whole poem did not fit as one,
+        // with its attribution, so the last stanza (or, alone, the last line)
+        // goes over, rather than be drawn under the attribution it left no
+        // room for.
+        if pages.len() == 1 {
+            let page = &mut pages[0];
+            let moved = if page.len() > 1 {
+                page.pop()
+            } else {
+                page.first_mut()
+                    .filter(|run| run.to - run.from > 1)
+                    .map(|run| {
+                        run.to -= 1;
+                        VerseRun {
+                            stanza: run.stanza,
+                            from: run.to,
+                            to: run.to + 1,
+                        }
+                    })
+            };
+            pages.extend(moved.map(|run| vec![run]));
+        }
         if pages.is_empty() {
             pages.push(vec![VerseRun {
                 stanza: 0,
@@ -1918,16 +1946,14 @@ impl Verses {
             screen = screen.secondary("From PoetryDB");
         }
         if count > 1 {
-            screen = screen
-                .page_turns("online-previous", "online-next")
-                .page_position(
-                    u16::try_from(page + 1).unwrap_or(u16::MAX),
-                    u16::try_from(count).unwrap_or(u16::MAX),
-                );
+            screen = screen.page_turns("online-previous", "online-next");
         }
         // A fetched poem makes a card as a bundled one does: today's poem
         // used to lose the card the day it began to come from PoetryDB.
-        screen.bottom_action("card", "Make a quote card").build()
+        screen
+            .bottom_action("card", "Make a quote card")
+            .build()
+            .with_auto_hidden_top_bar(true)
     }
 
     /// Keep verse lines and stanza gaps, measuring the same rich-text nodes
@@ -2043,6 +2069,7 @@ impl Verses {
         if !page.is_empty() {
             pages.push(page);
         }
+        spill_last_stanza(&mut pages);
         if pages.is_empty() {
             pages.push(Vec::new());
         }
@@ -2424,7 +2451,8 @@ impl Verses {
             return set_online_verse(screen, &pages[page])
                 .secondary(context.clamped_row(&poem.author, 1, false))
                 .secondary("From PoetryDB")
-                .build();
+                .build()
+                .with_auto_hidden_top_bar(true);
         }
         let poem = CORPUS[self.poem];
         let (scale, pages) = self.poem_pages(context);
@@ -2442,6 +2470,9 @@ impl Verses {
             .secondary(format!("{} · {}", poem.author, poem.year))
             .secondary(poem.source.to_owned())
             .build()
+            // The card is set on the poem's own pages, which are the whole
+            // panel, and it is the card that is shown, not the bar.
+            .with_auto_hidden_top_bar(true)
     }
 
     /// Draws the card and offers it to a paired computer.
@@ -2983,6 +3014,24 @@ fn set_verse(mut screen: ScreenBuilder, poem: Poem, runs: &[VerseRun]) -> Screen
     screen
 }
 
+/// One page of a fetched poem means it did not fit as one page with its
+/// attribution, so its last stanza goes over rather than be drawn under the
+/// attribution it left no room for.
+fn spill_last_stanza(pages: &mut Vec<Vec<OnlineLine>>) {
+    if pages.len() != 1 || pages[0].len() < 2 {
+        return;
+    }
+    let page = &mut pages[0];
+    let start = page
+        .iter()
+        .rposition(|line| line.stanza_start)
+        .filter(|at| *at > 0)
+        .unwrap_or(page.len() - 1);
+    let mut rest = page.split_off(start);
+    rest[0].stanza_start = false;
+    pages.push(rest);
+}
+
 fn split_online_line(text: &str, context: &Context) -> Option<(String, String)> {
     let metrics = context.metrics();
     let lines = kobo_ui::with_text_scale(metrics.text_scale, || {
@@ -3171,7 +3220,6 @@ mod tests {
 
     #[test]
     fn every_page_of_every_poem_fits_at_every_text_size() {
-        let chrome = Chrome::measuring(true);
         for scale in kobo_ui::TextScale::STEPS {
             let metrics = kobo_ui::DisplayMetrics {
                 text_scale: scale,
@@ -3186,10 +3234,9 @@ mod tests {
                 };
                 for page in 0..app.poem_pages(&context).1.len() {
                     app.poem_page = page;
-                    let issues = app
-                        .local_poem(&context)
-                        .diagnostics(&metrics, &chrome)
-                        .issues;
+                    let screen = app.local_poem(&context);
+                    let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+                    let issues = screen.diagnostics(&metrics, &chrome).issues;
                     assert!(
                         issues.is_empty(),
                         "{:?} {} page {page}: {issues:?}",
@@ -3399,7 +3446,6 @@ mod tests {
         // measured for one were set in the other and the card broke its lines
         // where the poem did not. Only the poem had a test like this, which is
         // why nothing said so.
-        let chrome = Chrome::measuring(true);
         for scale in kobo_ui::TextScale::STEPS {
             let metrics = kobo_ui::DisplayMetrics {
                 text_scale: scale,
@@ -3415,6 +3461,7 @@ mod tests {
                 for page in 0..app.poem_pages(&context).1.len() {
                     app.poem_page = page;
                     let card = app.quote_card(&context);
+                    let chrome = Chrome::for_screen(&card, false, Chrome::measuring(true).status);
                     let issues = card.diagnostics(&metrics, &chrome).issues;
                     assert!(
                         issues.is_empty(),

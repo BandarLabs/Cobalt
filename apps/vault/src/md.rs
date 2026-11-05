@@ -131,6 +131,87 @@ fn markdown_options() -> Options {
         | Options::ENABLE_TASKLISTS
 }
 
+/// What the text conversion would otherwise lose of a note's structure.
+///
+/// The conversion keeps an item's words and drops what marked it, keeps a
+/// cell's words and drops the cell, and joins a code block's lines: numbered
+/// steps arrived unnumbered, a table row ran its cells together into one
+/// word, and a code block was one line.
+#[derive(Default)]
+struct Shaping {
+    /// The number each open list is on, or `None` for a bulleted one.
+    lists: Vec<Option<u64>>,
+    /// Held until the item's first words, so a loose item, whose words sit in
+    /// a paragraph of their own, keeps its marker on the same line as them.
+    held_label: Option<String>,
+    cells_in_row: usize,
+    in_code: bool,
+}
+
+impl Shaping {
+    fn push<'a>(
+        &mut self,
+        event: pulldown_cmark::Event<'a>,
+        pending: &mut Vec<pulldown_cmark::Event<'a>>,
+    ) {
+        use pulldown_cmark::{Event, Tag, TagEnd};
+        match event {
+            Event::Start(Tag::List(start)) => {
+                self.lists.push(start);
+                pending.push(Event::Start(Tag::List(start)));
+            }
+            Event::End(TagEnd::List(ordered)) => {
+                self.lists.pop();
+                pending.push(Event::End(TagEnd::List(ordered)));
+            }
+            Event::Start(Tag::Item) => {
+                pending.push(Event::Start(Tag::Item));
+                self.held_label = Some(match self.lists.last_mut() {
+                    Some(Some(number)) => {
+                        let label = format!("{number}. ");
+                        *number += 1;
+                        label
+                    }
+                    _ => "\u{2022} ".to_owned(),
+                });
+            }
+            Event::Start(Tag::TableHead | Tag::TableRow) => {
+                self.cells_in_row = 0;
+                pending.push(Event::Html("<p>".into()));
+                pending.push(event);
+            }
+            Event::Start(Tag::TableCell) => {
+                if self.cells_in_row > 0 {
+                    pending.push(Event::Text(" \u{b7} ".into()));
+                }
+                self.cells_in_row += 1;
+                pending.push(event);
+            }
+            Event::Start(Tag::CodeBlock(_)) => {
+                self.in_code = true;
+                pending.push(event);
+            }
+            Event::End(TagEnd::CodeBlock) => {
+                self.in_code = false;
+                pending.push(event);
+            }
+            Event::Text(text) if self.in_code => {
+                for line in text.lines() {
+                    pending.push(Event::Html("<p>".into()));
+                    pending.push(Event::Text(line.to_owned().into()));
+                }
+            }
+            Event::Text(_) | Event::Code(_) if self.held_label.is_some() => {
+                if let Some(label) = self.held_label.take() {
+                    pending.push(Event::Text(label.into()));
+                }
+                pending.push(event);
+            }
+            other => pending.push(other),
+        }
+    }
+}
+
 /// The note as headings and paragraphs.
 ///
 /// Everything that is not a heading goes through the same HTML renderer as
@@ -145,14 +226,7 @@ pub fn blocks(markdown: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut pending: Vec<Event<'_>> = Vec::new();
     let mut heading: Option<(u8, String)> = None;
-    // The number each open list is on, or `None` for a bulleted one. The text
-    // conversion keeps an item's words and drops what marked it, so a
-    // numbered set of steps arrived as unnumbered paragraphs and a bulleted
-    // list as sentences with nothing to say they were a list.
-    let mut lists: Vec<Option<u64>> = Vec::new();
-    // Held until the item's first words, so a loose item, whose words sit in
-    // a paragraph of their own, keeps its marker on the same line as them.
-    let mut held_label: Option<String> = None;
+    let mut shaping = Shaping::default();
     let flush = |pending: &mut Vec<Event<'_>>, blocks: &mut Vec<Block>| {
         if pending.is_empty() {
             return;
@@ -192,32 +266,7 @@ pub fn blocks(markdown: &str) -> Vec<Block> {
                 }
             }
             _ if heading.is_some() => {}
-            Event::Start(Tag::List(start)) => {
-                lists.push(start);
-                pending.push(Event::Start(Tag::List(start)));
-            }
-            Event::End(TagEnd::List(ordered)) => {
-                lists.pop();
-                pending.push(Event::End(TagEnd::List(ordered)));
-            }
-            Event::Start(Tag::Item) => {
-                pending.push(Event::Start(Tag::Item));
-                held_label = Some(match lists.last_mut() {
-                    Some(Some(number)) => {
-                        let label = format!("{number}. ");
-                        *number += 1;
-                        label
-                    }
-                    _ => "\u{2022} ".to_owned(),
-                });
-            }
-            Event::Text(_) | Event::Code(_) if held_label.is_some() => {
-                if let Some(label) = held_label.take() {
-                    pending.push(Event::Text(label.into()));
-                }
-                pending.push(event);
-            }
-            other => pending.push(other),
+            other => shaping.push(other, &mut pending),
         }
     }
     flush(&mut pending, &mut blocks);
@@ -258,6 +307,26 @@ mod tests {
         ] {
             assert!(all.contains(expected), "{expected:?} missing from {all:?}");
         }
+    }
+
+    #[test]
+    fn a_table_keeps_its_cells_apart_and_a_code_block_its_lines() {
+        let found = blocks(
+            "| Character | Book |\n| --- | --- |\n| Emma | Emma |\n\n```\nfn main() {\n    run();\n}\n```\n",
+        );
+        let text: Vec<String> = found
+            .iter()
+            .map(|block| match block {
+                Block::Body { text, .. } | Block::Heading { text, .. } => text.clone(),
+            })
+            .collect();
+        assert!(
+            text.contains(&"Character \u{b7} Book".to_owned()),
+            "{text:?}"
+        );
+        assert!(text.contains(&"Emma \u{b7} Emma".to_owned()), "{text:?}");
+        assert!(text.contains(&"fn main() {".to_owned()), "{text:?}");
+        assert!(text.iter().any(|line| line.trim() == "run();"), "{text:?}");
     }
 
     #[test]

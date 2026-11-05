@@ -134,6 +134,12 @@ impl Control {
     const fn tappable(&self) -> bool {
         self.action.is_some()
     }
+
+    /// Whether the action is this node's own, rather than what a tap on the
+    /// page beneath it resolves to. A control names its action in its kind.
+    fn owns_action(&self) -> bool {
+        self.kind == "Back" || self.kind.contains("ActionId(")
+    }
 }
 
 /// A connection to a running simulator.
@@ -311,30 +317,33 @@ impl Driver {
     /// pressed instead, which is how an owner turns a page the words cover.
     fn tap_action_id(&mut self, rest: &str) -> Result<(), String> {
         let action = parse_action_id(rest)?;
-        if let Some(control) = self
-            .layout()?
-            .into_iter()
-            .find(|control| control.action == Some(action))
-        {
-            return self.touch(control.centre.0, control.centre.1);
+        // A control that carries the action first. Every node reports what a
+        // tap on it would do, so a heading on a reading page reports the
+        // middle column's action; tapping it at the top of the panel calls
+        // the bar back instead of doing what was asked.
+        let carrying = |controls: Vec<Control>, owned_only: bool| {
+            controls
+                .into_iter()
+                .filter(|control| control.action == Some(action))
+                .find(|control| !owned_only || control.owns_action())
+                .map(|control| control.centre)
+        };
+        if let Some((x, y)) = carrying(self.layout()?, true) {
+            return self.touch(x, y);
         }
-        let body = self.get("/layout")?;
-        let body = String::from_utf8_lossy(&body);
-        let declared = body
-            .find("\"pageTurns\":{")
-            .and_then(|start| {
-                let object = &body[start..];
-                object.find('}').map(|end| &object[..end])
-            })
-            .unwrap_or_default();
-        let turns = |key: &str| json_number(declared, key).and_then(|id| u32::try_from(id).ok());
-        if turns("\"next\"") == Some(action) {
+        let [previous, next] = self.declared_turns()?;
+        if next == action {
             return self.post_and_settle("/input", "page next");
         }
-        if turns("\"previous\"") == Some(action) {
+        if previous == action {
             return self.post_and_settle("/input", "page back");
         }
-        Err(format!("action {action} is not reachable on this screen"))
+        // The control may be on a bar that is out of sight.
+        self.reveal_bar()?;
+        let (x, y) = carrying(self.layout()?, true)
+            .or(carrying(self.layout()?, false))
+            .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
+        self.touch(x, y)
     }
 
     /// Taps the control carrying `action` when this panel draws it, and
@@ -428,20 +437,41 @@ impl Driver {
     /// works -- the tappable node there is the row, whose own lines are the
     /// title, but a picture or a label inside it may be what matched.
     fn tap(&mut self, label: &str) -> Result<(), String> {
-        let controls = self.layout()?;
-        let control = controls
-            .iter()
-            .find(|control| control.tappable() && control.says_exactly(label))
-            .or_else(|| {
-                controls
-                    .iter()
-                    .find(|control| control.tappable() && control.says(label))
-            })
-            .or_else(|| controls.iter().find(|control| control.says_exactly(label)))
-            .or_else(|| controls.iter().find(|control| control.says(label)))
-            .ok_or_else(|| format!("nothing on the screen says {label:?}"))?;
-        let (x, y) = control.centre;
+        let find = |controls: &[Control]| {
+            controls
+                .iter()
+                .find(|control| control.tappable() && control.says_exactly(label))
+                .or_else(|| {
+                    controls
+                        .iter()
+                        .find(|control| control.tappable() && control.says(label))
+                })
+                .or_else(|| controls.iter().find(|control| control.says_exactly(label)))
+                .or_else(|| controls.iter().find(|control| control.says(label)))
+                .map(|control| control.centre)
+        };
+        if let Some((x, y)) = find(&self.layout()?) {
+            return self.touch(x, y);
+        }
+        // A reading screen keeps its bar out of sight until the top of the
+        // panel is touched, and Back is on the bar. A reader touches the top
+        // and looks again, and so does this.
+        self.reveal_bar()?;
+        let (x, y) =
+            find(&self.layout()?).ok_or_else(|| format!("nothing on the screen says {label:?}"))?;
         self.touch(x, y)
+    }
+
+    /// Touches the top of the panel, where a hidden bar is called back.
+    fn reveal_bar(&mut self) -> Result<(), String> {
+        let (content_x, _, content_width, _) = self.paging()?.content;
+        let x = if content_width > 0 {
+            content_x + content_width / 2
+        } else {
+            536
+        };
+        self.touch(x, 12)?;
+        self.wait_idle("")
     }
 
     /// Types through visible touch targets. Standard key identities, which
@@ -517,6 +547,28 @@ impl Driver {
         }
     }
 
+    /// The previous and next page turns the screen declared, or zeros.
+    ///
+    /// A reading page has no control for either: the sides of the page are
+    /// the control, so a script asks for the declared turn instead.
+    fn declared_turns(&self) -> Result<[u32; 2], String> {
+        let body = self.get("/layout")?;
+        let body = String::from_utf8_lossy(&body);
+        let declared = body
+            .find("\"pageTurns\":{")
+            .and_then(|start| {
+                let object = &body[start..];
+                object.find('}').map(|end| &object[..end])
+            })
+            .unwrap_or_default();
+        let turn = |key: &str| {
+            json_number(declared, key)
+                .and_then(|id| u32::try_from(id).ok())
+                .unwrap_or(0)
+        };
+        Ok([turn("\"previous\""), turn("\"next\"")])
+    }
+
     fn wait_for_id(&self, action: u32) -> Result<(), String> {
         let deadline = Instant::now() + APPEAR_TIMEOUT;
         loop {
@@ -524,6 +576,7 @@ impl Driver {
                 .layout()?
                 .iter()
                 .any(|control| control.action == Some(action))
+                || self.declared_turns()?.contains(&action)
             {
                 return Ok(());
             }

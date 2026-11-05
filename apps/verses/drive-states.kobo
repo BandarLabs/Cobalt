@@ -1,4 +1,10 @@
-wait-for Today's poem
+wait-for Make a quote card
+# Today's poem is drawn again when PoetryDB answers, and a screen drawn
+# again starts with its bar out of sight, so the touch waits for it.
+wait-idle 3000
+tap-at 536,12
+wait-idle
+expect Today's poem
 clean
 shot today
 tap Browse
