@@ -1278,7 +1278,9 @@ mod tests {
         let screen = kobo_ui::Screen {
             page_turns: screen
                 .page_turns
-                .map(|turns| turns.with_position(1, pages.len() as u16)),
+                // At least two: "1 of 1" draws no strip, and the strip is
+                // what this checks the rows against.
+                .map(|turns| turns.with_position(1, pages.len().max(2) as u16)),
             ..screen
         };
         let layout = screen.layout();
