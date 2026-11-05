@@ -236,7 +236,7 @@ fn walk(
                 folders.push(path);
             }
         } else if kind.is_file() {
-            if let Some(audio) = Kind::from_name(name) {
+            if let Some(audio) = listable(name) {
                 let bytes = entry.metadata().map_or(0, |data| data.len());
                 if bytes > 0 {
                     files.push((name.to_owned(), path, audio, bytes));
@@ -245,14 +245,20 @@ fn walk(
         }
     }
     files.sort_by(|left, right| natural_order(&left.0, &right.0));
-    let names = files
+    // An archive is a book of its own however it is named: the player
+    // takes a folder's parts as files, never as archives.
+    let (archives, tracks): (Vec<_>, Vec<_>) = files
+        .into_iter()
+        .partition(|(_, _, kind, _)| *kind == Kind::Mp3z);
+    let names = tracks
         .iter()
         .map(|(name, _, _, _)| name.as_str())
         .collect::<Vec<_>>();
     // The folder's own files first: as one book when they read as parts,
     // else one book each.
+    let mut single = archives;
     if depth > 0 && reads_as_parts(&names) {
-        if let Some(entry) = folder_entry(root, directory, root_index, &files) {
+        if let Some(entry) = folder_entry(root, directory, root_index, &tracks) {
             if listing.entries.len() >= MAX_ENTRIES {
                 listing.truncated = true;
                 return;
@@ -260,22 +266,24 @@ fn walk(
             listing.entries.push(entry);
         }
     } else {
-        for (name, path, kind, bytes) in &files {
-            if listing.entries.len() >= MAX_ENTRIES {
-                listing.truncated = true;
-                return;
-            }
-            let Some(id) = id_of(root, path, root_index) else {
-                continue;
-            };
-            listing.entries.push(Entry {
-                id,
-                title: title_of(name),
-                kind: *kind,
-                parts: 1,
-                bytes: *bytes,
-            });
+        single.extend(tracks);
+    }
+    single.sort_by(|left, right| natural_order(&left.0, &right.0));
+    for (name, path, kind, bytes) in &single {
+        if listing.entries.len() >= MAX_ENTRIES {
+            listing.truncated = true;
+            return;
         }
+        let Some(id) = id_of(root, path, root_index) else {
+            continue;
+        };
+        listing.entries.push(Entry {
+            id,
+            title: title_of(name),
+            kind: *kind,
+            parts: 1,
+            bytes: *bytes,
+        });
     }
     folders.sort();
     for folder in folders {
@@ -304,9 +312,25 @@ fn folder_entry(
     })
 }
 
+/// The identifier a path is listed under, or nothing for one the wire
+/// cannot carry: too long, or holding a control character. Such a book is
+/// left off the listing rather than failing the whole reply, and never
+/// shortened, because a shortened identifier resolves to nowhere.
 fn id_of(root: &Path, path: &Path, root_index: usize) -> Option<String> {
     let relative = path.strip_prefix(root).ok()?.to_str()?;
-    Some(format!("{root_index}/{relative}"))
+    let id = format!("{root_index}/{relative}");
+    (id.len() <= kobo_protocol::MAX_LIBRARY_ID_LEN && !id.chars().any(char::is_control))
+        .then_some(id)
+}
+
+/// The kind of a file worth listing, which a hidden one never is: the
+/// `._01.mp3` sidecars a Mac leaves beside every file it copies are not
+/// sound, and they would be numbered parts of every book otherwise.
+fn listable(name: &str) -> Option<Kind> {
+    if name.starts_with('.') {
+        return None;
+    }
+    Kind::from_name(name)
 }
 
 /// The audio files in a folder, in playing order, or nothing for a folder
@@ -319,7 +343,8 @@ fn audio_files(directory: &Path) -> Option<Vec<(String, PathBuf)>> {
             let path = entry.path();
             let name = path.file_name()?.to_str()?.to_owned();
             let is_file = entry.file_type().ok()?.is_file();
-            (is_file && Kind::from_name(&name).is_some()).then_some((name, path))
+            let is_track = listable(&name).is_some_and(|kind| kind != Kind::Mp3z);
+            (is_file && is_track).then_some((name, path))
         })
         .collect::<Vec<_>>();
     if files.is_empty() || files.len() > MAX_PARTS {
@@ -501,6 +526,95 @@ mod tests {
                 fs::canonicalize(root.join("Audiobooks").join("Emma.m4b")).unwrap()
             ))
         );
+    }
+
+    /// A Mac copying a folder leaves a `._name` sidecar beside every file.
+    /// They are not sound, and numbered like the real parts they would have
+    /// made every folder a book that cannot be opened.
+    #[test]
+    fn hidden_sidecars_are_neither_listed_nor_parts() {
+        let root = scratch("sidecars");
+        let dune = root.join("Audiobooks").join("Dune");
+        fs::create_dir_all(&dune).expect("a book folder");
+        for name in ["01.mp3", "02.mp3", "._01.mp3", "._02.mp3", ".hidden.m4b"] {
+            fs::write(dune.join(name), b"bytes").expect("a file");
+        }
+        let roots = vec![root];
+        let listing = list_in(&roots);
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].parts, 2);
+        let Some(Location::Parts { paths, .. }) = resolve_in(&roots, "0/Audiobooks/Dune") else {
+            panic!("the folder resolves to its parts");
+        };
+        assert_eq!(paths.len(), 2);
+    }
+
+    /// Archives are books of their own however they are numbered: a folder
+    /// of parts is made of files, and the player opens archives one at a
+    /// time.
+    #[test]
+    fn numbered_archives_are_listed_one_each_never_as_parts() {
+        let root = scratch("archives");
+        let shelf = root.join("Audiobooks").join("Series");
+        fs::create_dir_all(&shelf).expect("a folder");
+        for name in [
+            "Book 1.mp3z",
+            "Book 2.mp3z",
+            "01 - Dune.mp3",
+            "02 - Dune.mp3",
+        ] {
+            fs::write(shelf.join(name), b"bytes").expect("a file");
+        }
+        let roots = vec![root];
+        let found = list_in(&roots)
+            .entries
+            .iter()
+            .map(|entry| (entry.title.clone(), entry.kind, entry.parts))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            found,
+            [
+                ("Book 1".to_owned(), Kind::Mp3z, 1),
+                ("Book 2".to_owned(), Kind::Mp3z, 1),
+                ("Series".to_owned(), Kind::Mp3, 2),
+            ]
+        );
+        let Some(Location::Parts { paths, .. }) = resolve_in(&roots, "0/Audiobooks/Series") else {
+            panic!("the folder resolves to its tracks");
+        };
+        assert_eq!(paths.len(), 2);
+        assert!(matches!(
+            resolve_in(&roots, "0/Audiobooks/Series/Book 1.mp3z"),
+            Some(Location::File(_))
+        ));
+    }
+
+    /// A path the wire cannot carry is left off the listing rather than
+    /// failing the whole reply, and never shortened.
+    #[test]
+    fn a_path_the_wire_cannot_carry_is_left_off_the_listing() {
+        let root = scratch("long-names");
+        let shelf = root.join("Audiobooks");
+        // Three folders of a hundred letters: each name fits the card, the
+        // path they make does not fit the wire.
+        let deep = shelf
+            .join("a".repeat(100))
+            .join("b".repeat(100))
+            .join("c".repeat(100));
+        fs::create_dir_all(&deep).expect("deep folders");
+        fs::write(deep.join("Long.mp3"), b"bytes").expect("a long path");
+        fs::write(shelf.join("Short.mp3"), b"bytes").expect("a short name");
+        let roots = vec![root];
+        let titles = list_in(&roots)
+            .entries
+            .iter()
+            .map(|entry| entry.title.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["Short"]);
+        assert!(list_in(&roots)
+            .entries
+            .iter()
+            .all(|entry| entry.id.len() <= kobo_protocol::MAX_LIBRARY_ID_LEN));
     }
 
     #[test]
