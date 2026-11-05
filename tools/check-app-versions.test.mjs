@@ -1192,6 +1192,25 @@ test("a dependency that left the lockfile affects what depended on it at base", 
     registeredConsumers(metadata(), ["notes", "reader", "weather"], removalAlone),
     new Set(["weather"])
   );
+  // Two resolutions of one crate keep their own dependents: notes depends
+  // on shared 2.0, which never carried the removed package, so only weather
+  // is affected.
+  const twoShared = [
+    'version = 4\n\n[[package]]\nname = "weather"\nversion = "0.3.1"\ndependencies = [\n "shared 1.0.0",\n]\n',
+    '[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared 2.0.0",\n]\n',
+    '[[package]]\nname = "shared"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s1"\ndependencies = [\n "removed-dependency",\n]\n',
+    '[[package]]\nname = "shared"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s2"\n',
+    '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n'
+  ].join("\n");
+  assert.deepEqual(
+    lockChangesResolvedAgainstBase(
+      twoShared,
+      new Set([registryIdentity("removed-dependency", "2.0.0")]),
+      new Set(["weather", "notes", "shared"])
+    ),
+    new Set([JSON.stringify(["weather", "<workspace-version>", ""])])
+  );
+
   // A removed package nothing at base reached is left as it was, and still
   // fails closed.
   const gone = lockChangesResolvedAgainstBase(

@@ -614,20 +614,52 @@ export function releaseLockPackageIdentities(
 // itself a workspace member, is left as it was, which fails closed below.
 export function lockChangesResolvedAgainstBase(previousSource, lockChanges, currentPackageNames) {
   const parts = lockfileParts(previousSource);
-  const dependents = new Map();
-  const workspace = new Set();
-  for (const packageBlock of parts?.packages || []) {
+  const packages = (parts?.packages || []).map(packageBlock => {
     const parsed = lockPackage(packageBlock);
-    if (!parsed.source) workspace.add(parsed.name);
     const list = /^dependencies = \[\n([\s\S]*?)^\]$/m.exec(packageBlock)?.[1] || "";
-    for (const line of list.split("\n")) {
-      const dependency = /^\s*"([^"\s]+)/.exec(line)?.[1];
-      if (!dependency) continue;
-      const names = dependents.get(dependency) || new Set();
-      names.add(parsed.name);
-      dependents.set(dependency, names);
+    const dependencies = list
+      .split("\n")
+      .map(line => /^\s*"([^"]+)"/.exec(line)?.[1])
+      .filter(Boolean);
+    return {
+      identity: packageIdentity(parsed.name, parsed.version, parsed.source),
+      name: parsed.name,
+      version: /^version = "([^"]+)"$/m.exec(packageBlock)?.[1],
+      source: parsed.source,
+      workspace: !parsed.source,
+      dependencies
+    };
+  });
+  const byName = new Map();
+  for (const package_ of packages) {
+    const named = byName.get(package_.name) || [];
+    named.push(package_);
+    byName.set(package_.name, named);
+  }
+  // A lockfile names a dependency by name alone when one resolution of it
+  // exists, by name and version when several do, and with its source when
+  // two share a version. Each form is matched against exactly what it says,
+  // so two resolutions of one crate keep their own dependents.
+  const resolveDependency = reference => {
+    const [name, version, ...rest] = reference.split(" ");
+    const source = rest.join(" ").replace(/^\(|\)$/g, "");
+    return (byName.get(name) || []).filter(
+      candidate =>
+        (version === undefined || candidate.version === version) &&
+        (source === "" || candidate.source === source)
+    );
+  };
+  const dependents = new Map();
+  for (const package_ of packages) {
+    for (const reference of package_.dependencies) {
+      for (const dependency of resolveDependency(reference)) {
+        const set = dependents.get(dependency.identity) || new Set();
+        set.add(package_.identity);
+        dependents.set(dependency.identity, set);
+      }
     }
   }
+  const byIdentity = new Map(packages.map(package_ => [package_.identity, package_]));
   const resolved = new Set();
   for (const identity of lockChanges) {
     const [name] = JSON.parse(identity);
@@ -636,7 +668,7 @@ export function lockChangesResolvedAgainstBase(previousSource, lockChanges, curr
       continue;
     }
     const reached = new Set();
-    const pending = [name];
+    const pending = [identity];
     while (pending.length > 0) {
       const next = pending.pop();
       for (const dependent of dependents.get(next) || []) {
@@ -645,13 +677,13 @@ export function lockChangesResolvedAgainstBase(previousSource, lockChanges, curr
         pending.push(dependent);
       }
     }
-    const members = [...reached].filter(dependent => workspace.has(dependent));
-    if (members.length === 0 || workspace.has(name)) {
+    const members = [...reached].filter(dependent => byIdentity.get(dependent)?.workspace);
+    if (members.length === 0 || byIdentity.get(identity)?.workspace) {
       resolved.add(identity);
       continue;
     }
     for (const member of members) {
-      resolved.add(packageIdentity(member, "<workspace-version>", ""));
+      resolved.add(packageIdentity(byIdentity.get(member).name, "<workspace-version>", ""));
     }
   }
   return resolved;
