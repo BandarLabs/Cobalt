@@ -793,7 +793,6 @@ fn load_and_save_failures_are_splashes_with_their_fix_directly_under_them() {
     }
 }
 
-
 #[test]
 fn an_untouched_puzzle_whose_grid_changed_does_not_lock_the_games_that_were_played() {
     // A reader's save from the four-puzzle day: the cat puzzle part solved,

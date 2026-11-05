@@ -1389,6 +1389,20 @@ impl Settings {
         self.delayed = context.spawn(Task::Sleep { seconds: 3 });
     }
 
+    /// Says so when the switch was turned on and the radio came back off.
+    ///
+    /// Saying nothing left the switch where it started, under a note about
+    /// restarting, and nothing on the screen said the tap had failed.
+    fn check_bluetooth_started(&mut self, request: &DeviceRequest, available: bool, enabled: bool) {
+        if matches!(request, DeviceRequest::SetBluetooth { enabled: true }) && available && !enabled
+        {
+            self.fail(
+                Topic::Bluetooth,
+                "Bluetooth did not start. Restart the reader, then turn it on again.",
+            );
+        }
+    }
+
     /// Records a failure against the row that caused it, so it is reported
     /// once, where the reader was looking when they asked for it.
     fn fail(&mut self, topic: Topic, error: impl Into<String>) {
@@ -1718,18 +1732,7 @@ impl KoboApp for Settings {
                 // reader has already been shown.
                 self.restart_on_exit |= restart_on_exit;
                 self.settled(Topic::Bluetooth);
-                // The switch was turned on and the radio came back off. Saying
-                // nothing left the switch where it started, under a note about
-                // restarting, and nothing on the screen said the tap had failed.
-                if matches!(request, DeviceRequest::SetBluetooth { enabled: true })
-                    && available
-                    && !enabled
-                {
-                    self.fail(
-                        Topic::Bluetooth,
-                        "Bluetooth did not start. Restart the reader, then turn it on again.",
-                    );
-                }
+                self.check_bluetooth_started(&request, available, enabled);
                 if matches!(request, DeviceRequest::PairBluetooth { .. }) {
                     if let Some(Pending::ConnectAfterPair(address)) = self.pending.take() {
                         context.device().connect_bluetooth(address);
@@ -3229,7 +3232,10 @@ mod tests {
                     runner.action(action_id(MORE));
                 }
             }
-            assert_eq!(rescans, pages, "{metrics:?}: Read again in the bar of every page");
+            assert_eq!(
+                rescans, pages,
+                "{metrics:?}: Read again in the bar of every page"
+            );
             for fact in [
                 "Kobo Clara BW",
                 "0.3.0",

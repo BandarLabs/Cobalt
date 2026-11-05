@@ -3056,7 +3056,9 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
                 BarStyle::Navigation => {
                     LayoutKind::NavDestination(destination.action, destination.glyph)
                 }
-                BarStyle::Actions => LayoutKind::ActionBarEntry(destination.action, destination.glyph),
+                BarStyle::Actions => {
+                    LayoutKind::ActionBarEntry(destination.action, destination.glyph)
+                }
             },
             text_lines: vec![destination.label.clone()],
         });
@@ -6548,9 +6550,7 @@ fn layout_node(
                     // before a space. Not before a comma or a stop: those sit
                     // on the baseline, where the glyphs do not lean at all, and
                     // the room read as a space before the comma.
-                    if styled.emphasis
-                        && end < to
-                        && text[end..to].starts_with(char::is_whitespace)
+                    if styled.emphasis && end < to && text[end..to].starts_with(char::is_whitespace)
                     {
                         run_x = run_x.saturating_add(emphasis_lean(prose));
                     }

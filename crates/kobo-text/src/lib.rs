@@ -765,7 +765,9 @@ impl SystemFonts {
             Some(path) => Typeface::load(PathBuf::from(path), metrics)?,
             None => match Typeface::bundled_serif(metrics, false) {
                 Some(face) => face,
-                None => Typeface::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)?,
+                None => {
+                    Typeface::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)?
+                }
             },
         });
         // The title face is the prose face wherever that is the bundled serif,

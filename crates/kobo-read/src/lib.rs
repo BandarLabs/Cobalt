@@ -3408,9 +3408,8 @@ fn paginate(
         if let Block::Row { cells, .. } = block {
             if columns.is_empty() {
                 columns = table_columns(&document.blocks, index_of(index), area);
-                head =
-                    names_figures(&document.blocks, index_of(index), cells)
-                        .then(|| (index_of(index), cells.clone()));
+                head = names_figures(&document.blocks, index_of(index), cells)
+                    .then(|| (index_of(index), cells.clone()));
                 row_index = 0;
             }
             let labels = head.as_ref().map_or(&[][..], |(_, cells)| cells.as_slice());
@@ -4672,9 +4671,17 @@ mod tests {
             row(&["CHAPTER I.", "Down the Rabbit-Hole"]),
             row(&["CHAPTER II.", "The Pool of Tears"]),
         ];
-        assert!(!super::names_figures(&contents, 0, &["CHAPTER I.".into(), "Down the Rabbit-Hole".into()]));
+        assert!(!super::names_figures(
+            &contents,
+            0,
+            &["CHAPTER I.".into(), "Down the Rabbit-Hole".into()]
+        ));
         let results = vec![row(&["Model", "Score"]), row(&["1", "0.93"])];
-        assert!(super::names_figures(&results, 0, &["Model".into(), "Score".into()]));
+        assert!(super::names_figures(
+            &results,
+            0,
+            &["Model".into(), "Score".into()]
+        ));
     }
 
     #[test]
@@ -4701,7 +4708,10 @@ mod tests {
             margin_before_em: 100,
             ..spaced
         };
-        assert_eq!(super::collapsed_after(Some(&previous), wider).margin_before_em, 75);
+        assert_eq!(
+            super::collapsed_after(Some(&previous), wider).margin_before_em,
+            75
+        );
         assert_eq!(super::collapsed_after(None, spaced).margin_before_em, 25);
     }
 
@@ -4713,8 +4723,14 @@ mod tests {
             "chain would be worth".to_owned(),
         ];
         let offsets = super::line_offsets(text, &lines);
-        assert_eq!(super::rejoined(text, &lines, offsets.as_deref(), 0, 2), text);
-        assert_eq!(super::rejoined(text, &lines, offsets.as_deref(), 1, 2), "chain would be worth");
+        assert_eq!(
+            super::rejoined(text, &lines, offsets.as_deref(), 0, 2),
+            text
+        );
+        assert_eq!(
+            super::rejoined(text, &lines, offsets.as_deref(), 1, 2),
+            "chain would be worth"
+        );
     }
 
     #[test]
@@ -4722,7 +4738,10 @@ mod tests {
         let lines = vec!["one".to_owned(), "two".to_owned()];
         let offsets = super::line_offsets("something else", &lines);
         assert!(offsets.is_none());
-        assert_eq!(super::rejoined("something else", &lines, offsets.as_deref(), 0, 2), "one two");
+        assert_eq!(
+            super::rejoined("something else", &lines, offsets.as_deref(), 0, 2),
+            "one two"
+        );
     }
 
     #[test]

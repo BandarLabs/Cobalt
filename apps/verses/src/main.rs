@@ -3323,7 +3323,11 @@ mod tests {
                 pages[page].len()
             );
         }
-        assert!(pages.len() <= 2, "{} pages for twenty short lines", pages.len());
+        assert!(
+            pages.len() <= 2,
+            "{} pages for twenty short lines",
+            pages.len()
+        );
     }
 
     #[test]

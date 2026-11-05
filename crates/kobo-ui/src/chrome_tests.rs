@@ -293,5 +293,8 @@ fn an_action_bar_is_set_in_ink_and_marks_none_of_its_verbs() {
         })
         .min()
         .unwrap_or(255);
-    assert!(darkest < tone::MUTED, "the label is no darker than a muted one: {darkest}");
+    assert!(
+        darkest < tone::MUTED,
+        "the label is no darker than a muted one: {darkest}"
+    );
 }
