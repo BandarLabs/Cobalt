@@ -1971,75 +1971,73 @@ impl Verses {
             *self.online_layout.borrow_mut() = Some((metrics, key, pages.clone()));
             return pages;
         }
-        // Measured with the first page's heading and the attribution, so every
-        // page has at least the room the fullest one needs.
-        let prefix = self.online_page_screen(context, poem, &[], 0, 2);
-        let chrome =
-            kobo_ui::Chrome::for_screen(&prefix, false, kobo_ui::Chrome::measuring(true).status);
-        let prefix_height = prefix.layout_with(&metrics, &chrome).content_used();
-        let (capacity, gap) = kobo_ui::with_text_scale(metrics.text_scale, || {
-            // Reading screens have no status strip. Reserve the same page
-            // position band as the renderer, then the measured author/notice.
-            // The card action takes the foot of the panel, as a bar would.
-            let area = metrics.prose_area_in(true, true, kobo_ui::Face::Reading);
-            (
-                area.height
-                    .saturating_sub(metrics.page_position_band())
-                    .saturating_sub(prefix_height),
-                area.gap,
+        // Each page is the page the reader will see, laid out and kept while
+        // it fits, a stanza at a time. The estimate this replaced measured
+        // every line as a screen of its own, top margin and all, at the
+        // default leading rather than the verse's, and charged a gap per line
+        // where the page has one per stanza. Every line came out taller than
+        // it is drawn, and a poem of five short stanzas was set two to a
+        // page over three pages, each half empty.
+        let fits = |lines: &[OnlineLine], first: bool| {
+            Self::page_fits(
+                context,
+                &self.online_page_screen(context, poem, lines, usize::from(!first), 2),
             )
-        });
-        // Measure each source line once, rather than relaying out the entire
-        // growing page for every additional line.
-        let measure = |line: &OnlineLine| measure_online_line(line, &metrics, &chrome);
-        let mut pages = Vec::new();
-        let mut page = Vec::new();
-        let mut used = 0;
-        while let Some(mut line) = pending.pop_front() {
-            if page.is_empty() {
-                line.stanza_start = false;
-            } else if line.stanza_start {
-                // The whole stanza, as it would sit at the top of a page.
-                let mut stanza = vec![OnlineLine {
-                    text: line.text.clone(),
-                    stanza_start: false,
-                }];
-                stanza.extend(
-                    pending
-                        .iter()
-                        .take_while(|next| !next.stanza_start)
-                        .cloned(),
-                );
-                let alone = stanza.iter().map(|line| measure(line).0 + gap).sum::<i32>();
-                let here = alone + measure(&line).0 - measure(&stanza[0]).0;
-                if used + here > capacity && alone <= capacity {
-                    pages.push(std::mem::take(&mut page));
-                    used = 0;
-                    pending.push_front(line);
-                    continue;
-                }
+        };
+        let mut pages: Vec<Vec<OnlineLine>> = Vec::new();
+        let mut page: Vec<OnlineLine> = Vec::new();
+        let mut stanza: Vec<OnlineLine> = Vec::new();
+        while let Some(line) = pending.pop_front() {
+            stanza.push(line);
+            if pending.front().is_some_and(|next| !next.stanza_start) {
+                continue;
             }
-            let (height, overflow) = measure(&line);
-            if !overflow && used + gap + height <= capacity {
-                used += gap + height;
-                page.push(line);
-            } else if !page.is_empty() {
+            // A whole stanza, onto this page if it fits, or the next.
+            let mut rest: std::collections::VecDeque<OnlineLine> =
+                std::mem::take(&mut stanza).into();
+            let placed = loop {
+                if let Some(first) = rest.front_mut() {
+                    first.stanza_start = !page.is_empty();
+                }
+                let mut whole = page.clone();
+                whole.extend(rest.iter().cloned());
+                if fits(&whole, pages.is_empty()) {
+                    page = whole;
+                    break true;
+                }
+                if page.is_empty() {
+                    break false;
+                }
                 pages.push(std::mem::take(&mut page));
-                used = 0;
-                pending.push_front(line);
-            } else if let Some((left, right)) = split_online_line(&line.text, context) {
-                pending.push_front(OnlineLine {
-                    text: right,
-                    stanza_start: false,
-                });
-                pending.push_front(OnlineLine {
-                    text: left,
-                    stanza_start: line.stanza_start,
-                });
-            } else {
-                // One glyph cannot be split further; this only applies to a
-                // viewport too small even for a single line below the header.
-                pages.push(vec![line]);
+            };
+            // Taller than a page by itself: line by line, splitting a line
+            // only when it is too long to stand on an empty page.
+            if !placed {
+                while let Some(mut line) = rest.pop_front() {
+                    line.stanza_start = line.stanza_start && !page.is_empty();
+                    let mut more = page.clone();
+                    more.push(line.clone());
+                    if fits(&more, pages.is_empty()) {
+                        page = more;
+                    } else if !page.is_empty() {
+                        pages.push(std::mem::take(&mut page));
+                        line.stanza_start = false;
+                        rest.push_front(line);
+                    } else if let Some((left, right)) = split_online_line(&line.text, context) {
+                        rest.push_front(OnlineLine {
+                            text: right,
+                            stanza_start: false,
+                        });
+                        rest.push_front(OnlineLine {
+                            text: left,
+                            stanza_start: false,
+                        });
+                    } else {
+                        // One glyph that cannot be split further, on a panel
+                        // too small for a single line under the heading.
+                        pages.push(vec![line]);
+                    }
+                }
             }
         }
         if !page.is_empty() {
@@ -2985,37 +2983,6 @@ fn set_verse(mut screen: ScreenBuilder, poem: Poem, runs: &[VerseRun]) -> Screen
     screen
 }
 
-/// How tall one line of a fetched poem stands, alone, and whether it fits the
-/// panel at all.
-fn measure_online_line(
-    line: &OnlineLine,
-    metrics: &kobo_sdk::DisplayMetrics,
-    chrome: &kobo_ui::Chrome,
-) -> (i32, bool) {
-    let screen = ScreenBuilder::new("verses-line-measure")
-        .reading(true)
-        .rich_text(
-            line.text.clone(),
-            Vec::new(),
-            kobo_sdk::ParagraphPresentation {
-                margin_before_em: if line.stanza_start { STANZA_AIR } else { 0 },
-                ..kobo_sdk::ParagraphPresentation::default()
-            },
-        )
-        .build();
-    let measured = screen.diagnostics(metrics, chrome);
-    let overflow = measured.issues.iter().any(|issue| {
-        matches!(
-            issue.kind,
-            kobo_ui::LayoutIssueKind::TextOverflow
-                | kobo_ui::LayoutIssueKind::Clipped
-                | kobo_ui::LayoutIssueKind::ContentOverflow { .. }
-                | kobo_ui::LayoutIssueKind::InteractiveOffscreen
-        )
-    });
-    (measured.layout.content_used(), overflow)
-}
-
 fn split_online_line(text: &str, context: &Context) -> Option<(String, String)> {
     let metrics = context.metrics();
     let lines = kobo_ui::with_text_scale(metrics.text_scale, || {
@@ -3314,6 +3281,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_page_of_a_poem_from_poetrydb_holds_every_stanza_that_fits() {
+        // Burns' "A Prayer in the Prospect of Death" came out as three pages of
+        // two stanzas each, every page half empty.
+        let context = AppRunner::new(Verses::default()).context();
+        let app = Verses::default();
+        let mut lines = Vec::new();
+        for stanza in 1..=5 {
+            if stanza > 1 {
+                lines.push(String::new());
+            }
+            for line in 1..=4 {
+                lines.push(format!("Stanza {stanza}, line {line}, of a prayer"));
+            }
+        }
+        let poem = OnlinePoem {
+            title: "A Prayer".into(),
+            author: "A Poet".into(),
+            lines,
+            linecount: "20".into(),
+        };
+        let pages = app.online_pages(&context, &poem);
+        let set = pages.iter().map(Vec::len).sum::<usize>();
+        assert_eq!(set, 20, "every line is set once");
+        // Any page but the last could not have taken the stanza after it.
+        for page in 0..pages.len().saturating_sub(1) {
+            let mut more = pages[page].clone();
+            more.extend(
+                pages[page + 1]
+                    .iter()
+                    .take_while(|line| !line.stanza_start)
+                    .cloned(),
+            );
+            let screen = app.online_page_screen(&context, &poem, &more, usize::from(page > 0), 2);
+            assert!(
+                !Verses::page_fits(&context, &screen),
+                "page {page} ended a stanza early: {} lines",
+                pages[page].len()
+            );
+        }
+        assert!(pages.len() <= 2, "{} pages for twenty short lines", pages.len());
     }
 
     #[test]
