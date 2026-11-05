@@ -2121,6 +2121,24 @@ impl ScreenBuilder {
         self
     }
 
+    /// Gives the row named `row`, in the list just added, the overflow mark
+    /// of [`Self::rows_with_menu`], naming `name`.
+    ///
+    /// For a list where only some rows have more to them than their tap: an
+    /// installed app whose row opens it, beside one still to be installed.
+    /// Does nothing if the last node is not a list holding that row.
+    #[must_use]
+    pub fn row_menu(mut self, row: impl AsRef<str>, name: impl AsRef<str>) -> Self {
+        let target = action_id(row.as_ref());
+        let action = self.register(name.as_ref());
+        if let Some(Node::Rows { rows, .. }) = self.nodes.last_mut() {
+            if let Some(row) = rows.iter_mut().find(|row| row.action == target) {
+                row.menu = Some(action);
+            }
+        }
+        self
+    }
+
     /// Gives the row named `row`, in the list just added, a count against
     /// the trailing edge: updates waiting, messages unread.
     ///
