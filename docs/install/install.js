@@ -600,6 +600,21 @@ async function fetchRelease() {
       throw new Error("the file that arrived is not the one that was published, so it was thrown away");
     }
 
+    // The choice may have moved while the bytes were arriving. What arrived
+    // was asked for under the channel chosen then, and offering it for the
+    // channel chosen now would write one channel's release to a reader told
+    // to follow the other. It is let go, and Write stays dark.
+    if (chosenChannel() !== channel) {
+      archive = null;
+      archiveChannel = null;
+      bar.hidden = true;
+      writeButton.disabled = true;
+      fetchButton.disabled = false;
+      fetchNote.textContent =
+        `The channel was changed while Cobalt was downloading. Download again for the ${chosenChannel() === "beta" ? "Beta" : "Stable"} channel.`;
+      return;
+    }
+
     archive = bytes;
     archiveChannel = channel;
     const label = served === "beta" ? `Cobalt ${escapeText(manifest.version)} (Beta)` : `Cobalt ${escapeText(manifest.version)}`;

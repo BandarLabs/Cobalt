@@ -98,7 +98,7 @@ function reader(extra = {}, serial = "N249000000000", firmware = "4.38.23697") {
   return directory("KOBOeReader", { ".kobo": { version: `${serial},4.1.15,${firmware}\n` }, ...extra });
 }
 
-function page(drive = reader(), { devices, pickerError, beta, apps = [], bundles = {} } = {}) {
+function page(drive = reader(), { devices, pickerError, beta, apps = [], bundles = {}, gate = {} } = {}) {
   function element() {
     return {
       dataset: {}, attributes: {}, handlers: {}, children: [], style: {},
@@ -153,7 +153,12 @@ function page(drive = reader(), { devices, pickerError, beta, apps = [], bundles
       fetched.push(url);
       if (url === "devices.json") return devices ? devices() : Response.json(profiles);
       if (url === "manifest.json") return Response.json(release);
-      if (url === release.archive) return new Response(payload);
+      // A download the test holds open, to act on the page while it is in
+      // flight.
+      if (url === release.archive) {
+        if (gate.archive) await gate.archive;
+        return new Response(payload);
+      }
       if (url === "beta/manifest.json") {
         return beta ? Response.json(betaRelease) : new Response("missing", { status: 404 });
       }
@@ -593,4 +598,37 @@ test("the catalogue is loaded once, so a second download does not list every app
   await settled();
   assert.equal(ui.node("#applist").children.length, catalogue.length);
   assert.equal(ui.fetched.filter(url => url === "apps.json").length, 1);
+});
+
+test("a download overtaken by a channel change is let go, and Write stays dark until a download for the new channel", async () => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const drive = reader();
+  const ui = page(drive, { beta: true, gate: { archive: held } });
+  await ui.click("#pick");
+
+  const downloading = ui.click("#fetch");
+  await settled();
+  ui.choose("beta");
+  release();
+  await downloading;
+
+  assert.equal(ui.evaluate("archive"), null);
+  assert.equal(ui.node("#write").disabled, true);
+  assert.equal(ui.node("#fetch").disabled, false);
+  assert.equal(ui.node("#step-download").dataset.state, undefined);
+  assert.match(ui.node("#fetch-note").innerHTML, /changed while Cobalt was downloading\. Download again for the Beta channel/);
+
+  // A click that reached the handler anyway writes nothing.
+  await ui.click("#write");
+  const system = await drive.getDirectoryHandle(".kobo");
+  await assert.rejects(system.getFileHandle("KoboRoot.tgz"), { name: "NotFoundError" });
+
+  await ui.click("#fetch");
+  assert.match(ui.node("#fetch-note").innerHTML, /0\.3\.12 \(Beta\) verified/);
+  assert.equal(ui.node("#write").disabled, false);
+  await ui.click("#write");
+  assert.equal(await textOf(system, "KoboRoot.tgz"), "test beta release archive");
+  const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt");
+  assert.equal(await textOf(await cobalt.getDirectoryHandle("state"), "auto-update"), "cobalt=on\napps=on\nchannel=beta\n");
 });
