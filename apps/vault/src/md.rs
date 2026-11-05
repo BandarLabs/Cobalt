@@ -152,7 +152,7 @@ pub fn blocks(markdown: &str) -> Vec<Block> {
     let mut lists: Vec<Option<u64>> = Vec::new();
     // Held until the item's first words, so a loose item, whose words sit in
     // a paragraph of their own, keeps its marker on the same line as them.
-    let mut marker: Option<String> = None;
+    let mut held_label: Option<String> = None;
     let flush = |pending: &mut Vec<Event<'_>>, blocks: &mut Vec<Block>| {
         if pending.is_empty() {
             return;
@@ -202,7 +202,7 @@ pub fn blocks(markdown: &str) -> Vec<Block> {
             }
             Event::Start(Tag::Item) => {
                 pending.push(Event::Start(Tag::Item));
-                marker = Some(match lists.last_mut() {
+                held_label = Some(match lists.last_mut() {
                     Some(Some(number)) => {
                         let label = format!("{number}. ");
                         *number += 1;
@@ -211,8 +211,8 @@ pub fn blocks(markdown: &str) -> Vec<Block> {
                     _ => "\u{2022} ".to_owned(),
                 });
             }
-            Event::Text(_) | Event::Code(_) if marker.is_some() => {
-                if let Some(label) = marker.take() {
+            Event::Text(_) | Event::Code(_) if held_label.is_some() => {
+                if let Some(label) = held_label.take() {
                     pending.push(Event::Text(label.into()));
                 }
                 pending.push(event);
