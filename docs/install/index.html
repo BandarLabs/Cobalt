@@ -115,6 +115,18 @@ li[aria-disabled="true"] { opacity: .45; }
 .shot figcaption { font-size: 14px; color: var(--ink-soft); margin-top: 7px; }
 .consent { display: block; margin-top: 9px; font-size: 15px; color: var(--ink); }
 .consent input { margin-right: 7px; accent-color: var(--cobalt); }
+.installed { list-style: none; margin: 10px 0 0; padding: 0; border: 1px solid var(--rule); }
+.installed li { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 13px; font-size: 15px; border-top: 1px solid var(--rule); }
+.installed li:first-child { border-top: none; }
+.installed li.gone { color: var(--ink-soft); }
+.btn.small { padding: 5px 12px; font-size: 14px; }
+.channel { border: 1px solid var(--rule); padding: 8px 14px 10px; margin: 0 0 14px; }
+.channel legend { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--ink-soft); padding: 0 6px; }
+.channel label { display: block; margin: 6px 0; font-size: 16px; cursor: pointer; }
+.channel input { margin-right: 8px; accent-color: var(--cobalt); }
+.channel label span { color: var(--ink-soft); font-size: 14px; margin-left: 6px; }
 kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; background: var(--paper); }
 @media (max-width: 600px) {
   h1 { font-size: 30px; }
@@ -184,6 +196,8 @@ cargo run -p kobo-cli -- setup</pre>
         <p>Plug the Kobo in. It asks on its own screen whether to connect: tap <strong>Connect</strong>. Until you do, it only charges and no drive appears. Then choose <code>KOBOeReader</code> here.</p>
         <button class="btn" id="pick" type="button">Choose the Kobo drive</button>
         <p class="note" id="pick-note">Your browser will ask permission to edit files on the drive. Only <code>.kobo</code> and <code>.adds</code> are written.</p>
+        <p class="note" id="installed-lede" hidden>Applications on this reader. Removing one keeps its data, and the Store can put it back.</p>
+        <ul class="installed" id="installed" hidden></ul>
       </div>
     </li>
 
@@ -191,6 +205,12 @@ cargo run -p kobo-cli -- setup</pre>
       <div>
         <h2>Download Cobalt</h2>
         <p id="download-copy">Downloads Cobalt and checks it against the checksum published with it. If the file that arrives is not the one that was published, it is thrown away instead of written to your reader.</p>
+        <fieldset class="channel">
+          <legend>Channel</legend>
+          <label><input type="radio" name="channel" id="channel-stable" value="stable" checked>Stable<span>Tested versions</span></label>
+          <label><input type="radio" name="channel" id="channel-beta" value="beta">Beta<span>New versions sooner</span></label>
+        </fieldset>
+        <p class="note" id="channel-note"></p>
         <button class="btn" id="fetch" type="button" disabled>Download and check it</button>
         <div class="progress" hidden id="bar"><i></i></div>
         <p class="note" id="fetch-note"></p>

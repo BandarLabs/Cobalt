@@ -11,10 +11,42 @@ const release = {
   version: "0.3.10", archive: "cobalt-KoboRoot.tgz", bytes: payload.length,
   sha256: createHash("sha256").update(payload).digest("hex"), nickelmenu: "0.6.0"
 };
+const betaPayload = new TextEncoder().encode("test beta release archive");
+const betaRelease = {
+  version: "0.3.12", archive: "beta/cobalt-KoboRoot.tgz", bytes: betaPayload.length,
+  sha256: createHash("sha256").update(betaPayload).digest("hex"), nickelmenu: "0.6.0"
+};
+
+// An application package as the site serves it: magic, format, manifest
+// length, a signature, the manifest and the executable. The page splits it
+// into the three files the reader expects, so the test needs the real shape.
+function bundle(id, manifest = `{"id":"${id}"}`, binary = `binary of ${id}`) {
+  const manifestBytes = new TextEncoder().encode(manifest);
+  const binaryBytes = new TextEncoder().encode(binary);
+  const bytes = new Uint8Array(78 + manifestBytes.length + binaryBytes.length);
+  bytes.set(new TextEncoder().encode("COBALTAP"), 0);
+  const view = new DataView(bytes.buffer);
+  view.setUint16(8, 1);
+  view.setUint32(10, manifestBytes.length);
+  bytes.fill(0xab, 14, 78);
+  bytes.set(manifestBytes, 78);
+  bytes.set(binaryBytes, 78 + manifestBytes.length);
+  return bytes;
+}
+const feeds = bundle("rss");
+const catalogue = [{
+  id: "rss", name: "Feeds", summary: "Follow feeds.", bytes: feeds.length,
+  sha256: createHash("sha256").update(feeds).digest("hex")
+}];
 const profiles = [
   { code: "N249", model: "Kobo Clara HD", firmware: ["4.38.23697"], ready: true },
   { code: "N506", model: "Tolino Shine 5", firmware: ["4.38.23697"], ready: false }
 ];
+
+// What a test wants to happen in the middle of the page's own work: a call
+// made as a file is written, so the page can be acted on while a write is in
+// flight. Cleared by the test that set it.
+const hooks = { onWrite: null, failRemoval: null };
 
 // Exercise the shipped script and its registered click handlers without USB
 // hardware. Handles retain writes in memory and reject missing entries like
@@ -26,7 +58,13 @@ function directory(name, contents = {}) {
       bytes: new TextEncoder().encode(value),
       async getFile() { return new Blob([this.bytes]); },
       async createWritable() {
-        return { write: async bytes => { this.bytes = bytes; }, close: async () => {} };
+        return {
+          write: async bytes => {
+            if (hooks.onWrite) await hooks.onWrite(key);
+            this.bytes = bytes;
+          },
+          close: async () => {}
+        };
       }
     } : directory(key, value)
   ]));
@@ -48,37 +86,61 @@ function directory(name, contents = {}) {
       if (entry?.kind !== "file") throw new DOMException(key, "NotFoundError");
       return entry;
     },
+    async removeEntry(key) {
+      if (!entries.has(key)) throw new DOMException(key, "NotFoundError");
+      if (hooks.failRemoval && hooks.failRemoval.key === key) throw hooks.failRemoval.error;
+      entries.delete(key);
+    },
+    has(key) { return entries.has(key); },
     async *entries() { yield* entries; }
   };
+}
+
+async function textOf(folder, name) {
+  return (await (await folder.getFileHandle(name)).getFile()).text();
+}
+
+// The catalogue loads behind the download rather than holding it up, so a
+// test that wants the loaded catalogue lets that happen first.
+function settled() {
+  return new Promise(resolve => setTimeout(resolve, 5));
 }
 
 function reader(extra = {}, serial = "N249000000000", firmware = "4.38.23697") {
   return directory("KOBOeReader", { ".kobo": { version: `${serial},4.1.15,${firmware}\n` }, ...extra });
 }
 
-function page(drive = reader(), { devices, pickerError } = {}) {
+function page(drive = reader(), { devices, pickerError, beta, apps = [], bundles = {}, gate = {} } = {}) {
   function element() {
     return {
       dataset: {}, attributes: {}, handlers: {}, children: [], style: {},
-      disabled: false, hidden: false, innerHTML: "",
+      disabled: false, hidden: false, checked: false, innerHTML: "",
       set textContent(value) {
         this.innerHTML = String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;")
           .replaceAll(">", "&gt;").replaceAll('"', "&quot;");
       },
+      get textContent() { return this.innerHTML; },
       setAttribute(name, value) { this.attributes[name] = value; },
       removeAttribute(name) { delete this.attributes[name]; },
       addEventListener(name, handler) { this.handlers[name] = handler; },
       querySelector() { return element(); },
-      append(child) { this.children.push(child); }
+      append(...added) { this.children.push(...added); },
+      replaceChildren() { this.children = []; }
     };
   }
   const nodes = new Map([...html.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)].map(([tag, id]) => {
     const node = element();
     node.disabled = /\sdisabled(?:\s|>)/.test(tag);
+    node.checked = /\schecked(?:\s|>)/.test(tag);
     if (tag.includes('aria-disabled="true"')) node.attributes["aria-disabled"] = "true";
     return [`#${id}`, node];
   }));
   const consent = element();
+  // What the catalogue step has ticked, standing in for the checked inputs the
+  // page would otherwise query out of the application list.
+  const ticked = [];
+  // Every address the page asked for, in order.
+  const fetched = [];
   const context = createContext({
     document: {
       querySelector(selector) {
@@ -87,7 +149,7 @@ function page(drive = reader(), { devices, pickerError } = {}) {
         }
         return nodes.get(selector) || null;
       },
-      querySelectorAll() { return []; },
+      querySelectorAll() { return ticked; },
       createElement: element
     },
     window: {
@@ -100,10 +162,22 @@ function page(drive = reader(), { devices, pickerError } = {}) {
       FileSystemDirectoryHandle: { prototype: { getDirectoryHandle() {} } }
     },
     async fetch(url) {
+      fetched.push(url);
       if (url === "devices.json") return devices ? devices() : Response.json(profiles);
       if (url === "manifest.json") return Response.json(release);
-      if (url === release.archive) return new Response(payload);
-      if (url === "apps.json") return Response.json([]);
+      // A download the test holds open, to act on the page while it is in
+      // flight.
+      if (url === release.archive) {
+        if (gate.archive) await gate.archive;
+        return new Response(payload);
+      }
+      if (url === "beta/manifest.json") {
+        return beta ? Response.json(betaRelease) : new Response("missing", { status: 404 });
+      }
+      if (beta && url === betaRelease.archive) return new Response(betaPayload);
+      if (url === "apps.json") return Response.json(apps);
+      const packaged = url.match(/^apps\/([a-z-]+)\.cobalt-app$/);
+      if (packaged && bundles[packaged[1]]) return new Response(bundles[packaged[1]]);
       throw new Error(`Unexpected fetch: ${url}`);
     },
     TextEncoder, TextDecoder, crypto: webcrypto
@@ -112,7 +186,22 @@ function page(drive = reader(), { devices, pickerError } = {}) {
   return {
     node: selector => nodes.get(selector), consent,
     click: selector => nodes.get(selector).handlers.click(),
-    evaluate: expression => runInContext(expression, context)
+    evaluate: expression => runInContext(expression, context),
+    // Chooses a channel the way a click on its radio would: the browser
+    // unticks the other one before the change event fires.
+    choose(channel) {
+      nodes.get("#channel-stable").checked = channel === "stable";
+      nodes.get("#channel-beta").checked = channel === "beta";
+      nodes.get(`#channel-${channel}`).handlers.change();
+    },
+    tick: id => ticked.push({ value: id }),
+    fetched,
+    // The installed list's rows, each a name and, where allowed, a Remove.
+    rows: () => nodes.get("#installed").children.map(row => ({
+      row,
+      name: row.children[0]?.innerHTML,
+      remove: row.children[1] ?? null
+    }))
   };
 }
 
@@ -344,3 +433,275 @@ for (const [name, drive] of [
     assert.equal(ui.node("#fetch").disabled, true);
   });
 }
+
+test("installed applications are listed by identity until the catalogue names them, and reserved ones get no Remove", async () => {
+  const ui = page(reader({ ".adds": { cobalt: {
+    VERSION: "0.3.9\n", apps: { rss: {}, launcher: {}, "rss.prev": {} }
+  } } }), { apps: catalogue });
+  await ui.click("#pick");
+  assert.equal(ui.node("#installed").hidden, false);
+  assert.deepEqual(ui.rows().map(({ name, remove }) => [name, remove !== null]),
+    [["launcher", false], ["rss", true]]);
+  assert.equal(ui.rows()[1].remove.innerHTML, "Remove");
+
+  await ui.click("#fetch");
+  await settled();
+  assert.deepEqual(ui.rows().map(({ name }) => name), ["launcher", "Feeds"]);
+});
+
+test("a reader with nothing installed shows no list", async () => {
+  const ui = page(reader());
+  await ui.click("#pick");
+  assert.equal(ui.node("#installed").hidden, true);
+  assert.equal(ui.node("#installed-lede").hidden, true);
+});
+
+test("removing an application records the removal before deleting its folder and staged copies, and keeps its data", async () => {
+  const drive = reader({ ".adds": { cobalt: {
+    VERSION: "0.3.9\n",
+    apps: { rss: { "manifest.json": "{}", bin: { "kobo-rss": "x" } }, "rss.prev": { "manifest.json": "{}" }, sudoku: {} },
+    data: { rss: { "feeds.opml": "kept" } }
+  } } });
+  const ui = page(drive);
+  await ui.click("#pick");
+  const { remove } = ui.rows().find(({ name }) => name === "rss");
+
+  // The first click only arms the button and names what would go.
+  await remove.handlers.click();
+  assert.equal(remove.innerHTML, "Remove rss");
+  const apps = await (await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt")).getDirectoryHandle("apps");
+  assert.equal(apps.has("rss"), true);
+
+  await remove.handlers.click();
+  assert.equal(apps.has("rss"), false);
+  assert.equal(apps.has("rss.prev"), false);
+  assert.equal(apps.has("sudoku"), true);
+  assert.equal(await textOf(apps, "rss.uninstalled"), "committed\n");
+  const data = await (await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt")).getDirectoryHandle("data");
+  assert.equal(await textOf(await data.getDirectoryHandle("rss"), "feeds.opml"), "kept");
+  assert.deepEqual(Array.from(ui.evaluate("installedApps")), ["sudoku"]);
+  assert.match(ui.rows()[0].row.innerHTML, /rss removed\. Its data stays on the reader\./);
+});
+
+test("installing an application clears a removal recorded for it", async () => {
+  const drive = reader({ ".adds": { cobalt: { VERSION: "0.3.9\n", apps: { "rss.uninstalled": "committed\n" } } } });
+  const ui = page(drive, { apps: catalogue, bundles: { rss: feeds } });
+  await ui.click("#pick");
+  await ui.click("#fetch");
+  ui.tick("rss");
+  await ui.click("#write");
+  assert.equal(ui.node("#step-write").dataset.state, "done");
+  const apps = await (await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt")).getDirectoryHandle("apps");
+  assert.equal(apps.has("rss.uninstalled"), false);
+  const rss = await apps.getDirectoryHandle("rss");
+  assert.equal(await textOf(rss, "manifest.json"), '{"id":"rss"}');
+  assert.equal(await textOf(await rss.getDirectoryHandle("bin"), "kobo-rss"), "binary of rss");
+  assert.match(await textOf(rss, "manifest.json.sig"), /^(ab){64}\n$/);
+});
+
+test("choosing Beta downloads the Beta release and records the channel with both switches on", async () => {
+  const drive = reader();
+  const ui = page(drive, { beta: true });
+  await ui.click("#pick");
+  assert.equal(ui.node("#channel-stable").checked, true);
+  ui.choose("beta");
+  assert.match(ui.node("#channel-note").innerHTML, /keeps updating from Beta/);
+  await ui.click("#fetch");
+  assert.match(ui.node("#fetch-note").innerHTML, /Cobalt 0\.3\.12 \(Beta\) verified/);
+  await ui.click("#write");
+  assert.equal(ui.node("#step-write").dataset.state, "done");
+  assert.match(ui.node("#write-note").innerHTML, /following Beta/);
+  const system = await drive.getDirectoryHandle(".kobo");
+  assert.equal(await textOf(system, "KoboRoot.tgz"), "test beta release archive");
+  const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt");
+  assert.equal(await textOf(await cobalt.getDirectoryHandle("state"), "auto-update"), "cobalt=on\napps=on\nchannel=beta\n");
+});
+
+test("a reader kept on Stable gets no preferences file, since to the runtime none means Stable", async () => {
+  const drive = reader();
+  const ui = page(drive);
+  await ui.click("#pick");
+  await ui.click("#fetch");
+  await ui.click("#write");
+  assert.equal(ui.node("#step-write").dataset.state, "done");
+  const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt", { create: true });
+  assert.equal(cobalt.has("state"), false);
+});
+
+test("a reader that follows Beta has Beta chosen for it, and keeps its other switches when moved to Stable", async () => {
+  const drive = reader({ ".adds": { cobalt: {
+    VERSION: "0.3.9\n", state: { "auto-update": "cobalt=on\napps=off\nchannel=beta\n" }
+  } } });
+  const ui = page(drive, { beta: true });
+  await ui.click("#pick");
+  assert.equal(ui.node("#channel-beta").checked, true);
+  assert.match(ui.node("#pick-note").innerHTML, /installed on the Beta channel/);
+
+  ui.choose("stable");
+  assert.match(ui.node("#channel-note").innerHTML, /follows Beta now and will follow Stable/);
+  await ui.click("#fetch");
+  await ui.click("#write");
+  assert.equal(ui.node("#step-write").dataset.state, "done");
+  const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt");
+  assert.equal(await textOf(await cobalt.getDirectoryHandle("state"), "auto-update"), "cobalt=on\napps=off\nchannel=stable\n");
+});
+
+test("a reader that follows Beta and stays on it is not rewritten", async () => {
+  const drive = reader({ ".adds": { cobalt: {
+    VERSION: "0.3.9\n", state: { "auto-update": "cobalt=off\napps=on\nchannel=beta\n" }
+  } } });
+  const ui = page(drive, { beta: true });
+  await ui.click("#pick");
+  await ui.click("#fetch");
+  await ui.click("#write");
+  const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt");
+  assert.equal(await textOf(await cobalt.getDirectoryHandle("state"), "auto-update"), "cobalt=off\napps=on\nchannel=beta\n");
+});
+
+test("changing the channel after a download puts the download back until it is repeated", async () => {
+  const drive = reader();
+  const ui = page(drive, { beta: true });
+  await ui.click("#pick");
+  await ui.click("#fetch");
+  assert.equal(ui.node("#write").disabled, false);
+
+  ui.choose("beta");
+  assert.equal(ui.evaluate("archive"), null);
+  assert.equal(ui.node("#write").disabled, true);
+  assert.equal(ui.node("#fetch").disabled, false);
+  assert.equal(ui.node("#step-download").dataset.state, undefined);
+  assert.match(ui.node("#fetch-note").innerHTML, /Download Cobalt again for the Beta channel/);
+
+  // A click that reached the handler anyway writes nothing.
+  await ui.click("#write");
+  const system = await drive.getDirectoryHandle(".kobo");
+  await assert.rejects(system.getFileHandle("KoboRoot.tgz"), { name: "NotFoundError" });
+
+  await ui.click("#fetch");
+  assert.equal(ui.node("#write").disabled, false);
+  await ui.click("#write");
+  assert.equal(await textOf(system, "KoboRoot.tgz"), "test beta release archive");
+});
+
+test("Beta falls back to the Stable release when the site has none, and still records Beta", async () => {
+  const drive = reader();
+  const ui = page(drive);
+  await ui.click("#pick");
+  ui.choose("beta");
+  await ui.click("#fetch");
+  assert.match(ui.node("#fetch-note").innerHTML, /Cobalt 0\.3\.10 verified\. No Beta release is published here yet/);
+  await ui.click("#write");
+  assert.equal(ui.node("#step-write").dataset.state, "done");
+  const system = await drive.getDirectoryHandle(".kobo");
+  assert.equal(await textOf(system, "KoboRoot.tgz"), "test release archive");
+  const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt");
+  assert.equal(await textOf(await cobalt.getDirectoryHandle("state"), "auto-update"), "cobalt=on\napps=on\nchannel=beta\n");
+});
+
+test("the catalogue is loaded once, so a second download does not list every application twice", async () => {
+  const ui = page(reader(), { beta: true, apps: catalogue });
+  await ui.click("#pick");
+  await ui.click("#fetch");
+  await settled();
+  assert.equal(ui.node("#applist").children.length, catalogue.length);
+
+  ui.choose("beta");
+  await ui.click("#fetch");
+  await settled();
+  assert.equal(ui.node("#applist").children.length, catalogue.length);
+  assert.equal(ui.fetched.filter(url => url === "apps.json").length, 1);
+});
+
+test("a download overtaken by a channel change is let go, and Write stays dark until a download for the new channel", async () => {
+  let release;
+  const held = new Promise(resolve => { release = resolve; });
+  const drive = reader();
+  const ui = page(drive, { beta: true, gate: { archive: held } });
+  await ui.click("#pick");
+
+  const downloading = ui.click("#fetch");
+  await settled();
+  ui.choose("beta");
+  release();
+  await downloading;
+
+  assert.equal(ui.evaluate("archive"), null);
+  assert.equal(ui.node("#write").disabled, true);
+  assert.equal(ui.node("#fetch").disabled, false);
+  assert.equal(ui.node("#step-download").dataset.state, undefined);
+  assert.match(ui.node("#fetch-note").innerHTML, /changed while Cobalt was downloading\. Download again for the Beta channel/);
+
+  // A click that reached the handler anyway writes nothing.
+  await ui.click("#write");
+  const system = await drive.getDirectoryHandle(".kobo");
+  await assert.rejects(system.getFileHandle("KoboRoot.tgz"), { name: "NotFoundError" });
+
+  await ui.click("#fetch");
+  assert.match(ui.node("#fetch-note").innerHTML, /0\.3\.12 \(Beta\) verified/);
+  assert.equal(ui.node("#write").disabled, false);
+  await ui.click("#write");
+  assert.equal(await textOf(system, "KoboRoot.tgz"), "test beta release archive");
+  const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt");
+  assert.equal(await textOf(await cobalt.getDirectoryHandle("state"), "auto-update"), "cobalt=on\napps=on\nchannel=beta\n");
+});
+
+test("the write goes dark to channel changes and finishes from what it started with", async () => {
+  const drive = reader();
+  const ui = page(drive, { beta: true });
+  await ui.click("#pick");
+  await ui.click("#fetch");
+
+  // A change event that arrives anyway while the release is being written:
+  // the radios must be dark, and the write must not notice.
+  let radiosDark = null;
+  hooks.onWrite = name => {
+    if (name !== "KoboRoot.tgz") return;
+    radiosDark = ui.node("#channel-stable").disabled && ui.node("#channel-beta").disabled;
+    ui.choose("beta");
+    hooks.onWrite = null;
+  };
+  await ui.click("#write");
+  hooks.onWrite = null;
+
+  assert.equal(radiosDark, true);
+  assert.equal(ui.node("#step-write").dataset.state, "done");
+  assert.doesNotMatch(ui.node("#write-note").innerHTML, /following Beta/);
+  const system = await drive.getDirectoryHandle(".kobo");
+  assert.equal(await textOf(system, "KoboRoot.tgz"), "test release archive");
+  const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt", { create: true });
+  assert.equal(cobalt.has("state"), false);
+  assert.equal(ui.node("#channel-stable").disabled, false);
+  assert.equal(ui.node("#channel-beta").disabled, false);
+});
+
+test("a removal the system refuses is reported as not done, and the application stays listed", async () => {
+  const drive = reader({ ".adds": { cobalt: {
+    VERSION: "0.3.9\n", apps: { rss: { "manifest.json": "{}" }, "rss.prev": {} }
+  } } });
+  const ui = page(drive);
+  await ui.click("#pick");
+  const { row, remove } = ui.rows()[0];
+  hooks.failRemoval = { key: "rss", error: new DOMException("the folder is in use", "NoModificationAllowedError") };
+  await remove.handlers.click();
+  await remove.handlers.click();
+  hooks.failRemoval = null;
+
+  const apps = await (await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt")).getDirectoryHandle("apps");
+  assert.equal(apps.has("rss"), true);
+  assert.equal(apps.has("rss.prev"), true);
+  // The record is left for the runtime to settle against the folder it finds.
+  assert.equal(await textOf(apps, "rss.uninstalled"), "committed\n");
+  assert.deepEqual(Array.from(ui.evaluate("installedApps")), ["rss"]);
+  assert.equal(remove.disabled, false);
+  assert.equal(remove.innerHTML, "Remove");
+  assert.equal(row.children[2].hidden, false);
+  assert.match(row.children[2].innerHTML, /rss could not be removed: the folder is in use\./);
+  assert.doesNotMatch(row.innerHTML, /removed\. Its data/);
+
+  // Allowed the next time, the same button finishes the job.
+  await remove.handlers.click();
+  await remove.handlers.click();
+  assert.equal(apps.has("rss"), false);
+  assert.equal(apps.has("rss.prev"), false);
+  assert.match(row.innerHTML, /rss removed\. Its data stays on the reader\./);
+});

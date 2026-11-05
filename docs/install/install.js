@@ -10,6 +10,31 @@ const MENU_FOLDER = ".adds";
 const MENU_SUBFOLDER = "nm";
 const MENU_FILE = "cobalt";
 
+// Where the runtime keeps what is installed and what the owner decided, inside
+// .adds. `state` and `apps` are two of the folders the runtime carries across
+// every update it applies to itself, so a file written into them before the
+// first start is still there after it.
+const INSTALL_FOLDER = "cobalt";
+const APPS_FOLDER = "apps";
+const STATE_FOLDER = "state";
+// The owner's standing choices about updates, one `name=value` line each, in
+// the form the runtime's own Settings application writes. The runtime reads a
+// missing file as both switches on and the Stable channel.
+const PREFERENCES_FILE = "auto-update";
+// The Store records a removal in a file of this name beside where the
+// application was, and the runtime takes that record as the removal's durable
+// commit: a copy found next to it is finished off, never restored. Written
+// here for the same reason, so a removal this page starts is one the reader
+// completes rather than undoes.
+const UNINSTALLED_SUFFIX = "uninstalled";
+// Identities that belong to Cobalt itself. The Store refuses to remove them
+// and so does this page: a reader without its launcher has nothing to open
+// the Store from.
+const RESERVED_APPS = ["books", "cobalt", "kobod", "launcher", "settings", "store", "terminal"];
+// Where the site describes each channel's release. The archive each names is
+// relative to this page, like the manifest itself.
+const MANIFEST = { stable: "manifest.json", beta: "beta/manifest.json" };
+
 // Byte for byte what `kobo setup` writes, and deliberately so. The undo path
 // removes its own comment lines by exact string match, so a line reworded to
 // mention this page instead would be left behind: the menu_item would go, the
@@ -37,6 +62,13 @@ const pickNote = document.querySelector("#pick-note");
 const fetchNote = document.querySelector("#fetch-note");
 const writeNote = document.querySelector("#write-note");
 const appsNote = document.querySelector("#apps-note");
+const installedLede = document.querySelector("#installed-lede");
+const installedList = document.querySelector("#installed");
+const channelNote = document.querySelector("#channel-note");
+const channelChoice = {
+  stable: document.querySelector("#channel-stable"),
+  beta: document.querySelector("#channel-beta")
+};
 const search = document.querySelector("#app-search");
 const bar = document.querySelector("#bar");
 const barFill = bar.querySelector("i");
@@ -49,6 +81,12 @@ let installed = null;
 let identity = null;
 let untestedAcknowledged = true;
 let installedApps = new Set();
+// The reader's standing update choices, read when it is chosen.
+let preferences = null;
+// Which channel the verified archive was downloaded for. A Beta request the
+// site answers with Stable still counts as Beta here: the reader is told to
+// follow Beta either way (see fetchRelease).
+let archiveChannel = null;
 
 function enable(element, on) {
   element.removeAttribute("aria-disabled");
@@ -123,11 +161,56 @@ async function readInstalledApps(handle) {
     const cobalt = await adds.getDirectoryHandle("cobalt");
     const apps = await cobalt.getDirectoryHandle("apps");
     for await (const [name, entry] of apps.entries()) {
-      // Staged .next and .prev folders are not installed applications.
-      if (entry.kind === "directory" && !name.includes(".")) present.add(name);
+      // Only names the runtime would accept as an identity. Staged .next and
+      // .prev folders and the record of a removal all carry a dot, and any
+      // other folder is not an application and is not offered as one.
+      if (entry.kind === "directory" && isAppId(name)) present.add(name);
     }
   } catch { /* nothing installed */ }
   return present;
+}
+
+// Read the way the runtime reads it: one switch per line, anything it does
+// not recognise ignored, anything missing on. A file that is not there is the
+// default, which is the Stable channel.
+function parsePreferences(text) {
+  const chosen = { cobalt: true, apps: true, channel: "stable" };
+  for (const line of text.split("\n")) {
+    switch (line.trim()) {
+      case "cobalt=off": chosen.cobalt = false; break;
+      case "cobalt=on": chosen.cobalt = true; break;
+      case "apps=off": chosen.apps = false; break;
+      case "apps=on": chosen.apps = true; break;
+      case "channel=stable": chosen.channel = "stable"; break;
+      case "channel=beta": chosen.channel = "beta"; break;
+      default: break;
+    }
+  }
+  return chosen;
+}
+
+// Byte for byte what the runtime writes, so a file this page leaves and a
+// file Settings on the reader leaves cannot be told apart.
+function renderPreferences(chosen) {
+  return `cobalt=${chosen.cobalt ? "on" : "off"}\napps=${chosen.apps ? "on" : "off"}\nchannel=${chosen.channel}\n`;
+}
+
+async function readPreferences(handle) {
+  try {
+    const adds = await handle.getDirectoryHandle(MENU_FOLDER);
+    const cobalt = await adds.getDirectoryHandle(INSTALL_FOLDER);
+    const state = await cobalt.getDirectoryHandle(STATE_FOLDER);
+    const file = await (await state.getFileHandle(PREFERENCES_FILE)).getFile();
+    return { present: true, ...parsePreferences(await file.text()) };
+  } catch {
+    return { present: false, ...parsePreferences("") };
+  }
+}
+
+// The runtime's own rule for an identity: lowercase letters, digits and
+// single hyphens, starting with a letter and not ending in a hyphen.
+function isAppId(name) {
+  return /^[a-z][a-z0-9-]*$/.test(name) && !name.endsWith("-") && !name.includes("--") && name.length <= 64;
 }
 
 async function readReaderIdentity(handle) {
@@ -182,6 +265,10 @@ function launchableGeneration(version) {
 function disarm() {
   drive = null;
   untestedAcknowledged = false;
+  // The list of applications belongs to the reader that was just forgotten;
+  // a Remove left on screen would act on nothing.
+  installedApps = new Set();
+  renderInstalled();
   delete step.connect.dataset.state;
   enable(step.download, false);
   fetchButton.disabled = true;
@@ -269,10 +356,16 @@ async function chooseDrive() {
   // finding out from what the reader does afterwards.
   installed = await readInstalledVersion(handle);
   installedApps = await readInstalledApps(handle);
+  preferences = await readPreferences(handle);
   identity = reading;
+  // The reader's own choice is shown as chosen. Somebody reinstalling a reader
+  // that follows Beta should find Beta selected, not be moved back to Stable
+  // by a default they never looked at.
+  selectChannel(preferences.channel);
+  renderInstalled();
   const where = `Reader found on <strong>${escapeText(handle.name)}</strong>`;
   const said = installed
-    ? `${where}, with Cobalt ${escapeText(installed)} installed.`
+    ? `${where}, with Cobalt ${escapeText(installed)} installed${preferences.channel === "beta" ? " on the Beta channel" : ""}.`
     : `${where}. Cobalt is not installed yet.`;
 
   // The reviewed models come from the profiles the runtime enforces, so this
@@ -334,14 +427,165 @@ async function chooseDrive() {
   writeButton.disabled = !untestedAcknowledged || archive === null;
 }
 
+function chosenChannel() {
+  return channelChoice.beta && channelChoice.beta.checked ? "beta" : "stable";
+}
+
+function selectChannel(channel) {
+  if (!channelChoice.stable || !channelChoice.beta) return;
+  channelChoice.stable.checked = channel === "stable";
+  channelChoice.beta.checked = channel === "beta";
+  describeChannel();
+}
+
+// Said beside the choice, so what Write will do to the reader's standing
+// preference is read here rather than discovered later in Settings.
+function describeChannel() {
+  if (!channelNote) return;
+  const channel = chosenChannel();
+  const current = preferences ? preferences.channel : "stable";
+  let said = channel === "beta"
+    ? "Beta gets new versions sooner. The reader keeps updating from Beta over Wi-Fi afterwards."
+    : "Stable gets tested versions.";
+  if (installed && current !== channel) {
+    said += channel === "beta"
+      ? " This reader follows Stable now and will follow Beta."
+      : " This reader follows Beta now and will follow Stable.";
+  }
+  channelNote.textContent = said;
+  // A release verified for one channel is not the other's. Changing the
+  // choice after a download puts the download back, rather than writing the
+  // Stable archive to a reader that is about to be told to follow Beta.
+  if (archive !== null && archiveChannel !== channel) {
+    archive = null;
+    archiveChannel = null;
+    delete step.download.dataset.state;
+    enable(step.write, false);
+    writeButton.disabled = true;
+    fetchButton.disabled = false;
+    fetchNote.textContent = `Download Cobalt again for the ${channel === "beta" ? "Beta" : "Stable"} channel.`;
+  }
+}
+
+// What is on the reader now, by name where the catalogue knows one. Drawn
+// again once the catalogue arrives, because the folder names are identities
+// and the names are what somebody recognises.
+function renderInstalled() {
+  if (!installedList) return;
+  const ids = [...installedApps].sort();
+  installedList.replaceChildren();
+  installedList.hidden = ids.length === 0;
+  if (installedLede) installedLede.hidden = ids.length === 0;
+  for (const id of ids) {
+    const row = document.createElement("li");
+    const name = document.createElement("span");
+    const known = catalogue.find(app => app.id === id);
+    name.textContent = known ? known.name : id;
+    row.append(name);
+    if (!RESERVED_APPS.includes(id)) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "btn small";
+      button.textContent = "Remove";
+      // Where a failure is reported, beside the button that can try again.
+      const why = document.createElement("span");
+      why.className = "bad";
+      why.hidden = true;
+      // Two clicks, the second naming what goes, rather than a dialog. A
+      // removal keeps the application's data and the Store can put the
+      // application back, so a second look is proportionate and a modal is
+      // not.
+      button.addEventListener("click", async () => {
+        if (button.dataset.armed !== "true") {
+          button.dataset.armed = "true";
+          button.textContent = `Remove ${name.textContent}`;
+          return;
+        }
+        await removeApp(id, row, name.textContent, button, why);
+      });
+      row.append(button, why);
+    }
+    installedList.append(row);
+  }
+}
+
+async function removeApp(id, row, name, button, why) {
+  button.disabled = true;
+  why.hidden = true;
+  try {
+    const adds = await drive.getDirectoryHandle(MENU_FOLDER);
+    const cobalt = await adds.getDirectoryHandle(INSTALL_FOLDER);
+    const apps = await cobalt.getDirectoryHandle(APPS_FOLDER);
+    // The record first, then the folders, which is the order that fails
+    // safely. The runtime finishes a removal it finds recorded and half done.
+    // One it finds unrecorded it undoes: an application whose folder is gone
+    // while its `.prev` copy from the last update remains looks like an
+    // interrupted update, and the copy is put back. Stopping after the record
+    // alone leaves a whole application beside a record the runtime clears at
+    // its next look, which is nothing having happened.
+    await writeFile(apps, `${id}.${UNINSTALLED_SUFFIX}`, new TextEncoder().encode("committed\n"));
+    for (const entry of [id, `${id}.prev`, `${id}.next`, `${id}.removed`]) {
+      try {
+        await apps.removeEntry(entry, { recursive: true });
+      } catch (error) {
+        // Absent is the usual case for the staged copies. Anything else, a
+        // folder the system would not let go of or a drive that stopped
+        // answering, is a removal that did not happen, not one to report as
+        // done.
+        if (!error || error.name !== "NotFoundError") throw error;
+      }
+    }
+    installedApps.delete(id);
+    row.className = "gone";
+    row.replaceChildren();
+    row.textContent = `${name} removed. Its data stays on the reader.`;
+    markCatalogueRow(id);
+  } catch (error) {
+    // The application stays listed as installed, which is what the reader
+    // still holds. The record written first is left where it is: the
+    // runtime settles it at its next look either way (kobod's app_store,
+    // recover_interrupted_transaction). Beside a folder whose signed
+    // manifest still verifies, the record is cleared and the application
+    // stays installed. Beside a folder the deletion got part way through,
+    // the removal is finished. Taking the record away here would leave that
+    // second case as an unrecorded, broken application, which is the one
+    // state the runtime does not repair.
+    button.disabled = false;
+    delete button.dataset.armed;
+    button.textContent = "Remove";
+    why.textContent = `${name} could not be removed: ${error.message || error.name || "no reason given"}.`;
+    why.hidden = false;
+  }
+}
+
+// The catalogue marks what is already on the reader; after a removal that
+// mark is no longer true for this application.
+function markCatalogueRow(id) {
+  const row = document.querySelector(`#applist [data-id="${id}"] em`);
+  if (!row) return;
+  const app = catalogue.find(entry => entry.id === id);
+  if (app) row.textContent = `${(app.bytes / 1048576).toFixed(1)} MB`;
+}
+
 async function fetchRelease() {
   fetchButton.disabled = true;
   fetchNote.textContent = "Checking what is available\u2026";
+  const channel = chosenChannel();
   try {
     // Checked before it is parsed. A 404 here answers with a page, and parsing
     // that as JSON reports a syntax error to somebody who wanted to install a
     // reading application.
-    const described = await fetch("manifest.json", { cache: "no-store" });
+    let described = await fetch(MANIFEST[channel], { cache: "no-store" });
+    let served = channel;
+    // The site carries a Beta release only once one has been published since
+    // the site learnt to offer it. Until then the Stable release is written,
+    // and the reader, told to follow Beta, moves itself to the newest Beta the
+    // first time it checks for updates over Wi-Fi. That is also what Settings
+    // on the reader does when Beta is chosen there.
+    if (!described.ok && channel === "beta" && described.status === 404) {
+      described = await fetch(MANIFEST.stable, { cache: "no-store" });
+      served = "stable";
+    }
     if (!described.ok) {
       throw new Error(`could not check what is available (${described.status})`);
     }
@@ -376,13 +620,33 @@ async function fetchRelease() {
       throw new Error("the file that arrived is not the one that was published, so it was thrown away");
     }
 
+    // The choice may have moved while the bytes were arriving. What arrived
+    // was asked for under the channel chosen then, and offering it for the
+    // channel chosen now would write one channel's release to a reader told
+    // to follow the other. It is let go, and Write stays dark.
+    if (chosenChannel() !== channel) {
+      archive = null;
+      archiveChannel = null;
+      bar.hidden = true;
+      writeButton.disabled = true;
+      fetchButton.disabled = false;
+      fetchNote.textContent =
+        `The channel was changed while Cobalt was downloading. Download again for the ${chosenChannel() === "beta" ? "Beta" : "Stable"} channel.`;
+      return;
+    }
+
     archive = bytes;
+    archiveChannel = channel;
+    const label = served === "beta" ? `Cobalt ${escapeText(manifest.version)} (Beta)` : `Cobalt ${escapeText(manifest.version)}`;
     const change = !installed
-      ? `Cobalt ${escapeText(manifest.version)} verified.`
+      ? `${label} verified.`
       : installed === manifest.version
-        ? `Cobalt ${escapeText(manifest.version)} verified. This reader already has that version, so this reinstalls it.`
-        : `Cobalt ${escapeText(manifest.version)} verified. This reader has ${escapeText(installed)}.`;
-    fetchNote.innerHTML = `<span class="ok">${change}</span>`;
+        ? `${label} verified. This reader already has that version, so this reinstalls it.`
+        : `${label} verified. This reader has ${escapeText(installed)}.`;
+    const stood = served !== channel
+      ? " No Beta release is published here yet, so this is the Stable one; the reader moves to Beta when it next updates over Wi-Fi."
+      : "";
+    fetchNote.innerHTML = `<span class="ok">${change}${stood}</span>`;
     done(step.download);
     enable(step.apps, true);
     enable(step.write, true);
@@ -395,14 +659,33 @@ async function fetchRelease() {
   }
 }
 
+// The radios are dark while a write runs. The choice is settled by what is
+// being written, and a change made then is one the write could not honour.
+function setChannelChoiceEnabled(on) {
+  for (const input of Object.values(channelChoice)) {
+    if (input) input.disabled = !on;
+  }
+}
+
 async function writeToReader() {
   // The button is the usual guard; this is the one that holds if the button
   // and the state ever disagree.
   if (drive === null || archive === null || !untestedAcknowledged) return;
+  // Taken now and used throughout, the cleanup included. The page's own state
+  // can move while the write runs: a channel change puts the download back,
+  // and a write that read `archive` after that found nothing to measure the
+  // slot against, and took a complete archive off the reader as a partial
+  // one. The channel recorded is the one the archive was downloaded for, so
+  // the two cannot disagree either.
+  const reader = drive;
+  const bytes = archive;
+  const described = manifest;
+  const channel = archiveChannel;
   writeButton.disabled = true;
+  setChannelChoiceEnabled(false);
   try {
     writeNote.textContent = "Writing the release…";
-    const system = await drive.getDirectoryHandle(SLOT_FOLDER, { create: true });
+    const system = await reader.getDirectoryHandle(SLOT_FOLDER, { create: true });
 
     // The firmware reads exactly one archive here and deletes it afterwards.
     // Anything already in the slot belongs to another mod's install that has
@@ -419,7 +702,7 @@ async function writeToReader() {
 
     const slot = await system.getFileHandle(SLOT_FILE, { create: true });
     const target = await slot.createWritable();
-    await target.write(archive);
+    await target.write(bytes);
     await target.close();
 
     // Read back what was written. There is no way for a page to eject a drive
@@ -432,25 +715,28 @@ async function writeToReader() {
     // that failed for no stated reason.
     writeNote.textContent = "Checking what was written…";
     const written = new Uint8Array(await (await slot.getFile()).arrayBuffer());
-    if (written.length !== archive.length) {
+    if (written.length !== bytes.length) {
       throw new Error(
-        `only ${written.length.toLocaleString()} of ${archive.length.toLocaleString()} bytes ` +
+        `only ${written.length.toLocaleString()} of ${bytes.length.toLocaleString()} bytes ` +
         "were written, so the reader was left alone. Check there is room on the drive and try again."
       );
     }
     const writtenDigest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", written))]
       .map(byte => byte.toString(16).padStart(2, "0")).join("");
-    if (writtenDigest !== manifest.sha256) {
+    if (writtenDigest !== described.sha256) {
       throw new Error("what ended up on the reader is not what was downloaded, so it was taken off again.");
     }
 
     writeNote.textContent = "Adding the menu entry…";
-    const adds = await drive.getDirectoryHandle(MENU_FOLDER, { create: true });
+    const adds = await reader.getDirectoryHandle(MENU_FOLDER, { create: true });
     const nm = await adds.getDirectoryHandle(MENU_SUBFOLDER, { create: true });
     const entry = await nm.getFileHandle(MENU_FILE, { create: true });
     const entryTarget = await entry.createWritable();
     await entryTarget.write(new TextEncoder().encode(MENU_ENTRY));
     await entryTarget.close();
+
+    writeNote.textContent = "Recording the update channel…";
+    await writeChannel(reader, adds, channel);
 
     const chosen = chosenApps();
     if (chosen.length > 0) {
@@ -460,9 +746,11 @@ async function writeToReader() {
         writeNote.textContent = `Writing ${app.name} (${index + 1} of ${chosen.length})…`;
         await writeApp(appsFolder, app);
       }
+      renderInstalled();
     }
 
-    const tail = chosen.length > 0 ? ` with ${chosen.length} application${chosen.length === 1 ? "" : "s"}` : "";
+    const tail = (chosen.length > 0 ? ` with ${chosen.length} application${chosen.length === 1 ? "" : "s"}` : "") +
+      (channel === "beta" ? ", following Beta" : "");
     writeNote.innerHTML =
       `<span class="ok">Written${escapeText(tail)}. Eject the drive, unplug the cable and restart the reader.</span>`;
     done(step.write);
@@ -471,25 +759,37 @@ async function writeToReader() {
     // A partial archive in the slot is worse than none: the firmware would try
     // it at the next start and fail on its own, with nobody to say why.
     try {
-      const system = await drive.getDirectoryHandle(SLOT_FOLDER);
+      const system = await reader.getDirectoryHandle(SLOT_FOLDER);
       const slot = await system.getFileHandle(SLOT_FILE);
       const partial = await slot.getFile();
-      if (partial.size !== (archive ? archive.length : -1)) {
+      if (partial.size !== bytes.length) {
         await system.removeEntry(SLOT_FILE);
       }
     } catch { /* nothing was written, or it is complete and stays */ }
     writeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
     writeButton.disabled = false;
+  } finally {
+    setChannelChoiceEnabled(true);
   }
 }
 
 // The list is whatever the Store was offering when the site was built, not a
 // list kept by hand here, so an application added to the catalogue appears
 // without anyone editing this page.
+//
+// Asked for once. Every verified download used to ask again, and each answer
+// put a second copy of every row under the first, so an application ticked in
+// both copies was written twice. A load that failed may be asked for again,
+// since it left no rows behind.
+let catalogueRequested = false;
+
 async function loadCatalogue() {
+  if (catalogueRequested) return;
+  catalogueRequested = true;
   try {
     catalogue = await (await fetch("apps.json", { cache: "no-store" })).json();
   } catch {
+    catalogueRequested = false;
     appsNote.textContent =
       "The application catalogue could not be read. Cobalt can still be installed, " +
       "and applications can be added later from the Store on the reader.";
@@ -499,6 +799,7 @@ async function loadCatalogue() {
   for (const app of catalogue) {
     const row = document.createElement("label");
     row.className = "app";
+    row.dataset.id = app.id;
     row.dataset.search = `${app.name} ${app.summary} ${app.id}`.toLowerCase();
     const already = installedApps.has(app.id);
     // The name links to the application's own page, which is where somebody
@@ -514,6 +815,7 @@ async function loadCatalogue() {
     row.querySelector(".app-name").addEventListener("click", event => event.stopPropagation());
     list.append(row);
   }
+  renderInstalled();
   search.disabled = false;
   search.addEventListener("input", () => {
     const needle = search.value.trim().toLowerCase();
@@ -591,6 +893,27 @@ async function writeApp(appsFolder, app) {
   await writeFile(folder, "manifest.json", manifest);
   await writeFile(folder, "manifest.json.sig",
     new TextEncoder().encode([...signature].map(b => b.toString(16).padStart(2, "0")).join("") + "\n"));
+  // A removal recorded earlier, here or by the Store, is over once the three
+  // files agree again. The runtime would reach the same conclusion at its
+  // next look and clear the record itself; clearing it here means the
+  // reader's first start has nothing to decide. Last, because until the
+  // signature is down the record is still telling the truth.
+  try { await appsFolder.removeEntry(`${app.id}.${UNINSTALLED_SUFFIX}`); } catch { /* none */ }
+  installedApps.add(app.id);
+}
+
+// Records the chosen channel the way Settings on the reader would, and only
+// when it changes something. To the runtime no file means Stable, so a reader
+// kept on Stable is left without one, and a reader's other two switches are
+// carried over rather than reset.
+async function writeChannel(reader, adds, channel) {
+  const current = await readPreferences(reader);
+  if (current.channel === channel) return;
+  const cobalt = await adds.getDirectoryHandle(INSTALL_FOLDER, { create: true });
+  const state = await cobalt.getDirectoryHandle(STATE_FOLDER, { create: true });
+  const chosen = { cobalt: current.cobalt, apps: current.apps, channel };
+  await writeFile(state, PREFERENCES_FILE, new TextEncoder().encode(renderPreferences(chosen)));
+  preferences = { present: true, ...chosen };
 }
 
 async function writeFile(folder, name, bytes) {
@@ -636,6 +959,10 @@ if (refuseUnsupportedBrowser()) {
   pickButton.addEventListener("click", chooseDrive);
   fetchButton.addEventListener("click", fetchRelease);
   writeButton.addEventListener("click", writeToReader);
+  for (const input of Object.values(channelChoice)) {
+    if (input) input.addEventListener("change", describeChannel);
+  }
+  describeChannel();
 }
 
 // After the wiring, and its failure is its own. This filled in the by-hand

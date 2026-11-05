@@ -454,6 +454,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # To ask for the site build below. A release made with the workflow
+      # token fires no `release` trigger, so the rebuild is asked for by name.
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
@@ -534,3 +537,14 @@ jobs:
             --notes "Immutable prerelease built from the beta branch at ${GITHUB_SHA}." \
             --prerelease \
             --latest=false
+
+      # The site carries the newest beta beside the stable release, for the
+      # browser installer's Beta choice, and it is built from main. The site
+      # workflow listens for releases, but a release created with the
+      # workflow token fires no `release` event in any workflow, so the
+      # rebuild is asked for by name. The stable channel never needed this:
+      # promotion pushes to main, which the site workflow also listens for.
+      - name: Ask the site to publish this beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main --repo "$GITHUB_REPOSITORY"

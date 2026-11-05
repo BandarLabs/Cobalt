@@ -22,8 +22,10 @@ You do not need Rust or a copy of the source code.
 
 Open the [browser installer](https://bandarlabs.github.io/Cobalt/install/) in
 Chrome, Edge or Opera, plug in your Kobo and follow the steps. It writes
-Cobalt and NickelMenu to the Kobo and can add apps at the same time. Then
-continue from [Restart the reader](#3-restart-the-reader).
+Cobalt and NickelMenu to the Kobo and can add apps at the same time. It also
+lists the apps already on the reader and can remove one, and it can put the
+reader on the Beta channel instead of Stable. Then continue from
+[Restart the reader](#3-restart-the-reader).
 
 ## Option 2: install from a terminal
 
