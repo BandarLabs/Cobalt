@@ -127,6 +127,8 @@ function page(drive = reader(), { devices, pickerError, beta, apps = [], bundles
   // What the catalogue step has ticked, standing in for the checked inputs the
   // page would otherwise query out of the application list.
   const ticked = [];
+  // Every address the page asked for, in order.
+  const fetched = [];
   const context = createContext({
     document: {
       querySelector(selector) {
@@ -148,6 +150,7 @@ function page(drive = reader(), { devices, pickerError, beta, apps = [], bundles
       FileSystemDirectoryHandle: { prototype: { getDirectoryHandle() {} } }
     },
     async fetch(url) {
+      fetched.push(url);
       if (url === "devices.json") return devices ? devices() : Response.json(profiles);
       if (url === "manifest.json") return Response.json(release);
       if (url === release.archive) return new Response(payload);
@@ -175,6 +178,7 @@ function page(drive = reader(), { devices, pickerError, beta, apps = [], bundles
       nodes.get(`#channel-${channel}`).handlers.change();
     },
     tick: id => ticked.push({ value: id }),
+    fetched,
     // The installed list's rows, each a name and, where allowed, a Remove.
     rows: () => nodes.get("#installed").children.map(row => ({
       row,
@@ -575,4 +579,18 @@ test("Beta falls back to the Stable release when the site has none, and still re
   assert.equal(await textOf(system, "KoboRoot.tgz"), "test release archive");
   const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt");
   assert.equal(await textOf(await cobalt.getDirectoryHandle("state"), "auto-update"), "cobalt=on\napps=on\nchannel=beta\n");
+});
+
+test("the catalogue is loaded once, so a second download does not list every application twice", async () => {
+  const ui = page(reader(), { beta: true, apps: catalogue });
+  await ui.click("#pick");
+  await ui.click("#fetch");
+  await settled();
+  assert.equal(ui.node("#applist").children.length, catalogue.length);
+
+  ui.choose("beta");
+  await ui.click("#fetch");
+  await settled();
+  assert.equal(ui.node("#applist").children.length, catalogue.length);
+  assert.equal(ui.fetched.filter(url => url === "apps.json").length, 1);
 });

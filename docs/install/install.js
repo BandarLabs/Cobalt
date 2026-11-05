@@ -720,10 +720,20 @@ async function writeToReader() {
 // The list is whatever the Store was offering when the site was built, not a
 // list kept by hand here, so an application added to the catalogue appears
 // without anyone editing this page.
+//
+// Asked for once. Every verified download used to ask again, and each answer
+// put a second copy of every row under the first, so an application ticked in
+// both copies was written twice. A load that failed may be asked for again,
+// since it left no rows behind.
+let catalogueRequested = false;
+
 async function loadCatalogue() {
+  if (catalogueRequested) return;
+  catalogueRequested = true;
   try {
     catalogue = await (await fetch("apps.json", { cache: "no-store" })).json();
   } catch {
+    catalogueRequested = false;
     appsNote.textContent =
       "The application catalogue could not be read. Cobalt can still be installed, " +
       "and applications can be added later from the Store on the reader.";
