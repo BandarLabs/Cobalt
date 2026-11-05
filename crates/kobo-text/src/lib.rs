@@ -323,6 +323,11 @@ impl Typeface {
         Self::bundled_serif(metrics, false).map_or_else(|| Self::discover(metrics), Ok)
     }
 
+    /// The compiled-in interface bold.
+    fn bundled_display(metrics: DisplayMetrics) -> Result<Self, Error> {
+        Self::from_bytes(DISPLAY_FONT, "AtkinsonHyperlegible-Bold.ttf", metrics)
+    }
+
     /// The compiled-in serif.
     fn bundled_serif(metrics: DisplayMetrics, heading: bool) -> Option<Self> {
         let (bytes, name) = if heading {
@@ -733,39 +738,44 @@ impl Typesetter for BookFont {
 }
 
 impl SystemFonts {
-    /// Finds the reader's own face for prose and compiles in the one for grids.
+    /// The faces every process on the reader lays text out in.
+    ///
+    /// Only the compiled-in faces, never the reader's own. Applications run in
+    /// a jail that holds their binary and nothing else, so the reader's font
+    /// directory is not there for them to find and they measure in the copies
+    /// compiled into them. The runtime used to look in that directory first
+    /// and set books in Bitter, which is shorter in the line than the Literata
+    /// every application had paginated in: each page was cut for one face and
+    /// drawn in the other, and ended a quarter of the panel early. A face only
+    /// one side of the socket can see cannot be the face either side uses.
+    ///
+    /// `KOBO_FONT` and `KOBO_READING_FONT` still choose a face, for a developer
+    /// who sets them on both sides.
     ///
     /// # Errors
     ///
-    /// Returns an error only when a face that was found cannot be read or
-    /// parsed. A machine with no fonts at all still gets the compiled-in
-    /// pair.
+    /// Returns an error only when an override names a face that cannot be read
+    /// or parsed. Without one, the compiled-in set always loads.
     pub fn discover(metrics: DisplayMetrics) -> Result<Self, Error> {
-        let text = Typeface::discover(metrics)?;
-        // Typography is the one thing here that must never be load-bearing. A
-        // prose face that cannot be loaded means books are set in the interface
-        // face, which is a slightly worse read; letting it fail the whole set
-        // means *nothing* is installed and `kobo-ui` falls back to its built-in
-        // bitmap for every character on the device, which is a far worse one.
-        // That is not hypothetical -- it is what shipped, because the first
-        // prose candidate turned out not to be a font.
-        let reading = Arc::new(match Typeface::discover_reading(metrics) {
-            Ok(face) => face,
-            Err(_) => Typeface::discover(metrics)?,
+        let text = match std::env::var_os(FONT_OVERRIDE) {
+            Some(path) => Typeface::load(PathBuf::from(path), metrics)?,
+            None => Typeface::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)?,
+        };
+        let reading = Arc::new(match std::env::var_os(READING_FONT_OVERRIDE) {
+            Some(path) => Typeface::load(PathBuf::from(path), metrics)?,
+            None => match Typeface::bundled_serif(metrics, false) {
+                Some(face) => face,
+                None => Typeface::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)?,
+            },
         });
-        // The regular title face is searched for in the same files as the
-        // prose face, in the same order, with the same compiled-in fallback,
-        // so wherever the prose face came from one of them it is the title
-        // face too. It used to be parsed a second time.
-        let display_title = if Self::reading_serves_as_title(&reading) {
+        // The title face is the prose face wherever that is the bundled serif,
+        // so the one face is parsed once rather than twice.
+        let display_title = if reading.source() == Path::new("Literata-Regular.ttf") {
             Arc::clone(&reading)
         } else {
-            // The panel's own serif, then the bundled one, then Atkinson Bold.
             Arc::new(
-                Typeface::discover_display_serif(metrics, DISPLAY_SERIF_REGULAR_CANDIDATES)
-                    .ok()
-                    .or_else(|| Typeface::bundled_serif(metrics, false))
-                    .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
+                Typeface::bundled_serif(metrics, false)
+                    .map_or_else(|| Typeface::bundled_display(metrics), Ok)?,
             )
         };
         Ok(Self {
@@ -773,13 +783,8 @@ impl SystemFonts {
             text,
             legacy_display: OnceLock::new(),
             display_title,
-            display_heading: Typeface::discover_display_serif(
-                metrics,
-                DISPLAY_SERIF_BOLD_CANDIDATES,
-            )
-            .ok()
-            .or_else(|| Typeface::bundled_serif(metrics, true))
-            .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
+            display_heading: Typeface::bundled_serif(metrics, true)
+                .map_or_else(|| Typeface::bundled_display(metrics), Ok)?,
             mono: OnceLock::new(),
             reading,
         })
@@ -797,24 +802,7 @@ impl SystemFonts {
         if let Some(face) = self.legacy_display.get() {
             return face.source();
         }
-        DEVICE_DISPLAY_FONT_CANDIDATES
-            .iter()
-            .map(Path::new)
-            .find(|path| path.exists())
-            .unwrap_or(Path::new("AtkinsonHyperlegible-Bold.ttf"))
-    }
-
-    /// Whether the title search would have found the face the prose search
-    /// did. Only when no override chose the prose face and both searches walk
-    /// the same list: `KOBO_READING_FONT` is for prose alone, and pointing it at
-    /// Vollkorn on a reader with Bitter must not reset every title in Vollkorn.
-    fn reading_serves_as_title(reading: &Typeface) -> bool {
-        std::env::var_os(READING_FONT_OVERRIDE).is_none()
-            && READING_FONT_CANDIDATES == DISPLAY_SERIF_REGULAR_CANDIDATES
-            && (reading.source() == Path::new("Literata-Regular.ttf")
-                || DISPLAY_SERIF_REGULAR_CANDIDATES
-                    .iter()
-                    .any(|candidate| reading.source() == Path::new(candidate)))
+        Path::new("AtkinsonHyperlegible-Bold.ttf")
     }
 
     /// The grid face, parsed on first use. The compiled-in bytes are checked by
@@ -834,8 +822,7 @@ impl SystemFonts {
         if let Some(face) = self.legacy_display.get() {
             return face;
         }
-        match Typeface::discover_display(self.metrics).or_else(|_| Typeface::discover(self.metrics))
-        {
+        match Typeface::bundled_display(self.metrics) {
             Ok(face) => self.legacy_display.get_or_init(|| face),
             Err(_) => &self.text,
         }
