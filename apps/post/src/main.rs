@@ -608,7 +608,7 @@ impl Post {
 }
 
 fn problem_at(gateway: &str, error: TaskError) -> kobo_sdk::failure::Problem {
-    let service = kobo_sdk::failure::Service::new("Your gateway")
+    let service = kobo_sdk::failure::Service::new("Hermes")
         .fixed_by("Run kobo connect post on your computer.");
     let service = if gateway.is_empty() {
         service
@@ -1200,7 +1200,7 @@ mod large_text_tests {
                     (
                         Some((
                             BannerLevel::Error,
-                            "Your gateway did not accept your account. Run kobo connect post on your computer.",
+                            "Hermes did not accept your account. Run kobo connect post on your computer.",
                         )),
                         None,
                     ),
