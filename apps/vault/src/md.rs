@@ -145,6 +145,11 @@ pub fn blocks(markdown: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut pending: Vec<Event<'_>> = Vec::new();
     let mut heading: Option<(u8, String)> = None;
+    // The number each open list is on, or `None` for a bulleted one. The text
+    // conversion keeps an item's words and drops what marked it, so a
+    // numbered set of steps arrived as unnumbered paragraphs and a bulleted
+    // list as sentences with nothing to say they were a list.
+    let mut lists: Vec<Option<u64>> = Vec::new();
     let flush = |pending: &mut Vec<Event<'_>>, blocks: &mut Vec<Block>| {
         if pending.is_empty() {
             return;
@@ -184,6 +189,26 @@ pub fn blocks(markdown: &str) -> Vec<Block> {
                 }
             }
             _ if heading.is_some() => {}
+            Event::Start(Tag::List(start)) => {
+                lists.push(start);
+                pending.push(Event::Start(Tag::List(start)));
+            }
+            Event::End(TagEnd::List(ordered)) => {
+                lists.pop();
+                pending.push(Event::End(TagEnd::List(ordered)));
+            }
+            Event::Start(Tag::Item) => {
+                pending.push(Event::Start(Tag::Item));
+                let label = match lists.last_mut() {
+                    Some(Some(number)) => {
+                        let label = format!("{number}. ");
+                        *number += 1;
+                        label
+                    }
+                    _ => "\u{2022} ".to_owned(),
+                };
+                pending.push(Event::Text(label.into()));
+            }
             other => pending.push(other),
         }
     }
@@ -204,6 +229,21 @@ pub fn render(markdown: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{blocks, Block};
+
+    #[test]
+    fn a_list_keeps_its_bullets_and_its_numbers() {
+        let found = blocks("- First\n- Second\n\n1. One\n2. Two\n");
+        let text: Vec<String> = found
+            .iter()
+            .map(|block| match block {
+                Block::Body { text, .. } | Block::Heading { text, .. } => text.clone(),
+            })
+            .collect();
+        let all = text.join("|");
+        for expected in ["\u{2022} First", "\u{2022} Second", "1. One", "2. Two"] {
+            assert!(all.contains(expected), "{expected:?} missing from {all:?}");
+        }
+    }
 
     #[test]
     fn headings_come_out_as_headings_at_their_own_level() {
