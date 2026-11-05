@@ -31,10 +31,9 @@ concurrency:
 
 jobs:
   build:
-    # The site carries the stable release, so a beta being published is not an
-    # occasion to rebuild it. Without this the workflow would run on every beta
-    # tag and republish the identical site.
-    if: github.event_name != 'release' || github.event.release.prerelease == false
+    # The site carries both channels: the stable release for the install
+    # steps, and the newest beta prerelease for the browser installer's Beta
+    # choice. A release on either channel is an occasion to rebuild it.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,12 +70,16 @@ jobs:
           # the latest one, and the site is only ever meant to carry the latest.
           # If a release published an older version -- a backport, or a tag
           # restored by hand -- the site would otherwise be rebuilt from it and
-          # quietly moved backwards.
-          if [ -n "${TRIGGERING_TAG:-}" ] && [ "$TRIGGERING_TAG" != "v${version}" ]; then
-            echo "${TRIGGERING_TAG} was published, but ${version} is the current release." >&2
-            echo "Refusing to build the site from something that is not the latest." >&2
-            exit 1
-          fi
+          # quietly moved backwards. A beta tag is judged against the newest
+          # beta instead, in the step below.
+          case "${TRIGGERING_TAG:-}" in
+            v*)
+              if [ "$TRIGGERING_TAG" != "v${version}" ]; then
+                echo "${TRIGGERING_TAG} was published, but ${version} is the current release." >&2
+                echo "Refusing to build the site from something that is not the latest." >&2
+                exit 1
+              fi;;
+          esac
           echo "COBALT_VERSION=$version" >> "$GITHUB_ENV"
           mkdir -p release
           gh release download "v${version}" --repo "$GITHUB_REPOSITORY" --dir release \
@@ -87,6 +90,45 @@ jobs:
           # the line naming it is checked; `sha256sum --check` on the whole file
           # would fail on the assets that were not downloaded.
           grep " cobalt-${version}-KoboRoot.tgz\$" "cobalt-${version}.sha256" \
+            | sha256sum --check -
+
+      # The Beta channel's release, chosen the way the reader's own updater
+      # chooses it: the highest beta prerelease, whatever order GitHub lists
+      # them in. Published beside Stable because the browser installer can only
+      # read an archive from its own origin, the same reason Stable is here.
+      # No beta at all is not a failure; the page then offers Stable and lets
+      # the reader move itself to Beta over Wi-Fi.
+      - name: Fetch the current beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRIGGERING_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          beta="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json tagName,isPrerelease,isDraft \
+            --jq '[.[] | select(.isPrerelease and (.isDraft | not)
+                    and (.tagName | test("^beta-v[0-9]+\\.[0-9]+\\.[0-9]+$")))
+                    | .tagName | ltrimstr("beta-v")]
+                  | sort_by(split(".") | map(tonumber)) | last // empty')"
+          if [ -z "$beta" ]; then
+            echo "No beta prerelease is published, so the site carries Stable alone."
+            exit 0
+          fi
+          case "${TRIGGERING_TAG:-}" in
+            beta-v*)
+              if [ "$TRIGGERING_TAG" != "beta-v${beta}" ]; then
+                echo "${TRIGGERING_TAG} was published, but beta-v${beta} is the newest beta." >&2
+                echo "Refusing to build the site from something that is not the newest." >&2
+                exit 1
+              fi;;
+          esac
+          echo "COBALT_BETA_VERSION=$beta" >> "$GITHUB_ENV"
+          mkdir -p beta-release
+          gh release download "beta-v${beta}" --repo "$GITHUB_REPOSITORY" --dir beta-release \
+            --pattern "cobalt-${beta}-KoboRoot.tgz" \
+            --pattern "cobalt-${beta}.sha256"
+          cd beta-release
+          grep " cobalt-${beta}-KoboRoot.tgz\$" "cobalt-${beta}.sha256" \
             | sha256sum --check -
 
       # The same release and the same digest the runtime pins, so the plugin
@@ -129,6 +171,25 @@ jobs:
           printf '{\n  "version": "%s",\n  "archive": "cobalt-KoboRoot.tgz",\n  "sha256": "%s",\n  "bytes": %s,\n  "nickelmenu": "v0.6.0"\n}\n' \
             "$COBALT_VERSION" "$digest" "$bytes" > _site/install/manifest.json
           cat _site/install/manifest.json
+
+      # The same merge and the same description for the beta, in a folder of
+      # its own so that nothing the Stable steps read can be taken from it.
+      - name: Merge and describe the beta release
+        if: env.COBALT_BETA_VERSION != ''
+        run: |
+          set -eu
+          mkdir -p beta-merged _site/install/beta
+          tar xzf "beta-release/cobalt-${COBALT_BETA_VERSION}-KoboRoot.tgz" -C beta-merged
+          tar xzf nm.tgz -C beta-merged
+          test -f beta-merged/usr/local/Kobo/imageformats/libnm.so
+          test -f "beta-merged/mnt/onboard/.adds/cobalt/VERSION"
+          tar czf _site/install/beta/cobalt-KoboRoot.tgz -C beta-merged mnt usr
+          gzip -t _site/install/beta/cobalt-KoboRoot.tgz
+          digest="$(sha256sum _site/install/beta/cobalt-KoboRoot.tgz | cut -d' ' -f1)"
+          bytes="$(wc -c < _site/install/beta/cobalt-KoboRoot.tgz | tr -d ' ')"
+          printf '{\n  "version": "%s",\n  "archive": "beta/cobalt-KoboRoot.tgz",\n  "sha256": "%s",\n  "bytes": %s,\n  "nickelmenu": "v0.6.0"\n}\n' \
+            "$COBALT_BETA_VERSION" "$digest" "$bytes" > _site/install/beta/manifest.json
+          cat _site/install/beta/manifest.json
 
       # Read from the published catalog rather than from this tree, so the list
       # is whatever the Store is actually offering on the day the site is built
