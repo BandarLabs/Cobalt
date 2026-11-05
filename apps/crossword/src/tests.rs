@@ -792,3 +792,22 @@ fn load_and_save_failures_are_splashes_with_their_fix_directly_under_them() {
         }
     }
 }
+
+
+#[test]
+fn an_untouched_puzzle_whose_grid_changed_does_not_lock_the_games_that_were_played() {
+    // A reader's save from the four-puzzle day: the cat puzzle part solved,
+    // the others listed but never opened. The mini grid has since been
+    // redrawn under the same name, and that untouched entry made every game
+    // unreadable, the cat puzzle with it.
+    let bytes = br#"{"schema":"crossword.games","version":1,"payload":{"current":"0","games":[{"id":"cat-v1","answer":"CATARETEN","position":{"letters":"CAT......","selected":"3","down":false},"undo":[],"reveals":0,"checks":0,"solved":false},{"id":"mini-v1","answer":"CAT##ORE##WEDGE##DOM##YOU","position":{"letters":"...##...##.....##...##...","selected":"5","down":false},"undo":[],"reveals":0,"checks":0,"solved":false}]}}"#;
+    let (games, current) = crate::saved::decode(bytes).expect("the played game is kept");
+    assert_eq!(current, 0);
+    assert_eq!(&games[0].position.letters[..3], b"CAT");
+}
+
+#[test]
+fn a_played_puzzle_whose_grid_changed_is_still_refused_rather_than_dropped() {
+    let bytes = br#"{"schema":"crossword.games","version":1,"payload":{"current":"0","games":[{"id":"mini-v1","answer":"CAT##ORE##WEDGE##DOM##YOU","position":{"letters":"CAT##...##.....##...##...","selected":"5","down":false},"undo":[],"reveals":0,"checks":0,"solved":false}]}}"#;
+    assert!(crate::saved::decode(bytes).is_err());
+}
