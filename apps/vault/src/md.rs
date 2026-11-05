@@ -150,6 +150,9 @@ pub fn blocks(markdown: &str) -> Vec<Block> {
     // numbered set of steps arrived as unnumbered paragraphs and a bulleted
     // list as sentences with nothing to say they were a list.
     let mut lists: Vec<Option<u64>> = Vec::new();
+    // Held until the item's first words, so a loose item, whose words sit in
+    // a paragraph of their own, keeps its marker on the same line as them.
+    let mut marker: Option<String> = None;
     let flush = |pending: &mut Vec<Event<'_>>, blocks: &mut Vec<Block>| {
         if pending.is_empty() {
             return;
@@ -199,15 +202,20 @@ pub fn blocks(markdown: &str) -> Vec<Block> {
             }
             Event::Start(Tag::Item) => {
                 pending.push(Event::Start(Tag::Item));
-                let label = match lists.last_mut() {
+                marker = Some(match lists.last_mut() {
                     Some(Some(number)) => {
                         let label = format!("{number}. ");
                         *number += 1;
                         label
                     }
                     _ => "\u{2022} ".to_owned(),
-                };
-                pending.push(Event::Text(label.into()));
+                });
+            }
+            Event::Text(_) | Event::Code(_) if marker.is_some() => {
+                if let Some(label) = marker.take() {
+                    pending.push(Event::Text(label.into()));
+                }
+                pending.push(event);
             }
             other => pending.push(other),
         }
@@ -232,7 +240,7 @@ mod tests {
 
     #[test]
     fn a_list_keeps_its_bullets_and_its_numbers() {
-        let found = blocks("- First\n- Second\n\n1. One\n2. Two\n");
+        let found = blocks("- First\n- Second\n\n1. One\n2. Two\n\n- Loose one\n\n- Loose two\n");
         let text: Vec<String> = found
             .iter()
             .map(|block| match block {
@@ -240,7 +248,14 @@ mod tests {
             })
             .collect();
         let all = text.join("|");
-        for expected in ["\u{2022} First", "\u{2022} Second", "1. One", "2. Two"] {
+        for expected in [
+            "\u{2022} First",
+            "\u{2022} Second",
+            "1. One",
+            "2. Two",
+            "\u{2022} Loose one",
+            "\u{2022} Loose two",
+        ] {
             assert!(all.contains(expected), "{expected:?} missing from {all:?}");
         }
     }

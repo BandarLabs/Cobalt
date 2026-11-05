@@ -3405,10 +3405,12 @@ fn paginate(
         // A table row is placed whole. Its cells are laid out side by side,
         // so unlike prose there is no first half of it that reads correctly
         // on its own: half a row is the top half of several columns at once.
-        if let Block::Row { cells, .. } = block {
+        if let Block::Row { cells, header } = block {
             if columns.is_empty() {
                 columns = table_columns(&document.blocks, index_of(index), area);
-                head = names_figures(&document.blocks, index_of(index), cells)
+                // A row the book marked as the heading is one, whatever is
+                // under it; only an unmarked row is judged by what follows.
+                head = (*header || names_figures(&document.blocks, index_of(index), cells))
                     .then(|| (index_of(index), cells.clone()));
                 row_index = 0;
             }
@@ -3540,6 +3542,24 @@ fn paginate(
         let mut source_at = 0usize;
         while placed < lines.len() {
             let room = area.height - used - if page.is_empty() { 0 } else { gap };
+            // What the margin above shrinks to against the paragraph before
+            // it, counted before deciding how much fits rather than after.
+            let shared = if placed == 0 {
+                rich_layout.zip(page.last()).map_or(0, |(rich, previous)| {
+                    if previous.kind == Kind::Body {
+                        natural_height.saturating_mul(i32::from(
+                            rich.style
+                                .margin_before_em
+                                .min(previous.presentation.margin_after_em),
+                        )) / 100
+                    } else {
+                        0
+                    }
+                })
+            } else {
+                0
+            };
+            let extra_height = extra_height.saturating_sub(shared);
             let fits = if room < height.saturating_add(extra_height) {
                 0
             } else {
@@ -4713,6 +4733,38 @@ mod tests {
             75
         );
         assert_eq!(super::collapsed_after(None, spaced).margin_before_em, 25);
+    }
+
+    #[test]
+    fn a_heading_row_the_book_marked_is_kept_over_a_table_of_words() {
+        // A table of words is not given a heading row by inference, but one
+        // the book marked keeps it: repeated at the top of every page the
+        // table spills onto.
+        let mut blocks = vec![Block::Row {
+            cells: vec!["Name".into(), "Role".into()],
+            header: true,
+        }];
+        for index in 0..120 {
+            blocks.push(Block::Row {
+                cells: vec![format!("Person {index}"), "Somebody".into()],
+                header: false,
+            });
+        }
+        let document = Document {
+            title: None,
+            author: None,
+            blocks,
+            truncated: false,
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert!(reader.pages.len() > 1, "the table has to spill");
+        let top = &reader.pages[1][0];
+        assert_eq!(top.kind, Kind::Row { header: true });
+        assert_eq!(
+            top.block, 0,
+            "the continuation does not repeat the heading row"
+        );
     }
 
     #[test]

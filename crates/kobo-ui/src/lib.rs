@@ -6542,18 +6542,6 @@ fn layout_node(
                         text_lines: vec![run.to_owned()],
                     });
                     run_x = run_x.saturating_add(run_width);
-                    // Emphasis is drawn by leaning the upright glyphs, the
-                    // tops furthest, by up to a seventh of a line. Placing the
-                    // next run where the upright word would have ended put the
-                    // lean straight into the space after it, and "very
-                    // remarkable" read as one word. The lean is given back
-                    // before a space. Not before a comma or a stop: those sit
-                    // on the baseline, where the glyphs do not lean at all, and
-                    // the room read as a space before the comma.
-                    if styled.emphasis && end < to && text[end..to].starts_with(char::is_whitespace)
-                    {
-                        run_x = run_x.saturating_add(emphasis_lean(prose));
-                    }
                     cursor = end;
                 }
                 for link in links.iter().take(MAX_TEXT_LINKS) {
@@ -18227,9 +18215,18 @@ fn draw_text_in(
 }
 
 #[allow(clippy::too_many_arguments)]
-/// How far the top of an emphasised run leans past where it would stand.
-fn emphasis_lean(face: Face) -> i32 {
-    FontSize::Body.line_height_in(face).max(1) / 7
+/// How far a pixel of an emphasised run moves sideways, `down` pixels below
+/// the top of a line `line` pixels tall.
+///
+/// The upright glyphs are leaned about the middle of the line, the top a
+/// fourteenth of a line right and the foot as far left, rather than about
+/// the foot. Leaned about the foot, the top of the last letter went a whole
+/// seventh of a line into the space after the word, and "very remarkable"
+/// read as one word. The run keeps the advance it was measured with, so
+/// wrapping, links and selection all stay where they were.
+fn emphasis_skew(line: i32, down: i32) -> i32 {
+    let line = line.max(1);
+    (line / 2 - down.clamp(0, line)) / 7
 }
 
 fn draw_rich_text(
@@ -18259,7 +18256,7 @@ fn draw_rich_text(
             face,
             &mut |pixel_x, pixel_y, coverage| {
                 let skew = if presentation.emphasis {
-                    (line - (pixel_y - y)).clamp(0, line) * emphasis_lean(face) / line
+                    emphasis_skew(line, pixel_y - y)
                 } else {
                     0
                 };
