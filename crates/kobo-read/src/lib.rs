@@ -640,37 +640,25 @@ impl Reader {
         // the layout engine drops them without saying anything.
         let mut metrics = *panel;
         metrics.text_scale = self.memory.scale;
-        // No bar is ever reserved: a reading page has nothing at its foot,
-        // and the controls are drawn over it rather than under it.
-        //
-        // The strip that says which page this is, though, is drawn there, and
-        // the layout engine takes it out of the content before it places
-        // anything. Measured without it, the last two lines of every page were
-        // set underneath "22 of 226" and the chevrons beside it.
-        let mut full = metrics.prose_area_in(true, false, Face::Reading);
+        // Nothing is reserved at the foot. A reading page has no bar, no page
+        // number and no arrows under it: the sides of the page turn it, as on
+        // the stock reader, and the place in the book is in the controls.
+        let mut area = metrics.prose_area_in(true, false, Face::Reading);
         if let Some(problem) = &self.problem {
             let notice = kobo_ui::with_text_scale(panel.text_scale, || {
-                kobo_ui::banner_height(problem, full.width, panel)
+                kobo_ui::banner_height(problem, area.width, panel)
             });
-            full.height = full
+            area.height = area
                 .height
                 .saturating_sub(notice)
-                .saturating_sub(full.gap)
+                .saturating_sub(area.gap)
                 .max(1);
         }
-        let mut area = full;
-        area.height = area
-            .height
-            .saturating_sub(metrics.page_position_band())
-            .max(1);
         // Measured with the prose at the size the screen will ask for. The
         // scale has to be ambient while this runs, because the wrapper and the
         // line height both read it -- and the screen carries the same value,
-        // so what was measured here is what gets drawn. It is the reading
-        // scale rather than the interface one, so the bar above the page and
-        // the strip below it stay the size the reader set for the device and
-        // a larger book gets all of the room it asked for.
-        let (mut pages, mut capped) = kobo_ui::with_reading_scale(self.memory.scale, || {
+        // so what was measured here is what gets drawn.
+        let (mut pages, capped) = kobo_ui::with_reading_scale(self.memory.scale, || {
             paginate(
                 &self.document,
                 &self.memory.highlights,
@@ -679,25 +667,6 @@ impl Reader {
                 area,
             )
         });
-        // A book of one page says nothing about where it is, so no strip is
-        // drawn and the room it was holding belongs to the words. Deciding it
-        // this way round rather than the other cannot oscillate: more room
-        // never turns one page into two.
-        if pages.len() <= 1 {
-            let (whole, cut) = kobo_ui::with_reading_scale(self.memory.scale, || {
-                paginate(
-                    &self.document,
-                    &self.memory.highlights,
-                    &self.pictures,
-                    &metrics,
-                    full,
-                )
-            });
-            if whole.len() <= 1 {
-                pages = whole;
-                capped = cut;
-            }
-        }
         decorate_annotation_ranges(&self.document, &self.memory.annotations, &mut pages);
         self.pages = pages;
         self.cut = capped || self.document.truncated;
@@ -1573,14 +1542,15 @@ impl Reader {
         }
     }
 
-    /// The line at the foot that says where in the book this page is.
+    /// Which page of how many, said in the controls rather than under the
+    /// page.
     ///
-    /// It lives at the foot now, not in the bar: the foot is where every Kobo
-    /// has always shown the place, and a reader glances there for it without
-    /// thinking. One page has no place worth stating, so it says nothing rather
-    /// than "1 of 1". The book's name is not repeated anywhere -- whoever is
-    /// reading it knows what it is.
-    fn foot_position(&self) -> Option<(u16, u16)> {
+    /// It used to sit at the foot with an arrow either side, a strip of the
+    /// panel taken from every page to repeat what the sides of the page
+    /// already do. The stock reader keeps the page to the words and gives the
+    /// place when its menu is opened, and so does this. One page has no place
+    /// worth stating, so it says nothing rather than "1 of 1".
+    fn place_in_book(&self) -> Option<(u16, u16)> {
         let pages = self.page_count();
         if pages <= 1 {
             return None;
@@ -1706,14 +1676,6 @@ impl Reader {
         screen = screen
             .page_turns(action::BACK, action::FORWARD)
             .reading_menu(action::CONTROLS);
-        // The place, at the foot, muted, one caption line. It is what tells a
-        // page turn from a tap that landed on nothing, and it is where a Kobo
-        // reader's eye goes for it. Drawn under every chrome state, reading
-        // included, because the place is a fact about the book and not a
-        // control the reader has to summon.
-        if let Some((page, total)) = self.foot_position() {
-            screen = screen.page_position(page, total);
-        }
         // Holding a finger on the page asks to mark something on it, which is
         // what a hold does in every reader anyone has used. It opens the list
         // of this page's paragraphs rather than dropping a caret into the
@@ -1782,6 +1744,10 @@ impl Reader {
         let scale = self.memory.scale;
         let smaller = scale.smaller().unwrap_or(scale);
         let larger = scale.larger().unwrap_or(scale);
+        let panel = match self.place_in_book() {
+            Some((page, total)) => panel.secondary(format!("Page {page} of {total}")),
+            None => panel,
+        };
         let mut panel = panel
             .stepper(
                 format!("{}%", scale.percent()),
@@ -3181,6 +3147,25 @@ fn following_height(
 /// is the only unit both this and the layout agree on. The layout squeezes
 /// these to fit the panel; the point of measuring them here is that a table
 /// split across two pages is squeezed by the same amounts on both.
+/// Whether a table's first row names the columns of figures under it.
+///
+/// A first row of words only names columns when there is something else
+/// beneath it. A book's contents is a table of words from top to bottom, and
+/// reading its first row as a heading greyed out "Chapter I" and drew a rule
+/// under it, as though the first chapter were the title of the rest.
+fn names_figures(blocks: &[Block], first: usize, cells: &[String]) -> bool {
+    kobo_ui::row_names_the_columns(cells)
+        && blocks
+            .get(first + 1..)
+            .unwrap_or_default()
+            .iter()
+            .map_while(|block| match block {
+                Block::Row { cells, .. } => Some(cells),
+                _ => None,
+            })
+            .any(|cells| !kobo_ui::row_names_the_columns(cells))
+}
+
 fn table_columns(blocks: &[Block], from: usize, area: ProseArea) -> Vec<u16> {
     let mut wants: Vec<u16> = Vec::new();
     for block in &blocks[from.min(blocks.len())..] {
@@ -3424,7 +3409,8 @@ fn paginate(
             if columns.is_empty() {
                 columns = table_columns(&document.blocks, index_of(index), area);
                 head =
-                    kobo_ui::row_names_the_columns(cells).then(|| (index_of(index), cells.clone()));
+                    names_figures(&document.blocks, index_of(index), cells)
+                        .then(|| (index_of(index), cells.clone()));
                 row_index = 0;
             }
             let labels = head.as_ref().map_or(&[][..], |(_, cells)| cells.as_slice());
@@ -3550,6 +3536,7 @@ fn paginate(
             }
         }
 
+        let offsets = line_offsets(text, &lines);
         let mut placed = 0;
         let mut source_at = 0usize;
         while placed < lines.len() {
@@ -3587,7 +3574,7 @@ fn paginate(
                     .unwrap_or(1)
                     .max(1);
                     let end = (placed + forced).min(lines.len());
-                    let text = lines[placed..end].join(" ");
+                    let text = rejoined(text, &lines, offsets.as_deref(), placed, end);
                     let (spans, formulae, presentation) =
                         piece_presentation(rich, text.as_str(), &mut source_at);
                     let presentation =
@@ -3614,11 +3601,12 @@ fn paginate(
             if !page.is_empty() {
                 used += gap;
             }
-            let text = lines[placed..placed + take].join(" ");
+            let text = rejoined(text, &lines, offsets.as_deref(), placed, placed + take);
             let (spans, formulae, presentation) =
                 piece_presentation(rich, text.as_str(), &mut source_at);
             let presentation =
                 fragment_presentation(presentation, placed == 0, placed + take == lines.len());
+            let presentation = collapsed_after(page.last(), presentation);
             // Only prose is drawn with the book's margins. A heading, a quote,
             // an item or a caption is set by the toolkit with its own spacing,
             // so charging it the margins its stylesheet asked for counted room
@@ -3654,6 +3642,44 @@ fn paginate(
         pages.push(page);
     }
     (pages, capped)
+}
+
+/// Where each wrapped line sits in the paragraph it was wrapped from.
+///
+/// The wrapper hands back slices of the paragraph, in order, so each is found
+/// by looking forward from the end of the one before. `None` if one cannot be
+/// found, which would mean the lines did not come from this text.
+fn line_offsets(text: &str, lines: &[String]) -> Option<Vec<(usize, usize)>> {
+    let mut at = 0;
+    lines
+        .iter()
+        .map(|line| {
+            let start = at + text.get(at..)?.find(line.as_str())?;
+            at = start + line.len();
+            Some((start, at))
+        })
+        .collect()
+}
+
+/// Lines `from..to` of a paragraph as they were written.
+///
+/// They used to be joined with a space. A line the wrapper broke after a
+/// hyphen has no space after it in the book, so "daisy-chain" broken across
+/// two lines came back as "daisy- chain", and once the text no longer matched
+/// the paragraph its italics could not be found in it either.
+fn rejoined(
+    text: &str,
+    lines: &[String],
+    offsets: Option<&[(usize, usize)]>,
+    from: usize,
+    to: usize,
+) -> String {
+    match offsets {
+        Some(offsets) if from < to && to <= offsets.len() => {
+            text[offsets[from].0..offsets[to - 1].1].to_owned()
+        }
+        _ => lines[from..to].join(" "),
+    }
 }
 
 fn kind_of(block: &Block, marked: bool) -> Kind {
@@ -3812,6 +3838,27 @@ fn fragment_presentation(
     }
     if !last {
         presentation.margin_after_em = 0;
+    }
+    presentation
+}
+
+/// The margin above a paragraph once it has met the margin below the one
+/// before it.
+///
+/// Two margins that meet collapse to the larger of them, as they do in every
+/// browser and every reader that follows CSS. They were added instead, so a
+/// book asking for a quarter of an em above and below each paragraph got half
+/// an em between every pair, and an indented novel read as a list of
+/// separate blocks.
+fn collapsed_after(
+    previous: Option<&Piece>,
+    mut presentation: kobo_ui::ParagraphPresentation,
+) -> kobo_ui::ParagraphPresentation {
+    if let Some(previous) = previous.filter(|previous| previous.kind == Kind::Body) {
+        let shared = presentation
+            .margin_before_em
+            .min(previous.presentation.margin_after_em);
+        presentation.margin_before_em -= shared;
     }
     presentation
 }
@@ -4265,29 +4312,38 @@ mod tests {
         );
     }
 
-    /// A reader wants to know how far through they are. The place moved from
-    /// the bar to the foot, where every Kobo has always shown it and where a
-    /// reader's eye goes for it, and it rides on the page turns as one muted
-    /// caption line. The book's name is not repeated in it: whoever is reading
-    /// it knows what it is.
+    /// A reader wants to know how far through they are, and the stock reader
+    /// tells them when its menu is opened rather than under every page. The
+    /// controls say which page of how many; the page itself carries no place.
     #[test]
-    fn the_foot_says_where_in_the_book_this_page_is() {
+    fn the_controls_say_where_in_the_book_this_page_is() {
         let mut reader = reader(40);
-        let pages = u16::try_from(reader.page_count()).unwrap();
+        let pages = reader.page_count();
         assert!(reader.forward());
         let screen = reader.screen("Pride and Prejudice");
         assert_eq!(
             screen.page_turns.and_then(|turns| turns.position),
-            Some((2, pages)),
-            "the foot carries the place, not the bar"
+            None,
+            "the page carries no place of its own"
         );
-        // The book's name is what the bar holds now.
         assert_eq!(
             screen.top_bar.map(|bar| bar.title),
             Some("Pride and Prejudice".to_owned())
         );
+        reader.act(action::CONTROLS, &panel());
+        let layout = reader
+            .screen("Pride and Prejudice")
+            .layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+        let place = format!("Page 2 of {pages}");
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| node.text_lines.iter().any(|line| *line == place)),
+            "the controls do not say {place}"
+        );
         // A book of one page has no place worth stating.
-        let short = Reader::open(
+        let mut short = Reader::open(
             Document {
                 title: None,
                 author: None,
@@ -4298,24 +4354,25 @@ mod tests {
             Memory::default(),
             &panel(),
         );
-        assert_eq!(
-            short
-                .screen("Short")
-                .page_turns
-                .and_then(|turns| turns.position),
-            None
-        );
+        short.act(action::CONTROLS, &panel());
+        let layout = short
+            .screen("Short")
+            .layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+        assert!(!layout
+            .nodes
+            .iter()
+            .any(|node| node.text_lines.iter().any(|line| line.starts_with("Page "))));
     }
 
-    /// The strip at the foot is taken out of the page before the words are
-    /// set, or the words are set underneath it. Every page of a real book ran
-    /// its last two lines under "22 of 226" and the chevrons beside it, which
-    /// is a page of a novel with two lines missing and nothing to say so.
+    /// The page is the words, down to the margin. A strip with the page number
+    /// and an arrow either side used to take the foot of every page, and the
+    /// sides of the page already turn it.
     #[test]
-    fn no_line_of_a_page_is_set_under_the_strip_that_says_where_it_is() {
+    fn a_page_has_no_strip_under_it_and_its_words_stop_at_the_margin() {
         let mut reader = reader(40);
         assert!(reader.page_count() > 1, "one page proves nothing here");
         let panel = panel();
+        let floor = panel.height - panel.screen_margin();
         for page in 0..reader.page_count() {
             while reader.page_number() < page + 1 {
                 assert!(reader.forward());
@@ -4323,25 +4380,18 @@ mod tests {
             let layout = reader
                 .screen("Pride and Prejudice")
                 .layout_with(&panel, &kobo_ui::Chrome::with_back(true));
-            let band = layout
-                .nodes
-                .iter()
-                .find(|node| node.kind == kobo_ui::LayoutKind::PagePosition)
-                .expect("a book of many pages says which one this is")
-                .rect;
-            let spilling = layout
-                .nodes
-                .iter()
-                .filter(|node| !node.text_lines.is_empty())
-                .filter(|node| node.kind != kobo_ui::LayoutKind::PagePosition)
-                .filter(|node| node.rect.y + node.rect.height > band.y)
-                .count();
-            assert_eq!(
-                spilling,
-                0,
-                "page {} set {spilling} things under the strip",
+            assert!(
+                !layout.nodes.iter().any(|node| matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::PagePosition
+                        | kobo_ui::LayoutKind::PagePrevious(_)
+                        | kobo_ui::LayoutKind::PageNext(_)
+                )),
+                "page {} still draws the strip",
                 page + 1
             );
+            let bottom = text_bottom_on_page(&reader, &panel);
+            assert!(bottom <= floor, "page {} runs past the margin", page + 1);
         }
     }
 
@@ -4610,6 +4660,69 @@ mod tests {
             reader.page_count()
         );
         assert!(!reader.page().is_empty());
+    }
+
+    #[test]
+    fn a_table_of_words_has_no_heading_row_but_one_of_figures_does() {
+        let row = |cells: &[&str]| Block::Row {
+            cells: cells.iter().map(|cell| (*cell).to_owned()).collect(),
+            header: false,
+        };
+        let contents = vec![
+            row(&["CHAPTER I.", "Down the Rabbit-Hole"]),
+            row(&["CHAPTER II.", "The Pool of Tears"]),
+        ];
+        assert!(!super::names_figures(&contents, 0, &["CHAPTER I.".into(), "Down the Rabbit-Hole".into()]));
+        let results = vec![row(&["Model", "Score"]), row(&["1", "0.93"])];
+        assert!(super::names_figures(&results, 0, &["Model".into(), "Score".into()]));
+    }
+
+    #[test]
+    fn the_margins_between_two_paragraphs_collapse_to_the_larger() {
+        let spaced = kobo_ui::ParagraphPresentation {
+            margin_before_em: 25,
+            margin_after_em: 25,
+            ..kobo_ui::ParagraphPresentation::default()
+        };
+        let previous = Piece {
+            block: 0,
+            text: "One.".into(),
+            kind: Kind::Body,
+            spans: Vec::new(),
+            formulae: Vec::new(),
+            presentation: spaced,
+            source_offset: None,
+            row: None,
+        };
+        let next = super::collapsed_after(Some(&previous), spaced);
+        assert_eq!(next.margin_before_em, 0, "a quarter em, not half of one");
+        assert_eq!(next.margin_after_em, 25);
+        let wider = kobo_ui::ParagraphPresentation {
+            margin_before_em: 100,
+            ..spaced
+        };
+        assert_eq!(super::collapsed_after(Some(&previous), wider).margin_before_em, 75);
+        assert_eq!(super::collapsed_after(None, spaced).margin_before_em, 25);
+    }
+
+    #[test]
+    fn a_line_broken_after_a_hyphen_comes_back_without_a_space() {
+        let text = "the pleasure of making a daisy-chain would be worth";
+        let lines = vec![
+            "the pleasure of making a daisy-".to_owned(),
+            "chain would be worth".to_owned(),
+        ];
+        let offsets = super::line_offsets(text, &lines);
+        assert_eq!(super::rejoined(text, &lines, offsets.as_deref(), 0, 2), text);
+        assert_eq!(super::rejoined(text, &lines, offsets.as_deref(), 1, 2), "chain would be worth");
+    }
+
+    #[test]
+    fn lines_that_did_not_come_from_the_text_are_still_joined() {
+        let lines = vec!["one".to_owned(), "two".to_owned()];
+        let offsets = super::line_offsets("something else", &lines);
+        assert!(offsets.is_none());
+        assert_eq!(super::rejoined("something else", &lines, offsets.as_deref(), 0, 2), "one two");
     }
 
     #[test]
@@ -5915,7 +6028,7 @@ mod tests {
     /// bottom of the panel, so the guess is never what is measured here.
     fn no_cell_falls_off_a_page(reader: &Reader) {
         let panel = panel();
-        let floor = panel.height - panel.page_position_band();
+        let floor = panel.height - panel.screen_margin();
         let mut turned = reader.clone();
         turned.go_to(0, &panel);
         for number in 0..reader.page_count() {
@@ -5963,7 +6076,7 @@ mod tests {
 
     fn no_words_fall_off_a_page(reader: &Reader) {
         let panel = panel();
-        let floor = panel.height - panel.page_position_band();
+        let floor = panel.height - panel.screen_margin();
         let mut turned = reader.clone();
         turned.go_to(0, &panel);
         for number in 0..reader.page_count() {

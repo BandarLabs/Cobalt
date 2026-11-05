@@ -304,14 +304,37 @@ impl Driver {
     }
 
     /// Taps the control carrying the named action.
+    ///
+    /// A page turn on a reading screen has no control: the sides of the page
+    /// are the control, and the words cover them. When the action is one the
+    /// screen declared as a page turn, the page key for that direction is
+    /// pressed instead, which is how an owner turns a page the words cover.
     fn tap_action_id(&mut self, rest: &str) -> Result<(), String> {
         let action = parse_action_id(rest)?;
-        let control = self
+        if let Some(control) = self
             .layout()?
             .into_iter()
             .find(|control| control.action == Some(action))
-            .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
-        self.touch(control.centre.0, control.centre.1)
+        {
+            return self.touch(control.centre.0, control.centre.1);
+        }
+        let body = self.get("/layout")?;
+        let body = String::from_utf8_lossy(&body);
+        let declared = body
+            .find("\"pageTurns\":{")
+            .and_then(|start| {
+                let object = &body[start..];
+                object.find('}').map(|end| &object[..end])
+            })
+            .unwrap_or_default();
+        let turns = |key: &str| json_number(declared, key).and_then(|id| u32::try_from(id).ok());
+        if turns("\"next\"") == Some(action) {
+            return self.post_and_settle("/input", "page next");
+        }
+        if turns("\"previous\"") == Some(action) {
+            return self.post_and_settle("/input", "page back");
+        }
+        Err(format!("action {action} is not reachable on this screen"))
     }
 
     /// Taps the control carrying `action` when this panel draws it, and
