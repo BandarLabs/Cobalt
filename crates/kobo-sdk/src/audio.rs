@@ -1662,7 +1662,7 @@ impl AudioPlayer {
                 }
             }
             DeviceResult::Failed(error) => {
-                self.trouble = Some(format!("Bluetooth failed: {}.", error.describe()));
+                self.trouble = Some(bluetooth_failure(request, *error));
                 if first_reading && self.autoplay == PlayIntent::Autoplay {
                     self.begin_audio(context);
                 }
@@ -1861,6 +1861,23 @@ fn is_bluetooth_request(request: &DeviceRequest) -> bool {
             | DeviceRequest::DisconnectBluetooth { .. }
             | DeviceRequest::ForgetBluetooth { .. }
     )
+}
+
+/// What a failed Bluetooth request means to the listener.
+///
+/// A radio that cannot be switched on because it is unreachable is a reader
+/// whose own software has not started the radio since it was switched on:
+/// the runtime will not do that first start itself. The listener can, from
+/// the reader's own home screen, so that is what the complaint says.
+fn bluetooth_failure(request: &DeviceRequest, error: DeviceError) -> String {
+    if matches!(request, DeviceRequest::SetBluetooth { enabled: true })
+        && error == DeviceError::Unreachable
+    {
+        return "Bluetooth's radio is not ready. Turn Bluetooth on once from the Kobo home \
+                screen, then come back."
+            .to_owned();
+    }
+    format!("Bluetooth failed: {}.", error.describe())
 }
 
 fn audio_error(error: DeviceError) -> &'static str {

@@ -41,6 +41,12 @@ const MTK_MARKERS: [&str; 4] = [
     "/usr/local/Kobo/launch-mtkbtd.sh",
     "/usr/local/Kobo/mtkbtd",
 ];
+/// The `MediaTek` radio's Bluetooth device node, present once its driver is
+/// loaded.
+const MTK_RADIO_NODE: &str = "/dev/stpbt";
+/// Where the `MediaTek` stack keeps its state: its pairings, and the
+/// firmware configuration its first start under Nickel writes.
+const MTK_STATE_DIR: &str = "/data/misc/bluedroid";
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(18);
 
 /// Whether the kernel has registered `hci0`, the controller every backend
@@ -147,10 +153,45 @@ fn select_backend(sys_root: &Path, mtk_markers: &[&Path]) -> Option<Backend> {
         .map(|tool| Backend::Bluetoothctl(tool.to_path_buf()))
 }
 
+/// What has to be on the reader before the `MediaTek` service may be spoken
+/// to at all.
+///
+/// Nickel loads the radio's kernel modules on the first use of either radio
+/// after boot and never unloads them, and the Bluetooth device node appears
+/// with them. A reader whose owner has used neither radio since switching it
+/// on has no driver loaded, and the vendor service does nothing about that:
+/// it starts on any D-Bus call, loads nothing itself, and powering the chip
+/// through it then panics the kernel, as has been measured on a Clara BW.
+/// The state directory is written by the stack's first start under Nickel;
+/// without it the service's own initialisation fails and retries in a way
+/// reported to corrupt the filesystem. Neither is something this runtime
+/// can put right, so both are required before any request reaches the
+/// service, and a reader missing one is told the radio is unreachable,
+/// which it is.
+#[derive(Clone, Debug)]
+struct MtkPrerequisites {
+    radio_node: PathBuf,
+    state_dir: PathBuf,
+}
+
+impl MtkPrerequisites {
+    fn firmware() -> Self {
+        Self {
+            radio_node: PathBuf::from(MTK_RADIO_NODE),
+            state_dir: PathBuf::from(MTK_STATE_DIR),
+        }
+    }
+
+    fn met(&self) -> bool {
+        self.radio_node.exists() && self.state_dir.is_dir()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Bluetooth {
     backend: Backend,
     scanning: Arc<AtomicBool>,
+    mtk: MtkPrerequisites,
 }
 
 impl Bluetooth {
@@ -174,6 +215,7 @@ impl Bluetooth {
         select_backend(Path::new("/sys/class/bluetooth"), &markers).map(|backend| Self {
             backend,
             scanning: Arc::new(AtomicBool::new(false)),
+            mtk: MtkPrerequisites::firmware(),
         })
     }
 
@@ -224,6 +266,15 @@ impl Bluetooth {
     pub fn set_enabled(&self, enabled: bool) -> DeviceResult {
         match &self.backend {
             Backend::Dbus { mtk: true, .. } => {
+                if !self.mtk.met() {
+                    // Nothing may be asked of the service yet, and a radio
+                    // that was never started needs no asking to be off.
+                    return if enabled {
+                        DeviceResult::Failed(DeviceError::Unreachable)
+                    } else {
+                        bluetooth_result(false, Vec::new())
+                    };
+                }
                 MTK_USED.store(true, Ordering::SeqCst);
                 let result = if enabled {
                     self.dbus_call(MANAGER, &["com.kobo.bluetooth.BluedroidManager1.On"])
@@ -252,6 +303,9 @@ impl Bluetooth {
         let started = match &self.backend {
             Backend::Dbus { mtk, .. } => {
                 if *mtk {
+                    if !self.mtk.met() {
+                        return DeviceResult::Failed(DeviceError::Unreachable);
+                    }
                     MTK_USED.store(true, Ordering::SeqCst);
                 }
                 self.dbus_call(ADAPTER, &["org.bluez.Adapter1.StartDiscovery"])
@@ -265,23 +319,43 @@ impl Bluetooth {
         bluetooth_result(true, Vec::new())
     }
 
-    /// Ends a scan this backend started and no reading has collected yet.
+    /// Ends discovery before a stream starts.
     ///
     /// A scan is normally ended by the state read that follows it a few
     /// seconds later. An application that scanned and then played, or left
     /// the screen, can leave discovery running, and discovery running under
-    /// an A2DP stream has been seen to starve it on the `MediaTek` stack.
-    /// Only a scan this backend started is touched: stopping one it did
-    /// not would mark the stack as used, and the reboot that follows, for
-    /// nothing.
+    /// an A2DP stream has been seen to starve it on the `MediaTek` stack,
+    /// whose daemon scans in a loop of ten seconds on and four off until it
+    /// is told to stop. A scan this backend did not start, left by whatever
+    /// owned the daemon before this session, starves the stream just the
+    /// same, so a running daemon is asked whether it is discovering. One
+    /// that is not running is not asked, because asking would start it.
     pub fn settle_scan(&self) {
-        if !self.scanning.swap(false, Ordering::SeqCst) {
-            return;
+        let own = self.scanning.swap(false, Ordering::SeqCst);
+        match &self.backend {
+            Backend::Dbus { bus, mtk, .. } => {
+                if !own {
+                    if !self.bus_running(bus) {
+                        return;
+                    }
+                    if *mtk {
+                        MTK_USED.store(true, Ordering::SeqCst);
+                    }
+                    let discovering = self
+                        .dbus_property(ADAPTER, "org.bluez.Adapter1", "Discovering")
+                        .is_ok_and(|value| value.contains("boolean true"));
+                    if !discovering {
+                        return;
+                    }
+                }
+                let _ = self.dbus_call(ADAPTER, &["org.bluez.Adapter1.StopDiscovery"]);
+            }
+            Backend::Bluetoothctl(_) => {
+                if own {
+                    let _ = self.ctl(&["scan", "off"]);
+                }
+            }
         }
-        let _ = match &self.backend {
-            Backend::Dbus { .. } => self.dbus_call(ADAPTER, &["org.bluez.Adapter1.StopDiscovery"]),
-            Backend::Bluetoothctl(_) => self.ctl(&["scan", "off"]),
-        };
     }
 
     #[must_use]
@@ -887,11 +961,14 @@ fn clip(value: &str, bytes: usize) -> String {
 mod tests {
     use super::{
         adapter_present, classify, device_path, mtk_service_installed, parse_ctl_devices,
-        parse_managed_devices, property, select_backend,
+        parse_managed_devices, property, select_backend, Backend, Bluetooth, MtkPrerequisites,
+        MTK_BUS,
     };
-    use kobo_protocol::BluetoothDeviceKind;
+    use kobo_protocol::{BluetoothDeviceKind, DeviceError, DeviceResult};
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
 
     fn root(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -901,6 +978,62 @@ mod tests {
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("a test directory");
         path
+    }
+
+    /// The `MediaTek` backend as it stands on a reader whose Nickel has not
+    /// brought the radio up, with a D-Bus tool that does not exist, so that
+    /// a request which does get through fails in a way a test can tell
+    /// apart from a refusal.
+    fn mtk_backend(root: &Path) -> Bluetooth {
+        Bluetooth {
+            backend: Backend::Dbus {
+                tool: root.join("no-such-dbus-send"),
+                bus: MTK_BUS,
+                mtk: true,
+            },
+            scanning: Arc::new(AtomicBool::new(false)),
+            mtk: MtkPrerequisites {
+                radio_node: root.join("stpbt"),
+                state_dir: root.join("bluedroid"),
+            },
+        }
+    }
+
+    /// Powering the `MediaTek` chip through its service before Nickel has
+    /// loaded the radio driver panics the kernel, and starting the service
+    /// without its state directory fails in a way reported to damage the
+    /// filesystem. Both are refused before the service is spoken to, and
+    /// only then.
+    #[test]
+    fn the_mtk_service_is_not_spoken_to_before_the_radio_and_its_state_exist() {
+        let root = root("mtk-cold");
+        let bluetooth = mtk_backend(&root);
+        assert_eq!(
+            bluetooth.set_enabled(true),
+            DeviceResult::Failed(DeviceError::Unreachable)
+        );
+        assert_eq!(
+            bluetooth.scan(),
+            DeviceResult::Failed(DeviceError::Unreachable)
+        );
+        assert!(matches!(
+            bluetooth.set_enabled(false),
+            DeviceResult::Bluetooth { enabled: false, .. }
+        ));
+
+        fs::write(root.join("stpbt"), b"").expect("the radio node");
+        assert_eq!(
+            bluetooth.set_enabled(true),
+            DeviceResult::Failed(DeviceError::Unreachable),
+            "the driver alone is not enough"
+        );
+        fs::create_dir_all(root.join("bluedroid")).expect("the state directory");
+        // With both in place the request reaches the tool, which is absent:
+        // a different failure, which is the guard having stepped aside.
+        assert_eq!(
+            bluetooth.set_enabled(true),
+            DeviceResult::Failed(DeviceError::Backend)
+        );
     }
 
     #[test]

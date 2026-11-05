@@ -444,6 +444,31 @@ fn play_without_an_output_opens_bluetooth_and_turns_it_on() {
         .any(|request| matches!(request, DeviceRequest::SetBluetooth { enabled: true })));
 }
 
+/// The one Bluetooth failure a listener can do something about is the radio
+/// not having been started since the reader was switched on, which the
+/// reader's own home screen does. The complaint says so; any other failure
+/// is reported as what it is.
+#[test]
+fn a_radio_that_is_not_ready_says_what_to_do_about_it() {
+    let mut player = AudioPlayer::shelf("book.mp3z", "Book");
+    let mut context = crate::Context::default();
+    player.on_device_result(
+        &mut context,
+        &DeviceRequest::SetBluetooth { enabled: true },
+        &DeviceResult::Failed(crate::DeviceError::Unreachable),
+    );
+    let trouble = player.trouble.clone().expect("a complaint");
+    assert!(trouble.contains("Kobo home screen"), "{trouble}");
+
+    player.on_device_result(
+        &mut context,
+        &DeviceRequest::SetBluetooth { enabled: true },
+        &DeviceResult::Failed(crate::DeviceError::Backend),
+    );
+    let trouble = player.trouble.clone().expect("a complaint");
+    assert!(trouble.starts_with("Bluetooth failed:"), "{trouble}");
+}
+
 #[test]
 fn connecting_after_play_loads_the_source_automatically() {
     let mut player = AudioPlayer::shelf("book.mp3z", "Book");
