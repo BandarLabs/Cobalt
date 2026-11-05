@@ -40,7 +40,8 @@ place kept. Or make one from a topic with your own accounts.
   sound stopped once they are back.
 - Backing out of the player keeps the book playing; the library's first row
   leads back to it. The page keys skip half a minute either way.
-- Plays through Bluetooth headphones or speakers. If none is connected,
+- Plays through Bluetooth headphones or speakers on the MediaTek readers:
+  Clara BW, Clara Colour, Libra Colour and Elipsa 2E. If none is connected,
   tapping a book opens a device picker, and the book starts once one
   connects.
 - A free sample plays without any accounts.
@@ -96,6 +97,15 @@ in MPEG-4, Ogg Vorbis, Ogg Opus, FLAC and WAV. HE-AAC (AAC with SBR) is not
 decoded; a file that says it needs it is refused as a kind this reader cannot
 play. Books with DRM do not play. A listing stops at two thousand books and
 says so.
+
+Sound goes out through the Bluetooth audio service of the MediaTek readers
+(Clara BW, Clara Colour, Libra Colour, Elipsa 2E). On the readers with a
+standard Linux Bluetooth stack (Libra 2, Sage, Clara 2E) the app can switch
+Bluetooth on and pair headphones, but the runtime has no way to send them
+sound yet, and the player says so. The reader's own software has to have
+started the Bluetooth radio once since the reader was switched on; if it has
+not, the player asks you to turn Bluetooth on from the Kobo home screen and
+come back.
 
 ## Permissions
 

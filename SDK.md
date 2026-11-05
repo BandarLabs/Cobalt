@@ -1494,8 +1494,13 @@ typed `DeviceResult::Wifi` and `DeviceResult::Bluetooth` values, while backend
 failures are `DeviceResult::Failed(DeviceError)`. On a MediaTek Clara, using
 an active Bluetooth stack makes the runtime reboot cleanly when the Cobalt
 session ends because handing the initialised vendor driver directly back to
-Nickel is not safe. **An invented reading is worse than a refusal**, because an
-application cannot tell one from the other and will act on it.
+Nickel is not safe. The runtime also never starts that stack itself before
+Nickel has brought the radio up since boot (the driver is loaded on the first
+use of either radio and powering the chip without it panics the kernel), or
+before the stack's state directory exists: `SetBluetooth` then fails with
+`Unreachable`, and the SDK player tells the listener to turn Bluetooth on once
+from the Kobo home screen. **An invented reading is worse than a refusal**,
+because an application cannot tell one from the other and will act on it.
 
 ### Declaring capabilities
 
@@ -1588,6 +1593,14 @@ its chapters with their start times, its cover as it was embedded, and a
 short line saying what the sound is. `set_audio_speed` plays faster or slower
 with the pitch unchanged, between half and three times; the position reported
 stays in the book's own time.
+
+Sound reaches headphones through the A2DP service of the MediaTek readers
+(Clara BW, Clara Colour, Libra Colour, Elipsa 2E); `audio` is unavailable on
+the readers with a standard BlueZ stack (Libra 2, Sage, Clara 2E), where the
+Bluetooth control surface still works. A Play that lands before the audio
+channel is negotiated, which is where a Play that waited for the headphones
+to connect always lands, is retried for up to five seconds before the
+headphones are reported gone, so an application need not time that itself.
 
 For a complete playback screen, use the SDK component rather than rebuilding
 transport and pairing state:
