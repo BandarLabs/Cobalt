@@ -1,4 +1,4 @@
-//! Runtime-owned audiobook playback through Kobo's AOSP A2DP HAL.
+//! Runtime-owned audiobook playback through Kobo's A2DP HAL.
 //!
 //! Bluetooth connection ownership stays with the firmware's `btservice`.
 //! Once an audio device is connected it exposes the standard AOSP
@@ -30,8 +30,9 @@ const COMMAND_CHECK_READY: u8 = 0x01;
 const COMMAND_START: u8 = 0x02;
 const COMMAND_STOP: u8 = 0x03;
 /// Asks the stack what it reads from the data socket: a rate and a channel
-/// count, after the acknowledgement. AOSP's own HAL asks this of its sink
-/// stream, and it is the only way to know rather than guess.
+/// count, after the acknowledgement. The firmware's own HAL asks this of
+/// the stack when it opens a stream, and it is the only way to know rather
+/// than guess.
 const COMMAND_GET_AUDIO_CONFIG: u8 = 0x05;
 const ACK_SUCCESS: u8 = 0x00;
 /// What the firmware's Bluetooth encoder consumes when it will not say.
@@ -58,6 +59,17 @@ const RESYNC_LIMIT: Duration = Duration::from_millis(500);
 /// radio and the headphones' battery as much as speech does. After this
 /// long the stream is released, and the next Play opens it again.
 const PAUSE_KEEPALIVE: Duration = Duration::from_secs(300);
+/// How long a Play keeps asking the stack for its sink before concluding
+/// that the headphones are not there.
+///
+/// A Bluetooth connect answers as soon as the link is up. The audio channel
+/// over that link is negotiated afterwards, and on the `MediaTek` stack that
+/// has been seen to take anything up to five seconds. A Play that lands in
+/// the gap, which is where every Play lands that waited for the headphones
+/// to connect, finds the stack not ready. Asking again every half second
+/// for this long makes that a short wait rather than a complaint.
+const SINK_PATIENCE: Duration = Duration::from_secs(5);
+const SINK_RETRY: Duration = Duration::from_millis(500);
 const IO_TIMEOUT: Duration = Duration::from_secs(3);
 const DATA_CONNECT_TIMEOUT: Duration = Duration::from_millis(750);
 /// The largest stream cached before playing. A stream is fetched whole
@@ -77,6 +89,22 @@ const BACKEND_MARKERS: [&str; 8] = [
     "/usr/local/Kobo/bluetooth/btservice",
     CONTROL_SOCKET,
 ];
+
+/// Where the stack's two sockets are.
+#[derive(Clone, Debug)]
+struct Sockets {
+    control: PathBuf,
+    data: PathBuf,
+}
+
+impl Sockets {
+    fn firmware() -> Self {
+        Self {
+            control: PathBuf::from(CONTROL_SOCKET),
+            data: PathBuf::from(DATA_SOCKET),
+        }
+    }
+}
 
 /// Bounded range fetch used by stream sources. The runtime injects its own TLS
 /// transport, keeping credentials and sockets out of SDK applications.
@@ -171,19 +199,35 @@ impl Audio {
         {
             return None;
         }
-        Some(Self::spawn(fetcher))
+        Some(Self::spawn(fetcher, Sockets::firmware(), SINK_PATIENCE))
+    }
+
+    /// A player with no stack behind it, and little patience for one: a
+    /// host has no sockets, and a test should not wait five seconds to
+    /// learn that.
+    #[cfg(test)]
+    fn simulated() -> Self {
+        Self::spawn(None, Sockets::firmware(), Duration::from_millis(600))
     }
 
     #[cfg(test)]
-    fn simulated() -> Self {
-        Self::spawn(None)
+    fn simulated_with(sockets: Sockets, patience: Duration) -> Self {
+        Self::spawn(None, sockets, patience)
     }
 
-    fn spawn(fetcher: Option<StreamFetcher>) -> Self {
+    fn spawn(fetcher: Option<StreamFetcher>, sockets: Sockets, patience: Duration) -> Self {
         let (sender, receiver) = mpsc::channel();
         let state = Arc::new(Mutex::new(State::default()));
         let worker_state = Arc::clone(&state);
-        let worker = thread::spawn(move || run(&receiver, &worker_state, fetcher.as_ref()));
+        let worker = thread::spawn(move || {
+            run(
+                &receiver,
+                &worker_state,
+                fetcher.as_ref(),
+                &sockets,
+                patience,
+            );
+        });
         Self {
             sender,
             state,
@@ -461,24 +505,47 @@ fn fault_error(fault: Fault) -> DeviceError {
     }
 }
 
+/// A Play whose sink has not opened yet.
+#[derive(Clone, Copy)]
+struct SinkWait {
+    /// When Play was pressed, from which the patience is counted.
+    since: Instant,
+    /// When the stack is next asked.
+    next_try: Instant,
+}
+
 /// Everything the worker thread holds between commands.
 struct Worker<'a> {
     state: &'a Mutex<State>,
     fetcher: Option<&'a StreamFetcher>,
+    sockets: &'a Sockets,
+    /// How long a Play waits for the sink.
+    patience: Duration,
     media: Option<Media>,
     sink: Option<A2dpSink>,
+    /// A Play still waiting for the stack to be ready.
+    waiting: Option<SinkWait>,
     next_write: Instant,
     /// When the book was paused, while the stream is kept alive.
     paused_at: Option<Instant>,
     chunk: Vec<i16>,
 }
 
-fn run(receiver: &mpsc::Receiver<Command>, state: &Mutex<State>, fetcher: Option<&StreamFetcher>) {
+fn run(
+    receiver: &mpsc::Receiver<Command>,
+    state: &Mutex<State>,
+    fetcher: Option<&StreamFetcher>,
+    sockets: &Sockets,
+    patience: Duration,
+) {
     let mut worker = Worker {
         state,
         fetcher,
+        sockets,
+        patience,
         media: None,
         sink: None,
+        waiting: None,
         next_write: Instant::now(),
         paused_at: None,
         chunk: Vec::new(),
@@ -520,11 +587,13 @@ impl Worker<'_> {
                     observed.playback = AudioPlaybackState::Paused;
                 }
                 drop(observed);
+                self.waiting = None;
                 self.paused_at = Some(Instant::now());
             }
             Command::Seek(position_ms) => self.seek(position_ms),
             Command::Stop => {
                 stop_sink(&mut self.sink);
+                self.waiting = None;
                 self.paused_at = None;
                 if let Some(media) = self.media.as_mut() {
                     let _ = media.seek(0);
@@ -557,6 +626,7 @@ impl Worker<'_> {
 
     fn load(&mut self, source: Source) {
         stop_sink(&mut self.sink);
+        self.waiting = None;
         self.paused_at = None;
         self.media = None;
         let speed = locked(self.state).speed_percent;
@@ -588,33 +658,66 @@ impl Worker<'_> {
             }
         }
         self.paused_at = None;
+        {
+            let mut observed = locked(self.state);
+            observed.playback = AudioPlaybackState::Playing;
+            observed.error = None;
+        }
         if self.sink.is_none() {
-            match A2dpSink::open_and_start() {
-                Ok(mut opened) => {
+            let now = Instant::now();
+            self.waiting = Some(SinkWait {
+                since: now,
+                next_try: now,
+            });
+            self.try_sink();
+        }
+    }
+
+    /// One attempt to open the sink for the Play that is waiting on it.
+    ///
+    /// A sink that opens ends the wait and starts the stream. One that
+    /// refuses is asked again after [`SINK_RETRY`] until the patience runs
+    /// out, and only then is the refusal taken as the headphones being gone
+    /// and the book paused where it is.
+    fn try_sink(&mut self) {
+        let Some(wait) = self.waiting else {
+            return;
+        };
+        let now = Instant::now();
+        if now < wait.next_try {
+            return;
+        }
+        let attempt = A2dpSink::open_and_start(self.sockets).and_then(|mut opened| {
+            opened
+                .write_silence(opened.frames_in_ms(LEAD_IN_MS))
+                .map(|()| opened)
+        });
+        match attempt {
+            Ok(opened) => {
+                if let Some(media) = self.media.as_mut() {
                     media.retune(opened.rate);
-                    if let Err(error) = opened.write_silence(opened.frames_in_ms(LEAD_IN_MS)) {
-                        record_sink(self.state, false);
-                        pause_with(self.state, error);
-                        return;
-                    }
-                    self.sink = Some(opened);
-                    record_sink(self.state, true);
-                    // The silence above is the cushion. Writing the first
-                    // real chunk right behind it keeps the cushion full;
-                    // waiting it out would start playback with an empty
-                    // buffer and a click on the first late chunk.
-                    self.next_write = Instant::now();
                 }
-                Err(error) => {
-                    record_sink(self.state, false);
-                    pause_with(self.state, error);
-                    return;
-                }
+                self.sink = Some(opened);
+                self.waiting = None;
+                record_sink(self.state, true);
+                // The silence written above is the cushion. Writing the
+                // first real chunk right behind it keeps the cushion full;
+                // waiting it out would start playback with an empty buffer
+                // and a click on the first late chunk.
+                self.next_write = Instant::now();
+            }
+            Err(_) if now.saturating_duration_since(wait.since) < self.patience => {
+                self.waiting = Some(SinkWait {
+                    since: wait.since,
+                    next_try: now + SINK_RETRY,
+                });
+            }
+            Err(error) => {
+                self.waiting = None;
+                record_sink(self.state, false);
+                pause_with(self.state, error);
             }
         }
-        let mut observed = locked(self.state);
-        observed.playback = AudioPlaybackState::Playing;
-        observed.error = None;
     }
 
     fn seek(&mut self, position_ms: u32) {
@@ -638,6 +741,10 @@ impl Worker<'_> {
     /// One write period has passed: the next chunk of the book, or of
     /// silence while paused, goes to the sink.
     fn tick(&mut self) {
+        if self.waiting.is_some() {
+            self.try_sink();
+            return;
+        }
         let playback = locked(self.state).playback;
         let result = match playback {
             AudioPlaybackState::Playing => self.play_chunk(),
@@ -810,9 +917,9 @@ struct A2dpSink {
 }
 
 impl A2dpSink {
-    fn open_and_start() -> Result<Self, DeviceError> {
+    fn open_and_start(sockets: &Sockets) -> Result<Self, DeviceError> {
         let mut sink = Self {
-            control: connect_control()?,
+            control: connect_control(&sockets.control)?,
             data: None,
             started: false,
             bytes: Vec::new(),
@@ -820,7 +927,7 @@ impl A2dpSink {
             channels: 2,
         };
         sink.command(COMMAND_CHECK_READY, true)?;
-        sink.read_config();
+        sink.read_config(&sockets.control);
         sink.command(COMMAND_START, true)?;
         // START has changed btservice state even before the data listener is
         // reachable. Mark it now so a failed data connect still sends STOP
@@ -828,7 +935,7 @@ impl A2dpSink {
         sink.started = true;
         let deadline = Instant::now() + DATA_CONNECT_TIMEOUT;
         loop {
-            match UnixStream::connect(DATA_SOCKET) {
+            match UnixStream::connect(&sockets.data) {
                 Ok(data) => {
                     data.set_write_timeout(Some(IO_TIMEOUT)).map_err(io_error)?;
                     sink.data = Some(data);
@@ -848,7 +955,7 @@ impl A2dpSink {
     /// answers nothing at all, or answers with a rate no encoder uses, has
     /// left the control socket in a state nothing here can trust, so the
     /// socket is opened again before START.
-    fn read_config(&mut self) {
+    fn read_config(&mut self, control_socket: &Path) {
         match self.query_config() {
             Ok(Some((rate, channels))) => {
                 self.rate = rate;
@@ -856,7 +963,7 @@ impl A2dpSink {
             }
             Ok(None) => {}
             Err(_) => {
-                if let Ok(control) = connect_control() {
+                if let Ok(control) = connect_control(control_socket) {
                     self.control = control;
                 }
             }
@@ -956,8 +1063,8 @@ impl Drop for A2dpSink {
     }
 }
 
-fn connect_control() -> Result<UnixStream, DeviceError> {
-    let control = UnixStream::connect(CONTROL_SOCKET).map_err(io_error)?;
+fn connect_control(socket: &Path) -> Result<UnixStream, DeviceError> {
+    let control = UnixStream::connect(socket).map_err(io_error)?;
     control
         .set_read_timeout(Some(IO_TIMEOUT))
         .map_err(io_error)?;
@@ -981,10 +1088,15 @@ fn io_error(error: std::io::Error) -> DeviceError {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_deadline, Audio, Source, BACKEND_MARKERS};
+    use super::{next_deadline, Audio, Sockets, Source, BACKEND_MARKERS};
+    use super::{ACK_SUCCESS, COMMAND_CHECK_READY, COMMAND_GET_AUDIO_CONFIG, COMMAND_START};
     use super::{RESYNC_LIMIT, WRITE_PERIOD};
     use kobo_protocol::{AudioPlaybackState, DeviceError, DeviceResult};
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     fn fixture(name: &str) -> PathBuf {
@@ -1089,10 +1201,181 @@ mod tests {
         assert_eq!(audio.play(), DeviceResult::Failed(DeviceError::NotFound));
     }
 
+    /// Polls `condition` until it holds or `limit` passes.
+    fn wait_for(condition: impl Fn() -> bool, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        loop {
+            if condition() {
+                return true;
+            }
+            if Instant::now() > deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Stands in for the firmware's stack: its two sockets, answering the
+    /// control commands the way the stack does, with the number of
+    /// `CHECK_READY` commands to refuse before accepting one chosen by the
+    /// test. Whatever reaches the data socket is read and counted.
+    struct FakeStack {
+        sockets: Sockets,
+        checks: Arc<AtomicUsize>,
+        configs: Arc<AtomicUsize>,
+        starts: Arc<AtomicUsize>,
+        data_bytes: Arc<AtomicUsize>,
+    }
+
+    impl FakeStack {
+        fn listen(name: &str, refusals: usize, rate: u32, channels: u8) -> Self {
+            let dir = std::env::temp_dir().join(format!("kobo-a2dp-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("a directory for the sockets");
+            let sockets = Sockets {
+                control: dir.join("ctrl"),
+                data: dir.join("data"),
+            };
+            let control = UnixListener::bind(&sockets.control).expect("a control socket");
+            let data = UnixListener::bind(&sockets.data).expect("a data socket");
+            let stack = Self {
+                sockets,
+                checks: Arc::new(AtomicUsize::new(0)),
+                configs: Arc::new(AtomicUsize::new(0)),
+                starts: Arc::new(AtomicUsize::new(0)),
+                data_bytes: Arc::new(AtomicUsize::new(0)),
+            };
+            let refusals = AtomicUsize::new(refusals);
+            let checks = Arc::clone(&stack.checks);
+            let configs = Arc::clone(&stack.configs);
+            let starts = Arc::clone(&stack.starts);
+            std::thread::spawn(move || {
+                for stream in control.incoming() {
+                    let Ok(mut stream) = stream else { break };
+                    let mut command = [0_u8; 1];
+                    while stream.read_exact(&mut command).is_ok() {
+                        let answer = match command[0] {
+                            COMMAND_CHECK_READY => {
+                                checks.fetch_add(1, Ordering::SeqCst);
+                                let refused = refusals
+                                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                                        left.checked_sub(1)
+                                    })
+                                    .is_ok();
+                                vec![if refused { 1 } else { ACK_SUCCESS }]
+                            }
+                            COMMAND_GET_AUDIO_CONFIG => {
+                                configs.fetch_add(1, Ordering::SeqCst);
+                                let mut answer = vec![ACK_SUCCESS];
+                                answer.extend_from_slice(&rate.to_ne_bytes());
+                                answer.push(channels);
+                                answer
+                            }
+                            COMMAND_START => {
+                                starts.fetch_add(1, Ordering::SeqCst);
+                                vec![ACK_SUCCESS]
+                            }
+                            _ => vec![ACK_SUCCESS],
+                        };
+                        if stream.write_all(&answer).is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+            let data_bytes = Arc::clone(&stack.data_bytes);
+            std::thread::spawn(move || {
+                for stream in data.incoming() {
+                    let Ok(mut stream) = stream else { break };
+                    let mut buffer = [0_u8; 4096];
+                    while let Ok(read) = stream.read(&mut buffer) {
+                        if read == 0 {
+                            break;
+                        }
+                        data_bytes.fetch_add(read, Ordering::SeqCst);
+                    }
+                }
+            });
+            stack
+        }
+
+        fn checks(&self) -> usize {
+            self.checks.load(Ordering::SeqCst)
+        }
+    }
+
+    /// A connect answers as soon as the link is up, and the audio channel
+    /// over it is negotiated afterwards. The Play that waited for the
+    /// headphones lands in that gap, so the stack's first "not ready" is
+    /// asked again rather than believed, and the stream starts at the rate
+    /// the stack names once it is ready.
+    #[test]
+    fn a_sink_that_is_not_ready_at_play_is_asked_again_until_it_is() {
+        let stack = FakeStack::listen("late", 2, 44_100, 2);
+        let audio = Audio::simulated_with(stack.sockets.clone(), Duration::from_secs(3));
+        let _ = audio.load(Source::File(fixture("chapters.mp3")));
+        settled(&audio);
+        let _ = audio.play();
+        assert!(wait_for(
+            || audio.sink_evidence().is_some(),
+            Duration::from_secs(5)
+        ));
+        assert_eq!(
+            audio.sink_evidence().map(|evidence| evidence.connected),
+            Some(true)
+        );
+        assert!(stack.checks() >= 3, "{} attempts", stack.checks());
+        assert_eq!(stack.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(stack.configs.load(Ordering::SeqCst), 1);
+        assert!(wait_for(
+            || stack.data_bytes.load(Ordering::SeqCst) > 0,
+            Duration::from_secs(2)
+        ));
+        assert!(wait_for(
+            || matches!(audio.state(), DeviceResult::Audio { position_ms, .. } if position_ms > 0),
+            Duration::from_secs(3)
+        ));
+        assert!(audio.is_playing());
+    }
+
+    /// The patience is finite. A stack that never becomes ready is the
+    /// headphones being gone, and the book is paused where it is.
+    #[test]
+    fn a_sink_that_stays_not_ready_is_given_up_on_when_the_patience_runs_out() {
+        let stack = FakeStack::listen("never", usize::MAX, 48_000, 2);
+        let patience = Duration::from_millis(700);
+        let audio = Audio::simulated_with(stack.sockets.clone(), patience);
+        let _ = audio.load(Source::File(fixture("chapters.mp3")));
+        settled(&audio);
+        let pressed = Instant::now();
+        let _ = audio.play();
+        assert!(
+            audio.is_playing(),
+            "the press is taken while the sink is awaited"
+        );
+        assert!(wait_for(
+            || audio.sink_evidence().is_some(),
+            Duration::from_secs(5)
+        ));
+        assert!(pressed.elapsed() >= patience);
+        assert_eq!(
+            audio.sink_evidence().map(|evidence| evidence.connected),
+            Some(false)
+        );
+        assert_eq!(
+            audio.state(),
+            DeviceResult::Failed(DeviceError::Unreachable)
+        );
+        assert!(stack.checks() >= 2, "{} attempts", stack.checks());
+        assert_eq!(stack.starts.load(Ordering::SeqCst), 0);
+        assert!(!audio.is_playing());
+    }
+
     /// No A2DP control socket exists on a host, which is exactly the state
     /// of a reader with no headphones connected. Pressing Play then proves
-    /// the headphones are gone, and keeps the book and its place so the
-    /// next Play, with headphones, carries on from here.
+    /// the headphones are gone, once the simulated player's short patience
+    /// is spent, and keeps the book and its place so the next Play, with
+    /// headphones, carries on from here.
     #[test]
     fn playing_without_headphones_keeps_the_place_and_says_so() {
         assert!(!std::path::Path::new(super::CONTROL_SOCKET).exists());
