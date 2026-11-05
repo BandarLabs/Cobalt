@@ -1,16 +1,18 @@
-//! On-demand, researched audiobooks for the Kobo library.
+//! Audiobooks on the reader: every book the owner copied over USB, played
+//! with its chapters, at its own speed, with a sleep timer and a place that
+//! is kept; and the studio that makes a new one from a topic.
 
 mod pipeline;
 
+use kobo_sdk::audio::{span, AudioMetadata, AudioPlayer};
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id,
-    audio::{AudioMetadata, AudioPlayer},
-    Context, DeviceRequest, DeviceResult, Failure, Glyph, Heartbeat, KoboApp, LogLevel,
-    PictureHandle, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StandardState,
-    StoreResult, TaskId, TaskOutcome,
+    action_id, typographic_cover, AudioEntry, BannerLevel, Context, DeviceRequest, DeviceResult,
+    Failure, Glyph, Heartbeat, KoboApp, LogLevel, PictureHandle, RowLead, Screen, ScreenBuilder,
+    ShelfDownload, ShelfProgress, ShelfUpload, StandardState, StoreResult, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const AGAIN: &str = "again";
 const CANCEL: &str = "cancel";
@@ -31,6 +33,8 @@ const ARCHIVE_SUFFIX: &str = ".mp3z";
 const SHELF: &str = "shelf";
 const LIBRARY_BACK: &str = "library-back";
 const LIBRARY_NEXT: &str = "library-next";
+/// The row at the head of the library that returns to the book playing.
+const NOW_PLAYING: &str = "now-playing";
 
 /// The three accounts one audiobook spends, checked before the first spend.
 const SECRETS: &[&str] = &["exa", "openai", "elevenlabs"];
@@ -64,17 +68,58 @@ const LIBRARY_KEY: &str = "library";
 /// the finished book is saved, or once the owner starts a different one.
 const CHECKPOINT_KEY: &str = "checkpoint";
 
+/// Where every book's place is kept: how far in, how fast, whether it is
+/// finished, when it was last heard, and what opening it taught about the
+/// book. One record for the whole library, because a listener has a few
+/// books on the go and a shelf of two thousand is still a few kilobytes.
+const PLACES_KEY: &str = "places";
+
+/// How far the position moves before the place is written again while a
+/// book plays. A write is a file on the card; one a minute is a place that
+/// is never more than a minute stale and a card that is not written to
+/// every few seconds for hours.
+const SAVE_EVERY_MS: u32 = 60_000;
+
 /// The largest narrated part read back after a restart. A part is a thousand
 /// characters of speech, about a megabyte of MP3, and narration refuses
 /// anything over four.
 const MAX_PART_BYTES: usize = 4 * 1024 * 1024;
 
-/// One finished audiobook, on the reader, playable with the network off.
+/// The cover drawn in the player, in pixels. A book's own art is fitted
+/// inside this; a book without any gets its title set in type at this size.
+const COVER_WIDTH: u32 = 240;
+const COVER_HEIGHT: u32 = 320;
+
+/// The field and record separators of the places record. Not tabs and
+/// newlines, because a file name may hold a tab and a title certainly may.
+const FIELD: char = '\u{1f}';
+const RECORD: char = '\u{1e}';
+
+/// One audiobook on the reader, as the runtime lists it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct Saved {
-    name: String,
+struct Book {
+    id: String,
+    /// The file or folder name without its suffix.
     title: String,
-    bytes: u32,
+    kind: u8,
+    parts: u16,
+    bytes: u64,
+}
+
+/// Where the listener got to in one book, and what opening it taught.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Place {
+    id: String,
+    position_ms: u32,
+    duration_ms: u32,
+    speed_percent: u16,
+    finished: bool,
+    /// Seconds since the epoch when the book last played, for the rewind on
+    /// coming back and for listing what is on the go first.
+    last_played: u64,
+    /// What the book said it is called, which is better than its file name.
+    title: String,
+    author: String,
 }
 
 /// A creation interrupted after its script was written.
@@ -94,9 +139,8 @@ struct Checkpoint {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Stage {
-    /// What is already on the reader. The application opens here rather than
-    /// on the composer, because an audiobook that took four minutes and
-    /// fourteen narration calls to make is worth more than the next one.
+    /// What is on the reader. The application opens here rather than on
+    /// the composer, because a book is worth more than the next one.
     #[default]
     Library,
     Compose,
@@ -131,6 +175,10 @@ enum Keeping {
 }
 
 #[derive(Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about the library and the work in flight, not alternate states"
+)]
 struct Audiobook {
     stage: Stage,
     /// What the book is about, as last typed.
@@ -156,20 +204,29 @@ struct Audiobook {
     retryable: bool,
     hint: Option<&'static str>,
     player: Option<AudioPlayer>,
-    /// `None` until the shelf has answered, so the library can say it is
+    /// The place record the player is for, so what it learns is kept
+    /// against the right book.
+    playing: Option<String>,
+    /// The position last written for the playing book.
+    saved_position_ms: u32,
+    /// `None` until the runtime has answered, so the library can say it is
     /// looking rather than claiming to be empty before it knows.
-    library: Option<Vec<Saved>>,
+    library: Option<Vec<Book>>,
+    /// Whether the listing stopped short of the whole collection.
+    truncated: bool,
     /// Archive name to title, oldest first, as it was last saved.
     titles: Vec<(String, String)>,
+    /// Every book's place, as last written.
+    places: Vec<Place>,
     /// Which library entries belong to which page. Nothing here scrolls.
     pages: Vec<Vec<usize>>,
     page: usize,
     /// Ticks while a provider is thinking, so a stage that takes a hundred
     /// seconds does not sit on an unchanging panel looking crashed.
     clock: Heartbeat,
-    /// Set when the shelf refuses to say what is on it, so the library can
-    /// stop looking. Without this a refusal leaves "Looking on the shelf" on
-    /// the panel for as long as the application is open.
+    /// Set when the runtime refuses to list the audiobooks, so the library
+    /// can stop looking. Without this a refusal leaves "Looking" on the
+    /// panel for as long as the application is open.
     shelf_unreadable: bool,
     /// The interrupted creation the store last told us about, offered on the
     /// composer until a new book supersedes it or a save finishes it.
@@ -259,7 +316,7 @@ impl Audiobook {
                     ScreenBuilder::new("audiobook-player-missing")
                         .top_bar("Audiobook")
                         .error_state("The player could not be prepared.")
-                        .button(AGAIN, "Create another")
+                        .button(SHELF, "Your audiobooks")
                         .build()
                 },
                 |player| player.screen_for(context),
@@ -387,23 +444,24 @@ impl Audiobook {
             .build()
     }
 
-    /// What is already on the reader, and the way back to it.
+    /// What is on the reader, and the way back to what is playing.
     ///
-    /// Everything here reads from disk. Nothing on this screen, and nothing
-    /// reached from it, needs the network: a book made in March plays in
-    /// September on a reader that has been in aeroplane mode since.
+    /// Everything here reads from the card. Nothing on this screen, and
+    /// nothing reached from it, needs the network: a book copied over in
+    /// March plays in September on a reader that has been in aeroplane mode
+    /// since.
     fn library_screen(&self) -> Screen {
         let screen = ScreenBuilder::new("audiobook-library").top_bar("Audiobooks");
         let Some(books) = self.library.as_ref() else {
-            return screen.activity("Looking on the shelf", None).build();
+            return screen.activity("Looking for audiobooks", None).build();
         };
         if books.is_empty() {
             let screen = if self.shelf_unreadable {
-                screen
-                    .error_state("The shelf could not be read, so what is saved cannot be listed.")
+                screen.error_state("The audiobooks on this reader could not be listed.")
             } else {
                 screen.empty_state(
-                    "No audiobooks yet. One made here stays on the reader and plays offline.",
+                    "No audiobooks yet. Over USB, copy MP3, M4B, OGG, FLAC or WAV files into \
+                     a folder called Audiobooks, one folder per book. Or make one here.",
                 )
             };
             return screen
@@ -413,21 +471,26 @@ impl Audiobook {
         }
         // The bottom of the panel is spent on page turns, so the way to the
         // composer is the one action the top bar allows.
-        let screen = screen.top_bar_glyph(NEW, "Create", Glyph::Plus);
+        let placed = self.library_head(screen.top_bar_glyph(NEW, "Create", Glyph::Plus));
         let showing = self.pages.get(self.page).map_or(&[][..], Vec::as_slice);
-        let mut turning = screen
-            .rows_with_trailing(showing.iter().filter_map(|index| {
-                books.get(*index).map(|book| {
-                    (
-                        play_action(*index),
-                        book.title.clone(),
-                        String::new(),
-                        Glyph::Headphones,
-                        size_on_disk(book.bytes),
-                    )
-                })
-            }))
-            .page_turns(LIBRARY_BACK, LIBRARY_NEXT);
+        let rows = showing
+            .iter()
+            .filter_map(|index| books.get(*index).map(|book| (*index, book)))
+            .map(|(index, book)| {
+                let place = self.place_of(&book.id);
+                (
+                    play_action(index),
+                    self.title_of(book),
+                    Self::status_of(book, place),
+                    RowLead::from(match place {
+                        Some(place) if place.finished => Glyph::Check,
+                        Some(place) if place.position_ms > 0 => Glyph::Headphones,
+                        _ => Glyph::Circle,
+                    }),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut turning = placed.rows(rows).page_turns(LIBRARY_BACK, LIBRARY_NEXT);
         if self.pages.len() > 1 {
             turning = turning.page_position(
                 u16::try_from(self.page + 1).unwrap_or(u16::MAX),
@@ -437,61 +500,205 @@ impl Audiobook {
         turning.build()
     }
 
+    /// Everything the library shows above its rows: a note when the listing
+    /// stopped short, and the book playing, which is one tap from wherever
+    /// the listener wandered to.
+    fn library_head(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let mut screen = screen;
+        if self.truncated {
+            screen = screen.banner(
+                BannerLevel::Info,
+                "Only the first two thousand audiobooks are listed.",
+            );
+        }
+        if let Some(player) = self.player.as_ref() {
+            let title = self.playing_title();
+            let left = player
+                .duration()
+                .saturating_sub(player.position())
+                .as_millis();
+            let left = span(u32::try_from(left).unwrap_or(u32::MAX));
+            let status = if player.is_playing() {
+                format!("Playing · {left} left")
+            } else if player.is_finished() {
+                "Finished".to_owned()
+            } else {
+                format!("Paused · {left} left")
+            };
+            screen = screen.section("Now playing").rows([(
+                NOW_PLAYING,
+                title,
+                status,
+                RowLead::from(Glyph::Headphones),
+            )]);
+        }
+        screen
+    }
+
+    /// What the book playing is called, by the same rules as its row: the
+    /// studio's name for it, else what it said, else its file name.
+    fn playing_title(&self) -> String {
+        let Some(id) = self.playing.as_deref() else {
+            return String::new();
+        };
+        if let Some(book) = self
+            .library
+            .as_ref()
+            .and_then(|books| books.iter().find(|book| same_book(&book.id, id)))
+        {
+            return self.title_of(book);
+        }
+        let stand_in = Book {
+            id: id.to_owned(),
+            title: id
+                .strip_prefix("shelf:")
+                .and_then(|name| name.strip_suffix(ARCHIVE_SUFFIX))
+                .unwrap_or(id)
+                .replace('-', " "),
+            ..Book::default()
+        };
+        self.title_of(&stand_in)
+    }
+
+    /// What a library row says under a book's title: who it is by and how
+    /// far in it is, or what kind of file it is when nothing has opened it.
+    fn status_of(book: &Book, place: Option<&Place>) -> String {
+        let author = place
+            .map(|place| place.author.as_str())
+            .filter(|author| !author.is_empty());
+        let state = match place {
+            Some(place) if place.finished => "Finished".to_owned(),
+            Some(place) if place.position_ms > 0 && place.duration_ms > 0 => {
+                format!(
+                    "{} left",
+                    span(place.duration_ms.saturating_sub(place.position_ms))
+                )
+            }
+            _ => {
+                let mut state = kind_badge(book.kind).to_owned();
+                if book.parts > 1 {
+                    state.push_str(&format!(" · {} parts", book.parts));
+                }
+                state.push_str(&format!(" · {}", size_on_disk(book.bytes)));
+                state
+            }
+        };
+        match author {
+            Some(author) => format!("{author} · {state}"),
+            None => state,
+        }
+    }
+
+    /// What a book is called: the title the studio saved it under, else
+    /// what it said when it was opened, else its file name.
+    fn title_of(&self, book: &Book) -> String {
+        if let Some(title) = self.studio_title(book) {
+            return title.to_owned();
+        }
+        self.place_of(&book.id)
+            .map(|place| place.title.as_str())
+            .filter(|title| !title.is_empty())
+            .map_or_else(|| book.title.clone(), str::to_owned)
+    }
+
+    /// The title a book made here was saved under, which its files do not
+    /// carry: the narration arrives without tags.
+    fn studio_title(&self, book: &Book) -> Option<&str> {
+        let file = book
+            .id
+            .strip_prefix("shelf:")
+            .unwrap_or_else(|| book.id.rsplit('/').next().unwrap_or_default());
+        self.titles
+            .iter()
+            .find(|(name, _)| name == file)
+            .map(|(_, title)| title.as_str())
+    }
+
+    fn place_of(&self, id: &str) -> Option<&Place> {
+        self.places.iter().find(|place| same_book(&place.id, id))
+    }
+
     fn has_books(&self) -> bool {
         self.library.as_ref().is_some_and(|books| !books.is_empty())
     }
 
-    /// Opens the library, and asks the shelf what is on it.
+    /// Opens the library, and asks the runtime what is on the reader.
     ///
-    /// The shelf is asked every time rather than once at start, because this
-    /// is also the screen somebody arrives at after making an audiobook, and
-    /// the disk is the only thing that knows whether it really landed.
+    /// Asked every time rather than once at start, because this is also the
+    /// screen somebody arrives at after copying a book over USB or making
+    /// one here, and the card is the only thing that knows what landed.
     fn open_library(&mut self, context: &mut Context) {
         self.stage = Stage::Library;
-        context.shelf().list();
+        context.device().list_audio();
         self.show(context);
     }
 
-    /// Builds the library from what is actually on the shelf.
-    ///
-    /// The shelf decides what exists; the saved index only supplies titles and
-    /// the order they were made in. A book whose title was lost still lists,
-    /// under its file name turned back into words, because a listing that
-    /// silently omits a four minute audiobook is worse than one with an ugly
-    /// name in it.
-    fn shelved(&mut self, context: &Context, blobs: &[(String, u32)]) {
-        let mut books = Vec::new();
-        for (name, title) in self.titles.iter().rev() {
-            if let Some((name, bytes)) = blobs.iter().find(|(shelved, _)| shelved == name) {
-                books.push(Saved {
-                    name: name.clone(),
-                    title: title.clone(),
-                    bytes: *bytes,
-                });
+    /// Builds the library from what the runtime listed.
+    fn listed(&mut self, context: &Context, entries: &[AudioEntry], truncated: bool) {
+        self.library = Some(
+            entries
+                .iter()
+                .map(|entry| Book {
+                    id: entry.id.clone(),
+                    title: entry.title.clone(),
+                    kind: entry.kind,
+                    parts: entry.parts,
+                    bytes: entry.bytes,
+                })
+                .collect(),
+        );
+        self.truncated = truncated;
+        self.shelf_unreadable = false;
+        self.repage(context);
+    }
+
+    /// Lays the library out in pages: the books on the go first, newest
+    /// listening first, then the ones not started, then the finished ones,
+    /// each group by title.
+    fn repage(&mut self, context: &Context) {
+        let Some(books) = self.library.as_ref() else {
+            return;
+        };
+        let mut order = (0..books.len()).collect::<Vec<_>>();
+        let rank = |index: usize| -> (u8, u64, String) {
+            let book = &books[index];
+            let place = self.place_of(&book.id);
+            let title = self.title_of(book).to_lowercase();
+            match place {
+                Some(place) if place.finished => (2, 0, title),
+                Some(place) if place.position_ms > 0 => (0, u64::MAX - place.last_played, title),
+                _ => (1, 0, title),
             }
-        }
-        for (name, bytes) in blobs {
-            let known = books.iter().any(|book| &book.name == name);
-            if !known && name.ends_with(ARCHIVE_SUFFIX) {
-                books.push(Saved {
-                    name: name.clone(),
-                    title: title_from_name(name),
-                    bytes: *bytes,
-                });
-            }
-        }
-        let sizes = books
+        };
+        order.sort_by_key(|index| rank(*index));
+        let rows = order
             .iter()
-            .map(|book| size_on_disk(book.bytes))
+            .map(|index| {
+                let book = &books[*index];
+                (
+                    self.title_of(book),
+                    Self::status_of(book, self.place_of(&book.id)),
+                )
+            })
             .collect::<Vec<_>>();
-        let rows = books
+        let measured = rows
             .iter()
-            .zip(&sizes)
-            .map(|(book, size)| (book.title.as_str(), "", size.as_str()))
+            .map(|(title, status)| (title.as_str(), status.as_str()))
             .collect::<Vec<_>>();
-        self.pages = context.paginate_rows_with_trailing(&rows, false);
+        let placed = self
+            .library_head(
+                ScreenBuilder::new("audiobook-library")
+                    .top_bar("Audiobooks")
+                    .top_bar_glyph(NEW, "Create", Glyph::Plus),
+            )
+            .build();
+        let pages =
+            context.paginate_rows_under(&measured, false, kobo_sdk::Position::AtTheFoot, &placed);
+        self.pages = pages
+            .into_iter()
+            .map(|page| page.into_iter().map(|row| order[row]).collect())
+            .collect();
         self.page = self.page.min(self.pages.len().saturating_sub(1));
-        self.library = Some(books);
     }
 
     /// Records the title of a finished audiobook, so the library can name it.
@@ -508,6 +715,7 @@ impl Audiobook {
         context.store().save(LIBRARY_KEY, index);
     }
 
+    /// Opens a listed book where the listener left it, and plays.
     fn play(&mut self, context: &mut Context, index: usize) {
         let Some(book) = self
             .library
@@ -517,26 +725,58 @@ impl Audiobook {
         else {
             return;
         };
-        self.title = book.title;
-        self.archive_name = book.name;
-        self.open_player(context);
+        let title = self.title_of(&book);
+        let place = self.place_of(&book.id).cloned().unwrap_or_default();
+        let mut metadata = AudioMetadata::new(&title);
+        if !place.author.is_empty() {
+            metadata = metadata.author(place.author.clone());
+        }
+        let mut player = match book.id.strip_prefix("shelf:") {
+            Some(name) => AudioPlayer::shelf(name, &title),
+            None => AudioPlayer::library(&book.id, &title),
+        }
+        .metadata(metadata)
+        .owns_back(true);
+        if self.studio_title(&book).is_some() {
+            player = player.keep_title();
+        }
+        if place.speed_percent > 0 {
+            player = player.speed(place.speed_percent);
+        }
+        if !place.finished && place.position_ms > 0 {
+            let since = now_secs().saturating_sub(place.last_played);
+            player = player.resuming_at(Duration::from_millis(u64::from(resume_from(
+                place.position_ms,
+                Duration::from_secs(since),
+            ))));
+        }
+        let author = (!place.author.is_empty()).then_some(place.author.as_str());
+        player.set_cover(context.put_picture(
+            PictureHandle(1),
+            COVER_WIDTH,
+            COVER_HEIGHT,
+            typographic_cover(&title, author, COVER_WIDTH, COVER_HEIGHT),
+        ));
+        self.open_player(context, player, book.id);
     }
 
     /// The free sample, playable before any account exists.
     ///
-    /// Once saved it is an ordinary book on the shelf and lists like one.
+    /// Once saved it is an ordinary book on the reader and lists like one.
     /// Before that, saving it is the whole errand: the same upload and the
     /// same player a created book uses, because a sample that took a
     /// shortcut would prove the shortcut, not the book.
     fn play_sample(&mut self, context: &mut Context) {
         SAMPLE_TITLE.clone_into(&mut self.title);
         SAMPLE_NAME.clone_into(&mut self.archive_name);
-        let already_saved = self
-            .library
-            .as_ref()
-            .is_some_and(|books| books.iter().any(|book| book.name == SAMPLE_NAME));
+        let already_saved = self.library.as_ref().is_some_and(|books| {
+            books.iter().any(|book| {
+                book.id.ends_with(&format!("/{SAMPLE_NAME}"))
+                    || book.id == format!("shelf:{SAMPLE_NAME}")
+            })
+        });
         if already_saved {
-            self.open_player(context);
+            self.open_shelf_player(context);
             return;
         }
         let bytes = match kobo_doc::zip::stored(&[("001.mp3".to_owned(), SAMPLE_BYTES.to_vec())]) {
@@ -555,24 +795,120 @@ impl Audiobook {
         self.stage = Stage::Save;
     }
 
-    /// The player, for an audiobook that has just been made and for one that
-    /// was made weeks ago. One function, because the two must not drift: the
-    /// second is the one somebody uses fifty times.
-    fn open_player(&mut self, context: &mut Context) {
-        let (width, height, grey) = cover_art(&self.title);
-        let cover = context.put_picture(PictureHandle(1), width, height, grey);
-        let mut player = AudioPlayer::shelf(&self.archive_name, &self.title)
+    /// The player for an audiobook made here, straight from the shelf it
+    /// was just saved to: the listing that will name it has not arrived yet,
+    /// and nobody should wait for a list to hear what they just made.
+    fn open_shelf_player(&mut self, context: &mut Context) {
+        let title = self.title.clone();
+        let mut player = AudioPlayer::shelf(&self.archive_name, &title)
             .metadata(
-                AudioMetadata::new(&self.title)
-                    .author("Researched, written and narrated on this reader")
-                    .chapter("Saved on this reader"),
+                AudioMetadata::new(&title)
+                    .author("Researched, written and narrated on this reader"),
             )
-            .secondary_action(AGAIN, "Create another", Glyph::Plus)
-            .owns_back(true);
-        player.set_cover(cover);
+            .owns_back(true)
+            .keep_title();
+        player.set_cover(context.put_picture(
+            PictureHandle(1),
+            COVER_WIDTH,
+            COVER_HEIGHT,
+            typographic_cover(
+                &title,
+                Some("Made on this reader"),
+                COVER_WIDTH,
+                COVER_HEIGHT,
+            ),
+        ));
+        let id = format!("shelf:{}", self.archive_name);
+        self.open_player(context, player, id);
+    }
+
+    /// Shows a player and starts it. One function for a book made a minute
+    /// ago and one copied over months ago, because the two must not drift:
+    /// the second is the one somebody uses fifty times.
+    fn open_player(&mut self, context: &mut Context, mut player: AudioPlayer, id: String) {
+        if let Some(old) = self.player.as_mut() {
+            old.pause(context);
+        }
+        self.note_place(context, true);
         player.start(context);
+        player.play(context);
+        self.saved_position_ms = 0;
         self.player = Some(player);
+        self.playing = Some(id);
         self.stage = Stage::Player;
+    }
+
+    /// Draws the cover the book carried, if it carried one worth drawing.
+    fn draw_cover(&mut self, context: &mut Context) {
+        let Some(player) = self.player.as_mut() else {
+            return;
+        };
+        let Some(bytes) = player.take_cover_bytes() else {
+            return;
+        };
+        let Some((width, height, grey)) = cover_picture(&bytes) else {
+            return;
+        };
+        let cover = context.put_picture(PictureHandle(2), width, height, grey);
+        player.set_cover(cover);
+    }
+
+    /// Writes where the playing book is, when it has moved enough to be
+    /// worth writing or when `force` says this is a moment that matters: a
+    /// pause, a seek, leaving the player, the reader going to sleep.
+    fn note_place(&mut self, context: &mut Context, force: bool) {
+        let Some(player) = self.player.as_ref() else {
+            return;
+        };
+        let Some(id) = self.playing.clone() else {
+            return;
+        };
+        let duration_ms = u32::try_from(player.duration().as_millis()).unwrap_or(u32::MAX);
+        if duration_ms == 0 {
+            return;
+        }
+        let position_ms = u32::try_from(player.position().as_millis()).unwrap_or(u32::MAX);
+        let finished = player.is_finished();
+        let moved = position_ms.abs_diff(self.saved_position_ms) >= SAVE_EVERY_MS;
+        let known = self.place_of(&id).cloned().unwrap_or_default();
+        let detail_title = player
+            .detail()
+            .map(|detail| detail.title.clone())
+            .unwrap_or_default();
+        let detail_author = player
+            .detail()
+            .map(|detail| detail.author.clone())
+            .unwrap_or_default();
+        let learned = known.title != detail_title || known.author != detail_author;
+        let speed_changed = known.speed_percent != player.speed_percent();
+        if !(force || moved || finished || learned || speed_changed) {
+            return;
+        }
+        let place = Place {
+            id: id.clone(),
+            position_ms: if finished { 0 } else { position_ms },
+            duration_ms,
+            speed_percent: player.speed_percent(),
+            finished,
+            last_played: now_secs(),
+            title: detail_title,
+            author: detail_author,
+        };
+        self.places.retain(|kept| !same_book(&kept.id, &id));
+        self.places.push(place);
+        self.saved_position_ms = position_ms;
+        context.store().save(PLACES_KEY, write_places(&self.places));
+    }
+
+    /// Back from the player to the library. The book keeps playing: the
+    /// library's first row is the way back to it. The studio starts afresh,
+    /// as it did when leaving the player meant stopping the book: a finished
+    /// creation is not a draft to come back to.
+    fn leave_player(&mut self, context: &mut Context) {
+        self.note_place(context, true);
+        self.clock.stop(context);
+        self.reset();
+        self.open_library(context);
     }
 
     /// Continues an interrupted creation.
@@ -895,8 +1231,14 @@ impl Audiobook {
         }
     }
 
-    /// A tap on the shelf: the sample, a new book, a page turn or a book.
+    /// A tap on the library: the book playing, a book, the sample, a new
+    /// book or a page turn.
     fn on_library_action(&mut self, context: &mut Context, action: kobo_sdk::ActionId) {
+        if action == action_id(NOW_PLAYING) && self.player.is_some() {
+            self.stage = Stage::Player;
+            self.show(context);
+            return;
+        }
         if action == action_id(SAMPLE) {
             self.play_sample(context);
             self.show(context);
@@ -1027,26 +1369,36 @@ impl Audiobook {
         }
     }
 
-    /// Back to a blank composer, keeping the library.
+    /// Back to a blank composer, keeping the library and the book playing.
     ///
     /// `Default` clears everything, and everything used to be the right
     /// amount, because the application forgot each audiobook the moment it
-    /// finished. It no longer does, so what is on the shelf has to outlive a
-    /// cancel.
+    /// finished. It no longer does, so what is on the reader, where the
+    /// listener is in it, and the book playing all have to outlive a cancel.
     fn reset(&mut self) {
         let library = self.library.take();
         let titles = std::mem::take(&mut self.titles);
+        let places = std::mem::take(&mut self.places);
         let pages = std::mem::take(&mut self.pages);
         let shelf_unreadable = self.shelf_unreadable;
+        let truncated = self.truncated;
         // A cancel stops the work, not the record of it: the checkpoint the
         // store holds stays offered, here as much as after a restart.
         let checkpoint = self.checkpoint.take();
         // A person who narrates in Hindi will narrate in Hindi again.
         let language = self.language;
+        let player = self.player.take();
+        let playing = self.playing.take();
+        let saved_position_ms = self.saved_position_ms;
         *self = Self {
             language,
+            player,
+            playing,
+            saved_position_ms,
             library,
+            truncated,
             titles,
+            places,
             pages,
             shelf_unreadable,
             checkpoint,
@@ -1117,10 +1469,10 @@ impl Audiobook {
 
 impl KoboApp for Audiobook {
     fn on_start(&mut self, context: &mut Context) {
-        // Titles first: the shelf is asked once they are back, so a listing
-        // never arrives with nothing to name it by.
         context.store().load(LIBRARY_KEY);
+        context.store().load(PLACES_KEY);
         context.store().load(CHECKPOINT_KEY);
+        context.device().list_audio();
         self.show(context);
     }
 
@@ -1155,6 +1507,7 @@ impl KoboApp for Audiobook {
                 .as_mut()
                 .is_some_and(|player| player.press(context, action))
         {
+            self.note_place(context, false);
             self.show(context);
             return;
         }
@@ -1178,14 +1531,9 @@ impl KoboApp for Audiobook {
             return;
         }
         if action == action_id(AGAIN) {
-            if self.player.is_some() {
-                context.device().stop_audio();
-            }
             self.clock.stop(context);
             // Starting over from a failure retires what was interrupted:
             // the person has seen it fail and chosen a different book.
-            // "Create another" under the player does not, because nothing
-            // about finishing one book says another should be thrown away.
             if self.stage == Stage::Failed {
                 self.retire_checkpoint(context);
             }
@@ -1198,18 +1546,20 @@ impl KoboApp for Audiobook {
             self.before_spending(context, action);
             return;
         }
-        // The player is always reached from the shelf, so the runtime's back
-        // control belongs to the shelf here rather than to leaving the
-        // application. Without this a tap on a book was a one way door.
+        // The player is always reached from the library, so the runtime's
+        // back control belongs to the library here rather than to leaving
+        // the application. The book keeps playing; the library's first row
+        // leads back to it.
         if action == action_id(SHELF)
             || (self.stage == Stage::Player && action == kobo_sdk::ActionId::BACK)
         {
-            if self.player.is_some() {
-                context.device().stop_audio();
+            if self.stage == Stage::Player {
+                self.leave_player(context);
+            } else {
+                self.clock.stop(context);
+                self.reset();
+                self.open_library(context);
             }
-            self.clock.stop(context);
-            self.reset();
-            self.open_library(context);
             return;
         }
         if self.stage == Stage::Library {
@@ -1231,6 +1581,23 @@ impl KoboApp for Audiobook {
                 self.begin(context);
             }
         }
+    }
+
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.stage == Stage::Player {
+            if let Some(player) = self.player.as_mut() {
+                player.skip(context, forward);
+            }
+            self.show(context);
+        }
+    }
+
+    fn on_background(&mut self, context: &mut Context) {
+        self.note_place(context, true);
+    }
+
+    fn on_exit(&mut self, context: &mut Context) {
+        self.note_place(context, true);
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
@@ -1256,7 +1623,9 @@ impl KoboApp for Audiobook {
             .as_mut()
             .is_some_and(|player| player.on_task(context, task, &outcome))
         {
-            self.show(context);
+            if matches!(self.stage, Stage::Player | Stage::Library) {
+                self.show(context);
+            }
             return;
         }
         if self.task != Some(task) {
@@ -1336,8 +1705,8 @@ impl KoboApp for Audiobook {
                     self.parts.clear();
                     self.saving_sample = false;
                     self.remember(context);
-                    context.shelf().list();
-                    self.open_player(context);
+                    context.device().list_audio();
+                    self.open_shelf_player(context);
                     self.show(context);
                     return;
                 }
@@ -1347,7 +1716,7 @@ impl KoboApp for Audiobook {
                     self.show(context);
                     return;
                 }
-                // Not the upload's answer. It is one of the two the library
+                // Not the upload's answer. It is one of the ones the library
                 // asks for, so fall through rather than dropping it.
                 ShelfProgress::Elsewhere => {}
             }
@@ -1355,7 +1724,17 @@ impl KoboApp for Audiobook {
         match result {
             StoreResult::Loaded { key, value } if key == LIBRARY_KEY => {
                 self.titles = parse_index(value.as_deref().unwrap_or_default());
-                context.shelf().list();
+                self.repage(context);
+                if self.stage == Stage::Library {
+                    self.show(context);
+                }
+            }
+            StoreResult::Loaded { key, value } if key == PLACES_KEY => {
+                self.places = parse_places(value.as_deref().unwrap_or_default());
+                self.repage(context);
+                if self.stage == Stage::Library {
+                    self.show(context);
+                }
             }
             StoreResult::Loaded { key, value } if key == CHECKPOINT_KEY => {
                 self.checkpoint = value.as_deref().and_then(read_checkpoint);
@@ -1364,8 +1743,21 @@ impl KoboApp for Audiobook {
                 }
             }
             StoreResult::Shelf(blobs) => {
-                self.shelf_unreadable = false;
-                self.shelved(context, &blobs);
+                let entries = blobs
+                    .iter()
+                    .filter(|(name, _)| name.ends_with(ARCHIVE_SUFFIX))
+                    .map(|(name, bytes)| AudioEntry {
+                        id: format!("shelf:{name}"),
+                        title: name
+                            .strip_suffix(ARCHIVE_SUFFIX)
+                            .unwrap_or(name)
+                            .replace('-', " "),
+                        kind: 7,
+                        parts: 1,
+                        bytes: u64::from(*bytes),
+                    })
+                    .collect::<Vec<_>>();
+                self.listed(context, &entries, false);
                 if self.stage == Stage::Library {
                     self.show(context);
                 }
@@ -1395,12 +1787,48 @@ impl KoboApp for Audiobook {
             }
             return;
         }
+        if request == DeviceRequest::ListAudio {
+            match &result {
+                DeviceResult::AudioLibrary { entries, truncated } => {
+                    self.listed(context, entries, *truncated);
+                }
+                // A runtime that cannot list the reader's audiobooks, as a
+                // simulator without an audio backend cannot, can still list
+                // this application's own shelf, where the books made here
+                // and the sample live.
+                DeviceResult::Denied(_) => context.shelf().list(),
+                DeviceResult::Failed(_) => {
+                    if self.library.is_none() {
+                        self.shelf_unreadable = true;
+                        self.library = Some(Vec::new());
+                    }
+                }
+                _ => {}
+            }
+            if self.stage == Stage::Library {
+                self.show(context);
+            }
+            return;
+        }
         if self
             .player
             .as_mut()
             .is_some_and(|player| player.on_device_result(context, &request, &result))
         {
-            self.show(context);
+            self.draw_cover(context);
+            // A pause, a seek and the end of the book are moments the place
+            // must survive; a reading that only moved the clock is written
+            // once a minute.
+            let moment = matches!(
+                request,
+                DeviceRequest::PauseAudio | DeviceRequest::SeekAudio { .. }
+            ) || self.player.as_ref().is_some_and(|player| {
+                player.is_finished() || player.playback() == kobo_sdk::AudioPlaybackState::Paused
+            });
+            self.note_place(context, moment);
+            if matches!(self.stage, Stage::Player | Stage::Library) {
+                self.show(context);
+            }
         }
     }
 }
@@ -1473,38 +1901,6 @@ fn service_name(secret: &str) -> &'static str {
     }
 }
 
-/// Deterministic monochrome cover art. It travels once through the SDK picture
-/// cache and remains visible while transport state and position redraw.
-fn cover_art(title: &str) -> (u32, u32, Vec<u8>) {
-    const WIDTH: u32 = 240;
-    const HEIGHT: u32 = 320;
-    let pixels = usize::try_from(WIDTH * HEIGHT).expect("the cover fits memory");
-    let mut grey = vec![240_u8; pixels];
-    let seed = title.bytes().fold(0x811c_9dc5_u32, |hash, byte| {
-        hash.rotate_left(5) ^ u32::from(byte)
-    });
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
-            let border = x < 8 || y < 8 || x >= WIDTH - 8 || y >= HEIGHT - 8;
-            let disc_x = i64::from(x) - i64::from(WIDTH) / 2;
-            let disc_y = i64::from(y) - 118;
-            let disc = disc_x * disc_x + disc_y * disc_y < 72 * 72;
-            let distance = u32::try_from(disc_x * disc_x + disc_y * disc_y)
-                .expect("a cover coordinate has a small square");
-            let groove = disc && (distance / 180 + seed) % 3 == 0;
-            let bar = (88..=232).contains(&y)
-                && (24..WIDTH - 24).contains(&x)
-                && (x / 12 + seed) % 5 < 2
-                && y > 205 - (x * 17 + seed) % 55;
-            let index = usize::try_from(y * WIDTH + x).expect("the cover index fits usize");
-            if border || groove || bar {
-                grey[index] = 24;
-            }
-        }
-    }
-    (WIDTH, HEIGHT, grey)
-}
-
 /// The name of the row that plays the `index`th audiobook.
 fn play_action(index: usize) -> String {
     format!("play-{index}")
@@ -1515,37 +1911,82 @@ fn language_action(language: pipeline::Language) -> String {
     format!("language-{}", language.name())
 }
 
-/// The size of a book on the card, in the coarsest honest unit.
-fn size_on_disk(bytes: u32) -> String {
-    let megabytes = f64::from(bytes) / (1024.0 * 1024.0);
-    if megabytes < 1.0 {
-        format!("{} KB", (bytes / 1024).max(1))
-    } else {
-        format!("{megabytes:.0} MB")
+/// The short name of a listed kind, as the wire numbers them.
+const fn kind_badge(kind: u8) -> &'static str {
+    match kind {
+        1 => "MP3",
+        2 => "M4B",
+        3 => "OGG",
+        4 => "OPUS",
+        5 => "FLAC",
+        6 => "WAV",
+        _ => "MP3Z",
     }
 }
 
-/// A file name turned back into something to read.
-///
-/// Only for an audiobook whose title the store lost. It cannot restore
-/// capitals or punctuation, and it does not pretend to: it undoes the slug and
-/// stops there.
-fn title_from_name(name: &str) -> String {
-    let stem = name.strip_suffix(ARCHIVE_SUFFIX).unwrap_or(name);
-    let words = stem.replace('-', " ");
-    let mut title = String::with_capacity(words.len());
-    for (index, character) in words.chars().enumerate() {
-        if index == 0 {
-            title.extend(character.to_uppercase());
-        } else {
-            title.push(character);
-        }
-    }
-    if title.is_empty() {
-        "Audiobook".to_owned()
+/// The size of a book on the card, in the coarsest honest unit.
+fn size_on_disk(bytes: u64) -> String {
+    const MEGABYTE: u64 = 1024 * 1024;
+    const GIGABYTE: u64 = 1024 * MEGABYTE;
+    if bytes >= GIGABYTE {
+        let tenths = bytes * 10 / GIGABYTE;
+        format!("{}.{} GB", tenths / 10, tenths % 10)
+    } else if bytes >= MEGABYTE {
+        format!("{} MB", bytes / MEGABYTE)
     } else {
-        title
+        format!("{} KB", (bytes / 1024).max(1))
     }
+}
+
+/// Whether two identifiers name one book. A book made here is first played
+/// off the shelf as `shelf:name` and later listed by the runtime under a
+/// path ending in that name; the place is one place either way.
+fn same_book(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let shelf_name = |id: &str| id.strip_prefix("shelf:").map(str::to_owned);
+    match (shelf_name(left), shelf_name(right)) {
+        (Some(name), None) => right.ends_with(&format!("/{name}")),
+        (None, Some(name)) => left.ends_with(&format!("/{name}")),
+        _ => false,
+    }
+}
+
+/// Where to carry on from, for a book put down `since` ago.
+///
+/// Nothing after a short break, a sentence after an hour, a paragraph
+/// after a day: the longer the gap, the more of the thread to pick up.
+fn resume_from(position_ms: u32, since: Duration) -> u32 {
+    let rewind = if since.as_secs() < 60 {
+        0
+    } else if since.as_secs() < 3_600 {
+        10_000
+    } else {
+        30_000
+    };
+    position_ms.saturating_sub(rewind)
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
+
+/// A book's own cover, fitted to the player and dithered for the panel.
+///
+/// A picture too small to be a cover is left out: blown up to the hero it
+/// is a grey smear, which is worse than the lettered cover already there.
+fn cover_picture(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    const MIN_COVER_PX: u32 = 96;
+    let picture = kobo_image::decode(bytes).ok()?;
+    if picture.width() < MIN_COVER_PX || picture.height() < MIN_COVER_PX {
+        return None;
+    }
+    let mut fitted = picture.fit(COVER_WIDTH, COVER_HEIGHT).ok()?;
+    fitted.dither(kobo_image::PANEL_GREYS);
+    Some((fitted.width(), fitted.height(), fitted.into_grey()))
 }
 
 /// Reads the saved archive-name-to-title index.
@@ -1559,6 +2000,59 @@ fn parse_index(saved: &[u8]) -> Vec<(String, String)> {
         .filter_map(|line| line.split_once('\t'))
         .filter(|(name, title)| !name.is_empty() && !title.is_empty())
         .map(|(name, title)| (name.to_owned(), title.to_owned()))
+        .collect()
+}
+
+/// Writes every book's place as one record.
+fn write_places(places: &[Place]) -> Vec<u8> {
+    let field = |text: &str| {
+        text.chars()
+            .filter(|character| *character != FIELD && *character != RECORD)
+            .collect::<String>()
+    };
+    places
+        .iter()
+        .filter(|place| !place.id.contains(FIELD) && !place.id.contains(RECORD))
+        .map(|place| {
+            [
+                "v1".to_owned(),
+                place.id.clone(),
+                place.position_ms.to_string(),
+                place.duration_ms.to_string(),
+                place.speed_percent.to_string(),
+                u8::from(place.finished).to_string(),
+                place.last_played.to_string(),
+                field(&place.title),
+                field(&place.author),
+            ]
+            .join(&FIELD.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join(&RECORD.to_string())
+        .into_bytes()
+}
+
+/// Reads the places record. A line that does not parse is one book whose
+/// place is lost, not a library whose places are.
+fn parse_places(saved: &[u8]) -> Vec<Place> {
+    String::from_utf8_lossy(saved)
+        .split(RECORD)
+        .filter_map(|line| {
+            let fields = line.split(FIELD).collect::<Vec<_>>();
+            if fields.len() != 9 || fields[0] != "v1" || fields[1].is_empty() {
+                return None;
+            }
+            Some(Place {
+                id: fields[1].to_owned(),
+                position_ms: fields[2].parse().ok()?,
+                duration_ms: fields[3].parse().ok()?,
+                speed_percent: fields[4].parse().ok()?,
+                finished: fields[5] == "1",
+                last_played: fields[6].parse().ok()?,
+                title: fields[7].to_owned(),
+                author: fields[8].to_owned(),
+            })
+        })
         .collect()
 }
 
@@ -1657,795 +2151,7 @@ fn main() -> ExitCode {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        archive_name, parse_index, play_action, read_checkpoint, size_on_disk, title_from_name,
-        write_checkpoint, Audiobook, Checkpoint, Saved, Stage, CHECK, CHECKPOINT_KEY, SAMPLE_NAME,
-        SAMPLE_TITLE, SECRETS,
-    };
-    use crate::pipeline;
-    use kobo_sdk::{action_id, StandardState, CLARA_BW_METRICS, MAX_ROWS};
-    use kobo_sdk::{Context, KoboApp, StoreResult};
-
-    #[test]
-    fn a_title_becomes_a_safe_kobo_filename() {
-        assert_eq!(archive_name("Moon: Past & Future"), "moon-past-future.mp3z");
-    }
-
-    #[test]
-    fn compose_progress_complete_and_failure_screens_fit_a_clara() {
-        let mut app = Audiobook::default();
-        for stage in [Stage::Compose, Stage::Setup, Stage::Research, Stage::Failed] {
-            app.stage = stage;
-            app.title = "A researched history of the night sky".to_owned();
-            app.summary = "An original, source-grounded tour of how people learned to understand the Moon, planets, and stars.".to_owned();
-            app.archive_name = "history-of-the-night-sky.mp3z".to_owned();
-            app.trouble = Some((
-                StandardState::Error,
-                "The provider could not complete this request.".to_owned(),
-            ));
-            let issues = app
-                .screen(&kobo_sdk::Context::default())
-                .validate(&CLARA_BW_METRICS);
-            assert!(issues.is_empty(), "{stage:?}: {issues:?}");
-        }
-    }
-
-    /// The hint used to be written to a field the compose screen never drew,
-    /// so a topic under three characters made the Create button do nothing at
-    /// all. It has to reach the screen, under the field it is about.
-    #[test]
-    fn a_short_topic_puts_a_visible_hint_on_the_compose_screen() {
-        let app = Audiobook {
-            stage: Stage::Compose,
-            hint: Some("That is too short. Add a few words."),
-            ..Audiobook::default()
-        };
-        let screen = app.screen(&kobo_sdk::Context::default());
-        let drawn = format!("{screen:?}");
-        assert!(drawn.contains("That is too short"), "{drawn}");
-        assert!(app
-            .screen(&Context::default())
-            .validate(&CLARA_BW_METRICS)
-            .is_empty());
-    }
-
-    /// Every stage the library can be in has to fit, including a shelf with
-    /// more audiobooks on it than one panel holds.
-    #[test]
-    fn every_library_screen_fits_a_clara() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let context = runner.context();
-        let mut app = Audiobook::default();
-        assert!(app
-            .screen(&Context::default())
-            .validate(&CLARA_BW_METRICS)
-            .is_empty());
-        app.library = Some(Vec::new());
-        assert!(app
-            .screen(&Context::default())
-            .validate(&CLARA_BW_METRICS)
-            .is_empty());
-        let blobs = (0..40)
-            .map(|index| (format!("book-{index}.mp3z"), 9_400_000))
-            .collect::<Vec<_>>();
-        app.titles = blobs
-            .iter()
-            .map(|(name, _)| {
-                (
-                    name.clone(),
-                    format!("A researched history of the night sky, part {name}"),
-                )
-            })
-            .collect();
-        app.shelved(&context, &blobs);
-        assert!(app.pages.len() > 1, "40 audiobooks are more than one page");
-        for page in 0..app.pages.len() {
-            app.page = page;
-            let issues = app
-                .screen(&kobo_sdk::Context::default())
-                .validate(&CLARA_BW_METRICS);
-            assert!(issues.is_empty(), "page {page}: {issues:?}");
-        }
-    }
-
-    /// The shelf says what exists and the saved index says what it is called.
-    /// A book the index never heard of still has to list, because the bytes
-    /// are on the card either way.
-    #[test]
-    fn the_library_is_the_shelf_named_by_the_index_newest_first() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let context = runner.context();
-        let mut app = Audiobook {
-            titles: vec![
-                ("moon.mp3z".to_owned(), "The Moon".to_owned()),
-                ("tides.mp3z".to_owned(), "The Tides".to_owned()),
-            ],
-            ..Audiobook::default()
-        };
-        app.shelved(
-            &context,
-            &[
-                ("moon.mp3z".to_owned(), 4_000_000),
-                ("stray-recording.mp3z".to_owned(), 1_000_000),
-                ("notes.txt".to_owned(), 12),
-            ],
-        );
-        let books = app.library.expect("the shelf answered");
-        assert_eq!(books.len(), 2, "{books:?}");
-        assert_eq!(books[0].title, "The Moon");
-        assert_eq!(books[1].title, "Stray recording");
-        assert!(!books.iter().any(|book| book.name == "notes.txt"));
-    }
-
-    /// An audiobook took four minutes and fourteen narration calls to make.
-    /// Cancelling the next one must not lose it.
-    #[test]
-    fn a_reset_keeps_what_is_already_on_the_shelf() {
-        let mut app = Audiobook {
-            stage: Stage::Narrate,
-            titles: vec![("moon.mp3z".to_owned(), "The Moon".to_owned())],
-            library: Some(vec![Saved {
-                name: "moon.mp3z".to_owned(),
-                title: "The Moon".to_owned(),
-                bytes: 4_000_000,
-            }]),
-            topic: "the moon".to_owned(),
-            ..Audiobook::default()
-        };
-        app.reset();
-        assert_eq!(app.stage, Stage::Library);
-        assert!(app.topic.is_empty());
-        assert_eq!(app.library.expect("the library survived").len(), 1);
-        assert_eq!(app.titles.len(), 1);
-    }
-
-    #[test]
-    fn the_index_survives_a_round_trip_and_ignores_a_broken_line() {
-        let saved = "moon.mp3z\tThe Moon\nrubbish\ntides.mp3z\tThe Tides\n";
-        assert_eq!(
-            parse_index(saved.as_bytes()),
-            vec![
-                ("moon.mp3z".to_owned(), "The Moon".to_owned()),
-                ("tides.mp3z".to_owned(), "The Tides".to_owned()),
-            ]
-        );
-        assert!(parse_index(b"").is_empty());
-    }
-
-    #[test]
-    fn a_lost_title_falls_back_to_the_file_name() {
-        assert_eq!(title_from_name("moon-past-future.mp3z"), "Moon past future");
-        assert_eq!(title_from_name(".mp3z"), "Audiobook");
-    }
-
-    #[test]
-    fn a_size_is_reported_in_the_coarsest_honest_unit() {
-        assert_eq!(size_on_disk(9_437_184), "9 MB");
-        assert_eq!(size_on_disk(4_096), "4 KB");
-        assert_eq!(size_on_disk(0), "1 KB");
-    }
-
-    /// Every row on the library has its own action, or tapping one book plays
-    /// another.
-    #[test]
-    fn each_row_has_its_own_action() {
-        let mut seen = std::collections::BTreeSet::new();
-        for index in 0..MAX_ROWS {
-            assert!(seen.insert(action_id(&play_action(index))), "{index}");
-        }
-    }
-
-    /// A topic submit asks the runtime which accounts are installed rather
-    /// than spending first and finding out later.
-    #[test]
-    fn a_submit_checks_every_account_before_spending() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Compose,
-            topic: "the moon".to_owned(),
-            ..Audiobook::default()
-        };
-        app.begin(&mut context);
-        assert_eq!(app.stage, Stage::Setup);
-        assert!(app.task.is_none(), "nothing is spent during the check");
-        assert!(app
-            .screen(&Context::default())
-            .validate(&CLARA_BW_METRICS)
-            .is_empty());
-    }
-
-    /// The preflight answer names every missing key at once, with the exact
-    /// command for each, while the reader has spent nothing.
-    #[test]
-    fn a_missing_key_is_named_with_the_command_that_installs_it() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Setup,
-            topic: "the moon".to_owned(),
-            ..Audiobook::default()
-        };
-        app.checked_secrets(&mut context, &["openai".to_owned()]);
-        assert_eq!(app.stage, Stage::Keys);
-        assert!(app.task.is_none(), "nothing was spent");
-        let drawn = format!("{:?}", app.screen(&Context::default()));
-        assert!(drawn.contains("secret set exa"), "{drawn}");
-        assert!(drawn.contains("secret set elevenlabs"), "{drawn}");
-        assert!(!drawn.contains("secret set openai"), "{drawn}");
-        assert!(drawn.contains("Check again"), "{drawn}");
-        assert!(app
-            .screen(&Context::default())
-            .validate(&CLARA_BW_METRICS)
-            .is_empty());
-    }
-
-    /// The dead end this replaced: the only way out threw the topic away.
-    /// Check again asks the runtime once more and keeps what was typed.
-    #[test]
-    fn checking_again_keeps_the_topic_and_asks_the_runtime_once_more() {
-        let mut runner = kobo_sdk::AppRunner::new(Audiobook {
-            stage: Stage::Keys,
-            missing: vec!["exa"],
-            topic: "the moon".to_owned(),
-            ..Audiobook::default()
-        });
-        let commands = runner.action(action_id(CHECK));
-        assert_eq!(runner.app().stage, Stage::Setup);
-        assert_eq!(runner.app().topic, "the moon");
-        assert!(commands.iter().any(|command| matches!(
-            command,
-            kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::CheckSecrets { .. })
-        )));
-    }
-
-    /// Every key present leads to the estimate, not to the first payment.
-    #[test]
-    fn the_cost_and_time_are_shown_before_anything_is_spent() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Setup,
-            topic: "the moon".to_owned(),
-            ..Audiobook::default()
-        };
-        let all = SECRETS
-            .iter()
-            .map(|name| (*name).to_owned())
-            .collect::<Vec<_>>();
-        app.checked_secrets(&mut context, &all);
-        assert_eq!(app.stage, Stage::Confirm);
-        assert!(app.task.is_none(), "nothing is spent before Create");
-        let drawn = format!("{:?}", app.screen(&Context::default()));
-        assert!(drawn.contains("minutes"), "{drawn}");
-        assert!(drawn.contains("ElevenLabs characters"), "{drawn}");
-        let estimate = pipeline::Estimate::for_a_book();
-        assert!(
-            drawn.contains(&format!(
-                "${} to ${}",
-                estimate.dollars.0, estimate.dollars.1
-            )),
-            "{drawn}"
-        );
-        assert!(drawn.contains("An estimate"), "{drawn}");
-        app.start_creation(&mut context);
-        assert_eq!(app.stage, Stage::Research);
-        assert!(app.task.is_some(), "Create starts the research");
-    }
-
-    /// A runtime that cannot answer the check leaves the flow to find a
-    /// missing key at the stage that spends it, the way it always has.
-    #[test]
-    fn an_unanswerable_preflight_defers_to_the_stages() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Setup,
-            topic: "the moon".to_owned(),
-            ..Audiobook::default()
-        };
-        app.skip_preflight(&mut context);
-        assert_eq!(
-            app.stage,
-            Stage::Confirm,
-            "the estimate is still shown first"
-        );
-        assert!(app.task.is_none());
-    }
-
-    /// A checkpoint carries the script and the stopping point, and only a
-    /// complete record comes back.
-    #[test]
-    fn a_checkpoint_round_trips_and_rejects_short_records() {
-        let checkpoint = Checkpoint {
-            topic: "the moon".to_owned(),
-            language: pipeline::Language::default(),
-            title: "The Moon".to_owned(),
-            summary: "A tour of the night sky.".to_owned(),
-            archive_name: "the-moon.mp3z".to_owned(),
-            parts: vec![
-                "Part one, spoken.".to_owned(),
-                "Part two, spoken.".to_owned(),
-                "Part three, spoken.".to_owned(),
-            ],
-            next_part: 2,
-        };
-        let saved = write_checkpoint(&checkpoint);
-        assert_eq!(read_checkpoint(&saved), Some(checkpoint.clone()));
-        assert_eq!(read_checkpoint(b""), None);
-        assert_eq!(read_checkpoint(b"v1\tonly\tthree\tfields\npart"), None);
-        // A stopping point past the parts is no record at all.
-        let text = String::from_utf8(write_checkpoint(&checkpoint)).unwrap();
-        let broken = text.replace("\t2\n", "\t9\n");
-        assert_eq!(read_checkpoint(broken.as_bytes()), None);
-    }
-
-    /// Narration interrupted at part three of five resumes at part three,
-    /// not from the beginning: the calls already paid for are not made again.
-    #[test]
-    fn an_interrupted_narration_resumes_where_it_stopped() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Failed,
-            title: "The Moon".to_owned(),
-            parts: vec![
-                "one".to_owned(),
-                "two".to_owned(),
-                "three".to_owned(),
-                "four".to_owned(),
-                "five".to_owned(),
-            ],
-            next_part: 2,
-            ..Audiobook::default()
-        };
-        app.resume(&mut context);
-        assert_eq!(app.stage, Stage::Narrate);
-        assert_eq!(
-            app.next_part, 2,
-            "part three is asked for again, not part one"
-        );
-        assert!(app.task.is_some(), "narration is back in flight");
-    }
-
-    fn store_requests(commands: &[kobo_sdk::Command]) -> Vec<kobo_sdk::StoreRequest> {
-        commands
-            .iter()
-            .filter_map(|command| match command {
-                kobo_sdk::Command::Store(request) => Some(request.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn speech_requests(commands: &[kobo_sdk::Command]) -> Vec<String> {
-        commands
-            .iter()
-            .filter_map(|command| match command {
-                kobo_sdk::Command::Spawn {
-                    work: kobo_sdk::Task::Post { url, body, .. },
-                    ..
-                } if url.contains("text-to-speech") => Some(body.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn moon_checkpoint(saved: usize) -> Checkpoint {
-        Checkpoint {
-            topic: "the moon".to_owned(),
-            language: pipeline::Language::default(),
-            title: "The Moon".to_owned(),
-            summary: String::new(),
-            archive_name: "the-moon.mp3z".to_owned(),
-            parts: vec!["one".to_owned(), "two".to_owned(), "three".to_owned()],
-            next_part: saved,
-        }
-    }
-
-    /// After a restart the parts already narrated are read back off the
-    /// shelf, and only the part after them is paid for. This used to start
-    /// again from part one and pay for every part a second time.
-    #[test]
-    fn a_stored_checkpoint_reads_saved_parts_back_instead_of_narrating_them_again() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Compose,
-            checkpoint: Some(moon_checkpoint(2)),
-            ..Audiobook::default()
-        };
-        app.resume(&mut context);
-        assert_eq!(app.stage, Stage::Restore);
-        let commands = context.take_commands();
-        assert!(
-            speech_requests(&commands).is_empty(),
-            "nothing is paid for yet"
-        );
-        assert!(store_requests(&commands).iter().any(|request| matches!(
-            request,
-            kobo_sdk::StoreRequest::ShelfRead { name, .. } if name == "the-moon.part-001"
-        )));
-        for (index, name) in ["the-moon.part-001", "the-moon.part-002"]
-            .iter()
-            .enumerate()
-        {
-            app.on_store(
-                &mut context,
-                StoreResult::ShelfRead {
-                    name: (*name).to_owned(),
-                    offset: 0,
-                    bytes: vec![u8::try_from(index).unwrap(); 300],
-                    size: 300,
-                },
-            );
-        }
-        assert_eq!(app.stage, Stage::Narrate);
-        assert_eq!(app.tracks.len(), 2, "both saved parts came back");
-        assert_eq!(app.next_part, 2);
-        let speech = speech_requests(&context.take_commands());
-        assert_eq!(speech.len(), 1, "{speech:?}");
-        assert!(speech[0].contains("three"), "only part three is narrated");
-    }
-
-    /// A part the shelf cannot give back is narrated again, and so is
-    /// everything after it, but nothing before it.
-    #[test]
-    fn a_saved_part_that_is_missing_is_narrated_again_from_there() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Compose,
-            checkpoint: Some(moon_checkpoint(2)),
-            ..Audiobook::default()
-        };
-        app.resume(&mut context);
-        app.on_store(
-            &mut context,
-            StoreResult::ShelfRead {
-                name: "the-moon.part-001".to_owned(),
-                offset: 0,
-                bytes: vec![1; 300],
-                size: 300,
-            },
-        );
-        let _ = context.take_commands();
-        app.on_store(
-            &mut context,
-            StoreResult::Denied(kobo_sdk::StoreError::Missing),
-        );
-        assert_eq!(app.stage, Stage::Narrate);
-        assert_eq!(app.next_part, 1);
-        let speech = speech_requests(&context.take_commands());
-        assert_eq!(speech.len(), 1);
-        assert!(speech[0].contains("two"), "{speech:?}");
-    }
-
-    /// Each narrated part is written to the shelf, and the checkpoint moves
-    /// only once it is there, so a restart is never promised audio that was
-    /// not saved.
-    #[test]
-    fn a_narrated_part_is_kept_on_the_shelf_before_the_checkpoint_counts_it() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Narrate,
-            title: "The Moon".to_owned(),
-            archive_name: "the-moon.mp3z".to_owned(),
-            parts: vec!["one".to_owned(), "two".to_owned()],
-            ..Audiobook::default()
-        };
-        app.received_voice(&mut context, vec![7; 300]);
-        let requests = store_requests(&context.take_commands());
-        assert!(requests.iter().any(|request| matches!(
-            request,
-            kobo_sdk::StoreRequest::ShelfWrite { name, last: true, .. } if name == "the-moon.part-001"
-        )));
-        assert!(
-            !requests.iter().any(|request| matches!(
-                request,
-                kobo_sdk::StoreRequest::Save { key, .. } if key == CHECKPOINT_KEY
-            )),
-            "the checkpoint counted a part before it was saved"
-        );
-        app.on_store(
-            &mut context,
-            StoreResult::ShelfWritten {
-                name: "the-moon.part-001".to_owned(),
-                size: 300,
-            },
-        );
-        let saved = store_requests(&context.take_commands())
-            .into_iter()
-            .find_map(|request| match request {
-                kobo_sdk::StoreRequest::Save { key, value } if key == CHECKPOINT_KEY => {
-                    read_checkpoint(&value)
-                }
-                _ => None,
-            })
-            .expect("the checkpoint moved");
-        assert_eq!(saved.next_part, 1);
-        assert_eq!(app.checkpoint.map(|kept| kept.next_part), Some(1));
-    }
-
-    /// The book's own upload waits for the last part's write, so the two
-    /// never answer on the same shelf at once.
-    #[test]
-    fn the_book_is_packaged_only_once_the_last_part_is_on_the_shelf() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Narrate,
-            title: "The Moon".to_owned(),
-            archive_name: "the-moon.mp3z".to_owned(),
-            parts: vec!["one".to_owned()],
-            ..Audiobook::default()
-        };
-        app.received_voice(&mut context, vec![7; 300]);
-        assert_eq!(
-            app.stage,
-            Stage::Narrate,
-            "packaged before the part was saved"
-        );
-        assert!(app.upload.is_none());
-        app.on_store(
-            &mut context,
-            StoreResult::ShelfWritten {
-                name: "the-moon.part-001".to_owned(),
-                size: 300,
-            },
-        );
-        assert_eq!(app.stage, Stage::Save);
-        assert!(app.upload.is_some());
-    }
-
-    /// Once the book is saved its parts are inside it, so they go.
-    #[test]
-    fn a_saved_book_removes_the_parts_it_was_made_from() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Save,
-            title: "The Moon".to_owned(),
-            archive_name: "the-moon.mp3z".to_owned(),
-            parts: vec!["one".to_owned(), "two".to_owned()],
-            checkpoint: Some(moon_checkpoint(2)),
-            upload: Some(kobo_sdk::ShelfUpload::new("the-moon.mp3z", vec![1; 10])),
-            ..Audiobook::default()
-        };
-        if let Some(upload) = app.upload.as_mut() {
-            upload.start(&mut context);
-        }
-        let _ = context.take_commands();
-        app.on_store(
-            &mut context,
-            StoreResult::ShelfWritten {
-                name: "the-moon.mp3z".to_owned(),
-                size: 10,
-            },
-        );
-        let removed = store_requests(&context.take_commands())
-            .into_iter()
-            .filter_map(|request| match request {
-                kobo_sdk::StoreRequest::ShelfRemove { name } => Some(name),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert!(
-            removed.contains(&"the-moon.part-001".to_owned()),
-            "{removed:?}"
-        );
-        assert!(
-            removed.contains(&"the-moon.part-002".to_owned()),
-            "{removed:?}"
-        );
-        assert!(app.checkpoint.is_none());
-    }
-
-    /// A cancel after some parts are saved leaves the composer offering a
-    /// resume that reads those parts back, not one from the first part.
-    #[test]
-    fn a_cancel_keeps_the_saved_parts_resumable() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Narrate,
-            title: "The Moon".to_owned(),
-            archive_name: "the-moon.mp3z".to_owned(),
-            parts: vec!["one".to_owned(), "two".to_owned(), "three".to_owned()],
-            ..Audiobook::default()
-        };
-        app.received_voice(&mut context, vec![7; 300]);
-        app.on_store(
-            &mut context,
-            StoreResult::ShelfWritten {
-                name: "the-moon.part-001".to_owned(),
-                size: 300,
-            },
-        );
-        app.reset();
-        assert_eq!(app.checkpoint.as_ref().map(|kept| kept.next_part), Some(1));
-        app.resume(&mut context);
-        assert_eq!(app.stage, Stage::Restore);
-    }
-
-    /// The failure screen leads with resuming when there is something to
-    /// resume, and does not offer it when there is not.
-    #[test]
-    fn the_failed_screen_offers_resume_only_when_it_can() {
-        let mut app = Audiobook {
-            stage: Stage::Failed,
-            trouble: Some((StandardState::Error, "The request failed.".to_owned())),
-            ..Audiobook::default()
-        };
-        let drawn = format!("{:?}", app.screen(&kobo_sdk::Context::default()));
-        assert!(!drawn.contains("Resume"), "{drawn}");
-        app.parts = vec!["one".to_owned()];
-        let drawn = format!("{:?}", app.screen(&kobo_sdk::Context::default()));
-        assert!(drawn.contains("Resume"), "{drawn}");
-        assert!(drawn.contains("Start over"), "{drawn}");
-        assert!(app
-            .screen(&Context::default())
-            .validate(&CLARA_BW_METRICS)
-            .is_empty());
-    }
-
-    /// An empty shelf is the moment the sample is for: no accounts, no
-    /// network, just proof the player works.
-    #[test]
-    fn an_empty_library_offers_the_free_sample() {
-        let mut app = Audiobook {
-            library: Some(Vec::new()),
-            ..Audiobook::default()
-        };
-        let drawn = format!("{:?}", app.screen(&kobo_sdk::Context::default()));
-        assert!(drawn.contains("Play the sample"), "{drawn}");
-        assert!(app
-            .screen(&Context::default())
-            .validate(&CLARA_BW_METRICS)
-            .is_empty());
-        // A shelf with books on it does not need the offer; the sample is
-        // there once saved, listed like any other book.
-        app.titles = vec![(SAMPLE_NAME.to_owned(), SAMPLE_TITLE.to_owned())];
-        app.shelved(
-            &kobo_sdk::AppRunner::new(Audiobook::default()).context(),
-            &[(SAMPLE_NAME.to_owned(), 900_000)],
-        );
-        let drawn = format!("{:?}", app.screen(&kobo_sdk::Context::default()));
-        assert!(drawn.contains(SAMPLE_TITLE), "{drawn}");
-    }
-
-    /// The sample plays like any book once it is on the shelf, and saves
-    /// itself through the same upload when it is not.
-    #[test]
-    fn the_sample_saves_then_plays_like_any_book() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            library: Some(Vec::new()),
-            ..Audiobook::default()
-        };
-        app.play_sample(&mut context);
-        assert_eq!(app.stage, Stage::Save);
-        assert!(app.upload.is_some(), "the sample is being saved first");
-        assert!(app.saving_sample);
-        let mut saved = Audiobook {
-            library: Some(vec![Saved {
-                name: SAMPLE_NAME.to_owned(),
-                title: SAMPLE_TITLE.to_owned(),
-                bytes: 900_000,
-            }]),
-            ..Audiobook::default()
-        };
-        saved.play_sample(&mut context);
-        assert_eq!(saved.stage, Stage::Player);
-        assert!(saved.upload.is_none(), "no second save for a saved sample");
-    }
-
-    /// A key that goes missing before the script exists gets the keys
-    /// screen; one that goes missing during narration keeps the resume and
-    /// names the command.
-    #[test]
-    fn a_key_missing_part_way_names_its_command_and_keeps_what_was_made() {
-        let runner = kobo_sdk::AppRunner::new(Audiobook::default());
-        let mut context = runner.context();
-        let mut app = Audiobook {
-            stage: Stage::Research,
-            ..Audiobook::default()
-        };
-        app.task = context.spawn(pipeline::research("the moon"));
-        let task = app.task.expect("research in flight");
-        app.on_task(
-            &mut context,
-            task,
-            kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential),
-        );
-        assert_eq!(app.stage, Stage::Keys);
-        assert_eq!(app.missing, vec!["exa"]);
-
-        let mut app = Audiobook {
-            stage: Stage::Narrate,
-            title: "The Moon".to_owned(),
-            parts: vec!["one".to_owned(), "two".to_owned()],
-            ..Audiobook::default()
-        };
-        app.task = context.spawn(pipeline::speech("one", pipeline::Language::default()));
-        let task = app.task.expect("narration in flight");
-        app.on_task(
-            &mut context,
-            task,
-            kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::NoCredential),
-        );
-        assert_eq!(app.stage, Stage::Failed);
-        let (state, advice) = app.trouble.clone().expect("a failure was recorded");
-        assert_eq!(state, StandardState::PermissionDenied);
-        assert!(advice.contains("kobo secret set elevenlabs"), "{advice}");
-        assert!(format!("{:?}", app.screen(&Context::default())).contains("Resume"));
-    }
-
-    /// A dropped connection used to leave "Try another topic" as the only
-    /// way on, which threw the typed topic away.
-    #[test]
-    fn a_dropped_connection_offers_to_try_the_same_topic_again() {
-        let mut runner = kobo_sdk::AppRunner::new(Audiobook {
-            stage: Stage::Research,
-            topic: "the moon".to_owned(),
-            ..Audiobook::default()
-        });
-        runner.app_mut().fail_task(kobo_sdk::TaskError::Offline);
-        let drawn = format!("{:?}", runner.app().screen(&Context::default()));
-        assert!(drawn.contains("Try again"), "{drawn}");
-        assert!(drawn.contains("New topic"), "{drawn}");
-        assert!(!drawn.contains("Try another topic"), "{drawn}");
-        runner.action(action_id(CHECK));
-        assert_eq!(runner.app().stage, Stage::Setup);
-        assert_eq!(runner.app().topic, "the moon");
-    }
-
-    /// The resume button stays one short word, and the message says where
-    /// it carries on.
-    #[test]
-    fn a_failure_with_something_to_resume_says_which_part_it_carries_on_with() {
-        let app = Audiobook {
-            stage: Stage::Failed,
-            title: "A researched history of the night sky and the people who mapped it".to_owned(),
-            parts: vec!["one".to_owned(), "two".to_owned(), "three".to_owned()],
-            next_part: 1,
-            trouble: Some((
-                StandardState::Error,
-                "ElevenLabs did not answer.".to_owned(),
-            )),
-            ..Audiobook::default()
-        };
-        let drawn = format!("{:?}", app.screen(&Context::default()));
-        assert!(drawn.contains("carries on from part 2 of 3"), "{drawn}");
-        assert!(!drawn.contains("Resume 'A researched"), "{drawn}");
-    }
-
-    /// A refused key names the provider and the command, and a refusal that
-    /// is not about the key never sends the owner to check an address these
-    /// fixed endpoints do not have.
-    #[test]
-    fn a_provider_refusal_names_the_provider_and_never_a_server_address() {
-        let mut app = Audiobook {
-            stage: Stage::Narrate,
-            ..Audiobook::default()
-        };
-        app.fail_task(kobo_sdk::TaskError::Unauthorized);
-        let (_, advice) = app.trouble.clone().expect("a failure");
-        assert!(advice.starts_with("ElevenLabs"), "{advice}");
-        assert!(advice.contains("kobo secret set elevenlabs"), "{advice}");
-        let mut app = Audiobook {
-            stage: Stage::Write,
-            ..Audiobook::default()
-        };
-        app.fail_task(kobo_sdk::TaskError::NotFound);
-        let (_, advice) = app.trouble.clone().expect("a failure");
-        assert!(advice.starts_with("OpenAI"), "{advice}");
-        assert!(!advice.contains("address"), "{advice}");
-    }
-}
+mod tests;
 
 #[cfg(test)]
 mod compose_tests;

@@ -606,6 +606,89 @@ export function releaseLockPackageIdentities(
     : changedLockPackageIdentities(previousSource, currentSource);
 }
 
+// A package that left the lockfile has no consumers in the current metadata,
+// so nothing there can say what it affected. The previous lockfile can: its
+// dependency lists name whoever depended on the package, up to the workspace
+// members that compiled it in, and those are the identities the change
+// belongs to. A removed package no workspace member reached, or one that was
+// itself a workspace member, is left as it was, which fails closed below.
+export function lockChangesResolvedAgainstBase(previousSource, lockChanges, currentPackageNames) {
+  const parts = lockfileParts(previousSource);
+  const packages = (parts?.packages || []).map(packageBlock => {
+    const parsed = lockPackage(packageBlock);
+    const list = /^dependencies = \[\n([\s\S]*?)^\]$/m.exec(packageBlock)?.[1] || "";
+    const dependencies = list
+      .split("\n")
+      .map(line => /^\s*"([^"]+)"/.exec(line)?.[1])
+      .filter(Boolean);
+    return {
+      identity: packageIdentity(parsed.name, parsed.version, parsed.source),
+      name: parsed.name,
+      version: /^version = "([^"]+)"$/m.exec(packageBlock)?.[1],
+      source: parsed.source,
+      workspace: !parsed.source,
+      dependencies
+    };
+  });
+  const byName = new Map();
+  for (const package_ of packages) {
+    const named = byName.get(package_.name) || [];
+    named.push(package_);
+    byName.set(package_.name, named);
+  }
+  // A lockfile names a dependency by name alone when one resolution of it
+  // exists, by name and version when several do, and with its source when
+  // two share a version. Each form is matched against exactly what it says,
+  // so two resolutions of one crate keep their own dependents.
+  const resolveDependency = reference => {
+    const [name, version, ...rest] = reference.split(" ");
+    const source = rest.join(" ").replace(/^\(|\)$/g, "");
+    return (byName.get(name) || []).filter(
+      candidate =>
+        (version === undefined || candidate.version === version) &&
+        (source === "" || candidate.source === source)
+    );
+  };
+  const dependents = new Map();
+  for (const package_ of packages) {
+    for (const reference of package_.dependencies) {
+      for (const dependency of resolveDependency(reference)) {
+        const set = dependents.get(dependency.identity) || new Set();
+        set.add(package_.identity);
+        dependents.set(dependency.identity, set);
+      }
+    }
+  }
+  const byIdentity = new Map(packages.map(package_ => [package_.identity, package_]));
+  const resolved = new Set();
+  for (const identity of lockChanges) {
+    const [name] = JSON.parse(identity);
+    if (currentPackageNames.has(name)) {
+      resolved.add(identity);
+      continue;
+    }
+    const reached = new Set();
+    const pending = [identity];
+    while (pending.length > 0) {
+      const next = pending.pop();
+      for (const dependent of dependents.get(next) || []) {
+        if (reached.has(dependent)) continue;
+        reached.add(dependent);
+        pending.push(dependent);
+      }
+    }
+    const members = [...reached].filter(dependent => byIdentity.get(dependent)?.workspace);
+    if (members.length === 0 || byIdentity.get(identity)?.workspace) {
+      resolved.add(identity);
+      continue;
+    }
+    for (const member of members) {
+      resolved.add(packageIdentity(byIdentity.get(member).name, "<workspace-version>", ""));
+    }
+  }
+  return resolved;
+}
+
 export function registeredConsumers(
   metadata,
   registeredPackages,
@@ -855,12 +938,20 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
   }
 
   if (changedPaths.includes("Cargo.lock")) {
+    const previousLock = command("git", ["show", `${baseRevision}:Cargo.lock`]);
     const lockChanges = releaseLockPackageIdentities(
-      command("git", ["show", `${baseRevision}:Cargo.lock`]),
+      previousLock,
       readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8"),
       compatiblePaths
     );
-    for (const identity of lockChanges) changedIdentities.add(identity);
+    const currentPackageNames = new Set(metadata.packages.map(package_ => package_.name));
+    for (const identity of lockChangesResolvedAgainstBase(
+      previousLock,
+      lockChanges,
+      currentPackageNames
+    )) {
+      changedIdentities.add(identity);
+    }
   }
 
   return {

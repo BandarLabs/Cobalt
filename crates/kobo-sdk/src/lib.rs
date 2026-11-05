@@ -21,15 +21,16 @@ mod selected_grid_tests;
 mod suspend;
 
 pub use kobo_protocol::{
-    is_valid_key, AppInfo, AppLinkState, AudioPlaybackState, AudioSource, BatteryDetail,
-    BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason, DeviceError, DeviceIdentity,
-    DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header, LibraryEntry, Lifecycle, LogLevel,
-    Message, RemoteInstallOutcome, SecretHeader, ShellError, ShellEvent, ShellRequest, StoreError,
-    StoreRequest, StoreResult, StreamError, Task, TaskError, TaskId, TaskOutcome, UpdateChannel,
-    UpdateMethod, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS, MAX_FONT_BYTES, MAX_HEADERS,
-    MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES, MAX_LOOKUP_WORD_BYTES,
-    MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK,
-    MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
+    is_valid_key, AppInfo, AppLinkState, AudioChapter, AudioDetail, AudioEntry, AudioPlaybackState,
+    AudioSource, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Credential, DenyReason,
+    DeviceError, DeviceIdentity, DeviceRequest, DeviceResult, DictionaryEntry, Frame, Header,
+    LibraryEntry, Lifecycle, LogLevel, Message, RemoteInstallOutcome, SecretHeader, ShellError,
+    ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError,
+    TaskId, TaskOutcome, UpdateChannel, UpdateMethod, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS,
+    MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES,
+    MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
+    MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
+    MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_protocol::{SecretTarget, TextOutcome, TEXT_ENTRY_VERSION};
 pub use kobo_ui::QuoteRole;
@@ -2698,6 +2699,31 @@ impl Device<'_> {
         }
         self.load_audio(AudioSource::Stream(url));
         true
+    }
+
+    /// Lists the audiobooks on the reader, answered with
+    /// [`DeviceResult::AudioLibrary`]: every file the runtime can play, and
+    /// every folder of files that reads as one book.
+    pub fn list_audio(&mut self) {
+        self.request(DeviceRequest::ListAudio);
+    }
+
+    /// Prepares an audiobook from the listing, by the identifier it gave.
+    pub fn load_library_audio(&mut self, id: impl Into<String>) {
+        self.load_audio(AudioSource::Library(id.into()));
+    }
+
+    /// Asks what the prepared source says about itself, answered with
+    /// [`DeviceResult::AudioDetail`] once a load has finished.
+    pub fn read_audio_detail(&mut self) {
+        self.request(DeviceRequest::ReadAudioDetail);
+    }
+
+    /// Plays the prepared source at `percent` of its own speed, pitch
+    /// unchanged. The runtime clamps to what sounds acceptable, between half
+    /// and three times.
+    pub fn set_audio_speed(&mut self, percent: u16) {
+        self.request(DeviceRequest::SetAudioSpeed { percent });
     }
 
     /// Starts or resumes the prepared audio source.

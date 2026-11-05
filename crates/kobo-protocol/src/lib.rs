@@ -130,6 +130,20 @@ pub const ACCENT_VERSION: u8 = 17;
 /// quotation, which is how those runtimes drew it.
 pub const QUIET_TYPE_VERSION: u8 = 17;
 
+/// The protocol an application must speak to list the audiobooks on the
+/// reader, play one from that list, read what it says about itself and
+/// change its speed: [`DeviceRequest::ListAudio`], a library
+/// [`AudioSource`], [`DeviceRequest::ReadAudioDetail`] and
+/// [`DeviceRequest::SetAudioSpeed`], answered with
+/// [`DeviceResult::AudioLibrary`] and [`DeviceResult::AudioDetail`].
+///
+/// All of them travel on tags an older runtime has no reading for, so an
+/// older runtime refuses the frame rather than misreading it, and the
+/// version itself did not move: the Store floors an application that
+/// declares `audio` at the first release carrying them, which is the
+/// change that matters to an owner.
+pub const AUDIOBOOK_VERSION: u8 = 17;
+
 pub const VERSION: u8 = 17;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
@@ -1402,6 +1416,20 @@ pub enum DeviceRequest {
     ListLibrary,
     /// Read one library document by the identifier a listing returned.
     ReadLibrary { id: String },
+    /// List the audiobooks on the reader: every file the runtime can play,
+    /// and every folder of them that reads as one book, under the same
+    /// roots the library is listed from. Requires [`AUDIOBOOK_VERSION`].
+    ListAudio,
+    /// Ask what the prepared audio source says about itself: its title,
+    /// author, chapters and cover. Answered with [`DeviceResult::AudioDetail`]
+    /// once a load has finished, and refused before. Requires
+    /// [`AUDIOBOOK_VERSION`].
+    ReadAudioDetail,
+    /// Play the prepared source faster or slower without changing its pitch,
+    /// as a percentage of its own speed. The runtime clamps to what sounds
+    /// acceptable and the next audio reading says what it kept. Requires
+    /// [`AUDIOBOOK_VERSION`].
+    SetAudioSpeed { percent: u16 },
     /// Ask which of these runtime-owned credentials are installed.
     ///
     /// Presence only, never values. An application that spends several
@@ -1849,6 +1877,15 @@ pub enum DeviceResult {
     /// The bytes of one library document, or empty when it is listed but not
     /// on the card (a Kobo Store title that has not been downloaded).
     LibraryDocument { id: String, bytes: Vec<u8> },
+    /// The audiobooks on the reader, and whether a bound cut the walk short.
+    /// Requires [`AUDIOBOOK_VERSION`].
+    AudioLibrary {
+        entries: Vec<AudioEntry>,
+        truncated: bool,
+    },
+    /// What the prepared audio source says about itself. Requires
+    /// [`AUDIOBOOK_VERSION`].
+    AudioDetail(AudioDetail),
     /// The subset of a [`DeviceRequest::CheckSecrets`] list that is
     /// installed on this reader. Names only: a stored value never
     /// leaves the runtime, and an absent name says so by omission.
@@ -1860,6 +1897,21 @@ pub enum DeviceResult {
 
 /// The largest library listing one result may carry.
 pub const MAX_LIBRARY_ENTRIES: usize = 400;
+/// How many audiobooks one listing may name. A collection past this is
+/// listed as far as this and said to be cut short.
+pub const MAX_AUDIO_ENTRIES: usize = 2_000;
+/// How many chapters one book may describe.
+pub const MAX_AUDIO_CHAPTERS: usize = 2_000;
+/// The longest title, author, narrator or album a book may describe, in
+/// bytes.
+pub const MAX_AUDIO_TEXT_LEN: usize = 256;
+/// The longest chapter title, in bytes.
+pub const MAX_AUDIO_CHAPTER_TITLE_LEN: usize = 160;
+/// The largest cover a book may carry, as it was embedded: JPEG or PNG.
+pub const MAX_AUDIO_COVER_BYTES: usize = 2 * 1024 * 1024;
+/// The kinds an audiobook entry may be: MP3, MPEG-4, Ogg Vorbis, Ogg Opus,
+/// FLAC, WAV and the firmware's `.mp3z` archive.
+pub const AUDIO_KINDS: [u8; 7] = [1, 2, 3, 4, 5, 6, 7];
 /// The largest identifier a library entry may use.
 pub const MAX_LIBRARY_ID_LEN: usize = 256;
 /// The largest title a shelf tile may carry.
@@ -1890,6 +1942,73 @@ impl LibraryEntry {
     pub const fn is_readable(&self) -> bool {
         self.on_card && self.kind != 5 && self.kind != 6
     }
+}
+
+/// One audiobook the owner has on the reader.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioEntry {
+    /// What to pass back as [`AudioSource::Library`] to play it. Opaque, and
+    /// stable across listings.
+    pub id: String,
+    /// The file or folder name without its suffix: the best title there is
+    /// without opening the book, which a listing never does.
+    pub title: String,
+    /// 1 MP3, 2 MPEG-4 (M4A, M4B), 3 Ogg Vorbis, 4 Ogg Opus, 5 FLAC, 6 WAV,
+    /// 7 MP3Z. A folder of files is the kind of its first file.
+    pub kind: u8,
+    /// How many files make up the book: one for a file, and the folder's
+    /// count for a folder.
+    pub parts: u16,
+    pub bytes: u64,
+}
+
+/// One chapter of a described audiobook.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioChapter {
+    pub start_ms: u32,
+    pub title: String,
+}
+
+/// What a prepared audio source says about itself. Every text is empty
+/// when the book does not say.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AudioDetail {
+    pub title: String,
+    pub author: String,
+    pub narrator: String,
+    pub album: String,
+    /// The codec, rate and channels as a short line, for a facts row.
+    pub format: String,
+    pub duration_ms: u32,
+    /// In order of start. Empty for a book that has none.
+    pub chapters: Vec<AudioChapter>,
+    /// The cover as it was embedded, JPEG or PNG, or empty.
+    pub cover: Vec<u8>,
+}
+
+impl AudioDetail {
+    /// Whether every field is within what the wire carries.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        [&self.title, &self.author, &self.narrator, &self.album]
+            .iter()
+            .all(|text| text.len() <= MAX_AUDIO_TEXT_LEN)
+            && self.format.len() <= MAX_AUDIO_TEXT_LEN
+            && self.chapters.len() <= MAX_AUDIO_CHAPTERS
+            && self
+                .chapters
+                .iter()
+                .all(|chapter| chapter.title.len() <= MAX_AUDIO_CHAPTER_TITLE_LEN)
+            && self.cover.len() <= MAX_AUDIO_COVER_BYTES
+    }
+}
+
+fn valid_audio_entry(entry: &AudioEntry) -> bool {
+    valid_library_id(&entry.id)
+        && !entry.title.is_empty()
+        && entry.title.len() <= MAX_LIBRARY_TITLE_LEN
+        && AUDIO_KINDS.contains(&entry.kind)
+        && entry.parts > 0
 }
 
 /// Application metadata safe to show to an unprivileged launcher or Store UI.
@@ -1974,11 +2093,16 @@ fn numeric_version(version: &str) -> Option<Vec<u64>> {
 /// Shelf names are resolved inside the calling application's own shelf. A
 /// stream is always HTTPS and carries no credentials, so an application can
 /// neither escape its data root nor turn the player into a secret-bearing
-/// request primitive.
+/// request primitive. A library identifier is one a
+/// [`DeviceResult::AudioLibrary`] listing handed out, so an application plays
+/// what the owner put on the reader without ever naming a path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AudioSource {
     Shelf(String),
     Stream(String),
+    /// An audiobook the runtime listed, by the identifier it gave it.
+    /// Requires [`AUDIOBOOK_VERSION`].
+    Library(String),
 }
 
 /// Observable state of the runtime-owned audio transport.
@@ -3101,24 +3225,28 @@ fn encode_device_request(
         }
         DeviceRequest::DisconnectWifi => output.push(21),
         DeviceRequest::ReadAudio => output.push(22),
-        DeviceRequest::LoadAudio { source } => {
-            output.push(23);
-            match source {
-                AudioSource::Shelf(name) if is_valid_key(name) => {
-                    output.push(1);
-                    push_string(output, name)?;
-                }
-                AudioSource::Stream(url)
-                    if url.starts_with("https://") && url.len() <= MAX_URL_LEN =>
-                {
-                    output.push(2);
-                    push_string(output, url)?;
-                }
-                AudioSource::Shelf(_) | AudioSource::Stream(_) => {
-                    return Err(ProtocolError::InvalidValue("audio source"));
-                }
+        DeviceRequest::LoadAudio { source } => match source {
+            AudioSource::Shelf(name) if is_valid_key(name) => {
+                output.push(23);
+                output.push(1);
+                push_string(output, name)?;
             }
-        }
+            AudioSource::Stream(url) if url.starts_with("https://") && url.len() <= MAX_URL_LEN => {
+                output.push(23);
+                output.push(2);
+                push_string(output, url)?;
+            }
+            // A tag of its own rather than a third source byte under tag 23,
+            // so a runtime from before audiobooks refuses the frame outright
+            // instead of reading an identifier as something it is not.
+            AudioSource::Library(id) if valid_library_id(id) => {
+                output.push(54);
+                push_string(output, id)?;
+            }
+            AudioSource::Shelf(_) | AudioSource::Stream(_) | AudioSource::Library(_) => {
+                return Err(ProtocolError::InvalidValue("audio source"));
+            }
+        },
         DeviceRequest::PlayAudio => output.push(24),
         DeviceRequest::PauseAudio => output.push(25),
         DeviceRequest::SeekAudio { position_ms } => {
@@ -3215,6 +3343,12 @@ fn encode_device_request(
         }
         DeviceRequest::ReadLibrary { .. } => {
             return Err(ProtocolError::InvalidValue("library id"));
+        }
+        DeviceRequest::ListAudio => output.push(53),
+        DeviceRequest::ReadAudioDetail => output.push(55),
+        DeviceRequest::SetAudioSpeed { percent } => {
+            output.push(56);
+            push_u16(output, *percent);
         }
         DeviceRequest::CheckSecrets { names } if !names.is_empty() && valid_secret_names(names) => {
             output.push(51);
@@ -3641,6 +3775,20 @@ fn decode_device_request(
             Ok(DeviceRequest::ReadLibrary { id })
         }
         52 if version >= TEXT_ENTRY_VERSION => decode_text_request(reader),
+        53 if version >= AUDIOBOOK_VERSION => Ok(DeviceRequest::ListAudio),
+        54 if version >= AUDIOBOOK_VERSION => {
+            let id = reader.string()?;
+            if !valid_library_id(&id) {
+                return Err(ProtocolError::InvalidValue("audio source"));
+            }
+            Ok(DeviceRequest::LoadAudio {
+                source: AudioSource::Library(id),
+            })
+        }
+        55 if version >= AUDIOBOOK_VERSION => Ok(DeviceRequest::ReadAudioDetail),
+        56 if version >= AUDIOBOOK_VERSION => Ok(DeviceRequest::SetAudioSpeed {
+            percent: reader.u16()?,
+        }),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -3903,6 +4051,53 @@ fn encode_device_result(
             );
             output.extend_from_slice(bytes);
         }
+        DeviceResult::AudioLibrary { entries, truncated } => {
+            if entries.len() > MAX_AUDIO_ENTRIES || !entries.iter().all(valid_audio_entry) {
+                return Err(ProtocolError::InvalidValue("audio listing"));
+            }
+            output.push(23);
+            push_u16(
+                output,
+                u16::try_from(entries.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            output.push(u8::from(*truncated));
+            for entry in entries {
+                push_string(output, &entry.id)?;
+                push_string(output, &entry.title)?;
+                output.push(entry.kind);
+                push_u16(output, entry.parts);
+                push_u64(output, entry.bytes);
+            }
+        }
+        DeviceResult::AudioDetail(detail) => {
+            if !detail.is_valid() {
+                return Err(ProtocolError::InvalidValue("audio detail"));
+            }
+            output.push(24);
+            for text in [
+                &detail.title,
+                &detail.author,
+                &detail.narrator,
+                &detail.album,
+                &detail.format,
+            ] {
+                push_string(output, text)?;
+            }
+            push_u32(output, detail.duration_ms);
+            push_u16(
+                output,
+                u16::try_from(detail.chapters.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            for chapter in &detail.chapters {
+                push_u32(output, chapter.start_ms);
+                push_string(output, &chapter.title)?;
+            }
+            push_u32(
+                output,
+                u32::try_from(detail.cover.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            output.extend_from_slice(&detail.cover);
+        }
         DeviceResult::Secrets { present } if valid_secret_names(present) => {
             output.push(21);
             output.push(u8::try_from(present.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
@@ -4153,6 +4348,8 @@ fn decode_device_result(
         }
         19 => decode_library_result(reader),
         20 => decode_library_document(reader),
+        23 if version >= AUDIOBOOK_VERSION => decode_audio_library(reader),
+        24 if version >= AUDIOBOOK_VERSION => decode_audio_detail(reader),
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
 }
@@ -4222,6 +4419,68 @@ fn decode_library_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoc
         entries.push(decode_library_entry(reader)?);
     }
     Ok(DeviceResult::Library { entries, truncated })
+}
+
+fn decode_audio_library(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let count = usize::from(reader.u16()?);
+    if count > MAX_AUDIO_ENTRIES {
+        return Err(ProtocolError::InvalidValue("audio listing"));
+    }
+    let truncated = read_boolean(reader, "audio listing truncated")?;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let entry = AudioEntry {
+            id: reader.string()?,
+            title: reader.string()?,
+            kind: reader.u8()?,
+            parts: reader.u16()?,
+            bytes: reader.u64()?,
+        };
+        if !valid_audio_entry(&entry) {
+            return Err(ProtocolError::InvalidValue("audio entry"));
+        }
+        entries.push(entry);
+    }
+    Ok(DeviceResult::AudioLibrary { entries, truncated })
+}
+
+fn decode_audio_detail(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let title = reader.string()?;
+    let author = reader.string()?;
+    let narrator = reader.string()?;
+    let album = reader.string()?;
+    let format = reader.string()?;
+    let duration_ms = reader.u32()?;
+    let count = usize::from(reader.u16()?);
+    if count > MAX_AUDIO_CHAPTERS {
+        return Err(ProtocolError::InvalidValue("audio chapters"));
+    }
+    let mut chapters = Vec::with_capacity(count);
+    for _ in 0..count {
+        chapters.push(AudioChapter {
+            start_ms: reader.u32()?,
+            title: reader.string()?,
+        });
+    }
+    let length = usize::try_from(reader.u32()?).unwrap_or(usize::MAX);
+    if length > MAX_AUDIO_COVER_BYTES {
+        return Err(ProtocolError::InvalidValue("audio cover"));
+    }
+    let cover = reader.take(length)?.to_vec();
+    let detail = AudioDetail {
+        title,
+        author,
+        narrator,
+        album,
+        format,
+        duration_ms,
+        chapters,
+        cover,
+    };
+    if !detail.is_valid() {
+        return Err(ProtocolError::InvalidValue("audio detail"));
+    }
+    Ok(DeviceResult::AudioDetail(detail))
 }
 
 fn decode_library_document(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
