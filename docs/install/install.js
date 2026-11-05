@@ -487,6 +487,10 @@ function renderInstalled() {
       button.type = "button";
       button.className = "btn small";
       button.textContent = "Remove";
+      // Where a failure is reported, beside the button that can try again.
+      const why = document.createElement("span");
+      why.className = "bad";
+      why.hidden = true;
       // Two clicks, the second naming what goes, rather than a dialog. A
       // removal keeps the application's data and the Store can put the
       // application back, so a second look is proportionate and a modal is
@@ -497,16 +501,17 @@ function renderInstalled() {
           button.textContent = `Remove ${name.textContent}`;
           return;
         }
-        await removeApp(id, row, name.textContent, button);
+        await removeApp(id, row, name.textContent, button, why);
       });
-      row.append(button);
+      row.append(button, why);
     }
     installedList.append(row);
   }
 }
 
-async function removeApp(id, row, name, button) {
+async function removeApp(id, row, name, button, why) {
   button.disabled = true;
+  why.hidden = true;
   try {
     const adds = await drive.getDirectoryHandle(MENU_FOLDER);
     const cobalt = await adds.getDirectoryHandle(INSTALL_FOLDER);
@@ -520,7 +525,15 @@ async function removeApp(id, row, name, button) {
     // its next look, which is nothing having happened.
     await writeFile(apps, `${id}.${UNINSTALLED_SUFFIX}`, new TextEncoder().encode("committed\n"));
     for (const entry of [id, `${id}.prev`, `${id}.next`, `${id}.removed`]) {
-      try { await apps.removeEntry(entry, { recursive: true }); } catch { /* absent */ }
+      try {
+        await apps.removeEntry(entry, { recursive: true });
+      } catch (error) {
+        // Absent is the usual case for the staged copies. Anything else, a
+        // folder the system would not let go of or a drive that stopped
+        // answering, is a removal that did not happen, not one to report as
+        // done.
+        if (!error || error.name !== "NotFoundError") throw error;
+      }
     }
     installedApps.delete(id);
     row.className = "gone";
@@ -528,13 +541,20 @@ async function removeApp(id, row, name, button) {
     row.textContent = `${name} removed. Its data stays on the reader.`;
     markCatalogueRow(id);
   } catch (error) {
+    // The application stays listed as installed, which is what the reader
+    // still holds. The record written first is left where it is: the
+    // runtime settles it at its next look either way (kobod's app_store,
+    // recover_interrupted_transaction). Beside a folder whose signed
+    // manifest still verifies, the record is cleared and the application
+    // stays installed. Beside a folder the deletion got part way through,
+    // the removal is finished. Taking the record away here would leave that
+    // second case as an unrecorded, broken application, which is the one
+    // state the runtime does not repair.
     button.disabled = false;
     delete button.dataset.armed;
     button.textContent = "Remove";
-    const why = document.createElement("span");
-    why.className = "bad";
     why.textContent = `${name} could not be removed: ${error.message || error.name || "no reason given"}.`;
-    row.append(why);
+    why.hidden = false;
   }
 }
 

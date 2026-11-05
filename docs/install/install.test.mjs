@@ -46,7 +46,7 @@ const profiles = [
 // What a test wants to happen in the middle of the page's own work: a call
 // made as a file is written, so the page can be acted on while a write is in
 // flight. Cleared by the test that set it.
-const hooks = { onWrite: null };
+const hooks = { onWrite: null, failRemoval: null };
 
 // Exercise the shipped script and its registered click handlers without USB
 // hardware. Handles retain writes in memory and reject missing entries like
@@ -88,6 +88,7 @@ function directory(name, contents = {}) {
     },
     async removeEntry(key) {
       if (!entries.has(key)) throw new DOMException(key, "NotFoundError");
+      if (hooks.failRemoval && hooks.failRemoval.key === key) throw hooks.failRemoval.error;
       entries.delete(key);
     },
     has(key) { return entries.has(key); },
@@ -671,4 +672,36 @@ test("the write goes dark to channel changes and finishes from what it started w
   assert.equal(cobalt.has("state"), false);
   assert.equal(ui.node("#channel-stable").disabled, false);
   assert.equal(ui.node("#channel-beta").disabled, false);
+});
+
+test("a removal the system refuses is reported as not done, and the application stays listed", async () => {
+  const drive = reader({ ".adds": { cobalt: {
+    VERSION: "0.3.9\n", apps: { rss: { "manifest.json": "{}" }, "rss.prev": {} }
+  } } });
+  const ui = page(drive);
+  await ui.click("#pick");
+  const { row, remove } = ui.rows()[0];
+  hooks.failRemoval = { key: "rss", error: new DOMException("the folder is in use", "NoModificationAllowedError") };
+  await remove.handlers.click();
+  await remove.handlers.click();
+  hooks.failRemoval = null;
+
+  const apps = await (await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt")).getDirectoryHandle("apps");
+  assert.equal(apps.has("rss"), true);
+  assert.equal(apps.has("rss.prev"), true);
+  // The record is left for the runtime to settle against the folder it finds.
+  assert.equal(await textOf(apps, "rss.uninstalled"), "committed\n");
+  assert.deepEqual(Array.from(ui.evaluate("installedApps")), ["rss"]);
+  assert.equal(remove.disabled, false);
+  assert.equal(remove.innerHTML, "Remove");
+  assert.equal(row.children[2].hidden, false);
+  assert.match(row.children[2].innerHTML, /rss could not be removed: the folder is in use\./);
+  assert.doesNotMatch(row.innerHTML, /removed\. Its data/);
+
+  // Allowed the next time, the same button finishes the job.
+  await remove.handlers.click();
+  await remove.handlers.click();
+  assert.equal(apps.has("rss"), false);
+  assert.equal(apps.has("rss.prev"), false);
+  assert.match(row.innerHTML, /rss removed\. Its data stays on the reader\./);
 });
