@@ -166,11 +166,17 @@ model prefix.
 
 ## What will refuse to work until the profile is right
 
-All of it. `validate` returns `Rejected` on any mismatch, and developer write
-tools use `write_ready_profile`, which also requires an exact device code,
-serial prefix, firmware version, kernel release and completed attended
-evidence. A profile that is merely close is treated as a different device,
-because geometry alone does not prove identity.
+All of it. `validate` returns `Rejected` on any mismatch, and writes require
+an exact device code, serial prefix and kernel release, a firmware branch the
+profile was measured on, and completed attended evidence. A profile that is
+merely close is treated as a different device, because geometry alone does not
+prove identity.
+
+The owner-run tools, synthetic tap, touch probe, guardian and smoke run, use
+`attended_write_profile`, which sets aside only the firmware branch. They write
+beneath the stock reader, so the branch has no say in where a tap or a frame
+lands. A reader Kobo moves from 4.45 to 4.46 keeps working with them, while a
+different kernel or a 5.x firmware still refuses.
 
 When the owner accepts the untested-device notice, Cobalt waives two things
 only: an unmeasured firmware branch, and a panel no one has watched take a
@@ -180,10 +186,10 @@ is never waived, and firmware 5.x is always refused.
 The bounded `kobo smoke-display` operation is the only exception while evidence
 is being gathered. The HAL owns its fixed regions, waveform choices,
 restoration, and verification and never returns a candidate-capable display
-session to the caller. It may ignore only the evidence-pending blocker;
-geometry, framebuffer safety, and exact identity remain mandatory. Normal
-runtime display, guard, synthetic-tap, and exclusive touch-grab paths stay
-blocked until `write_ready` is reviewed and enabled.
+session to the caller. It may also ignore the evidence-pending blocker;
+geometry, framebuffer safety, and exact hardware identity remain mandatory.
+Normal runtime display, guard, synthetic-tap, and exclusive touch-grab paths
+stay blocked until `write_ready` is reviewed and enabled.
 
 ## Evidence for write-ready support
 

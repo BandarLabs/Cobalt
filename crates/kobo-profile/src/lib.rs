@@ -952,6 +952,40 @@ pub fn write_ready_profile(
     }
 }
 
+/// Returns the profile an owner-run tool may write through, which is
+/// [`write_ready_profile`] without its firmware branch.
+///
+/// The synthetic tap, the touch probe, the guardian and the bounded smoke run
+/// are started by someone holding the reader. They used to refuse it the
+/// moment Kobo moved it to a firmware branch no profile was measured on, while
+/// the Cobalt session on the same reader carried on after the owner accepted
+/// the untested-firmware notice. The tools were stricter than the product they
+/// exist to test, and the strictness bought nothing: a tap goes into the
+/// kernel's touch node beneath the stock reader, and a smoke frame into the
+/// framebuffer, so where either lands is decided by the panel, the digitiser
+/// and the driver. Those are what the device code, serial prefix and kernel
+/// release pin, and those stay exact.
+///
+/// A generation the reader cannot launch Cobalt on is not a branch and stays
+/// refused, as does a profile still waiting for its attended evidence.
+///
+/// # Errors
+///
+/// Returns every remaining blocker when no profile claims the device or the
+/// claiming profile disagrees with it on anything but the firmware branch.
+pub fn attended_write_profile(
+    snapshot: &DeviceSnapshot,
+) -> Result<&'static DeviceProfile, Vec<String>> {
+    let profile = identify_profile(snapshot)
+        .ok_or_else(|| vec!["no supported hardware profile matched this device".to_owned()])?;
+    let blockers = profile.attended_write_blockers(snapshot);
+    if blockers.is_empty() {
+        Ok(profile)
+    } else {
+        Err(blockers)
+    }
+}
+
 /// Picks the profile this device is, preferring identity over geometry.
 ///
 /// Two readers can expose the same framebuffer geometry. Clara Colour reports
@@ -1413,6 +1447,22 @@ impl DeviceProfile {
             .filter(|blocker| {
                 blocker.as_str() != WRITE_EVIDENCE_PENDING && !blocker.starts_with(FIRMWARE_BLOCKER)
             })
+            .collect()
+    }
+
+    /// The write blockers an owner-run tool still has to respect: everything
+    /// but an unmeasured firmware branch.
+    ///
+    /// See [`attended_write_profile`] for why the branch is the one thing
+    /// these tools set aside. The evidence-pending blocker is kept, because a
+    /// panel nobody has watched take a write is a question about the hardware,
+    /// and a tool is no better placed to answer it than the profile is.
+    #[must_use]
+    pub fn attended_write_blockers(&self, snapshot: &DeviceSnapshot) -> Vec<String> {
+        self.validate(snapshot)
+            .write_blockers
+            .into_iter()
+            .filter(|blocker| !blocker.starts_with(FIRMWARE_BLOCKER))
             .collect()
     }
 
@@ -3489,6 +3539,42 @@ mod tests {
         assert!(CLARA_BW_391
             .write_identity_blockers(&clara_bw_on_firmware("4.45.23792"))
             .is_empty());
+    }
+
+    #[test]
+    fn a_reader_moved_to_a_new_firmware_branch_stays_open_to_attended_tools() {
+        // Kobo moved the owner's Clara BW from 4.45 to 4.46 and the synthetic
+        // tap refused it, although nothing a tap depends on had changed.
+        let snapshot = clara_bw_on_firmware("4.46.23852");
+        assert!(super::write_ready_profile(&snapshot).is_err());
+        assert_eq!(
+            super::attended_write_profile(&snapshot).map(|profile| profile.id),
+            Ok(CLARA_BW_391.id)
+        );
+    }
+
+    #[test]
+    fn a_different_kernel_still_closes_attended_tools() {
+        let mut snapshot = clara_bw_on_firmware("4.46.23852");
+        snapshot.identity.kernel_release = Some("5.10.0".into());
+        let blockers = super::attended_write_profile(&snapshot)
+            .expect_err("the kernel is what tracks the driver a tap goes through");
+        assert!(
+            blockers.iter().any(|blocker| blocker.contains("kernel")),
+            "{blockers:?}"
+        );
+    }
+
+    #[test]
+    fn a_generation_cobalt_cannot_launch_on_still_closes_attended_tools() {
+        let blockers = super::attended_write_profile(&clara_bw_on_firmware("5.0.1"))
+            .expect_err("an unlaunchable generation is not a branch to set aside");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.starts_with(super::FIRMWARE_GENERATION_BLOCKER)),
+            "{blockers:?}"
+        );
     }
 
     #[test]

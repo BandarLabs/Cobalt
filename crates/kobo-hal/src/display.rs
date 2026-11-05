@@ -271,6 +271,9 @@ impl PanelWork {
 #[derive(Clone, Copy)]
 enum WritePolicy {
     ReadyOnly,
+    /// An owner-run tool such as the guardian, which may write on a firmware
+    /// branch nobody measured. See [`kobo_profile::attended_write_profile`].
+    Attended,
     AttendedCandidateValidation,
     /// Every blocker an informed owner is allowed to waive is waived.
     ///
@@ -338,7 +341,7 @@ impl DisplaySession {
             profile,
             snapshot,
             Path::new("/dev/fb0"),
-            WritePolicy::ReadyOnly,
+            WritePolicy::Attended,
         )
     }
 
@@ -402,7 +405,9 @@ impl DisplaySession {
         let mut blockers = report.write_blockers;
         match policy {
             WritePolicy::ReadyOnly => {}
+            WritePolicy::Attended => blockers = profile.attended_write_blockers(&snapshot),
             WritePolicy::AttendedCandidateValidation => {
+                blockers = profile.attended_write_blockers(&snapshot);
                 blockers.retain(|blocker| blocker != WRITE_EVIDENCE_PENDING);
             }
             WritePolicy::OwnerAccepted => blockers = profile.unwaivable_write_blockers(&snapshot),
