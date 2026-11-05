@@ -202,6 +202,41 @@ fn the_word_after_an_emphasised_one_starts_clear_of_its_lean() {
 }
 
 #[test]
+fn a_comma_after_an_emphasised_word_sits_against_it() {
+    // "its waistcoat-pocket, and": the lean is at the top of the letters, and
+    // a comma on the baseline was pushed off by it into what read as a space.
+    let text = "waistcoat-pocket, and";
+    let screen = Screen::new(
+        1,
+        vec![Node::RichText {
+            id: NodeId(1),
+            text: text.into(),
+            spans: vec![RichTextSpan {
+                start: 0,
+                end: 16,
+                presentation: TextPresentation {
+                    emphasis: true,
+                    ..TextPresentation::default()
+                },
+            }],
+            links: Vec::new(),
+            presentation: ParagraphPresentation::default(),
+            selection: None,
+            formulae: Vec::new(),
+        }],
+    )
+    .with_reading(true);
+    let layout = screen.layout();
+    let runs: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::RichText(_)))
+        .collect();
+    assert_eq!(runs[1].text_lines[0], ", and");
+    assert_eq!(runs[1].rect.x, runs[0].rect.x + runs[0].rect.width);
+}
+
+#[test]
 fn a_held_unicode_word_resolves_to_stable_document_offsets() {
     let screen = Screen::new(
         1,

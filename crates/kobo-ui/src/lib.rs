@@ -6545,8 +6545,13 @@ fn layout_node(
                     // next run where the upright word would have ended put the
                     // lean straight into the space after it, and "very
                     // remarkable" read as one word. The lean is given back
-                    // before whatever follows on the same line.
-                    if styled.emphasis && end < to {
+                    // before a space. Not before a comma or a stop: those sit
+                    // on the baseline, where the glyphs do not lean at all, and
+                    // the room read as a space before the comma.
+                    if styled.emphasis
+                        && end < to
+                        && text[end..to].starts_with(char::is_whitespace)
+                    {
                         run_x = run_x.saturating_add(emphasis_lean(prose));
                     }
                     cursor = end;
