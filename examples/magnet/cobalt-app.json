@@ -3,10 +3,10 @@
   "display_name": "Magnet",
   "short_label": "Magnet",
   "summary": "Find the hall sensor behind the bezel and watch it respond to a magnet.",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "glyph": "magnet",
   "capabilities": [
     "cover-sensor"
   ],
-  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar."
+  "release_notes": "The four readings line up in one column."
 }

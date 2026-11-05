@@ -4,8 +4,8 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.14",
-  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
+  "version": "0.1.15",
+  "release_notes": "A poem from PoetryDB fills each page before turning to the next, instead of two stanzas a page.",
   "glyph": "note",
   "capabilities": [
     "network"
