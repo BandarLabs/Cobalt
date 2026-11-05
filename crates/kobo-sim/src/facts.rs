@@ -61,6 +61,7 @@ pub fn facts(profile_id: &str) -> Option<Facts> {
         | "tolino-shine-5-t302"
         | "clara-bw-395"
         | "clara-colour-393"
+        | "clara-2e-386"
         | "elipsa-2e-389" => (false, Bands::Dual),
         "clara-hd-376" => (false, Bands::TwoPointFour),
         "libra-h2o-384" | "libra-2-388" => (true, Bands::TwoPointFour),

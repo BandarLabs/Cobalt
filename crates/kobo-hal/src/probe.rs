@@ -156,12 +156,17 @@ fn discover_touch_path(input_devices_path: &str) -> Option<PathBuf> {
     discover_touch_path_from(&content)
 }
 
+/// Input device names of the touch controllers Kobo readers have shipped with:
+/// Cypress on the Clara BW, Clara Colour, Clara HD and Libra H2O, Elan on the
+/// Elipsa 2E and Libras 2 and Colour, and `FocalTech` on the Clara 2E.
+const TOUCH_NAMES: &[&str] = &["cyttsp5_mt", "Elan Touchscreen", "fts_ts"];
+
 fn discover_touch_path_from(content: &str) -> Option<PathBuf> {
     content.split("\n\n").find_map(|block| {
         let name_matches = block
             .lines()
             .find(|line| line.starts_with("N: Name="))
-            .is_some_and(|line| line.contains("cyttsp5_mt") || line.contains("Elan Touchscreen"));
+            .is_some_and(|line| TOUCH_NAMES.iter().any(|name| line.contains(name)));
         if !name_matches {
             return None;
         }
@@ -294,6 +299,30 @@ H: Handlers=event0\n";
         assert_eq!(
             discover_touch_path_from(fixture).as_deref(),
             Some(Path::new("/dev/input/event2"))
+        );
+    }
+
+    /// The Clara 2E's devices in the order its kernel lists them, with the
+    /// `FocalTech` controller between two key devices.
+    #[test]
+    fn finds_focaltech_touch_handler() {
+        let fixture = "I: Bus=0019 Vendor=0001 Product=0001 Version=0100\n\
+N: Name=\"gpio-keys\"\n\
+H: Handlers=event0 \n\
+B: EV=100013\n\n\
+I: Bus=0018 Vendor=0000 Product=0000 Version=0000\n\
+N: Name=\"fts_ts\"\n\
+S: Sysfs=/devices/platform/soc/2100000.aips-bus/21a4000.i2c/i2c-1/1-0038/input/input1\n\
+H: Handlers=event1 \n\
+B: EV=b\n\
+B: ABS=6618000 0\n\n\
+I: Bus=0019 Vendor=0001 Product=0001 Version=0100\n\
+N: Name=\"bd71828-pwrkey\"\n\
+H: Handlers=kbd event2 \n\
+B: EV=13\n";
+        assert_eq!(
+            discover_touch_path_from(fixture).as_deref(),
+            Some(Path::new("/dev/input/event1"))
         );
     }
 }
