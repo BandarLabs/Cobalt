@@ -298,7 +298,10 @@ impl Default for Memory {
             bookmarks: BTreeSet::new(),
             highlights: BTreeSet::new(),
             annotations: BTreeMap::new(),
-            full_page: false,
+            // The page is the whole panel, as on the stock reader: the bar
+            // comes back with a touch at the top and goes with the next
+            // touch on the page. A reader who wants it pinned asks once.
+            full_page: true,
             next_annotation_id: 1,
             scale: TextScale::default(),
             light: None,
@@ -326,8 +329,10 @@ impl Memory {
         if let Some(light) = self.light {
             let _ = writeln!(text, "light {light}");
         }
-        if self.full_page {
-            let _ = writeln!(text, "full 1");
+        // Written only when it departs from the default, so a book saved
+        // before the default changed opens on the whole page too.
+        if !self.full_page {
+            let _ = writeln!(text, "full 0");
         }
         for bookmark in &self.bookmarks {
             let _ = writeln!(text, "mark {bookmark}");
@@ -643,7 +648,9 @@ impl Reader {
         // Nothing is reserved at the foot. A reading page has no bar, no page
         // number and no arrows under it: the sides of the page turn it, as on
         // the stock reader, and the place in the book is in the controls.
-        let mut area = metrics.prose_area_in(true, false, Face::Reading);
+        // Measured without the bar when the bar is out of sight: when it is
+        // called back it is drawn over the page rather than above it.
+        let mut area = metrics.prose_area_in(!self.memory.full_page, false, Face::Reading);
         if let Some(problem) = &self.problem {
             let notice = kobo_ui::with_text_scale(panel.text_scale, || {
                 kobo_ui::banner_height(problem, area.width, panel)
@@ -1440,6 +1447,8 @@ impl Reader {
     /// way it was left.
     fn turn_full_page_over(&mut self, panel: &DisplayMetrics) -> Outcome {
         self.memory.full_page = !self.memory.full_page;
+        // The page is a bar's height taller or shorter now.
+        self.repaginate(panel);
         self.set_chrome(Chrome::Hidden, panel);
         Outcome::Save
     }
@@ -4489,18 +4498,14 @@ mod tests {
     /// book has to be on it. The bar it replaced carried five things and
     /// dropped the sixth without saying so.
     #[test]
-    fn a_full_page_is_asked_for_from_the_panel_and_kept_with_the_book() {
-        // The bar is what teaches the middle-column tap, so it is never taken
-        // from a reader who has not gone looking for the setting themselves.
+    fn a_page_is_the_whole_panel_until_the_bar_is_pinned() {
+        // As on the stock reader, the bar is out of sight until a touch at
+        // the top calls it back, and the page is measured for the room it
+        // leaves.
         let mut reader = reader(40);
-        assert!(
-            !reader.memory().full_page,
-            "a reader who has asked for nothing keeps the bar"
-        );
-        assert!(
-            !reader.screen("Pride and Prejudice").auto_hide_top_bar,
-            "and the shell is not told to hide it"
-        );
+        assert!(reader.memory().full_page);
+        assert!(reader.screen("Pride and Prejudice").auto_hide_top_bar);
+        let whole = reader.page_count();
 
         reader.act(action::CONTROLS, &panel());
         let outcome = reader.act(action::FULL_PAGE, &panel());
@@ -4509,32 +4514,29 @@ mod tests {
             Outcome::Save,
             "the book has to reopen the way it was left, so it is written down"
         );
-        assert!(reader.memory().full_page);
+        assert!(!reader.memory().full_page);
         let screen = reader.screen("Pride and Prejudice");
-        assert!(screen.auto_hide_top_bar, "the page is the whole page now");
+        assert!(!screen.auto_hide_top_bar, "the bar is pinned now");
         assert!(
             screen.overlay.is_none(),
-            "the panel that changed the page cannot be what hides it"
+            "the panel that changed the page cannot be what covers it"
         );
-
-        // Written and read back by name, so a reader that has never heard of
-        // the setting simply skips the line rather than losing the record.
-        let carried = Memory::decode(&reader.memory().encode());
-        assert!(carried.full_page);
-
-        // This record belongs to one book, so the next book starts with the
-        // bar. That is the same place the type size is kept, and it is worth
-        // being plain about: setting it here does not set it everywhere.
         assert!(
-            !Memory::default().full_page,
-            "another book opens with its bar until it is asked otherwise"
+            reader.page_count() >= whole,
+            "a page under a pinned bar holds no more than a whole one"
         );
 
-        // And it is a setting, not a trap: the same control gives the bar back.
+        // Written and read back by name, and a book saved before the default
+        // changed opens on the whole page.
+        let carried = Memory::decode(&reader.memory().encode());
+        assert!(!carried.full_page);
+        assert!(Memory::decode(b"at 0\n").full_page);
+
+        // And it is a setting, not a trap: the same control hides it again.
         reader.act(action::CONTROLS, &panel());
         reader.act(action::FULL_PAGE, &panel());
-        assert!(!reader.memory().full_page);
-        assert!(!reader.screen("Pride and Prejudice").auto_hide_top_bar);
+        assert!(reader.memory().full_page);
+        assert!(reader.screen("Pride and Prejudice").auto_hide_top_bar);
     }
 
     #[test]

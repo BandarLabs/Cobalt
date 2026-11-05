@@ -2134,7 +2134,14 @@ impl Screen {
             .as_ref()
             .map_or(0, |status| layout_status_band(status, metrics, &mut layout));
         cursor = cursor.saturating_add(band);
-        if let Some(top_bar) = &self.top_bar {
+        // A bar the reader called back over a screen that hides it is drawn
+        // over the page, as the stock reader draws its own, rather than above
+        // it. The shell only leaves such a bar in place while it is shown, so
+        // its presence is the reveal. Pushed down, the page under it moved a
+        // bar's height for as long as the bar was up, and a page measured for
+        // the whole panel lost its last lines under the foot.
+        let bar_over_content = self.auto_hide_top_bar && band == 0;
+        if let Some(top_bar) = self.top_bar.as_ref().filter(|_| !bar_over_content) {
             cursor = layout_top_bar(top_bar, chrome, metrics, band, &mut layout);
             cursor = cursor.saturating_add(metrics.below_top_bar(prose));
         }
@@ -2265,6 +2272,10 @@ impl Screen {
             cursor = cursor.saturating_add(gap);
         }
 
+        if let Some(top_bar) = self.top_bar.as_ref().filter(|_| bar_over_content) {
+            // Last, so it is drawn over the page and a tap on it is the bar's.
+            layout_top_bar(top_bar, chrome, metrics, band, &mut layout);
+        }
         if let Some(nav_bar) = &self.nav_bar {
             layout_nav_bar(nav_bar, metrics, &mut layout);
         }

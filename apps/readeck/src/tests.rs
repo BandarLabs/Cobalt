@@ -555,8 +555,11 @@ fn screens_fit_clara_and_elipsa() {
         runner.action(ActionId::BACK);
         screens.push(last_screen(&runner.action(action_id("settings"))).clone());
         for screen in screens {
+            // With the chrome the runtime draws it with: a reading screen has
+            // no status band, and its bar, when called back, is drawn over it.
+            let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(false).status);
             let errors: Vec<_> = screen
-                .diagnostics(&metrics, &Chrome::measuring(false))
+                .diagnostics(&metrics, &chrome)
                 .issues
                 .into_iter()
                 .filter(|i| i.severity == DiagnosticSeverity::Error)
