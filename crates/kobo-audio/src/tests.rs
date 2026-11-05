@@ -270,6 +270,32 @@ fn a_folder_of_files_is_one_book_with_a_chapter_per_file() {
     assert!((2_600..=3_000).contains(&landed), "{landed}");
 }
 
+/// A part that ends exactly where a read ends must not read as the end of
+/// the book: the next read carries on into the next part.
+#[test]
+fn a_part_ending_on_a_read_boundary_hands_over_to_the_next() {
+    let mut book = Book::open_parts("Two Tones", &[fixture("pcm.wav"), fixture("lossless.flac")])
+        .expect("opens");
+    // pcm.wav is two seconds at 16 kHz: 32,000 frames exactly.
+    let mut out = Vec::new();
+    let mut first = 0;
+    while first < 32_000 {
+        let sound = book.read(32_000 - first, &mut out).expect("sound");
+        assert_eq!(sound.rate, 16_000);
+        assert!(sound.frames > 0, "the first part ran short at {first}");
+        first += sound.frames;
+    }
+    assert_eq!(first, 32_000);
+    out.clear();
+    let next = book.read(512, &mut out).expect("sound");
+    assert_eq!(
+        next.frames, 512,
+        "the second part is not the end of the book"
+    );
+    assert_eq!(next.rate, 44_100);
+    assert!(!book.is_finished());
+}
+
 #[test]
 fn an_mp3z_opens_as_its_members_in_name_order() {
     let member = std::fs::read(fixture("stereo.mp3")).expect("fixture");

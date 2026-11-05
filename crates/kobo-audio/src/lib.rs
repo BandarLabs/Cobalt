@@ -248,6 +248,17 @@ impl Tags {
 enum Source {
     File(PathBuf),
     Memory(Arc<Vec<u8>>),
+    /// One member of an archive, read out of it each time it is opened.
+    ///
+    /// Not extracted up front: an archive of many small, well-compressed
+    /// members expands to far more than the archive, and holding every
+    /// member at once is the whole of that cost before a note plays.
+    /// Opening a member costs reading the central directory again, which
+    /// is a few kilobytes.
+    Member {
+        archive: Arc<Vec<u8>>,
+        name: String,
+    },
 }
 
 impl Source {
@@ -257,6 +268,11 @@ impl Source {
                 .map(|file| Box::new(file) as Box<dyn MediaSource>)
                 .map_err(|_| Fault::Unreadable),
             Self::Memory(bytes) => Ok(Box::new(Cursor::new(Shared(Arc::clone(bytes))))),
+            Self::Member { archive, name } => {
+                let archive = kobo_doc::zip::Archive::open(archive).map_err(|_| Fault::Damaged)?;
+                let member = archive.read(name).map_err(|_| Fault::Damaged)?;
+                Ok(Box::new(Cursor::new(member)))
+            }
         }
     }
 
@@ -264,6 +280,9 @@ impl Source {
         match self {
             Self::File(path) => std::fs::metadata(path).map_or(0, |data| data.len()),
             Self::Memory(bytes) => u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            // The compressed size is near enough for a bit rate: a member is
+            // MP3, which does not compress.
+            Self::Member { archive, .. } => u64::try_from(archive.len()).unwrap_or(u64::MAX),
         }
     }
 }
@@ -376,7 +395,7 @@ impl Book {
         if paths.is_empty() || paths.len() > MAX_PARTS {
             return Err(Fault::Unsupported);
         }
-        let mut parts = Vec::with_capacity(paths.len());
+        let mut parts: Vec<Part> = Vec::with_capacity(paths.len());
         for path in paths {
             let name = path
                 .file_name()
@@ -386,7 +405,14 @@ impl Book {
             if container == Container::Mp3z {
                 return Err(Fault::Unsupported);
             }
-            parts.push(part(Source::File(path.clone()), container, &stem(name))?);
+            let mut part = part(Source::File(path.clone()), container, &stem(name))?;
+            // Only the first part's tags describe the book; a later part's
+            // cover, repeated across hundreds of tracks, is memory for
+            // nothing. Its title is already its own.
+            if !parts.is_empty() {
+                part.tags = Tags::default();
+            }
+            parts.push(part);
         }
         Ok(Self::from_parts(parts, Some(title)))
     }
@@ -402,17 +428,23 @@ impl Book {
         if names.is_empty() || names.len() > MAX_PARTS {
             return Err(Fault::Unsupported);
         }
-        let mut parts = Vec::with_capacity(names.len());
-        for name in &names {
-            let member = archive.read(name).map_err(|_| Fault::Damaged)?;
-            parts.push(part(
-                Source::Memory(Arc::new(member)),
-                Container::Mp3,
-                &stem(name),
-            )?);
-        }
         drop(archive);
-        drop(bytes);
+        let bytes = Arc::new(bytes);
+        let mut parts: Vec<Part> = Vec::with_capacity(names.len());
+        for name in names {
+            let mut part = part(
+                Source::Member {
+                    archive: Arc::clone(&bytes),
+                    name: name.clone(),
+                },
+                Container::Mp3,
+                &stem(&name),
+            )?;
+            if !parts.is_empty() {
+                part.tags = Tags::default();
+            }
+            parts.push(part);
+        }
         // One member is a book in a box, called what the box is called
         // unless it says otherwise; several are chapters of one.
         let title = (parts.len() > 1 || parts[0].tags.title.is_none()).then_some(title);
@@ -525,18 +557,28 @@ impl Book {
         let mut rate = None;
         loop {
             let playing = self.playing.as_mut().ok_or(Fault::Damaged)?;
-            let rate = *rate.get_or_insert(playing.rate);
-            if rate != playing.rate {
+            let chunk_rate = *rate.get_or_insert(playing.rate);
+            if chunk_rate != playing.rate {
                 // The next part plays at its own rate; this call ends at the
                 // boundary so the caller can follow it.
                 break;
             }
             if playing.pending.is_empty() && !fill(playing)? {
-                // This part has run out. The next part plays at its own rate,
-                // so this call ends here and the caller asks again.
+                // This part has run out.
                 if self.current + 1 < self.parts.len() {
                     self.current += 1;
-                    self.playing = None;
+                    self.playing = Some(open_part(&self.parts[self.current])?);
+                    if given == 0 {
+                        // Nothing handed out yet, so the next part's sound
+                        // is this call's answer, at the next part's rate. An
+                        // empty answer here would read as the end of the
+                        // book, when a part happened to end exactly where
+                        // the last read did.
+                        rate = None;
+                        continue;
+                    }
+                    // Sound already handed out is at this part's rate; the
+                    // next part's is the next call's.
                 } else {
                     self.finished = true;
                     self.playing = None;
