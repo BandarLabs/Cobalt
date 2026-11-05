@@ -952,6 +952,16 @@ pub fn write_ready_profile(
     }
 }
 
+/// Whether a blocker says only that the firmware is on a branch nobody
+/// measured.
+///
+/// Narrower than [`FIRMWARE_BLOCKER`] on purpose. A version that could not be
+/// read shares that prefix, and waiving it would let a reader whose firmware
+/// is unknown through without anyone having seen that it is 4.x.
+fn is_branch_mismatch(blocker: &str) -> bool {
+    blocker.starts_with(&format!("{FIRMWARE_BLOCKER}: expected a "))
+}
+
 /// Returns the profile an owner-run tool may write through, which is
 /// [`write_ready_profile`] without its firmware branch.
 ///
@@ -1462,7 +1472,7 @@ impl DeviceProfile {
         self.validate(snapshot)
             .write_blockers
             .into_iter()
-            .filter(|blocker| !blocker.starts_with(FIRMWARE_BLOCKER))
+            .filter(|blocker| !is_branch_mismatch(blocker))
             .collect()
     }
 
@@ -3550,6 +3560,20 @@ mod tests {
         assert_eq!(
             super::attended_write_profile(&snapshot).map(|profile| profile.id),
             Ok(CLARA_BW_391.id)
+        );
+    }
+
+    #[test]
+    fn a_firmware_version_that_could_not_be_read_still_closes_attended_tools() {
+        let mut snapshot = clara_bw_on_firmware("4.46.23852");
+        snapshot.identity.firmware_version = None;
+        let blockers = super::attended_write_profile(&snapshot)
+            .expect_err("nobody has seen that an unread firmware is 4.x");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.contains("could not be read")),
+            "{blockers:?}"
         );
     }
 
