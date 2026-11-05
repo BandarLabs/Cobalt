@@ -639,14 +639,33 @@ async function fetchRelease() {
   }
 }
 
+// The radios are dark while a write runs. The choice is settled by what is
+// being written, and a change made then is one the write could not honour.
+function setChannelChoiceEnabled(on) {
+  for (const input of Object.values(channelChoice)) {
+    if (input) input.disabled = !on;
+  }
+}
+
 async function writeToReader() {
   // The button is the usual guard; this is the one that holds if the button
   // and the state ever disagree.
   if (drive === null || archive === null || !untestedAcknowledged) return;
+  // Taken now and used throughout, the cleanup included. The page's own state
+  // can move while the write runs: a channel change puts the download back,
+  // and a write that read `archive` after that found nothing to measure the
+  // slot against, and took a complete archive off the reader as a partial
+  // one. The channel recorded is the one the archive was downloaded for, so
+  // the two cannot disagree either.
+  const reader = drive;
+  const bytes = archive;
+  const described = manifest;
+  const channel = archiveChannel;
   writeButton.disabled = true;
+  setChannelChoiceEnabled(false);
   try {
     writeNote.textContent = "Writing the release…";
-    const system = await drive.getDirectoryHandle(SLOT_FOLDER, { create: true });
+    const system = await reader.getDirectoryHandle(SLOT_FOLDER, { create: true });
 
     // The firmware reads exactly one archive here and deletes it afterwards.
     // Anything already in the slot belongs to another mod's install that has
@@ -663,7 +682,7 @@ async function writeToReader() {
 
     const slot = await system.getFileHandle(SLOT_FILE, { create: true });
     const target = await slot.createWritable();
-    await target.write(archive);
+    await target.write(bytes);
     await target.close();
 
     // Read back what was written. There is no way for a page to eject a drive
@@ -676,20 +695,20 @@ async function writeToReader() {
     // that failed for no stated reason.
     writeNote.textContent = "Checking what was written…";
     const written = new Uint8Array(await (await slot.getFile()).arrayBuffer());
-    if (written.length !== archive.length) {
+    if (written.length !== bytes.length) {
       throw new Error(
-        `only ${written.length.toLocaleString()} of ${archive.length.toLocaleString()} bytes ` +
+        `only ${written.length.toLocaleString()} of ${bytes.length.toLocaleString()} bytes ` +
         "were written, so the reader was left alone. Check there is room on the drive and try again."
       );
     }
     const writtenDigest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", written))]
       .map(byte => byte.toString(16).padStart(2, "0")).join("");
-    if (writtenDigest !== manifest.sha256) {
+    if (writtenDigest !== described.sha256) {
       throw new Error("what ended up on the reader is not what was downloaded, so it was taken off again.");
     }
 
     writeNote.textContent = "Adding the menu entry…";
-    const adds = await drive.getDirectoryHandle(MENU_FOLDER, { create: true });
+    const adds = await reader.getDirectoryHandle(MENU_FOLDER, { create: true });
     const nm = await adds.getDirectoryHandle(MENU_SUBFOLDER, { create: true });
     const entry = await nm.getFileHandle(MENU_FILE, { create: true });
     const entryTarget = await entry.createWritable();
@@ -697,7 +716,7 @@ async function writeToReader() {
     await entryTarget.close();
 
     writeNote.textContent = "Recording the update channel…";
-    await writeChannel(adds);
+    await writeChannel(reader, adds, channel);
 
     const chosen = chosenApps();
     if (chosen.length > 0) {
@@ -711,7 +730,7 @@ async function writeToReader() {
     }
 
     const tail = (chosen.length > 0 ? ` with ${chosen.length} application${chosen.length === 1 ? "" : "s"}` : "") +
-      (archiveChannel === "beta" ? ", following Beta" : "");
+      (channel === "beta" ? ", following Beta" : "");
     writeNote.innerHTML =
       `<span class="ok">Written${escapeText(tail)}. Eject the drive, unplug the cable and restart the reader.</span>`;
     done(step.write);
@@ -720,15 +739,17 @@ async function writeToReader() {
     // A partial archive in the slot is worse than none: the firmware would try
     // it at the next start and fail on its own, with nobody to say why.
     try {
-      const system = await drive.getDirectoryHandle(SLOT_FOLDER);
+      const system = await reader.getDirectoryHandle(SLOT_FOLDER);
       const slot = await system.getFileHandle(SLOT_FILE);
       const partial = await slot.getFile();
-      if (partial.size !== (archive ? archive.length : -1)) {
+      if (partial.size !== bytes.length) {
         await system.removeEntry(SLOT_FILE);
       }
     } catch { /* nothing was written, or it is complete and stays */ }
     writeNote.innerHTML = `<span class="bad">${escapeText(error.message)}</span>`;
     writeButton.disabled = false;
+  } finally {
+    setChannelChoiceEnabled(true);
   }
 }
 
@@ -865,9 +886,8 @@ async function writeApp(appsFolder, app) {
 // when it changes something. To the runtime no file means Stable, so a reader
 // kept on Stable is left without one, and a reader's other two switches are
 // carried over rather than reset.
-async function writeChannel(adds) {
-  const channel = chosenChannel();
-  const current = await readPreferences(drive);
+async function writeChannel(reader, adds, channel) {
+  const current = await readPreferences(reader);
   if (current.channel === channel) return;
   const cobalt = await adds.getDirectoryHandle(INSTALL_FOLDER, { create: true });
   const state = await cobalt.getDirectoryHandle(STATE_FOLDER, { create: true });

@@ -43,6 +43,11 @@ const profiles = [
   { code: "N506", model: "Tolino Shine 5", firmware: ["4.38.23697"], ready: false }
 ];
 
+// What a test wants to happen in the middle of the page's own work: a call
+// made as a file is written, so the page can be acted on while a write is in
+// flight. Cleared by the test that set it.
+const hooks = { onWrite: null };
+
 // Exercise the shipped script and its registered click handlers without USB
 // hardware. Handles retain writes in memory and reject missing entries like
 // File System Access does on a fresh reader.
@@ -53,7 +58,13 @@ function directory(name, contents = {}) {
       bytes: new TextEncoder().encode(value),
       async getFile() { return new Blob([this.bytes]); },
       async createWritable() {
-        return { write: async bytes => { this.bytes = bytes; }, close: async () => {} };
+        return {
+          write: async bytes => {
+            if (hooks.onWrite) await hooks.onWrite(key);
+            this.bytes = bytes;
+          },
+          close: async () => {}
+        };
       }
     } : directory(key, value)
   ]));
@@ -631,4 +642,33 @@ test("a download overtaken by a channel change is let go, and Write stays dark u
   assert.equal(await textOf(system, "KoboRoot.tgz"), "test beta release archive");
   const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt");
   assert.equal(await textOf(await cobalt.getDirectoryHandle("state"), "auto-update"), "cobalt=on\napps=on\nchannel=beta\n");
+});
+
+test("the write goes dark to channel changes and finishes from what it started with", async () => {
+  const drive = reader();
+  const ui = page(drive, { beta: true });
+  await ui.click("#pick");
+  await ui.click("#fetch");
+
+  // A change event that arrives anyway while the release is being written:
+  // the radios must be dark, and the write must not notice.
+  let radiosDark = null;
+  hooks.onWrite = name => {
+    if (name !== "KoboRoot.tgz") return;
+    radiosDark = ui.node("#channel-stable").disabled && ui.node("#channel-beta").disabled;
+    ui.choose("beta");
+    hooks.onWrite = null;
+  };
+  await ui.click("#write");
+  hooks.onWrite = null;
+
+  assert.equal(radiosDark, true);
+  assert.equal(ui.node("#step-write").dataset.state, "done");
+  assert.doesNotMatch(ui.node("#write-note").innerHTML, /following Beta/);
+  const system = await drive.getDirectoryHandle(".kobo");
+  assert.equal(await textOf(system, "KoboRoot.tgz"), "test release archive");
+  const cobalt = await (await drive.getDirectoryHandle(".adds")).getDirectoryHandle("cobalt", { create: true });
+  assert.equal(cobalt.has("state"), false);
+  assert.equal(ui.node("#channel-stable").disabled, false);
+  assert.equal(ui.node("#channel-beta").disabled, false);
 });
