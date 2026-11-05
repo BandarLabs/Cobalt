@@ -1037,11 +1037,14 @@ impl Settings {
     /// reader whose driver is thinner gets a shorter list, which is honest,
     /// rather than a column of dashes.
     fn battery(&self) -> Screen {
+        // Reading again is the bar's refresh mark, as it is in the Store and
+        // Feeds. It was a button centred under the facts, the one thing on
+        // the screen not set from the left, and it moved down whenever the
+        // list grew. A failed reading also carries the way to read again.
         let mut screen = ScreenBuilder::new("settings-battery")
             .top_bar("Battery")
+            .top_bar_glyph(RESCAN, "Read again", Glyph::Refresh)
             .owns_back(true);
-        // A failed reading carries the way to read again, in place of the
-        // button at the foot.
         let trouble = self.banner_for(Topic::Battery);
         if let Some(trouble) = &trouble {
             screen = screen
@@ -1088,9 +1091,6 @@ impl Settings {
             screen = screen.text("This reader publishes nothing else about its battery.");
         } else {
             screen = screen.section("Details").facts(facts);
-        }
-        if trouble.is_none() {
-            screen = screen.button(RESCAN, "Read again");
         }
         screen.build()
     }
@@ -1188,8 +1188,11 @@ impl Settings {
     }
 
     fn about_page_screen(&self, parts: &[usize], page: usize, pages: usize) -> Screen {
+        // The same refresh mark as Battery, reachable from every page rather
+        // than from the foot of the last one.
         let mut screen = ScreenBuilder::new("settings-about")
             .top_bar("About")
+            .top_bar_glyph(RESCAN, "Read again", Glyph::Refresh)
             .owns_back(true);
         let trouble = self.banner_for(Topic::About);
         if let Some(trouble) = &trouble {
@@ -1206,11 +1209,6 @@ impl Settings {
                 AboutPart::Facts(title, facts) => screen.section(*title).facts(facts.clone()),
                 AboutPart::Text(title, text) => screen.section(*title).text(*text),
             };
-        }
-        // Read again sits at the foot of the last page, after everything it
-        // reads, and only when a banner is not already offering it.
-        if trouble.is_none() && page + 1 >= pages {
-            screen = screen.button(RESCAN, "Read again");
         }
         page_controls(screen, page, pages).build()
     }
@@ -1720,6 +1718,18 @@ impl KoboApp for Settings {
                 // reader has already been shown.
                 self.restart_on_exit |= restart_on_exit;
                 self.settled(Topic::Bluetooth);
+                // The switch was turned on and the radio came back off. Saying
+                // nothing left the switch where it started, under a note about
+                // restarting, and nothing on the screen said the tap had failed.
+                if matches!(request, DeviceRequest::SetBluetooth { enabled: true })
+                    && available
+                    && !enabled
+                {
+                    self.fail(
+                        Topic::Bluetooth,
+                        "Bluetooth did not start. Restart the reader, then turn it on again.",
+                    );
+                }
                 if matches!(request, DeviceRequest::PairBluetooth { .. }) {
                     if let Some(Pending::ConnectAfterPair(address)) = self.pending.take() {
                         context.device().connect_bluetooth(address);
@@ -3219,7 +3229,7 @@ mod tests {
                     runner.action(action_id(MORE));
                 }
             }
-            assert_eq!(rescans, 1, "{metrics:?}: Read again once, at the end");
+            assert_eq!(rescans, pages, "{metrics:?}: Read again in the bar of every page");
             for fact in [
                 "Kobo Clara BW",
                 "0.3.0",
@@ -3543,6 +3553,47 @@ mod tests {
                 "{view:?}: {commands:?}"
             );
         }
+    }
+
+    #[test]
+    fn bluetooth_that_comes_back_off_after_being_turned_on_says_it_did_not_start() {
+        let mut settings = Settings {
+            view: View::Bluetooth,
+            bluetooth_state: RadioState::Off,
+            ..Settings::default()
+        };
+        let mut context = kobo_sdk::Context::default();
+        kobo_sdk::KoboApp::on_device_result(
+            &mut settings,
+            &mut context,
+            DeviceRequest::SetBluetooth { enabled: true },
+            DeviceResult::Bluetooth {
+                available: true,
+                enabled: false,
+                devices: Vec::new(),
+                restart_on_exit: true,
+            },
+        );
+        let screen = format!("{:?}", settings.bluetooth());
+        assert!(screen.contains("Bluetooth did not start"), "{screen}");
+        // Turning it off and getting off back is what was asked for.
+        let mut settings = Settings {
+            view: View::Bluetooth,
+            bluetooth_state: RadioState::On,
+            ..Settings::default()
+        };
+        kobo_sdk::KoboApp::on_device_result(
+            &mut settings,
+            &mut context,
+            DeviceRequest::SetBluetooth { enabled: false },
+            DeviceResult::Bluetooth {
+                available: true,
+                enabled: false,
+                devices: Vec::new(),
+                restart_on_exit: true,
+            },
+        );
+        assert!(!format!("{:?}", settings.bluetooth()).contains("did not start"));
     }
 
     #[test]
