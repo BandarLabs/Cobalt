@@ -158,6 +158,50 @@ fn publisher_styled_text_keeps_alignment_and_inline_emphasis() {
 }
 
 #[test]
+fn the_word_after_an_emphasised_one_starts_clear_of_its_lean() {
+    // "nothing so very remarkable": the slant used to carry the top of the
+    // italic "y" into the space after it, and the two words read as one.
+    let text = "so very remarkable";
+    let screen = Screen::new(
+        1,
+        vec![Node::RichText {
+            id: NodeId(1),
+            text: text.into(),
+            spans: vec![RichTextSpan {
+                start: 3,
+                end: 7,
+                presentation: TextPresentation {
+                    emphasis: true,
+                    ..TextPresentation::default()
+                },
+            }],
+            links: Vec::new(),
+            presentation: ParagraphPresentation::default(),
+            selection: None,
+            formulae: Vec::new(),
+        }],
+    )
+    .with_reading(true);
+    let layout = screen.layout();
+    let runs: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::RichText(_)))
+        .collect();
+    let leaning = runs
+        .iter()
+        .position(|node| node.text_lines[0] == "very")
+        .expect("the emphasised run");
+    let after = runs[leaning + 1];
+    let upright_end = runs[leaning].rect.x + runs[leaning].rect.width;
+    assert!(
+        after.rect.x >= upright_end + super::emphasis_lean(Face::Reading),
+        "{after:?} starts inside the lean of {:?}",
+        runs[leaning]
+    );
+}
+
+#[test]
 fn a_held_unicode_word_resolves_to_stable_document_offsets() {
     let screen = Screen::new(
         1,

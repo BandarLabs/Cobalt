@@ -1874,9 +1874,14 @@ impl PageTurns {
     }
 
     /// The position to draw, once nonsense has been discarded.
+    ///
+    /// "1 of 1" is nonsense too. It says there is nowhere to turn to in a
+    /// strip that also takes a line from the foot of the screen, and Panels,
+    /// with one comic on its shelf, drew it under a list of one. A screen of
+    /// one page draws no strip and gets the line back.
     const fn drawable_position(self) -> Option<(u16, u16)> {
         match self.position {
-            Some((page, of)) if of > 0 && page >= 1 && page <= of => Some((page, of)),
+            Some((page, of)) if of > 1 && page >= 1 && page <= of => Some((page, of)),
             _ => None,
         }
     }
@@ -3044,10 +3049,14 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
                 width,
                 height,
             },
-            kind: if nav_bar.style == BarStyle::Navigation && nav_bar.selected == Some(index) {
-                LayoutKind::NavDestinationSelected(destination.action, destination.glyph)
-            } else {
-                LayoutKind::NavDestination(destination.action, destination.glyph)
+            kind: match nav_bar.style {
+                BarStyle::Navigation if nav_bar.selected == Some(index) => {
+                    LayoutKind::NavDestinationSelected(destination.action, destination.glyph)
+                }
+                BarStyle::Navigation => {
+                    LayoutKind::NavDestination(destination.action, destination.glyph)
+                }
+                BarStyle::Actions => LayoutKind::ActionBarEntry(destination.action, destination.glyph),
             },
             text_lines: vec![destination.label.clone()],
         });
@@ -5116,6 +5125,11 @@ pub enum LayoutKind {
     /// screen.
     NavDestination(ActionId, Option<Glyph>),
     NavDestinationSelected(ActionId, Option<Glyph>),
+    /// One verb in an action bar. Drawn in ink like a selected destination
+    /// and never marked: drawn as an unselected destination instead, every
+    /// working action in the bar was the grey of a tab one is not on, and
+    /// Undo, Notes and Add comic all read as switched off.
+    ActionBarEntry(ActionId, Option<Glyph>),
     Row(ActionId),
     Cell(ActionId, CellStyle, bool),
     /// A grid cell's label. Carries whether the cell is a board mark (an X,
@@ -5285,6 +5299,7 @@ impl LayoutKind {
             | Self::BarGlyph(action, _)
             | Self::NavDestination(action, ..)
             | Self::NavDestinationSelected(action, ..)
+            | Self::ActionBarEntry(action, ..)
             | Self::Tile(action, ControlState::Enabled)
             | Self::Field(action, _)
             | Self::FieldClear(action)
@@ -5601,6 +5616,7 @@ impl Layout {
                         | LayoutKind::BarGlyph(..)
                         | LayoutKind::NavDestination(..)
                         | LayoutKind::NavDestinationSelected(..)
+                        | LayoutKind::ActionBarEntry(..)
                         | LayoutKind::Row(_)
                         | LayoutKind::RowMenu(_)
                         | LayoutKind::Cell(..)
@@ -5622,7 +5638,24 @@ impl Layout {
             .min_by_key(|node| {
                 i64::from(node.rect.width.max(0)) * i64::from(node.rect.height.max(0))
             })
-            .map(|node| node.rect)
+            .map(|node| match node.kind {
+                // A row sets its words from its very edge, and the press is
+                // drawn as a patch inset from the edge on every side. On a
+                // switch row the patch began past the first letter of the
+                // label and of the line under it, and the pressed row read as
+                // a black bar with two letters hanging off it. These are
+                // widened into the margin by at least the inset, so the patch
+                // still covers what is on the row.
+                LayoutKind::Row(_) | LayoutKind::Toggle(..) | LayoutKind::OptionRow(..) => {
+                    let spare = min(node.rect.x, node.rect.height / 8).max(0);
+                    Rect {
+                        x: node.rect.x - spare,
+                        width: node.rect.width + 2 * spare,
+                        ..node.rect
+                    }
+                }
+                _ => node.rect,
+            })
     }
 
     /// How much of the band between the bars is already spoken for.
@@ -6507,6 +6540,15 @@ fn layout_node(
                         text_lines: vec![run.to_owned()],
                     });
                     run_x = run_x.saturating_add(run_width);
+                    // Emphasis is drawn by leaning the upright glyphs, the
+                    // tops furthest, by up to a seventh of a line. Placing the
+                    // next run where the upright word would have ended put the
+                    // lean straight into the space after it, and "very
+                    // remarkable" read as one word. The lean is given back
+                    // before whatever follows on the same line.
+                    if styled.emphasis && end < to {
+                        run_x = run_x.saturating_add(emphasis_lean(prose));
+                    }
                     cursor = end;
                 }
                 for link in links.iter().take(MAX_TEXT_LINKS) {
@@ -6832,27 +6874,16 @@ fn layout_node(
             } else {
                 metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM)
             };
-            let desired = measure_text(label, FontSize::Body)
-                .0
-                .saturating_add(padding.saturating_mul(2))
-                .max(metrics.touch_target_minimum());
-            // A primary control is deliberately dominant. Ordinary controls
-            // stay content-width unless their label would leave too little
-            // surrounding paper to read as a deliberate target.
-            let button_width = if legacy
-                || *emphasis == Emphasis::Primary
-                || in_band_slot()
-                || desired >= width * 4 / 5
-            {
-                width
-            } else {
-                desired.min(width)
-            };
-            let button_x = if button_width == width {
-                x
-            } else {
-                x.saturating_add((width - button_width) / 2)
-            };
+            // Every button takes the width of the column, as a primary and a
+            // pair in a band already did. A button the width of its label was
+            // centred under a full-width one, the one control on the screen
+            // not set from the margin, and a lone one between two pairs (Start
+            // section again, between Needles' pairs) read as a mistake. The
+            // emphasis is the fill, not the width. Wider only ever wraps the
+            // label onto fewer lines, so nothing measured narrow is drawn
+            // taller.
+            let button_width = width;
+            let button_x = x;
             let lines = wrap_text(
                 label,
                 if legacy {
@@ -14141,6 +14172,7 @@ const fn interaction_uses_panel_bounds(kind: LayoutKind) -> bool {
             | LayoutKind::BarGlyph(..)
             | LayoutKind::NavDestination(..)
             | LayoutKind::NavDestinationSelected(..)
+            | LayoutKind::ActionBarEntry(..)
             | LayoutKind::PagePrevious(_)
             | LayoutKind::PageNext(_)
     )
@@ -14227,6 +14259,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::BarGlyph(..)
             | LayoutKind::NavDestination(..)
             | LayoutKind::NavDestinationSelected(..)
+            | LayoutKind::ActionBarEntry(..)
             | LayoutKind::Row(_)
             | LayoutKind::RowMenu(_)
             | LayoutKind::Cell(..)
@@ -14362,6 +14395,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::ActivityFailure
         | LayoutKind::NavDestination(..)
         | LayoutKind::NavDestinationSelected(..)
+        | LayoutKind::ActionBarEntry(..)
         | LayoutKind::RowBadge
         | LayoutKind::FieldLabel
         | LayoutKind::FieldNote(_)
@@ -15946,7 +15980,7 @@ fn paint_layout(
                     &node.text_lines,
                     node.rect,
                     metrics,
-                    false,
+                    NavLabel::Destination,
                     glyph,
                     palette,
                     clip,
@@ -15958,7 +15992,19 @@ fn paint_layout(
                     &node.text_lines,
                     node.rect,
                     metrics,
-                    true,
+                    NavLabel::Selected,
+                    glyph,
+                    palette,
+                    clip,
+                );
+            }
+            LayoutKind::ActionBarEntry(_, glyph) => {
+                draw_nav_label(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    metrics,
+                    NavLabel::Action,
                     glyph,
                     palette,
                     clip,
@@ -17050,13 +17096,24 @@ fn draw_centered(
     }
 }
 
+/// How one entry in the bar at the foot is drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NavLabel {
+    /// A place the reader is not on: muted.
+    Destination,
+    /// The place the reader is on: ink, and marked.
+    Selected,
+    /// A verb: ink, and never marked, since it is not a place.
+    Action,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_nav_label(
     surface: &mut Surface,
     lines: &[String],
     rect: Rect,
     metrics: &DisplayMetrics,
-    selected: bool,
+    label: NavLabel,
     glyph: Option<Glyph>,
     palette: Palette,
     clip: Rect,
@@ -17067,7 +17124,8 @@ fn draw_nav_label(
     // foot of the slot to make space, which is the shape both phone platforms
     // draw a bottom bar in.
     let mut text = rect;
-    let mark_tone = if selected || legacy_typography() {
+    let selected = label == NavLabel::Selected;
+    let mark_tone = if label != NavLabel::Destination || legacy_typography() {
         tone::INK
     } else {
         tone::MUTED
@@ -17111,7 +17169,7 @@ fn draw_nav_label(
         lines,
         text,
         FontSize::Caption,
-        if selected || legacy_typography() {
+        if label != NavLabel::Destination || legacy_typography() {
             tone::INK
         } else {
             tone::MUTED
@@ -18164,6 +18222,11 @@ fn draw_text_in(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// How far the top of an emphasised run leans past where it would stand.
+fn emphasis_lean(face: Face) -> i32 {
+    FontSize::Body.line_height_in(face).max(1) / 7
+}
+
 fn draw_rich_text(
     surface: &mut Surface,
     text: &str,
@@ -18191,7 +18254,7 @@ fn draw_rich_text(
             face,
             &mut |pixel_x, pixel_y, coverage| {
                 let skew = if presentation.emphasis {
-                    (line - (pixel_y - y)).clamp(0, line) / 7
+                    (line - (pixel_y - y)).clamp(0, line) * emphasis_lean(face) / line
                 } else {
                     0
                 };

@@ -427,7 +427,8 @@ fn legacy_screens_keep_pre_folio_button_and_tile_geometry() {
         .iter()
         .find(|node| matches!(node.kind, LayoutKind::Button(..)))
         .expect("legacy button");
-    assert!(legacy_button.rect.width > modern_button.rect.width);
+    // Both take the column now; the legacy column is the wider of the two.
+    assert!(legacy_button.rect.width >= modern_button.rect.width);
     let modern_glyph = modern
         .nodes
         .iter()
@@ -608,7 +609,7 @@ fn legacy_nav_glyph_is_half_a_touch_target() {
             &[],
             rect,
             &CLARA_BW_METRICS,
-            false,
+            NavLabel::Destination,
             Some(Glyph::App),
             Palette::grey(),
             clip,
