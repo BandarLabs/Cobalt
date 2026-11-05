@@ -71,6 +71,17 @@ def seed(app, state, kobo, env, log):
         seed_stock_library(library)
     elif app == 'parser':
         run('parser', 'push', str(ROOT / 'apps/parser/fixtures/lamplight.z3'), '--sim')
+    elif app == 'audiobook':
+        # The simulator's library folder stands in for the reader's card:
+        # one book as a file, one as a folder of numbered parts, which is
+        # how a ripped set of discs arrives.
+        shelf = Path(state) / 'cobalt-sim-data' / 'library' / 'Audiobooks'
+        parts = shelf / 'Two Tones'
+        parts.mkdir(parents=True, exist_ok=True)
+        fixtures = ROOT / 'crates/kobo-audio/fixtures'
+        shutil.copyfile(fixtures / 'chapters.m4b', shelf / 'The Quiet Shelf.m4b')
+        shutil.copyfile(fixtures / 'pcm.wav', parts / '01 - A Low Tone.wav')
+        shutil.copyfile(fixtures / 'lossless.flac', parts / '02 - A Higher Tone.flac')
 
 
 def write_epub(path, title, author, words):
@@ -225,6 +236,11 @@ def run_app(app, kobo, out, environment, timeout, bare=False, route_override=Non
             # Real dice come from the operating system, so a route that says
             # what was rolled needs the fixture source rather than chance.
             env['KOBO_BACKGAMMON_SEED'] = '7'
+        if app == 'audiobook':
+            # The simulator models no audio or Bluetooth unless asked, and a
+            # player with neither is a banner saying so.
+            env['KOBO_SIM_BACKENDS'] = ('network,battery-read,frontlight-control,wifi-control,'
+                                        'cover-sensor,library,audio,bluetooth-audio,bluetooth-control')
         try:
             if not bare:
                 seed(app, state, kobo, env, log)

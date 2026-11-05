@@ -5,28 +5,29 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  COMMAND_MAX_BUFFER,
   changedLockPackageIdentities,
   changedRegistryPackages,
   checkBuildPackages,
   checkEntries,
   checkProtocolMinimums,
-  COMMAND_MAX_BUFFER,
   compatibleChangePaths,
   globalBuildInputsChanged,
   isContributionManifest,
-  meaningfulReleaseNotes,
+  isDocumentation,
+  isFilmingScript,
+  lockChangesResolvedAgainstBase,
   lockfileOnlyAddsPackages,
   manifestOnlyChangesPathDependencyVersions,
   manifestOnlyChangesVersions,
   manifestOnlyChangesWorkspaceMembershipOrVersion,
+  meaningfulReleaseNotes,
   packagesToBuild,
   registeredConsumers,
-  isDocumentation,
-  isFilmingScript,
+  releaseDependencyIds,
   releaseDiffArguments,
   releaseLockPackageIdentities,
   releaseNeeded,
-  releaseDependencyIds,
   storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
 import { collectRegistry, currentProtocolVersion, deriveMinimumCobalt } from "./app-registry.mjs";
@@ -1150,6 +1151,77 @@ test("a lock change with no identifiable current package fails closed", () => {
       false
     ),
     new Set()
+  );
+});
+
+test("a dependency that left the lockfile affects what depended on it at base", () => {
+  const previous = [
+    'version = 4\n\n[[package]]\nname = "weather"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n',
+    '[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "notes-dep",\n]\n',
+    '[[package]]\nname = "shared"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s"\ndependencies = [\n "removed-dependency 2.0.0",\n]\n',
+    '[[package]]\nname = "notes-dep"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "n"\n',
+    '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n'
+  ].join("\n");
+  const current = previous
+    .replace('dependencies = [\n "removed-dependency 2.0.0",\n]\n', "")
+    .replace(
+      '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n',
+      ""
+    );
+  const changed = changedLockPackageIdentities(previous, current);
+  assert.deepEqual(
+    changed,
+    new Set([registryIdentity("shared"), registryIdentity("removed-dependency", "2.0.0")])
+  );
+  const resolved = lockChangesResolvedAgainstBase(
+    previous,
+    changed,
+    new Set(["weather", "notes", "shared", "notes-dep"])
+  );
+  assert.deepEqual(
+    resolved,
+    new Set([registryIdentity("shared"), JSON.stringify(["weather", "<workspace-version>", ""])])
+  );
+  // The consumers at base are what the removal affects: weather, not notes.
+  const removalAlone = lockChangesResolvedAgainstBase(
+    previous,
+    new Set([registryIdentity("removed-dependency", "2.0.0")]),
+    new Set(["weather", "notes", "shared", "notes-dep"])
+  );
+  assert.deepEqual(
+    registeredConsumers(metadata(), ["notes", "reader", "weather"], removalAlone),
+    new Set(["weather"])
+  );
+  // Two resolutions of one crate keep their own dependents: notes depends
+  // on shared 2.0, which never carried the removed package, so only weather
+  // is affected.
+  const twoShared = [
+    'version = 4\n\n[[package]]\nname = "weather"\nversion = "0.3.1"\ndependencies = [\n "shared 1.0.0",\n]\n',
+    '[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared 2.0.0",\n]\n',
+    '[[package]]\nname = "shared"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s1"\ndependencies = [\n "removed-dependency",\n]\n',
+    '[[package]]\nname = "shared"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s2"\n',
+    '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n'
+  ].join("\n");
+  assert.deepEqual(
+    lockChangesResolvedAgainstBase(
+      twoShared,
+      new Set([registryIdentity("removed-dependency", "2.0.0")]),
+      new Set(["weather", "notes", "shared"])
+    ),
+    new Set([JSON.stringify(["weather", "<workspace-version>", ""])])
+  );
+
+  // A removed package nothing at base reached is left as it was, and still
+  // fails closed.
+  const gone = lockChangesResolvedAgainstBase(
+    previous,
+    new Set([JSON.stringify(["gone-app", "<workspace-version>", ""])]),
+    new Set(["notes"])
+  );
+  assert.deepEqual(gone, new Set([JSON.stringify(["gone-app", "<workspace-version>", ""])]));
+  assert.throws(
+    () => registeredConsumers(metadata(), ["notes"], gone),
+    /cannot identify its consumers/
   );
 });
 

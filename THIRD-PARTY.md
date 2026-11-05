@@ -17,10 +17,11 @@ cargo metadata --format-version 1 --all-features
 | Selected licence | Crates |
 | --- | --- |
 | Apache-2.0 | dependencies that offer Apache-2.0 as an alternative, including `image`, `http`, `rustls`, `libc`, `png`, `flate2`, `ttf-parser`, and their transitive dependencies |
-| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `qrcodegen`, `simd-adler32`, `slice-ring-buffer`, `vt100`, `zip` |
+| MIT | `bytes`, `byteorder-lite`, `extended`, `memchr`, `pulldown-cmark`, `pulldown-cmark-escape`, `qrcodegen`, `simd-adler32`, `vt100`, `zip` |
 | Apache-2.0 and ISC | `ring` |
 | ISC | `rustls-webpki`, `untrusted` |
-| BSD-3-Clause | `subtle` |
+| BSD-3-Clause | `rusty-opus`, `subtle` |
+| MPL-2.0 | `symphonia` and its `symphonia-*` crates |
 | CDLA-Permissive-2.0 | `webpki-roots` |
 | GPL-3.0-or-later | `shakmaty` |
 | Zlib | `foldhash` |
@@ -34,6 +35,18 @@ notices in `licenses/LICENSE-Rust-dependencies.txt`. That includes `ring`'s
 Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
 CA data bundled by `webpki-roots`. The GPL-3.0-or-later terms selected for
 `shakmaty` ship separately in `licenses/LICENSE-shakmaty.txt`.
+
+## Audio dependencies
+
+Audiobooks are decoded by `symphonia` 0.6.1 (MPL-2.0) and its format and
+codec crates: MP3, AAC-LC in MPEG-4, Ogg Vorbis, FLAC and WAV, all pure Rust.
+The MPL is a file-level copyleft: the crates are used unmodified, their source
+is public, and nothing here changes the terms a binary built from this tree is
+distributed under. Ogg Opus is decoded by `rusty-opus` 1.0.2 (BSD-3-Clause), a
+pure Rust port of libopus whose notice carries the Xiph.Org copyright; it is
+behind the `opus` feature of `kobo-audio`, on by default, so a build can leave
+it out. The `minimp3` C decoder, and the `slice-ring-buffer` advisory it
+carried, are gone.
 
 ## QR code dependency
 

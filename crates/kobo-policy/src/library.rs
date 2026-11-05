@@ -285,7 +285,7 @@ pub fn to_wire(entry: Entry) -> kobo_protocol::LibraryEntry {
 /// Truncates to the wire bound on a character boundary, never producing an
 /// empty title: the encoder refuses those, and one overlong Japanese title
 /// would otherwise drop the whole listing.
-fn clip_title(title: &str) -> String {
+pub(crate) fn clip_title(title: &str) -> String {
     let mut out = String::new();
     for ch in title.chars() {
         let mut buf = [0; 4];
@@ -529,7 +529,7 @@ pub fn resolve_in(roots: &[PathBuf], id: &str) -> Option<PathBuf> {
 
 /// Whether the walk leaves a directory alone: every hidden one, and the
 /// visible names in [`SKIPPED`].
-fn skipped_directory(name: &str) -> bool {
+pub(crate) fn skipped_directory(name: &str) -> bool {
     name.starts_with('.') || SKIPPED.contains(&name)
 }
 

@@ -1471,9 +1471,12 @@ context.device().scan_bluetooth();
 context.device().pair_bluetooth("AA:BB:CC:DD:EE:FF");
 context.device().scan_wifi();
 context.device().join_wifi("Library", "eight-or-more");
-context.device().load_shelf_audio("chaptered-book.mp3z");
+context.device().list_audio();
+context.device().load_library_audio("0/Audiobooks/Night Sky.m4b");
 context.device().play_audio();
 context.device().seek_audio(Duration::from_secs(30));
+context.device().read_audio_detail();
+context.device().set_audio_speed(125);
 ```
 
 Every one is a request, answered at `on_device_result` with a `DeviceResult`
@@ -1491,8 +1494,13 @@ typed `DeviceResult::Wifi` and `DeviceResult::Bluetooth` values, while backend
 failures are `DeviceResult::Failed(DeviceError)`. On a MediaTek Clara, using
 an active Bluetooth stack makes the runtime reboot cleanly when the Cobalt
 session ends because handing the initialised vendor driver directly back to
-Nickel is not safe. **An invented reading is worse than a refusal**, because an
-application cannot tell one from the other and will act on it.
+Nickel is not safe. The runtime also never starts that stack itself before
+Nickel has brought the radio up since boot (the driver is loaded on the first
+use of either radio and powering the chip without it panics the kernel), or
+before the stack's state directory exists: `SetBluetooth` then fails with
+`Unreachable`, and the SDK player tells the listener to turn Bluetooth on once
+from the Kobo home screen. **An invented reading is worse than a refusal**,
+because an application cannot tell one from the other and will act on it.
 
 ### Declaring capabilities
 
@@ -1569,15 +1577,45 @@ is movement rather than noise. `examples/magnet` is the whole surface on one
 screen, and doubles as the calibration screen: nothing on the case says where
 the sensor is, so you walk a magnet along the edges and watch for the answer.
 
+### Audiobooks
+
+`list_audio` answers with `DeviceResult::AudioLibrary`: every audio file the
+runtime can play under the places books live, and every folder of numbered
+files as one book with that many parts. Each entry carries an opaque
+identifier to play it by, as `AudioSource::Library`, so an application never
+names a path. The runtime decodes MP3, AAC in MPEG-4 (`.m4b`, `.m4a`), Ogg
+Vorbis, Ogg Opus, FLAC, WAV and `.mp3z` archives, as the book plays rather
+than whole, so a ten hour book costs the same memory as a ten second one.
+
+Once a load has finished, `read_audio_detail` answers with
+`DeviceResult::AudioDetail`: the book's title, author, narrator and album,
+its chapters with their start times, its cover as it was embedded, and a
+short line saying what the sound is. `set_audio_speed` plays faster or slower
+with the pitch unchanged, between half and three times; the position reported
+stays in the book's own time.
+
+Sound reaches headphones through the A2DP service of the MediaTek readers
+(Clara BW, Clara Colour, Libra Colour, Elipsa 2E); `audio` is unavailable on
+the readers with a standard BlueZ stack (Libra 2, Sage, Clara 2E), where the
+Bluetooth control surface still works. A Play that lands before the audio
+channel is negotiated, which is where a Play that waited for the headphones
+to connect always lands, is retried for up to five seconds before the
+headphones are reported gone, so an application need not time that itself.
+
 For a complete playback screen, use the SDK component rather than rebuilding
 transport and pairing state:
 
 ```rust
 use kobo_sdk::audio::{AudioMetadata, AudioPlayer};
+use std::time::Duration;
 
-let mut player = AudioPlayer::shelf("chaptered-book.mp3z", "Night Sky")
-    .metadata(AudioMetadata::new("Night Sky").author("Ada Example"));
+let mut player = AudioPlayer::library("0/Audiobooks/Night Sky.m4b", "Night Sky")
+    .metadata(AudioMetadata::new("Night Sky").author("Ada Example"))
+    .speed(125)
+    .resuming_at(Duration::from_secs(3_600))
+    .owns_back(true);
 player.start(context);
+player.play(context);
 
 // In on_action:
 if player.press(context, action) {
@@ -1585,17 +1623,31 @@ if player.press(context, action) {
 }
 
 // Forward on_device_result and on_task in the same way. The latter owns only
-// its scan-delay and five-second position-poll task IDs, so application tasks
-// remain distinguishable.
+// its scan-delay, position-poll and sleep-timer task IDs, so application
+// tasks remain distinguishable. After a device result, `take_cover_bytes`
+// hands over the book's own cover once, for the application to decode with
+// `kobo_image` and draw with `set_cover`.
 ```
 
-The component accepts an optional cached `TilePicture` cover. Its Play action
-uses an already-connected Bluetooth audio-class device; without one, it opens
-its embedded headphones/speaker picker, powers and scans Bluetooth if needed,
-pairs and connects the selected output, and resumes the pending Play action.
-Keyboard and remote connections do not count as audio outputs. Shelf paths are
-resolved within the calling application's shelf, and stream sources are
-unauthenticated HTTPS objects cached under a 64 MiB ceiling before playback.
+The component shows the book's byline and chapter, chapter keys either side
+of the transport, a Chapters screen that opens on the chapter playing, a
+Speed screen with a stepper and the common speeds as one tap each, and a
+Sleep timer screen with minutes or the end of the chapter. A book paused for
+more than a minute resumes ten seconds earlier, and one put down for an hour
+or more half a minute earlier. `position`, `duration`, `speed_percent`,
+`is_finished` and `detail` are what an application needs to remember a
+listener's place; it saves that itself, at pauses and once a minute.
+
+Its Play action uses an already-connected Bluetooth audio-class device;
+without one, it opens its embedded headphones/speaker picker, powers and
+scans Bluetooth if needed, pairs and connects the selected output, and
+resumes the pending Play action. A Play before the first Bluetooth reading
+waits for it rather than opening the picker over headphones that are already
+connected. Keyboard and remote connections do not count as audio outputs.
+Shelf paths are resolved within the calling application's shelf, and stream
+sources are unauthenticated HTTPS objects cached under a 64 MiB ceiling
+before playback. Losing the sink mid-book pauses the book where it is and
+reports it; Play carries on from there.
 
 `AudioPlayer::owns_back(true)` is for a player reached from a list rather than
 opened as the application's front door. Without it, a player sitting at the

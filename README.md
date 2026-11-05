@@ -93,7 +93,7 @@ Screenshots are from a Kobo Clara BW or its simulator.
 <table>
 <tr>
 <td width="33%" valign="top"><a href="examples/chat/README.md"><img width="230" src="docs/media/site/apps/chat.png" alt="An answer displayed for touch-friendly reading on a Kobo"></a><br><b><a href="examples/chat/README.md">AI Command Center</a></b><br>Ask a question, then read and navigate the answer with touch controls. Needs an account.</td>
-<td width="33%" valign="top"><a href="examples/audiobook/README.md"><img width="230" src="docs/media/site/apps/audiobook.png" alt="An audiobook player with cover art and playback controls on a Kobo"></a><br><b><a href="examples/audiobook/README.md">Audiobook Studio</a></b><br>Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account.</td>
+<td width="33%" valign="top"><a href="examples/audiobook/README.md"><img width="230" src="docs/media/site/apps/audiobook.png" alt="An audiobook player with cover art and playback controls on a Kobo"></a><br><b><a href="examples/audiobook/README.md">Audiobooks</a></b><br>Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.</td>
 <td width="33%" valign="top"><a href="apps/backgammon/README.md"><img width="230" src="docs/media/site/apps/backgammon.png" alt="Backgammon on a Kobo in the middle of a game against the computer, with its last move marked on the board and described below it."></a><br><b><a href="apps/backgammon/README.md">Backgammon</a></b><br>Play complete solo or pass-and-play backgammon on one Kobo.</td>
 </tr>
 <tr>
