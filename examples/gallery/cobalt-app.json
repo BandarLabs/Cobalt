@@ -4,10 +4,10 @@
   "short_label": "Components",
   "summary": "See every Cobalt UI component on the device in one reference app.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "glyph": "chart",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Shows a row that opens what it names, with a mark at its edge for the rest, as the Store now draws an installed app."
+  "release_notes": "The overlays page opens a dialog that names its own Close in place of a cross, as apps now can, and the banners page shows the new notice marks."
 }
