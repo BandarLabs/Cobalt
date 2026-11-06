@@ -43,15 +43,18 @@ pub fn is_public_reserved_app_id(id: &str) -> bool {
     PUBLIC_RESERVED_APP_IDS.contains(&id)
 }
 
-/// Returns whether every released runtime can render this manifest glyph.
+/// The first runtime that reads [`crate::CATALOG_FILE`], the catalog that
+/// names the application marks.
+pub const FIRST_MARKED_RUNTIME: &str = "0.3.34";
+
+/// Returns whether runtimes up to and including 0.3.33 can draw this glyph.
 ///
-/// This is the publisher's list, not the reader's. A runtime up to and
-/// including 0.3.33 refuses a whole catalog when one entry names a glyph it
-/// does not know, and every reader fetches the same catalog, so a name may
-/// join this list only once no reader that old can still be fetching it. A
-/// newer runtime reads any well-formed name; see [`Manifest::parse_installable`].
+/// Those runtimes refuse a whole catalog when one entry names a glyph outside
+/// this list, so the list is frozen: it is what they shipped with, and it is
+/// what [`Catalog::for_earlier_runtimes`] keeps [`crate::EARLIER_CATALOG_FILE`]
+/// to.
 #[must_use]
-pub fn is_public_glyph(name: &str) -> bool {
+pub fn is_earlier_glyph(name: &str) -> bool {
     matches!(
         name,
         "app"
@@ -99,6 +102,83 @@ pub fn is_public_glyph(name: &str) -> bool {
             | "plus"
             | "headphones"
     )
+}
+
+/// Each glyph name a later runtime draws, beside the earlier glyph that stands
+/// in for it in the catalog runtimes up to 0.3.33 read.
+///
+/// The stand-in is the glyph the application wore before it had a mark of its
+/// own, and for the marks that arrived with protocol 18 it is the same glyph a
+/// frame below 18 carries in place of the mark. `heart` and
+/// `chess-white-knight` were drawable before then but never publishable, so
+/// they stand in for themselves nowhere and take the glyph of the application
+/// that first wore them.
+const MARKS: [(&str, &str); 35] = [
+    ("crossword-grid", "grid"),
+    ("cell-grid", "grid"),
+    ("noughts-crosses", "grid"),
+    ("pixel-picture", "grid"),
+    ("puzzle", "grid"),
+    ("remote", "grid"),
+    ("chess-white-knight", "grid"),
+    ("dice", "circle"),
+    ("counters", "circle"),
+    ("question", "chat"),
+    ("mail", "chat"),
+    ("swords", "book"),
+    ("map", "book"),
+    ("books", "book"),
+    ("book-download", "book"),
+    ("stack", "book"),
+    ("heart", "book"),
+    ("flask", "note"),
+    ("letter-check", "note"),
+    ("music", "note"),
+    ("lock", "note"),
+    ("quote", "note"),
+    ("eyeglass", "bookmark"),
+    ("cards", "bookmark"),
+    ("yarn", "bookmark"),
+    ("feather", "app"),
+    ("photo", "app"),
+    ("butterfly", "search"),
+    ("calendar-check", "check"),
+    ("checklist", "check"),
+    ("house", "light"),
+    ("cutlery", "reader"),
+    ("bolt", "reader"),
+    ("inbox", "rss"),
+    ("keyboard", "terminal"),
+];
+
+/// The glyph runtimes up to 0.3.33 are shown in place of `name`: `name`
+/// itself when they can draw it, the stand-in from the list of marks when it
+/// is one, and nothing for a name no runtime can draw.
+#[must_use]
+pub fn earlier_glyph(name: &str) -> Option<&str> {
+    if is_earlier_glyph(name) {
+        return Some(name);
+    }
+    MARKS
+        .iter()
+        .find(|(mark, _)| *mark == name)
+        .map(|(_, earlier)| *earlier)
+}
+
+/// The glyph names that arrived after 0.3.33 and may be published, each of
+/// which [`earlier_glyph`] gives a stand-in for.
+pub fn mark_names() -> impl Iterator<Item = &'static str> {
+    MARKS.iter().map(|(mark, _)| *mark)
+}
+
+/// Returns whether a manifest may be published naming this glyph.
+///
+/// A name is publishable when some runtime can draw it and runtimes up to
+/// 0.3.33 have a glyph to be shown instead, which is [`earlier_glyph`]. A
+/// newer runtime reads any well-formed name; see [`Manifest::parse_installable`].
+#[must_use]
+pub fn is_public_glyph(name: &str) -> bool {
+    earlier_glyph(name).is_some()
 }
 
 /// Returns whether `current` satisfies a manifest's minimum Cobalt version.
@@ -275,7 +355,7 @@ impl Manifest {
         if !is_public_glyph(&self.glyph) {
             return Err(FormatError::InvalidValue {
                 field: "glyph",
-                reason: "is not supported by released Cobalt runtimes",
+                reason: "is not a glyph Cobalt runtimes can draw",
             });
         }
         self.ensure_installable()
@@ -289,6 +369,38 @@ impl Manifest {
             });
         }
         Ok(())
+    }
+
+    /// This manifest as runtimes up to 0.3.33 are shown it: identical but for
+    /// the glyph, which is [`earlier_glyph`] of this one.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a glyph no runtime can draw.
+    pub fn for_earlier_runtimes(&self) -> Result<Self, FormatError> {
+        let glyph = earlier_glyph(&self.glyph).ok_or(FormatError::InvalidValue {
+            field: "glyph",
+            reason: "is not a glyph Cobalt runtimes can draw",
+        })?;
+        Ok(Self {
+            glyph: glyph.to_owned(),
+            ..self.clone()
+        })
+    }
+
+    /// Whether `catalog` offers this manifest, which is a bundle's: the same
+    /// manifest, or the same manifest as runtimes up to 0.3.33 are shown it.
+    ///
+    /// The second is the one difference allowed between a bundle and the
+    /// entry that sends a reader to it. It is what a reader that falls back to
+    /// [`crate::EARLIER_CATALOG_FILE`] finds there, and it is deterministic,
+    /// so it admits no manifest the publisher did not sign.
+    #[must_use]
+    pub fn is_offered_as(&self, offered: &Self) -> bool {
+        self == offered
+            || self
+                .for_earlier_runtimes()
+                .is_ok_and(|earlier| earlier == *offered)
     }
 
     /// Deterministic compact JSON used for signatures.
@@ -511,6 +623,45 @@ impl Catalog {
             entry.manifest.ensure_installable()?;
         }
         Ok(catalog)
+    }
+
+    /// This catalog as runtimes up to 0.3.33 must be given it: every entry
+    /// the same but for its glyph, which is [`earlier_glyph`] of its own.
+    ///
+    /// Those runtimes check a bundle's manifest against its entry byte for
+    /// byte, so they could not install an entry whose glyph was changed here.
+    /// An entry may only be changed when it already requires
+    /// [`FIRST_MARKED_RUNTIME`], which they refuse to install anyway.
+    ///
+    /// # Errors
+    ///
+    /// Refuses a glyph no runtime can draw, and a changed entry whose minimum
+    /// Cobalt version is earlier than [`FIRST_MARKED_RUNTIME`].
+    pub fn for_earlier_runtimes(&self) -> Result<Self, FormatError> {
+        let entries = self
+            .entries
+            .iter()
+            .map(|entry| {
+                let manifest = entry.manifest.for_earlier_runtimes()?;
+                if manifest != entry.manifest
+                    && !cobalt_version_at_least(
+                        entry.manifest.minimum_cobalt_version(),
+                        FIRST_MARKED_RUNTIME,
+                    )
+                {
+                    return Err(FormatError::InvalidValue {
+                        field: "glyph",
+                        reason: "is drawn only from Cobalt 0.3.34, so the application must \
+                                 require it",
+                    });
+                }
+                Ok(CatalogEntry {
+                    manifest,
+                    ..entry.clone()
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(entries)
     }
 
     /// Deterministic compact JSON used for signatures.
@@ -967,19 +1118,100 @@ mod tests {
         assert!(Catalog::parse_installable(&catalog.to_canonical_bytes()).is_err());
     }
 
-    /// Runtimes up to 0.3.33 refused the whole catalog over one glyph name
-    /// they did not know, so the publisher keeps to the names they know while
-    /// a reader accepts any well-formed one and draws what it can.
+    /// The glyph names `is_public_glyph` accepted in 0.3.33, copied from that
+    /// release. A runtime that old refuses a catalog over any other name.
+    const RELEASED_0_3_33: [&str; 44] = [
+        "app",
+        "book",
+        "note",
+        "clock",
+        "settings",
+        "folder",
+        "chart",
+        "search",
+        "wifi",
+        "battery",
+        "reader",
+        "power",
+        "grid",
+        "circle",
+        "check",
+        "terminal",
+        "chat",
+        "news",
+        "rss",
+        "light",
+        "close",
+        "download",
+        "bookmark",
+        "filter",
+        "person",
+        "tag",
+        "globe",
+        "refresh",
+        "more",
+        "bluetooth",
+        "key",
+        "magnet",
+        "play",
+        "pause",
+        "rewind30",
+        "forward30",
+        "volume-down",
+        "volume-up",
+        "more-vertical",
+        "trash",
+        "previous",
+        "next",
+        "plus",
+        "headphones",
+    ];
+
+    fn marked(id: &str, glyph: &str, minimum: &str) -> CatalogEntry {
+        let mut input = input(id, id.as_bytes());
+        input.glyph = glyph.to_owned();
+        input.minimum_cobalt_version = minimum.to_owned();
+        CatalogEntry::new(CatalogEntryInput {
+            manifest: Manifest::new(input, &[]).expect("manifest"),
+            package_url: format!("https://apps.example/{id}.cobalt-app"),
+            package_sha256: hex_digest(id.as_bytes()),
+            package_bytes: 100,
+        })
+        .expect("entry")
+    }
+
     #[test]
-    fn a_glyph_released_runtimes_cannot_draw_is_refused_for_publishing_but_read_by_a_reader() {
+    fn the_glyphs_earlier_runtimes_draw_are_exactly_the_ones_0_3_33_shipped_with() {
+        for name in RELEASED_0_3_33 {
+            assert!(is_earlier_glyph(name), "{name}");
+            assert_eq!(earlier_glyph(name), Some(name));
+        }
+        for (mark, earlier) in MARKS {
+            assert!(!RELEASED_0_3_33.contains(&mark), "{mark} was already drawn");
+            assert!(!is_earlier_glyph(mark), "{mark}");
+            assert!(
+                RELEASED_0_3_33.contains(&earlier),
+                "{mark} stands in as {earlier}, which 0.3.33 cannot draw"
+            );
+            assert!(is_public_glyph(mark));
+        }
+        assert!(!is_public_glyph("a-later-mark"));
+        assert_eq!(earlier_glyph("a-later-mark"), None);
+    }
+
+    /// A mark can be published, and a name no runtime draws cannot, but a
+    /// reader accepts any well-formed name and draws what it can.
+    #[test]
+    fn a_mark_is_published_and_a_name_no_runtime_draws_is_still_read_by_a_reader() {
         let mut marked = input("backgammon", b"binary");
         marked.glyph = "dice".to_owned();
-        assert!(!is_public_glyph("dice"));
+        assert!(Manifest::new_public(marked.clone()).is_ok());
+
+        marked.glyph = "a-later-mark".to_owned();
         assert!(matches!(
             Manifest::new_public(marked.clone()),
             Err(FormatError::InvalidValue { field: "glyph", .. })
         ));
-
         let manifest = Manifest::new(marked, &[]).expect("well-formed manifest");
         let bytes = manifest.to_canonical_bytes();
         assert!(Manifest::parse_public(&bytes).is_err());
@@ -999,6 +1231,89 @@ mod tests {
         let bytes = catalog.to_canonical_bytes();
         assert!(Catalog::parse_public(&bytes).is_err());
         assert_eq!(Catalog::parse_installable(&bytes), Ok(catalog));
+    }
+
+    /// The earlier file is read by runtimes that refuse the whole catalog over
+    /// one glyph name outside their list, so every entry in it has to be one
+    /// of theirs, and nothing else about any entry may differ.
+    #[test]
+    fn the_earlier_catalog_names_only_glyphs_0_3_33_draws_and_changes_nothing_else() {
+        let mut entries = vec![marked("brief", "clock", "0.1.9")];
+        for (index, (mark, _)) in MARKS.iter().enumerate() {
+            entries.push(marked(&format!("app-{index}"), mark, FIRST_MARKED_RUNTIME));
+        }
+        let catalog = Catalog::new(entries).expect("catalog");
+        let earlier = catalog.for_earlier_runtimes().expect("earlier catalog");
+        let bytes = earlier.to_canonical_bytes();
+
+        // Read it as 0.3.33 did: the generic parse, then its allow-list over
+        // every entry.
+        let read = Catalog::parse(&bytes, public_reserved_app_ids()).expect("parses");
+        assert_eq!(read.to_canonical_bytes(), bytes);
+        assert_eq!(read.entries().len(), catalog.entries().len());
+        for (entry, offered) in catalog.entries().iter().zip(read.entries()) {
+            assert!(
+                RELEASED_0_3_33.contains(&offered.manifest().glyph()),
+                "{} is offered to 0.3.33 as {}",
+                entry.manifest().id(),
+                offered.manifest().glyph()
+            );
+            assert_eq!(
+                offered.manifest().glyph(),
+                earlier_glyph(entry.manifest().glyph()).unwrap()
+            );
+            assert_eq!(
+                Manifest {
+                    glyph: entry.manifest().glyph().to_owned(),
+                    ..offered.manifest().clone()
+                },
+                *entry.manifest()
+            );
+            assert_eq!(offered.package_url(), entry.package_url());
+            assert_eq!(offered.package_sha256(), entry.package_sha256());
+            assert_eq!(offered.package_bytes(), entry.package_bytes());
+            assert!(entry.manifest().is_offered_as(offered.manifest()));
+        }
+        assert_eq!(read.entries()[0], catalog.entries()[0]);
+        assert_eq!(
+            catalog.for_earlier_runtimes(),
+            catalog.for_earlier_runtimes(),
+            "the earlier catalog is a function of the catalog"
+        );
+    }
+
+    /// Runtimes up to 0.3.33 check a bundle against its entry byte for byte,
+    /// so an entry they would try to install must reach them unchanged.
+    #[test]
+    fn a_mark_on_an_application_earlier_runtimes_would_install_is_refused() {
+        let catalog = Catalog::new(vec![marked("backgammon", "dice", "0.3.33")]).expect("catalog");
+        assert!(matches!(
+            catalog.for_earlier_runtimes(),
+            Err(FormatError::InvalidValue { field: "glyph", .. })
+        ));
+        let unmarked = Catalog::new(vec![marked("brief", "clock", "0.1.9")]).expect("catalog");
+        assert_eq!(unmarked.for_earlier_runtimes(), Ok(unmarked));
+    }
+
+    #[test]
+    fn a_bundle_is_offered_by_its_own_manifest_or_its_earlier_one_and_no_other() {
+        let bundle = marked("backgammon", "dice", FIRST_MARKED_RUNTIME)
+            .manifest()
+            .clone();
+        let offered = |glyph: &str| Manifest {
+            glyph: glyph.to_owned(),
+            ..bundle.clone()
+        };
+        assert!(bundle.is_offered_as(&bundle));
+        assert!(bundle.is_offered_as(&offered("circle")));
+        assert!(!bundle.is_offered_as(&offered("grid")));
+        assert!(!bundle.is_offered_as(&offered("app")));
+        let mut other = offered("circle");
+        other.version = "9.9.9".to_owned();
+        assert!(!bundle.is_offered_as(&other));
+        // The relation runs one way: an entry naming the mark does not offer a
+        // bundle signed with the stand-in.
+        assert!(!offered("circle").is_offered_as(&bundle));
     }
 
     #[test]
