@@ -8529,8 +8529,19 @@ fn layout_node(
             let value_width = max(0, width.saturating_sub(column).saturating_sub(gap));
             // The label rides down to sit on the first line of its value, so a
             // caption beside body text shares a baseline rather than floating
-            // above it.
-            let baseline = max(0, value_size.line_height() - label_size.line_height());
+            // above it. By the faces' own ascents where the typesetter can
+            // give them: lowering the label by the difference in line heights
+            // aligned the foot of the two line boxes, and a caption's box
+            // carries proportionally more room under its baseline than body
+            // text's, so every label sat a few pixels below its value.
+            let baseline = with_typesetter(Face::Text, |typesetter| {
+                label_drop(
+                    typesetter.ascent(value_size, Face::Text),
+                    typesetter.ascent(label_size, Face::Text),
+                    value_size.line_height() - label_size.line_height(),
+                )
+            })
+            .unwrap_or_else(|| max(0, value_size.line_height() - label_size.line_height()));
             let mut cursor = y;
             for (label, value) in entries {
                 if layout.nodes.len() + 2 > MAX_LAYOUT_NODES {
@@ -12683,6 +12694,17 @@ fn stamp_format_badge_on(surface: &mut Surface, badge: &str) {
         tone::PAPER,
         bounds,
     );
+}
+
+/// How far a smaller label is lowered to stand on the baseline of the larger
+/// value beside it: the difference in their ascents when the faces give them,
+/// and the difference in line heights, `boxes`, when they do not.
+fn label_drop(value_ascent: Option<i32>, label_ascent: Option<i32>, boxes: i32) -> i32 {
+    match (value_ascent, label_ascent) {
+        (Some(value), Some(label)) => value.saturating_sub(label),
+        _ => boxes,
+    }
+    .max(0)
 }
 
 /// The height a [`Node::Section`] header occupies, lead and trail included.

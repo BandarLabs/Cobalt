@@ -1134,3 +1134,13 @@ fn chips_and_fields_are_rounded_like_the_buttons_beside_them() {
         assert_ne!(at(rect.x + rect.width / 2, rect.y), tone::PAPER, "{rect:?}");
     }
 }
+
+#[test]
+fn a_fact_label_stands_on_its_values_baseline_rather_than_at_the_foot_of_its_line() {
+    // Body text 46 pixels a line with its baseline 36 down; a caption 30 a
+    // line with its baseline 22 down. Lowering by the line heights put the
+    // label's baseline 2 pixels under the value's.
+    assert_eq!(label_drop(Some(36), Some(22), 46 - 30), 14);
+    assert_eq!(label_drop(None, Some(22), 16), 16);
+    assert_eq!(label_drop(Some(10), Some(22), 16), 0);
+}
