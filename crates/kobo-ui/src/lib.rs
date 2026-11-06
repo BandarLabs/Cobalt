@@ -144,6 +144,8 @@ pub fn row_names_the_columns(cells: &[String]) -> bool {
 mod folio_tests;
 
 #[cfg(test)]
+mod italic_tests;
+#[cfg(test)]
 mod quiet_tests;
 
 #[cfg(test)]
@@ -2077,7 +2079,7 @@ impl Screen {
     /// secondary lines at caption size. Both passes run in the application
     /// and in the runtime alike, so the two still agree on what was drawn.
     fn layout_with_selected_font(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
-        if typography() != Typography::Quiet {
+        if typography() < Typography::Quiet {
             return self.layout_once(metrics, chrome);
         }
         if room_given_up() {
@@ -6177,6 +6179,77 @@ fn rich_run_at(start: usize, line_end: usize, spans: &[RichTextSpan]) -> (usize,
     (line_end.max(start + 1), TextPresentation::default())
 }
 
+/// Whether emphasis in `face` is set in a real italic here.
+///
+/// Only in [`Typography::Fine`]: an application at an older protocol measured
+/// its emphasis upright, and setting it in a narrower italic would draw its
+/// lines shorter than the lines it fitted to the page.
+fn sets_true_italic(face: Face) -> bool {
+    typography() >= Typography::Fine
+        && with_typesetter(face, |typesetter| typesetter.has_italic(face)).unwrap_or(false)
+}
+
+/// The width of one run of a paragraph, in the cut its style is drawn in.
+fn measure_run_in(run: &str, size: FontSize, face: Face, styled: TextPresentation) -> i32 {
+    if styled.emphasis && sets_true_italic(face) {
+        with_typesetter(face, |typesetter| {
+            typesetter.measure_italic(run, size, face).0
+        })
+        .unwrap_or_else(|| measure_text_in(run, size, face).0)
+    } else {
+        measure_text_in(run, size, face).0
+    }
+}
+
+/// The width of `text[from..to]` as a styled paragraph sets it: each run in
+/// its own cut, a formula as its picture.
+///
+/// The same as [`measure_range_in`] wherever no run is set in an italic,
+/// which is every paragraph before [`Typography::Fine`].
+#[allow(clippy::too_many_arguments)]
+fn measure_rich_range(
+    text: &str,
+    from: usize,
+    to: usize,
+    size: FontSize,
+    face: Face,
+    spans: &[RichTextSpan],
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> i32 {
+    let italic_inside = spans
+        .iter()
+        .take(MAX_RICH_TEXT_SPANS)
+        .any(|span| span.presentation.emphasis && span.start < to && span.end > from);
+    if !italic_inside || !sets_true_italic(face) {
+        return measure_range_in(text, from, to, size, face, formulae, line_height);
+    }
+    let mut total = 0i32;
+    let mut cursor = from;
+    while cursor < to {
+        let (mut end, styled) = rich_run_at(cursor, to, spans);
+        if end <= cursor || end > to || !text.is_char_boundary(end) {
+            end = text[cursor..to]
+                .char_indices()
+                .nth(1)
+                .map_or(to, |(offset, _)| cursor + offset);
+        }
+        let carries_formula = formulae
+            .iter()
+            .take(MAX_INLINE_FORMULAE)
+            .any(|formula| formula.start < end && formula.end > cursor);
+        total = total.saturating_add(
+            if styled.emphasis && !carries_formula && text.is_char_boundary(cursor) {
+                measure_run_in(&text[cursor..end], size, face, styled)
+            } else {
+                measure_range_in(text, cursor, end, size, face, formulae, line_height)
+            },
+        );
+        cursor = end;
+    }
+    total
+}
+
 fn rich_text_spacing(presentation: ParagraphPresentation, prose: Face) -> (i32, i32, i32, i32) {
     let natural = FontSize::Body.line_height_in(prose).max(1);
     let line_height =
@@ -6376,8 +6449,15 @@ fn layout_node(
             let rich_text_limit = MAX_LAYOUT_NODES.saturating_sub(1);
             let (line_height, before, after, indent) = rich_text_spacing(*presentation, prose);
             let measure = width.saturating_sub(indent.max(0)).max(1);
-            let ranges =
-                wrap_ranges_with(text, measure, FontSize::Body, prose, formulae, line_height);
+            let ranges = wrap_ranges_with(
+                text,
+                measure,
+                FontSize::Body,
+                prose,
+                spans,
+                formulae,
+                line_height,
+            );
             let visible_lines = if legacy_typography() && !flow_height_bound() {
                 usize::MAX
             } else {
@@ -6401,8 +6481,16 @@ fn layout_node(
                     break;
                 }
                 let line = &text[from..to];
-                let line_width =
-                    measure_range_in(text, from, to, FontSize::Body, prose, formulae, line_height);
+                let line_width = measure_rich_range(
+                    text,
+                    from,
+                    to,
+                    FontSize::Body,
+                    prose,
+                    spans,
+                    formulae,
+                    line_height,
+                );
                 let first_indent = if line_index == 0 { indent } else { 0 };
                 let available = width.saturating_sub(first_indent.max(0));
                 let aligned = match presentation.alignment {
@@ -6494,7 +6582,7 @@ fn layout_node(
                         styled = TextPresentation::default();
                     }
                     let run = &text[cursor..end];
-                    let run_width = measure_text_in(run, FontSize::Body, prose).0;
+                    let run_width = measure_run_in(run, FontSize::Body, prose, styled);
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
@@ -6520,21 +6608,23 @@ fn layout_node(
                         // written: a formula earlier on the line takes the width
                         // of its picture, and measuring the words it stands for
                         // instead puts every target after it in the wrong place.
-                        let before = measure_range_in(
+                        let before = measure_rich_range(
                             text,
                             from,
                             start,
                             FontSize::Body,
                             prose,
+                            spans,
                             formulae,
                             line_height,
                         );
-                        let through = measure_range_in(
+                        let through = measure_rich_range(
                             text,
                             from,
                             end,
                             FontSize::Body,
                             prose,
+                            spans,
                             formulae,
                             line_height,
                         );
@@ -6563,21 +6653,23 @@ fn layout_node(
                         else {
                             continue;
                         };
-                        let before = measure_range_in(
+                        let before = measure_rich_range(
                             text,
                             from,
                             start,
                             FontSize::Body,
                             prose,
+                            spans,
                             formulae,
                             line_height,
                         );
-                        let through = measure_range_in(
+                        let through = measure_rich_range(
                             text,
                             from,
                             end,
                             FontSize::Body,
                             prose,
+                            spans,
                             formulae,
                             line_height,
                         );
@@ -7627,7 +7719,7 @@ fn layout_node(
             // after it too, a list whose last fact fitted ran its node past
             // the bound it was fitted to by those few pixels, and a band
             // holding it was clipped at the foot of the panel.
-            if typography() == Typography::Quiet && cursor > y {
+            if typography() >= Typography::Quiet && cursor > y {
                 cursor.saturating_sub(gap / 2)
             } else {
                 cursor
@@ -9953,12 +10045,12 @@ impl FontSize {
         match (self, typography()) {
             (Self::Terminal, _) => 18,
             (Self::Caption, _) => 24,
-            (Self::Note, Typography::Quiet) if !room_given_up() => 27,
+            (Self::Note, Typography::Quiet | Typography::Fine) if !room_given_up() => 27,
             (Self::Note, _) => 24,
             (Self::Body, _) => 31,
-            (Self::Title, Typography::Quiet) => 38,
+            (Self::Title, Typography::Quiet | Typography::Fine) => 38,
             (Self::Title, _) => 42,
-            (Self::Heading, Typography::Quiet) => 46,
+            (Self::Heading, Typography::Quiet | Typography::Fine) => 46,
             (Self::Heading, _) => 54,
         }
     }
@@ -10127,6 +10219,35 @@ pub trait Typesetter: Send + Sync {
         true
     }
 
+    /// Whether `face` has an italic cut to set emphasis in.
+    ///
+    /// The default is `false`, and then emphasis is the upright letters
+    /// leant over as they are drawn, measured as the upright ones. A
+    /// typesetter that says `true` measures and draws emphasis with
+    /// [`Self::measure_italic`] and [`Self::draw_italic`] instead, in screens
+    /// laid out in [`Typography::Fine`].
+    fn has_italic(&self, _face: Face) -> bool {
+        false
+    }
+
+    /// The width and height of `text` in the italic of `face`.
+    fn measure_italic(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
+        self.measure(text, size, face)
+    }
+
+    /// Draws `text` in the italic of `face`, as [`Self::draw`] does upright.
+    fn draw_italic(
+        &self,
+        text: &str,
+        x: i32,
+        y: i32,
+        size: FontSize,
+        face: Face,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        self.draw(text, x, y, size, face, plot);
+    }
+
     /// Unicode byte offsets after which a line may or must end.
     fn line_breaks(&self, text: &str) -> Vec<(usize, BreakOpportunity)> {
         fallback_line_breaks(text)
@@ -10255,11 +10376,15 @@ pub enum Typography {
     /// line of it is lost; a screen built round a board always is. See
     /// [`FontSize::tenth_mm`] and [`DisplayMetrics::below_top_bar`].
     Quiet,
+    /// Protocol 18: Quiet, with emphasis in prose set in the reading face's
+    /// own italic where the typesetter has one, measured as it is drawn.
+    /// See [`Typesetter::has_italic`].
+    Fine,
 }
 
 impl Typography {
     /// The edition applications built against this crate measure in.
-    pub const CURRENT: Self = Self::Quiet;
+    pub const CURRENT: Self = Self::Fine;
 }
 
 impl Default for Typography {
@@ -10728,7 +10853,7 @@ impl DisplayMetrics {
     /// line the bar takes from the page is a line the reader turns for.
     #[must_use]
     pub fn below_top_bar(&self, face: Face) -> i32 {
-        if typography() == Typography::Quiet && face != Face::Reading && !room_given_up() {
+        if typography() >= Typography::Quiet && face != Face::Reading && !room_given_up() {
             self.tenth_mm(30)
         } else {
             self.space(Space::Tight)
@@ -11691,7 +11816,7 @@ fn space_before(
     metrics: &DisplayMetrics,
     prose: Face,
 ) -> i32 {
-    if typography() != Typography::Quiet || prose == Face::Reading || room_given_up() {
+    if typography() < Typography::Quiet || prose == Face::Reading || room_given_up() {
         return 0;
     }
     let Some(previous) = previous else {
@@ -12107,7 +12232,22 @@ pub fn wrap_text_with_formulae(
     formulae: &[InlineFormula],
     line_height: i32,
 ) -> Vec<String> {
-    let lines = wrap_ranges_with(text, max_width, size, face, formulae, line_height);
+    wrap_rich_text(text, &[], max_width, size, face, formulae, line_height)
+}
+
+/// The same, for a styled paragraph: a run set in an italic is measured in
+/// it, so a page counted here breaks where the drawn paragraph does.
+#[must_use]
+pub fn wrap_rich_text(
+    text: &str,
+    spans: &[RichTextSpan],
+    max_width: i32,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> Vec<String> {
+    let lines = wrap_ranges_with(text, max_width, size, face, spans, formulae, line_height);
     if lines.is_empty() {
         return vec![String::new()];
     }
@@ -12128,7 +12268,7 @@ pub fn wrap_text_with_formulae(
 /// Empty for text that wraps to nothing, which [`wrap_text_in`] turns back into
 /// the single empty line every caller downstream expects.
 fn wrap_ranges(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<(usize, usize)> {
-    wrap_ranges_with(text, max_width, size, face, &[], 0)
+    wrap_ranges_with(text, max_width, size, face, &[], &[], 0)
 }
 
 /// The same, for a paragraph with formulas set into it.
@@ -12142,6 +12282,7 @@ fn wrap_ranges_with(
     max_width: i32,
     size: FontSize,
     face: Face,
+    spans: &[RichTextSpan],
     formulae: &[InlineFormula],
     line_height: i32,
 ) -> Vec<(usize, usize)> {
@@ -12174,12 +12315,13 @@ fn wrap_ranges_with(
             };
             let candidate = text[start..visible_end].trim_end_matches(char::is_whitespace);
             let candidate_end = start + candidate.len();
-            if measure_range_in(
+            if measure_rich_range(
                 text,
                 start,
                 candidate_end,
                 size,
                 face,
+                spans,
                 formulae,
                 line_height,
             ) <= max_width
@@ -12294,7 +12436,7 @@ pub const PAD_BORDER_TENTH_MM: i32 = 12;
 /// label as long as "Example" ran into the frame. A pad is still a rounded
 /// square in ink, which is what separates it from a ruled board.
 fn pad_border_tenth_mm() -> i32 {
-    if typography() == Typography::Quiet {
+    if typography() >= Typography::Quiet {
         5
     } else {
         PAD_BORDER_TENTH_MM
@@ -13971,6 +14113,7 @@ fn validate_content_bounds(
             } else if let Node::RichText {
                 text,
                 presentation,
+                spans,
                 formulae,
                 ..
             } = node
@@ -13987,6 +14130,7 @@ fn validate_content_bounds(
                         measure,
                         FontSize::Body,
                         layout.prose_face,
+                        spans,
                         formulae,
                         line_height,
                     )
@@ -18182,28 +18326,29 @@ fn draw_rich_text(
         0
     };
     let y = rect.y.saturating_add(vertical);
+    // A real italic is already slanted; leaning it again would set it at
+    // twice the angle its designer drew.
+    let italic = presentation.emphasis && sets_true_italic(face);
     if with_typesetter(face, |typesetter| {
-        typesetter.draw(
-            text,
-            rect.x,
-            y,
-            FontSize::Body,
-            face,
-            &mut |pixel_x, pixel_y, coverage| {
-                let skew = if presentation.emphasis {
-                    (line - (pixel_y - y)).clamp(0, line) / 7
-                } else {
-                    0
-                };
-                let x = pixel_x.saturating_add(skew);
-                if coverage > 0 && clip.contains(x, pixel_y) {
-                    surface.blend(x, pixel_y, tone, coverage);
-                    if presentation.strong && clip.contains(x + 1, pixel_y) {
-                        surface.blend(x + 1, pixel_y, tone, coverage);
-                    }
+        let mut plot = |pixel_x: i32, pixel_y: i32, coverage: u8| {
+            let skew = if presentation.emphasis && !italic {
+                (line - (pixel_y - y)).clamp(0, line) / 7
+            } else {
+                0
+            };
+            let x = pixel_x.saturating_add(skew);
+            if coverage > 0 && clip.contains(x, pixel_y) {
+                surface.blend(x, pixel_y, tone, coverage);
+                if presentation.strong && clip.contains(x + 1, pixel_y) {
+                    surface.blend(x + 1, pixel_y, tone, coverage);
                 }
-            },
-        );
+            }
+        };
+        if italic {
+            typesetter.draw_italic(text, rect.x, y, FontSize::Body, face, &mut plot);
+        } else {
+            typesetter.draw(text, rect.x, y, FontSize::Body, face, &mut plot);
+        }
     })
     .is_none()
     {

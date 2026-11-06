@@ -116,6 +116,16 @@ pub const SERIF_FONT: &[u8] = include_bytes!("../fonts/Literata-Regular.ttf");
 /// The semibold cut of the same serif, for the size that heads a screen.
 pub const SERIF_HEADING_FONT: &[u8] = include_bytes!("../fonts/Literata-SemiBold.ttf");
 
+/// The italic cut of the same serif, for emphasis in prose.
+///
+/// Emphasis used to be the upright letters leant over as they were drawn,
+/// which is how a typewriter would do it: the shapes stay upright and only
+/// slide. A real italic is drawn differently, narrower and with its own
+/// letterforms, and a poem's title or a book's stressed word reads as set
+/// rather than as faked. Only paired with the bundled regular: set beside a
+/// different serif it would be a third face on the page.
+pub const SERIF_ITALIC_FONT: &[u8] = include_bytes!("../fonts/Literata-Italic.ttf");
+
 /// Bold is looked for on the device first, so a firmware that carries the cut
 /// is used rather than the compiled-in copy, exactly as the regular is.
 pub const DEVICE_DISPLAY_FONT_CANDIDATES: &[&str] =
@@ -654,6 +664,9 @@ pub struct SystemFonts {
     /// and most processes never draw a grid or a letter outside Latin.
     mono: OnceLock<Typeface>,
     reading: Arc<Typeface>,
+    /// The reading face's italic, parsed the first time emphasis is set.
+    /// Absent when the reading face is not the bundled serif.
+    italic: OnceLock<Option<Typeface>>,
 }
 
 /// A bounded publisher face used only for book prose.
@@ -782,7 +795,22 @@ impl SystemFonts {
             .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
             mono: OnceLock::new(),
             reading,
+            italic: OnceLock::new(),
         })
+    }
+
+    /// The italic of the reading face, when there is one to pair with it.
+    fn italic(&self) -> Option<&Typeface> {
+        self.italic
+            .get_or_init(|| {
+                (self.reading.source() == Path::new("Literata-Regular.ttf"))
+                    .then(|| {
+                        Typeface::from_bytes(SERIF_ITALIC_FONT, "Literata-Italic.ttf", self.metrics)
+                            .ok()
+                    })
+                    .flatten()
+            })
+            .as_ref()
     }
 
     /// Where the grid face comes from, without building it to ask.
@@ -916,6 +944,43 @@ impl SystemFonts {
 }
 
 impl Typesetter for SystemFonts {
+    fn has_italic(&self, face: Face) -> bool {
+        face == Face::Reading && self.italic().is_some()
+    }
+
+    fn measure_italic(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
+        match self.italic().filter(|_| face == Face::Reading) {
+            Some(italic) => {
+                italic.measure_run(text, size, face, None, self.fallback(italic, text, face))
+            }
+            None => self.measure(text, size, face),
+        }
+    }
+
+    fn draw_italic(
+        &self,
+        text: &str,
+        x: i32,
+        y: i32,
+        size: FontSize,
+        face: Face,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        match self.italic().filter(|_| face == Face::Reading) {
+            Some(italic) => italic.draw_run(
+                text,
+                x,
+                y,
+                size,
+                face,
+                None,
+                self.fallback(italic, text, face),
+                plot,
+            ),
+            None => self.draw(text, x, y, size, face, plot),
+        }
+    }
+
     fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
         let chosen = self.cut(size, face);
         chosen.measure_run(
@@ -1344,6 +1409,32 @@ mod tests {
             fonts.mono.get().is_some(),
             "Cyrillic borrows from the grid face"
         );
+    }
+
+    #[test]
+    fn the_bundled_serif_sets_emphasis_in_its_own_narrower_italic() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        assert!(fonts.has_italic(Face::Reading));
+        assert!(!fonts.has_italic(Face::Text), "the interface face has none");
+        let line = "That time of year thou mayst in me behold";
+        let upright = fonts.measure(line, FontSize::Body, Face::Reading).0;
+        let italic = fonts.measure_italic(line, FontSize::Body, Face::Reading).0;
+        assert!(
+            italic < upright,
+            "an italic is drawn narrower: {italic} against {upright}"
+        );
+        let mut inked = 0;
+        fonts.draw_italic(
+            line,
+            0,
+            0,
+            FontSize::Body,
+            Face::Reading,
+            &mut |_, _, coverage| {
+                inked += usize::from(coverage > 0);
+            },
+        );
+        assert!(inked > 0, "the italic draws");
     }
 
     #[test]

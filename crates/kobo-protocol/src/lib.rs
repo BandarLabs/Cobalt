@@ -144,7 +144,16 @@ pub const QUIET_TYPE_VERSION: u8 = 17;
 /// change that matters to an owner.
 pub const AUDIOBOOK_VERSION: u8 = 17;
 
-pub const VERSION: u8 = 17;
+/// The protocol whose screens are laid out in [`kobo_ui::Typography::Fine`]:
+/// emphasis in prose is measured and set in the reading face's own italic.
+///
+/// Like [`QUIET_TYPE_VERSION`], a promise about measurement rather than a
+/// byte on the wire. An application at an earlier version measured its
+/// emphasis upright, so the runtime keeps leaning the upright letters for it
+/// instead of drawing a narrower italic into lines it did not fit.
+pub const FINE_TYPE_VERSION: u8 = 18;
+
+pub const VERSION: u8 = 18;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Beta wire version introducing explicit update tasks.
@@ -185,7 +194,7 @@ const PRE_FOLIO_VERSIONS: [u8; 2] = [DICTIONARY_VERSION, LEGACY_VERSION];
 /// application can still be speaking it. A test holds it to the release
 /// registry's `tools/protocol-minimums.json`, so removing one is a visible
 /// decision rather than a side effect.
-pub const ACCEPTED_VERSIONS: [u8; 8] = [
+pub const ACCEPTED_VERSIONS: [u8; 9] = [
     DICTIONARY_VERSION,
     LEGACY_VERSION,
     FOLIO_VERSION,
@@ -195,6 +204,7 @@ pub const ACCEPTED_VERSIONS: [u8; 8] = [
     // longer the newest.
     PICTURE_BLEED_VERSION,
     CONTROLS_VERSION,
+    QUIET_TYPE_VERSION,
     VERSION,
 ];
 
@@ -7446,8 +7456,10 @@ fn decode_screen(
         kobo_ui::Typography::Paperback
     } else if version < QUIET_TYPE_VERSION {
         kobo_ui::Typography::Folio
-    } else {
+    } else if version < FINE_TYPE_VERSION {
         kobo_ui::Typography::Quiet
+    } else {
+        kobo_ui::Typography::Fine
     };
     Ok(screen)
 }
