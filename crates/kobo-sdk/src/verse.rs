@@ -103,8 +103,11 @@ impl ScreenBuilder {
     /// lines will stand.
     #[must_use]
     pub fn verse_head(self, title: &str, poet: &str, setting: VerseSetting) -> Self {
+        // At the verse's leading, so the title and the poet read as one head
+        // rather than two paragraphs a prose line apart.
         let line = ParagraphPresentation {
             start_indent_em: setting.indent_em,
+            line_height_percent: VERSE_LEADING,
             ..ParagraphPresentation::PLAIN
         };
         self.rich_text(title, italic(title), line).rich_text(
@@ -148,6 +151,7 @@ impl ScreenBuilder {
             italic(note),
             ParagraphPresentation {
                 start_indent_em: setting.indent_em,
+                line_height_percent: VERSE_LEADING,
                 margin_before_em: 100,
                 ..ParagraphPresentation::PLAIN
             },
