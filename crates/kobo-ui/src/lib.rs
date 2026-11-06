@@ -6727,6 +6727,59 @@ fn rich_text_lines(
     (ranges, initial)
 }
 
+/// The block indent, in hundredths of an em, that centres a poem in a column
+/// `column` pixels wide: its longest line sits in the middle and every other
+/// line keeps its own ragged end, as a poem is set in a printed anthology.
+///
+/// `stanzas` are the poem's stanzas, line by line; `presentation` is how each
+/// is set, and when it asks for an initial the first stanza's opening lines
+/// are measured with the room the letter takes. Zero when a line would not
+/// fit the column whole: a poem whose lines wrap is set from the margin, so
+/// the wrapped lines have every pixel there is.
+#[must_use]
+pub fn verse_indent(
+    stanzas: &[&[&str]],
+    column: i32,
+    presentation: ParagraphPresentation,
+    prose: Face,
+) -> u16 {
+    let (line_height, ..) = rich_text_spacing(presentation, prose);
+    let opening = stanzas
+        .first()
+        .map(|stanza| stanza.join("\n"))
+        .unwrap_or_default();
+    let initial = initial_letter(&opening, presentation, prose, line_height, &[]);
+    let mut longest = 0i32;
+    for (index, stanza) in stanzas.iter().enumerate() {
+        for (row, line) in stanza.iter().enumerate() {
+            let (text, beside) = match initial {
+                Some(initial) if index == 0 && row < initial.lines => {
+                    let text = if row == 0 {
+                        line.get(initial.end..).unwrap_or_default()
+                    } else {
+                        line
+                    };
+                    (text, initial.width)
+                }
+                _ => (*line, 0),
+            };
+            let width = measure_text_in(text, FontSize::Body, prose)
+                .0
+                .saturating_add(beside);
+            longest = longest.max(width);
+        }
+    }
+    let em = measure_text_in("M", FontSize::Body, prose).0.max(1);
+    if longest == 0 || longest > column {
+        return 0;
+    }
+    // Rounded down, so the indent never pushes the longest line past the
+    // column it was measured to fit.
+    u16::try_from((column - longest) / 2 * 100 / em)
+        .unwrap_or(0)
+        .min(2_000)
+}
+
 /// How far every line of a paragraph stands in, in pixels.
 fn block_indent(presentation: ParagraphPresentation, prose: Face) -> i32 {
     measure_text_in("M", FontSize::Body, prose)
