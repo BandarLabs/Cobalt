@@ -4481,3 +4481,102 @@ fn a_sections_value_is_measured_before_its_title_is_clamped() {
         "a title and its value together ran past the right margin"
     );
 }
+
+fn dialog_over_a_page(typography: Typography) -> Layout {
+    let words = |id: u32| Node::Text {
+        id: NodeId(id),
+        text: "Play six hundred puzzles with pencil notes, undo and saved games.".into(),
+        links: Vec::new(),
+    };
+    Screen::new(
+        1,
+        vec![
+            Node::Splash {
+                id: NodeId(2),
+                glyph: Some(Glyph::Grid),
+                title: "Sudoku".into(),
+                summary: "Puzzles for a quiet evening.".into(),
+            },
+            words(3),
+            words(4),
+        ],
+    )
+    .with_top_bar(TopBar::new(NodeId(1), "Sudoku"))
+    .with_overlay(Overlay::dialog(
+        NodeId(10),
+        "Uninstall Sudoku?",
+        ActionId(11),
+        vec![
+            Node::Text {
+                id: NodeId(12),
+                text: "Its saved data stays on this reader.".into(),
+                links: Vec::new(),
+            },
+            Node::Button {
+                id: NodeId(13),
+                action: ActionId(11),
+                label: "Cancel".into(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            },
+        ],
+    ))
+    .with_typography(typography)
+    .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
+}
+
+#[test]
+fn a_dialog_never_cuts_through_a_glyph_a_picture_or_a_line_of_words_behind_it() {
+    let layout = dialog_over_a_page(Typography::Fine);
+    let frame = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Overlay)
+        .expect("the dialogue")
+        .rect;
+    let behind = layout
+        .nodes
+        .iter()
+        .take_while(|node| !matches!(node.kind, LayoutKind::Scrim { .. }))
+        .filter(|node| {
+            matches!(node.kind, LayoutKind::SplashGlyph(_))
+                || (matches!(
+                    node.kind,
+                    LayoutKind::Text | LayoutKind::SplashTitle | LayoutKind::SplashText
+                ) && !node.text_lines.is_empty())
+        })
+        .filter(|node| {
+            node.rect.x < frame.x + frame.width && node.rect.x + node.rect.width > frame.x
+        });
+    for node in behind {
+        for edge in [frame.y, frame.y + frame.height] {
+            assert!(
+                !(node.rect.y < edge && node.rect.y + node.rect.height > edge),
+                "{:?} at {:?} is cut by the edge at {edge}",
+                node.kind,
+                node.rect
+            );
+        }
+    }
+    // And it stays between the bars.
+    let bar = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::TopBar)
+        .expect("the bar")
+        .rect;
+    assert!(frame.y >= bar.y + bar.height);
+    assert!(frame.y + frame.height <= CLARA_BW_METRICS.height);
+}
+
+#[test]
+fn an_older_applications_dialog_is_still_centred_on_the_panel() {
+    let layout = dialog_over_a_page(Typography::Quiet);
+    let frame = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Overlay)
+        .expect("the dialogue")
+        .rect;
+    assert_eq!(frame.y, (CLARA_BW_METRICS.height - frame.height) / 2);
+}

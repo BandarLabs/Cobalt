@@ -2577,7 +2577,13 @@ impl Screen {
         // popover hanging off a top-bar control has to cover to be readable --
         // and so hit testing, which walks the list backwards, reaches it first.
         if let Some(overlay) = &self.overlay {
-            layout_overlay(overlay, metrics, prose, &mut layout);
+            layout_overlay(
+                overlay,
+                metrics,
+                prose,
+                (content_top, content_bottom),
+                &mut layout,
+            );
             // A popover cannot also be a page turn: the zones are whatever is
             // left of the content area, and "left over" must not include the
             // thing drawn over it. Said as suppression rather than absence, so
@@ -2600,7 +2606,13 @@ impl Screen {
 /// Everything here is measured against what is already in `layout`, because a
 /// popover's position is a fact about where its anchor ended up and cannot be
 /// known before the screen has been laid out.
-fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layout: &mut Layout) {
+fn layout_overlay(
+    overlay: &Overlay,
+    metrics: &DisplayMetrics,
+    prose: Face,
+    content: (i32, i32),
+    layout: &mut Layout,
+) {
     let margin = metrics.screen_margin();
     let padding = metrics.space(Space::Small);
     let gap = metrics.space(Space::Tight);
@@ -2726,11 +2738,16 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
 
     let caret = metrics.space(Space::Small);
     let (x, y, side) = match overlay.kind {
-        OverlayKind::Modal | OverlayKind::Dialog { .. } => (
-            (metrics.width - width) / 2,
-            (metrics.height - height) / 2,
-            None,
-        ),
+        OverlayKind::Modal | OverlayKind::Dialog { .. } => {
+            let x = (metrics.width - width) / 2;
+            let y = if typography() >= Typography::Fine {
+                clear_dialog_top(layout, content, x, width, height)
+                    .unwrap_or((metrics.height - height) / 2)
+            } else {
+                (metrics.height - height) / 2
+            };
+            (x, y, None)
+        }
         OverlayKind::Popover { anchor } => {
             let target = layout
                 .nodes
@@ -2749,6 +2766,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
                     },
                     metrics,
                     prose,
+                    content,
                     layout,
                 );
             };
@@ -2970,6 +2988,70 @@ fn set_as_menu(
             text_lines: button.text_lines,
         });
     }
+}
+
+/// Where a dialogue `height` tall and `width` wide at `x` goes, from
+/// [`Typography::Fine`]: centred in the content area between the bars, then
+/// moved the least distance that puts both its edges in clear space.
+///
+/// Centred on the whole panel, a dialogue's top edge fell wherever the panel's
+/// middle happened to be, and on the store's app page that was through the
+/// middle of the app's icon: half a glyph sticking out above a box reads as
+/// something broken, not as something behind. Nothing behind is moved; the
+/// dialogue is. `None` when it is taller than the content area, which keeps
+/// the old centring on the panel.
+fn clear_dialog_top(
+    layout: &Layout,
+    content: (i32, i32),
+    x: i32,
+    width: i32,
+    height: i32,
+) -> Option<i32> {
+    let (top, bottom) = content;
+    let room = bottom.saturating_sub(top).saturating_sub(height);
+    if room < 0 {
+        return None;
+    }
+    // What a reader sees as a thing: words, marks and pictures. Bars, bands,
+    // spacers and a row's own tap target are the ground they stand on, and
+    // an edge across those is an edge across paper.
+    let marks: Vec<Rect> = layout
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.rect.x < x + width
+                && node.rect.x + node.rect.width > x
+                && (layout_text_style(node).is_some_and(|_| !node.text_lines.is_empty())
+                    || matches!(
+                        node.kind,
+                        LayoutKind::SplashGlyph(_)
+                            | LayoutKind::TileGlyph(_)
+                            | LayoutKind::TileGlyphMuted(_)
+                            | LayoutKind::InlineGlyph(..)
+                            | LayoutKind::RowLead(_)
+                            | LayoutKind::Picture(_)
+                            | LayoutKind::FramedPicture(_)
+                            | LayoutKind::Button(..)
+                            | LayoutKind::BannerWords(..)
+                    ))
+        })
+        .map(|node| node.rect)
+        .collect();
+    let cuts = |edge: i32| {
+        marks
+            .iter()
+            .any(|rect| rect.y < edge && rect.y + rect.height > edge)
+    };
+    let centred = top + room / 2;
+    let clear = |y: i32| !cuts(y) && !cuts(y + height);
+    for step in 0..=room {
+        for y in [centred - step, centred + step] {
+            if (top..=top + room).contains(&y) && clear(y) {
+                return Some(y);
+            }
+        }
+    }
+    Some(centred)
 }
 
 /// Lays out the strip carrying the clock, the radio and the battery.
