@@ -16,6 +16,13 @@ const SETTINGS: &str = "settings";
 const SEARCH_FIELD: &str = "search-field";
 const SEARCH_LIMIT: u32 = 512 * 1024;
 const USER_AGENT: &str = "Cobalt Verses/0.1";
+/// The quote card as it is shown while it is saved, in pixels and in the
+/// millimetres of panel it may take: half the panel, so its words still
+/// read and the line saying where it goes fits under it.
+const CARD_PREVIEW: kobo_sdk::PictureHandle = kobo_sdk::PictureHandle(1);
+const CARD_PREVIEW_WIDTH: u32 = 536;
+const CARD_PREVIEW_HEIGHT: u32 = 724;
+const CARD_PREVIEW_MM: u16 = 70;
 
 #[derive(Clone, Copy)]
 struct Poem {
@@ -1554,6 +1561,8 @@ struct Verses {
     day: Option<(u16, u8, u8)>,
     /// A card on its way to a paired computer.
     export: Option<kobo_sdk::exports::Export>,
+    /// The card being saved, drawn small, and the poem it was made from.
+    card: Option<(Option<kobo_sdk::TilePicture>, String)>,
     /// Whether a favourite is still waiting for storage to confirm it.
     ///
     /// Marking a poem used to write and walk away. A write that failed took
@@ -1589,6 +1598,7 @@ impl Default for Verses {
             loaded: false,
             poem_page: 0,
             export: None,
+            card: None,
             day: reader_clock()
                 .now()
                 .ok()
@@ -2404,7 +2414,7 @@ impl Verses {
             // and a way to try again if the computer is not listening.
             View::Card => self.export.as_ref().map_or_else(
                 || self.local_poem(context),
-                kobo_sdk::exports::Export::screen,
+                |export| self.card_screen(export),
             ),
             View::Browse => self.browse(context).0,
             View::Search => self.search(),
@@ -2527,6 +2537,30 @@ impl Verses {
         card(fits.max(1))
     }
 
+    /// The card being saved: the card itself, the poem it came from, and
+    /// where the copy is going.
+    ///
+    /// Until the copy is ready, and if it fails, the export's own screen
+    /// says what is happening and offers to try again.
+    fn card_screen(&self, export: &kobo_sdk::exports::Export) -> Screen {
+        let Some((picture, poem)) = self.card.as_ref().filter(|_| export.is_ready()) else {
+            return export.screen();
+        };
+        let mut screen = ScreenBuilder::new("verses-card")
+            .top_bar("Quote card")
+            .owns_back(true);
+        if let Some(picture) = picture {
+            screen = screen.picture(*picture, CARD_PREVIEW_MM);
+        }
+        screen
+            .text(poem.clone())
+            .secondary(
+                "Saved for your computer. Open Cobalt there to receive it. The card stays on \
+                 this reader too.",
+            )
+            .build()
+    }
+
     /// Draws the card and offers it to a paired computer.
     fn export_card(&mut self, context: &mut Context) {
         let metrics = context.metrics();
@@ -2544,13 +2578,29 @@ impl Verses {
             u32::try_from(metrics.height).unwrap_or(0),
             &surface.pixels,
         );
-        let name = match self.current_online().filter(|_| self.card_from_online()) {
-            Some(poem) => format!("{} by {}", poem.title, poem.author),
-            None => format!(
-                "{} by {}",
-                CORPUS[self.poem].title, CORPUS[self.poem].author
+        let (title, author) = match self.current_online().filter(|_| self.card_from_online()) {
+            Some(poem) => (poem.title.clone(), poem.author.clone()),
+            None => (
+                CORPUS[self.poem].title.to_owned(),
+                CORPUS[self.poem].author.to_owned(),
             ),
         };
+        let name = format!("{title} by {author}");
+        // The card itself, at a size that leaves room for what is said
+        // about it. Saving one used to show its file name and size and
+        // nothing of what had been made.
+        let shown = kobo_image::Picture::from_grey(
+            u32::try_from(metrics.width).unwrap_or(0),
+            u32::try_from(metrics.height).unwrap_or(0),
+            surface.pixels.clone(),
+        )
+        .and_then(|picture| picture.fit(CARD_PREVIEW_WIDTH, CARD_PREVIEW_HEIGHT))
+        .ok()
+        .and_then(|picture| {
+            let (width, height) = (picture.width(), picture.height());
+            context.put_picture(CARD_PREVIEW, width, height, picture.into_grey())
+        });
+        self.card = Some((shown, format!("{title}, {author}")));
         match picture
             .map_err(|error| format!("{error:?}"))
             .and_then(|bytes| {
@@ -2800,6 +2850,13 @@ impl KoboApp for Verses {
                 View::Reading | View::Results | View::Search => View::Browse,
                 View::Card => {
                     self.export = None;
+                    if self
+                        .card
+                        .take()
+                        .is_some_and(|(picture, _)| picture.is_some())
+                    {
+                        context.drop_picture(CARD_PREVIEW);
+                    }
                     self.card_from
                 }
                 _ => View::Today,
@@ -3714,6 +3771,13 @@ mod tests {
         runner.action(action_id("card"));
         assert_eq!(runner.app().view, View::Card);
         assert!(runner.app().card_from_online());
+        // The card itself is kept, drawn small, to be shown while it saves.
+        let (picture, poem) = runner.app().card.clone().expect("the card is kept to show");
+        assert_eq!(poem, "A Fetched Poem, A Poet");
+        let picture = picture.expect("the card was handed over as a picture");
+        assert!(picture.source.0 <= CARD_PREVIEW_WIDTH && picture.source.1 <= CARD_PREVIEW_HEIGHT);
+        runner.action(ActionId::BACK);
+        assert!(runner.app().card.is_none());
     }
 
     /// A reader on the second page of a long poem opened from a search, with

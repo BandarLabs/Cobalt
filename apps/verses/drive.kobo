@@ -22,8 +22,9 @@ wait-for Make a quote card
 clean
 shot verses-poem-menu
 tap Make a quote card
-wait-for Save a copy
-expect Ready for your computer.
+# Once saved, the card itself is shown with where it is going.
+wait-for Saved for your computer
+expect Quote card
 clean
 shot verses-card
 
