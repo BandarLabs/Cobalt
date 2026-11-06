@@ -597,12 +597,12 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
 ///
 /// - Noughts and crosses is the open board with a cross and a nought in two
 ///   of its corners, drawn to the edge of the box so the marks can be read.
-/// - The crossword is four cells each way with black squares, set
-///   symmetrically as a printed grid's are.
+/// - The crossword is nine cells with two black squares in opposite
+///   corners, as a printed grid sets them.
 /// - The number puzzle is three boxes each way, with its cells as hairlines
 ///   inside them and no black squares, so it is not the crossword.
-/// - The nonogram is a smaller grid with its clues counted off along the top
-///   and left edges, which no other grid has.
+/// - The nonogram is nine cells with four filled as a shape and its clues
+///   counted off above the columns, which no other grid has.
 /// - The comic is a page cut into panels of unequal size, one gutter slanted.
 /// - The board games are a board of four squares with a black piece and a
 ///   white one.
@@ -650,37 +650,29 @@ fn drawn_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
             Some(shapes)
         }
         Glyph::CrosswordGrid => {
-            const CELL: i32 = (HIGH - LOW) / 4;
+            // Nine cells in a frame a little inside the usual one, with two
+            // black squares in opposite corners. The cell walls are lighter
+            // than the frame and the black squares stand off them, so the
+            // grid carries about as much ink as the line icons beside it
+            // instead of reading as a blot.
+            const LOW: i32 = 200;
+            const HIGH: i32 = 800;
+            const CELL: i32 = (HIGH - LOW) / 3;
+            const INSET: i32 = 40;
             let mut shapes = Vec::new();
-            for (row, column) in [(0, 3), (1, 1), (2, 2), (3, 0)] {
-                let (x, y) = (LOW + column * CELL, LOW + row * CELL);
-                // A black square in a corner of the frame follows its curve.
-                let path = match (row, column) {
-                    (0, 3) => Path::new()
-                        .move_to(x, y)
-                        .line_to(HIGH - CORNER, y)
-                        .quad_to(HIGH, y, HIGH, y + CORNER)
-                        .line_to(HIGH, y + CELL)
-                        .line_to(x, y + CELL)
-                        .close(),
-                    (3, 0) => Path::new()
-                        .move_to(x, y)
-                        .line_to(x + CELL, y)
-                        .line_to(x + CELL, HIGH)
-                        .line_to(x + CORNER, HIGH)
-                        .quad_to(x, HIGH, x, HIGH - CORNER)
-                        .close(),
-                    _ => Path::rounded(x, y, CELL, CELL, 0),
-                };
-                shapes.push(Shape::Fill(path));
+            for (row, column) in [(0, 2), (2, 0)] {
+                shapes.push(Shape::Fill(Path::rounded(
+                    LOW + column * CELL + INSET,
+                    LOW + row * CELL + INSET,
+                    CELL - 2 * INSET,
+                    CELL - 2 * INSET,
+                    12,
+                )));
             }
-            shapes.push(frame());
-            // The cell walls are lighter than the frame, so sixteen cells
-            // stay open enough to read at launcher size.
-            for step in 1..4 {
-                let at = LOW + step * CELL;
+            shapes.push(stroke(Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, 75)));
+            for at in [LOW + CELL, HIGH - CELL] {
                 for path in [Path::line(at, LOW, at, HIGH), Path::line(LOW, at, HIGH, at)] {
-                    shapes.push(Shape::Stroke { path, width: 36 });
+                    shapes.push(Shape::Stroke { path, width: 40 });
                 }
             }
             Some(shapes)
@@ -708,34 +700,27 @@ fn drawn_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
             Some(shapes)
         }
         Glyph::CluedGrid => {
-            // A grid three cells square in the lower right, its filled cells
-            // set apart so they read as cells rather than as one blot, with
-            // one clue mark above each column and beside each row.
-            const ORIGIN: i32 = 397;
-            const INSET: i32 = 22;
-            const CELL: i32 = (HIGH - INSET - ORIGIN) / 3;
-            const CLUE: (i32, i32) = (LOW, 271);
+            // Nine cells in a frame, four of them filled as an L, with a clue
+            // mark above each column. Nothing else: the clues along the left
+            // and the cell walls made it noise at launcher size.
+            const X: i32 = 245;
+            const Y: i32 = 323;
+            const CELL: i32 = 170;
+            const INSET: i32 = 20;
             let mut shapes = Vec::new();
-            for (row, column) in [(0, 0), (0, 1), (1, 1), (2, 1), (2, 2)] {
+            for (row, column) in [(0, 0), (1, 0), (2, 0), (2, 1)] {
                 shapes.push(Shape::Fill(Path::rounded(
-                    ORIGIN + column * CELL + INSET,
-                    ORIGIN + row * CELL + INSET,
+                    X + column * CELL + INSET,
+                    Y + row * CELL + INSET,
                     CELL - 2 * INSET,
                     CELL - 2 * INSET,
                     12,
                 )));
             }
-            shapes.push(stroke(Path::rounded(
-                ORIGIN - INSET,
-                ORIGIN - INSET,
-                3 * CELL + 2 * INSET,
-                3 * CELL + 2 * INSET,
-                54,
-            )));
-            for step in 0..3 {
-                let at = ORIGIN + step * CELL + CELL / 2;
-                shapes.push(stroke(Path::line(at, CLUE.0, at, CLUE.1)));
-                shapes.push(stroke(Path::line(CLUE.0, at, CLUE.1, at)));
+            shapes.push(stroke(Path::rounded(X, Y, 3 * CELL, 3 * CELL, 50)));
+            for column in 0..3 {
+                let at = X + column * CELL + CELL / 2;
+                shapes.push(stroke(Path::line(at, LOW, at, 245)));
             }
             Some(shapes)
         }

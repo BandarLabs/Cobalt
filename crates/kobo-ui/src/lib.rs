@@ -5280,8 +5280,8 @@ pub enum Glyph {
     /// A nought and a cross: the two marks of noughts and crosses, without
     /// the board, which is a grid like every other puzzle's.
     NoughtsCrosses,
-    /// A small grid with some cells filled and the clues counted off along
-    /// its top and left edges: a nonogram.
+    /// Nine cells with four filled as a shape and the clues counted off above
+    /// the columns: a nonogram.
     CluedGrid,
     /// A jigsaw piece: a logic puzzle, or a pack of them.
     Puzzle,
