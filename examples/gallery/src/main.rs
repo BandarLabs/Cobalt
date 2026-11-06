@@ -1345,8 +1345,8 @@ impl Gallery {
             .banner(BannerLevel::Info, "An informational banner.")
             .banner(
                 BannerLevel::Attention,
-                "An attention banner, drawn inverted. This is what replaces flashing \
-                 the frontlight.",
+                "An attention banner, for something worth seeing to before it \
+                 goes wrong.",
             )
     }
 

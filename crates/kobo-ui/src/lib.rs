@@ -9863,57 +9863,46 @@ fn layout_node(
             text,
             action,
         } => {
-            let padding = metrics.space(Space::Small);
-            let mark = banner_mark_column(*level, metrics);
-            let lines = wrap_text(text, width - 2 * padding - mark, FontSize::Body);
-            let words = banner_height_for_lines(lines.len(), metrics);
-            // The action is a line of its own rather than a button beside the
-            // words, so the words keep the banner's whole measure. Beside
-            // them, "Sign in again" at the largest text size left the reason
-            // three words a line.
-            let button = action.as_ref().map(|action| {
-                let finger = banner_action_height(metrics);
-                let inner = max(1, width - 2 * padding);
-                let label = one_line(&action.label, max(1, inner - 2 * padding), FontSize::Body);
-                let wide = measure_text(&label, FontSize::Body)
-                    .0
-                    .saturating_add(2 * padding)
-                    .max(metrics.touch_target_minimum())
-                    .min(inner);
-                (action.action, label, wide, finger)
-            });
-            let height = button.as_ref().map_or(words, |(.., finger)| {
-                words
-                    .saturating_add(*finger)
-                    .saturating_add(metrics.space(Space::Tight))
-            });
+            let plan = plan_banner(
+                text,
+                *level,
+                action.as_ref().map(|action| action.label.as_str()),
+                width,
+                metrics,
+            );
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
                     x,
                     y,
                     width,
-                    height,
+                    height: plan.height,
                 },
                 kind: LayoutKind::Banner(*level),
-                text_lines: lines,
+                text_lines: plan.lines,
             });
-            if let Some((action, label, wide, finger)) = button {
+            if let (Some(action), Some(button)) = (action, plan.action) {
+                let padding = metrics.space(Space::Small);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
-                        x: x.saturating_add(width).saturating_sub(padding + wide),
-                        y: y.saturating_add(height)
-                            .saturating_sub(padding)
-                            .saturating_sub(finger),
-                        width: wide,
-                        height: finger,
+                        x: x.saturating_add(width)
+                            .saturating_sub(padding + button.width),
+                        y: if button.beside {
+                            y.saturating_add((plan.height - button.height) / 2)
+                        } else {
+                            y.saturating_add(plan.height)
+                                .saturating_sub(padding)
+                                .saturating_sub(button.height)
+                        },
+                        width: button.width,
+                        height: button.height,
                     },
-                    kind: LayoutKind::BannerAction(action),
-                    text_lines: vec![label],
+                    kind: LayoutKind::BannerAction(action.action),
+                    text_lines: vec![button.label],
                 });
             }
-            y.saturating_add(height)
+            y.saturating_add(plan.height)
         }
         Node::Splash {
             id,
@@ -10799,15 +10788,122 @@ fn banner_action_height(metrics: &DisplayMetrics) -> i32 {
     max(metrics.touch_target_default(), FontSize::Body.line_height())
 }
 
-/// The column a success or an error banner gives its mark ahead of the words.
-/// Info and attention give none, so their banners are laid out exactly as
-/// they always were.
+/// The column a banner gives its mark ahead of the words.
+///
+/// Every level has one in [`Typography::Fine`], so the four levels are one
+/// shape told apart by their marks. Before that only a success and an error
+/// had one, and an application at an older protocol measured its info and
+/// attention banners without it.
 fn banner_mark_column(level: BannerLevel, metrics: &DisplayMetrics) -> i32 {
+    let column = FontSize::Body
+        .line_height()
+        .saturating_add(metrics.space(Space::Tight));
     match level {
+        _ if typography() >= Typography::Fine => column,
         BannerLevel::Info | BannerLevel::Attention => 0,
-        BannerLevel::Success | BannerLevel::Error => FontSize::Body
-            .line_height()
-            .saturating_add(metrics.space(Space::Tight)),
+        BannerLevel::Success | BannerLevel::Error => column,
+    }
+}
+
+/// The mark a banner sets ahead of its words.
+fn banner_mark(level: BannerLevel) -> Vec<vector::Shape> {
+    match level {
+        BannerLevel::Info => vector::notice(vector::NoticeMark::Note),
+        BannerLevel::Attention => vector::notice(vector::NoticeMark::Caution),
+        BannerLevel::Success => vector::shapes(Glyph::Check),
+        BannerLevel::Error => vector::notice(vector::NoticeMark::Fault),
+    }
+}
+
+/// How a banner is laid out: its words, its height, and where its action
+/// goes.
+struct BannerPlan {
+    lines: Vec<String>,
+    height: i32,
+    action: Option<BannerButton>,
+}
+
+struct BannerButton {
+    label: String,
+    width: i32,
+    height: i32,
+    /// At the end of the words rather than on a line under them.
+    beside: bool,
+}
+
+/// Lays out a banner `width` wide, with an action labelled `label` if it has
+/// one.
+///
+/// In [`Typography::Fine`] the action goes at the end of the words when they
+/// still fit in two lines beside it, the way a notice on any other system
+/// carries its one button. On a line of its own it made a grey slab twice the
+/// height of a one-line notice, with a button floating in its far corner.
+/// Words that need more than two lines beside it, or more than half the
+/// banner's measure, keep the whole measure and the action goes under them:
+/// "Sign in again" at the largest text size would otherwise leave the reason
+/// three words a line.
+fn plan_banner(
+    text: &str,
+    level: BannerLevel,
+    label: Option<&str>,
+    width: i32,
+    metrics: &DisplayMetrics,
+) -> BannerPlan {
+    let padding = metrics.space(Space::Small);
+    let tight = metrics.space(Space::Tight);
+    let measure = max(1, width - 2 * padding - banner_mark_column(level, metrics));
+    let button = label.map(|label| {
+        let inner = max(1, width - 2 * padding);
+        let label = one_line(label, max(1, inner - 2 * padding), FontSize::Body);
+        let wide = measure_text(&label, FontSize::Body)
+            .0
+            .saturating_add(2 * padding)
+            .max(metrics.touch_target_minimum())
+            .min(inner);
+        (label, wide)
+    });
+    if let Some((label, wide)) = button.as_ref() {
+        let beside = measure - padding - wide;
+        if typography() >= Typography::Fine && beside * 2 >= measure {
+            let lines = wrap_text(text, beside, FontSize::Body);
+            if lines.len() <= 2 {
+                let words = banner_height_for_lines(lines.len(), metrics);
+                // As tall as the words leave room for, so the button sits
+                // inside the banner with the same margin above and below it,
+                // and never shorter than a fingertip.
+                let finger = words
+                    .saturating_sub(2 * tight)
+                    .max(metrics.touch_target_minimum())
+                    .min(banner_action_height(metrics));
+                return BannerPlan {
+                    lines,
+                    height: max(words, finger.saturating_add(2 * tight)),
+                    action: Some(BannerButton {
+                        label: label.clone(),
+                        width: *wide,
+                        height: finger,
+                        beside: true,
+                    }),
+                };
+            }
+        }
+    }
+    let lines = wrap_text(text, measure, FontSize::Body);
+    let words = banner_height_for_lines(lines.len(), metrics);
+    let finger = banner_action_height(metrics);
+    BannerPlan {
+        lines,
+        height: if button.is_some() {
+            words.saturating_add(finger).saturating_add(tight)
+        } else {
+            words
+        },
+        action: button.map(|(label, width)| BannerButton {
+            label,
+            width,
+            height: finger,
+            beside: false,
+        }),
     }
 }
 
@@ -12463,11 +12559,16 @@ pub fn banner_height(text: &str, width: i32, metrics: &DisplayMetrics) -> i32 {
 
 /// The same, for a banner of any level and with or without its action.
 ///
-/// A success or an error banner gives a column to its mark, so its words wrap
-/// narrower than an info banner's, and an action takes a line of its own
-/// under the words. A paginator that measured only the words reserved a line
-/// too little for each, and the last row of the page went under the bar,
-/// which is why retries were kept off the banners they answer.
+/// A banner gives a column to its mark, so its words wrap narrower than the
+/// page, and an action may take a line of its own under the words. A
+/// paginator that measured only the words reserved a line too little for
+/// each, and the last row of the page went under the bar, which is why
+/// retries were kept off the banners they answer.
+///
+/// Without the action's label this cannot tell whether the action fits at
+/// the end of the words, so it answers with the height of an action on a line
+/// of its own: the most the banner can take, which never puts a row under the
+/// bar. [`banner_height_labelled`] gives the exact height.
 #[must_use]
 pub fn banner_height_with(
     text: &str,
@@ -12482,13 +12583,7 @@ pub fn banner_height_with(
         } else {
             width.min(metrics.readable_width())
         };
-        let padding = metrics.space(Space::Small);
-        let lines = wrap_text(
-            text,
-            width - 2 * padding - banner_mark_column(level, metrics),
-            FontSize::Body,
-        );
-        let words = banner_height_for_lines(lines.len(), metrics);
+        let words = plan_banner(text, level, None, width, metrics).height;
         if action {
             words
                 .saturating_add(banner_action_height(metrics))
@@ -12496,6 +12591,26 @@ pub fn banner_height_with(
         } else {
             words
         }
+    })
+}
+
+/// The height a banner takes with an action labelled `action`, or with none,
+/// exactly as it is drawn.
+#[must_use]
+pub fn banner_height_labelled(
+    text: &str,
+    level: BannerLevel,
+    action: Option<&str>,
+    width: i32,
+    metrics: &DisplayMetrics,
+) -> i32 {
+    with_text_scale(metrics.text_scale, || {
+        let width = if legacy_typography() {
+            width
+        } else {
+            width.min(metrics.readable_width())
+        };
+        plan_banner(text, level, action, width, metrics).height
     })
 }
 
@@ -17947,66 +18062,102 @@ fn paint_layout(
             }
             LayoutKind::Banner(level) => {
                 let padding = metrics.space(Space::Small);
-                // Both levels sit on the same quiet surface. An attention
-                // banner used to be reversed out of solid black across the
-                // full width of the panel, which on E Ink is a slab that has
-                // to be cleared before anything near it can be redrawn, and
-                // which shouted louder than the content it was warning about.
-                // What separates the two levels now is a heavy bar down the
-                // leading edge, the same mark a printed page uses to flag a
-                // paragraph, readable at a glance and cheap to draw.
-                fill_clipped(surface, node.rect, palette.banner(level), clip);
-                let mut text_x = node.rect.x + padding;
-                // A success and an error carry a mark ahead of the words, in a
-                // column the layout set aside for it, so the level can be told
-                // without reading. An error is also ruled round in ink: it is
-                // the one banner that asks the reader to do something.
+                let line = FontSize::Body.line_height();
                 let mark = banner_mark_column(level, metrics);
-                if mark > 0 {
-                    let side = FontSize::Body.line_height();
-                    draw_glyph_icon_in(
+                if typography() >= Typography::Fine {
+                    // One shape for every level: the quiet surface, rounded
+                    // like the buttons beside it, with the level's mark ahead
+                    // of the words. The levels used to be three different
+                    // objects, a black bar down one edge, a box ruled in ink
+                    // and a plain grey field, which on one panel read as three
+                    // components rather than one speaking at three volumes.
+                    fill_rounded_clipped(
                         surface,
-                        if level == BannerLevel::Error {
-                            Glyph::Close
-                        } else {
-                            Glyph::Check
-                        },
+                        node.rect,
+                        metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                        palette.banner(level),
+                        clip,
+                    );
+                    // The words sit in the middle of the band they own: the
+                    // whole banner when the action is beside them or there is
+                    // none, the part above the action when it is under them.
+                    let count = i32::try_from(node.text_lines.len()).unwrap_or(0);
+                    let words = banner_height_for_lines(node.text_lines.len(), metrics);
+                    let under = words
+                        .saturating_add(banner_action_height(metrics))
+                        .saturating_add(metrics.space(Space::Tight));
+                    let band = if node.rect.height >= under {
+                        words
+                    } else {
+                        node.rect.height
+                    };
+                    let top = node.rect.y + (band - count.saturating_mul(line)) / 2;
+                    let text_x = node.rect.x + padding;
+                    draw_vector(
+                        surface,
+                        &banner_mark(level),
                         Rect {
                             x: text_x,
-                            y: node.rect.y + padding,
-                            width: side,
-                            height: side,
+                            y: top,
+                            width: line,
+                            height: line,
                         },
                         clip,
                         tone::INK,
                     );
-                    text_x = text_x.saturating_add(mark);
-                }
-                if level == BannerLevel::Error {
-                    stroke_clipped(surface, node.rect, tone::INK, metrics.button_border(), clip);
-                }
-                if level == BannerLevel::Attention {
-                    let bar = metrics.rule_thickness() * 3;
-                    fill_clipped(
+                    draw_lines(
                         surface,
-                        Rect {
-                            width: bar,
-                            ..node.rect
-                        },
-                        palette.banner_edge(),
+                        &node.text_lines,
+                        text_x.saturating_add(mark),
+                        top,
+                        FontSize::Body,
+                        tone::INK,
                         clip,
                     );
-                    text_x = text_x.saturating_add(bar);
+                } else {
+                    // As an application at an older protocol measured it: no
+                    // mark column for info or attention, so attention keeps
+                    // the bar down its leading edge that tells it from info.
+                    fill_clipped(surface, node.rect, palette.banner(level), clip);
+                    let mut text_x = node.rect.x + padding;
+                    if mark > 0 {
+                        draw_vector(
+                            surface,
+                            &banner_mark(level),
+                            Rect {
+                                x: text_x,
+                                y: node.rect.y + padding,
+                                width: line,
+                                height: line,
+                            },
+                            clip,
+                            tone::INK,
+                        );
+                        text_x = text_x.saturating_add(mark);
+                    }
+                    if level == BannerLevel::Attention {
+                        let bar = metrics.rule_thickness() * 3;
+                        fill_clipped(
+                            surface,
+                            Rect {
+                                width: bar,
+                                ..node.rect
+                            },
+                            palette.banner_edge(),
+                            clip,
+                        );
+                        text_x = text_x.saturating_add(bar);
+                    }
+                    draw_lines(
+                        surface,
+                        &node.text_lines,
+                        text_x,
+                        node.rect.y + padding,
+                        FontSize::Body,
+                        tone::INK,
+                        clip,
+                    );
                 }
-                draw_lines(
-                    surface,
-                    &node.text_lines,
-                    text_x,
-                    node.rect.y + padding,
-                    FontSize::Body,
-                    tone::INK,
-                    clip,
-                );
             }
             LayoutKind::Skeleton => {
                 let count = node

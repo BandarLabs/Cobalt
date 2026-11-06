@@ -732,6 +732,60 @@ pub fn back_arrow() -> Vec<Shape> {
     }]
 }
 
+/// What a notice is about, as the mark ahead of its words.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NoticeMark {
+    /// Something worth knowing: a lower-case i in a ring.
+    Note,
+    /// Something the reader may want to deal with: a stroke and a point in a
+    /// triangle, the sign a road or a manual uses for care.
+    Caution,
+    /// Something that went wrong: a stroke and a point in a ring.
+    Fault,
+}
+
+/// The mark a notice sets ahead of its words.
+///
+/// Not a [`Glyph`], because these belong to the runtime's notices and an
+/// application has no reason to draw one anywhere else. An error used to wear
+/// the cross that closes things, which beside a sentence read as a button
+/// that would put the notice away, and an attention notice wore nothing at
+/// all. These are drawn on the same box and at the same weight as the icons,
+/// so a notice's mark and a row's icon look like one set.
+#[must_use]
+pub fn notice(mark: NoticeMark) -> Vec<Shape> {
+    let stroke = |path| Shape::Stroke {
+        path,
+        width: WEIGHT,
+    };
+    // A point is a stroke with no length: its round cap is a dot exactly as
+    // heavy as the lines beside it.
+    let point = |x, y| stroke(Path::line(x, y, x + 1, y));
+    match mark {
+        NoticeMark::Note => vec![
+            stroke(Path::circle(500, 500, 375)),
+            point(500, 333),
+            stroke(Path::line(500, 458, 500, 667)),
+        ],
+        NoticeMark::Caution => vec![
+            stroke(
+                Path::new()
+                    .move_to(500, 145)
+                    .line_to(85, 840)
+                    .line_to(915, 840)
+                    .close(),
+            ),
+            stroke(Path::line(500, 400, 500, 580)),
+            point(500, 715),
+        ],
+        NoticeMark::Fault => vec![
+            stroke(Path::circle(500, 500, 375)),
+            stroke(Path::line(500, 312, 500, 520)),
+            point(500, 678),
+        ],
+    }
+}
+
 /// A battery showing how much is left, rather than a battery.
 ///
 /// The icon in [`shapes`] is a symbol: it means "battery" and says nothing

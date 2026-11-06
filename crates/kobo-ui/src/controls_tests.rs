@@ -562,7 +562,7 @@ fn an_info_banner_without_an_action_is_the_height_it_always_was() {
 }
 
 #[test]
-fn a_banner_action_sits_under_the_words_and_answers_a_tap() {
+fn a_banner_action_sits_beside_or_under_the_words_inside_the_banner_and_answers_a_tap() {
     for (name, metrics) in PANELS {
         let layout = banner(BannerLevel::Error, true).layout_for(&metrics);
         let band = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].clone();
@@ -571,7 +571,24 @@ fn a_banner_action_sits_under_the_words_and_answers_a_tap() {
             + metrics.space(Space::Small)
             + i32::try_from(band.text_lines.len()).unwrap()
                 * with_text_scale(metrics.text_scale, || FontSize::Body.line_height());
-        assert!(action.y >= words_bottom, "{name}");
+        let widest = with_text_scale(metrics.text_scale, || {
+            band.text_lines
+                .iter()
+                .map(|line| measure_text(line, FontSize::Body).0)
+                .max()
+                .unwrap_or(0)
+        });
+        let words_right = band.rect.x
+            + metrics.space(Space::Small)
+            + with_text_scale(metrics.text_scale, || {
+                banner_mark_column(BannerLevel::Error, &metrics)
+            })
+            + widest;
+        assert!(
+            action.y >= words_bottom || action.x >= words_right,
+            "{name}: the action covers the words"
+        );
+        assert!(action.y >= band.rect.y, "{name}");
         assert!(
             action.y + action.height <= band.rect.y + band.rect.height,
             "{name}"
@@ -583,14 +600,83 @@ fn a_banner_action_sits_under_the_words_and_answers_a_tap() {
 }
 
 #[test]
-fn success_and_error_banners_draw_differently_from_info_and_from_each_other() {
+fn every_banner_level_draws_differently_from_every_other() {
     let metrics = CLARA_BW_METRICS;
-    let info = painted(&banner(BannerLevel::Info, false), &metrics).pixels;
-    let success = painted(&banner(BannerLevel::Success, false), &metrics).pixels;
-    let error = painted(&banner(BannerLevel::Error, false), &metrics).pixels;
-    assert_ne!(info, success);
-    assert_ne!(info, error);
-    assert_ne!(success, error);
+    let levels = [
+        BannerLevel::Info,
+        BannerLevel::Attention,
+        BannerLevel::Success,
+        BannerLevel::Error,
+    ];
+    for typography in [Typography::Quiet, Typography::Fine] {
+        let drawn: Vec<_> = levels
+            .iter()
+            .map(|level| {
+                painted(&banner(*level, false).with_typography(typography), &metrics).pixels
+            })
+            .collect();
+        for (one, first) in drawn.iter().enumerate() {
+            for (other, second) in drawn.iter().enumerate().skip(one + 1) {
+                assert_ne!(
+                    first, second,
+                    "{typography:?}: {:?} and {:?} look the same",
+                    levels[one], levels[other]
+                );
+            }
+        }
+    }
+}
+
+fn short_banner(typography: Typography) -> Screen {
+    screen(vec![Node::Banner {
+        id: NodeId(1),
+        level: BannerLevel::Success,
+        text: "Sighting deleted.".to_owned(),
+        action: Some(BarAction::new(ActionId(8), "Undo")),
+    }])
+    .with_typography(typography)
+}
+
+#[test]
+fn a_short_banner_carries_its_action_at_the_end_of_its_words_on_one_band() {
+    for (name, metrics) in PANELS {
+        let layout = short_banner(Typography::Fine).layout_for(&metrics);
+        let band = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].clone();
+        let action = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerAction(_)))[0].rect;
+        assert_eq!(band.text_lines.len(), 1, "{name}");
+        // Centred in the band, with the same margin above and below.
+        assert_eq!(
+            action.y - band.rect.y,
+            band.rect.y + band.rect.height - action.y - action.height,
+            "{name}"
+        );
+        assert!(action.height >= metrics.touch_target_minimum(), "{name}");
+        let stacked = with_text_scale(metrics.text_scale, || {
+            banner_height_with(
+                "Sighting deleted.",
+                BannerLevel::Success,
+                true,
+                band.rect.width,
+                &metrics,
+            )
+        });
+        assert!(band.rect.height < stacked, "{name}");
+        let (x, y) = centre(action);
+        assert_eq!(layout.hit_test(x, y), Some(ActionId(8)), "{name}");
+    }
+}
+
+#[test]
+fn an_application_at_an_older_protocol_keeps_its_banner_action_on_a_line_of_its_own() {
+    for (name, metrics) in PANELS {
+        let layout = short_banner(Typography::Quiet).layout_for(&metrics);
+        let band = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].clone();
+        let action = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerAction(_)))[0].rect;
+        let words_bottom = band.rect.y
+            + metrics.space(Space::Small)
+            + with_text_scale(metrics.text_scale, || FontSize::Body.line_height());
+        assert!(action.y >= words_bottom, "{name}");
+    }
 }
 
 fn code(payload: &str) -> Screen {
@@ -814,15 +900,23 @@ fn a_banner_is_measured_at_the_height_it_is_drawn_whatever_its_level_and_action(
                 for action in [false, true] {
                     let layout = banner(level, action).layout_for(&metrics);
                     let rect = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].rect;
+                    let text = "Lichess did not answer. Your games are still on the reader.";
                     assert_eq!(
                         rect.height,
-                        banner_height_with(
-                            "Lichess did not answer. Your games are still on the reader.",
+                        banner_height_labelled(
+                            text,
                             level,
-                            action,
+                            action.then_some("Check again"),
                             rect.width,
                             &metrics
                         ),
+                        "{name} {text_scale:?} {level:?} action {action}"
+                    );
+                    // Without the label the height is the most the banner
+                    // can take, so a page measured that way is never long.
+                    assert!(
+                        rect.height
+                            <= banner_height_with(text, level, action, rect.width, &metrics),
                         "{name} {text_scale:?} {level:?} action {action}"
                     );
                 }

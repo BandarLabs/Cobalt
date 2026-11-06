@@ -784,42 +784,50 @@ fn an_ordinary_control_still_reads_as_available_next_to_a_disabled_one() {
 }
 
 #[test]
-fn an_attention_banner_marks_its_edge_rather_than_blacking_out_the_panel() {
+fn an_attention_banner_is_never_blacked_out_and_only_an_older_application_marks_its_edge() {
     // It used to be reversed out of solid black across the full width,
     // which shouted louder than whatever it was warning about and left the
     // panel a slab to clear before anything near it could be redrawn.
-    let screen = Screen::new(
-        1,
-        vec![Node::Banner {
-            id: NodeId(1),
-            level: BannerLevel::Attention,
-            text: "The network went away.".to_owned(),
-            action: None,
-        }],
-    );
-    let rect = screen
-        .layout()
-        .nodes
-        .into_iter()
-        .find(|node| matches!(node.kind, LayoutKind::Banner(_)))
-        .expect("the banner was laid out")
-        .rect;
-    let (surface, stride) = paint(&screen);
-    let ink = tone_count(&surface, rect, tone::INK, stride);
-    let area = usize::try_from(rect.width * rect.height).expect("a real banner");
-    assert!(
-        ink * 4 < area,
-        "the banner is still mostly black: {ink} of {area}"
-    );
-    // The leading edge is the mark that distinguishes it, so it must be
-    // solid ink for the full height of the banner.
-    let bar = CLARA_BW_METRICS.rule_thickness() * 3;
-    let edge = Rect { width: bar, ..rect };
-    assert_eq!(
-        tone_count(&surface, edge, tone::INK, stride),
-        usize::try_from(bar * rect.height).expect("a real edge"),
-        "the leading edge was not drawn solid"
-    );
+    for typography in [Typography::Quiet, Typography::Fine] {
+        let screen = Screen::new(
+            1,
+            vec![Node::Banner {
+                id: NodeId(1),
+                level: BannerLevel::Attention,
+                text: "The network went away.".to_owned(),
+                action: None,
+            }],
+        )
+        .with_typography(typography);
+        let rect = screen
+            .layout()
+            .nodes
+            .into_iter()
+            .find(|node| matches!(node.kind, LayoutKind::Banner(_)))
+            .expect("the banner was laid out")
+            .rect;
+        let (surface, stride) = paint(&screen);
+        let ink = tone_count(&surface, rect, tone::INK, stride);
+        let area = usize::try_from(rect.width * rect.height).expect("a real banner");
+        assert!(
+            ink * 4 < area,
+            "{typography:?}: the banner is still mostly black: {ink} of {area}"
+        );
+        // An application at an older protocol gave an attention banner no
+        // column for a mark, so the bar down its leading edge is what tells
+        // it from info, solid for the full height of the banner. From Fine
+        // on the caution mark does that, and the banner is the same rounded
+        // field as every other level.
+        let bar = CLARA_BW_METRICS.rule_thickness() * 3;
+        let edge = Rect { width: bar, ..rect };
+        let solid = tone_count(&surface, edge, tone::INK, stride)
+            == usize::try_from(bar * rect.height).expect("a real edge");
+        assert_eq!(
+            solid,
+            typography < Typography::Fine,
+            "{typography:?}: the leading edge"
+        );
+    }
 }
 
 #[test]
