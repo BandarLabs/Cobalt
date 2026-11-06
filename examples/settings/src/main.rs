@@ -501,7 +501,11 @@ impl Settings {
     /// invitation to start it.
     fn update_summary(&self) -> String {
         match &self.update {
-            UpdateFlow::Idle => format!("Cobalt {VERSION}"),
+            // The installed version closes the page, so before a check this
+            // row says how updates arrive rather than repeating it.
+            UpdateFlow::Idle => self
+                .update_options_summary()
+                .unwrap_or_else(|| "Not checked yet".to_owned()),
             UpdateFlow::Checking { .. }
             | UpdateFlow::Manifest { .. }
             | UpdateFlow::ManifestSignature { .. } => "Checking".to_owned(),
@@ -2225,6 +2229,19 @@ mod tests {
             paired: index % 2 == 0,
             connected: index == 0,
         }
+    }
+
+    #[test]
+    fn the_home_page_names_the_installed_version_once() {
+        let settings = Settings {
+            auto_update: Some((true, true)),
+            update_channel: Some(UpdateChannel::Beta),
+            ..Settings::default()
+        };
+        let rendered = format!("{:?}", settings.home());
+        assert_eq!(rendered.matches(VERSION).count(), 1, "{rendered}");
+        assert!(rendered.contains("Beta · Cobalt and apps update on their own"));
+        assert_eq!(Settings::default().update_summary(), "Not checked yet");
     }
 
     #[test]
