@@ -262,8 +262,13 @@ impl StandardState {
     /// than a page that failed to load.
     const fn glyph(self) -> Glyph {
         match self {
-            Self::Empty => Glyph::Circle,
-            Self::Offline => Glyph::Wifi,
+            // A folder, the place things would be, rather than a bare ring,
+            // which on a page this empty read as a placeholder nobody filled.
+            Self::Empty => Glyph::Folder,
+            // The world, not the Wi-Fi mark: the mark is drawn with every bar
+            // lit, which says connected on the one screen that means the
+            // opposite, and it is already in the status band beside it.
+            Self::Offline => Glyph::Globe,
             // A key, not a person. The commonest way to reach this state is an
             // API key the reader has not installed, and a head and shoulders
             // sends whoever is looking at it hunting for an account setting
