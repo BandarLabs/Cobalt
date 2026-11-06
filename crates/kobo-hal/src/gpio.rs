@@ -154,7 +154,7 @@ fn named_device_reports_key(content: &str, name: &str, code: u16, word_bits: u32
     })
 }
 
-fn bitmap_has(bitmap: &str, code: u16, word_bits: u32) -> bool {
+pub(crate) fn bitmap_has(bitmap: &str, code: u16, word_bits: u32) -> bool {
     let words = bitmap.split_whitespace().collect::<Vec<_>>();
     let word_bits = word_bits as usize;
     let index = usize::from(code) / word_bits;
