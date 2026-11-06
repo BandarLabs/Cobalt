@@ -4,8 +4,8 @@
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
   "version": "1.0.22",
-  "release_notes": "Play the computer comes first, Play online gives its times in plain words, move targets are even grey dots, a finished game offers New game, the board is plain light and dark squares, and names and clocks line up with it.",
-  "glyph": "grid",
+  "release_notes": "Lichess now has an icon of its own, a chess knight.",
+  "glyph": "chess-white-knight",
   "capabilities": [
     "network",
     "hold-wifi",

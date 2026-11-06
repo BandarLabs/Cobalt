@@ -5,7 +5,7 @@
   "summary": "Browse offline SRD references and manage tabletop combat.",
   "page_description": "Offline SRD reference and table tools for spell lookups, monster stat blocks, dice, initiative, and party HP.",
   "version": "0.1.11",
-  "release_notes": "Dice show the total large in the middle of the page, really roll, throw two dice for advantage, and can go back to a normal roll.",
-  "glyph": "book",
+  "release_notes": "Grimoire now has an icon of its own, a sword.",
+  "glyph": "sword",
   "capabilities": []
 }

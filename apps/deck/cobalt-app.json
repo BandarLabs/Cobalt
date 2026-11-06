@@ -5,8 +5,8 @@
   "summary": "Turn your Kobo into a remote control for your computer. Needs your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
   "version": "0.2.13",
-  "release_notes": "When the reader is offline or the computer does not answer, the banner says why once and the line under it names the paired computer.",
-  "glyph": "grid",
+  "release_notes": "Deck now has an icon of its own, a remote control.",
+  "glyph": "remote",
   "capabilities": [
     "network"
   ],

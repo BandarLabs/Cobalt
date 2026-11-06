@@ -5,7 +5,7 @@
   "summary": "Track daily and weekday habits with local streaks.",
   "page_description": "An offline habit tracker for daily and weekday habits, with streaks, weekly statistics and a backup you can copy to your computer.",
   "version": "0.1.15",
-  "release_notes": "Skip a habit from its own menu, and Stats counts a habit's days only from when it was first marked.",
-  "glyph": "check",
+  "release_notes": "Habits now has an icon of its own, a calendar page with a tick.",
+  "glyph": "calendar-check",
   "capabilities": []
 }

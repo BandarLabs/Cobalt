@@ -5,8 +5,8 @@
   "summary": "Read and reply to letters from Hermes. Needs an account.",
   "page_description": "Read and reply to letters from your own Hermes Agent. The inbox and your drafts stay readable offline, and replies are sent when the gateway is back.",
   "version": "0.2.11",
-  "release_notes": "Messages about your account name Hermes rather than reading \"No Your gateway account\".",
-  "glyph": "chat",
+  "release_notes": "Post now has an icon of its own, an envelope.",
+  "glyph": "mail",
   "capabilities": [
     "network"
   ],

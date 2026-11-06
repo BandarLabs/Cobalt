@@ -5,8 +5,8 @@
   "summary": "Browse your notes by folder, tag, link, and backlink. Needs your computer.",
   "page_description": "Keep a searchable copy of your note library ready to read on your Kobo.",
   "version": "0.1.11",
-  "release_notes": "A note is read on the whole panel: the sides of the page turn it, the bar comes back with a touch at the top, and lists, tables and code keep their bullets, cells and lines.",
-  "glyph": "note",
+  "release_notes": "Vault now has an icon of its own, a notebook.",
+  "glyph": "notebook",
   "capabilities": [],
   "setup": {
     "steps": [

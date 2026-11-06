@@ -4,10 +4,10 @@
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
   "version": "1.0.30",
-  "glyph": "book",
+  "glyph": "book-download",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "A book without a cover picture, or whose picture is still on its way, shows its title and author set as a cover, and the catalog in use is marked Current."
+  "release_notes": "Gutenbird now has an icon of its own, a book with an arrow."
 }

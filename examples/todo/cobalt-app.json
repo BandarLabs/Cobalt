@@ -4,7 +4,7 @@
   "short_label": "Todo",
   "summary": "Keep a simple to-do list that stays on your Kobo.",
   "version": "1.0.16",
-  "glyph": "check",
+  "glyph": "checklist",
   "capabilities": [],
-  "release_notes": "The list is titled Todo with each group counted beside its heading, Add stays at the foot of the panel, and an item keeps Rename and Remove in its bar, with Remove as the bin."
+  "release_notes": "Todo now has an icon of its own, a checklist."
 }

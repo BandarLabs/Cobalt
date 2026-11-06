@@ -5,8 +5,8 @@
   "summary": "Read music scores with setlists and half-page turns. Needs your computer.",
   "page_description": "A Kobo score reader with stable stand mode, setlists, and two-stage half-page turns.",
   "version": "0.1.13",
-  "release_notes": "The score has the panel: no clock or title over the staves. Touch the top edge for the title, or the middle of the page for the menu.",
-  "glyph": "note",
+  "release_notes": "Music now has an icon of its own, two music notes.",
+  "glyph": "music",
   "capabilities": [
     "keep-awake"
   ],
