@@ -15773,25 +15773,15 @@ fn paint_layout(
                         clip,
                     );
                 }
-                // A byline sits on a tinted strip. Without it, "user 3 hours
-                // ago" is one more line of text in a column of lines of text,
-                // and on a page of nested replies the reader has to re-read
-                // the first line of every comment to work out whether it is
-                // the comment or the name of whoever wrote it. Tone alone did
-                // not do it: muted grey text at caption size reads as a quiet
-                // sentence, not as a label.
-                //
-                // The strip runs the width of the column and is inset only by
-                // the padding, so it also draws the left edge of the comment
-                // for the eye to run down.
+                // A byline is quiet type with air above it, not a tinted
+                // strip. Strips under every comment's name turned a thread
+                // into a stack of grey bands, the heaviest thing on the page
+                // marking the least important line of each comment. What
+                // tells the name from the comment is that it is set smaller
+                // and lighter, after a gap, which is how a printed letters
+                // page sets who wrote each letter.
                 let (left, top) = match role {
-                    QuoteRole::Byline => {
-                        // Exactly the rectangle, because the height already
-                        // includes the air. Painting outside it would run into
-                        // the paragraph underneath.
-                        fill_clipped(surface, node.rect, tone::SURFACE, clip);
-                        (0, metrics.space(Space::Tight))
-                    }
+                    QuoteRole::Byline => (0, metrics.space(Space::Tight)),
                     // The same grey as a key on the keyboard, and the same
                     // corners as a button, so the panel reads as part of this
                     // interface rather than as a picture of a terminal.

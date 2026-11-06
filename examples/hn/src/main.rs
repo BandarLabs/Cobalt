@@ -661,14 +661,17 @@ impl Hn {
         let Some(story) = self.open.and_then(|index| self.stories.get(index)) else {
             return self.list();
         };
-        // The headline is in the bar and nowhere else. It used to be in both
-        // the bar and the first paragraph, which is the same words twice on
-        // one panel with one of them cut short, and it cost the first page a
-        // headline's worth of comments. The bar is where it has to stay: it
-        // is the only part of the screen that survives paging into the
-        // replies, and a reader four pages down a thread should not have to
-        // page back to find out whose story they are arguing about.
-        let mut screen = ScreenBuilder::new("hn-thread").top_bar(story.title.clone());
+        // The first page opens with the whole headline, set as the page's
+        // heading, where the bar could only show it cut short. The pages after
+        // it carry the headline in the bar as a running head, the way a book
+        // does, so a reader four pages down a thread still knows whose story
+        // they are arguing about. Either way it is said once per page.
+        let bar = if self.thread_page == 0 {
+            "Discussion".to_owned()
+        } else {
+            story.title.clone()
+        };
+        let mut screen = ScreenBuilder::new("hn-thread").top_bar(bar);
         // The word on the control is the acknowledgement. "Saving" while the
         // article is still on its way to the device, so nobody switches the
         // radio off believing it is already there.
@@ -684,8 +687,11 @@ impl Hn {
         }
         if !self.lanes.is_empty() && self.comments.is_empty() {
             // No bar, which is what the loaded thread has too: nothing under
-            // the reader's finger moves when the comments land.
+            // the reader's finger moves when the comments land. The headline
+            // is up while they come, where the loaded page will have it.
             return screen
+                .heading(story.title.clone())
+                .secondary(story_line(story, self.now))
                 .activity("Fetching the comments", None)
                 .skeleton(self.skeleton.max(1))
                 .build();
@@ -757,13 +763,15 @@ impl Hn {
             .build()
     }
 
-    /// The facts, and under them, when the discussion could not be fetched,
-    /// the reason with its fix on it: Join Wi-Fi offline, Try again where
-    /// asking again can help. Drawn on the first page and measured as the
-    /// block that page is paged under, so the banner and its action line are
-    /// room the paragraphs never had.
+    /// The headline and the line about it, and under them, when the
+    /// discussion could not be fetched, the reason with its fix on it: Join
+    /// Wi-Fi offline, Try again where asking again can help. Drawn on the
+    /// first page and measured as the block that page is paged under, so the
+    /// banner and its action line are room the paragraphs never had.
     fn above_the_discussion(&self, screen: ScreenBuilder, story: &Story) -> ScreenBuilder {
-        let screen = screen.facts(story_facts(story, self.now));
+        let screen = screen
+            .heading(story.title.clone())
+            .secondary(story_line(story, self.now));
         match self.discussion_problem() {
             Some(problem) => screen.problem_banner_with(&problem, THREAD_RETRY, None),
             None => screen,
@@ -2084,26 +2092,27 @@ fn unix_now() -> i64 {
         .unwrap_or_default()
 }
 
-/// What Hacker News says about a story that is not its title.
+/// What Hacker News says about a story that is not its title, as the one
+/// quiet line under the headline.
 ///
-/// The domain, score, comment count and age, as a labelled block. They used to
-/// share one byline, four clauses run together with middots, which reads as a
-/// single long word and buries the score a reader is scanning for. The domain
-/// is dropped for a self-post, which has none: a fact with an empty value is a
-/// label pointing at a gap.
-fn story_facts(story: &Story, now: i64) -> Vec<(&'static str, String)> {
-    let mut facts = Vec::new();
+/// A labelled block of Domain, Score, Comments and Age stood between the
+/// headline and the discussion as a form to be read before the comments,
+/// four rows tall for four short facts. Each fact says what it is in its own
+/// words ("412 points", "96 comments"), so a line of them needs no labels.
+/// The site is left out of a self-post, which has none.
+fn story_line(story: &Story, now: i64) -> String {
+    let mut parts = Vec::new();
     if let Some(site) = &story.site {
-        facts.push(("Domain", site.clone()));
+        parts.push(site.clone());
     }
     if story.job {
-        facts.push(("Kind", "Job posting".to_owned()));
+        parts.push("Job posting".to_owned());
     } else {
-        facts.push(("Score", model::score(story)));
-        facts.push(("Comments", story.comments.to_string()));
+        parts.push(model::score(story));
+        parts.push(model::plural(story.comments, "comment"));
     }
-    facts.push(("Age", model::age(now, story.created)));
-    facts
+    parts.push(model::age(now, story.created));
+    parts.join(" \u{b7} ")
 }
 
 /// A line that folds what is under it, or a plain one where nothing is.
@@ -2863,7 +2872,12 @@ mod tests {
             let spilling = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Quote(..) | LayoutKind::FactValue))
+                .filter(|node| {
+                    matches!(
+                        node.kind,
+                        LayoutKind::Quote(..) | LayoutKind::Heading(_) | LayoutKind::Secondary
+                    )
+                })
                 .filter(|node| node.rect.y + node.rect.height > floor)
                 .count();
             assert_eq!(
@@ -3335,28 +3349,42 @@ mod tests {
     }
 
     #[test]
-    fn the_discussion_says_the_headline_once() {
-        // The headline used to be in the top bar and in the first paragraph,
-        // which is the same words twice on one panel with one of them cut
-        // short, and it cost the first page a headline's worth of comments.
+    fn the_discussion_opens_with_the_whole_headline_and_one_line_about_it() {
+        // The headline used to be cut short in the bar, over a four-row
+        // table of Domain, Score, Comments and Age.
         let (runner, _) = opened_thread();
         let application = runner.app();
-        let title = application
+        let story = application
             .open
             .and_then(|index| application.stories.get(index))
-            .map(|story| story.title.clone())
             .expect("a story is open");
+        let title = story.title.clone();
         let repeated = application
             .thread_paragraphs()
             .into_iter()
             .filter(|(_, _, _, text)| text.contains(&title))
             .count();
-        assert_eq!(repeated, 0, "the headline is in the bar, and only there");
+        assert_eq!(repeated, 0, "the headline is not a paragraph of the thread");
         let screen = application.thread();
-        assert_eq!(
+        assert!(screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, kobo_sdk::Node::Heading { text, .. } if *text == title)));
+        assert!(!screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, kobo_sdk::Node::Facts { .. })));
+        let line = super::story_line(story, application.now);
+        assert!(line.contains("points") || line.contains("point"), "{line}");
+        assert!(line.contains("comment"), "{line}");
+        assert!(screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, kobo_sdk::Node::Secondary { text, .. } if *text == line)));
+        assert_ne!(
             screen.top_bar.as_ref().map(|bar| bar.title.clone()),
             Some(title),
-            "the bar is where the headline has to be: it survives page turns"
+            "the first page says the headline once"
         );
     }
 

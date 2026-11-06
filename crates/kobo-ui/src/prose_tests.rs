@@ -1662,11 +1662,10 @@ fn a_byline(fold: Option<Fold>) -> Screen {
 }
 
 #[test]
-fn a_byline_is_set_on_a_tint_and_the_words_underneath_it_are_not() {
-    // Muted caption text alone was not enough to tell a name apart from a
-    // sentence, so the byline gets a band. The band has to stop at the
-    // byline: a comment drawn entirely on a tint is a card, and a page of
-    // cards is a page with no white space in it.
+fn a_byline_is_quiet_type_on_bare_paper_set_apart_by_the_air_above_it() {
+    // A tinted strip under every name turned a thread into a stack of grey
+    // bands, the heaviest thing on the page marking the least important line
+    // of each comment.
     let screen = a_byline(None);
     let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
     let (surface, stride) = paint(&screen);
@@ -1675,19 +1674,18 @@ fn a_byline_is_set_on_a_tint_and_the_words_underneath_it_are_not() {
         .iter()
         .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Byline)))
         .expect("a byline");
-    let body = layout
-        .nodes
-        .iter()
-        .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Body)))
-        .expect("a body");
-    assert!(
-        tone_count(&surface, byline.rect, tone::SURFACE, stride) > 0,
-        "the byline was drawn on bare paper, so it still reads as a sentence"
-    );
     assert_eq!(
-        tone_count(&surface, body.rect, tone::SURFACE, stride),
+        tone_count(&surface, byline.rect, tone::SURFACE, stride),
         0,
-        "the tint ran on past the byline and under the comment"
+        "the byline was drawn on a band"
+    );
+    assert!(
+        tone_count(&surface, byline.rect, tone::MUTED, stride) > 0,
+        "the byline is set in the muted tone"
+    );
+    assert!(
+        byline.rect.height > FontSize::Caption.line_height(),
+        "the byline keeps the air that sets it apart from the comment above"
     );
 }
 
