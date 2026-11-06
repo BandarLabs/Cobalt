@@ -2400,10 +2400,7 @@ fn a_menu_of_buttons_is_wide_enough_for_the_words_on_them() {
             .layout_with(&metrics, &Chrome::default())
             .nodes
             .iter()
-            .find(|node| {
-                node.kind
-                    == LayoutKind::Button(ActionId(6), ControlState::Enabled, Emphasis::Normal)
-            })
+            .find(|node| node.kind == LayoutKind::RowTitle)
             .expect("the menu item")
             .text_lines
             .clone();
@@ -2562,6 +2559,81 @@ fn a_popover_points_at_the_control_that_opened_it() {
         anchor.x,
         anchor.x + anchor.width
     );
+}
+
+fn menu_popover(second: ControlState) -> Screen {
+    let item = |id: u32, action: u32, label: &str, state| Node::Button {
+        id: NodeId(id),
+        action: ActionId(action),
+        label: label.to_owned(),
+        state,
+        emphasis: Emphasis::Normal,
+    };
+    Screen::new(1, vec![item(1, 5, "More", ControlState::Enabled)]).with_overlay(Overlay::popover(
+        NodeId(40),
+        ActionId(5),
+        vec![
+            item(41, 6, "New game", ControlState::Enabled),
+            item(42, 7, "Check word", second),
+            item(43, 8, "Puzzles", ControlState::Enabled),
+        ],
+    ))
+}
+
+#[test]
+fn a_popover_of_plain_buttons_is_set_as_menu_rows_with_a_hairline_between_them() {
+    let layout =
+        menu_popover(ControlState::Enabled).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let rows: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Row(_)))
+        .collect();
+    let rules: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| node.kind == LayoutKind::RowRule)
+        .collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rules.len(), 2);
+    assert!(!layout
+        .nodes
+        .iter()
+        .any(|node| matches!(node.kind, LayoutKind::Button(ActionId(6..=8), _, _))));
+    for (rule, pair) in rules.iter().zip(rows.windows(2)) {
+        assert!(rule.rect.y >= pair[0].rect.y + pair[0].rect.height);
+        assert!(rule.rect.y + rule.rect.height <= pair[1].rect.y);
+    }
+    for (row, action) in rows.iter().zip([6, 7, 8]) {
+        let (x, y) = (
+            row.rect.x + row.rect.width / 2,
+            row.rect.y + row.rect.height / 2,
+        );
+        assert_eq!(layout.hit_test(x, y), Some(ActionId(action)));
+    }
+}
+
+#[test]
+fn a_menu_is_exactly_as_tall_as_the_buttons_it_was_measured_as() {
+    let menu =
+        menu_popover(ControlState::Enabled).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let buttons =
+        menu_popover(ControlState::Disabled).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let frame = |layout: &Layout| {
+        layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Overlay)
+            .expect("the popover")
+            .rect
+    };
+    assert_eq!(frame(&menu), frame(&buttons));
+    // A popover with a disabled choice keeps its buttons, because a row has
+    // no way to show that it cannot be pressed.
+    assert!(buttons.nodes.iter().any(|node| matches!(
+        node.kind,
+        LayoutKind::Button(ActionId(7), ControlState::Disabled, _)
+    )));
 }
 
 #[test]

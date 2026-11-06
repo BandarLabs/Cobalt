@@ -2640,6 +2640,9 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         cursor = cursor.saturating_add(gap);
     }
     let height = min(cursor - gap + padding, metrics.height - 2 * margin);
+    if matches!(overlay.kind, OverlayKind::Popover { .. }) {
+        set_as_menu(&overlay.nodes, &mut scratch, padding, inner, metrics);
+    }
 
     let caret = metrics.space(Space::Small);
     let (x, y, side) = match overlay.kind {
@@ -2797,6 +2800,95 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
             break;
         }
         layout.nodes.push(node);
+    }
+}
+
+/// Sets a popover that is nothing but ordinary buttons as a menu: each
+/// button a row with its label at the leading edge, and a hairline between
+/// rows. Every row runs the width of the popover, its label at the same
+/// margin a title would take, rather than each button being as wide as its
+/// own label and centred under the one above it.
+///
+/// A popover's frame is already a box. Outlining every choice inside it drew
+/// a stack of boxes in a box, which read as a form rather than a menu, and
+/// every other menu on the system is rows. Only the drawing changes: each row
+/// takes the rectangle its button was measured into and the hairline sits in
+/// the gap between them, so a popover is exactly as tall as an application at
+/// any protocol measured it. A popover with a filled or a disabled button
+/// keeps its buttons, because a row has no way to show either.
+fn set_as_menu(
+    nodes: &[Node],
+    scratch: &mut Layout,
+    left: i32,
+    width: i32,
+    metrics: &DisplayMetrics,
+) {
+    let plain = !nodes.is_empty()
+        && nodes.iter().all(|node| {
+            matches!(
+                node,
+                Node::Button {
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Normal,
+                    ..
+                }
+            )
+        });
+    if !plain
+        || !scratch
+            .nodes
+            .iter()
+            .all(|node| matches!(node.kind, LayoutKind::Button(..)))
+    {
+        return;
+    }
+    let rule = metrics.rule_thickness();
+    let buttons = std::mem::take(&mut scratch.nodes);
+    let mut previous_bottom = None;
+    for button in buttons {
+        let LayoutKind::Button(action, ..) = button.kind else {
+            continue;
+        };
+        let rect = Rect {
+            x: left,
+            width,
+            ..button.rect
+        };
+        if let Some(bottom) = previous_bottom {
+            scratch.nodes.push(LayoutNode {
+                id: button.id,
+                rect: Rect {
+                    x: rect.x,
+                    y: bottom + (rect.y - bottom - rule) / 2,
+                    width: rect.width,
+                    height: rule,
+                },
+                kind: LayoutKind::RowRule,
+                text_lines: Vec::new(),
+            });
+        }
+        previous_bottom = Some(rect.y + rect.height);
+        let lines = button.text_lines.len().max(1);
+        let words = i32::try_from(lines)
+            .unwrap_or(1)
+            .saturating_mul(FontSize::Body.line_height());
+        scratch.nodes.push(LayoutNode {
+            id: button.id,
+            rect,
+            kind: LayoutKind::Row(action),
+            text_lines: Vec::new(),
+        });
+        scratch.nodes.push(LayoutNode {
+            id: button.id,
+            rect: Rect {
+                x: rect.x,
+                y: rect.y + (rect.height - words) / 2,
+                width: rect.width,
+                height: words,
+            },
+            kind: LayoutKind::RowTitle,
+            text_lines: button.text_lines,
+        });
     }
 }
 
