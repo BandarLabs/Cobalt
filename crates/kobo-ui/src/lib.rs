@@ -2254,6 +2254,7 @@ impl Screen {
         // column, so the values of two blocks under two sections start at the
         // same place rather than wherever each block's longest label ended.
         let shared_facts = SharedFactLabel::enter(shared_fact_label(&self.nodes));
+        let mut placed: Vec<PlacedFlowNode> = Vec::new();
         for (position, node) in self.nodes.iter().enumerate() {
             if layout.nodes.len() >= MAX_LAYOUT_NODES || cursor >= content_bottom {
                 if self.nodes[position..]
@@ -2314,6 +2315,8 @@ impl Screen {
                 gap,
                 true,
             );
+            let first = layout.nodes.len();
+            let top = cursor;
             cursor = with_flow_height_bound(bottom < content_bottom, || {
                 layout_flow_node(
                     node,
@@ -2327,12 +2330,21 @@ impl Screen {
                     &mut layout,
                 )
             });
+            placed.push(PlacedFlowNode {
+                position,
+                nodes: first..layout.nodes.len(),
+                top,
+                end: cursor,
+                bottom,
+                bounded: bottom < content_bottom,
+            });
             layout.flow_height = cursor.saturating_sub(content_top).max(0);
             if cursor > content_bottom {
                 note_cut_short();
             }
             cursor = cursor.saturating_add(gap);
         }
+        align_bands_with_boards(&self.nodes, &placed, margin, metrics, prose, &mut layout);
         drop(shared_facts);
 
         if let Some(top_bar) = self.top_bar.as_ref().filter(|_| bar_over_content) {
@@ -12150,6 +12162,99 @@ fn space_before(
     metrics
         .space(wanted)
         .saturating_sub(metrics.space(Space::Tight))
+}
+
+/// Where one root flow node landed: which layout nodes it produced, and the
+/// room it was laid out in.
+struct PlacedFlowNode {
+    position: usize,
+    nodes: std::ops::Range<usize>,
+    top: i32,
+    end: i32,
+    bottom: i32,
+    bounded: bool,
+}
+
+/// Sets a band that sits directly above or below a chess or draughts board
+/// to the board's own width.
+///
+/// A board is as large as the height left for it allows, and so is often a
+/// little narrower than the page and centred on it. The bars round it, a
+/// player's name and clock, were set to the page instead, so the clock stood
+/// a few pixels past the board's right edge and the name a few pixels before
+/// its left one. Laying the band out again at the board's width lines both
+/// up with the squares. A band that would come out a different height at
+/// that width keeps the place it had, since everything under it is already
+/// set.
+fn align_bands_with_boards(
+    nodes: &[Node],
+    placed: &[PlacedFlowNode],
+    margin: i32,
+    metrics: &DisplayMetrics,
+    prose: Face,
+    layout: &mut Layout,
+) {
+    let mut replacements: Vec<(std::ops::Range<usize>, Vec<LayoutNode>)> = Vec::new();
+    for (index, board) in placed.iter().enumerate() {
+        let squares = layout.nodes[board.nodes.clone()].iter().filter(|node| {
+            matches!(
+                node.kind,
+                LayoutKind::Cell(_, CellStyle::BoardLight | CellStyle::BoardDark, _)
+            )
+        });
+        let Some((left, right)) = squares.fold(None, |edges: Option<(i32, i32)>, node| {
+            let (left, right) = (node.rect.x, node.rect.x + node.rect.width);
+            Some(edges.map_or((left, right), |(l, r)| (l.min(left), r.max(right))))
+        }) else {
+            continue;
+        };
+        let neighbours = [index.checked_sub(1), Some(index + 1)];
+        for band in neighbours
+            .into_iter()
+            .flatten()
+            .filter_map(|at| placed.get(at))
+        {
+            if band.position.abs_diff(board.position) != 1
+                || !matches!(nodes[band.position], Node::Band { .. })
+                || replacements.iter().any(|(range, _)| *range == band.nodes)
+            {
+                continue;
+            }
+            let was = &layout.nodes[band.nodes.clone()];
+            let band_left = was.iter().map(|node| node.rect.x).min().unwrap_or(margin);
+            let band_right = was
+                .iter()
+                .map(|node| node.rect.x + node.rect.width)
+                .max()
+                .unwrap_or(left);
+            if band_left >= left && band_right <= right {
+                continue;
+            }
+            let mut scratch = Layout {
+                prose_face: layout.prose_face,
+                ..Layout::default()
+            };
+            let end = with_flow_height_bound(band.bounded, || {
+                layout_flow_node(
+                    &nodes[band.position],
+                    left,
+                    band.top,
+                    right - left,
+                    band.bottom,
+                    0,
+                    metrics,
+                    prose,
+                    &mut scratch,
+                )
+            });
+            if end == band.end && scratch.nodes.len() == band.nodes.len() {
+                replacements.push((band.nodes.clone(), scratch.nodes));
+            }
+        }
+    }
+    for (range, replacement) in replacements {
+        layout.nodes.splice(range, replacement);
+    }
 }
 
 /// How much room trailing nodes need, so flexible content can leave it.

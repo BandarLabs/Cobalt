@@ -6670,20 +6670,22 @@ mod tests {
     }
 
     #[test]
-    fn undo_and_the_clocks_end_at_the_right_edge_of_the_board() {
-        let edge = |app: &Lichess, chip: &str| {
-            let metrics = kobo_ui::CLARA_BW_METRICS;
+    fn undo_and_the_clocks_end_at_the_right_edge_of_the_board_at_every_text_size() {
+        let edges = |app: &Lichess, chip: &str, metrics: &DisplayMetrics| {
             let layout = app
                 .game_screen(&Context::default())
-                .layout_with(&metrics, &kobo_ui::Chrome::measuring(true));
+                .layout_with(metrics, &kobo_ui::Chrome::measuring(true));
             let right = |rect: kobo_ui::Rect| rect.x + rect.width;
-            let board = layout
+            let squares = layout
                 .nodes
                 .iter()
-                .filter(|node| matches!(node.kind, kobo_ui::LayoutKind::Cell(..)))
-                .map(|node| right(node.rect))
-                .max()
+                .filter(|node| matches!(node.kind, kobo_ui::LayoutKind::Cell(..)));
+            let board_left = squares
+                .clone()
+                .map(|node| node.rect.x)
+                .min()
                 .expect("board");
+            let board_right = squares.map(|node| right(node.rect)).max().expect("board");
             let chip = layout
                 .nodes
                 .iter()
@@ -6692,30 +6694,59 @@ mod tests {
                 })
                 .map(|node| right(node.rect))
                 .expect("chip");
-            (board, chip)
+            // The player's name is the band's other end, and starts where the
+            // board's first file does.
+            let name_left = layout
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.kind == kobo_ui::LayoutKind::Text
+                        && node
+                            .text_lines
+                            .iter()
+                            .any(|line| line == "Kobo" || line == "You")
+                })
+                .map(|node| node.rect.x)
+                .min()
+                .expect("a player's name");
+            (board_left, board_right, chip, name_left)
         };
-        let mut untimed = ready_app();
-        let mut context = Context::default();
-        untimed.start_computer_game(&mut context);
-        let (board, undo) = edge(&untimed, "take-back");
-        // Within a pixel: the board splits its width into eight whole squares.
-        assert!(
-            (undo - board).abs() <= 1,
-            "Undo ends at {undo}, the board at {board}"
-        );
-        // A clock is taller than the name beside it, which leaves a little
-        // less height for the board; it still ends where the band does.
-        let mut timed = ready_app();
-        timed.computer_clock = ComputerClock::Ten;
-        timed.start_computer_game(&mut context);
-        for clock in ["your-clock", "opponent-clock"] {
-            let (board, chip) = edge(&timed, clock);
-            assert!(chip >= board, "{clock} ends inside the board's edge");
-            assert!(
-                chip - board <= 12,
-                "{clock} ends {} pixels past the board",
-                chip - board
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut untimed = ready_app();
+            let mut context = Context::default();
+            untimed.start_computer_game(&mut context);
+            let (left, board, undo, name) = edges(&untimed, "take-back", &metrics);
+            assert_eq!(
+                undo, board,
+                "{text_scale:?}: Undo ends off the board's edge"
             );
+            assert_eq!(
+                name, left,
+                "{text_scale:?}: a name starts off the board's edge"
+            );
+            // A clock is taller than the name beside it, which leaves a
+            // little less height for the board, so the board is narrower
+            // than the page; the clocks still end where its squares do.
+            let mut timed = ready_app();
+            timed.computer_clock = ComputerClock::Ten;
+            timed.start_computer_game(&mut context);
+            for clock in ["your-clock", "opponent-clock"] {
+                let (left, board, chip, name) = edges(&timed, clock, &metrics);
+                assert_eq!(
+                    chip,
+                    board,
+                    "{text_scale:?}: {clock} ends {} pixels past the board",
+                    chip - board
+                );
+                assert_eq!(
+                    name, left,
+                    "{text_scale:?}: a name starts off the board's edge"
+                );
+            }
         }
     }
 
