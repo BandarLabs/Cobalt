@@ -10,6 +10,10 @@ use kobo_sdk::{
 const PAGE: PictureHandle = PictureHandle(2000);
 const THUMB_BASE: u32 = 2001;
 const THUMBS: usize = 2;
+/// The zoom the viewport allows, in percent, so the stepper can say which
+/// end has nowhere further to go.
+const MIN_ZOOM: u16 = 100;
+const MAX_ZOOM: u16 = 400;
 
 #[cfg(test)]
 #[path = "comic_tests.rs"]
@@ -236,6 +240,62 @@ impl ComicView {
         )
     }
 
+    /// The reading controls, with the name of each group when `named`.
+    fn controls(&self, named: bool) -> Screen {
+        let memory = self.reader.memory();
+        let zoom = memory.viewport.zoom();
+        let section = |screen: ScreenBuilder, name: &str| {
+            if named {
+                screen.section(name)
+            } else {
+                screen
+            }
+        };
+        let mut screen = ScreenBuilder::new("comic-controls")
+            .top_bar("Reading")
+            .owns_back(true)
+            .secondary(self.position());
+        if self.notice.is_some() {
+            screen = screen.top_bar_action("comic-details", "Details");
+        }
+        let screen = section(screen, "Page size")
+            .segmented(
+                usize::from(memory.viewport.fit != Fit::Page),
+                [
+                    ("comic-fit-page", "Fit page"),
+                    ("comic-fit-width", "Fit width"),
+                ],
+            )
+            .stepper(
+                format!("Zoom {zoom}%"),
+                "comic-zoom-out",
+                Glyph::Minus,
+                "comic-zoom-in",
+                Glyph::Plus,
+            )
+            .stepper_ends(zoom > MIN_ZOOM, zoom < MAX_ZOOM);
+        let screen = section(screen, "Pages")
+            .buttons([("comic-pages", "All pages"), ("comic-jump", "Go to page")]);
+        section(screen, "View")
+            .buttons([
+                ("comic-pan", "Move page"),
+                ("comic-options", "Reading options"),
+            ])
+            .bottom_action(
+                if self.save_state == SaveState::Failed {
+                    "comic-save-retry"
+                } else {
+                    "comic-read"
+                },
+                if self.save_state == SaveState::Failed {
+                    "Retry saving"
+                } else {
+                    "Back to the page"
+                },
+            )
+            .build()
+    }
+
     #[must_use]
     #[allow(
         clippy::too_many_lines,
@@ -282,45 +342,22 @@ impl ComicView {
                     .build()
                     .with_auto_hidden_top_bar(self.full_page())
             }
+            // Grouped by what each control is for: how large the page is
+            // drawn, which page it is, and how the comic is read. Eight equal
+            // buttons in a block gave the fit, which is a choice of two, the
+            // look of two more commands, and the zoom, which is a number, the
+            // look of two places to go. Back to the page is the one thing
+            // set apart, at the foot. Where the panel is too short for the
+            // group names, held sideways at the larger text sizes, the groups
+            // keep their order and lose their names.
             Mode::Controls => {
-                let memory = self.reader.memory();
-                let mut screen = ScreenBuilder::new("comic-controls")
-                    .top_bar("Reading")
-                    .owns_back(true)
-                    .secondary(format!(
-                        "{} · {} · {}%",
-                        self.position(),
-                        if memory.viewport.fit == Fit::Page {
-                            "Fit page"
-                        } else {
-                            "Fit width"
-                        },
-                        memory.viewport.zoom()
-                    ));
-                if self.notice.is_some() {
-                    screen = screen.top_bar_action("comic-details", "Details");
+                let named = self.controls(true);
+                let chrome = kobo_ui::Chrome::for_screen(&named, false, None);
+                if named.diagnostics(&self.metrics, &chrome).has_errors() {
+                    self.controls(false)
+                } else {
+                    named
                 }
-                screen
-                    .buttons([
-                        ("comic-fit-page", "Fit page"),
-                        ("comic-fit-width", "Fit width"),
-                    ])
-                    .buttons([("comic-zoom-out", "Zoom out"), ("comic-zoom-in", "Zoom in")])
-                    .buttons([("comic-pan", "Move page"), ("comic-options", "More")])
-                    .buttons([("comic-pages", "Pages"), ("comic-jump", "Go to page")])
-                    .bottom_action(
-                        if self.save_state == SaveState::Failed {
-                            "comic-save-retry"
-                        } else {
-                            "comic-read"
-                        },
-                        if self.save_state == SaveState::Failed {
-                            "Retry saving"
-                        } else {
-                            "Read"
-                        },
-                    )
-                    .build()
             }
             Mode::Details => ScreenBuilder::new("comic-details")
                 .top_bar("Comic details")

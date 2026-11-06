@@ -189,3 +189,39 @@ fn every_control_the_comic_draws_is_one_it_answers() {
         }
     }
 }
+
+#[test]
+fn the_reading_controls_set_the_fit_as_a_choice_and_the_zoom_as_a_number() {
+    let mut runner = AppRunner::new(App::default());
+    runner.start();
+    runner.action(action_id("comic-controls"));
+    let view = runner.app_mut().view.as_ref().unwrap();
+    let screen = view.screen();
+    let layout = screen.layout_with(&view.metrics, &kobo_ui::Chrome::default());
+    let kinds = |wanted: &str| {
+        layout.nodes.iter().find_map(|node| match node.kind {
+            kobo_ui::LayoutKind::Chip(action, selected) if action == action_id(wanted) => {
+                Some(Some(selected))
+            }
+            kobo_ui::LayoutKind::Button(action, ..) if action == action_id(wanted) => Some(None),
+            _ => None,
+        })
+    };
+    // The fit is a choice of two with the current one filled, not two
+    // commands that look like the rest.
+    assert_eq!(kinds("comic-fit-page"), Some(Some(true)));
+    assert_eq!(kinds("comic-fit-width"), Some(Some(false)));
+    assert!(format!("{screen:?}").contains("Zoom 100%"));
+    let buttons = layout
+        .nodes
+        .iter()
+        .filter(|node| {
+            matches!(node.kind, kobo_ui::LayoutKind::Button(action, ..)
+                if action != action_id("comic-read"))
+        })
+        .count();
+    assert_eq!(buttons, 4, "four commands besides the way back, not eight");
+    runner.action(action_id("comic-zoom-in"));
+    let screen = runner.app_mut().view.as_ref().unwrap().screen();
+    assert!(format!("{screen:?}").contains("Zoom 125%"));
+}

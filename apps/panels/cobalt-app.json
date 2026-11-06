@@ -5,7 +5,7 @@
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Read CBZ comics on your Kobo with zoom, spreads and right-to-left reading. Add comics over USB or download them from your Komga library.",
   "version": "0.1.10",
-  "release_notes": "A comic page has the panel to itself: no clock, bar or page count over the art. Tap the middle for the reading controls, which now say the page, or the top edge for the bar.",
+  "release_notes": "A comic page has the panel to itself, and the reading controls in the middle are grouped into page size, pages and view, with the zoom as one number.",
   "glyph": "reader",
   "capabilities": [
     "network"

@@ -17,3 +17,8 @@ wait-for Fit page
 expect Page 1 of
 clean
 shot controls
+# The controls are grouped: the page's size, its place, and how it is read,
+# with the way back to the page at the foot.
+expect Page size
+expect Zoom 100%
+expect Back to the page
