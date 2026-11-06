@@ -146,6 +146,8 @@ mod folio_tests;
 #[cfg(test)]
 mod fine_type_tests;
 #[cfg(test)]
+mod link_target_tests;
+#[cfg(test)]
 mod quiet_tests;
 
 #[cfg(test)]
@@ -6603,6 +6605,44 @@ fn measure_rich_range(
     total
 }
 
+/// One run of a line of rich text as it was placed on the panel.
+struct PlacedRun {
+    start: usize,
+    end: usize,
+    x: i32,
+    width: i32,
+    /// The run's style, or `None` for a formula drawn as a picture.
+    styled: Option<TextPresentation>,
+}
+
+/// Where `offset` falls on a line whose runs were placed as `placed`.
+///
+/// Inside a run, the run's own words up to the offset are measured in the
+/// cut they are drawn in, which is the only measurement that agrees with the
+/// letters on the panel. Inside a formula, which has no letters to stop
+/// between, it is the picture's leading edge.
+fn placed_x(text: &str, placed: &[PlacedRun], line_x: i32, offset: usize, face: Face) -> i32 {
+    let Some(run) = placed.iter().find(|run| offset < run.end) else {
+        return placed
+            .last()
+            .map_or(line_x, |run| run.x.saturating_add(run.width));
+    };
+    if offset <= run.start {
+        return run.x;
+    }
+    match run.styled {
+        Some(styled) if text.is_char_boundary(run.start) && text.is_char_boundary(offset) => {
+            run.x.saturating_add(measure_run_in(
+                &text[run.start..offset],
+                FontSize::Body,
+                face,
+                styled,
+            ))
+        }
+        _ => run.x,
+    }
+}
+
 /// A paragraph's first letter, set down into its opening lines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct InitialLetter {
@@ -7165,6 +7205,13 @@ fn layout_node(
                 let line_x = x.saturating_add(first_indent).saturating_add(aligned);
                 let mut cursor = from;
                 let mut run_x = line_x;
+                // Where each run of this line went, so a link or a word held
+                // to select it is found where its letters were drawn. Each
+                // run is drawn on its own, so the space a face kerns across a
+                // run boundary when it measures the whole line is not on the
+                // panel, and a target measured over the whole line drifted off
+                // its word by that much for every run before it.
+                let mut placed: Vec<PlacedRun> = Vec::new();
                 while cursor < to {
                     // Every slice below is by byte, and a paper is full of
                     // characters that take more than one of them. An offset
@@ -7210,6 +7257,13 @@ fn layout_node(
                                 },
                                 kind: LayoutKind::Picture(formula.handle),
                                 text_lines: Vec::new(),
+                            });
+                            placed.push(PlacedRun {
+                                start: cursor,
+                                end,
+                                x: run_x,
+                                width: drawn_width,
+                                styled: None,
                             });
                             run_x = run_x.saturating_add(drawn_width);
                         }
@@ -7258,9 +7312,17 @@ fn layout_node(
                         kind: LayoutKind::RichText(styled),
                         text_lines: vec![run.to_owned()],
                     });
+                    placed.push(PlacedRun {
+                        start: cursor,
+                        end,
+                        x: run_x,
+                        width: run_width,
+                        styled: Some(styled),
+                    });
                     run_x = run_x.saturating_add(run_width);
                     cursor = end;
                 }
+                let x_at = |offset: usize| placed_x(text, &placed, line_x, offset, prose);
                 for link in links.iter().take(MAX_TEXT_LINKS) {
                     if layout.nodes.len() >= rich_text_limit {
                         break;
@@ -7268,36 +7330,18 @@ fn layout_node(
                     let start = max(from, link.start);
                     let end = min(to, link.end);
                     if start < end && text.is_char_boundary(start) && text.is_char_boundary(end) {
-                        // Measured the way the line is set, not the way it was
+                        // Found the way the line is set, not the way it was
                         // written: a formula earlier on the line takes the width
                         // of its picture, and measuring the words it stands for
                         // instead puts every target after it in the wrong place.
-                        let before = measure_rich_range(
-                            text,
-                            from,
-                            start,
-                            FontSize::Body,
-                            prose,
-                            spans,
-                            formulae,
-                            line_height,
-                        );
-                        let through = measure_rich_range(
-                            text,
-                            from,
-                            end,
-                            FontSize::Body,
-                            prose,
-                            spans,
-                            formulae,
-                            line_height,
-                        );
+                        let left = x_at(start);
+                        let right = x_at(end);
                         layout.nodes.push(LayoutNode {
                             id: *id,
                             rect: Rect {
-                                x: line_x.saturating_add(before),
+                                x: left,
                                 y: line_y,
-                                width: through.saturating_sub(before),
+                                width: right.saturating_sub(left),
                                 height: line_height,
                             },
                             kind: if quiet {
@@ -7331,32 +7375,12 @@ fn layout_node(
                         else {
                             continue;
                         };
-                        let before = measure_rich_range(
-                            text,
-                            from,
-                            start.max(from),
-                            FontSize::Body,
-                            prose,
-                            spans,
-                            formulae,
-                            line_height,
-                        );
-                        let through = measure_rich_range(
-                            text,
-                            from,
-                            end,
-                            FontSize::Body,
-                            prose,
-                            spans,
-                            formulae,
-                            line_height,
-                        );
-                        let left = joined.map_or(line_x.saturating_add(before), |rect| rect.x);
+                        let left = joined.map_or_else(|| x_at(start.max(from)), |rect| rect.x);
                         layout.text_hits.push((
                             Rect {
                                 x: left,
                                 y: line_y,
-                                width: line_x.saturating_add(through).saturating_sub(left).max(1),
+                                width: x_at(end).saturating_sub(left).max(1),
                                 height: line_height,
                             },
                             TextHit {

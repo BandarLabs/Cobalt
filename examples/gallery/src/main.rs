@@ -990,7 +990,7 @@ impl Gallery {
                     },
                 }],
                 ParagraphPresentation::default(),
-                [("link-rich", 27, 31)],
+                [("link-rich", 27, 34)],
             )
             .selectable_rich_text_linking(
                 "A paragraph the reader can hold to mark.",
@@ -1014,7 +1014,7 @@ impl Gallery {
             )
             .text_linking(
                 "Plain text can carry a link to somewhere else in the same document.",
-                [("link-target", 32, 41)],
+                [("link-target", 31, 40)],
             )
             .spacer(Space::Small)
             // A hold is not drawn; it is the gesture that opens the marking
