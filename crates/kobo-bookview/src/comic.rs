@@ -151,7 +151,8 @@ impl ComicView {
         self.previews.clear();
     }
 
-    fn page_header(&self) -> ScreenBuilder {
+    /// Where the reader is, and whether that has been kept.
+    fn position(&self) -> String {
         let visible = self.reader.visible_pages(self.target_without_header());
         let position = if visible.len() == 2 {
             format!(
@@ -167,17 +168,28 @@ impl ComicView {
                 self.reader.comic().pages.len()
             )
         };
-        let position = match self.save_state {
+        match self.save_state {
             SaveState::Saved => position,
             SaveState::Pending => format!("{position} · Saving"),
             SaveState::Failed => format!("{position} · Position not saved"),
-        };
-        ScreenBuilder::new("comic-page")
+        }
+    }
+
+    fn page_header(&self) -> ScreenBuilder {
+        let screen = ScreenBuilder::new("comic-page")
             .top_bar(&self.title)
             .top_bar_action("comic-controls", "Reading")
             .reading(true)
-            .owns_back(true)
-            .secondary(position)
+            .owns_back(true);
+        // On a page that has the panel the position moves to the controls,
+        // a tap in the middle away: a caption above the art pushed it down
+        // the panel. A position that could not be saved is still said here,
+        // because that is something the reader needs to know unasked.
+        if self.full_page() && self.save_state != SaveState::Failed {
+            screen
+        } else {
+            screen.secondary(self.position())
+        }
     }
     fn target_without_header(&self) -> (u32, u32) {
         (
@@ -266,6 +278,7 @@ impl ComicView {
                 };
                 screen
                     .page_turns(previous, next)
+                    .reading_menu("comic-controls")
                     .build()
                     .with_auto_hidden_top_bar(self.full_page())
             }
@@ -275,7 +288,8 @@ impl ComicView {
                     .top_bar("Reading")
                     .owns_back(true)
                     .secondary(format!(
-                        "{} · {}%",
+                        "{} · {} · {}%",
+                        self.position(),
                         if memory.viewport.fit == Fit::Page {
                             "Fit page"
                         } else {
