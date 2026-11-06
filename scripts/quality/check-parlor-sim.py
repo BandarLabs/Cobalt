@@ -16,7 +16,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
 
-GAMES = ['Reversi', 'Draughts', "Nine Men's Morris", 'Kalah 6,4']
+GAMES = ['Reversi', 'Draughts', "Nine Men's Morris", 'Kalah']
 
 
 def main():
@@ -175,8 +175,8 @@ def main():
                 panel = start()
                 drive('wait-for Board games')
                 resumed = capture('11-resume-offered')
-                assert 'Resume saved game' in words(resumed), words(resumed)
-                drive('tap Resume saved game', 'wait-idle')
+                assert 'Resume Reversi' in words(resumed), words(resumed)
+                drive('tap Resume Reversi', 'wait-idle')
                 back = capture('12-resumed')
                 said = words(back)
                 assert 'The computer placed the marked disc' in said, said

@@ -15,7 +15,7 @@ shot parlor-help
 tap Back
 tap Start game
 expect Your move
-expect Tap a hollow destination
+expect Tap a dotted square
 clean
 shot reversi
 scenario storage-full

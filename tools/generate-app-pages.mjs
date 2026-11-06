@@ -62,7 +62,7 @@ const screenshots = {
   nonograms: ["nonograms.png", "A Nonograms puzzle with the selected square and its row and column clues highlighted."],
   panels: ["panels.png", "The Panels comic shelf with a cover and saved progress, page 2 of 4."],
   paperterm: ["paperterm.png", "Paperterm showing a laptop terminal session in portrait, with the keyboard open."],
-  parlor: ["parlor.png", "Reversi against the computer on a Kobo, with the computer's last disc marked and the legal moves shown as small rings."],
+  parlor: ["parlor.png", "Reversi against the computer on a Kobo, on a ruled board with the computer's last disc marked and the legal moves shown as grey dots."],
   parser: ["parser.png", "Parser opening Lamplight, with tappable words in the story and command buttons for LOOK, TAKE and the compass directions."],
   post: ["post.png", "Post inbox listing Hermes letters newest first, with Newer and Older paging."],
   pubquiz: ["pubquiz.png", "Pub Quiz pass-around question on Ada's turn, with four numbered answer choices."],
