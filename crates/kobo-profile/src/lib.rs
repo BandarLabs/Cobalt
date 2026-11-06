@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+pub mod calibration;
 pub mod observation;
 pub mod provisional;
 
@@ -90,12 +91,23 @@ pub enum TouchTransform {
     /// Confirmed on the Clara BW and the Clara HD, each by a physically
     /// captured touch.
     TransposeMirrorX,
+    /// Whatever the owner's two taps showed, on a reader with no profile.
+    ///
+    /// Only a provisional profile ever carries this. It can hold any of the
+    /// eight ways a digitiser can sit under a panel, including the ones the
+    /// variants above deliberately leave out, because on unmeasured hardware
+    /// nobody knows in advance which of them it will be. It is measured at
+    /// the pose the reader was in when the dots were tapped, which is also
+    /// the provisional profile's only verified pose, so the warning above
+    /// about composing with a half turn never comes into play. See
+    /// [`calibration`].
+    Calibrated(TouchMapping),
 }
 
 impl TouchTransform {
     /// Lowers a declared transform into the composable form.
     ///
-    /// Lossless in both directions for all four variants. The composed value
+    /// Lossless in both directions for the four measured variants. The composed value
     /// this feeds is a superset: a transpose with both axes mirrored is
     /// reachable here and deliberately has no variant above, because it is a
     /// runtime fact about which way up the reader is being held rather than a
@@ -123,6 +135,7 @@ impl TouchTransform {
                 mirror_x: true,
                 mirror_y: false,
             },
+            Self::Calibrated(mapping) => mapping,
         }
     }
 }
@@ -2659,6 +2672,20 @@ mod tests {
                     observed: rotation,
                     reference: 1,
                 })
+            );
+        }
+    }
+
+    /// A calibration belongs to one owner's unmeasured reader. A measured
+    /// profile carrying one would mean somebody's two taps had replaced a
+    /// transform that was checked against the hardware.
+    #[test]
+    fn no_measured_profile_carries_a_calibrated_transform() {
+        for profile in SUPPORTED_PROFILES {
+            assert!(
+                !matches!(profile.touch_transform, TouchTransform::Calibrated(_)),
+                "{} carries a calibration",
+                profile.id
             );
         }
     }

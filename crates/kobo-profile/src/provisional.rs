@@ -19,7 +19,7 @@
 
 use crate::{
     firmware_branch, DeviceProfile, DeviceSnapshot, FramebufferController, GeometryRule,
-    TouchTransform, SUPPORTED_PROFILES,
+    TouchMapping, TouchTransform, SUPPORTED_PROFILES,
 };
 
 /// The pixel density assumed when no measured profile shares this resolution.
@@ -102,9 +102,9 @@ pub fn profile_from_probe(
         green: framebuffer.green,
         blue: framebuffer.blue,
         alpha: framebuffer.alpha,
-        // The one field with no derivation. Supplied by the caller from a
-        // calibration the owner performed, or left at the caller's default and
-        // wrong until they do one.
+        // The one field with no derivation. Supplied by the caller from the
+        // two-tap calibration the owner performed, or left at the caller's
+        // starting point until they have done one.
         touch_transform,
         // The pose the device is in right now is the only one anything here
         // has been seen at, so it is both the anchor and the whole verified
@@ -142,6 +142,30 @@ pub fn profile_from_probe(
         colour_panel: false,
     };
     Ok(Box::leak(Box::new(profile)))
+}
+
+/// Rebuilds a provisional profile around the owner's touch calibration.
+///
+/// Refuses any profile that is not provisional. A measured profile's
+/// transform was checked against the hardware by somebody holding it, and two
+/// taps from a session that resolved to that profile are not evidence enough
+/// to overrule it.
+///
+/// # Errors
+///
+/// When `profile` is a measured one, or the probe no longer derives a profile.
+pub fn recalibrated(
+    profile: &DeviceProfile,
+    snapshot: &DeviceSnapshot,
+    mapping: TouchMapping,
+) -> Result<&'static DeviceProfile, String> {
+    if profile.id != PROVISIONAL_ID {
+        return Err(format!(
+            "{} is a measured profile, and its touch transform is never replaced by a calibration",
+            profile.id
+        ));
+    }
+    profile_from_probe(snapshot, TouchTransform::Calibrated(mapping))
 }
 
 /// The i.MX device-tree roots whose EPDC driver takes the 72-byte update.
@@ -214,8 +238,8 @@ fn leak_rotations(rotation: u32) -> &'static [u32] {
 mod tests {
     use super::{profile_from_probe, ASSUMED_PIXELS_PER_INCH, PROVISIONAL_ID};
     use crate::{
-        Bitfield, DeviceSnapshot, FramebufferController, FramebufferSnapshot, IdentitySnapshot,
-        TouchSnapshot, TouchTransform, WRITE_EVIDENCE_PENDING,
+        Bitfield, DeviceProfile, DeviceSnapshot, FramebufferController, FramebufferSnapshot,
+        IdentitySnapshot, TouchSnapshot, TouchTransform, WRITE_EVIDENCE_PENDING,
     };
 
     fn byte(offset: u32) -> Bitfield {
@@ -405,5 +429,41 @@ mod tests {
         let mut snapshot = unmeasured_snapshot();
         snapshot.identity.firmware_version = Some("unknown".into());
         assert!(profile_from_probe(&snapshot, TouchTransform::Direct).is_err());
+    }
+    #[test]
+    fn a_calibration_replaces_only_the_touch_transform_of_a_provisional_profile() {
+        let snapshot = unmeasured_snapshot();
+        let start = profile_from_probe(&snapshot, TouchTransform::Direct).expect("derivable");
+        let mapping = crate::calibration::ALL_MAPPINGS[6];
+        let calibrated = super::recalibrated(start, &snapshot, mapping).expect("provisional");
+        assert_eq!(
+            calibrated.touch_transform,
+            TouchTransform::Calibrated(mapping)
+        );
+        assert_eq!(
+            DeviceProfile {
+                touch_transform: start.touch_transform,
+                ..*calibrated
+            },
+            *start,
+            "nothing but the transform moved"
+        );
+        assert!(calibrated.validate(&snapshot).mismatches.is_empty());
+    }
+
+    #[test]
+    fn a_measured_profile_is_never_recalibrated() {
+        for profile in crate::SUPPORTED_PROFILES {
+            assert!(
+                super::recalibrated(
+                    profile,
+                    &unmeasured_snapshot(),
+                    crate::calibration::ALL_MAPPINGS[0]
+                )
+                .is_err(),
+                "{} accepted a calibration",
+                profile.id
+            );
+        }
     }
 }

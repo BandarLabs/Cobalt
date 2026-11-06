@@ -1812,3 +1812,35 @@ fn a_protocol_15_application_cannot_send_a_protocol_16_control() {
         super::Event::AppGone(43)
     ));
 }
+
+/// The calibration screen shows exactly one dot, where the derivation expects
+/// the tap, and leaves the other dot's place blank so there is never a doubt
+/// about which one to touch.
+#[test]
+fn a_calibration_screen_draws_its_one_dot_where_the_tap_is_expected() {
+    let whole_screen = kobo_hal::Rect {
+        x: 0,
+        y: 0,
+        width: 1072,
+        height: 1448,
+    };
+    let [first, second] = kobo_profile::calibration::targets(1072, 1448);
+    for retrying in [false, true] {
+        let surface =
+            super::calibration_surface(whole_screen, first, retrying, kobo_ui::Appearance::Grey);
+        assert_eq!((surface.width, surface.height), (1072, 1448));
+        let at = |(x, y): (u32, u32)| surface.pixels[y as usize * surface.width + x as usize];
+        assert_eq!(at(first), kobo_ui::tone::INK, "the dot is drawn");
+        assert_eq!(
+            at((first.0 + 10, first.1)),
+            kobo_ui::tone::INK,
+            "and is wide enough to aim at"
+        );
+        assert_eq!(at(second), kobo_ui::tone::PAPER, "the other dot is not");
+        assert_eq!(
+            at((first.0 + 200, first.1)),
+            kobo_ui::tone::PAPER,
+            "nothing crowds it"
+        );
+    }
+}
