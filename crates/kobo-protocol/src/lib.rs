@@ -4883,6 +4883,10 @@ fn encoded_node_len(
             let mut length = 5;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             add_encoded_len(&mut length, 2 + spans.len() * 9 + 9 + 1 + 1)?;
+            if version >= FINE_TYPE_VERSION {
+                // The block indent and the initial's line count.
+                add_encoded_len(&mut length, 3)?;
+            }
             for _ in links.iter().take(kobo_ui::MAX_TEXT_LINKS) {
                 add_encoded_len(&mut length, 12)?;
             }
@@ -6224,6 +6228,12 @@ fn encode_node(
                 output,
                 u16::from_ne_bytes(presentation.first_line_indent_em.to_ne_bytes()),
             );
+            // An older runtime reads the links next, so the block indent and
+            // the initial travel only to runtimes that expect them.
+            if version >= FINE_TYPE_VERSION {
+                push_u16(output, presentation.start_indent_em);
+                output.push(presentation.initial_lines);
+            }
             let links = &links[..links.len().min(kobo_ui::MAX_TEXT_LINKS)];
             output.push(u8::try_from(links.len()).map_err(|_| ProtocolError::TooManyNodes)?);
             for link in links {
@@ -7548,6 +7558,16 @@ fn decode_node(
                 margin_after_em: reader.u16()?.min(2_000),
                 first_line_indent_em: i16::from_ne_bytes(reader.u16()?.to_ne_bytes())
                     .clamp(-2_000, 2_000),
+                ..kobo_ui::ParagraphPresentation::default()
+            };
+            let presentation = if version >= FINE_TYPE_VERSION {
+                kobo_ui::ParagraphPresentation {
+                    start_indent_em: reader.u16()?.min(2_000),
+                    initial_lines: reader.u8()?.min(4),
+                    ..presentation
+                }
+            } else {
+                presentation
             };
             let link_count = usize::from(reader.u8()?);
             let mut links = Vec::with_capacity(link_count.min(kobo_ui::MAX_TEXT_LINKS));

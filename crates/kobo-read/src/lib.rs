@@ -3826,6 +3826,7 @@ fn paragraph_presentation(style: &kobo_doc::BlockStyle) -> kobo_ui::ParagraphPre
         margin_before_em: style.margin_before_em,
         margin_after_em: style.margin_after_em,
         first_line_indent_em: style.first_line_indent_em,
+        ..kobo_ui::ParagraphPresentation::default()
     }
 }
 
@@ -5816,6 +5817,7 @@ mod tests {
             margin_before_em: 75,
             margin_after_em: 50,
             first_line_indent_em: 125,
+            ..kobo_ui::ParagraphPresentation::PLAIN
         };
 
         let first = fragment_presentation(whole, true, false);
