@@ -65,8 +65,9 @@ clean
 shot audiobook-paused
 tap back
 wait-for Audiobooks
-expect Now playing
+# The book playing is listed once, by its own row, which says it is paused.
 expect Paused
+expect-missing Now playing
 clean
 shot audiobook-library-playing
 tap Two Tones

@@ -165,7 +165,7 @@ fn a_book_is_named_by_what_it_said_then_the_index_then_its_file() {
     assert_eq!(app.title_of(&books[0]), "The Moon");
     assert_eq!(app.title_of(&books[1]), "stray-recording");
     assert_eq!(app.title_of(&books[2]), "Dune, by Frank Herbert");
-    assert_eq!(Audiobook::status_of(&books[0], None), "MP3Z · 3 MB");
+    assert_eq!(Audiobook::status_of(&books[0], None), "MP3 · 3 MB");
     assert_eq!(
         Audiobook::status_of(&books[2], app.place_of("0/Audiobooks/Dune")),
         "Frank Herbert · MP3 · 42 parts · 4.6 GB"
@@ -318,10 +318,38 @@ fn a_book_opens_where_it_was_left_and_keeps_playing_behind_the_library() {
     assert!(app.player.is_some());
     assert!(app.topic.is_empty());
     let drawn = format!("{:?}", app.screen(&context));
-    assert!(drawn.contains("Now playing"), "{drawn}");
-    assert!(drawn.contains("\"Night\""), "{drawn}");
+    assert_eq!(drawn.matches("\"Night\"").count(), 1, "{drawn}");
+    assert!(drawn.contains(" left"), "{drawn}");
     app.on_action(&mut context, action_id(NOW_PLAYING));
     assert_eq!(app.stage, Stage::Player);
+}
+
+/// The book playing is listed once: on the page that lists it, its own row
+/// says it is playing and leads back to the player, and the "Now playing"
+/// row above is kept for the pages that do not list it.
+#[test]
+fn the_book_playing_is_listed_once() {
+    let runner = kobo_sdk::AppRunner::new(Audiobook::default());
+    let mut context = runner.context();
+    let mut app = Audiobook::default();
+    app.listed(
+        &context,
+        &[
+            entry("0/Audiobooks/night.m4b", "night", 2, 1, 10),
+            entry("0/Audiobooks/day.m4b", "day", 2, 1, 10),
+        ],
+        false,
+    );
+    app.play(&mut context, 0);
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    let screen = app.screen(&context);
+    let drawn = format!("{screen:?}");
+    assert_eq!(drawn.matches("\"night\"").count(), 1, "{drawn}");
+    assert!(!drawn.contains("Now playing"), "{drawn}");
+    assert!(
+        drawn.contains(&format!("{:?}", action_id(NOW_PLAYING))),
+        "the playing row leads back to the player"
+    );
 }
 
 /// A book made here, playing off the shelf, is named in the library's

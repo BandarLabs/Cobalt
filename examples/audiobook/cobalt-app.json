@@ -3,7 +3,7 @@
   "display_name": "Audiobooks",
   "short_label": "Audiobooks",
   "summary": "Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,7 +11,7 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "Plays the audiobooks on the reader: MP3, M4B, M4A, OGG, Opus, FLAC and WAV, and a folder of numbered files as one book. Cover, author and chapters, speed from half to three times, a sleep timer, and your place kept in every book.",
+  "release_notes": "The book playing is listed once, and a book made here is labelled MP3 and has its title alone on its cover.",
   "setup": {
     "steps": [
       {
