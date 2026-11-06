@@ -2709,6 +2709,67 @@ fn an_overlay_takes_the_page_turns_away() {
 /// without a cross it is a screen with no way off it unless the
 /// application remembered to put one in a row. The frame draws it, so the
 /// application cannot forget.
+fn details_dialog(dismiss: ActionId) -> Screen {
+    Screen::new(1, Vec::new()).with_overlay(Overlay::dialog(
+        NodeId(2),
+        "Details",
+        dismiss,
+        vec![
+            Node::Text {
+                id: NodeId(3),
+                text: "EPUB, 1.1 MB".into(),
+                links: Vec::new(),
+            },
+            Node::Button {
+                id: NodeId(4),
+                action: ActionId(9),
+                label: "Close".into(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            },
+        ],
+    ))
+}
+
+#[test]
+fn a_dialogue_with_its_own_close_button_draws_no_second_cross() {
+    for (name, metrics) in PANELS {
+        let layout = details_dialog(ActionId(9)).layout_with(&metrics, &Chrome::with_back(false));
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::OverlayClose),
+            "{name}: the cross was drawn beside Close"
+        );
+        let close = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(ActionId(9), _, _)))
+            .unwrap_or_else(|| panic!("{name}: no Close"))
+            .rect;
+        assert_eq!(
+            layout.hit_test(close.x + close.width / 2, close.y + close.height / 2),
+            Some(ActionId(9)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_dialogue_whose_way_out_is_missing_gets_the_cross_after_all() {
+    for (name, metrics) in PANELS {
+        let layout = details_dialog(ActionId(77)).layout_with(&metrics, &Chrome::with_back(false));
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::OverlayClose),
+            "{name}: a dialogue was left with no way off it"
+        );
+    }
+}
+
 #[test]
 fn a_modal_always_carries_a_way_out() {
     for (name, metrics) in PANELS {

@@ -287,6 +287,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `top_bar_overflow(name, open, [(name, label), ...])` | Three dots that open a menu when `open`, and close on a tap anywhere else. |
 | `popover(anchor, build)` | An anchored overlay that dismisses when the reader taps outside it. |
 | `modal(title, build)` | A centred overlay that remains until one of its controls answers it. |
+| `dialog(title, dismiss, build)` | Protocol 18. A modal whose own button named `dismiss` (a Close, a Done, a Cancel) is its way out, so its frame carries no second cross. `confirm` is one. |
 | `page_turns(previous, next)` | Tap the left of the page to go back, the rest to go on. |
 | `page_position(page, total)` | A footer line saying where in the list this is. |
 | `reading_menu(name)` | Adds a middle page-turn zone for a reader's controls. |

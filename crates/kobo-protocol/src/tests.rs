@@ -1635,3 +1635,55 @@ fn a_muted_run_keeps_its_tone_on_the_wire_alongside_every_other_style() {
     }
     assert!(text_presentation_from_byte(0x80).is_err());
 }
+
+fn screen_with_dialog(dismiss: ActionId) -> Screen {
+    Screen::new(1, Vec::new()).with_overlay(kobo_ui::Overlay::dialog(
+        NodeId(2),
+        "Details",
+        dismiss,
+        vec![Node::Button {
+            id: NodeId(3),
+            action: ActionId(9),
+            label: "Close".into(),
+            state: kobo_ui::ControlState::Enabled,
+            emphasis: kobo_ui::Emphasis::Normal,
+        }],
+    ))
+}
+
+fn overlay_kind_after_the_wire(version: u8, screen: Screen) -> Option<kobo_ui::OverlayKind> {
+    let frame = Frame {
+        version,
+        request_id: 4,
+        message: Message::SetScreen(screen),
+    };
+    let back = decode(&encode(&frame).expect("encodes")).expect("decodes");
+    let Message::SetScreen(out) = back.message else {
+        panic!("wrong message");
+    };
+    out.overlay.map(|overlay| overlay.kind)
+}
+
+#[test]
+fn a_dialogue_keeps_its_way_out_on_the_wire_and_reaches_an_older_runtime_as_a_modal() {
+    assert_eq!(
+        overlay_kind_after_the_wire(VERSION, screen_with_dialog(ActionId(9))),
+        Some(kobo_ui::OverlayKind::Dialog {
+            dismiss: ActionId(9)
+        })
+    );
+    assert_eq!(
+        overlay_kind_after_the_wire(FINE_TYPE_VERSION - 1, screen_with_dialog(ActionId(9))),
+        Some(kobo_ui::OverlayKind::Modal)
+    );
+}
+
+#[test]
+fn a_dialogue_cannot_name_the_runtimes_own_back_as_its_way_out() {
+    let frame = Frame {
+        version: VERSION,
+        request_id: 4,
+        message: Message::SetScreen(screen_with_dialog(ActionId::BACK)),
+    };
+    assert!(encode(&frame).is_err());
+}

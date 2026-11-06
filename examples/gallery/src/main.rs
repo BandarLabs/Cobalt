@@ -2012,7 +2012,7 @@ impl Gallery {
             )])
             .button("open-sheet", "Open a modal");
         if self.floating == Some(Floating::Sheet) {
-            screen.modal("Details", |sheet| {
+            screen.dialog("Details", "sheet-close", |sheet| {
                 sheet
                     .facts([("Format", "EPUB"), ("Size", "1.1 MB")])
                     .button("sheet-close", "Close")

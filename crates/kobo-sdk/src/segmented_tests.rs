@@ -240,3 +240,31 @@ fn a_word_wider_than_the_column_is_broken_inside_and_nothing_is_lost() {
             .trim_end();
     assert_eq!(flag, long, "{lines:?}");
 }
+
+#[test]
+fn a_confirmation_is_left_by_its_cancel_answer_and_carries_no_second_cross() {
+    let screen = ScreenBuilder::new("shelf")
+        .top_bar("Shelf")
+        .confirm(
+            "Delete this shelf?",
+            "The books stay on the reader.",
+            ("delete", "Delete"),
+            ("keep", "Keep"),
+        )
+        .build();
+    let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    assert!(!layout
+        .nodes
+        .iter()
+        .any(|node| node.kind == LayoutKind::OverlayClose));
+    let keep = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind.acts_on() == Some(action_id("keep")))
+        .expect("the way out is drawn")
+        .rect;
+    assert_eq!(
+        layout.hit_test(keep.x + keep.width / 2, keep.y + keep.height / 2),
+        Some(action_id("keep"))
+    );
+}

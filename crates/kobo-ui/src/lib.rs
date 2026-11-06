@@ -1656,6 +1656,17 @@ pub enum OverlayKind {
     /// because "somewhere else" is not one of the choices and a reader who
     /// brushes the panel has not decided anything.
     Modal,
+    /// A modal whose own button named `dismiss` is the way out, so the frame
+    /// draws no cross of its own.
+    ///
+    /// A details sheet with a Close button, or a question with a Cancel, drew
+    /// both that button and the frame's cross, two controls a few centimetres
+    /// apart that do the same thing, and the reader has to wonder which one
+    /// is the real way out. If no button in the dialogue acts on `dismiss`,
+    /// the cross is drawn after all, because a dialogue with no way off it is
+    /// the one thing an overlay must never be. Protocol 18; an older runtime
+    /// is sent a plain modal.
+    Dialog { dismiss: ActionId },
 }
 
 impl Overlay {
@@ -1667,6 +1678,35 @@ impl Overlay {
             kind: OverlayKind::Popover { anchor },
             title: String::new(),
             nodes,
+        }
+    }
+
+    /// A modal whose button acting on `dismiss` is its way out, with no cross
+    /// in its frame. See [`OverlayKind::Dialog`].
+    #[must_use]
+    pub fn dialog(
+        id: NodeId,
+        title: impl Into<String>,
+        dismiss: ActionId,
+        nodes: Vec<Node>,
+    ) -> Self {
+        Self {
+            id,
+            kind: OverlayKind::Dialog { dismiss },
+            title: title.into(),
+            nodes,
+        }
+    }
+
+    /// Whether the frame needs a cross of its own to be left: always for a
+    /// modal, never for a popover, and for a dialogue only when none of its
+    /// buttons acts on the action it named as its way out.
+    #[must_use]
+    pub fn draws_a_cross(&self) -> bool {
+        match self.kind {
+            OverlayKind::Modal => true,
+            OverlayKind::Popover { .. } => false,
+            OverlayKind::Dialog { dismiss } => !offers(&self.nodes, dismiss),
         }
     }
 
@@ -1692,6 +1732,21 @@ impl Overlay {
     pub const fn dismissed_by_a_miss(&self) -> bool {
         matches!(self.kind, OverlayKind::Popover { .. })
     }
+}
+
+/// Whether a button among `nodes`, or in a band or a card among them, acts
+/// on `action`.
+fn offers(nodes: &[Node], action: ActionId) -> bool {
+    nodes.iter().any(|node| match node {
+        Node::Button {
+            action: own,
+            state: ControlState::Enabled,
+            ..
+        } => *own == action,
+        Node::Card { children, .. } => offers(children, action),
+        Node::Band { slots, .. } => slots.iter().any(|slot| offers(&slot.nodes, action)),
+        _ => false,
+    })
 }
 
 /// What a bottom bar is for.
@@ -2541,7 +2596,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     // like a mark was pressed. Bounded below so a one word menu is still a
     // comfortable target and still has room for its caret.
     let width = match overlay.kind {
-        OverlayKind::Modal => widest,
+        OverlayKind::Modal | OverlayKind::Dialog { .. } => widest,
         OverlayKind::Popover { .. } => {
             let narrowest = min(widest, 3 * metrics.touch_target_default());
             let title = if overlay.title.is_empty() {
@@ -2571,7 +2626,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     // remember to put in a row, because the one that forgets has drawn a
     // screen with no way off it. A popover needs none -- a miss puts it away,
     // and a second cross beside the control that opened it is noise.
-    let closes = matches!(overlay.kind, OverlayKind::Modal);
+    let closes = overlay.draws_a_cross();
     let close = if closes {
         metrics.touch_target_default()
     } else {
@@ -2591,7 +2646,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         wrap_text_in(&overlay.title, title_width, FontSize::Title, prose)
             .into_iter()
             .take(match overlay.kind {
-                OverlayKind::Modal => 2,
+                OverlayKind::Modal | OverlayKind::Dialog { .. } => 2,
                 OverlayKind::Popover { .. } => 1,
             })
             .collect()
@@ -2646,7 +2701,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
 
     let caret = metrics.space(Space::Small);
     let (x, y, side) = match overlay.kind {
-        OverlayKind::Modal => (
+        OverlayKind::Modal | OverlayKind::Dialog { .. } => (
             (metrics.width - width) / 2,
             (metrics.height - height) / 2,
             None,
