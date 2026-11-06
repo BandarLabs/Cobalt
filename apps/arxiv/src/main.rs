@@ -578,6 +578,9 @@ struct Arxiv {
     formulae_as_text: bool,
     task: Option<(TaskId, Awaiting)>,
     trouble: Option<String>,
+    /// Whether the last listing failed because the reader is off the
+    /// network, which is the one failure whose fix is on this device.
+    listing_offline: bool,
     /// How far back listings reach.
     window: Window,
     /// Set when Keep was pressed from an abstract, so that the fetch it
@@ -852,6 +855,7 @@ impl Arxiv {
             query.expression(self.window, today())
         );
         self.trouble = None;
+        self.listing_offline = false;
         match context.spawn_retrying(Task::Fetch {
             url,
             offset: 0,
@@ -1345,35 +1349,33 @@ impl Arxiv {
             .map_or_else(|| "Preprints".to_owned(), Query::title);
         let mut screen = ScreenBuilder::new("arxiv-listing").top_bar(title);
         let failed = self.papers.is_empty() && self.trouble.is_some();
-        if let Some(trouble) = &self.trouble {
-            let level = if failed {
-                BannerLevel::Error
+        if failed && !self.waiting_for(Awaiting::Listing) {
+            // A listing that never arrived is not a listing with nothing in
+            // it, so it is drawn as the failure it is, with the way out of
+            // it. Off the network that is Join Wi-Fi beside Try again: the
+            // banner here used to say "Join Wi-Fi and try again" and offer
+            // only Try again, which fails the same way on a reader with no
+            // network. The date window is not offered either, since no date
+            // range brings a listing back that the network never sent.
+            return if self.listing_offline {
+                screen.failure_state(kobo_sdk::Failure::of(TaskError::Offline), RETRY_LISTING)
             } else {
-                BannerLevel::Attention
-            };
-            screen = screen.banner(level, trouble.clone());
+                screen
+                    .error_state(self.trouble.clone().unwrap_or_default())
+                    .primary_button(RETRY_LISTING, "Try again")
+            }
+            .build();
+        }
+        if let Some(trouble) = &self.trouble {
+            screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
         if self.waiting_for(Awaiting::Listing) {
             return placeholder(context, &screen);
-        }
-        if failed {
-            // The one thing that can change a listing that never arrived goes
-            // on the banner saying why, rather than in a button of its own
-            // under it.
-            screen = screen.banner_action(RETRY_LISTING, "Try again");
         }
         // The window control carries its own state as its label, so the
         // one button is both the way to change the reach of the listing and
         // the only place that says what the reach currently is.
         let narrowing = (WINDOW, self.window.label(), Glyph::Filter);
-        if failed {
-            // A listing that never arrived is not a listing with nothing in
-            // it. The banner says why and carries the retry, rather than
-            // advice about search words that were never the problem.
-            return screen
-                .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
-                .build();
-        }
         if self.papers.is_empty() {
             return screen
                 .splash(
@@ -2705,7 +2707,10 @@ impl Arxiv {
                 Awaiting::Listing => self.took_listing(&bytes),
                 Awaiting::FullText => self.took_full_text(context, &bytes),
             },
-            TaskOutcome::Failed(error) => self.trouble = Some(explain(error, awaiting)),
+            TaskOutcome::Failed(error) => {
+                self.listing_offline = awaiting == Awaiting::Listing && error == TaskError::Offline;
+                self.trouble = Some(explain(error, awaiting));
+            }
             TaskOutcome::Cancelled => {}
         }
         self.show(context);
@@ -3190,6 +3195,21 @@ mod tests {
         assert!(rendered.contains("not on a network"), "{rendered}");
         assert!(rendered.contains("Try again"), "{rendered}");
         assert!(!rendered.contains("No papers found"), "{rendered}");
+        let screen = runner.app().listing(&context);
+        let layout = screen.layout_with(
+            &kobo_sdk::CLARA_BW_METRICS,
+            &kobo_sdk::Chrome::measuring(true),
+        );
+        assert!(
+            layout
+                .rect_of_action(action_id(kobo_sdk::JOIN_WIFI))
+                .is_some(),
+            "offline, the way to join a network is offered beside Try again: {rendered}"
+        );
+        assert!(
+            layout.rect_of_action(action_id(WINDOW)).is_none(),
+            "no date range brings back a listing the network never sent: {rendered}"
+        );
         let commands = runner.action(action_id(super::RETRY_LISTING));
         assert!(commands.iter().any(|command| matches!(
             command,
@@ -3294,8 +3314,8 @@ mod tests {
         }
     }
 
-    /// A listing that never arrived says so with its retry on the banner,
-    /// and the banner, its action and the date window fit at every size.
+    /// A listing that never arrived says so with its retry, and both fit at
+    /// every size.
     #[test]
     fn a_listing_that_never_arrived_fits_its_retry_at_every_text_size() {
         for metrics in text_size_metrics() {
