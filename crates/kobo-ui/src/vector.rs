@@ -641,6 +641,48 @@ fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
     Some(shapes)
 }
 
+/// A flag on a mine field square: a pole on a short foot, with a pennant
+/// that fills the top half of it. Heavy enough to read on the grey of a
+/// covered square from arm's length.
+#[must_use]
+pub fn flag() -> Vec<Shape> {
+    vec![
+        Shape::Stroke {
+            path: Path::line(420, 150, 420, 840),
+            width: 90,
+        },
+        Shape::Stroke {
+            path: Path::line(270, 840, 660, 840),
+            width: 90,
+        },
+        Shape::Fill(
+            Path::new()
+                .move_to(420, 110)
+                .line_to(840, 310)
+                .line_to(420, 510)
+                .close(),
+        ),
+    ]
+}
+
+/// A mine: a round body with eight spikes, as a printed field draws one.
+#[must_use]
+pub fn mine() -> Vec<Shape> {
+    let mut shapes = vec![Shape::Fill(Path::circle(500, 500, 290))];
+    for (x0, y0, x1, y1) in [
+        (500, 110, 500, 890),
+        (110, 500, 890, 500),
+        (250, 250, 750, 750),
+        (250, 750, 750, 250),
+    ] {
+        shapes.push(Shape::Stroke {
+            path: Path::line(x0, y0, x1, y1),
+            width: 110,
+        });
+    }
+    shapes
+}
+
 /// The ring cut out of a black king, drawn over it in paper.
 #[must_use]
 pub fn king_inlay() -> Vec<Shape> {

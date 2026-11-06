@@ -42,6 +42,10 @@ wait-for-id hashi
 tap Hashi
 tap Five islands
 wait-for-id game-more
+# Every game has the same bar at its foot: Undo, then the mode where a game
+# has one, or Restart where it does not.
+expect Undo
+expect Restart
 tap-id route-0
 tap-id route-1
 tap-id route-2

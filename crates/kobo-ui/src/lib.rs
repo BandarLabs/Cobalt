@@ -1342,6 +1342,44 @@ const TILE_SHADE: u8 = 170;
 /// ink and still be read without leaning in.
 const TILE_FADED_INK: u8 = 136;
 
+/// What a mine field square shows besides a count.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FieldMark {
+    Flag,
+    Mine,
+}
+
+impl FieldMark {
+    /// The character an application sends for this mark. The runtime draws
+    /// its own picture in place of the character, because the typeface's
+    /// flag came out a few pixels tall in the middle of a square.
+    fn of(label: &str) -> Option<Self> {
+        match label {
+            "\u{2691}" => Some(Self::Flag),
+            "\u{2739}" => Some(Self::Mine),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a square grid is a mine field: four to nine squares a side, each
+/// one blank, a count from 1 to 8, a flag or a mine, at least one of them
+/// still covered, and nothing else on it. Covered is the cell's selection.
+fn is_mine_field(square: bool, columns: i32, cells: &[Cell]) -> bool {
+    square
+        && (4..=9).contains(&columns)
+        && i32::try_from(cells.len()).is_ok_and(|count| count == columns * columns)
+        && cells.iter().any(|cell| cell.selected)
+        && cells.iter().all(|cell| {
+            cell.glyph.is_none()
+                && cell.corner.is_none()
+                && cell.tone == CellTone::Plain
+                && (cell.label.is_empty()
+                    || FieldMark::of(&cell.label).is_some()
+                    || matches!(cell.label.as_bytes(), [b'1'..=b'8']))
+        })
+}
+
 /// What a grid cell is: part of a board, or a key.
 ///
 /// A board is ruled squares, and the rules are the board. A keyboard is not:
@@ -1413,6 +1451,19 @@ pub enum CellStyle {
     /// A square of a joined board ruled in grey, a reversi board's: it
     /// draws its top and left rules and the board draws the frame.
     Ruled,
+    /// A square of a mine field. The squares meet and share their rules, as
+    /// on a printed board, with a heavier frame round the field: drawn as
+    /// separate tiles with paper between them, a field read as a keypad.
+    /// A covered square is grey and an opened one is paper; `struck` is the
+    /// mine that ended the game, set in ink so it is found at a glance. The
+    /// four edges say which sides of the field this square is on.
+    Field {
+        top: bool,
+        left: bool,
+        right: bool,
+        bottom: bool,
+        struck: bool,
+    },
     /// A board square carrying one of the word-game tones.
     Tile(CellTone),
     /// A keyboard key carrying the tone its letter has on the board.
@@ -5319,6 +5370,11 @@ pub enum LayoutKind {
     ToneLabel(CellTone, bool),
     /// Explicit board ink; selection is an outline independent of the mark.
     BoardMark(BoardMark, bool),
+    /// A flag or a mine on a mine field, drawn rather than typed. Carries
+    /// whether it sits on ink, where it is drawn in paper.
+    FieldMark(FieldMark, bool),
+    /// The count on an opened mine field square, in the interface face.
+    FieldCount,
     BoardClue,
     /// The chip marking the selected square's row and column clues. Drawn
     /// behind the clue's numbers and sized to them, never to the gutter: the
@@ -8099,6 +8155,7 @@ fn layout_node(
                         && cell.tone == CellTone::Plain
                         && matches!(cell.glyph, None | Some(Glyph::Circle | Glyph::Close))
                 });
+            let mine_field = is_mine_field(*square, requested, cells);
             let chess_board = *square
                 && requested == 8
                 && cells.len() == 64
@@ -8138,6 +8195,7 @@ fn layout_node(
             let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
             } else if chess_board
+                || mine_field
                 || hash_board
                 || draughts_squares
                 || reversi_board
@@ -8272,6 +8330,14 @@ fn layout_node(
                     CellStyle::Plain
                 } else if reversi_board {
                     CellStyle::Ruled
+                } else if mine_field {
+                    CellStyle::Field {
+                        top: row == 0,
+                        left: column == 0,
+                        right: column == columns - 1,
+                        bottom: (position + columns) >= i32::try_from(cells.len()).unwrap_or(0),
+                        struck: FieldMark::of(&cell.label) == Some(FieldMark::Mine),
+                    }
                 } else if hash_board {
                     CellStyle::Hash {
                         right: column < 2,
@@ -8438,6 +8504,35 @@ fn layout_node(
                                 ),
                                 text_lines: vec![cell.label.clone()],
                             });
+                        }
+                        // A count is set in the interface face, about half
+                        // the height of its square; see `field_count_style`.
+                        // A flag or a mine is drawn, not typed.
+                        None if matches!(style, CellStyle::Field { .. }) => {
+                            if let Some(mark) = FieldMark::of(&cell.label) {
+                                let size = min(cell_height, cell_width) * 2 / 3;
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x.saturating_add((cell_width - size) / 2),
+                                        y: rect.y.saturating_add((cell_height - size) / 2),
+                                        width: size,
+                                        height: size,
+                                    },
+                                    kind: LayoutKind::FieldMark(
+                                        mark,
+                                        matches!(style, CellStyle::Field { struck: true, .. }),
+                                    ),
+                                    text_lines: vec![cell.label.clone()],
+                                });
+                            } else if !cell.label.is_empty() {
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect,
+                                    kind: LayoutKind::FieldCount,
+                                    text_lines: vec![cell.label.clone()],
+                                });
+                            }
                         }
                         None if style == CellStyle::CrosswordBlock => (),
                         None => {
@@ -14727,6 +14822,8 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true)
         ) {
             board_label_style(node).1
+        } else if node.kind == LayoutKind::FieldCount {
+            field_count_style(node).1
         } else if matches!(
             node.kind,
             LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false)
@@ -14860,6 +14957,33 @@ fn board_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
     }
     (FontSize::Caption, scale)
 }
+/// The size of a count on a mine field square: body type, at the largest
+/// step of the scale whose line is no more than half the square.
+///
+/// Body because it is the interface face. Title and heading are set in the
+/// display cut, whose figures have serifs, and a board of serif ones read as
+/// a page of chapter numbers. The step is the square's, not the reader's
+/// text size, because the count is the content of the square the way a
+/// printed field's numbers are, and a body-sized digit sat lost in the
+/// middle of a two-centimetre square.
+fn field_count_style(node: &LayoutNode) -> (FontSize, TextScale) {
+    let fits = |scale: TextScale| {
+        with_text_scale(scale, || {
+            FontSize::Body.line_height() * 2 <= node.rect.height
+                && node
+                    .text_lines
+                    .iter()
+                    .all(|line| measure_text(line, FontSize::Body).0 * 2 <= node.rect.width)
+        })
+    };
+    let scale = TextScale::STEPS
+        .into_iter()
+        .rev()
+        .find(|scale| fits(*scale))
+        .unwrap_or(TextScale::STEPS[0]);
+    (FontSize::Body, scale)
+}
+
 fn board_label_size(node: &LayoutNode) -> FontSize {
     board_label_style(node).0
 }
@@ -14900,6 +15024,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
         LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true) => board_label_size(node),
         LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_) => pencil::label_style(node).0,
+        LayoutKind::FieldCount => field_count_style(node).0,
         LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false) => key_label_style(node).0,
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::BarAction(_) => {
@@ -16061,6 +16186,95 @@ fn paint_layout(
                         clip,
                     );
                 }
+            }
+            LayoutKind::Cell(
+                _,
+                CellStyle::Field {
+                    top,
+                    left,
+                    right,
+                    bottom,
+                    struck,
+                },
+                covered,
+            ) => {
+                let r = node.rect;
+                if struck {
+                    fill_clipped(surface, r, tone::INK, clip);
+                } else if covered {
+                    fill_clipped(surface, r, tone::SURFACE, clip);
+                }
+                // Each square rules its own top and left, and the squares on
+                // the far edges their right and bottom too, so every rule
+                // between two squares is drawn once and the field is one
+                // ruled board. Its outer edge is the frame, in ink.
+                let rule = metrics.rule_thickness();
+                let frame = rule * 2;
+                let sides = [
+                    (
+                        true,
+                        top,
+                        Rect {
+                            height: if top { frame } else { rule },
+                            ..r
+                        },
+                    ),
+                    (
+                        true,
+                        left,
+                        Rect {
+                            width: if left { frame } else { rule },
+                            ..r
+                        },
+                    ),
+                    (
+                        right,
+                        true,
+                        Rect {
+                            x: r.x + r.width - frame,
+                            width: frame,
+                            ..r
+                        },
+                    ),
+                    (
+                        bottom,
+                        true,
+                        Rect {
+                            y: r.y + r.height - frame,
+                            height: frame,
+                            ..r
+                        },
+                    ),
+                ];
+                for (drawn, edge, side) in sides {
+                    if drawn {
+                        fill_clipped(
+                            surface,
+                            side,
+                            if edge { tone::INK } else { tone::RULE },
+                            clip,
+                        );
+                    }
+                }
+            }
+            LayoutKind::FieldCount => {
+                let (size, scale) = field_count_style(&node);
+                with_text_scale(scale, || {
+                    draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
+                });
+            }
+            LayoutKind::FieldMark(mark, on_ink) => {
+                let shapes = match mark {
+                    FieldMark::Flag => vector::flag(),
+                    FieldMark::Mine => vector::mine(),
+                };
+                draw_vector(
+                    surface,
+                    &shapes,
+                    node.rect,
+                    clip,
+                    if on_ink { tone::PAPER } else { tone::INK },
+                );
             }
             LayoutKind::RuledBoard => {
                 stroke_clipped(
