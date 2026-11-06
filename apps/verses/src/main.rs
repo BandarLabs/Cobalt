@@ -1,6 +1,7 @@
 //! Daily public-domain poetry with an offline shelf and `PoetryDB` search.
 use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
 use kobo_sdk::keyboard::{TextEntry, Typing};
+use kobo_sdk::verse::VerseSetting;
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, Screen, ScreenBuilder,
     StoreResult, Task, TaskError, TaskId, TaskOutcome,
@@ -1460,13 +1461,6 @@ struct LegacySaved {
     sleep: bool,
 }
 
-/// The air between two stanzas, in hundredths of an em: three quarters of a
-/// line, which is what a printed book of verse leaves.
-const STANZA_AIR: u16 = 75;
-
-/// Verse leading, as a percentage of the reading face's line height.
-const VERSE_LEADING: u16 = 88;
-
 /// The size verse is set at: one step above whatever the reader chose.
 ///
 /// A poem is a page looked at rather than moved through, and these are short
@@ -1521,6 +1515,10 @@ struct Verses {
     online: Option<usize>,
     online_page: usize,
     online_layout: std::cell::RefCell<Option<OnlineLayout>>,
+    /// Where the fetched poem last set stands on the page, and for which
+    /// poem and panel. Pagination lays a page out many times over, and the
+    /// poem's longest line does not change between them.
+    online_setting: std::cell::RefCell<Option<(u64, kobo_ui::DisplayMetrics, VerseSetting)>>,
     /// The pages of the bundled poem last measured, and what they were
     /// measured for. Paging lays each page out to see what fits, which is
     /// worth doing once per poem and panel rather than on every repaint of a
@@ -1572,6 +1570,7 @@ impl Default for Verses {
             online: None,
             online_page: 0,
             online_layout: std::cell::RefCell::new(None),
+            online_setting: std::cell::RefCell::new(None),
             poem_layout: std::cell::RefCell::new(None),
             browse_page: 0,
             results_page: 0,
@@ -1687,7 +1686,15 @@ impl Verses {
     fn local_poem(&self, context: &Context) -> Screen {
         let (scale, pages) = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
-        self.poem_page_screen(&pages[page], page, pages.len(), scale)
+        let setting = self.poem_setting(context, scale);
+        self.poem_page_screen(&pages[page], page, pages.len(), scale, setting)
+    }
+
+    /// Where this poem's lines stand on the page at `scale`: the same on
+    /// every page of it, so the block does not move as the page turns.
+    fn poem_setting(&self, context: &Context, scale: kobo_ui::TextScale) -> VerseSetting {
+        let stanzas: Vec<&[&str]> = CORPUS[self.poem].stanzas.to_vec();
+        VerseSetting::measure(context, scale, &stanzas)
     }
 
     fn poem_page_screen(
@@ -1696,6 +1703,7 @@ impl Verses {
         page: usize,
         count: usize,
         scale: kobo_ui::TextScale,
+        setting: VerseSetting,
     ) -> Screen {
         let poem = CORPUS[self.poem];
         let mut screen = ScreenBuilder::new("verses-poem").top_bar(if self.view == View::Today {
@@ -1719,15 +1727,17 @@ impl Verses {
         if centred {
             screen = screen.fill();
         }
-        if page == 0 {
-            screen = screen
-                .heading_at_level(2, poem.title)
-                .secondary(format!("{} · {}", poem.author, poem.year));
-        }
         screen = screen.reading(true).text_scale(scale);
-        screen = set_verse(screen, poem, runs);
+        if page == 0 {
+            screen = screen.verse_head(
+                poem.title,
+                &format!("{}, {}", poem.author, poem.year),
+                setting,
+            );
+        }
+        screen = set_verse(screen, poem, runs, setting);
         if page + 1 == count {
-            screen = screen.secondary(format!("From {}", poem.source));
+            screen = screen.verse_note(&format!("From {}", poem.source), setting);
         }
         if centred {
             screen = screen.fill();
@@ -1816,18 +1826,23 @@ impl Verses {
         let larger = poem_scale(context);
         let own = context.metrics().text_scale;
         for scale in [larger, own] {
-            if Self::page_fits(context, &self.poem_page_screen(&whole, 0, 1, scale)) {
+            let setting = self.poem_setting(context, scale);
+            if Self::page_fits(
+                context,
+                &self.poem_page_screen(&whole, 0, 1, scale, setting),
+            ) {
                 return (scale, vec![whole]);
             }
         }
         let scale = larger;
+        let setting = self.poem_setting(context, scale);
         // Measured as a page of a longer poem, with the page position and the
         // attribution both present, so a page that fits here fits wherever it
         // lands.
         let fits = |runs: &[VerseRun], first: bool| {
             Self::page_fits(
                 context,
-                &self.poem_page_screen(runs, usize::from(!first), 2, scale),
+                &self.poem_page_screen(runs, usize::from(!first), 2, scale, setting),
             )
         };
         let mut pages: Vec<Vec<VerseRun>> = Vec::new();
@@ -1944,11 +1959,38 @@ impl Verses {
             // The same head as a bundled poem: its title in the display serif
             // and who wrote it beneath, instead of the title squeezed into the
             // bar and the poet set as the first line of the page.
-            screen = screen
-                .heading_at_level(2, context.clamped_row(&poem.title, 2, true))
-                .secondary(context.clamped_row(&poem.author, 2, false));
+            screen = screen.reading(true).verse_head(
+                &context.clamped_row(&poem.title, 2, true),
+                &context.clamped_row(&poem.author, 2, false),
+                self.online_setting(context, poem),
+            );
         }
         screen.reading(true)
+    }
+
+    /// Where a fetched poem's lines stand on the page, as
+    /// [`Self::poem_setting`] says for a bundled one.
+    fn online_setting(&self, context: &Context, poem: &OnlinePoem) -> VerseSetting {
+        use std::hash::{Hash, Hasher};
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        poem.hash(&mut hash);
+        let key = hash.finish();
+        let metrics = context.metrics();
+        if let Some((saved, measured, setting)) = *self.online_setting.borrow() {
+            if saved == key && measured == metrics {
+                return setting;
+            }
+        }
+        let stanzas: Vec<Vec<&str>> = poem
+            .lines
+            .split(|line| line.trim().is_empty())
+            .filter(|stanza| !stanza.is_empty())
+            .map(|stanza| stanza.iter().map(String::as_str).collect())
+            .collect();
+        let stanzas: Vec<&[&str]> = stanzas.iter().map(Vec::as_slice).collect();
+        let setting = VerseSetting::measure(context, metrics.text_scale, &stanzas);
+        *self.online_setting.borrow_mut() = Some((key, metrics, setting));
+        setting
     }
 
     fn online_page_screen(
@@ -1960,9 +2002,10 @@ impl Verses {
         count: usize,
     ) -> Screen {
         let mut screen = self.online_prefix(context, poem, page);
-        screen = set_online_verse(screen, lines);
+        let setting = self.online_setting(context, poem);
+        screen = set_online_verse(screen, lines, setting, page == 0);
         if page + 1 == count {
-            screen = screen.secondary("From PoetryDB");
+            screen = screen.verse_note("From PoetryDB", setting);
         }
         screen = screen
             .page_turns("online-previous", "online-next")
@@ -2464,13 +2507,19 @@ impl Verses {
             let pages = self.online_pages(context, poem);
             let page = self.online_page.min(pages.len().saturating_sub(1));
             let lines = &pages[page];
+            let setting = self.online_setting(context, poem);
+            let opens = self.online_page == 0;
             let card = |shown: usize| {
                 let screen = ScreenBuilder::new("verses-card")
                     .top_bar(context.clamped_row(&poem.title, 1, false))
-                    .reading(true);
-                set_online_verse(screen, &lines[..shown])
-                    .secondary(context.clamped_row(&poem.author, 1, false))
-                    .secondary("From PoetryDB")
+                    .reading(true)
+                    .verse_head(
+                        &context.clamped_row(&poem.title, 1, false),
+                        &context.clamped_row(&poem.author, 1, false),
+                        setting,
+                    );
+                set_online_verse(screen, &lines[..shown], setting, opens)
+                    .verse_note("From PoetryDB", setting)
                     .build()
                     .with_auto_hidden_top_bar(true)
             };
@@ -2485,15 +2534,20 @@ impl Verses {
         // another breaks its lines where the poem does not.
         let runs = &pages[page];
         let total: usize = runs.iter().map(|run| run.to - run.from).sum();
+        let setting = self.poem_setting(context, scale);
         let card = |shown: usize| {
             let mut screen = ScreenBuilder::new("verses-card")
                 .top_bar(poem.title)
                 .reading(true)
-                .text_scale(scale);
-            screen = set_verse(screen, poem, &first_lines(runs, shown));
+                .text_scale(scale)
+                .verse_head(
+                    poem.title,
+                    &format!("{}, {}", poem.author, poem.year),
+                    setting,
+                );
+            screen = set_verse(screen, poem, &first_lines(runs, shown), setting);
             screen
-                .secondary(format!("{} · {}", poem.author, poem.year))
-                .secondary(poem.source.to_owned())
+                .verse_note(poem.source, setting)
                 .build()
                 // The card is set on the poem's own pages, which are the whole
                 // panel, and it is the card that is shown, not the bar.
@@ -3019,38 +3073,32 @@ impl KoboApp for Verses {
 /// Lines of one stanza go together as one paragraph at verse leading. A page
 /// was measured a line at a time with paragraph spacing between, so it always
 /// has the room this takes.
-fn set_online_verse(mut screen: ScreenBuilder, lines: &[OnlineLine]) -> ScreenBuilder {
+fn set_online_verse(
+    mut screen: ScreenBuilder,
+    lines: &[OnlineLine],
+    setting: VerseSetting,
+    opens_poem: bool,
+) -> ScreenBuilder {
     let mut stanza: Vec<&str> = Vec::new();
-    let mut opens = false;
-    let flush = |screen: ScreenBuilder, stanza: &mut Vec<&str>, opens: bool| {
-        if stanza.is_empty() {
-            return screen;
-        }
-        let text = stanza.join("\n");
-        stanza.clear();
-        screen.rich_text(
-            text,
-            Vec::new(),
-            kobo_sdk::ParagraphPresentation {
-                margin_before_em: if opens { STANZA_AIR } else { 0 },
-                line_height_percent: VERSE_LEADING,
-                ..kobo_sdk::ParagraphPresentation::default()
-            },
-        )
-    };
+    let mut after_break = false;
+    let mut opens = opens_poem;
     for line in lines {
+        if line.stanza_start && !stanza.is_empty() {
+            screen = screen.stanza(&stanza, setting, opens, after_break);
+            stanza.clear();
+            opens = false;
+        }
         if line.stanza_start {
-            screen = flush(screen, &mut stanza, opens);
-            opens = true;
+            after_break = true;
         }
         stanza.push(&line.text);
     }
-    flush(screen, &mut stanza, opens)
+    if !stanza.is_empty() {
+        screen = screen.stanza(&stanza, setting, opens, after_break);
+    }
+    screen
 }
 
-/// Sets the runs of a poem as stanzas: one paragraph each, a printed poem's
-/// leading inside it and the poet's space between them. The page and the card
-/// share this so a card is the page it was made from, line for line.
 /// The first `lines` lines of a page's runs.
 fn first_lines(runs: &[VerseRun], lines: usize) -> Vec<VerseRun> {
     let mut left = lines;
@@ -3069,28 +3117,23 @@ fn first_lines(runs: &[VerseRun], lines: usize) -> Vec<VerseRun> {
     kept
 }
 
-fn set_verse(mut screen: ScreenBuilder, poem: Poem, runs: &[VerseRun]) -> ScreenBuilder {
+/// Sets the runs of a poem as stanzas, through the SDK's verse setting: one
+/// paragraph each, a printed poem's leading inside it and the poet's space
+/// between them, the block standing where `setting` puts it. The poem's
+/// opening stanza begins with its initial. The page and the card share this
+/// so a card is the page it was made from, line for line.
+fn set_verse(
+    mut screen: ScreenBuilder,
+    poem: Poem,
+    runs: &[VerseRun],
+    setting: VerseSetting,
+) -> ScreenBuilder {
     for (index, run) in runs.iter().enumerate() {
         let lines = &poem.stanzas[run.stanza][run.from..run.to];
-        screen = screen.rich_text(
-            lines.join("\n"),
-            Vec::new(),
-            kobo_sdk::ParagraphPresentation {
-                // A stanza carried over from the page before opens without
-                // the space. The unit is hundredths of an em.
-                margin_before_em: if index > 0 && run.from == 0 {
-                    STANZA_AIR
-                } else {
-                    0
-                },
-                // A printed poem's leading rather than a novel's. The reading
-                // face opens lines up for an hour of prose, which set a short
-                // stanza almost double spaced and pushed the last stanza of
-                // Hope onto a page of its own.
-                line_height_percent: VERSE_LEADING,
-                ..kobo_sdk::ParagraphPresentation::default()
-            },
-        );
+        let opens = run.stanza == 0 && run.from == 0;
+        // A stanza carried over from the page before opens without the space.
+        let after_break = index > 0 && run.from == 0;
+        screen = screen.stanza(lines, setting, opens, after_break);
     }
     screen
 }
@@ -3517,6 +3560,47 @@ mod tests {
             url,
             "https://poetrydb.org/author,title,lines/hope%20%26%20spring/author,title,linecount"
         );
+    }
+
+    /// Every page of a poem sets its lines from the same place, so the block
+    /// does not move under the reader as a page turns, and only the stanza
+    /// that opens the poem begins with its initial.
+    #[test]
+    fn a_poem_stands_in_one_place_on_every_page_and_opens_once() {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale: *kobo_ui::TextScale::STEPS.last().expect("sizes"),
+            ..CLARA_BW_METRICS
+        };
+        let context = AppRunner::with_metrics(Verses::default(), metrics).context();
+        let (index, mut app) = CORPUS
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                (
+                    index,
+                    Verses {
+                        poem: index,
+                        view: View::Reading,
+                        ..Verses::default()
+                    },
+                )
+            })
+            .find(|(_, app)| app.poem_pages(&context).1.len() > 1)
+            .expect("a poem longer than a page at the largest size");
+        let pages = app.poem_pages(&context).1.len();
+        let mut indents = std::collections::BTreeSet::new();
+        let mut initials = 0;
+        for page in 0..pages {
+            app.poem_page = page;
+            for node in &app.local_poem(&context).nodes {
+                if let kobo_sdk::Node::RichText { presentation, .. } = node {
+                    indents.insert(presentation.start_indent_em);
+                    initials += usize::from(presentation.initial_lines > 0);
+                }
+            }
+        }
+        assert_eq!(indents.len(), 1, "{} moved between pages", CORPUS[index].title);
+        assert_eq!(initials, 1, "{} opened more than once", CORPUS[index].title);
     }
 
     #[test]
