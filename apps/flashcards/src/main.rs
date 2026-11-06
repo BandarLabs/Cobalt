@@ -32,14 +32,14 @@ const CARD_PRESENTATION: ParagraphPresentation = ParagraphPresentation {
     line_height_percent: 135,
     margin_before_em: 30,
     margin_after_em: 30,
-    first_line_indent_em: 0,
+    ..ParagraphPresentation::PLAIN
 };
 const DECK_PRESENTATION: ParagraphPresentation = ParagraphPresentation {
     alignment: ParagraphAlignment::Center,
     line_height_percent: 110,
     margin_before_em: 0,
     margin_after_em: 20,
-    first_line_indent_em: 0,
+    ..ParagraphPresentation::PLAIN
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
