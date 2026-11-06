@@ -89,6 +89,7 @@ pub mod snapshot;
 pub mod terminal;
 pub mod validation;
 pub mod verse;
+pub mod when;
 
 pub use audio::{AudioMetadata, AudioPlayer};
 
@@ -261,8 +262,13 @@ impl StandardState {
     /// than a page that failed to load.
     const fn glyph(self) -> Glyph {
         match self {
-            Self::Empty => Glyph::Circle,
-            Self::Offline => Glyph::Wifi,
+            // A folder, the place things would be, rather than a bare ring,
+            // which on a page this empty read as a placeholder nobody filled.
+            Self::Empty => Glyph::Folder,
+            // The world, not the Wi-Fi mark: the mark is drawn with every bar
+            // lit, which says connected on the one screen that means the
+            // opposite, and it is already in the status band beside it.
+            Self::Offline => Glyph::Globe,
             // A key, not a person. The commonest way to reach this state is an
             // API key the reader has not installed, and a head and shoulders
             // sends whoever is looking at it hunting for an account setting
@@ -2098,9 +2104,10 @@ pub enum Position {
 /// A banner as the paginators measure it: its level, its words, and whether
 /// it carries an action.
 ///
-/// The height of a banner is more than its words. A success or an error
-/// banner sets a mark ahead of them, so they wrap narrower, and an action
-/// from [`ScreenBuilder::banner_action`] takes a line of its own underneath.
+/// The height of a banner is more than its words. A banner sets a mark ahead
+/// of them, so they wrap narrower, and an action from
+/// [`ScreenBuilder::banner_action`] goes at the end of the words when they fit
+/// beside it and takes a line of its own underneath when they do not.
 /// A list paged under the words alone came out a line too long for each, and
 /// its last row went under the bar, which is why retries were left off the
 /// banners that explain them. Describe the banner the way the screen builds
@@ -2110,6 +2117,7 @@ pub struct BannerShape<'a> {
     level: BannerLevel,
     text: &'a str,
     action: bool,
+    label: Option<&'a str>,
 }
 
 impl<'a> BannerShape<'a> {
@@ -2120,21 +2128,41 @@ impl<'a> BannerShape<'a> {
             level,
             text,
             action: false,
+            label: None,
         }
     }
 
-    /// The same banner, carrying an action on the line under its words.
+    /// The same banner, carrying an action whose label is not known here.
     ///
-    /// The label is not needed: the line is a finger high whatever it says.
+    /// Measured as if the action had a line of its own under the words, which
+    /// is the most room it can take, so a page is never too long. Prefer
+    /// [`Self::with_labelled_action`]: whether the action fits at the end of
+    /// the words depends on what it says, and without that a page under a
+    /// short banner can come out a row short.
     #[must_use]
     pub const fn with_action(mut self) -> Self {
         self.action = true;
         self
     }
 
+    /// The same banner, carrying an action labelled `label`, measured exactly
+    /// as it is drawn. Pass the label given to
+    /// [`ScreenBuilder::banner_action`].
+    #[must_use]
+    pub const fn with_labelled_action(mut self, label: &'a str) -> Self {
+        self.action = true;
+        self.label = Some(label);
+        self
+    }
+
     /// The height this banner takes on a page `width` wide.
     fn height(&self, width: i32, metrics: &DisplayMetrics) -> i32 {
-        kobo_ui::banner_height_with(self.text, self.level, self.action, width, metrics)
+        match self.label {
+            Some(label) => {
+                kobo_ui::banner_height_labelled(self.text, self.level, Some(label), width, metrics)
+            }
+            None => kobo_ui::banner_height_with(self.text, self.level, self.action, width, metrics),
+        }
     }
 }
 

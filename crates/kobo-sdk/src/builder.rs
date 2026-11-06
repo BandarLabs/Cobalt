@@ -512,7 +512,10 @@ impl ScreenBuilder {
         let question = question.into();
         let (confirm_name, confirm_label) = (confirm.0.as_ref().to_owned(), confirm.1.into());
         let (cancel_name, cancel_label) = (cancel.0.as_ref().to_owned(), cancel.1.into());
-        self.modal(title, move |builder| {
+        // The cancel answer is the way out, so the frame carries no cross:
+        // a cross beside Cancel is the same answer offered twice.
+        let dismiss = cancel_name.clone();
+        self.dialog(title, dismiss, move |builder| {
             builder.text(question).band(
                 BandAlign::Middle,
                 [
@@ -982,9 +985,31 @@ impl ScreenBuilder {
     }
 
     /// Puts a question over the screen that has to be answered.
+    ///
+    /// The frame carries a cross that sends [`ActionId::BACK`]. When one of
+    /// the modal's own buttons already closes it, a Close, a Done or a
+    /// Cancel, use [`Self::dialog`] instead, so the reader is not offered two
+    /// ways out that do the same thing.
     #[must_use]
     pub fn modal(self, title: impl Into<String>, build: impl FnOnce(Self) -> Self) -> Self {
         self.overlay_with(OverlayKind::Modal, title.into(), build)
+    }
+
+    /// A modal whose button named `dismiss` is its way out, with no cross in
+    /// its frame.
+    ///
+    /// Build the button inside `build` as usual. If none of the buttons is
+    /// named `dismiss`, the runtime draws the cross after all, so a dialogue
+    /// can never be left with no way off it.
+    #[must_use]
+    pub fn dialog(
+        mut self,
+        title: impl Into<String>,
+        dismiss: impl AsRef<str>,
+        build: impl FnOnce(Self) -> Self,
+    ) -> Self {
+        let dismiss = self.register(dismiss.as_ref());
+        self.overlay_with(OverlayKind::Dialog { dismiss }, title.into(), build)
     }
 
     fn overlay_with(

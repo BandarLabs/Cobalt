@@ -4825,8 +4825,12 @@ fn encoded_screen_len(
     add_encoded_len(&mut length, 1)?;
     if let Some(overlay) = &screen.overlay {
         add_encoded_len(&mut length, 7)?;
-        if matches!(overlay.kind, kobo_ui::OverlayKind::Popover { .. }) {
-            add_encoded_len(&mut length, 4)?;
+        match overlay.kind {
+            kobo_ui::OverlayKind::Popover { .. } => add_encoded_len(&mut length, 4)?,
+            kobo_ui::OverlayKind::Dialog { .. } if version >= FINE_TYPE_VERSION => {
+                add_encoded_len(&mut length, 4)?;
+            }
+            kobo_ui::OverlayKind::Modal | kobo_ui::OverlayKind::Dialog { .. } => {}
         }
         add_encoded_len(&mut length, encoded_string_len(&overlay.title)?)?;
         for node in &overlay.nodes {
@@ -6061,6 +6065,20 @@ fn encode_screen(
                     output.push(1);
                     push_u32(output, anchor.0);
                 }
+                // Protocol 18. An older runtime is sent a plain modal, which
+                // draws its own cross beside the dialogue's way out: one
+                // control too many, and nothing missing.
+                kobo_ui::OverlayKind::Dialog { dismiss } => {
+                    if version >= FINE_TYPE_VERSION {
+                        if dismiss.is_reserved() {
+                            return Err(ProtocolError::InvalidValue("dialogue dismissal"));
+                        }
+                        output.push(2);
+                        push_u32(output, dismiss.0);
+                    } else {
+                        output.push(0);
+                    }
+                }
             }
             push_string(output, &overlay.title)?;
             push_u16(
@@ -6140,10 +6158,11 @@ fn text_presentation_byte(style: kobo_ui::TextPresentation) -> u8 {
         | (u8::from(style.superscript) << 3)
         | (u8::from(style.subscript) << 4)
         | (u8::from(style.highlighted) << 5)
+        | (u8::from(style.muted) << 6)
 }
 
 fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, ProtocolError> {
-    if value & !0x3f != 0 {
+    if value & !0x7f != 0 {
         return Err(ProtocolError::InvalidValue("rich text style"));
     }
     Ok(kobo_ui::TextPresentation {
@@ -6153,6 +6172,7 @@ fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, P
         superscript: value & 8 != 0,
         subscript: value & 16 != 0,
         highlighted: value & 32 != 0,
+        muted: value & 64 != 0,
     })
 }
 
@@ -7434,6 +7454,13 @@ fn decode_screen(
                 1 => kobo_ui::OverlayKind::Popover {
                     anchor: ActionId(reader.u32()?),
                 },
+                2 if version >= FINE_TYPE_VERSION => {
+                    let dismiss = ActionId(reader.u32()?);
+                    if dismiss.is_reserved() {
+                        return Err(ProtocolError::InvalidValue("dialogue dismissal"));
+                    }
+                    kobo_ui::OverlayKind::Dialog { dismiss }
+                }
                 _ => return Err(ProtocolError::InvalidValue("overlay kind")),
             };
             let title = reader.string()?;

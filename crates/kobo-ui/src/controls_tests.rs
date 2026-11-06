@@ -562,16 +562,28 @@ fn an_info_banner_without_an_action_is_the_height_it_always_was() {
 }
 
 #[test]
-fn a_banner_action_sits_under_the_words_and_answers_a_tap() {
+fn a_banner_action_sits_beside_or_under_the_words_inside_the_banner_and_answers_a_tap() {
     for (name, metrics) in PANELS {
         let layout = banner(BannerLevel::Error, true).layout_for(&metrics);
         let band = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].clone();
         let action = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerAction(_)))[0].rect;
-        let words_bottom = band.rect.y
-            + metrics.space(Space::Small)
-            + i32::try_from(band.text_lines.len()).unwrap()
-                * with_text_scale(metrics.text_scale, || FontSize::Body.line_height());
-        assert!(action.y >= words_bottom, "{name}");
+        let words = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerWords(..)))[0].clone();
+        let words_bottom = words.rect.y + words.rect.height;
+        let widest = with_text_scale(metrics.text_scale, || {
+            words
+                .text_lines
+                .iter()
+                .map(|line| measure_text(line, FontSize::Body).0)
+                .max()
+                .unwrap_or(0)
+        });
+        let words_right =
+            words.rect.x + with_text_scale(metrics.text_scale, || notice_column(&metrics)) + widest;
+        assert!(
+            action.y >= words_bottom || action.x >= words_right,
+            "{name}: the action covers the words"
+        );
+        assert!(action.y >= band.rect.y, "{name}");
         assert!(
             action.y + action.height <= band.rect.y + band.rect.height,
             "{name}"
@@ -583,14 +595,84 @@ fn a_banner_action_sits_under_the_words_and_answers_a_tap() {
 }
 
 #[test]
-fn success_and_error_banners_draw_differently_from_info_and_from_each_other() {
+fn every_banner_level_draws_differently_from_every_other() {
     let metrics = CLARA_BW_METRICS;
-    let info = painted(&banner(BannerLevel::Info, false), &metrics).pixels;
-    let success = painted(&banner(BannerLevel::Success, false), &metrics).pixels;
-    let error = painted(&banner(BannerLevel::Error, false), &metrics).pixels;
-    assert_ne!(info, success);
-    assert_ne!(info, error);
-    assert_ne!(success, error);
+    let levels = [
+        BannerLevel::Info,
+        BannerLevel::Attention,
+        BannerLevel::Success,
+        BannerLevel::Error,
+    ];
+    for typography in [Typography::Quiet, Typography::Fine] {
+        let drawn: Vec<_> = levels
+            .iter()
+            .map(|level| {
+                painted(&banner(*level, false).with_typography(typography), &metrics).pixels
+            })
+            .collect();
+        for (one, first) in drawn.iter().enumerate() {
+            for (other, second) in drawn.iter().enumerate().skip(one + 1) {
+                assert_ne!(
+                    first, second,
+                    "{typography:?}: {:?} and {:?} look the same",
+                    levels[one], levels[other]
+                );
+            }
+        }
+    }
+}
+
+fn short_banner(typography: Typography) -> Screen {
+    screen(vec![Node::Banner {
+        id: NodeId(1),
+        level: BannerLevel::Success,
+        text: "Sighting deleted.".to_owned(),
+        action: Some(BarAction::new(ActionId(8), "Undo")),
+    }])
+    .with_typography(typography)
+}
+
+#[test]
+fn a_short_banner_carries_its_action_at_the_end_of_its_words_on_one_band() {
+    for (name, metrics) in PANELS {
+        let layout = short_banner(Typography::Fine).layout_for(&metrics);
+        let band = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].clone();
+        let action = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerAction(_)))[0].rect;
+        let words = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerWords(..)))[0].clone();
+        assert_eq!(words.text_lines.len(), 1, "{name}");
+        // Centred in the band, with the same margin above and below.
+        assert_eq!(
+            action.y - band.rect.y,
+            band.rect.y + band.rect.height - action.y - action.height,
+            "{name}"
+        );
+        assert!(action.height >= metrics.touch_target_minimum(), "{name}");
+        let stacked = with_text_scale(metrics.text_scale, || {
+            banner_height_with(
+                "Sighting deleted.",
+                BannerLevel::Success,
+                true,
+                band.rect.width,
+                &metrics,
+            )
+        });
+        assert!(band.rect.height < stacked, "{name}");
+        let (x, y) = centre(action);
+        assert_eq!(layout.hit_test(x, y), Some(ActionId(8)), "{name}");
+    }
+}
+
+#[test]
+fn an_application_at_an_older_protocol_keeps_its_banner_action_on_a_line_of_its_own() {
+    for (name, metrics) in PANELS {
+        let layout = short_banner(Typography::Quiet).layout_for(&metrics);
+        let band = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].clone();
+        let action = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerAction(_)))[0].rect;
+        let words_bottom = band.rect.y
+            + metrics.space(Space::Small)
+            + with_text_scale(metrics.text_scale, || FontSize::Body.line_height());
+        assert!(action.y >= words_bottom, "{name}");
+    }
 }
 
 fn code(payload: &str) -> Screen {
@@ -814,15 +896,23 @@ fn a_banner_is_measured_at_the_height_it_is_drawn_whatever_its_level_and_action(
                 for action in [false, true] {
                     let layout = banner(level, action).layout_for(&metrics);
                     let rect = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].rect;
+                    let text = "Lichess did not answer. Your games are still on the reader.";
                     assert_eq!(
                         rect.height,
-                        banner_height_with(
-                            "Lichess did not answer. Your games are still on the reader.",
+                        banner_height_labelled(
+                            text,
                             level,
-                            action,
+                            action.then_some("Check again"),
                             rect.width,
                             &metrics
                         ),
+                        "{name} {text_scale:?} {level:?} action {action}"
+                    );
+                    // Without the label the height is the most the banner
+                    // can take, so a page measured that way is never long.
+                    assert!(
+                        rect.height
+                            <= banner_height_with(text, level, action, rect.width, &metrics),
                         "{name} {text_scale:?} {level:?} action {action}"
                     );
                 }
@@ -1003,4 +1093,109 @@ fn rows_measured_without_their_buttons_and_badges_run_past_the_page_somewhere() 
         }
     }
     assert!(overflowed);
+}
+
+#[test]
+fn chips_and_fields_are_rounded_like_the_buttons_beside_them() {
+    let metrics = CLARA_BW_METRICS;
+    let screen = screen(vec![
+        Node::Chips {
+            id: NodeId(1),
+            chips: vec![Chip::new(ActionId(2), "Unread")],
+        },
+        Node::Field {
+            id: NodeId(3),
+            action: ActionId(4),
+            value: String::new(),
+            placeholder: "Search the catalogue".to_owned(),
+            clear: None,
+            label: None,
+            hint: None,
+            error: None,
+            kind: FieldKind::Text,
+        },
+    ]);
+    let layout = screen.layout_for(&metrics);
+    let surface = painted(&screen, &metrics);
+    let at = |x: i32, y: i32| {
+        surface.pixels[usize::try_from(y).unwrap() * surface.width + usize::try_from(x).unwrap()]
+    };
+    for rect in [
+        kinds(&layout, |kind| matches!(kind, LayoutKind::Chip(..)))[0].rect,
+        kinds(&layout, |kind| matches!(kind, LayoutKind::Field(..)))[0].rect,
+    ] {
+        // The very corner is paper, where a square outline would have put
+        // its rule, while the middle of the top edge is still ruled.
+        assert_eq!(at(rect.x, rect.y), tone::PAPER, "{rect:?}");
+        assert_ne!(at(rect.x + rect.width / 2, rect.y), tone::PAPER, "{rect:?}");
+    }
+}
+
+#[test]
+fn a_fact_label_stands_on_its_values_baseline_rather_than_at_the_foot_of_its_line() {
+    // Body text 46 pixels a line with its baseline 36 down; a caption 30 a
+    // line with its baseline 22 down. Lowering by the line heights put the
+    // label's baseline 2 pixels under the value's.
+    assert_eq!(label_drop(Some(36), Some(22), 46 - 30), 14);
+    assert_eq!(label_drop(None, Some(22), 16), 16);
+    assert_eq!(label_drop(Some(10), Some(22), 16), 0);
+}
+
+#[test]
+fn a_short_hyphenated_word_is_kept_whole_and_a_long_compound_still_breaks() {
+    let text = "Check Wi-Fi and try again.";
+    let at_hyphen = text.find("Wi-").unwrap() + "Wi-".len();
+    assert!(strands_a_fragment(text, at_hyphen));
+    let compound = "a state-of-the-art reader";
+    let after_state = compound.find("state-").unwrap() + "state-".len();
+    assert!(strands_a_fragment(compound, after_state));
+    let long = "the counter-argument holds";
+    let after_counter = long.find("counter-").unwrap() + "counter-".len();
+    assert!(!strands_a_fragment(long, after_counter));
+    // Laid out, a measure that ends inside "Wi-Fi" takes the whole word to
+    // the next line rather than leaving "Wi-" behind.
+    let width = with_typography(Typography::Fine, || {
+        measure_text("Check Wi-", FontSize::Body).0 + 1
+    });
+    let lines = with_typography(Typography::Fine, || wrap_text(text, width, FontSize::Body));
+    assert!(lines.iter().all(|line| !line.ends_with('-')), "{lines:?}");
+}
+
+#[test]
+fn an_info_banner_gives_up_its_mark_rather_than_grow_a_line_taller() {
+    // Wide enough for the words on one line, and not for the words and the
+    // mark's column beside them.
+    let text = "Your saved comics are here.";
+    let column = notice_column(&CLARA_BW_METRICS);
+    let padding = CLARA_BW_METRICS.space(Space::Small);
+    let tight = measure_text(text, FontSize::Body).0 + 2 * padding + column / 2;
+    let layout = |level| {
+        screen(vec![Node::Banner {
+            id: NodeId(1),
+            level,
+            text: text.to_owned(),
+            action: None,
+        }])
+        .layout_with(
+            &DisplayMetrics {
+                width: tight + 2 * CLARA_BW_METRICS.screen_margin(),
+                ..CLARA_BW_METRICS
+            },
+            &Chrome::default(),
+        )
+    };
+    let info = layout(BannerLevel::Info);
+    let words = kinds(&info, |kind| matches!(kind, LayoutKind::BannerWords(..)))[0].clone();
+    assert_eq!(
+        words.kind,
+        LayoutKind::BannerWords(BannerLevel::Info, false)
+    );
+    assert_eq!(words.text_lines.len(), 1);
+    // A success always carries its check, as it always did.
+    let success = layout(BannerLevel::Success);
+    let words = kinds(&success, |kind| matches!(kind, LayoutKind::BannerWords(..)))[0].clone();
+    assert_eq!(
+        words.kind,
+        LayoutKind::BannerWords(BannerLevel::Success, true)
+    );
 }

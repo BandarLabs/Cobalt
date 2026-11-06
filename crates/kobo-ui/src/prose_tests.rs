@@ -784,42 +784,50 @@ fn an_ordinary_control_still_reads_as_available_next_to_a_disabled_one() {
 }
 
 #[test]
-fn an_attention_banner_marks_its_edge_rather_than_blacking_out_the_panel() {
+fn an_attention_banner_is_never_blacked_out_and_only_an_older_application_marks_its_edge() {
     // It used to be reversed out of solid black across the full width,
     // which shouted louder than whatever it was warning about and left the
     // panel a slab to clear before anything near it could be redrawn.
-    let screen = Screen::new(
-        1,
-        vec![Node::Banner {
-            id: NodeId(1),
-            level: BannerLevel::Attention,
-            text: "The network went away.".to_owned(),
-            action: None,
-        }],
-    );
-    let rect = screen
-        .layout()
-        .nodes
-        .into_iter()
-        .find(|node| matches!(node.kind, LayoutKind::Banner(_)))
-        .expect("the banner was laid out")
-        .rect;
-    let (surface, stride) = paint(&screen);
-    let ink = tone_count(&surface, rect, tone::INK, stride);
-    let area = usize::try_from(rect.width * rect.height).expect("a real banner");
-    assert!(
-        ink * 4 < area,
-        "the banner is still mostly black: {ink} of {area}"
-    );
-    // The leading edge is the mark that distinguishes it, so it must be
-    // solid ink for the full height of the banner.
-    let bar = CLARA_BW_METRICS.rule_thickness() * 3;
-    let edge = Rect { width: bar, ..rect };
-    assert_eq!(
-        tone_count(&surface, edge, tone::INK, stride),
-        usize::try_from(bar * rect.height).expect("a real edge"),
-        "the leading edge was not drawn solid"
-    );
+    for typography in [Typography::Quiet, Typography::Fine] {
+        let screen = Screen::new(
+            1,
+            vec![Node::Banner {
+                id: NodeId(1),
+                level: BannerLevel::Attention,
+                text: "The network went away.".to_owned(),
+                action: None,
+            }],
+        )
+        .with_typography(typography);
+        let rect = screen
+            .layout()
+            .nodes
+            .into_iter()
+            .find(|node| matches!(node.kind, LayoutKind::Banner(_)))
+            .expect("the banner was laid out")
+            .rect;
+        let (surface, stride) = paint(&screen);
+        let ink = tone_count(&surface, rect, tone::INK, stride);
+        let area = usize::try_from(rect.width * rect.height).expect("a real banner");
+        assert!(
+            ink * 4 < area,
+            "{typography:?}: the banner is still mostly black: {ink} of {area}"
+        );
+        // An application at an older protocol gave an attention banner no
+        // column for a mark, so the bar down its leading edge is what tells
+        // it from info, solid for the full height of the banner. From Fine
+        // on the caution mark does that, and the banner is the same rounded
+        // field as every other level.
+        let bar = CLARA_BW_METRICS.rule_thickness() * 3;
+        let edge = Rect { width: bar, ..rect };
+        let solid = tone_count(&surface, edge, tone::INK, stride)
+            == usize::try_from(bar * rect.height).expect("a real edge");
+        assert_eq!(
+            solid,
+            typography < Typography::Fine,
+            "{typography:?}: the leading edge"
+        );
+    }
 }
 
 #[test]
@@ -2392,10 +2400,7 @@ fn a_menu_of_buttons_is_wide_enough_for_the_words_on_them() {
             .layout_with(&metrics, &Chrome::default())
             .nodes
             .iter()
-            .find(|node| {
-                node.kind
-                    == LayoutKind::Button(ActionId(6), ControlState::Enabled, Emphasis::Normal)
-            })
+            .find(|node| node.kind == LayoutKind::RowTitle)
             .expect("the menu item")
             .text_lines
             .clone();
@@ -2418,8 +2423,8 @@ fn a_popover_never_gets_wider_than_a_modal() {
                         including the parts nobody read, at once and for good";
     let width = overlay_width(&with_a_menu(&[sentence]));
     let modal = overlay_width(&with_an_overlay(OverlayKind::Modal));
-    assert_eq!(
-        width, modal,
+    assert!(
+        width <= modal,
         "a long menu item pushed the popover past the width a modal is allowed"
     );
 }
@@ -2556,6 +2561,81 @@ fn a_popover_points_at_the_control_that_opened_it() {
     );
 }
 
+fn menu_popover(second: ControlState) -> Screen {
+    let item = |id: u32, action: u32, label: &str, state| Node::Button {
+        id: NodeId(id),
+        action: ActionId(action),
+        label: label.to_owned(),
+        state,
+        emphasis: Emphasis::Normal,
+    };
+    Screen::new(1, vec![item(1, 5, "More", ControlState::Enabled)]).with_overlay(Overlay::popover(
+        NodeId(40),
+        ActionId(5),
+        vec![
+            item(41, 6, "New game", ControlState::Enabled),
+            item(42, 7, "Check word", second),
+            item(43, 8, "Puzzles", ControlState::Enabled),
+        ],
+    ))
+}
+
+#[test]
+fn a_popover_of_plain_buttons_is_set_as_menu_rows_with_a_hairline_between_them() {
+    let layout =
+        menu_popover(ControlState::Enabled).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let rows: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Row(_)))
+        .collect();
+    let rules: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| node.kind == LayoutKind::RowRule)
+        .collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rules.len(), 2);
+    assert!(!layout
+        .nodes
+        .iter()
+        .any(|node| matches!(node.kind, LayoutKind::Button(ActionId(6..=8), _, _))));
+    for (rule, pair) in rules.iter().zip(rows.windows(2)) {
+        assert!(rule.rect.y >= pair[0].rect.y + pair[0].rect.height);
+        assert!(rule.rect.y + rule.rect.height <= pair[1].rect.y);
+    }
+    for (row, action) in rows.iter().zip([6, 7, 8]) {
+        let (x, y) = (
+            row.rect.x + row.rect.width / 2,
+            row.rect.y + row.rect.height / 2,
+        );
+        assert_eq!(layout.hit_test(x, y), Some(ActionId(action)));
+    }
+}
+
+#[test]
+fn a_menu_is_exactly_as_tall_as_the_buttons_it_was_measured_as() {
+    let menu =
+        menu_popover(ControlState::Enabled).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let buttons =
+        menu_popover(ControlState::Disabled).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let frame = |layout: &Layout| {
+        layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Overlay)
+            .expect("the popover")
+            .rect
+    };
+    assert_eq!(frame(&menu), frame(&buttons));
+    // A popover with a disabled choice keeps its buttons, because a row has
+    // no way to show that it cannot be pressed.
+    assert!(buttons.nodes.iter().any(|node| matches!(
+        node.kind,
+        LayoutKind::Button(ActionId(7), ControlState::Disabled, _)
+    )));
+}
+
 #[test]
 fn an_overlay_with_nothing_to_point_at_is_still_shown() {
     // Naming an anchor that is not on the screen is an application bug.
@@ -2629,6 +2709,67 @@ fn an_overlay_takes_the_page_turns_away() {
 /// without a cross it is a screen with no way off it unless the
 /// application remembered to put one in a row. The frame draws it, so the
 /// application cannot forget.
+fn details_dialog(dismiss: ActionId) -> Screen {
+    Screen::new(1, Vec::new()).with_overlay(Overlay::dialog(
+        NodeId(2),
+        "Details",
+        dismiss,
+        vec![
+            Node::Text {
+                id: NodeId(3),
+                text: "EPUB, 1.1 MB".into(),
+                links: Vec::new(),
+            },
+            Node::Button {
+                id: NodeId(4),
+                action: ActionId(9),
+                label: "Close".into(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            },
+        ],
+    ))
+}
+
+#[test]
+fn a_dialogue_with_its_own_close_button_draws_no_second_cross() {
+    for (name, metrics) in PANELS {
+        let layout = details_dialog(ActionId(9)).layout_with(&metrics, &Chrome::with_back(false));
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::OverlayClose),
+            "{name}: the cross was drawn beside Close"
+        );
+        let close = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(ActionId(9), _, _)))
+            .unwrap_or_else(|| panic!("{name}: no Close"))
+            .rect;
+        assert_eq!(
+            layout.hit_test(close.x + close.width / 2, close.y + close.height / 2),
+            Some(ActionId(9)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_dialogue_whose_way_out_is_missing_gets_the_cross_after_all() {
+    for (name, metrics) in PANELS {
+        let layout = details_dialog(ActionId(77)).layout_with(&metrics, &Chrome::with_back(false));
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::OverlayClose),
+            "{name}: a dialogue was left with no way off it"
+        );
+    }
+}
+
 #[test]
 fn a_modal_always_carries_a_way_out() {
     for (name, metrics) in PANELS {
@@ -4339,4 +4480,125 @@ fn a_sections_value_is_measured_before_its_title_is_clamped() {
         together <= node.rect.width,
         "a title and its value together ran past the right margin"
     );
+}
+
+fn dialog_over_a_page(typography: Typography) -> Layout {
+    let words = |id: u32| Node::Text {
+        id: NodeId(id),
+        text: "Play six hundred puzzles with pencil notes, undo and saved games.".into(),
+        links: Vec::new(),
+    };
+    Screen::new(
+        1,
+        vec![
+            Node::Splash {
+                id: NodeId(2),
+                glyph: Some(Glyph::Grid),
+                title: "Sudoku".into(),
+                summary: "Puzzles for a quiet evening.".into(),
+            },
+            words(3),
+            words(4),
+        ],
+    )
+    .with_top_bar(TopBar::new(NodeId(1), "Sudoku"))
+    .with_overlay(Overlay::dialog(
+        NodeId(10),
+        "Uninstall Sudoku?",
+        ActionId(11),
+        vec![
+            Node::Text {
+                id: NodeId(12),
+                text: "Its saved data stays on this reader.".into(),
+                links: Vec::new(),
+            },
+            Node::Button {
+                id: NodeId(13),
+                action: ActionId(11),
+                label: "Cancel".into(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            },
+        ],
+    ))
+    .with_typography(typography)
+    .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
+}
+
+#[test]
+fn a_dialog_never_cuts_through_a_glyph_a_picture_or_a_line_of_words_behind_it() {
+    let layout = dialog_over_a_page(Typography::Fine);
+    let frame = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Overlay)
+        .expect("the dialogue")
+        .rect;
+    let behind = layout
+        .nodes
+        .iter()
+        .take_while(|node| !matches!(node.kind, LayoutKind::Scrim { .. }))
+        .filter(|node| {
+            matches!(node.kind, LayoutKind::SplashGlyph(_))
+                || (matches!(
+                    node.kind,
+                    LayoutKind::Text | LayoutKind::SplashTitle | LayoutKind::SplashText
+                ) && !node.text_lines.is_empty())
+        })
+        .filter(|node| {
+            node.rect.x < frame.x + frame.width && node.rect.x + node.rect.width > frame.x
+        });
+    for node in behind {
+        for edge in [frame.y, frame.y + frame.height] {
+            assert!(
+                !(node.rect.y < edge && node.rect.y + node.rect.height > edge),
+                "{:?} at {:?} is cut by the edge at {edge}",
+                node.kind,
+                node.rect
+            );
+        }
+    }
+    // And it stays between the bars.
+    let bar = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::TopBar)
+        .expect("the bar")
+        .rect;
+    assert!(frame.y >= bar.y + bar.height);
+    assert!(frame.y + frame.height <= CLARA_BW_METRICS.height);
+}
+
+#[test]
+fn an_older_applications_dialog_is_still_centred_on_the_panel() {
+    let layout = dialog_over_a_page(Typography::Quiet);
+    let frame = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Overlay)
+        .expect("the dialogue")
+        .rect;
+    assert_eq!(frame.y, (CLARA_BW_METRICS.height - frame.height) / 2);
+}
+
+#[test]
+fn a_dialog_spans_the_page_column_so_nothing_behind_it_shows_at_its_sides() {
+    let layout = dialog_over_a_page(Typography::Fine);
+    let frame = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Overlay)
+        .expect("the dialogue")
+        .rect;
+    let margin = CLARA_BW_METRICS.screen_margin();
+    let column = (CLARA_BW_METRICS.width - 2 * margin).min(CLARA_BW_METRICS.readable_width());
+    let words = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Text)
+        .expect("the words behind")
+        .rect;
+    assert_eq!(frame.width, column);
+    assert_eq!(frame.x, words.x);
+    assert_eq!(frame.x + frame.width, words.x + words.width);
 }

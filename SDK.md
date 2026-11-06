@@ -294,6 +294,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `top_bar_overflow(name, open, [(name, label), ...])` | Three dots that open a menu when `open`, and close on a tap anywhere else. |
 | `popover(anchor, build)` | An anchored overlay that dismisses when the reader taps outside it. |
 | `modal(title, build)` | A centred overlay that remains until one of its controls answers it. |
+| `dialog(title, dismiss, build)` | Protocol 18. A modal whose own button named `dismiss` (a Close, a Done, a Cancel) is its way out, so its frame carries no second cross. `confirm` is one. |
 | `page_turns(previous, next)` | Tap the left of the page to go back, the rest to go on. |
 | `page_position(page, total)` | A footer line saying where in the list this is. |
 | `page_rail(page, total)` | A passive page rail in the right margin, with a zero-based `page`. Needs `page_turns`. |
@@ -382,7 +383,7 @@ the actual E Ink renderer and is the quickest visual reference.
 |---|---|
 | `banner(level, text)` | `Info` or `Attention`, and from protocol 16 `Success` or `Error`, which carry a mark ahead of the words. Pick the level by meaning; see *Banners: which level, and where the retry goes*. |
 | `problem_banner_with(&problem, retry, sign_in)` | A task failure from `kobo_sdk::failure` at its own level, carrying Join Wi-Fi, Sign in or Try again as its action. |
-| `banner_action(name, label)` | Protocol 16. The one action a banner may carry, on a line of its own under the words. |
+| `banner_action(name, label)` | Protocol 16. The one action a banner may carry. From protocol 18 it sits at the end of the words when they fit in two lines beside it, and on a line of its own under them otherwise. |
 | `steps(current, total, labels)` | Protocol 16. "Step 2 of 4" and a mark per step, on one line. |
 | `code(payload, caption)` | Protocol 16. Text drawn by the runtime as a QR code, up to `MAX_CODE_BYTES` (213) bytes, in a square up to 50 mm wide. |
 | `progress(percent)` | A determinate bar. |
@@ -660,6 +661,12 @@ shows bytes received and no percentage. If it does not supply a date, there is
 no date. A fabricated fact is the one failure a reader cannot detect and the
 one this SDK will not help you with.
 
+**Dates are said, not logged.** "Updated 2026-11-06 08:13" is a log line.
+`when::spoken(moment, now)` writes a moment the way the reader would say it,
+against their own clock: "Today, 08:13", "Yesterday", "3 Nov", "3 Nov 2025".
+`when::stamp_millis` reads the ISO 8601 stamps services send, so a stamp from a
+feed can be handed straight over.
+
 **State is a field, not a suffix.** `TileState::Held`, not `format!("{title}
 (kept)")`. See the next section, which is the same argument at the renderer's
 level.
@@ -807,10 +814,11 @@ Build that prefix with the same function the screen itself uses, and leave the
 list and the page-position strip out of it.
 
 A banner is taller than its words when it carries a mark or an action: a
-`Success` or `Error` banner sets a mark ahead of the words, so they wrap
-narrower, and `banner_action` adds a line under them. Describe it with a
-`BannerShape` and page with `paginate_rows_below_banner(rows, nav_bar,
-Some(BannerShape::new(level, &text).with_action()))`, or
+banner sets a mark ahead of the words, so they wrap narrower, and
+`banner_action` either sits at the end of the words or adds a line under
+them, depending on what its label says. Describe it with a `BannerShape` and
+page with `paginate_rows_below_banner(rows, nav_bar,
+Some(BannerShape::new(level, &text).with_labelled_action(label)))`, or
 `paginate_rows_with_menu_below_banner(…)` for rows with a mark. For a task's
 failure, `problem.banner_shape(sign_in)` is the shape `problem_banner_with`
 draws. The older `paginate_rows_below_notice(rows, nav_bar, Some(text))`

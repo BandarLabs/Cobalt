@@ -1714,6 +1714,7 @@ fn ui_spans(spans: &[CardTextSpan]) -> Vec<RichTextSpan> {
                 superscript: span.style.superscript,
                 subscript: span.style.subscript,
                 highlighted: false,
+                muted: false,
             },
         })
         .collect()
