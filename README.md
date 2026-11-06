@@ -158,7 +158,7 @@ Screenshots are from a Kobo Clara BW or its simulator.
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/zotero-reader/README.md"><img width="230" src="docs/media/site/apps/zotero-reader.png" alt="The opening of Darwin's On the Origin of Species, read from a Zotero library's indexed text on a Kobo"></a><br><b><a href="apps/zotero-reader/README.md">Stacks</a></b><br>Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline. Needs an account.</td>
-<td width="33%" valign="top"><a href="apps/sudoku/README.md"><img width="230" src="docs/media/site/apps/sudoku.png" alt="An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"></a><br><b><a href="apps/sudoku/README.md">Sudoku</a></b><br>Play 600 original Sudoku puzzles with pencil notes, undo and saved games.</td>
+<td width="33%" valign="top"><a href="apps/sudoku/README.md"><img width="230" src="docs/media/site/apps/sudoku.png" alt="An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded"></a><br><b><a href="apps/sudoku/README.md">Sudoku</a></b><br>Play 600 original Sudoku puzzles with pencil notes, undo and saved games.</td>
 <td width="33%" valign="top"><a href="apps/syncthing/README.md"><img width="230" src="docs/media/site/apps/syncthing.png" alt="Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."></a><br><b><a href="apps/syncthing/README.md">Sync</a></b><br>Sync folders between your computer and your Kobo with Syncthing. Needs your computer.</td>
 </tr>
 <tr>

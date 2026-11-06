@@ -73,7 +73,7 @@ const screenshots = {
   settings: ["settings.png", "Cobalt Settings listing Bluetooth, Wi-Fi, Battery, Software update and About"],
   sidekick: ["sidekick.png", "Sidekick showing several coding-agent sessions and their pending approvals."],
   store: ["store.png", "The Cobalt App Store listing installed and available apps"],
-  sudoku: ["sudoku.png", "An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"],
+  sudoku: ["sudoku.png", "An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded"],
   syncthing: ["syncthing.png", "Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
