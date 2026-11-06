@@ -526,8 +526,14 @@ fn options_hold_only_what_the_board_does_not_and_back_returns_to_it() {
     r.action(action_id("more"));
     assert_eq!(r.app().route, Route::Menu);
     let drawn = format!("{:?}", r.app().menu());
-    assert!(!drawn.contains("\"Undo\"") && !drawn.contains("\"Resume\""), "{drawn}");
-    assert!(drawn.contains("Restart puzzle") && drawn.contains("Puzzles"), "{drawn}");
+    assert!(
+        !drawn.contains("\"Undo\"") && !drawn.contains("\"Resume\""),
+        "{drawn}"
+    );
+    assert!(
+        drawn.contains("Restart puzzle") && drawn.contains("Puzzles"),
+        "{drawn}"
+    );
     r.action(ActionId::BACK);
     assert_eq!(r.app().route, Route::Play);
 }
