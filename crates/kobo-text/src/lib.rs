@@ -116,6 +116,16 @@ pub const SERIF_FONT: &[u8] = include_bytes!("../fonts/Literata-Regular.ttf");
 /// The semibold cut of the same serif, for the size that heads a screen.
 pub const SERIF_HEADING_FONT: &[u8] = include_bytes!("../fonts/Literata-SemiBold.ttf");
 
+/// The italic cut of the same serif, for emphasis in prose.
+///
+/// Emphasis used to be the upright letters leant over as they were drawn,
+/// which is how a typewriter would do it: the shapes stay upright and only
+/// slide. A real italic is drawn differently, narrower and with its own
+/// letterforms, and a poem's title or a book's stressed word reads as set
+/// rather than as faked. Only paired with the bundled regular: set beside a
+/// different serif it would be a third face on the page.
+pub const SERIF_ITALIC_FONT: &[u8] = include_bytes!("../fonts/Literata-Italic.ttf");
+
 /// Bold is looked for on the device first, so a firmware that carries the cut
 /// is used rather than the compiled-in copy, exactly as the regular is.
 pub const DEVICE_DISPLAY_FONT_CANDIDATES: &[&str] =
@@ -480,6 +490,11 @@ impl Typeface {
     }
 
     /// The distance from the top of a line to the baseline.
+    /// The em at which this face's capitals stand `cap` pixels tall.
+    fn pixels_for_cap(&self, cap: i32) -> f32 {
+        (cap.max(1) as f32 / self.cap_share()).max(1.0)
+    }
+
     fn ascent(&self, pixels: f32) -> i32 {
         self.font
             .horizontal_line_metrics(pixels)
@@ -515,6 +530,14 @@ impl Typeface {
             return (cells.saturating_mul(cell), self.height(size, face));
         }
         let pixels = self.pixels(size, face);
+        (
+            self.advance(text, pixels, fallback).round() as i32,
+            self.height(size, face),
+        )
+    }
+
+    /// How far a proportional run at `pixels` to the em moves the pen.
+    fn advance(&self, text: &str, pixels: f32, fallback: Option<&Self>) -> f32 {
         let mut width = 0f32;
         let mut previous: Option<(&Self, char)> = None;
         for character in text.chars() {
@@ -531,7 +554,19 @@ impl Typeface {
             width += face.font.metrics(glyph, pixels).advance_width;
             previous = Some((face, glyph));
         }
-        (width.round() as i32, self.height(size, face))
+        width
+    }
+
+    /// A capital's height as a share of the em: what turns "capitals this
+    /// tall" into a size to set the face at.
+    fn cap_share(&self) -> f32 {
+        let reference = 1000.0;
+        let height = self.font.metrics('H', reference).height as f32 / reference;
+        if height > 0.1 {
+            height
+        } else {
+            0.7
+        }
     }
 
     /// The baseline-to-baseline distance for this face.
@@ -570,6 +605,21 @@ impl Typeface {
         // glyph, so a letter borrowed from another face sits on the same line
         // as the letters around it instead of a line of its own.
         let baseline = y.saturating_add(self.ascent(pixels));
+        self.draw_on_baseline(text, x, baseline, pixels, cell, fallback, plot);
+    }
+
+    /// Draws one run at `pixels` to the em, standing on `baseline`.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_on_baseline(
+        &self,
+        text: &str,
+        x: i32,
+        baseline: i32,
+        pixels: f32,
+        cell: Option<i32>,
+        fallback: Option<&Self>,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
         let mut pen = x as f32;
         let mut previous: Option<(&Self, char)> = None;
         for character in text.chars() {
@@ -659,6 +709,9 @@ pub struct SystemFonts {
     /// and most processes never draw a grid or a letter outside Latin.
     mono: OnceLock<Typeface>,
     reading: Arc<Typeface>,
+    /// The reading face's italic, parsed the first time emphasis is set.
+    /// Absent when the reading face is not the bundled serif.
+    italic: OnceLock<Option<Typeface>>,
 }
 
 /// A bounded publisher face used only for book prose.
@@ -789,7 +842,22 @@ impl SystemFonts {
                 .map_or_else(|| Typeface::bundled_display(metrics), Ok)?,
             mono: OnceLock::new(),
             reading,
+            italic: OnceLock::new(),
         })
+    }
+
+    /// The italic of the reading face, when there is one to pair with it.
+    fn italic(&self) -> Option<&Typeface> {
+        self.italic
+            .get_or_init(|| {
+                (self.reading.source() == Path::new("Literata-Regular.ttf"))
+                    .then(|| {
+                        Typeface::from_bytes(SERIF_ITALIC_FONT, "Literata-Italic.ttf", self.metrics)
+                            .ok()
+                    })
+                    .flatten()
+            })
+            .as_ref()
     }
 
     /// Where the grid face comes from, without building it to ask.
@@ -905,6 +973,85 @@ impl SystemFonts {
 }
 
 impl Typesetter for SystemFonts {
+    fn has_italic(&self, face: Face) -> bool {
+        face == Face::Reading && self.italic().is_some()
+    }
+
+    fn cap_height(&self, size: FontSize, face: Face) -> Option<i32> {
+        let chosen = self.cut(size, face);
+        Some((chosen.cap_share() * chosen.pixels(size, face)).round() as i32)
+    }
+
+    fn ascent(&self, size: FontSize, face: Face) -> Option<i32> {
+        let chosen = self.cut(size, face);
+        Some(chosen.ascent(chosen.pixels(size, face)))
+    }
+
+    fn measure_initial(&self, text: &str, face: Face, cap: i32) -> Option<i32> {
+        let chosen = self.face(face);
+        let pixels = chosen.pixels_for_cap(cap);
+        Some(
+            chosen
+                .advance(text, pixels, self.fallback(chosen, text, face))
+                .round() as i32,
+        )
+    }
+
+    fn draw_initial(
+        &self,
+        text: &str,
+        x: i32,
+        baseline: i32,
+        face: Face,
+        cap: i32,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        let chosen = self.face(face);
+        let pixels = chosen.pixels_for_cap(cap);
+        chosen.draw_on_baseline(
+            text,
+            x,
+            baseline,
+            pixels,
+            None,
+            self.fallback(chosen, text, face),
+            plot,
+        );
+    }
+
+    fn measure_italic(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
+        match self.italic().filter(|_| face == Face::Reading) {
+            Some(italic) => {
+                italic.measure_run(text, size, face, None, self.fallback(italic, text, face))
+            }
+            None => self.measure(text, size, face),
+        }
+    }
+
+    fn draw_italic(
+        &self,
+        text: &str,
+        x: i32,
+        y: i32,
+        size: FontSize,
+        face: Face,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        match self.italic().filter(|_| face == Face::Reading) {
+            Some(italic) => italic.draw_run(
+                text,
+                x,
+                y,
+                size,
+                face,
+                None,
+                self.fallback(italic, text, face),
+                plot,
+            ),
+            None => self.draw(text, x, y, size, face, plot),
+        }
+    }
+
     fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
         let chosen = self.cut(size, face);
         chosen.measure_run(
@@ -1386,6 +1533,54 @@ mod tests {
             fonts.mono.get().is_some(),
             "Cyrillic borrows from the grid face"
         );
+    }
+
+    /// The interface face's zero is a plain oval. The slash it was drawn
+    /// with crossed its middle, and set in every clock, date and score it
+    /// made the interface read as a code editor.
+    #[test]
+    fn the_interface_zero_is_open_in_the_middle() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        for size in [FontSize::Body, FontSize::Heading] {
+            let mut inked = std::collections::BTreeSet::new();
+            fonts.draw("0", 0, 0, size, Face::Text, &mut |x, y, coverage| {
+                if coverage > 128 {
+                    inked.insert((x, y));
+                }
+            });
+            let left = inked.iter().map(|(x, _)| *x).min().expect("a zero");
+            let right = inked.iter().map(|(x, _)| *x).max().expect("a zero");
+            let top = inked.iter().map(|(_, y)| *y).min().expect("a zero");
+            let bottom = inked.iter().map(|(_, y)| *y).max().expect("a zero");
+            let middle = ((left + right) / 2, (top + bottom) / 2);
+            assert!(!inked.contains(&middle), "{size:?} zero is struck through");
+        }
+    }
+
+    #[test]
+    fn the_bundled_serif_sets_emphasis_in_its_own_narrower_italic() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        assert!(fonts.has_italic(Face::Reading));
+        assert!(!fonts.has_italic(Face::Text), "the interface face has none");
+        let line = "That time of year thou mayst in me behold";
+        let upright = fonts.measure(line, FontSize::Body, Face::Reading).0;
+        let italic = fonts.measure_italic(line, FontSize::Body, Face::Reading).0;
+        assert!(
+            italic < upright,
+            "an italic is drawn narrower: {italic} against {upright}"
+        );
+        let mut inked = 0;
+        fonts.draw_italic(
+            line,
+            0,
+            0,
+            FontSize::Body,
+            Face::Reading,
+            &mut |_, _, coverage| {
+                inked += usize::from(coverage > 0);
+            },
+        );
+        assert!(inked > 0, "the italic draws");
     }
 
     #[test]

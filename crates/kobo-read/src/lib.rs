@@ -3579,17 +3579,23 @@ fn paginate(
         // Wrapped against the pictures rather than the words they stand for
         // when both are known, because a page counted one way and drawn the
         // other is a page with a line too many on it.
-        let lines = match rich_layout.map(|rich| block_formulae(rich, pictures)) {
-            Some(formulae) if !formulae.is_empty() => kobo_ui::wrap_text_with_formulae(
-                text,
-                width,
-                size,
-                area.face,
-                &formulae,
-                natural_height,
-            ),
-            _ => wrap_text_in(text, width, wrap_size, wrap_face),
-        };
+        // And in the cut each run is drawn in: a passage in italic sets
+        // narrower than the same words upright.
+        let lines =
+            match rich_layout.map(|rich| (block_formulae(rich, pictures), block_emphasis(rich))) {
+                Some((formulae, emphasis)) if !formulae.is_empty() || !emphasis.is_empty() => {
+                    kobo_ui::wrap_rich_text(
+                        text,
+                        &emphasis,
+                        width,
+                        size,
+                        area.face,
+                        &formulae,
+                        natural_height,
+                    )
+                }
+                _ => wrap_text_in(text, width, wrap_size, wrap_face),
+            };
         if lines.is_empty() {
             continue;
         }
@@ -3905,6 +3911,28 @@ fn piece_presentation(
     (spans, formulae, paragraph_presentation(&rich.style))
 }
 
+/// The runs of a block set in emphasis, as offsets into the block's own text
+/// the way [`block_formulae`] gives its formulae.
+fn block_emphasis(rich: &kobo_doc::RichBlock) -> Vec<kobo_ui::RichTextSpan> {
+    let mut emphasis = Vec::new();
+    let mut cursor = 0usize;
+    for span in &rich.spans {
+        let start = cursor;
+        cursor += span.text.len();
+        if span.style.emphasis && start < cursor {
+            emphasis.push(kobo_ui::RichTextSpan {
+                start,
+                end: cursor,
+                presentation: kobo_ui::TextPresentation {
+                    emphasis: true,
+                    ..kobo_ui::TextPresentation::default()
+                },
+            });
+        }
+    }
+    emphasis
+}
+
 /// Every formula in a block, as the pictures they are drawn as.
 ///
 /// The offsets are into the block's own text -- the spans joined end to end,
@@ -3958,6 +3986,7 @@ fn paragraph_presentation(style: &kobo_doc::BlockStyle) -> kobo_ui::ParagraphPre
         margin_before_em: style.margin_before_em,
         margin_after_em: style.margin_after_em,
         first_line_indent_em: style.first_line_indent_em,
+        ..kobo_ui::ParagraphPresentation::default()
     }
 }
 
@@ -6080,6 +6109,7 @@ mod tests {
             margin_before_em: 75,
             margin_after_em: 50,
             first_line_indent_em: 125,
+            ..kobo_ui::ParagraphPresentation::PLAIN
         };
 
         let first = fragment_presentation(whole, true, false);

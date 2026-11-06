@@ -1350,7 +1350,7 @@ fn version_12_folio_fields_round_trip() {
         panic!("expected screen");
     };
     assert_eq!(decoded, screen);
-    assert_eq!(decoded.typography, kobo_ui::Typography::Quiet);
+    assert_eq!(decoded.typography, kobo_ui::Typography::Fine);
 }
 
 #[test]
@@ -1531,7 +1531,10 @@ fn decoded_at(version: u8, screen: Screen) -> Screen {
 #[test]
 fn a_command_travels_as_a_command_at_protocol_seventeen() {
     let decoded = decoded_at(QUIET_TYPE_VERSION, quoted_command());
-    assert_eq!(decoded, quoted_command());
+    assert_eq!(
+        decoded,
+        quoted_command().with_typography(kobo_ui::Typography::Quiet)
+    );
 }
 
 /// A runtime without the command role reads an unknown role as prose, so a
@@ -1549,7 +1552,7 @@ fn a_command_written_at_protocol_sixteen_is_read_as_a_quotation() {
 
 /// An application at protocol 16 fitted its text to Folio's sizes and gaps,
 /// so its screens are laid out in them; one at 17 fitted them to the quiet
-/// ones.
+/// ones, and one at 18 measured its emphasis in the italic as well.
 #[test]
 fn each_protocol_is_laid_out_in_the_type_it_measured_with() {
     let screen = Screen::new(5, Vec::new());
@@ -1558,6 +1561,8 @@ fn each_protocol_is_laid_out_in_the_type_it_measured_with() {
         (FOLIO_VERSION, kobo_ui::Typography::Folio),
         (QUIET_TYPE_VERSION - 1, kobo_ui::Typography::Folio),
         (QUIET_TYPE_VERSION, kobo_ui::Typography::Quiet),
+        (FINE_TYPE_VERSION - 1, kobo_ui::Typography::Quiet),
+        (FINE_TYPE_VERSION, kobo_ui::Typography::Fine),
     ] {
         assert_eq!(
             decoded_at(version, screen.clone()).typography,
@@ -1565,4 +1570,41 @@ fn each_protocol_is_laid_out_in_the_type_it_measured_with() {
             "protocol {version}"
         );
     }
+}
+
+fn verse_paragraph() -> Screen {
+    Screen::new(
+        5,
+        vec![Node::RichText {
+            id: kobo_ui::NodeId(1),
+            text: "That time of year thou mayst in me behold".to_owned(),
+            spans: Vec::new(),
+            links: Vec::new(),
+            presentation: kobo_ui::ParagraphPresentation {
+                start_indent_em: 340,
+                initial_lines: 3,
+                ..kobo_ui::ParagraphPresentation::default()
+            },
+            selection: None,
+            formulae: Vec::new(),
+        }],
+    )
+}
+
+fn paragraph_of(screen: &Screen) -> kobo_ui::ParagraphPresentation {
+    match screen.nodes.as_slice() {
+        [Node::RichText { presentation, .. }] => *presentation,
+        nodes => panic!("expected one paragraph, got {nodes:?}"),
+    }
+}
+
+/// A block indent and an initial reach a runtime that sets them, and an
+/// application at an older protocol never sends bytes its runtime would read
+/// as the paragraph's links.
+#[test]
+fn a_block_indent_and_an_initial_travel_from_protocol_eighteen() {
+    let fine = paragraph_of(&decoded_at(FINE_TYPE_VERSION, verse_paragraph()));
+    assert_eq!((fine.start_indent_em, fine.initial_lines), (340, 3));
+    let quiet = paragraph_of(&decoded_at(QUIET_TYPE_VERSION, verse_paragraph()));
+    assert_eq!((quiet.start_indent_em, quiet.initial_lines), (0, 0));
 }
