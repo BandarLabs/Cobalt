@@ -123,6 +123,8 @@ struct ReviewScreenModel {
     pages: usize,
     completed: usize,
     total_cards: usize,
+    /// The question, shown above the answer on the answer's first page.
+    question: Option<StyledPage>,
 }
 
 #[allow(
@@ -506,7 +508,9 @@ impl Flashcards {
         let japanese_font = (matches!(
             card_text_font(side_text(card, self.answer)),
             Ok(CardTextFont::Japanese)
-        ) || matches!(card_text_font(&deck), Ok(CardTextFont::Japanese)))
+        ) || (self.answer
+            && matches!(card_text_font(&card.front), Ok(CardTextFont::Japanese)))
+            || matches!(card_text_font(&deck), Ok(CardTextFont::Japanese)))
         .then_some(self.japanese_font)
         .flatten();
         review_screen(
@@ -525,6 +529,9 @@ impl Flashcards {
                 pages: page_count,
                 completed,
                 total_cards: total,
+                question: (self.answer && page == 0)
+                    .then(|| question_above_answer(card))
+                    .flatten(),
             },
             &shown.text,
             &shown.spans,
@@ -832,6 +839,7 @@ impl Flashcards {
         });
         let deck = self.selected_deck_name();
         let japanese_font = (matches!(card_text_font(&text), Ok(CardTextFont::Japanese))
+            || (self.answer && matches!(card_text_font(&card.front), Ok(CardTextFont::Japanese)))
             || matches!(card_text_font(&deck), Ok(CardTextFont::Japanese)))
         .then_some(self.japanese_font)
         .flatten();
@@ -854,6 +862,7 @@ impl Flashcards {
             pages: 2,
             completed,
             total_cards: total,
+            question: self.answer.then(|| question_above_answer(card)).flatten(),
         };
         self.card_pages = paginate_review_text(&model, &text, &spans, context.metrics());
         self.card_page = self.card_page.min(self.card_pages.len().saturating_sub(1));
@@ -1610,6 +1619,15 @@ fn review_screen(model: &ReviewScreenModel, text: &str, spans: &[CardTextSpan]) 
     if let Some(picture) = model.picture {
         screen = screen.picture(picture, 38);
     }
+    if let Some(question) = &model.question {
+        screen = screen
+            .rich_text(
+                question.text.clone(),
+                ui_spans(&question.spans),
+                CARD_PRESENTATION,
+            )
+            .divider();
+    }
     let display_text = if text.trim().is_empty() && model.picture.is_none() {
         "No text was rendered for this side."
     } else {
@@ -1714,7 +1732,12 @@ fn paginate_review_text(
         .collect::<Vec<_>>();
     let mut pages = Vec::new();
     let mut start = 0;
+    // The question stands above the answer on its first page only, so the
+    // pages after it are measured without it.
+    let mut later = model.clone();
+    later.question = None;
     while start < text.len() {
+        let model = if pages.is_empty() { model } else { &later };
         let start_index = boundaries
             .binary_search(&start)
             .expect("page start is a character boundary");
@@ -1949,6 +1972,27 @@ fn image_for_side(card: &Card, answer: bool) -> Option<&kobo_flashcards_format::
                 && card.question_media_names.contains(&attachment.name)
         })
     }
+}
+
+/// The question to show above a card's answer, unless the answer already
+/// shows it.
+///
+/// An answer is read against its question: "Magnetic north." alone does not
+/// say what it answers, and grading it means remembering a screen that is
+/// gone. Most imported cards are written as the question, a rule and the
+/// answer already, and those keep the layout their author gave them.
+fn question_above_answer(card: &Card) -> Option<StyledPage> {
+    let question = card.front.trim();
+    if question.is_empty() || card.back.contains(question) {
+        return None;
+    }
+    let offset = card.front.len() - card.front.trim_start().len();
+    Some(styled_page(
+        &card.front,
+        &card.front_spans,
+        offset,
+        offset + question.len(),
+    ))
 }
 
 fn side_text(card: &Card, answer: bool) -> &str {
@@ -2198,6 +2242,7 @@ mod tests {
             pages: 1,
             completed: 2,
             total_cards: 18,
+            question: None,
         }
     }
 
@@ -2468,6 +2513,50 @@ mod tests {
             .deck_choices()
             .iter()
             .any(|choice| choice.due == 5));
+    }
+
+    #[test]
+    fn the_answer_is_shown_under_its_question_and_a_rule() {
+        use kobo_sdk::AppRunner;
+
+        let (mut values, mut blobs, mut writes) =
+            (TestMaps::new(), TestMaps::new(), TestMaps::new());
+        let mut runner = AppRunner::new(Flashcards {
+            fixed_day: Some(TEST_DAY),
+            ..Flashcards::default()
+        });
+        let commands = runner.start();
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        for action in ["sample", "deck-0", "answer"] {
+            let commands = runner.action(action_id(action));
+            pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        }
+        let card = runner.app().current_card().expect("a card").clone();
+        let screen = runner.app().screen(&runner.context());
+        let order = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::RichText { text, .. } if *text == card.front => Some("question"),
+                kobo_sdk::Node::Divider { .. } => Some("rule"),
+                kobo_sdk::Node::RichText { text, .. } if *text == card.back => Some("answer"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["question", "rule", "answer"]);
+    }
+
+    #[test]
+    fn an_answer_that_already_repeats_its_question_is_shown_as_written() {
+        let mut card = fixture_card(1, 1);
+        card.front = "Capital of France?".to_owned();
+        card.back = "Capital of France?\n\nParis".to_owned();
+        assert!(question_above_answer(&card).is_none());
+        card.back = "Paris".to_owned();
+        assert_eq!(
+            question_above_answer(&card).map(|page| page.text),
+            Some("Capital of France?".to_owned())
+        );
     }
 
     #[test]

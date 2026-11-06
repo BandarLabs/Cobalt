@@ -10,7 +10,7 @@ computer and send them to the reader over Wi-Fi.
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/japanese.png" alt="A Japanese card"><br>A Japanese card</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/long-answer.png" alt="A long answer, with controls in place"><br>A long answer, with controls in place</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/long-answer.png" alt="A long answer under its question"><br>A long answer under its question</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/media.png" alt="A card with an image: a star chart and its answer"><br>A card with an image: a star chart and its answer</td>

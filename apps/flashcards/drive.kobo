@@ -15,6 +15,9 @@ tap Getting started
 wait-for 1 of 6
 tap-id answer
 wait-for Answer
+# The answer is read under its question.
+expect What does a compass needle point toward?
+expect Magnetic north.
 tap-id again
 wait-for 1 of 6
 tap-id answer
