@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
-  "version": "1.0.29",
+  "version": "1.0.30",
   "glyph": "book",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "A long table of contents now turns in pages, so every chapter can be reached, and opens at the chapter you are reading. Notes and links turn in pages too, and tapping a note goes to its passage."
+  "release_notes": "The catalog you are browsing is marked Current instead of Open, which read as a button."
 }

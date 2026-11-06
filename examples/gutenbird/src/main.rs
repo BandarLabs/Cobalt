@@ -1041,7 +1041,9 @@ impl Gutenbird {
             .iter()
             .enumerate()
             .map(|(index, catalog)| {
-                let state = if index == self.current { "Open" } else { "" };
+                // "Open" here read as a button on a row that is opened by
+                // tapping it anywhere; this marks the catalog being browsed.
+                let state = if index == self.current { "Current" } else { "" };
                 (
                     context.clamped_row_beside(&catalog.name, state, 2, false),
                     context.clamped_row(catalog.summary(), 2, false),
