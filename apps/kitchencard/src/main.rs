@@ -836,13 +836,11 @@ impl Kitchen {
         } else {
             screen.text(&recipe.steps[step])
         };
-        let mut has_primary = false;
         if self.timer.is_none() {
             if let Some(minutes) = step_timer(&recipe.steps[step]) {
                 screen = if last {
                     screen.button("timer", format!("Start {minutes} min timer"))
                 } else {
-                    has_primary = true;
                     screen.primary_button("timer", format!("Start {minutes} min timer"))
                 };
             }
@@ -850,10 +848,11 @@ impl Kitchen {
         if self.timer.is_some() {
             screen = screen.button("stop-timer", "Stop the timer");
         }
+        // The right side of the page is the next step, as it is the next page
+        // of a book. A Next step button said the same under every step and
+        // took the room a long step needs.
         if last {
             screen = screen.primary_button("finish", "Finish");
-        } else if !has_primary {
-            screen = screen.primary_button("next", "Next step");
         }
         screen
             .page_turns("previous", "next")
