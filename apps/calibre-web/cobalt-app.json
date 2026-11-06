@@ -4,9 +4,9 @@
   "short_label": "Library",
   "summary": "Browse and read books from your calibre-web library. Needs an account.",
   "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.",
-  "version": "0.1.12",
-  "release_notes": "Sign in now asks for a username and a password in two fields, with the password masked, and adding a library asks for the address you open calibre-web at.",
-  "glyph": "book",
+  "version": "0.1.13",
+  "release_notes": "Library now has an icon of its own, books on a shelf.",
+  "glyph": "books",
   "capabilities": [
     "network"
   ],

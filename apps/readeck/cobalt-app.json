@@ -3,9 +3,9 @@
   "display_name": "Readeck",
   "short_label": "Readeck",
   "summary": "Read and search your saved Readeck articles. Needs an account.",
-  "version": "0.1.6",
-  "release_notes": "Articles open on the whole panel: the sides of the page turn it, and the bar comes back with a touch at the top.",
-  "glyph": "bookmark",
+  "version": "0.1.7",
+  "release_notes": "Readeck now has an icon of its own, a paperclip.",
+  "glyph": "paperclip",
   "capabilities": [
     "network",
     "frontlight-control"

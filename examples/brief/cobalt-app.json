@@ -3,11 +3,11 @@
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
   "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
-  "version": "1.0.15",
-  "glyph": "clock",
+  "version": "1.0.16",
+  "glyph": "sunrise",
   "capabilities": [
     "network",
     "scheduled-wake"
   ],
-  "release_notes": "Refresh sits in the top bar once there are stories, so the foot of each page is headlines."
+  "release_notes": "Daily Brief now has an icon of its own, a sunrise."
 }

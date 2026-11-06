@@ -2324,7 +2324,7 @@ fn app_catalog_verify(arguments: &[String]) -> Result<(), String> {
         .iter()
         .find(|entry| entry.manifest().id() == parsed.manifest().id())
         .ok_or("Verified catalog does not contain the supplied package")?;
-    if entry.manifest().to_canonical_bytes() != parsed.manifest().to_canonical_bytes()
+    if !parsed.manifest().is_offered_as(entry.manifest())
         || entry.package_bytes() != package.len() as u64
         || entry.package_sha256().as_str() != kobo_net::sha256::hex_digest(&package)
     {
@@ -2335,15 +2335,17 @@ fn app_catalog_verify(arguments: &[String]) -> Result<(), String> {
 }
 
 fn app_catalog(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo app-catalog --seed PATH --out PATH --signature PATH \
-                         --entry PACKAGE HTTPS_URL [--entry PACKAGE HTTPS_URL ...]";
+    const USAGE: &str = "usage: kobo app-catalog --seed PATH --out PATH --earlier-out PATH \
+                         --entry PACKAGE HTTPS_URL [--entry PACKAGE HTTPS_URL ...]\n\
+                         Each catalog is signed beside itself as PATH.sig; --earlier-out is \
+                         the one runtimes up to 0.3.33 read.";
     let seed_path = single_path_flag(arguments, "--seed", USAGE)?;
     let output = single_path_flag(arguments, "--out", USAGE)?;
-    let signature_output = single_path_flag(arguments, "--signature", USAGE)?;
+    let earlier_output = single_path_flag(arguments, "--earlier-out", USAGE)?;
     let entries = paired_flag(arguments, "--entry", USAGE)?;
     ensure_only_flags(
         arguments,
-        &["--seed", "--out", "--signature", "--entry"],
+        &["--seed", "--out", "--earlier-out", "--entry"],
         USAGE,
     )?;
     if entries.is_empty() {
@@ -2373,15 +2375,7 @@ fn app_catalog(arguments: &[String]) -> Result<(), String> {
     }
     let catalog = kobo_app_store::Catalog::new(catalog_entries)
         .map_err(|error| format!("invalid app catalog: {error}"))?;
-    let bytes = catalog.to_canonical_bytes();
-    let signature =
-        kobo_app_store::sign(&bytes, &seed).map_err(|error| format!("sign catalog: {error}"))?;
-    fs::write(&output, &bytes).map_err(|error| format!("write {}: {error}", output.display()))?;
-    fs::write(&signature_output, format!("{signature}\n"))
-        .map_err(|error| format!("write {}: {error}", signature_output.display()))?;
-    println!("created {}", output.display());
-    println!("created {}", signature_output.display());
-    Ok(())
+    write_signed_catalogs(&catalog, &seed, &output, &earlier_output)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2537,18 +2531,51 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
 
     let catalog = kobo_app_store::Catalog::new(entries)
         .map_err(|error| format!("build app catalog: {error}"))?;
-    let catalog_bytes = catalog.to_canonical_bytes();
-    let signature =
-        kobo_app_store::sign(&catalog_bytes, &seed).map_err(|error| error.to_string())?;
-    let catalog_path = output.join("cobalt-app-catalog.json");
-    let signature_path = output.join("cobalt-app-catalog.json.sig");
-    fs::write(&catalog_path, catalog_bytes)
-        .map_err(|error| format!("write {}: {error}", catalog_path.display()))?;
-    fs::write(&signature_path, format!("{signature}\n"))
-        .map_err(|error| format!("write {}: {error}", signature_path.display()))?;
-    println!("created {}", catalog_path.display());
-    println!("created {}", signature_path.display());
+    write_signed_catalogs(
+        &catalog,
+        &seed,
+        &output.join(kobo_app_store::CATALOG_FILE),
+        &output.join(kobo_app_store::EARLIER_CATALOG_FILE),
+    )
+}
+
+/// Signs and writes the catalog and the same catalog for runtimes up to
+/// 0.3.33, each with its signature beside it under the same name and `.sig`.
+///
+/// Both are built and checked before either is written, so a publication
+/// that cannot give earlier runtimes a catalog they read gives nobody a new
+/// one.
+fn write_signed_catalogs(
+    catalog: &kobo_app_store::Catalog,
+    seed: &[u8; 32],
+    catalog_path: &Path,
+    earlier_path: &Path,
+) -> Result<(), String> {
+    let earlier = catalog
+        .for_earlier_runtimes()
+        .map_err(|error| format!("build the catalog for runtimes up to 0.3.33: {error}"))?;
+    let mut signed = Vec::with_capacity(2);
+    for (catalog, path) in [(catalog, catalog_path), (&earlier, earlier_path)] {
+        let bytes = catalog.to_canonical_bytes();
+        let signature =
+            kobo_app_store::sign(&bytes, seed).map_err(|error| format!("sign catalog: {error}"))?;
+        signed.push((path, bytes, signature));
+    }
+    for (path, bytes, signature) in signed {
+        let signature_path = signature_path_for(path);
+        fs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))?;
+        fs::write(&signature_path, format!("{signature}\n"))
+            .map_err(|error| format!("write {}: {error}", signature_path.display()))?;
+        println!("created {}", path.display());
+        println!("created {}", signature_path.display());
+    }
     Ok(())
+}
+
+fn signature_path_for(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".sig");
+    PathBuf::from(name)
 }
 
 fn build_release_binary(app: &ReleaseApp) -> Result<Vec<u8>, String> {

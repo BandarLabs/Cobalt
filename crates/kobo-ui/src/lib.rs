@@ -5263,6 +5263,92 @@ pub enum Glyph {
     /// before this existed, and a single dot the width of a full stop is not
     /// an emblem anyone reads at arm's length.
     Mill,
+    // The marks below exist so that every application on the launcher can be
+    // told from its neighbours by its picture as well as its name. Seven
+    // games once shared one four-square grid and six readers one book, which
+    // made a page of tiles look like a placeholder. They arrived with protocol
+    // 18; an older frame carries the mark each application wore before.
+    /// Nine cells with two of them blacked out: a crossword, whose answers run
+    /// between the black squares.
+    CrosswordGrid,
+    /// Nine boxes with a nine in the middle one: a number puzzle played one
+    /// figure to a cell.
+    CellGrid,
+    /// A letter with a tick beside it: a word guessed and checked letter by
+    /// letter.
+    LetterCheck,
+    /// A nought and a cross: the two marks of noughts and crosses, without
+    /// the board, which is a grid like every other puzzle's.
+    NoughtsCrosses,
+    /// Nine cells with four filled as a shape and the clues counted off above
+    /// the columns: a nonogram.
+    CluedGrid,
+    /// A jigsaw piece: a logic puzzle, or a pack of them.
+    Puzzle,
+    /// A handheld remote with a pad and buttons: this reader controlling
+    /// another machine.
+    Remote,
+    /// A die showing five: a game of chance, or one with dice in it.
+    Dice,
+    /// A board of four squares with a black piece and a white one: the old
+    /// board games, whose pieces are discs whatever the board.
+    BoardPieces,
+    /// A question mark in a ring: a quiz, a round of questions.
+    Question,
+    /// Two crossed swords: tabletop combat and the reference books that go
+    /// with it.
+    Swords,
+    /// A folded map: finding a way, which is most of what a text adventure
+    /// asks of its player.
+    Map,
+    /// Books standing on a shelf: a library rather than one book.
+    Books,
+    /// A book with an arrow leaving it: books fetched for reading offline.
+    BookDownload,
+    /// Three layers in a pile: a stack of papers, a collection.
+    Stack,
+    /// A laboratory flask: a research paper, before or after review.
+    Flask,
+    /// A paperclip: an article clipped from the web to read properly later.
+    Paperclip,
+    /// Two cards fanned: a deck of flashcards.
+    Cards,
+    /// A ball of yarn: knitting and the patterns for it.
+    Yarn,
+    /// Two notes joined by a beam: music, or the scores it is read from.
+    Music,
+    /// A padlock: a vault, a private collection kept on another machine.
+    Lock,
+    /// A pair of quotation marks: words someone else wrote, such as a poem.
+    Quote,
+    /// A feather: birds, drawn by the one part of a bird that is a line.
+    Feather,
+    /// A pair of binoculars: looking for birds out of doors and noting them
+    /// down.
+    Binoculars,
+    /// An envelope: a letter, sent or received.
+    Mail,
+    /// A calendar page with a tick: something done today, and on the days
+    /// before.
+    CalendarCheck,
+    /// Three ticks beside three lines: a list of things to do.
+    Checklist,
+    /// A house with a door: home, and the things in it.
+    House,
+    /// A fork and a knife: cooking and the recipes for it.
+    Cutlery,
+    /// A page cut into panels of unequal size, one gutter at a slant: a comic.
+    ComicPanels,
+    /// An inbox tray: unread items gathered from somewhere else, waiting to
+    /// be read and cleared.
+    Inbox,
+    /// A framed landscape: a photograph.
+    Photo,
+    /// A keyboard: typing into a machine somewhere else, told apart from the
+    /// runtime's own Terminal, which keeps the framed prompt.
+    Keyboard,
+    /// The sun coming up over the horizon: a briefing to read in the morning.
+    Sunrise,
 }
 
 impl Glyph {
@@ -5273,7 +5359,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 69] = [
+    pub const ALL: [Self; 103] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5343,6 +5429,40 @@ impl Glyph {
         Self::Backspace,
         Self::Shift,
         Self::Mill,
+        Self::CrosswordGrid,
+        Self::CellGrid,
+        Self::LetterCheck,
+        Self::NoughtsCrosses,
+        Self::CluedGrid,
+        Self::Puzzle,
+        Self::Remote,
+        Self::Dice,
+        Self::BoardPieces,
+        Self::Question,
+        Self::Swords,
+        Self::Map,
+        Self::Books,
+        Self::BookDownload,
+        Self::Stack,
+        Self::Flask,
+        Self::Paperclip,
+        Self::Cards,
+        Self::Yarn,
+        Self::Music,
+        Self::Lock,
+        Self::Quote,
+        Self::Feather,
+        Self::Binoculars,
+        Self::Mail,
+        Self::CalendarCheck,
+        Self::Checklist,
+        Self::House,
+        Self::Cutlery,
+        Self::ComicPanels,
+        Self::Inbox,
+        Self::Photo,
+        Self::Keyboard,
+        Self::Sunrise,
     ];
 }
 

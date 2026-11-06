@@ -51,7 +51,9 @@ gh workflow run "Publish beta platform" --ref beta
    From the Actions tab, select **Promote tested beta apps**, branch `main`:
 
    - `tested_commit`: the 40-character beta commit recorded in step 3
-   - `expected_catalog_sha256`: SHA-256 of that commit's `cobalt-app-catalog.json`
+   - `expected_catalog_sha256`: SHA-256 of that commit's `cobalt-app-catalog-v2.json`
+     (its `cobalt-app-catalog.json` if the Beta release has no v2 file yet).
+     The workflow promotes both catalogs.
    - `confirmation`: `promote-apps-` plus the first 12 characters of the commit
 
    ```

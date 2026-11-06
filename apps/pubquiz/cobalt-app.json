@@ -4,9 +4,9 @@
   "short_label": "Pub Quiz",
   "summary": "Play offline solo or pass-around trivia rounds.",
   "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
-  "version": "0.1.19",
-  "release_notes": "The Get more questions row no longer shows a full stop before its middle dot.",
-  "glyph": "chat",
+  "version": "0.1.20",
+  "release_notes": "Pub Quiz now has an icon of its own, a question mark.",
+  "glyph": "question",
   "capabilities": [
     "network"
   ]

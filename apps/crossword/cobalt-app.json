@@ -5,8 +5,8 @@
   "summary": "Sixty-one offline crosswords with clue navigation and saved progress.",
   "page_description": "Solve sixty-one original 5 by 5 and 7 by 7 crosswords offline. Tap a square or a clue, type an answer, and check or reveal letters when you want help. Undo is always under the grid, and each puzzle keeps its own progress.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.14",
-  "release_notes": "Letters are larger, the clue over the grid is in ink, and a small puzzle prints every clue under its grid. Clues fit Across beside Down, and an old save from before the mini was redrawn opens again.",
-  "glyph": "grid",
+  "version": "0.1.15",
+  "release_notes": "Crossword now has an icon of its own, a crossword grid with black squares.",
+  "glyph": "crossword-grid",
   "capabilities": []
 }

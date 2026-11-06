@@ -186,8 +186,10 @@ fn app_bundle_and_catalog_commands_produce_verified_assets() {
     let manifest_path = root.join("manifest.json");
     let binary_path = root.join("kobo-word-count");
     let bundle_path = root.join("word-count.cobalt-app");
-    let catalog_path = root.join("cobalt-app-catalog.json");
-    let signature_path = root.join("cobalt-app-catalog.json.sig");
+    let catalog_path = root.join(kobo_app_store::CATALOG_FILE);
+    let signature_path = root.join(format!("{}.sig", kobo_app_store::CATALOG_FILE));
+    let earlier_path = root.join(kobo_app_store::EARLIER_CATALOG_FILE);
+    let earlier_signature_path = root.join(format!("{}.sig", kobo_app_store::EARLIER_CATALOG_FILE));
     let seed = [9_u8; 32];
     let mut binary = vec![0_u8; 84];
     binary[..6].copy_from_slice(b"\x7fELF\x01\x01");
@@ -213,8 +215,8 @@ fn app_bundle_and_catalog_commands_produce_verified_assets() {
         short_label: "Words".to_owned(),
         summary: "Counts words in a note.".to_owned(),
         version: "1.0.0".to_owned(),
-        minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
-        glyph: "note".to_owned(),
+        minimum_cobalt_version: kobo_app_store::FIRST_MARKED_RUNTIME.to_owned(),
+        glyph: "dice".to_owned(),
         capabilities: Vec::new(),
         binary_sha256: kobo_net::sha256::hex_digest(&binary),
         binary_bytes: binary.len() as u64,
@@ -251,8 +253,8 @@ fn app_bundle_and_catalog_commands_produce_verified_assets() {
         seed_path.display().to_string(),
         "--out".to_owned(),
         catalog_path.display().to_string(),
-        "--signature".to_owned(),
-        signature_path.display().to_string(),
+        "--earlier-out".to_owned(),
+        earlier_path.display().to_string(),
         "--entry".to_owned(),
         bundle_path.display().to_string(),
         "https://example.test/word-count.cobalt-app".to_owned(),
@@ -275,6 +277,21 @@ fn app_bundle_and_catalog_commands_produce_verified_assets() {
     kobo_app_store::verify(&catalog_bytes, &signature, &public).expect("verify catalog");
     let catalog = kobo_app_store::Catalog::parse_public(&catalog_bytes).expect("parse catalog");
     assert_eq!(catalog.entries().len(), 1);
+    assert_eq!(catalog.entries()[0].manifest().glyph(), "dice");
+
+    // The same entry, signed again, for runtimes that know only the glyph the
+    // application wore before.
+    let earlier_bytes = fs::read(&earlier_path).expect("read earlier catalog");
+    let earlier_signature = fs::read_to_string(&earlier_signature_path).expect("read signature");
+    let earlier_signature =
+        kobo_app_store::DetachedSignature::from_hex(earlier_signature.trim()).expect("signature");
+    kobo_app_store::verify(&earlier_bytes, &earlier_signature, &public).expect("verify earlier");
+    let earlier = kobo_app_store::Catalog::parse_public(&earlier_bytes).expect("parse earlier");
+    assert_eq!(earlier.entries()[0].manifest().glyph(), "circle");
+    assert!(kobo_app_store::is_earlier_glyph(
+        earlier.entries()[0].manifest().glyph()
+    ));
+    assert_eq!(Ok(earlier), catalog.for_earlier_runtimes());
     let public_path = root.join("public-key");
     fs::write(&public_path, public.to_string()).unwrap();
     let verify_package = vec![
@@ -299,6 +316,10 @@ fn app_bundle_and_catalog_commands_produce_verified_assets() {
     ];
     super::app_verify(&verify_package).expect("verify matching package");
     super::app_catalog_verify(&verify_catalog).expect("verify matching catalog");
+    let mut verify_earlier = verify_catalog.clone();
+    verify_earlier[1] = earlier_path.display().to_string();
+    verify_earlier[3] = earlier_signature_path.display().to_string();
+    super::app_catalog_verify(&verify_earlier).expect("verify the earlier catalog");
     fs::write(&binary_path, b"different binary").unwrap();
     assert!(super::app_verify(&verify_package).is_err());
     fs::write(&binary_path, &binary).unwrap();
@@ -346,6 +367,45 @@ fn app_bundle_and_catalog_commands_produce_verified_assets() {
     fs::write(&bundle_path, changed_package).unwrap();
     assert!(super::app_verify(&verify_package).is_err());
     assert!(super::app_catalog_verify(&verify_catalog).is_err());
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+/// A runtime up to 0.3.33 checks a bundle against its catalog entry byte for
+/// byte, so a mark on an application it would install is refused before
+/// anything is written.
+#[test]
+fn a_catalog_with_a_mark_earlier_runtimes_would_try_to_install_is_not_written() {
+    let root = std::env::temp_dir().join(format!("kobo-app-early-mark-{}", std::process::id()));
+    fs::create_dir_all(&root).expect("create fixture");
+    let seed = [9_u8; 32];
+    let manifest = kobo_app_store::Manifest::new_public(kobo_app_store::ManifestInput {
+        id: "backgammon".to_owned(),
+        display_name: "Backgammon".to_owned(),
+        short_label: "Backgammon".to_owned(),
+        summary: "Play backgammon.".to_owned(),
+        version: "1.0.0".to_owned(),
+        minimum_cobalt_version: "0.3.33".to_owned(),
+        glyph: "dice".to_owned(),
+        capabilities: Vec::new(),
+        binary_sha256: kobo_net::sha256::hex_digest(b"binary"),
+        binary_bytes: 6,
+    })
+    .expect("manifest");
+    let catalog = kobo_app_store::Catalog::new(vec![kobo_app_store::CatalogEntry::new(
+        kobo_app_store::CatalogEntryInput {
+            manifest,
+            package_url: "https://example.test/backgammon.cobalt-app".to_owned(),
+            package_sha256: kobo_net::sha256::hex_digest(b"package"),
+            package_bytes: 100,
+        },
+    )
+    .expect("entry")])
+    .expect("catalog");
+    let catalog_path = root.join(kobo_app_store::CATALOG_FILE);
+    let earlier_path = root.join(kobo_app_store::EARLIER_CATALOG_FILE);
+    assert!(super::write_signed_catalogs(&catalog, &seed, &catalog_path, &earlier_path).is_err());
+    assert!(!catalog_path.exists());
+    assert!(!earlier_path.exists());
     fs::remove_dir_all(root).expect("remove fixture");
 }
 

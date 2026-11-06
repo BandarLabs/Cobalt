@@ -3,8 +3,8 @@
   "display_name": "Tic-tac-toe",
   "short_label": "Tic-tac-toe",
   "summary": "Play tic-tac-toe together on one Kobo.",
-  "version": "1.0.14",
-  "glyph": "grid",
+  "version": "1.0.15",
+  "glyph": "noughts-crosses",
   "capabilities": [],
-  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar."
+  "release_notes": "Tic-tac-toe now has an icon of its own, a board with a nought and a cross."
 }

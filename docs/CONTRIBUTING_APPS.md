@@ -43,6 +43,23 @@ capability policy in `tools/protocol-minimums.json`. An app may supply a newer
 version as an explicit compatibility floor; it can never lower the derived
 minimum.
 
+`glyph` names the mark the launcher and the Store draw for the app, such as
+`book`, `dice` or `map`. The names that can be published are the glyphs
+runtimes up to 0.3.33 draw and the marks listed in `MARKS` in
+`crates/kobo-app-store/src/model.rs`, each beside the glyph it stands in as.
+Pick a mark no other app wears: two apps with the same picture look like one
+app on the launcher.
+
+Runtimes up to 0.3.33 refuse a whole catalog over a glyph name they do not
+know, so every channel publishes two signed catalogs. Runtimes from 0.3.34
+read `cobalt-app-catalog-v2.json`, which names the mark. Older runtimes read
+`cobalt-app-catalog.json`, where the same entry wears the stand-in. Because
+those runtimes check a bundle against its entry byte for byte, an app may only
+wear a mark when its `minimum_cobalt_version` is 0.3.34 or later, and the
+publisher refuses the catalog otherwise. A new mark needs a stand-in in
+`MARKS`, a name in `crates/kobod/src/app_store.rs`, and a wire fallback below
+the protocol that added it.
+
 Optional `setup.steps` may describe account or self-hosting prerequisites.
 Use one to six short steps. Links must be absolute HTTPS URLs without embedded
 credentials. Setup text is website-only and never enters the signed package.

@@ -205,11 +205,22 @@ jobs:
           release_tag="$(node tools/app-catalog-channel.mjs)"
           echo "Checking app versions against the $release_tag channel."
           mkdir -p published-state
+          # The catalog that names every mark is the one this tree describes.
+          # A channel last published before there were two catalogs has only
+          # the earlier one, and its provenance hashes that.
+          catalog_name=cobalt-app-catalog-v2.json
+          catalog_count="$(
+            gh release view "$release_tag" --json assets \
+              --jq '[.assets[] | select(.name == "cobalt-app-catalog-v2.json")] | length'
+          )"
+          if [ "$catalog_count" -eq 0 ]; then
+            catalog_name=cobalt-app-catalog.json
+          fi
           gh release download "$release_tag" \
             --dir published-state \
-            --pattern cobalt-app-catalog.json
+            --pattern "$catalog_name"
           catalog_sha256="$(
-            sha256sum published-state/cobalt-app-catalog.json | cut -d' ' -f1
+            sha256sum "published-state/$catalog_name" | cut -d' ' -f1
           )"
           provenance_count="$(
             gh release view "$release_tag" --json assets \
@@ -266,7 +277,7 @@ jobs:
           fi
           node tools/check-app-versions.mjs \
             --registry generated-app-registry.json \
-            --published-catalog published-state/cobalt-app-catalog.json \
+            --published-catalog "published-state/$catalog_name" \
             --base "$published_sha"
 
   host-release-build:

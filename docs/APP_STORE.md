@@ -13,8 +13,19 @@ Cobalt platform releases and Store app releases are separate:
 
 Readers on the default **Stable** update channel use:
 
-- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json`
-- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig`
+- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog-v2.json`
+- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog-v2.json.sig`
+
+Runtimes up to 0.3.33 read `cobalt-app-catalog.json` and its `.sig` from the
+same release instead. That file is the same catalog, signed separately, with
+each app's mark replaced by a glyph those runtimes draw, because they refuse a
+whole catalog over a glyph name they do not know. The replacement for each
+mark is fixed in `kobo_app_store` (`MARKS` in `model.rs`), and an entry may
+wear a mark only when it requires 0.3.34 or later, so those runtimes never try
+to install a bundle that differs from its entry. A runtime from 0.3.34 falls
+back to the earlier file only when the release has no `cobalt-app-catalog-v2.json`,
+and installs from it by accepting a bundle whose manifest differs from its
+entry in that stand-in glyph alone.
 
 Readers whose owner chooses **Beta** under **Settings ▸ Software update** use
 the isolated `app-catalog-beta` release instead. Its catalog and detached signature are

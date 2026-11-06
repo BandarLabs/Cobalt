@@ -561,6 +561,9 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
     if let Some(shapes) = game_piece_shapes(glyph) {
         return shapes;
     }
+    if let Some(shapes) = drawn_shapes(glyph) {
+        return shapes;
+    }
     let width = if matches!(
         glyph,
         Glyph::ChessBlackKing
@@ -581,6 +584,181 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             width,
         })
         .collect()
+}
+
+/// The marks drawn here rather than imported: the four puzzles, the comic
+/// and the board games.
+///
+/// Each puzzle is played on a grid, and drawn as Tabler draws a grid they were
+/// four squares of lines a glance could not tell apart. So each is drawn as
+/// the grid only its own puzzle has, in Tabler's terms: the frame of its
+/// `square` (four to twenty on its grid of twenty-four, with a corner of two)
+/// at the stroke weight of every other icon.
+///
+/// - Noughts and crosses is the open board with a cross and a nought in two
+///   of its corners, drawn to the edge of the box so the marks can be read.
+/// - The crossword is nine cells with two black squares in opposite
+///   corners, as a printed grid sets them.
+/// - The number puzzle is nine boxes with a nine drawn in the middle one
+///   and no black squares, so it is not the crossword.
+/// - The nonogram is nine cells with four filled as a shape and its clues
+///   counted off above the columns, which no other grid has.
+/// - The comic is a page cut into panels of unequal size, one gutter slanted.
+/// - The board games are a board of four squares with a black piece and a
+///   white one.
+fn drawn_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
+    const LOW: i32 = 167;
+    const HIGH: i32 = 833;
+    const CORNER: i32 = 83;
+    let stroke = |path| Shape::Stroke {
+        path,
+        width: WEIGHT,
+    };
+    let frame = || stroke(Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, CORNER));
+    match glyph {
+        Glyph::NoughtsCrosses => {
+            // The board's lines run nearly to the edge of the box and are
+            // lighter than the marks, and the outer cells are the larger, so
+            // the cross and the nought in two corners are big enough to read
+            // as a game in play rather than as specks on a grid.
+            const SPAN: (i32, i32) = (80, 920);
+            const LINES: [i32; 2] = [360, 640];
+            let mut shapes = Vec::new();
+            for at in LINES {
+                for path in [
+                    Path::line(at, SPAN.0, at, SPAN.1),
+                    Path::line(SPAN.0, at, SPAN.1, at),
+                ] {
+                    shapes.push(Shape::Stroke { path, width: 44 });
+                }
+            }
+            let (cross, nought, arm) = (190, 810, 100);
+            shapes.push(stroke(Path::line(
+                cross - arm,
+                cross - arm,
+                cross + arm,
+                cross + arm,
+            )));
+            shapes.push(stroke(Path::line(
+                cross + arm,
+                cross - arm,
+                cross - arm,
+                cross + arm,
+            )));
+            shapes.push(stroke(Path::circle(nought, nought, 105)));
+            Some(shapes)
+        }
+        Glyph::CrosswordGrid => {
+            // Nine cells in a frame a little inside the usual one, with two
+            // black squares in opposite corners. The cell walls are lighter
+            // than the frame and the black squares stand off them, so the
+            // grid carries about as much ink as the line icons beside it
+            // instead of reading as a blot.
+            const LOW: i32 = 200;
+            const HIGH: i32 = 800;
+            const CELL: i32 = (HIGH - LOW) / 3;
+            const INSET: i32 = 40;
+            let mut shapes = Vec::new();
+            for (row, column) in [(0, 2), (2, 0)] {
+                shapes.push(Shape::Fill(Path::rounded(
+                    LOW + column * CELL + INSET,
+                    LOW + row * CELL + INSET,
+                    CELL - 2 * INSET,
+                    CELL - 2 * INSET,
+                    12,
+                )));
+            }
+            shapes.push(stroke(Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, 75)));
+            for at in [LOW + CELL, HIGH - CELL] {
+                for path in [Path::line(at, LOW, at, HIGH), Path::line(LOW, at, HIGH, at)] {
+                    shapes.push(Shape::Stroke { path, width: 40 });
+                }
+            }
+            Some(shapes)
+        }
+        Glyph::CellGrid => {
+            // Nine boxes in the crossword's frame, with no black squares and
+            // a nine drawn in the middle one as the other marks are drawn: a
+            // ring and a tail at one stroke weight, rather than a display
+            // digit. Cell walls inside the boxes made a mesh nearly twice the
+            // weight of the marks around it, so there are none.
+            const LOW: i32 = 200;
+            const HIGH: i32 = 800;
+            const BOX: i32 = (HIGH - LOW) / 3;
+            let mut shapes = vec![stroke(Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, 75))];
+            for at in [LOW + BOX, HIGH - BOX] {
+                for path in [Path::line(at, LOW, at, HIGH), Path::line(LOW, at, HIGH, at)] {
+                    shapes.push(Shape::Stroke { path, width: 34 });
+                }
+            }
+            // The nine, in units of its box: a ring above, and a stem down
+            // the right of it that turns under to the left.
+            let at = |x: i32, y: i32| {
+                (
+                    500 + (x - 500) * BOX * 115 / 20_000,
+                    500 + (y - 500) * BOX * 115 / 20_000,
+                )
+            };
+            let (ring, radius) = (at(500, 476), 40 * BOX * 115 / 20_000);
+            let tail = [
+                at(540, 476),
+                at(540, 520),
+                at(540, 566),
+                at(496, 566),
+                at(472, 560),
+            ];
+            for path in [
+                Path::circle(ring.0, ring.1, radius),
+                Path::new()
+                    .move_to(tail[0].0, tail[0].1)
+                    .line_to(tail[1].0, tail[1].1)
+                    .quad_to(tail[2].0, tail[2].1, tail[3].0, tail[3].1)
+                    .line_to(tail[4].0, tail[4].1),
+            ] {
+                shapes.push(Shape::Stroke { path, width: 40 });
+            }
+            Some(shapes)
+        }
+        Glyph::CluedGrid => {
+            // Nine cells in a frame, four of them filled as an L, with a clue
+            // mark above each column. Nothing else: the clues along the left
+            // and the cell walls made it noise at launcher size.
+            const X: i32 = 245;
+            const Y: i32 = 323;
+            const CELL: i32 = 170;
+            const INSET: i32 = 20;
+            let mut shapes = Vec::new();
+            for (row, column) in [(0, 0), (1, 0), (2, 0), (2, 1)] {
+                shapes.push(Shape::Fill(Path::rounded(
+                    X + column * CELL + INSET,
+                    Y + row * CELL + INSET,
+                    CELL - 2 * INSET,
+                    CELL - 2 * INSET,
+                    12,
+                )));
+            }
+            shapes.push(stroke(Path::rounded(X, Y, 3 * CELL, 3 * CELL, 50)));
+            for column in 0..3 {
+                let at = X + column * CELL + CELL / 2;
+                shapes.push(stroke(Path::line(at, LOW, at, 245)));
+            }
+            Some(shapes)
+        }
+        Glyph::ComicPanels => Some(vec![
+            frame(),
+            stroke(Path::line(LOW, 458, HIGH, 458)),
+            stroke(Path::line(542, LOW, 542, 458)),
+            stroke(Path::line(417, 458, 354, HIGH)),
+        ]),
+        Glyph::BoardPieces => Some(vec![
+            frame(),
+            stroke(Path::line(500, LOW, 500, HIGH)),
+            stroke(Path::line(LOW, 500, HIGH, 500)),
+            Shape::Fill(Path::circle(333, 333, 96)),
+            stroke(Path::circle(667, 667, 92)),
+        ]),
+        _ => None,
+    }
 }
 
 /// A game piece is drawn the way a printed diagram draws it, seen from

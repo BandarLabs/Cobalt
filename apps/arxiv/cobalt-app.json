@@ -3,11 +3,11 @@
   "display_name": "Preprints",
   "short_label": "Preprints",
   "summary": "Browse every arXiv category, keep preprints with their figures, and read them offline on your Kobo.",
-  "version": "1.4.12",
-  "glyph": "note",
+  "version": "1.4.13",
+  "glyph": "flask",
   "capabilities": [
     "network"
   ],
-  "release_notes": "A listing that could not load while the reader is off Wi-Fi now offers Join Wi-Fi beside Try again, and no longer offers a date range that cannot help.",
+  "release_notes": "Preprints now has an icon of its own, a flask.",
   "page_description": "Browse the newest arXiv preprints in any category, grouped under arXiv's own headings, or search the archive, then read the abstract and the paper's HTML rendering on the panel instead of downloading a PDF. Keep preprints with their figures for offline reading on your Kobo. Preprints is an unofficial reader and is not affiliated with or endorsed by arXiv. Thank you to arXiv for use of its open access interoperability."
 }
