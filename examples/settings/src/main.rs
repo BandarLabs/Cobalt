@@ -1035,13 +1035,13 @@ impl Settings {
     /// reader whose driver is thinner gets a shorter list, which is honest,
     /// rather than a column of dashes.
     fn battery(&self) -> Screen {
-        // Reading again is the bar's refresh mark, as it is in the Store and
-        // Feeds. It was a button centred under the facts, the one thing on
-        // the screen not set from the left, and it moved down whenever the
-        // list grew. A failed reading also carries the way to read again.
+        // No refresh mark in the bar. The gauge is read when this screen
+        // opens and again whenever Settings comes back to the front, so a
+        // mark that read it a third time only asked the owner to do the
+        // reader's job. A reading that failed carries the way to read again
+        // on its banner, where the failure is.
         let mut screen = ScreenBuilder::new("settings-battery")
             .top_bar("Battery")
-            .top_bar_glyph(RESCAN, "Read again", Glyph::Refresh)
             .owns_back(true);
         let trouble = self.banner_for(Topic::Battery);
         if let Some(trouble) = &trouble {
@@ -1116,16 +1116,16 @@ impl Settings {
         if let Some(address) = &self.address {
             facts.push(("Wi-Fi address".to_owned(), address.clone()));
         }
-        let mut support: Vec<(String, String)> = vec![
-            ("Profile".to_owned(), identity.profile_id.clone()),
-            (
-                "Screen".to_owned(),
-                format!(
-                    "{} × {} pixels",
-                    identity.panel_width, identity.panel_height
-                ),
+        // The runtime's own name for the hardware profile is left off. It
+        // is a developer's identifier ("SIMULATOR:clara-bw-391" in the
+        // simulator) that says nothing the model and device code do not.
+        let mut support: Vec<(String, String)> = vec![(
+            "Screen".to_owned(),
+            format!(
+                "{} × {} pixels",
+                identity.panel_width, identity.panel_height
             ),
-        ];
+        )];
         if identity.device_code != 0 {
             support.push(("Device code".to_owned(), identity.device_code.to_string()));
         }
@@ -1186,11 +1186,10 @@ impl Settings {
     }
 
     fn about_page_screen(&self, parts: &[usize], page: usize, pages: usize) -> Screen {
-        // The same refresh mark as Battery, reachable from every page rather
-        // than from the foot of the last one.
+        // No refresh mark: nothing on this page changes while it is open.
+        // A failed read carries Read again on its banner.
         let mut screen = ScreenBuilder::new("settings-about")
             .top_bar("About")
-            .top_bar_glyph(RESCAN, "Read again", Glyph::Refresh)
             .owns_back(true);
         let trouble = self.banner_for(Topic::About);
         if let Some(trouble) = &trouble {
@@ -1578,6 +1577,19 @@ impl KoboApp for Settings {
     /// application running on it, and it wears the colour of the logo.
     fn accent(&self) -> Option<kobo_sdk::Accent> {
         Some(kobo_sdk::Accent::Cobalt)
+    }
+
+    /// The battery screen reads the gauge again whenever Settings comes
+    /// back to the front or the reader wakes, which is what its refresh mark
+    /// used to be pressed for.
+    fn on_foreground(&mut self, context: &mut Context) {
+        if self.view == View::Battery {
+            context.device().read_battery_detail();
+        }
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.on_foreground(context);
     }
 
     fn on_start(&mut self, context: &mut Context) {
@@ -2651,7 +2663,6 @@ mod tests {
         let drawn = format!("{:?}", screen.nodes);
         for needle in [
             "Kobo Clara BW",
-            "CLARA_BW_391",
             "391",
             "4.41.23145",
             "5.10.117",
@@ -2703,11 +2714,14 @@ mod tests {
         let issues = screen.validate(&CLARA_BW_METRICS);
         assert!(issues.is_empty(), "{issues:?}");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
-        assert!(layout.rect_of_action(action_id(RESCAN)).is_some());
+        assert!(
+            layout.rect_of_action(action_id(RESCAN)).is_none(),
+            "the battery is read on opening, not from a mark in the bar"
+        );
     }
 
     /// A reader whose driver publishes almost nothing gets a short screen
-    /// rather than a column of dashes, and the button stays reachable.
+    /// rather than a column of dashes.
     #[test]
     fn a_gauge_that_publishes_almost_nothing_says_so_rather_than_showing_zeroes() {
         let settings = Settings {
@@ -2722,7 +2736,51 @@ mod tests {
         let issues = screen.validate(&CLARA_BW_METRICS);
         assert!(issues.is_empty(), "{issues:?}");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
-        assert!(layout.rect_of_action(action_id(RESCAN)).is_some());
+        assert!(
+            layout.rect_of_action(action_id(RESCAN)).is_none(),
+            "the battery is read on opening, not from a mark in the bar"
+        );
+    }
+
+    #[test]
+    fn the_battery_is_read_again_when_settings_comes_back_to_the_front() {
+        let mut settings = Settings {
+            view: super::View::Battery,
+            ..Settings::default()
+        };
+        use kobo_sdk::KoboApp;
+        let mut context = kobo_sdk::Context::default();
+        settings.on_foreground(&mut context);
+        assert!(context.take_commands().iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::ReadBatteryDetail)
+        )));
+        settings.view = super::View::Home;
+        settings.on_foreground(&mut context);
+        assert!(context.take_commands().is_empty());
+    }
+
+    #[test]
+    fn about_names_the_reader_without_the_runtime_profile_or_a_refresh_mark() {
+        let mut settings = Settings::default();
+        settings.identity = Some(DeviceIdentity {
+            profile_id: "SIMULATOR:clara-bw-391".to_owned(),
+            model: "Kobo Clara BW".to_owned(),
+            device_code: 391,
+            firmware: "4.41.23145".to_owned(),
+            kernel: "5.10.117".to_owned(),
+            runtime_version: "0.3.0".to_owned(),
+            panel_width: 1072,
+            panel_height: 1448,
+        });
+        let screen = settings.about();
+        let drawn = format!("{screen:?}");
+        assert!(!drawn.contains("SIMULATOR"), "{drawn}");
+        assert!(!drawn.contains("\"Profile\""), "{drawn}");
+        assert!(screen
+            .top_bar
+            .as_ref()
+            .is_some_and(|bar| bar.actions.is_empty()));
     }
 
     #[test]
@@ -3257,16 +3315,12 @@ mod tests {
                     runner.action(action_id(MORE));
                 }
             }
-            assert_eq!(
-                rescans, pages,
-                "{metrics:?}: Read again in the bar of every page"
-            );
+            assert_eq!(rescans, 0, "{metrics:?}: no refresh mark on About");
             for fact in [
                 "Kobo Clara BW",
                 "0.3.0",
                 "4.41.23145",
                 "192.168.1.23",
-                "CLARA_BW_391",
                 "1072 × 1448 pixels",
                 "391",
                 "5.10.117",
