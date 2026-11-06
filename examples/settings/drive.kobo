@@ -5,7 +5,7 @@
 # At the largest text size About is on the second page of the list, so the
 # route turns to it, and turns back for Software update.
 wait-for Settings
-tap-paged Model, versions and Wi-Fi address
+tap-paged Model and versions
 wait-for From your computer
 expect kobo setup
 shot settings-about

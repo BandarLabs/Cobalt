@@ -443,13 +443,7 @@ impl Settings {
                 self.update_summary(),
                 Glyph::Download,
             ),
-            SettingsRow::new(
-                None,
-                ABOUT,
-                "About",
-                "Model, versions and Wi-Fi address",
-                Glyph::Reader,
-            ),
+            SettingsRow::new(None, ABOUT, "About", "Model and versions", Glyph::Reader),
         ]
     }
 
@@ -527,7 +521,7 @@ impl Settings {
             UpdateFlow::Idle => {
                 screen = screen
                     .section_with_value("Installed", VERSION)
-                    .text("Checking asks GitHub for the newest published release. Nothing is downloaded until you choose to install it.")
+                    .text("Checking looks online for a newer Cobalt. Nothing is downloaded until you choose to install it.")
                     .button(CHECK, "Check for updates");
             }
             UpdateFlow::Checking { .. }
@@ -1922,14 +1916,14 @@ const fn check_failure_words(error: TaskError) -> &'static str {
     match error {
         TaskError::Offline => "This reader is not on Wi-Fi. Join a network, then check again.",
         TaskError::Unreachable | TaskError::TimedOut => {
-            "GitHub did not answer. Check that Wi-Fi reaches the internet, then try again."
+            "The update server did not answer. Check that Wi-Fi reaches the internet, then try again."
         }
         TaskError::RateLimited(_) => {
-            "GitHub asked this reader to wait before checking again. Try again in an hour."
+            "The update server asked this reader to wait. Try again in an hour."
         }
         TaskError::Denied | TaskError::NoCredential | TaskError::Unauthorized => NO_NETWORK_ALLOWED,
         TaskError::NotFound | TaskError::TooLarge => {
-            "GitHub's list of releases could not be read. Try again later."
+            "The list of updates could not be read. Try again later."
         }
     }
 }
@@ -2052,9 +2046,9 @@ fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String>
     // GitHub that is not there.
     let value = kobo_json::parse(body).map_err(|_| {
         if body.len() >= release_window(channel) as usize {
-            "GitHub's release list is longer than this reader can read.".to_owned()
+            "The list of updates is longer than this reader can read.".to_owned()
         } else {
-            "GitHub sent something that is not a release.".to_owned()
+            "The update server sent something that is not an update.".to_owned()
         }
     })?;
     match channel {
@@ -2067,7 +2061,7 @@ fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String>
                     .filter_map(|release| release_value(release, "beta-v", true))
                     .max_by_key(|release| numbers(&release.version))
             })
-            .ok_or_else(|| "GitHub has no valid beta release for this reader.".to_owned()),
+            .ok_or_else(|| "There is no beta update for this reader yet.".to_owned()),
     }
 }
 
@@ -2866,6 +2860,20 @@ mod tests {
     }
 
     #[test]
+    fn update_copy_says_what_happens_without_naming_where_releases_are_kept() {
+        for error in [
+            super::TaskError::Unreachable,
+            super::TaskError::RateLimited(60),
+            super::TaskError::NotFound,
+        ] {
+            let failure = super::check_failure_words(error);
+            assert!(!failure.contains("GitHub"), "{failure}");
+        }
+        let failure = super::latest_release("<html>", UpdateChannel::Beta).expect_err("not a feed");
+        assert!(!failure.contains("GitHub"), "{failure}");
+    }
+
+    #[test]
     fn a_feed_cut_off_at_its_window_is_reported_as_too_long_not_as_nonsense() {
         let window = super::release_window(UpdateChannel::Beta) as usize;
         let cut_off = r#"[{"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[{"#
@@ -2880,7 +2888,7 @@ mod tests {
         assert!(
             super::latest_release("<html>", UpdateChannel::Beta)
                 .expect_err("not a feed at all")
-                .contains("not a release"),
+                .contains("not an update"),
             "a short reply that is not a feed keeps its own sentence"
         );
     }
@@ -3009,7 +3017,7 @@ mod tests {
             },
             super::UpdateFlow::Failed("The download did not match its digest.".to_owned()),
             super::UpdateFlow::Failed(
-                "GitHub's release list is longer than this reader can read.".to_owned(),
+                "The list of updates is longer than this reader can read.".to_owned(),
             ),
         ];
         for flow in flows {
@@ -3167,11 +3175,11 @@ mod tests {
         use super::{check_failure_words, refusal_words};
         use kobo_sdk::TaskError;
         for error in [
-            TaskError::Unreachable,
+            super::TaskError::Unreachable,
             TaskError::TimedOut,
             TaskError::RateLimited(60),
             TaskError::Denied,
-            TaskError::NotFound,
+            super::TaskError::NotFound,
         ] {
             let words = check_failure_words(error);
             assert!(words.starts_with(char::is_uppercase), "{words}");
@@ -3391,7 +3399,7 @@ mod tests {
             },
             super::UpdateFlow::Offline,
             super::UpdateFlow::Failed(
-                "GitHub did not answer. Check that Wi-Fi reaches the internet, then try again."
+                "The update server did not answer. Check that Wi-Fi reaches the internet, then try again."
                     .to_owned(),
             ),
         ];
