@@ -144,6 +144,18 @@ pub const QUIET_TYPE_VERSION: u8 = 17;
 /// change that matters to an owner.
 pub const AUDIOBOOK_VERSION: u8 = 17;
 
+/// The protocol a grid cell must be encoded at to carry a
+/// [`kobo_ui::CellTone`], the three marks a word game prints on its tiles.
+///
+/// The tone travels in the upper bits of the byte that already says whether
+/// a cell is selected, so a cell without one is encoded exactly as it always
+/// was. A runtime released before tones existed reads that byte as a flag and
+/// refuses any other value, which is the right failure: the screen is refused
+/// rather than drawn with every tile alike. As with the audiobook messages,
+/// the version itself did not move, and an application that marks its tiles
+/// names the first release that draws them as its minimum.
+pub const CELL_TONE_VERSION: u8 = 17;
+
 pub const VERSION: u8 = 17;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
@@ -6517,8 +6529,13 @@ fn encode_node(
                         output.push(encode_glyph(glyph));
                     }
                 }
+                if cell.tone != kobo_ui::CellTone::Plain && version < CELL_TONE_VERSION {
+                    return Err(ProtocolError::InvalidValue(
+                        "cell tone requires protocol 17",
+                    ));
+                }
                 if version >= 13 {
-                    output.push(u8::from(cell.selected));
+                    output.push(u8::from(cell.selected) | (cell.tone.code() << 1));
                 }
                 if numbered {
                     let number = cell.corner.unwrap_or(0);
@@ -8282,11 +8299,14 @@ fn decode_node(
                     _ => return Err(ProtocolError::InvalidValue("cell glyph flag")),
                 };
                 let mut cell = if version >= 13 {
-                    cell.with_selected(match reader.u8()? {
-                        0 => false,
-                        1 => true,
-                        _ => return Err(ProtocolError::InvalidValue("cell selected flag")),
-                    })
+                    let flags = reader.u8()?;
+                    let tone = if version >= CELL_TONE_VERSION {
+                        kobo_ui::CellTone::from_code(flags >> 1)
+                    } else {
+                        (flags >> 1 == 0).then_some(kobo_ui::CellTone::Plain)
+                    }
+                    .ok_or(ProtocolError::InvalidValue("cell selected flag"))?;
+                    cell.with_selected(flags & 1 == 1).with_tone(tone)
                 } else {
                     cell
                 };

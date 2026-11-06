@@ -1333,6 +1333,15 @@ pub struct BarAction {
     pub glyph: Option<Glyph>,
 }
 
+/// The field of a shaded tile. Mid-grey, an exact level of the panel's
+/// sixteen, so it is neither mistaken for paper nor for the solid square, and
+/// dark enough that ink letters on it stay the darkest thing in the square.
+const TILE_SHADE: u8 = 170;
+
+/// The letter on a faded tile. Light enough to step back from every letter in
+/// ink and still be read without leaning in.
+const TILE_FADED_INK: u8 = 136;
+
 /// What a grid cell is: part of a board, or a key.
 ///
 /// A board is ruled squares, and the rules are the board. A keyboard is not:
@@ -1381,6 +1390,10 @@ pub enum CellStyle {
     /// that did something, which is a panel mostly made of controls that do
     /// nothing.
     EmptyPad,
+    /// A board square carrying one of the word-game tones.
+    Tile(CellTone),
+    /// A keyboard key carrying the tone its letter has on the board.
+    KeyTile(CellTone),
 }
 
 /// Whether a control can currently be activated.
@@ -4282,6 +4295,63 @@ pub struct Cell {
     pub selected: bool,
     /// Small crossword clue number in the upper-left corner (1–99).
     pub corner: Option<u8>,
+    /// How strongly the square is marked, for a game whose tiles report
+    /// three things at once. Plain unless the application says otherwise.
+    pub tone: CellTone,
+}
+
+/// The three marks a word game prints on a tile, and on the key for the same
+/// letter.
+///
+/// A printed word puzzle shows a letter in its right place as a solid black
+/// square, a letter that is in the word elsewhere as a grey square with a
+/// heavy rule round it, and a letter that is not in the word at all as a
+/// faint letter on plain paper. Each is a different amount of ink, so the
+/// three can be told apart at arm's length on sixteen greys without reading a
+/// single letter, which brackets and crosses typed beside the letter could
+/// not do.
+///
+/// Sent from protocol 17 in the byte that says whether a cell is selected. A
+/// runtime that has no reading for a tone refuses the screen rather than
+/// drawing every tile alike, so an application that uses one asks the Store
+/// for the release that draws them.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum CellTone {
+    /// Drawn as the cell always was.
+    #[default]
+    Plain,
+    /// Solid ink with the label in paper: the letter is in its place.
+    Solid,
+    /// A mid-grey field inside a heavy rule: the letter is in the word, but
+    /// somewhere else.
+    Shaded,
+    /// A faint label on paper: the letter has been tried and is not used.
+    Faded,
+}
+
+impl CellTone {
+    /// The tone's number on the wire, from zero for plain.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Plain => 0,
+            Self::Solid => 1,
+            Self::Shaded => 2,
+            Self::Faded => 3,
+        }
+    }
+
+    /// The tone a wire number names, if any.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Plain),
+            1 => Some(Self::Solid),
+            2 => Some(Self::Shaded),
+            3 => Some(Self::Faded),
+            _ => None,
+        }
+    }
 }
 
 impl Cell {
@@ -4293,7 +4363,15 @@ impl Cell {
             glyph: None,
             selected: false,
             corner: None,
+            tone: CellTone::Plain,
         }
+    }
+
+    /// Marks the cell with one of the word-game tones.
+    #[must_use]
+    pub const fn with_tone(mut self, tone: CellTone) -> Self {
+        self.tone = tone;
+        self
     }
 
     /// Gives this cell a picture to sit above its label.
@@ -5179,6 +5257,10 @@ pub enum LayoutKind {
     /// columns for its cells to turn taller than they are wide, so the size
     /// this label draws at cannot be read off its own rectangle.
     CellLabel(bool),
+    /// The label of a toned tile or key, set in the ink its tone asks for:
+    /// paper on a solid square, ink on a shaded one, a faint grey on a faded
+    /// one. Carries whether it is a board mark, as [`Self::CellLabel`] does.
+    ToneLabel(CellTone, bool),
     /// Explicit board ink; selection is an outline independent of the mark.
     BoardMark(BoardMark, bool),
     BoardClue,
@@ -7849,7 +7931,11 @@ fn layout_node(
                 && requested == 12
                 && cells.len() == 24
                 && cells.iter().all(|cell| cell.label.starts_with("Point "));
-            let pad_deck = *square && requested == 5 && cells.len() <= 15;
+            // A row of word-game tiles is five squares too, and is a board.
+            let pad_deck = *square
+                && requested == 5
+                && cells.len() <= 15
+                && cells.iter().all(|cell| cell.tone == CellTone::Plain);
             let chess_board = *square
                 && requested == 8
                 && cells.len() == 64
@@ -8029,6 +8115,15 @@ fn layout_node(
                     && cell.label.trim().is_empty()
                 {
                     CellStyle::EmptyPad
+                } else if cell.tone != CellTone::Plain && cell.glyph.is_none() {
+                    // Only a plain square or a key takes a tone. The other
+                    // boards already say what their squares are with the
+                    // colour of the square itself.
+                    match style {
+                        CellStyle::Board => CellStyle::Tile(cell.tone),
+                        CellStyle::Key => CellStyle::KeyTile(cell.tone),
+                        other => other,
+                    }
                 } else {
                     style
                 };
@@ -8151,10 +8246,16 @@ fn layout_node(
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: letter,
-                                kind: LayoutKind::CellLabel(matches!(
-                                    style,
-                                    CellStyle::Board | CellStyle::BoardDark | CellStyle::Crossword
-                                )),
+                                kind: match style {
+                                    CellStyle::Tile(tone) => LayoutKind::ToneLabel(tone, true),
+                                    CellStyle::KeyTile(tone) => LayoutKind::ToneLabel(tone, false),
+                                    _ => LayoutKind::CellLabel(matches!(
+                                        style,
+                                        CellStyle::Board
+                                            | CellStyle::BoardDark
+                                            | CellStyle::Crossword
+                                    )),
+                                },
                                 text_lines: vec![cell.label.clone()],
                             });
                             if let Some(number) = cell.corner.filter(|n| (1..=99).contains(n)) {
@@ -14296,9 +14397,15 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
         };
         let scale = if matches!(node.kind, LayoutKind::PencilNumber(_)) {
             pencil::label_style(node).1
-        } else if matches!(node.kind, LayoutKind::CellLabel(true)) {
+        } else if matches!(
+            node.kind,
+            LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true)
+        ) {
             board_label_style(node).1
-        } else if matches!(node.kind, LayoutKind::CellLabel(false)) {
+        } else if matches!(
+            node.kind,
+            LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false)
+        ) {
             key_label_style(node).1
         } else {
             text_scale()
@@ -14463,9 +14570,9 @@ fn key_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
-        LayoutKind::CellLabel(true) => board_label_size(node),
+        LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true) => board_label_size(node),
         LayoutKind::PencilNumber(_) => pencil::label_style(node).0,
-        LayoutKind::CellLabel(false) => key_label_style(node).0,
+        LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false) => key_label_style(node).0,
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::BarAction(_) => {
             if FontSize::Body.line_height() <= node.rect.height {
@@ -15575,6 +15682,63 @@ fn paint_layout(
                 metrics.rule_thickness(),
                 clip,
             ),
+            // A word game's tiles, printed the way a puzzle page prints them:
+            // the right letter in the right place is a black square, a letter
+            // in the word elsewhere is a grey square in a heavy rule, and a
+            // letter that is not in the word sits faintly on paper inside a
+            // lighter rule than an untried square, so it steps back.
+            LayoutKind::Cell(_, CellStyle::Tile(cell_tone), selected) => {
+                let rule = metrics.rule_thickness();
+                match cell_tone {
+                    CellTone::Solid => fill_clipped(surface, node.rect, tone::INK, clip),
+                    CellTone::Shaded => {
+                        fill_clipped(surface, node.rect, TILE_SHADE, clip);
+                        stroke_clipped(surface, node.rect, tone::INK, rule * 2, clip);
+                    }
+                    CellTone::Faded => {
+                        stroke_clipped(surface, node.rect, tone::RULE_LIGHT, rule, clip);
+                    }
+                    CellTone::Plain => stroke_clipped(surface, node.rect, tone::RULE, rule, clip),
+                }
+                if selected && cell_tone != CellTone::Solid {
+                    stroke_clipped(surface, node.rect, tone::INK, rule * 2, clip);
+                }
+            }
+            // The key for a letter says what the board has learned about it,
+            // in the same three amounts of ink, so the next guess can be
+            // chosen from the keys alone. A letter that is not in the word
+            // loses its field and keeps a hairline, so it still reads as a key
+            // and can still be typed.
+            LayoutKind::Cell(_, CellStyle::KeyTile(cell_tone), _) => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+                match cell_tone {
+                    CellTone::Solid => {
+                        fill_rounded_clipped(surface, node.rect, radius, tone::INK, clip);
+                    }
+                    CellTone::Shaded => {
+                        fill_rounded_clipped(surface, node.rect, radius, TILE_SHADE, clip);
+                        stroke_rounded_clipped(
+                            surface,
+                            node.rect,
+                            radius,
+                            tone::INK,
+                            metrics.rule_thickness() * 2,
+                            clip,
+                        );
+                    }
+                    CellTone::Faded => stroke_rounded_clipped(
+                        surface,
+                        node.rect,
+                        radius,
+                        tone::RULE_LIGHT,
+                        metrics.rule_thickness(),
+                        clip,
+                    ),
+                    CellTone::Plain => {
+                        fill_rounded_clipped(surface, node.rect, radius, tone::SURFACE, clip);
+                    }
+                }
+            }
             LayoutKind::Cell(_, CellStyle::BoardDark, selected) => {
                 fill_clipped(surface, node.rect, palette.board_dark(), clip);
                 stroke_clipped(
@@ -15717,6 +15881,21 @@ fn paint_layout(
                 };
                 with_text_scale(scale, || {
                     draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
+                });
+            }
+            LayoutKind::ToneLabel(cell_tone, board) => {
+                let (size, scale) = if board {
+                    board_label_style(&node)
+                } else {
+                    key_label_style(&node)
+                };
+                let ink = match cell_tone {
+                    CellTone::Solid => tone::PAPER,
+                    CellTone::Faded => TILE_FADED_INK,
+                    CellTone::Plain | CellTone::Shaded => tone::INK,
+                };
+                with_text_scale(scale, || {
+                    draw_centered(surface, &node.text_lines, node.rect, size, ink, clip);
                 });
             }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),

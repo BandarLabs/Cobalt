@@ -2372,6 +2372,37 @@ impl ScreenBuilder {
         self
     }
 
+    /// A word game's board: square tiles, each with its letter and the tone
+    /// that says what the guess learned about it.
+    ///
+    /// Laid out exactly as [`Self::board_with_selection`] lays out the same
+    /// squares; only the ink changes. A tone needs the release that draws
+    /// tones, so an application using one names that release as its minimum.
+    #[must_use]
+    pub fn board_with_tones<I, N, L>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, crate::CellTone)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let mut source = cells.into_iter();
+        let mut cells = Vec::new();
+        for (name, label, tone) in source.by_ref().take(MAX_CELLS) {
+            cells.push(Cell::new(self.register(name.as_ref()), label).with_tone(tone));
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "grid cells", MAX_CELLS);
+        }
+        self.nodes.push(Node::Grid {
+            id,
+            columns: columns.clamp(1, MAX_COLUMNS),
+            square: true,
+            cells,
+        });
+        self
+    }
+
     /// Physical pencil-puzzle geometry shared by the reader and simulator.
     /// Actions use stable IDs from `action_id`; fixed clues carry no action.
     /// Requires the protocol-14 beta runtime's pencil-board node.

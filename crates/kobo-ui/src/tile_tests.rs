@@ -200,3 +200,74 @@ fn an_empty_grid_occupies_no_space() {
         .iter()
         .any(|node| matches!(node.kind, LayoutKind::Tile(..))));
 }
+
+#[test]
+fn the_three_tones_of_a_word_game_print_three_different_amounts_of_ink() {
+    // Solid, shaded and faded tiles are told apart from across the room by
+    // how dark the square is, before any letter is read. So the middle of
+    // each square, clear of its letter, is checked for the ink it carries.
+    let tones = [
+        CellTone::Solid,
+        CellTone::Shaded,
+        CellTone::Faded,
+        CellTone::Plain,
+    ];
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 4,
+            square: true,
+            cells: tones
+                .iter()
+                .enumerate()
+                .map(|(index, tone)| Cell::new(ActionId(10 + index as u32), "I").with_tone(*tone))
+                .collect(),
+        }],
+    );
+    let metrics = CLARA_BW_METRICS;
+    let chrome = Chrome::measuring(true);
+    let layout = screen.layout_with(&metrics, &chrome);
+    let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
+    render_with(&screen, &metrics, &chrome, &mut surface, None);
+    let field = |index: u32| {
+        let rect = layout.rect_of_action(ActionId(10 + index)).expect("a tile");
+        // A quarter in from the left, halfway down: inside the rule, and
+        // clear of a narrow letter set in the middle.
+        let x = (rect.x + rect.width / 4) as usize;
+        let y = (rect.y + rect.height / 2) as usize;
+        surface.pixels[y * surface.width + x]
+    };
+    assert_eq!(field(0), tone::INK, "a tile in its place is not solid");
+    let shaded = field(1);
+    assert!(
+        shaded > tone::INK + 100 && shaded < tone::PAPER - 50,
+        "a tile in the word elsewhere is {shaded}, not a mid grey"
+    );
+    assert_eq!(
+        field(2),
+        tone::PAPER,
+        "an unused letter's tile is not paper"
+    );
+    assert_eq!(field(3), tone::PAPER);
+    // The toned squares sit exactly where plain ones would, so a board that
+    // starts using tones does not move.
+    let plain = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 4,
+            square: true,
+            cells: (0..4)
+                .map(|index| Cell::new(ActionId(10 + index), "I"))
+                .collect(),
+        }],
+    );
+    let plain = plain.layout_with(&metrics, &chrome);
+    for index in 0..4 {
+        assert_eq!(
+            plain.rect_of_action(ActionId(10 + index)),
+            layout.rect_of_action(ActionId(10 + index))
+        );
+    }
+}
