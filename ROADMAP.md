@@ -52,48 +52,54 @@ Success means:
 
 ### Complete the reading experience
 
-Finish the reading features already under development, with an initial focus on
-search, annotations, and durable session behavior.
+The shared reader already keeps bookmarks, highlights and the reading position
+across restarts, and looks words up in offline dictionaries. What remains is
+finding text inside a book: the reading core can search a document, but the
+reader does not offer it yet.
 
 Success means:
 
 - A reader can find text inside a book.
-- Highlights and notes survive restarts.
-- Returning to a book restores a stable reading position.
 - Reading remains available without a network connection or account.
 
 ## Next
 
 ### Library
 
-Provide one place to find saved books, articles, papers, documents, and audio.
-The first library should favor a small set of dependable views over elaborate
-organization features.
+**Books** lists the documents already on the reader. The next step is one place
+for saved articles, papers and audio as well, favouring a small set of
+dependable views over elaborate organization features.
 
-### Wireless delivery
+### Wireless delivery from a phone
 
-Let owners send supported content from a computer or phone to a connected
-reader without repeating the initial Cobalt installation process.
+`kobo send` and the app commands already send content from a computer over
+Wi-Fi. Owners should be able to do the same from a phone.
 
 ### Portable reading data
 
 Provide clear backup and export for annotations, reading state, and library
 metadata before adding multi-device synchronization.
 
-### Easier installation
-
-Reduce the tools required for the first USB installation while retaining exact
-device checks, visible changes, and a documented recovery path.
-
 ## Later
 
 - Optional synchronization between devices.
-- Dictionary and vocabulary tools.
+- Vocabulary tools built on the offline dictionaries.
 - Private reading insights and statistics.
 - Additional document formats.
-- Owner-approved service connections.
 - More applications built and maintained by the community.
 - Support for more devices after hardware testing is complete.
+
+## Shipped
+
+- Installing from the browser, with no tools on the computer.
+- Books, with bookmarks, highlights and a kept reading position.
+- Offline dictionary lookup. See [docs/DICTIONARIES.md](docs/DICTIONARIES.md).
+- Sending files to apps over Wi-Fi with `kobo send`.
+- Account connections the owner approves with `kobo connect`, with tokens the
+  app never sees.
+- Folder sync with a computer through Syncthing.
+- Running on Kobos nobody has tested yet, after telling the owner what is
+  untested.
 
 ## Not currently planned
 

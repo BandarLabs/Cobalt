@@ -11,10 +11,11 @@ unattended or routine installed-device mode.
 
 ## Build and install the attended branch
 
-Keep all Cargo output on the external volume:
+Use a target directory of its own, so the trace build does not mix with
+others:
 
 ```sh
-export CARGO_TARGET_DIR="/Volumes/Untitled 1/cobalt-targets/wifi-handoff-phase0"
+export CARGO_TARGET_DIR="$PWD/target/wifi-handoff-phase0"
 cargo run -p kobo-cli --features device-write -- \
   package --out "$CARGO_TARGET_DIR/KoboRoot-wifi-handoff-phase0.tgz"
 ```
@@ -31,7 +32,7 @@ Normal `start.sh` launches do not trace and retain their existing behavior.
 
 ## Run one attended trace
 
-Start from a clean reboot with stock Nickel, `wpa_supplicant`, `dhcpcd`, and
+Start from a clean reboot with the stock reader, `wpa_supplicant`, `dhcpcd`, and
 `dhcpcd-dbus` running. Confirm the reader is online, open an interactive shell
 (the command form of `kobo shell` has a two-minute ceiling), then run the
 attended command at the device prompt:
@@ -51,11 +52,11 @@ checks. Omit it for a wholly passive trace; all ownership and state sampling
 still runs.
 
 Exit Cobalt within two minutes so the 14 minute 30 second hard runtime can
-include the full ten-minute post-Nickel soak. After Nickel reappears, leave the
-device alone for at least ten minutes.
+include the full ten-minute soak after the stock reader returns. Once it
+reappears, leave the device alone for at least ten minutes.
 
 **Do not toggle Wi-Fi during that ten-minute passive soak.** Do not open
-Nickel's Wi-Fi screen, suspend the device deliberately, run another Cobalt
+the stock reader's Wi-Fi screen, suspend the device deliberately, run another Cobalt
 session, or start/stop networking daemons. If connectivity disappears, record
 the wall-clock time and continue waiting. The trace ends by itself.
 
@@ -88,11 +89,11 @@ interrupted line, which the parser ignores.
 
 ## Trace lifetime and contents
 
-The helper starts before Nickel is stopped, writes a durable baseline, samples
-at 200 ms through transition windows, then every five seconds during the soak.
-It exits ten minutes after the later of observing the restarted Nickel PID or
-`kobod` exiting, with an exact 14 minute 30 second Linux boot-time ceiling and
-a 4 MiB file ceiling. Linux boot time includes suspended time, so a trace whose
+The helper starts before the stock reader is stopped, writes a durable
+baseline, samples at 200 ms through transition windows, then every five
+seconds during the soak. It exits ten minutes after the later of observing the
+restarted stock reader's PID or `kobod` exiting, with an exact 14 minute 30
+second Linux boot-time ceiling and a 4 MiB file ceiling. Linux boot time includes suspended time, so a trace whose
 deadline passes during suspend writes its end marker immediately after resume.
 At most four traces are retained.
 

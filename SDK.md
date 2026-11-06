@@ -81,7 +81,7 @@ For something you intend to put on a reader, start in `examples/` instead.
 Copy the smallest application as a base:
 
 ```sh
-cp -r examples/todo examples/myapp
+cp -r examples/hello examples/myapp
 ```
 
 Its `Cargo.toml` is the whole manifest an application needs:
@@ -185,6 +185,12 @@ hand it over:
 context.set_screen(ScreenBuilder::new("results").heading("Results").build());
 ```
 
+The runtime diffs it against the last one and picks an E Ink waveform from the
+pixels that changed. This is not a stylistic preference. A retained tree
+invites incremental mutation, incremental mutation on E Ink means many small
+partial refreshes, and many small partial refreshes on this hardware means
+visible ghosting.
+
 ### Portrait and landscape
 
 Portrait is the compatibility default. An application that benefits
@@ -204,12 +210,6 @@ same mapping. On readers that report a verified physical landscape side, the
 runtime follows that side; readers without orientation events use a fixed
 clockwise convention. Returning to the reader or starting another application
 restores the portrait default automatically.
-
-The runtime diffs it against the last one and picks an E Ink waveform from the
-pixels that changed. This is not a stylistic preference. A retained tree
-invites incremental mutation, incremental mutation on E Ink means many small
-partial refreshes, and many small partial refreshes on this hardware means
-visible ghosting.
 
 ### Actions are names
 
@@ -232,12 +232,18 @@ pub trait KoboApp {
     fn on_start(&mut self, context: &mut Context);
     fn on_action(&mut self, context: &mut Context, action: ActionId);
 
+    fn accent(&self) -> Option<Accent> { None }
+    // Defaults to on_action, for apps that have not opted into word selection.
+    fn on_text_hold(&mut self, context: &mut Context, action: ActionId, hit: TextHit) {}
     fn on_resume(&mut self, context: &mut Context) {}
+    // Defaults to on_background.
     fn on_suspend(&mut self, context: &mut Context) {}
     fn can_suspend(&self) -> bool { true }
     fn on_scheduled_wake(&mut self, context: &mut Context) {}
     fn on_exit(&mut self, context: &mut Context) {}
     fn on_device_result(&mut self, cx: &mut Context, request: DeviceRequest, result: DeviceResult) {}
+    fn on_cover_change(&mut self, context: &mut Context, magnet_present: bool) {}
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {}
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {}
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {}
     // These default to forwarding the result to on_store. Override to route failures by key.
@@ -282,6 +288,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `nav_bar(selected, [(name, label), ...])` | The pinned bottom bar of *destinations*. At least two. |
 | `action_bar([(name, label), ...])` | The same slot, carrying *verbs* instead. At most three. |
 | `action_bar_marked([(name, label, glyph), ...])` | The same, with an optional mark drawn above each word. |
+| `nav_bar_marked(selected, [(name, label, glyph), ...])` | A nav bar whose destinations keep a mark above the word. |
 | `bottom_action(name, label)` | One pinned full-width control in the bottom band. |
 | `bottom_action_marked(name, label, glyph)` | One pinned control with its mark beside the word. |
 | `top_bar_overflow(name, open, [(name, label), ...])` | Three dots that open a menu when `open`, and close on a tap anywhere else. |
@@ -289,6 +296,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `modal(title, build)` | A centred overlay that remains until one of its controls answers it. |
 | `page_turns(previous, next)` | Tap the left of the page to go back, the rest to go on. |
 | `page_position(page, total)` | A footer line saying where in the list this is. |
+| `page_rail(page, total)` | A passive page rail in the right margin, with a zero-based `page`. Needs `page_turns`. |
 | `reading_menu(name)` | Adds a middle page-turn zone for a reader's controls. |
 | `hold(name)` | Sends an action when the content area is held. |
 | `tabs(selected, [(name, label), ...])` | A row of tabs over one region of the screen. |
@@ -307,6 +315,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `with_formulae(formulae)` | Adds prepared inline formula pictures to the rich-text paragraph just added. |
 | `secondary(text)` | Muted metadata such as an author, date, size or status. |
 | `section(title)` / `section_with_value(title, value)` | A labelled group, optionally with a count or total. |
+| `section_link(name, label)` | A small trailing destination, such as "View all", on the most recent section. |
 | `facts([(label, value), ...])` | Labelled values with one shared, measured label column. |
 | `quote(depth, text)` / `byline(depth, text)` | Thread body text and its smaller, muted author line. |
 | `command(text)` | Something the owner types on a computer. Protocol 17 sets it in the fixed-pitch face on a grey panel the width of the column and wraps it only at its spaces; an earlier runtime draws it as a quotation. |
@@ -314,6 +323,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `table(rows, weights)` | Tabular document content with columns measured across all rows. |
 | `picture(picture, max_height_mm)` | A framed picture fitted to a physical height. |
 | `unframed_picture(picture, max_height_mm)` | The same without a border, for formulas and in-flow document art. |
+| `full_bleed_picture(picture, max_height_mm)` | A picture that is the whole page, measured against the panel rather than the margins. |
 
 ### Actions and input
 
@@ -333,13 +343,14 @@ the actual E Ink renderer and is the quickest visual reference.
 | `option_list(prompt, page, previous, next, [(name, label, summary), ...])` | Protocol 16. One answer from a long list, a page of rows at a time with its own pager. `options_per_page(metrics, summaries)` says how many rows a page holds. |
 | `segmented(selected, [(name, label), ...])` | Two to five values of one setting side by side, the current one filled. Each value is its own action. Falls back to wrapping chips when a label will not fit its share. |
 | `chips([(name, label, selected), ...])` | Wrapping filters, tags or recent searches with selected state. |
+| `picker(name, label, open, selected, [(name, label), ...])` | A filter or sort chip showing the current value, with the other values in a menu hung from it while `open`. |
 | `choose(prompt, [(name, label), ...])` | A question with tappable answers. |
 | `chosen(index)` | Marks which answer of the preceding `choose` or `option_list` is already given. |
 | `or_type(name, placeholder)` | A freeform row on the end of a `choose`. |
 | `stepper(label, less, less_glyph, more, more_glyph)` | A setting that moves one notch at a time. |
 | `stepper_ends(less, more)` / `stepper_track(percent)` | Configures enabled ends and the optional position track of the preceding stepper. |
 | `keyboard(&keyboard, submit)` | Keys drawn by the app itself, pinned under the thumbs, for a terminal or keypad that needs every key. |
-| `text_entry(&entry, prompt, submit)` | Asks the runtime's keyboard for an open `TextEntry`; draws the prompt under it. `text_entry_with_hint` adds one line of guidance. |
+| `text_entry(&entry, prompt, submit)` | Asks the runtime's keyboard for an open `TextEntry`; draws the prompt under it. `text_entry_with_hint` adds one line of guidance. `secret_entry` is the same for an entry made with `TextEntry::saved_as`. |
 | `typed(&keyboard, placeholder)` | The text accumulated by a keyboard, or its placeholder. |
 
 ### Collections, grids and media
@@ -353,6 +364,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `checked_rows([(name, title, summary, lead, state), ...])` | Protocol 16. Rows that can be ticked: `Checked`, `Unchecked` or `Mixed`, drawn as a box in place of the lead. |
 | `selection_bar(count, [(name, label), ...])` | Protocol 16. How many rows are ticked and up to three verbs for all of them, one bar high. |
 | `row_button(row, name, label)` / `row_badge(row, count)` | Protocol 16. A small button, or a count of fixed width, against the trailing edge of a row in the list just added. |
+| `row_menu(row, name)` | Gives one row of the list just added the overflow mark of `rows_with_menu`. |
 | `row_overflow(anchor, open, [(name, label, glyph), ...])` | The menu behind that mark. |
 | `paged_list(page, items)` | A pre-paged list of plain strings. |
 | `tiles([(name, label, glyph), ...])` | A grid of square destinations. |
@@ -479,7 +491,7 @@ line above it, which was going to change anyway.
 
 The vocabulary above is small, and a small vocabulary only reads
 as a product if it is spent the same way every time. These are the rules the
-nine shipped applications follow. Some of them the renderer now enforces as
+shipped applications follow. Some of them the renderer now enforces as
 diagnostics; the rest are here because a screen that breaks them looks wrong
 without anybody being able to say why.
 
@@ -646,7 +658,7 @@ the sentence inside is still yours.
 **Never invent a number.** If the source does not supply a total, the transfer
 shows bytes received and no percentage. If it does not supply a date, there is
 no date. A fabricated fact is the one failure a reader cannot detect and the
-one this SDK will not help you with. See *Refusing rather than inventing*.
+one this SDK will not help you with.
 
 **State is a field, not a suffix.** `TileState::Held`, not `format!("{title}
 (kept)")`. See the next section, which is the same argument at the renderer's
@@ -833,7 +845,7 @@ rather than a few pixels:
 ### A second thing to do to a row
 
 A row has one obvious verb: open it. Everything else a reader might want to do
-to the thing it names -- stop following it, forget it, rename it -- has nowhere
+to the thing it names (stop following it, forget it, rename it) has nowhere
 to live on a panel with no long press worth relying on and no room for a second
 button beside every entry.
 
@@ -850,7 +862,7 @@ something the builder remembers. Two things to get right:
 - Pass `open` as false when the row is not on the page being drawn. A popover
   anchored to a control that is not on the panel has nothing to point at.
 - A tap beside a popover arrives as `ActionId::BACK`. On a screen that would
-  otherwise let the runtime take Back, claim it with `with_own_back(true)`
+  otherwise let the runtime take Back, claim it with `owns_back(true)`
   while the menu is open, or putting the menu away closes the application.
 
 Feeds is the worked example: the mark on a feed offers to stop following it,
@@ -1035,8 +1047,10 @@ would not even queue it, and the result arrives at `on_task`:
 fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
     match outcome {
         TaskOutcome::Completed(bytes) => { /* … */ }
-        TaskOutcome::Failed(error)    => { /* Denied, Unreachable, TooLarge,
-                                             TimedOut, NotFound */ }
+        TaskOutcome::Failed(error)    => { /* Denied, NoCredential, Offline,
+                                             Unreachable, TooLarge, TimedOut,
+                                             NotFound, Unauthorized,
+                                             RateLimited(seconds) */ }
         TaskOutcome::Cancelled        => { /* you asked */ }
     }
     self.show(context);
@@ -1055,9 +1069,8 @@ The task kinds:
 - **`ReadFile { path }`**. Confined to the application's own directory.
 - **`Sleep { seconds }`**. Waits without holding a wake lock.
 
-`Task::Update` uses beta protocol 14 task tag 4; existing task tags are
-unchanged. Rebuild the app, runtime and simulator together. Historical protocol
-versions reject update tasks. The reviewed Miniflux token policy permits bounded
+`Task::Update` arrived in protocol 14 as task tag 4, and runtimes older than
+that reject it. The reviewed Miniflux token policy permits bounded
 entry PUTs only within the saved server scope. Other provider grants remain
 method-specific; adding a new provider requires reviewing its destinations and
 body fields before an account can be used for updates.
@@ -1110,7 +1123,7 @@ self.clock.start(context);
 
 // First in on_task, and returned from immediately, or a nap is mistaken
 // for the provider's reply.
-if self.clock.on_task(context, task) {
+if self.clock.on_task(context, task, &outcome) {
     context.set_screen(self.screen());   // "2 min 45 s so far"
     return;
 }
@@ -1119,9 +1132,9 @@ if self.clock.on_task(context, task) {
 `Heartbeat::default()` is five seconds, not zero. Stop it on every path that
 ends the work, including cancel and failure, or it naps forever.
 
-A `Post` body may be up to `MAX_POST_BODY_LEN`, which is far larger than the
-16 KiB ceiling on a label, because a request that carries research or a
-document is not a string on a screen. `Context::spawn` returns `None` rather
+A `Post` body may be up to 4 MiB (`MAX_POST_BODY_LEN`, the same as
+`MAX_TASK_BYTES`), far larger than the 16 KiB ceiling on a label, because a
+request that carries research or a document is not a string on a screen. `Context::spawn` returns `None` rather
 than failing the process if a task is still too large to send, so an
 over-large request is something the application shows rather than something
 the runtime dies of.
@@ -1145,11 +1158,12 @@ A value already stored by the runtime is never in the application's memory,
 logs, or crash dump, and it cannot be sent anywhere the application did not
 name: the request is not replayed across a redirect.
 
-`Failure::of(error)` turns a task failure into a state, a sentence and an
-clear answer about whether a Retry control would help. For a missing
-credential, `Failure::naming(secret)` says which one: an application running
-against three providers that only says "install a key" leaves whoever is
-holding the reader to guess which of the three.
+`Failure::of(error)` turns a task failure into a state, a sentence and a
+clear answer about whether a Retry control would help. `Failure::naming(secret)`
+returns the same advice without the credential's name, so a screen never shows
+an internal identifier. An application running against several providers
+should say in its own words which account is missing, or whoever is holding
+the reader has to guess.
 
 Getting a key onto the reader is a command, not an errand:
 
@@ -1162,7 +1176,8 @@ kobo secret remove openai --device 192.168.1.5
 ```
 
 With no `--from`, the key is looked for in `$KOBO_SECRETS_DIR/<name>`,
-`~/.config/cobalt/secrets/<name>` and `~/.<name>`, in that order. The value is
+`~/.config/cobalt/secrets/<name>`, `~/.config/kobo/secrets/<name>` and
+`~/.<name>`, in that order. The value is
 read on this machine and written straight to the reader: it is never passed as
 an argument, so it does not reach a process table or a shell history, and it is
 never printed. A one-line `NAME=value` file is accepted as well as a raw key;
@@ -1194,8 +1209,10 @@ context.set_screen(setup.screen("My app"));
 Pass actions to `setup.on_action(...)` and device replies to
 `setup.on_device_result(...)`. Entry is masked on screen, the runtime accepts
 only credential names authorized for the calling app, and the app cannot read
-the stored value back. The setup prompt also shows the CLI alternative and
-instructs the owner to restart the app after using it.
+the stored value back. The setup prompt also shows the `kobo secret set`
+alternative with a Check again button, and `setup.recheck(context)`, called
+when the app returns to the front or the reader wakes, connects an account
+that arrived from the computer without a restart.
 
 For an owner-hosted service, bind the account to its HTTPS server with
 `CredentialSetup::bind_server` or `context.secrets().set_server(name, server,
@@ -1238,8 +1255,8 @@ Every request is HTTPS, verified against the public roots every browser
 carries. Those roots cannot vouch for a daemon on your own machine, on your
 own network, holding a certificate no public authority would sign for a
 private address. For that one case the runtime also reads owner-installed
-roots -- `/mnt/onboard/.adds/cobalt/trust` on the device,
-`~/.config/kobo/trust` for the host runtimes -- and verifies against them
+roots (`/mnt/onboard/.adds/cobalt/trust` on the device,
+`~/.config/kobo/trust` for the host runtimes) and verifies against them
 exactly as it verifies any public host, rather than offering a switch that
 turns verification off.
 
@@ -1249,7 +1266,8 @@ kobo trust set sidekick --device 192.168.1.5
 
 The value travels over the same attended channel as a secret, but unlike a
 secret it is checked for being a PEM certificate before it goes, and listing
-installed roots is harmless. Roots are loaded once at session start. The
+installed roots is harmless. With no `--from`, the certificate is read from
+`~/.config/kobo/trust/<name>`. Roots are loaded once at session start. The
 command is rarely needed by hand: `kobo setup` carries everything in
 `~/.config/kobo/trust` onto the reader it is setting up.
 
@@ -1485,12 +1503,14 @@ context.device().set_audio_speed(125);
 ```
 
 Every one is a request, answered at `on_device_result` with a `DeviceResult`
-that may be `Denied`. There are three distinct refusals and they mean different
-things:
+that may be `Denied`. The refusals mean different things:
 
 - **`NotDeclared`**. The application did not ask for the capability.
 - **`WithheldForBattery`**. Policy will not spend the charge right now.
 - **`Unsupported`**. This build cannot do it.
+- **`PolicyRejected`**. The request was well formed but outside what policy
+  allows at all.
+- **`Busy`**. Another application holds this exclusive resource.
 
 A build performs only what it has a proven backend for. The device backend
 uses the firmware's running `wpa_supplicant` and Bluetooth service; it does not
@@ -1499,10 +1519,10 @@ typed `DeviceResult::Wifi` and `DeviceResult::Bluetooth` values, while backend
 failures are `DeviceResult::Failed(DeviceError)`. On a MediaTek Clara, using
 an active Bluetooth stack makes the runtime reboot cleanly when the Cobalt
 session ends because handing the initialised vendor driver directly back to
-Nickel is not safe. The runtime also never starts that stack itself before
-Nickel has brought the radio up since boot (the driver is loaded on the first
-use of either radio and powering the chip without it panics the kernel), or
-before the stack's state directory exists: `SetBluetooth` then fails with
+the stock reader is not safe. The runtime also never starts that stack itself
+before the stock reader has brought the radio up since boot (the driver is
+loaded on the first use of either radio and powering the chip without it
+panics the kernel), or before the stack's state directory exists: `SetBluetooth` then fails with
 `Unreachable`, and the SDK player tells the listener to turn Bluetooth on once
 from the Kobo home screen. **An invented reading is worse than a refusal**,
 because an application cannot tell one from the other and will act on it.
@@ -1527,6 +1547,8 @@ clamps even that:
 | `sleep-screen` | Draw the sleep screen |
 | `notifications` | Post notifications |
 | `shared-files` | Use a user-visible folder |
+| `library` | List and read the books already on the device, read-only |
+| `cover-sensor` | Watch the hall sensor a sleep cover closes against |
 | `shell` | Run a terminal, hosted by the runtime |
 
 Unknown names are rejected rather than ignored, dependencies are enforced
@@ -1554,7 +1576,8 @@ runtime is the only thing that can start, bound, or stop a program.
 
 There is a hall sensor behind one edge of the bezel. It is what a sleep cover
 closes against, but it cannot tell a cover from any other magnet, so the SDK
-reports what was measured and leaves the meaning to you.
+reports what was measured and leaves the meaning to you. Declare
+`cover-sensor` to hear it.
 
 ```rust
 fn on_start(&mut self, context: &mut Context) {
@@ -1711,8 +1734,9 @@ and download to the development loop; a Rust-to-WASM renderer can be added
 later for a fully static/offline embed without changing the simulation model.
 
 Failure handling is still code that has to run. Select a deterministic scenario
-in the inspector to exercise offline, low-battery, permission-denied,
-missing-secret, network-timeout, storage-full and image-cache-pressure paths.
+in the inspector, or with a `scenario` step in a drive script, to exercise the
+`offline`, `host-down`, `low-battery`, `permission-denied`, `missing-secret`,
+`network-timeout`, `storage-full` and `cache-pressure` paths.
 The foreground and background buttons deliver real SDK lifecycle messages.
 `KOBO_SIM_OFFLINE=1` remains available for headless or scripted development.
 
@@ -1750,7 +1774,7 @@ kobo devices --subnet 192.168.1
 ```
 
 ```
-192.168.1.15  N365 · firmware 4.45.23697 · Cobalt 0.1.0
+192.168.1.15  N365 · firmware 4.45.23697 · Cobalt 0.3.33
 ```
 
 A device also stops answering a few minutes after anybody stops touching it.
@@ -1830,11 +1854,15 @@ A script is one step per line; `#` is a comment.
 | step | what it does |
 | --- | --- |
 | `tap LABEL` | finds the node whose text carries `LABEL` and taps its centre |
+| `tap-id ACTION` | taps the control raising `ACTION`, by stable action name or numeric ID |
 | `tap-at X,Y` | taps a point, for a control with no words |
 | `type TEXT` | taps the on-screen key for each character in turn |
 | `expect TEXT` | fails unless something on the screen says it |
 | `expect-missing TEXT` | fails if something does |
 | `wait-for TEXT` | the same as `expect`, but allows for work in flight |
+| `wait-for-id ACTION` | waits until a control raising `ACTION` is on the screen |
+| `wait-idle [MS]` | waits, up to 10 seconds by default, for every task to finish |
+| `expect-state ENDPOINT#POINTER VALUE` | checks a value in the simulator's typed JSON state |
 | `clean` | fails if the renderer raised any error about this screen |
 | `shot NAME` | writes `NAME.png` into the shots folder |
 | `dump` | prints every node and its text, for writing the next step |
@@ -1859,7 +1887,7 @@ on: the list that was empty for half a second before the fetch came back, the
 pane drawn at the wrong size until the second layout pass. Frames identical to
 the one before them are dropped, so a script that waits two seconds between
 taps is one frame there and not eight. The directory ends up holding numbered
-greyscale PNGs, a `timings.txt`, a `recording.mp4` and a `recording.gif` --
+greyscale PNGs, a `timings.txt`, a `recording.mp4` and a `recording.gif`:
 the same shape `kobo record --device` produces from a reader, so a demo made
 here and a demo made on hardware are the same kind of file.
 
@@ -1878,9 +1906,9 @@ one simulator at a time, with no reader anywhere near it.
 **Pass `--ideal` when you are reading the screenshots rather than the
 refreshes.** A screenshot is taken from the simulated panel, and the simulated
 panel models residue from previous refreshes. Its timing and ghosting are
-approximations that still need comparison with physical reader captures. That is what you want when the question is whether a screen refreshes
-cleanly, and exactly what you do not want when the question is whether it
-*reads* well: two screens overlaid are hard for a person to judge and worse
+approximations that still need comparison with physical reader captures. That
+is what you want when the question is whether a screen refreshes cleanly, and
+exactly what you do not want when the question is whether it *reads* well: two screens overlaid are hard for a person to judge and worse
 for a model. `--ideal` takes the frame without the residue. `kobo shot`
 accepts it too.
 
@@ -1903,8 +1931,8 @@ For the real panel:
 # A PNG of whatever is on the e-ink display right now.
 cargo run -p kobo-cli -- shot --device <address> --out screen.png
 
-# A real tap on the real glass.
-cargo run -p kobo-cli --features device-write -- tap --device <address> 536,900
+# A real tap on the real glass, then another 800 ms later.
+cargo run -p kobo-cli --features device-write -- tap --device <address> 536,900 800:536,1200
 ```
 
 `shot --device` is read-only: it opens the framebuffer for reading, copies it,
@@ -1919,10 +1947,11 @@ a transfer cut short is refused rather than saved as half a picture.
 digitiser's coordinate space, the profile's `display_to_touch` transform, the
 multitouch decoder and the hit-testing all run exactly as they do under a
 finger. It is behind `device-write` and behind an unlock phrase, because a
-program that can tap anything can tap the stock reader's factory reset. It taps
-once, at one point, which must be on the screen, and it always lifts: a tap
-that failed halfway would leave the digitiser reporting a finger that is not
-there.
+program that can tap anything can tap the stock reader's factory reset. Each
+`MS:X,Y` step waits that many milliseconds, timed on the device, before its
+tap, so one upload drives a whole sequence. Every point is checked to be on
+the screen before any is tapped, and each tap always lifts: a tap that failed
+halfway would leave the digitiser reporting a finger that is not there.
 
 The division is deliberate. **`drive` is the simulator; `shot`, `tap` and
 `record` are the device.** Resolving a label to a coordinate needs the layout,
@@ -1987,6 +2016,9 @@ single rule: **nothing that cannot be undone by a reboot.**
 | `kobo-doc` | EPUB, HTML, Markdown and plain-text bytes into a structured document. |
 | `kobo-read` | Pagination, reading positions, contents, search and annotations. |
 | `kobo-bookview` | End-to-end SDK reading surface, including deferred pictures. |
+| `kobo-state` | Drafts, versioned records and an outbox: durable app state. |
+| `kobo-comic` | Bounded CBZ inspection and page decoding. |
+| `kobo-audio` | Audiobook file reading and decoding, used by the runtime. |
 | `kobo-text` | Typeface loading and measurement. |
 | `kobo-shell` | One terminal per application, hosted by the runtime. |
 | `kobo-term` | The vt100 screen a program's output is parsed into. |
@@ -2024,7 +2056,7 @@ At the smallest legal square, up to three-character board marks can step down th
 
 Board viewports shade and outline the selected square’s matching row and column clue targets. Panning retains absolute row/column identities; the complete clue remains available through its existing inspection action. Nonograms provides an app-level example with attached clues and persistent undo.
 
-### Numbered crossword grids (beta)
+### Numbered crossword grids
 
 `ScreenBuilder::crossword_board(columns, cells)` takes `(action_name, letter,
 corner_number, active_word)` tuples. It draws joined black rules, centered
@@ -2034,10 +2066,10 @@ one start square. Keep the same absolute action IDs as letters change; the app
 owns clue navigation and answer checking. Crossword's screenshot and complete
 example are in `apps/crossword`.
 
-The protocol-14 beta uses a distinct numbered-grid node tag (33), so ordinary
-grid frames remain byte-compatible with installed apps. Numbered boards refuse
-older protocol versions; deploy the matching beta runtime with the app. No
-existing grid label is interpreted as an embedded numbering format.
+Numbered grids travel on their own node tag (33), added in protocol 14, so
+ordinary grid frames stay byte-compatible with installed apps. A runtime older
+than protocol 14 refuses a numbered board. No existing grid label is
+interpreted as an embedded numbering format.
 
 Short keyboard labels fit their physical key rectangles, including compact
 landscape rows at large text settings. Top-bar text actions use caption size

@@ -75,17 +75,17 @@ building from source.
 
 - **Cobalt** updates from **Settings** on the reader. Settings also switches
   between the Stable and Beta channels, keeping your apps and data.
-- **Apps** update from **Store**.
+- **Apps** update from **App Store**.
 - **The `kobo` command** on your computer updates with `kobo update`, or
   `kobo update --channel beta`. This never changes the reader.
 
 ## Apps
 
-Install and remove apps from **Store** on the reader, or from an app's page on
-the website: open **Install links** in Store to link a phone or computer, then
-use **Install** on any [app page](https://bandarlabs.github.io/Cobalt/#apps).
-The Launcher, Store, Settings and Terminal come with Cobalt and cannot be
-removed.
+Install and remove apps from **App Store** on the reader, or from an app's
+page on the website: tap **Link a browser** in App Store to link a phone or
+computer, then use **Install** on any
+[app page](https://bandarlabs.github.io/Cobalt/#apps). The launcher, App
+Store, Settings and Terminal come with Cobalt and cannot be removed.
 
 Screenshots are from a Kobo Clara BW or its simulator.
 
@@ -194,9 +194,8 @@ Want an app that is not here? Add it to the
 
 ## How it compares
 
-[NickelMenu](https://pgaskin.net/NickelMenu/) adds actions to the Kobo menu.
-[KOReader](https://koreader.rocks/) and [Plato](https://github.com/baskerville/plato)
-are reading apps. Cobalt is a platform for building and installing many kinds
+Menu add-ons put actions in the Kobo's menu, and alternative readers replace
+the book reader. Cobalt is a platform for building and installing many kinds
 of apps. It handles the screen, touch input, e-ink refreshes, app lifecycle,
 device access, isolation and signed installs, so app authors do not have to.
 The [FAQ](https://bandarlabs.github.io/Cobalt/faq.html) has more.
@@ -241,8 +240,8 @@ Contributions are welcome: apps, fixes, documentation and device testing. See
 
 To add an app:
 
-1. Add it as a workspace package under `apps/<app-id>/`, with its entry in
-   `apps/catalog.json`.
+1. Add it as a workspace package under `apps/<app-id>/`, with its Store
+   metadata in `apps/<app-id>/cobalt-app.json`.
 2. Add unit tests and layout checks for each supported screen.
 3. Run it in the simulators, then on a supported Kobo, and attach a photo,
    GIF or video to the pull request.

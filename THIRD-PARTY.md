@@ -118,11 +118,11 @@ the artifacts that contain them.
 | Font | Licence | File |
 | --- | --- | --- |
 | Atkinson Hyperlegible (Regular and Bold, with a plain zero) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt`; the change in `licenses/SOURCE-AtkinsonHyperlegible.md` |
-| DejaVu Sans | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
+| DejaVu Sans Mono | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
 | Literata (Regular, SemiBold and Italic, Latin subset) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-Literata.txt`; subset recipe in `licenses/SOURCE-Literata.md` |
 | Cobalt Japanese (derived Noto Sans CJK JP subset) | SIL Open Font License 1.1 | `licenses/LICENSE-Cobalt-Japanese-font.txt`; source and deterministic subset recipe in `licenses/SOURCE-Cobalt-Japanese-font.md` |
 
-Both permit embedding and redistribution. The OFL forbids selling the font on
+Both licences permit embedding and redistribution. The OFL forbids selling the font on
 its own and requires the reserved name to be kept, which embedding does not
 touch.
 
@@ -181,13 +181,15 @@ The example applications talk to services this project does not own.
 | --- | --- | --- |
 | `hn` | Hacker News Firebase API | Public, unauthenticated, no key |
 | `gutenbird` | Gutendex and Project Gutenberg | Public; Gutenberg texts are public domain in the US |
-| `lichess` | Lichess Board and puzzle APIs | Official HTTPS origin; Board API access uses a runtime-held personal token |
+| `lichess` | Lichess Board, puzzle and account APIs | Official HTTPS origin; public puzzle access, and an optional runtime-held personal token for the Board API and account features |
+| `arxiv` | arXiv API and HTML papers | Public, unauthenticated |
+| `zotero-reader` | Zotero web API | Owner's account, using a runtime-held API key |
+| `readeck` | Readeck API | Owner-supplied HTTPS service using a runtime-held token |
 | `rss` | Feedsearch | Public; the search screen carries the attribution its terms ask for |
 | `calibre-web` | calibre-web or calibre content-server OPDS | Owner-supplied HTTPS service; optional HTTP Basic credential |
 | `fanshelf` | Archive of Our Own public work pages | Public, unauthenticated lookups with an identifying user agent |
 | `homepanel` | Home Assistant API | Owner-supplied HTTPS service using a runtime-held long-lived token |
 | `kitchencard` | Mealie API | Owner-supplied service; Mealie is AGPL-3.0 |
-| `lichess` | Lichess API | Public puzzle access; optional personal access token for account features |
 | `needles` | Ravelry API | Account access through a runtime-held HTTP Basic credential |
 | `panels` | Komga OPDS | Optional owner-supplied service; Komga is MIT licensed |
 | `post` | Hermes gateway | Owner-supplied HTTPS gateway; Hermes Agent is MIT licensed |
