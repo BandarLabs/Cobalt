@@ -574,20 +574,24 @@ impl Brief {
             }
         }
 
-        if self.fetching == Fetching::Nothing && !self.refresh_in_bar() {
+        if self.fetching == Fetching::Nothing {
             // Pinned to the foot of the panel rather than set after the last
             // story. Placed inline it was drawn wherever the list happened to
             // end, and with a full brief that was past the bottom edge: the
-            // one control on the screen, off the screen.
-            screen = screen.bottom_action_marked(
-                REFRESH,
-                if self.failure.is_some() {
-                    "Try again"
-                } else {
-                    "Refresh"
-                },
-                Glyph::Refresh,
-            );
+            // one control on the screen, off the screen. Over a list of
+            // stories Refresh is in the top bar instead, and the foot is left
+            // to the headlines.
+            if !self.refresh_in_bar() {
+                screen = screen.bottom_action_marked(
+                    REFRESH,
+                    if self.failure.is_some() {
+                        "Try again"
+                    } else {
+                        "Refresh"
+                    },
+                    Glyph::Refresh,
+                );
+            }
         } else {
             // A bar against a known total, not a spinner: the count of stories
             // is fixed, so an indeterminate animation would be claiming the end
@@ -1639,6 +1643,20 @@ mod tests {
         }];
         let listed = kinds(&brief);
         assert!(in_bar(&listed) && !at_foot(&listed));
+        // Nothing is being fetched, so there is no progress to report either.
+        assert!(
+            !listed.iter().any(|kind| matches!(
+                kind,
+                kobo_ui::LayoutKind::ActivityLabel | kobo_ui::LayoutKind::ActivityProgress
+            )),
+            "an idle brief drew a progress bar over its stories"
+        );
+        assert!(
+            !listed
+                .iter()
+                .any(|kind| matches!(kind, kobo_ui::LayoutKind::Button(..))),
+            "an idle brief drew a button at its foot"
+        );
     }
 
     /// Choosing another list does not leave the last one's stories under the
