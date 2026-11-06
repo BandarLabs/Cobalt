@@ -5,7 +5,7 @@ offline.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/home.png" alt="Time controls and puzzles"><br>Time controls and puzzles</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/home.png" alt="Play the computer first, then the rest"><br>Play the computer first, then the rest</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/game.png" alt="A live game"><br>A live game</td>
 </tr>
 <tr>

@@ -128,7 +128,7 @@ Screenshots are from a Kobo Clara BW or its simulator.
 </tr>
 <tr>
 <td width="33%" valign="top"><a href="apps/calibre-web/README.md"><img width="230" src="docs/media/site/apps/calibre-web.png" alt="The first page of Pride and Prejudice from a calibre-web library on a Kobo, with text-size and front-light controls and the page count."></a><br><b><a href="apps/calibre-web/README.md">Library</a></b><br>Browse and read books from your calibre-web library. Needs an account.</td>
-<td width="33%" valign="top"><a href="apps/lichess/README.md"><img width="230" src="docs/media/site/apps/lichess.png" alt="Lichess on Kobo with Your games, Puzzles, Computer and How to play cards above the rapid and classical time controls."></a><br><b><a href="apps/lichess/README.md">Lichess</a></b><br>Play Lichess games, challenge players, solve puzzles, or play offline.</td>
+<td width="33%" valign="top"><a href="apps/lichess/README.md"><img width="230" src="docs/media/site/apps/lichess.png" alt="Lichess on Kobo with Play the computer first, then Play online, Your games, Puzzles and How to play."></a><br><b><a href="apps/lichess/README.md">Lichess</a></b><br>Play Lichess games, challenge players, solve puzzles, or play offline.</td>
 <td width="33%" valign="top"><a href="apps/logicpack/README.md"><img width="230" src="docs/media/site/apps/logicpack.png" alt="A solved Hashi puzzle in Logic Pack, with sixteen islands joined by single and double bridges."></a><br><b><a href="apps/logicpack/README.md">Logic Pack</a></b><br>Play four familiar logic games offline.</td>
 </tr>
 <tr>

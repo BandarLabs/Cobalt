@@ -132,7 +132,7 @@ for scale in ["default", "170"]:
                             "http://" + address + "/layout", timeout=2
                         ) as response:
                             layout = json.load(response)
-                        if "Computer" in json.dumps(layout):
+                        if "Play the computer" in json.dumps(layout):
                             break
                     except OSError:
                         pass

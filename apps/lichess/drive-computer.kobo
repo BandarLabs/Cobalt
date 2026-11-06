@@ -1,5 +1,5 @@
 # sweep: --bare
-expect Computer
+expect Play the computer
 tap-id play-computer
 wait-for Start game
 expect No clock
@@ -26,8 +26,7 @@ shot computer-bishop
 tap-id square-f1
 expect-missing f1 →
 tap Back
-expect Computer
-expect Resume game
+expect Resume your game
 tap-id play-computer
 expect Kobo
 clean
@@ -47,7 +46,7 @@ clean
 shot computer-result
 tap-id dismiss-result
 tap Back
-expect Computer
+expect Play the computer
 tap-id play-computer
 wait-for Start game
 tap-id computer-side-black
