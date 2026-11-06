@@ -206,9 +206,9 @@ fn an_initial_is_set_down_into_its_lines_and_they_are_set_beside_it() {
     };
     assert_eq!(cap, 80);
     assert_eq!(
-        baseline - initial.rect.y,
+        baseline,
         2 * 30 + 24,
-        "on the third baseline"
+        "on the third baseline, from its own top"
     );
     assert_eq!(
         line_starts(&nodes),
@@ -253,4 +253,103 @@ fn a_poem_is_centred_on_its_longest_line_and_set_from_the_margin_when_one_would_
     });
     drop_book_typesetter(face);
     assert_eq!(indent, (550, 0));
+}
+
+#[test]
+fn italic_around_a_formula_is_measured_in_the_italic_and_the_formula_as_its_picture() {
+    let face = leaning();
+    let text = "aa xx bb";
+    let width = with_reading_font(Some(face), || {
+        with_typography(Typography::Fine, || {
+            measure_rich_range(
+                text,
+                0,
+                text.len(),
+                FontSize::Body,
+                Face::Reading,
+                &[RichTextSpan {
+                    start: 0,
+                    end: text.len(),
+                    presentation: TextPresentation {
+                        emphasis: true,
+                        ..TextPresentation::default()
+                    },
+                }],
+                &[InlineFormula {
+                    start: 3,
+                    end: 5,
+                    handle: PictureHandle(1),
+                    source: (40, 20),
+                }],
+                30,
+            )
+        })
+    });
+    drop_book_typesetter(face);
+    // "aa " and " bb" are three italic letters each, six pixels a letter,
+    // and the formula is its forty-pixel picture.
+    assert_eq!(width, 6 * 3 + 40 + 6 * 3);
+}
+
+#[test]
+fn an_initial_keeps_its_accent_with_its_letter() {
+    let face = leaning();
+    let initial = with_reading_font(Some(face), || {
+        with_typography(Typography::Fine, || {
+            initial_letter(
+                "A\u{301}nd so",
+                ParagraphPresentation {
+                    initial_lines: 2,
+                    ..ParagraphPresentation::PLAIN
+                },
+                Face::Reading,
+                30,
+                &[],
+            )
+        })
+    });
+    drop_book_typesetter(face);
+    assert_eq!(initial.map(|initial| initial.end), Some("A\u{301}".len()));
+}
+
+#[test]
+fn holding_the_word_an_initial_begins_selects_the_whole_word() {
+    let face = leaning();
+    let metrics = DisplayMetrics {
+        width: 300 + 2 * CLARA_BW_METRICS.screen_margin(),
+        ..CLARA_BW_METRICS
+    };
+    let node = Node::RichText {
+        id: NodeId(1),
+        text: "Hello world".to_owned(),
+        spans: Vec::new(),
+        links: Vec::new(),
+        presentation: ParagraphPresentation {
+            initial_lines: 2,
+            ..ParagraphPresentation::PLAIN
+        },
+        selection: Some(TextSelection {
+            context: 7,
+            offset: 0,
+        }),
+        formulae: Vec::new(),
+    };
+    let layout = Screen::new(1, vec![node])
+        .with_reading(true)
+        .with_reading_font(Some(face))
+        .with_typography(Typography::Fine)
+        .layout_with(&metrics, &Chrome::with_back(false));
+    drop_book_typesetter(face);
+    let initial = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::Initial { .. }))
+        .expect("an initial");
+    let hello = layout
+        .text_hits
+        .iter()
+        .find(|(_, hit)| hit.start == 0)
+        .expect("a hit for the opening word");
+    assert_eq!(hello.1.end, 5, "the whole of Hello");
+    assert_eq!(hello.0.x, initial.rect.x, "from the initial's own edge");
 }

@@ -5251,7 +5251,9 @@ pub enum LayoutKind {
     Text,
     RichText(TextPresentation),
     /// A paragraph's first letter set down into its opening lines, its
-    /// capitals `cap` pixels tall and standing on the baseline at `baseline`.
+    /// capitals `cap` pixels tall and standing on a baseline `baseline`
+    /// pixels below the top of the node. Relative, so a paragraph moved after
+    /// layout, in a dialog or a band, takes its initial with it.
     Initial {
         cap: i32,
         baseline: i32,
@@ -6585,17 +6587,11 @@ fn measure_rich_range(
                 .nth(1)
                 .map_or(to, |(offset, _)| cursor + offset);
         }
-        let carries_formula = formulae
-            .iter()
-            .take(MAX_INLINE_FORMULAE)
-            .any(|formula| formula.start < end && formula.end > cursor);
-        total = total.saturating_add(
-            if styled.emphasis && !carries_formula && text.is_char_boundary(cursor) {
-                measure_run_in(&text[cursor..end], size, face, styled)
-            } else {
-                measure_range_in(text, cursor, end, size, face, formulae, line_height)
-            },
-        );
+        total = total.saturating_add(if styled.emphasis {
+            measure_italic_range(text, cursor, end, size, face, formulae, line_height)
+        } else {
+            measure_range_in(text, cursor, end, size, face, formulae, line_height)
+        });
         cursor = end;
     }
     total
@@ -6637,21 +6633,20 @@ fn initial_letter(
         return None;
     }
     let lines = usize::from(presentation.initial_lines.min(4));
-    let mut characters = text.char_indices();
-    let (_, first) = characters.next()?;
-    let end = if opens_a_word(first) {
-        let (at, letter) = characters.next()?;
-        at + letter.len_utf8()
+    // Whole graphemes, so a letter written with a combining accent keeps its
+    // accent at the letter's size instead of leaving it beside the initial.
+    let mut graphemes = text.grapheme_indices(true);
+    let (_, first) = graphemes.next()?;
+    let opening = first.chars().next().is_some_and(opens_a_word);
+    let (at, letter) = if opening {
+        graphemes.next()?
     } else {
-        first.len_utf8()
+        (0, first)
     };
-    if !text[..end]
-        .chars()
-        .last()
-        .is_some_and(char::is_alphanumeric)
-    {
+    if !letter.chars().next().is_some_and(char::is_alphanumeric) {
         return None;
     }
+    let end = at + letter.len();
     let letter = &text[..end];
     let (body_cap, ascent) = with_typesetter(prose, |typesetter| {
         Some((
@@ -6786,6 +6781,55 @@ fn block_indent(presentation: ParagraphPresentation, prose: Face) -> i32 {
         .0
         .saturating_mul(i32::from(presentation.start_indent_em.min(2000)))
         / 100
+}
+
+/// The width of `text[from..to]` set in the italic, with any formula in it
+/// as its picture: the words between formulas in the italic, as layout draws
+/// them, and each formula at the width of what stands for it.
+fn measure_italic_range(
+    text: &str,
+    from: usize,
+    to: usize,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> i32 {
+    let italic = TextPresentation {
+        emphasis: true,
+        ..TextPresentation::default()
+    };
+    let mut total = 0i32;
+    let mut cursor = from;
+    while cursor < to {
+        if let Some(formula) = formula_at(cursor, formulae) {
+            let end = formula.end.min(to).max(cursor + 1);
+            total = total.saturating_add(measure_range_in(
+                text,
+                cursor,
+                end,
+                size,
+                face,
+                formulae,
+                line_height,
+            ));
+            cursor = end;
+            continue;
+        }
+        let next = formulae
+            .iter()
+            .take(MAX_INLINE_FORMULAE)
+            .map(|formula| formula.start)
+            .filter(|start| *start > cursor)
+            .min()
+            .unwrap_or(to)
+            .min(to);
+        if text.is_char_boundary(cursor) && text.is_char_boundary(next) {
+            total = total.saturating_add(measure_run_in(&text[cursor..next], size, face, italic));
+        }
+        cursor = next.max(cursor + 1);
+    }
+    total
 }
 
 fn rich_text_spacing(presentation: ParagraphPresentation, prose: Face) -> (i32, i32, i32, i32) {
@@ -7029,24 +7073,56 @@ fn layout_node(
                 });
                 shown.len() >= 8 && linked * 3 >= letters * 2
             };
-            if let Some(initial) = initial.filter(|_| visible_lines > 0) {
-                let lines = i32::try_from(initial.lines).unwrap_or(1);
+            let initial_rect = initial.filter(|_| visible_lines > 0).map(|initial| Rect {
+                x: x.saturating_add(block),
+                y: line_y,
+                width: initial.width,
+                height: line_height.saturating_mul(i32::try_from(initial.lines).unwrap_or(1)),
+            });
+            if let (Some(initial), Some(rect)) = (initial, initial_rect) {
                 layout.nodes.push(LayoutNode {
                     id: *id,
-                    rect: Rect {
-                        x: x.saturating_add(block),
-                        y: line_y,
-                        width: initial.width,
-                        height: line_height.saturating_mul(lines),
-                    },
+                    rect,
                     kind: LayoutKind::Initial {
                         cap: initial.cap,
-                        baseline: line_y
-                            .saturating_add(line_height.saturating_mul(lines - 1))
+                        baseline: line_height
+                            .saturating_mul(i32::try_from(initial.lines).unwrap_or(1) - 1)
                             .saturating_add(initial.ascent),
                     },
                     text_lines: vec![text[..initial.end].to_owned()],
                 });
+                // The letter is still the start of the text: a link that
+                // begins with it can be followed from it, and a word that is
+                // the letter alone can be held to select it. A word the
+                // letter only begins is selected from the first line below.
+                for link in links.iter().take(MAX_TEXT_LINKS) {
+                    if link.start < initial.end && layout.nodes.len() < rich_text_limit {
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect,
+                            kind: LayoutKind::InlineLink(link.action),
+                            text_lines: Vec::new(),
+                        });
+                    }
+                }
+                let standalone = !text[initial.end..]
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_alphanumeric);
+                if let (Some(selection), true) = (selection, standalone) {
+                    if layout.text_hits.len() < MAX_TEXT_HITS {
+                        layout.text_hits.push((
+                            rect,
+                            TextHit {
+                                context: selection.context,
+                                start: selection.offset,
+                                end: selection
+                                    .offset
+                                    .saturating_add(u32::try_from(initial.end).unwrap_or(0)),
+                            },
+                        ));
+                    }
+                }
             }
             for (line_index, &(from, to)) in ranges.iter().take(visible_lines).enumerate() {
                 if layout.nodes.len() >= rich_text_limit {
@@ -7228,12 +7304,22 @@ fn layout_node(
                     }
                 }
                 if let Some(selection) = selection {
+                    // The word the initial begins, on the first line beside
+                    // it: held, it selects the whole word, initial included.
+                    let continued = initial_rect.filter(|_| {
+                        line_index == 0 && initial.is_some_and(|initial| initial.end == from)
+                    });
                     for (relative, word) in line.unicode_word_indices() {
                         if layout.text_hits.len() >= MAX_TEXT_HITS {
                             break;
                         }
-                        let start = from.saturating_add(relative);
-                        let end = start.saturating_add(word.len());
+                        let joined = continued.filter(|_| relative == 0);
+                        let start = if joined.is_some() {
+                            0
+                        } else {
+                            from.saturating_add(relative)
+                        };
+                        let end = from.saturating_add(relative).saturating_add(word.len());
                         let (Ok(start_offset), Ok(end_offset)) =
                             (u32::try_from(start), u32::try_from(end))
                         else {
@@ -7242,7 +7328,7 @@ fn layout_node(
                         let before = measure_rich_range(
                             text,
                             from,
-                            start,
+                            start.max(from),
                             FontSize::Body,
                             prose,
                             spans,
@@ -7259,11 +7345,12 @@ fn layout_node(
                             formulae,
                             line_height,
                         );
+                        let left = joined.map_or(line_x.saturating_add(before), |rect| rect.x);
                         layout.text_hits.push((
                             Rect {
-                                x: line_x.saturating_add(before),
+                                x: left,
                                 y: line_y,
-                                width: through.saturating_sub(before).max(1),
+                                width: line_x.saturating_add(through).saturating_sub(left).max(1),
                                 height: line_height,
                             },
                             TextHit {
@@ -17311,7 +17398,7 @@ fn paint_layout(
                         typesetter.draw_initial(
                             text,
                             node.rect.x,
-                            baseline,
+                            node.rect.y.saturating_add(baseline),
                             prose,
                             cap,
                             &mut |x, y, coverage| {
