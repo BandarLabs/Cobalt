@@ -279,7 +279,19 @@ impl App {
         // difference between a key that did nothing and a computer that is no
         // longer listening, which is not a difference a reader can see in a
         // grid of squares.
-        screen = screen.secondary(self.connection());
+        //
+        // While the banner is saying what went wrong, the line only names the
+        // computer. Both used to state the cause, so an offline reader was
+        // told it was not on Wi-Fi twice, one line under the other.
+        let banner_says_why = self
+            .trouble
+            .zip(self.notice.as_deref())
+            .is_some_and(|(trouble, notice)| notice == trouble.advice());
+        screen = screen.secondary(if banner_says_why {
+            self.pairing()
+        } else {
+            self.connection()
+        });
         // A five-column board rather than the pads shortcut: the shortcut
         // backfills every unassigned place with a blank key, and a reader
         // with three commands saw a wall of ruled boxes that do nothing.
@@ -301,16 +313,25 @@ impl App {
         }
         screen.build()
     }
-    /// What this deck is connected to, as a sentence.
-    fn connection(&self) -> String {
+    /// Which computer this deck is paired with, as a sentence, whether or
+    /// not it is answering.
+    fn pairing(&self) -> String {
         if self.address == "local" {
             return "Preview only. Pair to run commands.".to_owned();
         }
         if self.address.is_empty() {
             return "Not paired with a computer yet.".to_owned();
         }
+        format!("Paired with {}.", self.address)
+    }
+
+    /// What this deck is connected to, as a sentence.
+    fn connection(&self) -> String {
+        if self.address == "local" || self.address.is_empty() {
+            return self.pairing();
+        }
         match self.trouble {
-            None => format!("Paired with {}.", self.address),
+            None => self.pairing(),
             Some(Trouble::Offline) => "This reader is not on Wi-Fi.".to_owned(),
             Some(Trouble::Unreachable) => format!("{} is not answering.", self.address),
             Some(Trouble::Slow) => format!("{} is slow to answer.", self.address),
@@ -1194,6 +1215,17 @@ mod tests {
         }
         // A pairing problem is never blamed on the network or the address.
         assert!(!seen[0].contains("Wi-Fi") && !seen[0].contains("not answering"));
+    }
+
+    #[test]
+    fn an_offline_deck_says_it_is_not_on_wi_fi_once() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("retry"));
+        let task = in_flight(&runner).expect("a look is in flight");
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Offline));
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert_eq!(drawn.matches("not on Wi-Fi").count(), 1, "{drawn}");
+        assert!(drawn.contains("Paired with 192.168.1.5:8080."), "{drawn}");
     }
 
     #[test]
