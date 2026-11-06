@@ -4,8 +4,8 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.",
-  "version": "0.1.18",
-  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
+  "version": "0.1.19",
+  "release_notes": "The story is no longer underlined word by word; every word can still be tapped. Verbs are a quiet run of labels, Open what? offers whole things like the wooden crate, and Restore lists only saved games.",
   "glyph": "book",
   "capabilities": [],
   "setup": {
