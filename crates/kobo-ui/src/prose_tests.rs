@@ -4094,6 +4094,57 @@ fn a_natural_slot_takes_only_what_it_measures() {
     );
 }
 
+#[test]
+fn a_chip_in_a_natural_slot_sits_beside_the_text_against_the_far_edge() {
+    let screen = Screen::new(
+        1,
+        vec![Node::Band {
+            id: NodeId(1),
+            align: BandAlign::Top,
+            slots: vec![
+                BandSlot::fill(vec![Node::Text {
+                    id: NodeId(2),
+                    text: "You".to_owned(),
+                    links: Vec::new(),
+                }]),
+                BandSlot::natural(vec![Node::Chips {
+                    id: NodeId(3),
+                    chips: vec![Chip {
+                        action: ActionId(7),
+                        label: "Undo".to_owned(),
+                        selected: false,
+                    }],
+                }]),
+            ],
+        }],
+    );
+    let layout = screen.layout();
+    let band = layout
+        .nodes
+        .iter()
+        .find(|node| node.id == NodeId(1))
+        .expect("band")
+        .rect;
+    let text = layout
+        .nodes
+        .iter()
+        .find(|node| node.id == NodeId(2))
+        .expect("text")
+        .rect;
+    let chip = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::Chip(..)))
+        .expect("chip")
+        .rect;
+    assert_eq!(chip.y, text.y, "the chip was stacked under the text");
+    assert_eq!(
+        chip.x + chip.width,
+        band.x + band.width,
+        "the chip stopped short of the band's edge"
+    );
+}
+
 /// A panel narrow enough that two columns cannot both stay readable.
 fn metrics_width_for_one_column() -> i32 {
     CLARA_BW_METRICS.tenth_mm(MIN_BAND_SLOT_TENTH_MM) * 2

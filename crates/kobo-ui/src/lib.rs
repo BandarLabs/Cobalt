@@ -6025,6 +6025,28 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
             })
             .max()
             .unwrap_or(available),
+        // As wide as the run is on one line, so a clock or a single command
+        // in a natural slot sits against the band's far edge. Without an
+        // answer here a run of chips asked for the whole band, which stacked
+        // it under the text it was meant to sit beside. Two or more are
+        // measured as the segmented control a band slot draws them as: every
+        // segment as wide as the widest label.
+        Node::Chips { chips, .. } => {
+            let pad = metrics.space(Space::Small);
+            let widths: Vec<i32> = chips
+                .iter()
+                .take(MAX_CHIPS)
+                .map(|chip| measure_text(&chip.label, FontSize::Caption).0 + pad * 2)
+                .collect();
+            let count = widths.len() as i32;
+            let run = if (2..=MAX_SEGMENTS).contains(&widths.len()) {
+                let widest = widths.iter().copied().max().unwrap_or(0);
+                widest * count + metrics.space(Space::Small) * (count - 1)
+            } else {
+                widths.iter().sum::<i32>() + metrics.space(Space::Tight) * max(0, count - 1)
+            };
+            min(available, run)
+        }
         Node::Picture {
             source,
             max_height_tenths_mm,
