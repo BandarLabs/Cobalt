@@ -62,8 +62,7 @@ pub fn probe_device() -> Result<DeviceSnapshot, ProbeError> {
 
 /// The device tree's compatible list, most specific first, or nothing when
 /// the kernel publishes none.
-#[must_use]
-pub fn device_tree_compatible() -> Vec<String> {
+fn device_tree_compatible() -> Vec<String> {
     read_nul_list(&[
         "/sys/firmware/devicetree/base/compatible",
         "/proc/device-tree/compatible",

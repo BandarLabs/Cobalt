@@ -113,10 +113,13 @@ and controllers that never send a tracking id of -1 all decode.
 
 On i.MX readers three more differences apply:
 
-- The front light is driven through `mxc_msp430.0` where it exists, and the
-  warmth control (`lm3630a_led/color`, which runs the other way on these
-  readers) is never written. Whatever brightness the reader had is put back on
-  exit.
+- On a reader with no profile, the front light is driven through
+  `mxc_msp430.0` where it exists, and the warmth control
+  (`lm3630a_led/color`, which runs the other way on these readers) is never
+  written. Whatever brightness the reader had is put back on exit. The
+  measured Clara HD, Libra H2O and Libra 2 keep the control they were tested
+  with until someone confirms the new one on each of them and changes the
+  profile's `front_light` field.
 - The sleep cover is read on key 59 as well as key 35.
 - Some boards hold the wait for a panel update for about five seconds after the
   update has finished. Cobalt stops waiting after two seconds and writes

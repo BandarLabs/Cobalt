@@ -92,47 +92,19 @@ const PREFERRED: &str = "lm3630a_led";
 /// The brightness control on the i.MX6 readers.
 const IMX_PREFERRED: &str = "mxc_msp430.0";
 
-/// Which way round a reader's light controls are wired.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum LightLayout {
-    /// The aggregate control is the brightness, and its balance can light
-    /// both banks at the top of the range. Measured on the `MediaTek`
-    /// readers, and kept for anything this module does not recognise.
-    #[default]
-    Aggregate,
-    /// The i.MX6 arrangement: brightness on `mxc_msp430.0` where it exists,
-    /// and a warmth control that is never touched.
-    Imx,
+pub use kobo_profile::LightLayout;
+
+/// The control a layout prefers for brightness.
+const fn preferred(layout: LightLayout) -> &'static str {
+    match layout {
+        LightLayout::Aggregate => PREFERRED,
+        LightLayout::Imx => IMX_PREFERRED,
+    }
 }
 
-impl LightLayout {
-    /// Reads the layout from the device tree's compatible list.
-    #[must_use]
-    pub fn from_compatible(compatible: &[String]) -> Self {
-        if compatible.iter().any(|name| name.starts_with("fsl,imx")) {
-            Self::Imx
-        } else {
-            Self::Aggregate
-        }
-    }
-
-    /// The layout of the reader this is running on.
-    #[must_use]
-    pub fn of_this_device() -> Self {
-        Self::from_compatible(&crate::probe::device_tree_compatible())
-    }
-
-    const fn preferred(self) -> &'static str {
-        match self {
-            Self::Aggregate => PREFERRED,
-            Self::Imx => IMX_PREFERRED,
-        }
-    }
-
-    /// Whether the balance between banks may be moved to light both.
-    const fn drives_balance(self) -> bool {
-        matches!(self, Self::Aggregate)
-    }
+/// Whether a layout lets the balance between banks be moved to light both.
+const fn drives_balance(layout: LightLayout) -> bool {
+    matches!(layout, LightLayout::Aggregate)
 }
 
 /// A front light that can be read and set.
@@ -175,9 +147,18 @@ impl Balance {
 
 impl Frontlight {
     /// Opens the device's front light, or returns `None` when it has none.
+    ///
+    /// Uses the aggregate layout every measured reader was tested with. A
+    /// caller that knows the reader's profile uses [`Self::open_for`].
     #[must_use]
     pub fn open() -> Option<Self> {
-        Self::open_in_layout(Path::new(BACKLIGHTS), LightLayout::of_this_device())
+        Self::open_in(Path::new(BACKLIGHTS))
+    }
+
+    /// Opens the front light the way `profile` says it is wired.
+    #[must_use]
+    pub fn open_for(profile: &kobo_profile::DeviceProfile) -> Option<Self> {
+        Self::open_in_layout(Path::new(BACKLIGHTS), profile.front_light)
     }
 
     /// The same, against an arbitrary root, so the discovery and the scaling are
@@ -207,7 +188,7 @@ impl Frontlight {
         // Only where the layout says the balance is ours to move. On i.MX the
         // same file is the owner's warmth, so it is not even read.
         let balance = read_number(&control.join("max_color"))
-            .filter(|maximum| layout.drives_balance() && *maximum >= 2)
+            .filter(|maximum| drives_balance(layout) && *maximum >= 2)
             .and_then(|maximum| {
                 Some(Balance {
                     maximum,
@@ -354,7 +335,7 @@ fn find_control(backlights: &Path, layout: LightLayout) -> Option<PathBuf> {
         .iter()
         .position(|path| {
             path.file_name()
-                .is_some_and(|name| name == layout.preferred())
+                .is_some_and(|name| name == preferred(layout))
         })
         .or_else(|| {
             candidates
@@ -640,23 +621,31 @@ mod tests {
         control(root, "mxc_msp430.0", "42", "100");
     }
 
+    /// Every measured profile opens the same control, with the same balance
+    /// behaviour, as the layout-free discovery did before profiles named a
+    /// layout. The fixture holds every control an i.MX reader publishes, so a
+    /// measured i.MX profile that silently moved to `mxc_msp430.0` would fail
+    /// here.
     #[test]
-    fn the_layout_follows_the_device_tree() {
-        use super::LightLayout;
-        let names = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-        assert_eq!(
-            LightLayout::from_compatible(&names(&["kobo,libra2", "fsl,imx6sll"])),
-            LightLayout::Imx
-        );
-        assert_eq!(
-            LightLayout::from_compatible(&names(&["fsl,imx6ull"])),
-            LightLayout::Imx
-        );
-        assert_eq!(
-            LightLayout::from_compatible(&names(&["mediatek,mt8110", "mediatek,mt8512"])),
-            LightLayout::Aggregate
-        );
-        assert_eq!(LightLayout::from_compatible(&[]), LightLayout::Aggregate);
+    fn every_measured_profile_picks_the_control_it_picked_before() {
+        let root = scratch("measured-unchanged");
+        imx_lights(&root);
+        let before = find_control(&root, super::LightLayout::Aggregate).expect("a control");
+        assert_eq!(before.file_name().expect("name"), "lm3630a_led");
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            assert_eq!(
+                find_control(&root, profile.front_light).as_ref(),
+                Some(&before),
+                "{}",
+                profile.id
+            );
+            let light = Frontlight::open_in_layout(&root, profile.front_light).expect("a light");
+            light.set(100).expect("set");
+            assert_eq!(colour(&root, "lm3630a_led"), "5", "{}", profile.id);
+            light.restore().expect("restore");
+            assert_eq!(colour(&root, "lm3630a_led"), "8", "{}", profile.id);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

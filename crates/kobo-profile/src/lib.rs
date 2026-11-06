@@ -19,6 +19,40 @@ pub enum FramebufferController {
     MxcfbV2,
 }
 
+/// How a reader's front light controls are wired, and so which one sets the
+/// brightness and whether the warmth may be touched.
+///
+/// Declared on the profile for the same reason as the touch transform: the
+/// same control names mean different things on different boards, and the
+/// only safe source for which is which is somebody holding the reader.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LightLayout {
+    /// The `lm3630a_led` aggregate sets the brightness, and its balance may be
+    /// moved to light both banks at the top of the range. Measured on the
+    /// `MediaTek` readers, and what every measured profile used before this
+    /// field existed.
+    #[default]
+    Aggregate,
+    /// The i.MX6 arrangement reported for the Clara HD, Libra H2O and Libra 2:
+    /// brightness on `mxc_msp430.0` where it exists, and `lm3630a_led/color`
+    /// is the warmth on a reversed scale, never written. Provisional profiles
+    /// on i.MX use it. A measured profile opts in only once somebody has
+    /// watched it work on that reader.
+    Imx,
+}
+
+impl LightLayout {
+    /// The layout a reader with no profile is given, from its device tree.
+    #[must_use]
+    pub fn from_compatible(compatible: &[String]) -> Self {
+        if compatible.iter().any(|name| name.starts_with("fsl,imx")) {
+            Self::Imx
+        } else {
+            Self::Aggregate
+        }
+    }
+}
+
 /// How a device's touch controller reports position relative to the display.
 ///
 /// This used to be inferred from the framebuffer's `rotation`. It cannot be:
@@ -313,6 +347,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     // replacement to complete association because a stale route can linger.
     reap_nickel_supplicant: true,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Tolino Shine 5 T302 running the Kobo Clara BW 391 software stack.
@@ -397,6 +432,7 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     // fix never ran on the refreshed hardware that needed it just as much.
     reap_nickel_supplicant: true,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
@@ -466,6 +502,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Kobo Clara Colour, whose measured framebuffer geometry, HWTCON interface,
@@ -486,6 +523,7 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     colour_panel: true,
+    front_light: LightLayout::Aggregate,
     ..CLARA_BW_391
 };
 
@@ -550,6 +588,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     // This does not initialize the MediaTek driver or touch Bluetooth.
     reap_nickel_supplicant: true,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Kobo Libra 2, codename `io`, an i.MX6SLL Mark 7 device driven by
@@ -645,6 +684,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &["/bin/wpa_supplicant"],
     reap_nickel_supplicant: true,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Kobo Libra Colour, a `MediaTek` HWTCON device like the Clara BW, and the
@@ -741,6 +781,7 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     colour_panel: true,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Kobo Libra Colour on firmware 4.46.23836. The doctor report and attended
@@ -873,6 +914,7 @@ pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
@@ -1251,6 +1293,9 @@ pub struct DeviceProfile {
     /// filter. The greyscale path is identical either way, so a wrong `true`
     /// costs colour content and nothing else.
     pub colour_panel: bool,
+    /// Which front light control sets the brightness, and whether the warmth
+    /// may be moved. See [`LightLayout`].
+    pub front_light: LightLayout,
 }
 
 /// Pose geometry derived by a profile's [`GeometryRule`].
@@ -2034,7 +2079,9 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 
 #[cfg(test)]
 mod tests {
-    use super::{PanelPose, PoseError, TouchMapping, TouchTransform, SUPPORTED_PROFILES};
+    use super::{
+        LightLayout, PanelPose, PoseError, TouchMapping, TouchTransform, SUPPORTED_PROFILES,
+    };
 
     /// The Libra 2 at the pose it was measured in: page-turn buttons on the
     /// right, which this device reports as rotation 1. Every display
@@ -2672,6 +2719,21 @@ mod tests {
                     observed: rotation,
                     reference: 1,
                 })
+            );
+        }
+    }
+
+    /// Every measured profile drives its light exactly as it did before the
+    /// layout became a field. Changing one is a hardware claim, made by
+    /// editing that profile after watching it work, never by a default.
+    #[test]
+    fn every_measured_profile_keeps_the_light_layout_it_was_tested_with() {
+        for profile in SUPPORTED_PROFILES {
+            assert_eq!(
+                profile.front_light,
+                LightLayout::Aggregate,
+                "{}",
+                profile.id
             );
         }
     }
