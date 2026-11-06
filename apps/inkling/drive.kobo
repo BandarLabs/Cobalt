@@ -35,6 +35,10 @@ tap Statistics
 expect Played 0. Won 0.
 tap Play
 maybe-tap-id enter
+type rival
+tap Guess
+expect 2 of 6
+maybe-tap-id enter
 type gravy
 tap Guess
 expect Solved

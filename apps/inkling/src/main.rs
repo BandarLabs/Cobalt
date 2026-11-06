@@ -4,7 +4,7 @@ use kobo_sdk::game::{Menu, Tap};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder,
-    SlotWidth, StoreResult,
+    SlotWidth, Space, StoreResult,
 };
 use std::process::ExitCode;
 const STATE: &str = "inkling-state-v1";
@@ -20,8 +20,10 @@ const ARCHIVE_PAGE: usize = 5;
 /// keys went off the bottom. The widest that leaves the keys whole on this
 /// panel at this text size is measured once and kept for the whole game, so
 /// the board never changes size between guesses.
-/// The narrowest is five squares of the smallest touch target.
-const BOARD_WHILE_TYPING: [u16; 4] = [450, 420, 390, 370];
+/// The narrowest is five squares of the smallest touch target. 405 is what
+/// a Clara BW takes at the usual text size once both lines and the margin
+/// above the keys are drawn; 390 is a hair under a touch target there.
+const BOARD_WHILE_TYPING: [u16; 5] = [450, 420, 405, 390, 370];
 /// The same once the game is over and the keys are gone.
 const BOARD_AT_REST: [u16; 6] = [600, 540, 480, 420, 360, 300];
 type BoardSlot<'a> = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder + 'a>;
@@ -961,12 +963,6 @@ impl Game {
         let builder = ScreenBuilder::new("inkling")
             .game_top_bar(title, self.menu, more)
             .secondary(&self.notice);
-        let builder =
-            if self.guesses().is_empty() || playing && self.fit.keys && !self.fit.knowledge {
-                builder
-            } else {
-                builder.secondary(self.knowledge())
-            };
         // Paper either side, so the board sits in the middle of the panel at
         // the width it was given rather than against the left margin.
         let slots: [(SlotWidth, BoardSlot<'_>); 3] = [
@@ -985,9 +981,24 @@ impl Game {
             ),
             (SlotWidth::Fill, Box::new(|b| b)),
         ];
+        // What the guesses so far have found goes under the board. Above it,
+        // the line that arrives with the first guess pushed the whole board
+        // down onto the keys between one guess and the next.
         let builder = builder.band(BandAlign::Top, slots);
+        let builder =
+            if self.guesses().is_empty() || playing && self.fit.keys && !self.fit.knowledge {
+                builder
+            } else {
+                builder.secondary(self.knowledge())
+            };
         if playing && self.fit.keys {
-            builder.keyboard(&self.keyboard, "Guess").build()
+            // A margin of paper keeps the board and its lines off the keys.
+            // The board is measured with it, so a panel without the room
+            // gets a narrower board rather than squares pressed on the keys.
+            builder
+                .spacer(Space::Small)
+                .keyboard(&self.keyboard, "Guess")
+                .build()
         } else if playing {
             builder.primary_button("enter", "Type a guess").build()
         } else {
@@ -1657,6 +1668,52 @@ mod help_layout_tests {
                     }
                 }
             }
+        }
+    }
+    #[test]
+    fn the_board_stays_put_when_a_guess_adds_a_line_and_paper_is_left_above_the_keys() {
+        let metrics = kobo_ui::CLARA_BW_METRICS;
+        let _runner = kobo_sdk::AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
+        let chrome = kobo_ui::Chrome::measuring(true);
+        let place = |game: &mut Game| {
+            game.fit(metrics);
+            let layout = game.screen().layout_with(&metrics, &chrome);
+            let top = layout.rect_of_action(action_id("cell-0")).unwrap().y;
+            let keys = layout.rect_of_action(action_id("kb.r0c0")).unwrap().y;
+            let above_keys = layout
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.rect.y < keys
+                        && matches!(
+                            node.kind,
+                            kobo_ui::LayoutKind::Secondary | kobo_ui::LayoutKind::Cell(..)
+                        )
+                })
+                .map(|node| node.rect.y + node.rect.height)
+                .max()
+                .unwrap();
+            (top, keys - above_keys)
+        };
+        let mut fresh = Game::for_day("2026-09-01");
+        let mut guessed = Game::for_day("2026-09-01");
+        guessed.keyboard = Keyboard::with_text("crane");
+        guessed.submit();
+        let mut refused = Game::for_day("2026-09-01");
+        refused.daily = vec!["crane".into()];
+        refused.keyboard = Keyboard::with_text("zzzzz");
+        refused.submit();
+        let mut archive = Game::for_day("2026-09-01");
+        archive.open_archive_day(0);
+        let (first, _) = place(&mut fresh);
+        for game in [&mut fresh, &mut guessed, &mut refused, &mut archive] {
+            let (top, gap) = place(game);
+            assert_eq!(top, first, "the board moved under {:?}", game.notice);
+            assert!(
+                gap >= metrics.space(Space::Small),
+                "{gap} pixels between the keys and what is above them under {:?}",
+                game.notice
+            );
         }
     }
 }
