@@ -19,6 +19,12 @@ wait 300
 expect-missing e2 →
 clean
 shot computer-reply
+tap-id square-f1
+expect f1 →
+clean
+shot computer-bishop
+tap-id square-f1
+expect-missing f1 →
 tap Back
 expect Computer
 expect Resume game

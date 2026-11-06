@@ -1515,7 +1515,7 @@ impl Lichess {
         )];
         if timed {
             opponent_slots.push((
-                SlotWidth::Fixed(220),
+                SlotWidth::Natural,
                 Box::new(move |slot| {
                     slot.chips([("opponent-clock", opponent_clock, opponent_active)])
                 }),
@@ -1577,12 +1577,12 @@ impl Lichess {
         )];
         if timed {
             you_slots.push((
-                SlotWidth::Fixed(220),
+                SlotWidth::Natural,
                 Box::new(move |slot| slot.chips([("your-clock", you_clock, your_active)])),
             ));
         } else {
             you_slots.push((
-                SlotWidth::Fixed(220),
+                SlotWidth::Natural,
                 Box::new(|slot| slot.chips([("take-back", "Undo", false)])),
             ));
         }
@@ -6629,6 +6629,56 @@ mod tests {
         black.on_action(&mut context, action_id("take-back"));
         assert_eq!(black.game.as_ref().expect("game").state.moves.len(), 1);
         assert!(black.game.as_ref().expect("game").my_turn());
+    }
+
+    #[test]
+    fn undo_and_the_clocks_end_at_the_right_edge_of_the_board() {
+        let edge = |app: &Lichess, chip: &str| {
+            let metrics = kobo_ui::CLARA_BW_METRICS;
+            let layout = app
+                .game_screen(&Context::default())
+                .layout_with(&metrics, &kobo_ui::Chrome::measuring(true));
+            let right = |rect: kobo_ui::Rect| rect.x + rect.width;
+            let board = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, kobo_ui::LayoutKind::Cell(..)))
+                .map(|node| right(node.rect))
+                .max()
+                .expect("board");
+            let chip = layout
+                .nodes
+                .iter()
+                .find(|node| {
+                    matches!(node.kind, kobo_ui::LayoutKind::Chip(action, _) if action == action_id(chip))
+                })
+                .map(|node| right(node.rect))
+                .expect("chip");
+            (board, chip)
+        };
+        let mut untimed = ready_app();
+        let mut context = Context::default();
+        untimed.start_computer_game(&mut context);
+        let (board, undo) = edge(&untimed, "take-back");
+        // Within a pixel: the board splits its width into eight whole squares.
+        assert!(
+            (undo - board).abs() <= 1,
+            "Undo ends at {undo}, the board at {board}"
+        );
+        // A clock is taller than the name beside it, which leaves a little
+        // less height for the board; it still ends where the band does.
+        let mut timed = ready_app();
+        timed.computer_clock = ComputerClock::Ten;
+        timed.start_computer_game(&mut context);
+        for clock in ["your-clock", "opponent-clock"] {
+            let (board, chip) = edge(&timed, clock);
+            assert!(chip >= board, "{clock} ends inside the board's edge");
+            assert!(
+                chip - board <= 12,
+                "{clock} ends {} pixels past the board",
+                chip - board
+            );
+        }
     }
 
     #[test]
