@@ -46,7 +46,7 @@ def seed(app, state, kobo, env, log):
     # the sweep checks the companion and the app agree on what a push leaves
     # on the reader, not just that the app can read a hand-placed file.
     elif app == 'frame':
-        run('frame', 'push', str(ROOT / 'apps/frame/screenshots/frame.png'), '--sim', '--fit', 'pad')
+        run('frame', 'push', str(ROOT / 'apps/frame/sample-photo.jpg'), '--sim')
     elif app == 'needles':
         run('needles', 'push', str(ROOT / 'apps/needles/fixtures/pattern.md'), '--sim')
     elif app == 'birds':

@@ -200,7 +200,7 @@ for app in $APPS; do
             ;;
         frame)
             TMPDIR="$store" "$KOBO" frame init --sim >/dev/null
-            TMPDIR="$store" "$KOBO" frame push "$PWD/apps/frame/screenshots/frame.png" --sim --fit pad >/dev/null
+            TMPDIR="$store" "$KOBO" frame push "$PWD/apps/frame/sample-photo.jpg" --sim >/dev/null
             ;;
         vault)
             TMPDIR="$store" "$KOBO" vault init --sim >/dev/null
