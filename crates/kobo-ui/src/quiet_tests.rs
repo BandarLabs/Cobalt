@@ -340,3 +340,140 @@ fn a_command_keeps_its_own_spaces_and_line_breaks() {
         ["kobo deck init", "", "kobo deck run"]
     );
 }
+
+fn tabbed(typography: Typography, body: Node) -> Screen {
+    Screen::new(
+        1,
+        vec![
+            Node::Tabs {
+                id: NodeId(2),
+                tabs: vec![
+                    Chip::new(ActionId(3), "Boards"),
+                    Chip::new(ActionId(4), "Tone"),
+                ],
+                selected: 0,
+            },
+            body,
+        ],
+    )
+    .with_top_bar(TopBar::new(NodeId(1), "Gallery"))
+    .with_typography(typography)
+}
+
+fn tab_top(screen: &Screen) -> i32 {
+    screen
+        .layout()
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::Tab(..)))
+        .expect("the tabs are drawn")
+        .rect
+        .y
+}
+
+#[test]
+fn a_tab_strip_stays_where_it_was_on_a_page_that_gave_its_room_back() {
+    let board = || Node::Grid {
+        id: NodeId(5),
+        columns: 3,
+        square: true,
+        cells: (0..9)
+            .map(|index| Cell::new(ActionId(10 + index), format!("{index}")))
+            .collect(),
+    };
+    let words = || Node::Text {
+        id: NodeId(5),
+        text: "A page with room to spare.".into(),
+        links: Vec::new(),
+    };
+    // A screen built round a board gives its room back. From Fine the room
+    // under the top bar goes last, so the tabs over a board sit where the
+    // tabs over a page of words do.
+    assert_eq!(
+        tab_top(&tabbed(Typography::Fine, board())),
+        tab_top(&tabbed(Typography::Fine, words()))
+    );
+    // An application at an older protocol measured them a step apart, and
+    // keeps that.
+    assert!(
+        tab_top(&tabbed(Typography::Quiet, board())) < tab_top(&tabbed(Typography::Quiet, words()))
+    );
+}
+
+fn pinned(typography: Typography) -> (Rect, Rect) {
+    pinned_under(
+        typography,
+        vec![
+            Node::Text {
+                id: NodeId(2),
+                text: "Nothing here yet.".into(),
+                links: Vec::new(),
+            },
+            Node::Flex { id: NodeId(3) },
+        ],
+    )
+}
+
+fn pinned_under(typography: Typography, mut nodes: Vec<Node>) -> (Rect, Rect) {
+    nodes.push(Node::Button {
+        id: NodeId(4),
+        action: ActionId(5),
+        label: "Try a sample".into(),
+        state: ControlState::Enabled,
+        emphasis: Emphasis::Normal,
+    });
+    let screen = Screen::new(1, nodes)
+        .with_top_bar(TopBar::new(NodeId(1), "Shelf"))
+        .with_bottom_action(BottomAction::new(
+            NodeId(6),
+            BarAction::new(ActionId(7), "Browse"),
+        ))
+        .with_typography(typography);
+    let layout = screen.layout();
+    let button = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::Button(ActionId(5), ..)))
+        .expect("the pinned button")
+        .rect;
+    let bar = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind.acts_on() == Some(ActionId(7)))
+        .expect("the bottom action")
+        .rect;
+    (button, bar)
+}
+
+#[test]
+fn what_a_fill_pushes_to_the_foot_rests_above_the_bottom_bar_rather_than_on_its_rule() {
+    let band_top = CLARA_BW_METRICS.height - CLARA_BW_METRICS.nav_bar_height();
+    let (fine, bar) = pinned(Typography::Fine);
+    let (quiet, _) = pinned(Typography::Quiet);
+    assert!(bar.y >= band_top);
+    // An application at an older protocol keeps the foot it measured; from
+    // Fine the fill stops two millimetres shorter.
+    assert_eq!(
+        (quiet.y + quiet.height) - (fine.y + fine.height),
+        CLARA_BW_METRICS.space(Space::Small)
+    );
+    assert!(fine.y + fine.height + CLARA_BW_METRICS.space(Space::Small) <= band_top);
+}
+
+#[test]
+fn what_follows_an_empty_state_rests_above_the_bottom_bar_rather_than_on_its_rule() {
+    let splash = || {
+        vec![Node::Splash {
+            id: NodeId(2),
+            glyph: Some(Glyph::Book),
+            title: "Your shelf is empty".into(),
+            summary: "Add a comic from your computer.".into(),
+        }]
+    };
+    let (fine, _) = pinned_under(Typography::Fine, splash());
+    let (quiet, _) = pinned_under(Typography::Quiet, splash());
+    assert_eq!(
+        (quiet.y + quiet.height) - (fine.y + fine.height),
+        CLARA_BW_METRICS.space(Space::Small)
+    );
+}

@@ -2273,8 +2273,21 @@ impl Screen {
         self.layout_without_room(metrics, chrome)
     }
 
+    /// Lays the screen out with the room given back, keeping the room beside
+    /// the bars where that still fits; see [`bar_room_given_up`].
     fn layout_without_room(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        if typography() < Typography::Fine || BAR_ROOM_GIVEN_UP.with(std::cell::Cell::get) {
+            let mut layout = with_room_given_up(|| self.layout_once(metrics, chrome));
+            layout.room_given_up = true;
+            return layout;
+        }
+        let outer = CUT_SHORT.with(|cut| cut.replace(false));
         let mut layout = with_room_given_up(|| self.layout_once(metrics, chrome));
+        let cut = CUT_SHORT.with(|slot| slot.replace(outer));
+        if cut {
+            layout =
+                with_room_given_up(|| with_bar_room_given_up(|| self.layout_once(metrics, chrome)));
+        }
         layout.room_given_up = true;
         layout
     }
@@ -2359,6 +2372,13 @@ impl Screen {
             0
         };
         let flow_width = metrics.width - 2 * margin - rail_reserved;
+        // What a fill or a splash pushes to the foot stops this far short of
+        // a bottom bar; see [`DisplayMetrics::above_bottom_bar`].
+        let foot = if self.nav_bar.is_some() || self.bottom_action.is_some() {
+            metrics.above_bottom_bar(prose)
+        } else {
+            0
+        };
 
         // Every block of facts set straight on the page shares one label
         // column, so the values of two blocks under two sections start at the
@@ -2407,6 +2427,7 @@ impl Screen {
                     .filter(|node| matches!(node, Node::Flex { .. }))
                     .count();
                 let free = content_bottom
+                    .saturating_sub(foot)
                     .saturating_sub(trailing)
                     .saturating_sub(cursor);
                 let share = free / (i32::try_from(later).unwrap_or(0) + 1);
@@ -2419,7 +2440,11 @@ impl Screen {
                 &self.nodes[position + 1..],
                 margin,
                 flow_width,
-                content_bottom,
+                if matches!(node, Node::Splash { .. }) {
+                    content_bottom - foot
+                } else {
+                    content_bottom
+                },
                 metrics,
                 prose,
                 gap,
@@ -11522,6 +11547,7 @@ thread_local! {
     static TYPOGRAPHY: std::cell::Cell<Typography> = const { std::cell::Cell::new(Typography::CURRENT) };
     static CUT_SHORT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static ROOM_GIVEN_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static BAR_ROOM_GIVEN_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FLOW_HEIGHT_BOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static IN_BAND_SLOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -11665,6 +11691,22 @@ fn room_given_up() -> bool {
     ROOM_GIVEN_UP.with(std::cell::Cell::get)
 }
 
+/// Whether the room beside the bars has been given back for this frame.
+///
+/// Before [`Typography::Fine`] it went with the rest of the room. That moved
+/// everything under the top bar up three millimetres on any screen that was
+/// full, so of two pages behind one row of tabs, the crowded one had its tabs
+/// a step higher than its neighbour's, and a reader turning between them saw
+/// the strip jump. From Fine it is the last room a screen gives back: only
+/// when the screen still does not fit with every other gap closed.
+fn bar_room_given_up() -> bool {
+    if typography() >= Typography::Fine {
+        BAR_ROOM_GIVEN_UP.with(std::cell::Cell::get)
+    } else {
+        room_given_up()
+    }
+}
+
 /// Runs `body` with the room the quiet edition adds taken back out: the space
 /// under the top bar, above a section and above a button, and the step a
 /// secondary line is set above caption size.
@@ -11684,6 +11726,19 @@ pub fn with_room_given_up<T>(body: impl FnOnce() -> T) -> T {
         }
     }
     let previous = ROOM_GIVEN_UP.with(|slot| slot.replace(true));
+    let _restore = Restore(previous);
+    body()
+}
+
+/// Runs `body` with the room beside the bars given back as well.
+fn with_bar_room_given_up<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BAR_ROOM_GIVEN_UP.with(|slot| slot.set(self.0));
+        }
+    }
+    let previous = BAR_ROOM_GIVEN_UP.with(|slot| slot.replace(true));
     let _restore = Restore(previous);
     body()
 }
@@ -12071,10 +12126,29 @@ impl DisplayMetrics {
     /// line the bar takes from the page is a line the reader turns for.
     #[must_use]
     pub fn below_top_bar(&self, face: Face) -> i32 {
-        if typography() >= Typography::Quiet && face != Face::Reading && !room_given_up() {
+        if typography() >= Typography::Quiet && face != Face::Reading && !bar_room_given_up() {
             self.tenth_mm(30)
         } else {
             self.space(Space::Tight)
+        }
+    }
+
+    /// The room a fill leaves between what it pushes to the foot of a screen
+    /// and the rule of the bottom bar under it.
+    ///
+    /// None until [`Typography::Fine`]: a fill pushed its button or command
+    /// all the way down to the bar's rule, which reads as something wedged
+    /// into the bar rather than resting above it. Two millimetres now, taken
+    /// only from the room the fill was handing out, so a screen holds as much
+    /// as it always did; given back with the room under the top bar, and
+    /// never on a page of a book, for the reason [`Self::below_top_bar`]
+    /// gives.
+    #[must_use]
+    pub fn above_bottom_bar(&self, face: Face) -> i32 {
+        if typography() >= Typography::Fine && face != Face::Reading && !bar_room_given_up() {
+            self.space(Space::Small)
+        } else {
+            0
         }
     }
 
