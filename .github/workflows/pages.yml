@@ -202,11 +202,19 @@ jobs:
         run: |
           set -eu
           mkdir -p _site/install/apps
+          # The catalog that names every mark, or the earlier one while the
+          # stable channel has not been published with two.
+          catalog_name=cobalt-app-catalog-v2.json
+          if [ "$(gh release view app-catalog --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '[.assets[] | select(.name == "cobalt-app-catalog-v2.json")] | length')" -eq 0 ]
+          then
+            catalog_name=cobalt-app-catalog.json
+          fi
           gh release download app-catalog --repo "$GITHUB_REPOSITORY" \
-            --dir . --pattern cobalt-app-catalog.json --clobber
-          node --input-type=module -e '
+            --dir . --pattern "$catalog_name" --clobber
+          CATALOG_NAME="$catalog_name" node --input-type=module -e '
             import { readFileSync, writeFileSync } from "node:fs";
-            const catalog = JSON.parse(readFileSync("cobalt-app-catalog.json", "utf8"));
+            const catalog = JSON.parse(readFileSync(process.env.CATALOG_NAME, "utf8"));
             const apps = catalog.entries.map(entry => ({
               id: entry.manifest.id,
               name: entry.manifest.display_name,

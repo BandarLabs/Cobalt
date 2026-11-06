@@ -150,7 +150,17 @@ jobs:
           then
             has_release=true
             catalog_present=false
-            catalog_asset_id="$(asset_id "$release_state" cobalt-app-catalog.json)"
+            # The catalog this tree is checked against is the one that names
+            # every application's mark. A channel last published before there
+            # were two catalogs has only the earlier one, and is republished so
+            # it carries both.
+            catalog_name=cobalt-app-catalog-v2.json
+            catalog_asset_id="$(asset_id "$release_state" "$catalog_name")"
+            if [ -z "$catalog_asset_id" ]; then
+              catalog_name=cobalt-app-catalog.json
+              catalog_asset_id="$(asset_id "$release_state" "$catalog_name")"
+              repair=true
+            fi
             if [ -n "$catalog_asset_id" ]; then
               api_download_asset published-app-catalog.json "$catalog_asset_id"
               catalog_present=true
@@ -313,17 +323,25 @@ jobs:
             # being correct, and this is the only run that ever looks. Verify
             # the signature readers verify, and that every bundle the catalog
             # sends them to is still on the release.
-            signature_asset_id="$(asset_id "$release_state" cobalt-app-catalog.json.sig)"
-            if [ -z "$signature_asset_id" ]; then
-              echo "$release_tag publishes a catalog with no signature beside it" >&2
-              exit 1
-            fi
-            api_download_asset published-app-catalog.json.sig "$signature_asset_id"
+            # Runtimes up to 0.3.33 read the earlier catalog, so it is verified
+            # as well: signed, and the same catalog but for stand-in glyphs.
+            for name in "$catalog_name" cobalt-app-catalog.json; do
+              for asset in "$name" "$name.sig"; do
+                published_asset_id="$(asset_id "$release_state" "$asset")"
+                if [ -z "$published_asset_id" ]; then
+                  echo "$release_tag publishes no $asset" >&2
+                  exit 1
+                fi
+                api_download_asset "published-$asset" "$published_asset_id"
+              done
+            done
             node tools/verify-published-catalog.mjs \
               --catalog published-app-catalog.json \
-              --signature published-app-catalog.json.sig \
+              --signature "published-$catalog_name.sig" \
               --registry generated-app-registry.json \
-              --release "$release_state"
+              --release "$release_state" \
+              --earlier-catalog published-cobalt-app-catalog.json \
+              --earlier-signature published-cobalt-app-catalog.json.sig
             # Having nothing to publish is not the same as Store inputs being
             # unchanged. The platform used to skip a release while crates/
             # moved; this is that gate for the catalog. apps/ and every
@@ -614,11 +632,14 @@ jobs:
           if api_get "$release_state" \
             "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}"
           then
+            # The newer catalog when the channel has one, as in the check above.
             catalog_asset_id="$(
               node -e '
                 const fs = require("fs");
                 const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-                const matches = release.assets.filter(asset => asset.name === "cobalt-app-catalog.json");
+                const named = name => release.assets.filter(asset => asset.name === name);
+                let matches = named("cobalt-app-catalog-v2.json");
+                if (matches.length === 0) matches = named("cobalt-app-catalog.json");
                 if (matches.length !== 1 || !Number.isSafeInteger(matches[0].id)) {
                   throw new Error("existing app catalog release has no unique catalog asset");
                 }
@@ -663,7 +684,11 @@ jobs:
             --out dist/apps \
             --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}" \
             --artifact-dir dist/artifacts
-          catalog_sha256="$(sha256sum dist/apps/cobalt-app-catalog.json | cut -d' ' -f1)"
+          # catalog_sha256 is the catalog this tree describes, the one that
+          # names every mark; earlier_catalog_sha256 is its copy for runtimes
+          # up to 0.3.33.
+          catalog_sha256="$(sha256sum dist/apps/cobalt-app-catalog-v2.json | cut -d' ' -f1)"
+          earlier_catalog_sha256="$(sha256sum dist/apps/cobalt-app-catalog.json | cut -d' ' -f1)"
           # shellcheck disable=SC2016
           node -e '
             const fs = require("fs");
@@ -674,11 +699,13 @@ jobs:
               workflow_run_id: Number(process.argv[4]),
               workflow_run_attempt: Number(process.argv[5]),
               catalog_sha256: process.argv[6],
+              earlier_catalog_sha256: process.argv[7],
             };
             fs.writeFileSync(process.argv[1], `${JSON.stringify(value)}\n`);
           ' \
             dist/apps/cobalt-app-catalog-provenance.json \
-            "$release_tag" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$catalog_sha256"
+            "$release_tag" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$catalog_sha256" "$earlier_catalog_sha256"
           cp \
             dist/apps/cobalt-app-catalog-provenance.json \
             "dist/apps/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
@@ -796,9 +823,18 @@ jobs:
           # round, the signature is never newer than the catalog it covers: the
           # window holds the previous signature over the new catalog, which a
           # reader also rejects, but as the retryable state it is.
+          #
+          # The earlier catalog, which runtimes up to 0.3.33 read, goes first,
+          # then the newer one. A newer runtime that finds no newer catalog
+          # reads the earlier one, so until the newer one lands it reads the
+          # catalog just published rather than the one before it.
           gh release upload \
             "$release_tag" dist/apps/cobalt-app-catalog.json --clobber
           gh release upload \
             "$release_tag" dist/apps/cobalt-app-catalog.json.sig --clobber
+          gh release upload \
+            "$release_tag" dist/apps/cobalt-app-catalog-v2.json --clobber
+          gh release upload \
+            "$release_tag" dist/apps/cobalt-app-catalog-v2.json.sig --clobber
           gh release upload \
             "$release_tag" dist/apps/cobalt-app-catalog-provenance.json --clobber
