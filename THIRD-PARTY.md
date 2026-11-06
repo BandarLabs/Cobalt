@@ -117,7 +117,7 @@ the artifacts that contain them.
 
 | Font | Licence | File |
 | --- | --- | --- |
-| Atkinson Hyperlegible (Regular and Bold) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt` |
+| Atkinson Hyperlegible (Regular and Bold, with a plain zero) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt`; the change in `licenses/SOURCE-AtkinsonHyperlegible.md` |
 | DejaVu Sans | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
 | Literata (Regular, SemiBold and Italic, Latin subset) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-Literata.txt`; subset recipe in `licenses/SOURCE-Literata.md` |
 | Cobalt Japanese (derived Noto Sans CJK JP subset) | SIL Open Font License 1.1 | `licenses/LICENSE-Cobalt-Japanese-font.txt`; source and deterministic subset recipe in `licenses/SOURCE-Cobalt-Japanese-font.md` |

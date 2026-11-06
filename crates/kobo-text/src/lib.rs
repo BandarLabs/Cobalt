@@ -1535,6 +1535,28 @@ mod tests {
         );
     }
 
+    /// The interface face's zero is a plain oval. The slash it was drawn
+    /// with crossed its middle, and set in every clock, date and score it
+    /// made the interface read as a code editor.
+    #[test]
+    fn the_interface_zero_is_open_in_the_middle() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        for size in [FontSize::Body, FontSize::Heading] {
+            let mut inked = std::collections::BTreeSet::new();
+            fonts.draw("0", 0, 0, size, Face::Text, &mut |x, y, coverage| {
+                if coverage > 128 {
+                    inked.insert((x, y));
+                }
+            });
+            let left = inked.iter().map(|(x, _)| *x).min().expect("a zero");
+            let right = inked.iter().map(|(x, _)| *x).max().expect("a zero");
+            let top = inked.iter().map(|(_, y)| *y).min().expect("a zero");
+            let bottom = inked.iter().map(|(_, y)| *y).max().expect("a zero");
+            let middle = ((left + right) / 2, (top + bottom) / 2);
+            assert!(!inked.contains(&middle), "{size:?} zero is struck through");
+        }
+    }
+
     #[test]
     fn the_bundled_serif_sets_emphasis_in_its_own_narrower_italic() {
         let fonts = SystemFonts::discover(CLARA).expect("fonts");

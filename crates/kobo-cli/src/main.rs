@@ -5168,6 +5168,13 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
         include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt"),
         false,
     ));
+    // The interface face is modified in one glyph, and the Open Font License
+    // asks that a modified copy say how; the note travels with the binaries.
+    members.push(text_member(
+        "licenses/SOURCE-AtkinsonHyperlegible.md",
+        include_str!("../../../licenses/SOURCE-AtkinsonHyperlegible.md"),
+        false,
+    ));
     members.push(text_member(
         "licenses/LICENSE-DejaVu.txt",
         include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt"),
