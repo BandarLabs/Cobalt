@@ -1403,6 +1403,13 @@ pub enum CellStyle {
     Pit,
     /// A store at one end of a sowing game's board, as tall as both rows.
     Store,
+    /// A square of a noughts and crosses board: it draws the rule on its
+    /// right and below it where another square follows, so the board is the
+    /// four rules of a # and nothing round it.
+    Hash {
+        right: bool,
+        bottom: bool,
+    },
     /// A square of a joined board ruled in grey, a reversi board's: it
     /// draws its top and left rules and the board draws the frame.
     Ruled,
@@ -8048,6 +8055,16 @@ fn layout_node(
                 && cells
                     .iter()
                     .any(|cell| matches!(cell.glyph, Some(Glyph::BlackDisc | Glyph::WhiteDisc)));
+            // Noughts and crosses is drawn as the # it is played on: three by
+            // three squares that meet, with only the four rules between them.
+            let hash_board = *square
+                && requested == 3
+                && cells.len() == 9
+                && cells.iter().all(|cell| {
+                    cell.corner.is_none()
+                        && cell.tone == CellTone::Plain
+                        && matches!(cell.glyph, None | Some(Glyph::Circle | Glyph::Close))
+                });
             let chess_board = *square
                 && requested == 8
                 && cells.len() == 64
@@ -8085,6 +8102,7 @@ fn layout_node(
             let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
             } else if chess_board
+                || hash_board
                 || draughts_squares
                 || reversi_board
                 || (*square && cells.iter().any(|cell| cell.corner.is_some()))
@@ -8214,6 +8232,11 @@ fn layout_node(
                     CellStyle::Plain
                 } else if reversi_board {
                     CellStyle::Ruled
+                } else if hash_board {
+                    CellStyle::Hash {
+                        right: column < 2,
+                        bottom: row < 2,
+                    }
                 } else if (draughts_board || chess_board) && (row + column) % 2 == 1 {
                     CellStyle::BoardDark
                 } else if draughts_board || chess_board {
@@ -15856,6 +15879,36 @@ fn paint_layout(
                 tone::MUTED,
                 clip,
             ),
+            LayoutKind::Cell(_, CellStyle::Hash { right, bottom }, selected) => {
+                if selected {
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
+                }
+                let rule = metrics.rule_thickness() * 2;
+                if right {
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            x: node.rect.x + node.rect.width - rule,
+                            width: rule,
+                            ..node.rect
+                        },
+                        tone::INK,
+                        clip,
+                    );
+                }
+                if bottom {
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            y: node.rect.y + node.rect.height - rule,
+                            height: rule,
+                            ..node.rect
+                        },
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
             LayoutKind::RuledBoard => {
                 stroke_clipped(
                     surface,

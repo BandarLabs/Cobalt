@@ -434,3 +434,40 @@ fn a_reversi_board_is_one_ruled_grid_and_a_legal_square_is_a_grey_dot() {
         "a legal square is {dot}, not grey"
     );
 }
+
+#[test]
+fn noughts_and_crosses_is_drawn_as_a_hash_with_no_box_round_it() {
+    let cells = (0..9_u32)
+        .map(|index| {
+            let cell = Cell::new(ActionId(400 + index), "");
+            match index {
+                0 => cell.with_glyph(Glyph::Circle),
+                4 => cell.with_glyph(Glyph::Close),
+                _ => cell,
+            }
+        })
+        .collect();
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 3,
+            square: true,
+            cells,
+        }],
+    );
+    let metrics = CLARA_BW_METRICS;
+    let chrome = Chrome::measuring(true);
+    let layout = screen.layout_with(&metrics, &chrome);
+    let first = layout.rect_of_action(ActionId(400)).unwrap();
+    let second = layout.rect_of_action(ActionId(401)).unwrap();
+    assert_eq!(second.x, first.x + first.width, "the squares do not meet");
+    let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
+    render_with(&screen, &metrics, &chrome, &mut surface, None);
+    let pixel = |x: i32, y: i32| surface.pixels[y as usize * surface.width + x as usize];
+    // A rule between the first two squares, and none along the outer edge.
+    let middle = first.y + first.height / 2;
+    assert_eq!(pixel(first.x + first.width - 1, middle), tone::INK);
+    assert_eq!(pixel(first.x, first.y + first.height / 4), tone::PAPER);
+    assert_eq!(pixel(first.x + first.width / 4, first.y), tone::PAPER);
+}
