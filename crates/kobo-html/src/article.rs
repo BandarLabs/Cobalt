@@ -25,13 +25,21 @@ const FURNITURE: [&str; 10] = [
 ];
 
 /// Roles a page gives its furniture when it uses plain `div`s for everything.
-const FURNITURE_ROLES: [&str; 6] = [
+///
+/// A link dressed as a button is still a button: "New issue" or "Sign up" is
+/// something to press in a browser, and in a reader it is a stray line.
+const FURNITURE_ROLES: [&str; 11] = [
     "navigation",
     "complementary",
     "contentinfo",
     "banner",
     "search",
     "dialog",
+    "button",
+    "menu",
+    "menubar",
+    "toolbar",
+    "tablist",
 ];
 
 /// Words in a class or id that only ever name furniture.
@@ -41,7 +49,38 @@ const FURNITURE_ROLES: [&str; 6] = [
 /// every site that has them, and each one, left in, put a line of links or a
 /// sign-up form at the top of the first page. "cookie" is not among them,
 /// because a recipe is entitled to a class called `cookie-recipe`.
-const FURNITURE_NAMES: [&str; 3] = ["breadcrumb", "newsletter", "skip-link"];
+///
+/// A "sticky header" is the title and status a page pins to the top of the
+/// window as it scrolls, so it is the article's first lines said a second
+/// time.
+const FURNITURE_NAMES: [&str; 4] = ["breadcrumb", "newsletter", "skip-link", "sticky-header"];
+
+/// Words in a class that hide an element from the eye and leave it for a
+/// screen reader.
+///
+/// Pages label their regions this way for listeners ("Repository
+/// navigation", "Reacted by" and forty names), and a reader that shows them
+/// prints the labels of things that are no longer there. Compared with the
+/// hyphens taken out, because each design system spells them its own way.
+const UNSEEN_NAMES: [&str; 3] = ["sronly", "visuallyhidden", "screenreader"];
+
+/// The fewest links a list needs before it is read as a menu.
+const MENU_LINKS: usize = 3;
+
+/// The most words a link in a menu carries.
+///
+/// "Archive", "Today's picture" and "About us" are menu entries. A list whose
+/// links read like titles of things, "How the tide tables were first
+/// printed", is a reading list, and that is the article's.
+const MENU_LINK_WORDS: usize = 4;
+
+/// The fewest words in a paragraph above the headline that make it the
+/// article's own.
+///
+/// A standfirst or an opening sentence placed above the title is prose. What
+/// else sits above a headline on a page is a label, a date, a button or a line
+/// of category links, all of them shorter than this.
+const PROSE_WORDS: usize = 12;
 
 /// The most marked regions weighed against each other.
 ///
@@ -82,11 +121,25 @@ pub fn main_content(html: &str) -> String {
         Some((first, last)) => (first, last, false),
         None => (0, tags.len(), true),
     };
-    let start = if whole { 0 } else { tags[from].start };
     let end = if whole {
         html.len()
     } else {
         tags.get(to).map_or(html.len(), |tag| tag.end)
+    };
+    let last = if whole {
+        tags.len()
+    } else {
+        to.saturating_add(1).min(tags.len())
+    };
+    // The headline, when what sits above it is not prose, is where the
+    // article starts. A page's own title bar, a status label and a row of
+    // category links all live there, inside the region the page marked.
+    let headline = headline(html, &tags, from, last);
+    let from = headline.unwrap_or(from);
+    let start = match headline {
+        Some(index) => tags[index].start,
+        None if whole => 0,
+        None => tags[from].start,
     };
     let mut out = String::with_capacity(end - start + 256);
     for (style_start, style_end) in &styles {
@@ -96,11 +149,6 @@ pub fn main_content(html: &str) -> String {
     }
     let mut cursor = start;
     let mut index = from;
-    let last = if whole {
-        tags.len()
-    } else {
-        to.saturating_add(1).min(tags.len())
-    };
     while index < last {
         let tag = &tags[index];
         if tag.start < cursor {
@@ -110,7 +158,8 @@ pub fn main_content(html: &str) -> String {
         let strip = !tag.closing
             && (tag.mark == Mark::Furniture
                 || FURNITURE.contains(&tag.name.as_str())
-                || (whole && tag.name == "header"));
+                || (whole && tag.name == "header")
+                || is_menu(html, &tags, index));
         if strip {
             out.push_str(&html[cursor..tag.start]);
             let close = if tag.self_closing {
@@ -216,7 +265,12 @@ fn scan(html: &str) -> (Vec<Tag>, Vec<(usize, usize)>) {
                     FURNITURE_NAMES.iter().any(|word| value.contains(word))
                 })
             })
-            || has_bare_attribute(inside, "hidden");
+            || has_bare_attribute(inside, "hidden")
+            || attribute(inside, "type").is_some_and(|kind| kind.eq_ignore_ascii_case("button"))
+            || attribute(inside, "class").is_some_and(|value| {
+                let value = value.to_ascii_lowercase().replace(['-', '_'], "");
+                UNSEEN_NAMES.iter().any(|word| value.contains(word))
+            });
         tags.push(Tag {
             start,
             end,
@@ -234,6 +288,136 @@ fn scan(html: &str) -> (Vec<Tag>, Vec<(usize, usize)>) {
         at = end;
     }
     (tags, styles)
+}
+
+/// The first top-level heading between `from` and `last`, when nothing above
+/// it is prose.
+///
+/// Only an `<h1>`, because a page has one title and many section headings,
+/// and starting at a section heading would lose the story's opening.
+fn headline(html: &str, tags: &[Tag], from: usize, last: usize) -> Option<usize> {
+    let title = (from..last).find(|&index| !tags[index].closing && tags[index].name == "h1")?;
+    // Nothing to read above it means nothing to take away, and the cut keeps
+    // the region's own opening tag.
+    if words_between(html, tags, from, title) == 0 && !has_picture(tags, from, title) {
+        return None;
+    }
+    let prose_above = (from..title)
+        .filter(|&index| !tags[index].closing && tags[index].name == "p")
+        .any(|open| {
+            let close = closing_of(tags, open).map_or(title, |close| close.min(title));
+            words_between(html, tags, open, close) >= PROSE_WORDS
+        });
+    (!prose_above).then_some(title)
+}
+
+/// Whether the element opening at `open` is a menu: at least [`MENU_LINKS`]
+/// short links and nothing else to read.
+///
+/// Pages that do not mark their menus with `<nav>` still write them the same
+/// way, as a list or a row of links of a word or two each. Read in order they
+/// are a column of "Archive", "Search", "About" above the article, or a row of
+/// tags with no spaces between them. A word or two ahead of the first link is
+/// the row's own label ("Labels", "Tags") and goes with it. A paragraph is
+/// never a menu, because a sentence may well be mostly links.
+fn is_menu(html: &str, tags: &[Tag], open: usize) -> bool {
+    let tag = &tags[open];
+    if tag.closing
+        || tag.self_closing
+        || !matches!(tag.name.as_str(), "ul" | "ol" | "div" | "span" | "section")
+    {
+        return false;
+    }
+    let name = tag.name.as_str();
+    let mut depth = 1_usize;
+    let mut links = 0;
+    let mut label_words = 0;
+    let mut index = open;
+    loop {
+        let tag = &tags[index];
+        if index > open && tag.name == name && !tag.self_closing {
+            if tag.closing {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            } else {
+                depth += 1;
+            }
+        }
+        if !tag.closing && tag.name == "img" {
+            // A row of linked pictures is a gallery, not a menu.
+            return false;
+        }
+        if !tag.closing && tag.mark == Mark::Furniture && !tag.self_closing {
+            // A tooltip or a hidden label is taken out on its own, so its
+            // words do not count against the row it sits in.
+            let Some(close) = closing_of(tags, index) else {
+                return false;
+            };
+            index = close + 1;
+            if index >= tags.len() {
+                break;
+            }
+            continue;
+        }
+        if !tag.closing && tag.name == "a" {
+            let Some(close) = closing_of(tags, index) else {
+                return false;
+            };
+            let words = words_between(html, tags, index, close);
+            if words == 0 || words > MENU_LINK_WORDS || has_picture(tags, index, close) {
+                return false;
+            }
+            links += 1;
+            index = close;
+        } else {
+            let text_end = tags.get(index + 1).map_or(html.len(), |next| next.start);
+            let text = &html[tag.end..text_end.max(tag.end)];
+            if text.chars().any(char::is_alphanumeric) {
+                // Text outside every link is something to read, unless it is
+                // a short label ahead of the first one.
+                label_words += text.split_whitespace().count();
+                if links > 0 || label_words > 2 {
+                    return false;
+                }
+            }
+        }
+        index += 1;
+        if index >= tags.len() {
+            break;
+        }
+    }
+    links >= MENU_LINKS
+}
+
+/// Whether a picture sits between two tags.
+fn has_picture(tags: &[Tag], from: usize, to: usize) -> bool {
+    tags[from..to.min(tags.len())]
+        .iter()
+        .any(|tag| !tag.closing && tag.name == "img")
+}
+
+/// The number of words of text between two tags that a reader would see.
+///
+/// The words of a hidden label inside a link do not make it a long link.
+fn words_between(html: &str, tags: &[Tag], from: usize, to: usize) -> usize {
+    let to = to.min(tags.len());
+    let mut words = 0;
+    let mut index = from;
+    while index < to {
+        let tag = &tags[index];
+        if index > from && !tag.closing && !tag.self_closing && tag.mark == Mark::Furniture {
+            index = closing_of(tags, index).map_or(to, |close| close.max(index + 1));
+            continue;
+        }
+        let text_end = tags.get(index + 1).map_or(html.len(), |next| next.start);
+        words += html[tag.end..text_end.max(tag.end)]
+            .split_whitespace()
+            .count();
+        index += 1;
+    }
+    words
 }
 
 /// Whether a tag carries an attribute written with no value, such as
@@ -470,5 +654,100 @@ mod tests {
         assert!(cut.contains("Seen."));
         assert!(!cut.contains("Unseen."));
         assert!(!cut.contains("Icon"));
+    }
+    #[test]
+    fn a_code_host_issue_page_opens_at_its_title_without_its_buttons_or_hidden_labels() {
+        // Cut down from an issue page on a code host as it is served to a
+        // reader that runs no scripts: a visually hidden heading and a
+        // repository menu above the title, a "New issue" link dressed as a
+        // button beside it, a row of label links with tooltips between them,
+        // and a sticky copy of the title for when the page scrolls.
+        let page = "<html><body><main>\
+            <h2 class=\"prc-src-InternalVisuallyHidden-2YaI6\">Repository navigation</h2>\
+            <ul><li><a href=/code>Code</a></li><li><a href=/issues>Issues</a></li>\
+            <li><a href=/pulls>Pull requests</a></li></ul>\
+            <div role=region><h1><bdi>Privacy violation in User-Agent header</bdi>\
+            <span> #107757</span></h1>\
+            <a data-component=Button type=button href=/login><span>New issue</span></a></div>\
+            <div class=\"issueMetadata\"><div>Labels</div><div>\
+            <a href=/l/1><span>area:security</span></a>\
+            <span role=tooltip aria-hidden=true>Security issues</span>\
+            <a href=/l/2><span>bug</span><span class=sr-only>Something isn't working</span></a>\
+            <a href=/l/3><span>platform:macos</span></a></div></div>\
+            <div id=\"issue-viewer-sticky-header\"><a href=#top>Privacy violation in User-Agent \
+            header</a><span>#107757</span></div>\
+            <h2 class=sr-only>Description</h2>\
+            <p>I receive dozens of scam emails a day since my address went out in a header.</p>\
+            <p>Steps to reproduce follow.</p></main></body></html>";
+        let cut = main_content(page);
+        assert!(cut.starts_with("<h1>"), "{cut}");
+        assert!(cut.contains("dozens of scam emails"));
+        for chrome in [
+            "Repository navigation",
+            "Pull requests",
+            "New issue",
+            "area:security",
+            "Labels",
+            "Something isn't working",
+            "Description",
+            "#top",
+        ] {
+            assert!(!cut.contains(chrome), "{chrome} was kept in {cut}");
+        }
+    }
+
+    #[test]
+    fn a_menu_written_as_a_plain_list_of_short_links_is_left_out() {
+        // A feed that carries a whole page: its section menu is a list of
+        // one-word links with no `<nav>` around it.
+        let page = "<div class=\"secondary-menu\"><ul>\
+            <li><a href=/today>Today\u{2019}s picture</a></li><li><a href=/archive>Archive</a></li>\
+            <li><a href=/submit>Submissions</a></li><li><a href=/search>Search</a></li></ul></div>\
+            <h2>A farewell to a telescope</h2><p>After twenty-two years of service it came home.</p>";
+        let cut = main_content(page);
+        assert!(cut.contains("A farewell to a telescope"));
+        assert!(cut.contains("twenty-two years"));
+        assert!(!cut.contains("Archive"));
+        assert!(!cut.contains("Submissions"));
+    }
+
+    #[test]
+    fn a_reading_list_of_long_link_titles_and_a_sentence_full_of_links_are_kept() {
+        let page = "<article><p>The fleet, <a href=/a>the tugs</a>, <a href=/b>the ferries</a> and \
+            <a href=/c>the dredgers</a> all came out.</p><h2>Further reading</h2><ul>\
+            <li><a href=/1>How the tide tables were first printed in the port</a></li>\
+            <li><a href=/2>A history of the harbour master\u{2019}s office and its keepers</a></li>\
+            <li><a href=/3>The pilot boats of the estuary from sail to diesel</a></li></ul></article>";
+        let cut = main_content(page);
+        assert!(cut.contains("the dredgers"));
+        assert!(cut.contains("tide tables"));
+        assert!(cut.contains("pilot boats"));
+    }
+
+    #[test]
+    fn a_row_of_linked_pictures_is_a_gallery_and_is_kept() {
+        let page = "<article><p>Photographs from the walk.</p><div>\
+            <a href=/1><img src=1.jpg alt=Pier></a><a href=/2><img src=2.jpg alt=Dunes></a>\
+            <a href=/3><img src=3.jpg alt=Lighthouse></a></div></article>";
+        let cut = main_content(page);
+        assert!(cut.contains("1.jpg"));
+        assert!(cut.contains("3.jpg"));
+    }
+
+    #[test]
+    fn prose_above_the_headline_keeps_the_article_from_starting_at_it() {
+        let page = "<main><p>This is the opening of a column that puts its first paragraph \
+            above its own title, as some do.</p><h1>The title</h1><p>The rest.</p></main>";
+        let cut = main_content(page);
+        assert!(cut.contains("opening of a column"));
+        assert!(cut.contains("The title"));
+    }
+
+    #[test]
+    fn a_date_and_a_line_of_category_links_above_the_headline_are_left_out() {
+        let page = "<article><p>5 November \u{b7} <a href=/t/mac>macos</a> \
+            <a href=/t/diy>diy</a></p><h1>Reborn</h1><p>It boots.</p></article>";
+        let cut = main_content(page);
+        assert!(cut.starts_with("<h1>Reborn"), "{cut}");
     }
 }
