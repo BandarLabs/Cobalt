@@ -415,6 +415,10 @@ pub mod input {
     use super::{ior, query_ioctl, query_ioctl_bytes, File};
     use std::io;
 
+    /// The single-touch axes. Older controllers report only these, with
+    /// `BTN_TOUCH` saying whether a finger is down.
+    pub const ABS_X: u16 = 0x00;
+    pub const ABS_Y: u16 = 0x01;
     pub const ABS_MT_SLOT: u16 = 0x2f;
     pub const ABS_MT_TRACKING_ID: u16 = 0x39;
     pub const ABS_MT_POSITION_X: u16 = 0x35;
@@ -435,6 +439,9 @@ pub mod input {
     pub const KEY_PAGE_193: u16 = 193;
     pub const KEY_PAGE_194: u16 = 194;
     pub const SYN_REPORT: u16 = 0;
+    /// Ends one contact inside a frame on a controller that reports contacts
+    /// as an anonymous list rather than in numbered slots.
+    pub const SYN_MT_REPORT: u16 = 2;
     pub const SYN_DROPPED: u16 = 3;
     pub const BTN_TOUCH: u16 = 330;
 
@@ -474,6 +481,34 @@ pub mod input {
     /// `/proc/bus/input/devices` confirms bit 35 is the only key that node has.
     /// A press means the magnet arrived, a release means it left.
     pub const KEY_COVER: u16 = 35;
+
+    /// Builds an `EVIOCGBIT` query for the codes one event type supports.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the type or size cannot fit in the ioctl request.
+    #[must_use]
+    pub const fn eviocgbit(kind: u16, bytes: u32) -> u64 {
+        assert!(kind < 0x20 && bytes <= 0x3fff);
+        ior(b'E', 0x20 + kind.to_le_bytes()[0], bytes)
+    }
+
+    /// Whether the device declares that it can send `code` of event `kind`.
+    ///
+    /// Read from the kernel's own bitmap, one bit per code in little-endian
+    /// bytes, so the answer does not depend on how wide the kernel's `long`
+    /// is, which the text in `/proc/bus/input/devices` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `EVIOCGBIT`.
+    pub fn supports(file: &File, kind: u16, code: u16) -> io::Result<bool> {
+        let mut bitmap = [0_u8; 96];
+        let size = u32::try_from(bitmap.len()).unwrap_or(0);
+        query_ioctl_bytes(file, eviocgbit(kind, size), &mut bitmap)?;
+        let (byte, bit) = (usize::from(code) / 8, usize::from(code) % 8);
+        Ok(bitmap.get(byte).is_some_and(|byte| byte & (1 << bit) != 0))
+    }
 
     /// Builds an `EVIOCGKEY` query for a key bitmap of `bytes` bytes.
     ///
@@ -2706,6 +2741,15 @@ mod tests {
         assert_eq!(iow(b'F', 0x2e, 36), 0x4024_462e);
         assert_eq!(iow(b'F', 0x2e, 72), 0x4048_462e);
         assert_eq!(iowr(b'F', 0x2f, 8), 0xc008_462f);
+    }
+
+    /// The capability query is the same request `touch_snapshot` already
+    /// sends for keys, built from the event type rather than spelled out.
+    #[test]
+    fn the_capability_query_is_numbered_by_event_type() {
+        assert_eq!(input::eviocgbit(input::EV_KEY, 96), ior(b'E', 0x21, 96));
+        assert_eq!(input::eviocgbit(input::EV_KEY, 96), 0x8060_4521);
+        assert_eq!(input::eviocgbit(input::EV_ABS, 96), 0x8060_4523);
     }
 
     /// The two backends share a number here, and that is not a coincidence to
