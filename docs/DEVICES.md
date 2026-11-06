@@ -60,6 +60,111 @@ Cobalt again. This change does not add live autorotation within a session.
 See the [N605 acceptance record](testing/elipsa-rotation-89/README.md) for
 attended results in both portrait poses and device framebuffer captures.
 
+## Models without a profile
+
+Every row above is a reader somebody held while Cobalt ran on it. A Kobo that
+is not in the table still runs, on a profile built from what it reports about
+itself, provided its display driver is one Cobalt speaks. This section says
+which readers that covers, what such a session needs, and what a volunteer can
+check to move a model into the table.
+
+### Which families
+
+| Family | Display driver | Examples | Status |
+|---|---|---|---|
+| MediaTek MT8110 / MT8113 | HWTCON | Clara BW, Clara Colour, Libra Colour, Elipsa 2E | Measured profiles above; other models in the family run provisionally |
+| i.MX6SLL | EPDC v2, 32-bit pixels | Clara HD, Libra H2O, Libra 2, Forma, Clara 2E | Clara HD, Libra H2O and Libra 2 are measured; the rest run provisionally |
+| i.MX6ULL | EPDC v2, 32-bit pixels | Nia | Runs provisionally |
+| Allwinner | sunxi display engine | Elipsa, Sage | Not supported yet |
+| i.MX50 and i.MX6SL | EPDC v1, 16-bit pixels | Most readers released before the Clara HD | Not supported yet |
+
+The last two families are refused before the reader is stopped, with a
+message that says the model is not supported yet and why. Their display
+drivers take a different update request from the ones Cobalt sends, and a
+request the driver misreads is not an error anything can catch, so neither is
+attempted.
+
+### Provisional support
+
+A reader with no profile gets one derived from its own probe: framebuffer
+geometry and pixel layout, the touch controller and its ranges, the firmware
+and kernel. The density is borrowed from a measured profile with the same
+resolution, or taken as 300 ppi. Two things cannot be derived and are handled
+on the device:
+
+- **How the digitiser is mounted.** Before the first real screen the reader
+  shows "Touch the dot" with one dot near the top-left corner, then one near
+  the top-right. From the two taps Cobalt works out whether the touch axes are
+  swapped and whether each is mirrored, and remembers the answer in
+  `.adds/cobalt/state/touch-calibration` for that reader, controller and pose.
+  The dots share an edge on purpose: two dots at opposite corners cannot tell
+  swapped axes from unswapped ones. Missing three times, leaving the dots for
+  two minutes, or pressing the power button hands the reader back. A measured
+  profile's transform is never replaced by a calibration. To calibrate again,
+  delete that file.
+- **Whether the owner wants to run untested.** After calibration the reader
+  says it has not been tested and asks before continuing, as before.
+
+The touch panel is found by what it reports rather than by name: a node with
+multi-touch position axes, or with `ABS_X`, `ABS_Y` and `BTN_TOUCH` for a
+single-touch controller. Nodes named for buttons, the power key or the cover
+are skipped. Controllers that send no tracking id, single-touch controllers,
+and controllers that never send a tracking id of -1 all decode.
+
+On i.MX readers three more differences apply:
+
+- The front light is driven through `mxc_msp430.0` where it exists, and the
+  warmth control (`lm3630a_led/color`, which runs the other way on these
+  readers) is never written. Whatever brightness the reader had is put back on
+  exit.
+- The sleep cover is read on key 59 as well as key 35.
+- Some boards hold the wait for a panel update for about five seconds after the
+  update has finished. Cobalt stops waiting after two seconds and writes
+  `refresh: the panel had not confirmed update ...` to standard error, which
+  `start.sh` captures.
+
+The button node may be called `ntx_event0` on older kernels instead of
+`gpio-keys`. Cobalt falls back to that name, but no reader with it has been
+tested.
+
+### Volunteer checklist
+
+Run these on the reader and note the model, serial prefix (the first four
+characters) and firmware. Start the session with `KOBO_BLACKBOX=1` so
+`kobo logs` has something to show.
+
+Every family:
+
+1. `kobo doctor --device <address>` and keep the whole output. It is what a
+   new profile row is written from.
+2. Launch Cobalt. Tap both dots when asked. The log should say
+   `touch: calibrated as ...`.
+3. Tap near each of the four corners of the launcher and check that each tap
+   lands where your finger was, not mirrored or rotated.
+4. If the reader has page keys, open a book and press each one. Each should
+   turn the page the way the key points.
+5. Close and open the sleep cover, if you have one, and check the session
+   notices.
+6. Change the brightness from Cobalt. The light should change visibly. Exit,
+   and check the brightness and the warmth are exactly what the Kobo had
+   before.
+7. With Wi-Fi on before launch, exit and check Wi-Fi is still connected in the
+   Kobo reader.
+8. Launch and exit three times in a row. The reader should come back each
+   time without a restart.
+
+i.MX readers (Clara HD, Forma, Libra H2O, Libra 2, Clara 2E, Nia):
+
+- Watch for screens that take about five seconds to settle, and note whether
+  the stall line above appears in the captured standard error.
+- Check warmth by eye after exit, not only brightness. Warmth that moved is a
+  bug.
+
+MediaTek readers:
+
+- Run the whole list once off the charger. Some faults in the hand-back only
+  show on battery.
+
 ## Connecting a device
 
 The reader has to be on the same wireless network as the machine you work from.
