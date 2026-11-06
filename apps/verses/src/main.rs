@@ -1506,6 +1506,9 @@ enum View {
     Online,
 }
 
+/// The middle of a poem's page.
+const POEM_MENU: &str = "poem-menu";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Pending {
     Search,
@@ -1557,6 +1560,8 @@ struct Verses {
     /// the favourite with it and said nothing, so a reader found their poem
     /// unmarked the next time they opened the shelf and had no idea why.
     saving: bool,
+    /// Whether the panel a tap in the middle of a poem opens is up.
+    poem_menu: bool,
 }
 
 impl Default for Verses {
@@ -1590,6 +1595,7 @@ impl Default for Verses {
                 .and_then(Snapshot::date)
                 .map(|date| (date.year, date.month, date.day)),
             saving: false,
+            poem_menu: false,
         }
     }
 }
@@ -1727,15 +1733,28 @@ impl Verses {
             screen = screen.fill();
         }
         // A poem is read the way a book is: the sides of the page turn it,
-        // and the bar stays out of sight until a touch at the top calls it
-        // back over the page.
-        if count > 1 {
-            screen = screen.page_turns("poem-previous", "poem-next");
-        }
-        screen
-            .bottom_action("card", "Make a quote card")
+        // the middle opens what can be done with it, and the bar stays out
+        // of sight until a touch at the top calls it back over the page.
+        screen = screen
+            .page_turns("poem-previous", "poem-next")
+            .reading_menu(POEM_MENU);
+        self.with_poem_menu(screen, poem.title)
             .build()
             .with_auto_hidden_top_bar(true)
+    }
+
+    /// The panel a tap in the middle of a poem opens.
+    ///
+    /// Making a card used to be a button under every page of every poem,
+    /// which cost a line of verse on each one to offer something done once
+    /// in a while.
+    fn with_poem_menu(&self, screen: ScreenBuilder, title: &str) -> ScreenBuilder {
+        if !self.poem_menu {
+            return screen;
+        }
+        screen.modal(title.to_owned(), |panel| {
+            panel.button("card", "Make a quote card")
+        })
     }
 
     /// Which lines go on which page, measured against the panel, and the size
@@ -1945,13 +1964,12 @@ impl Verses {
         if page + 1 == count {
             screen = screen.secondary("From PoetryDB");
         }
-        if count > 1 {
-            screen = screen.page_turns("online-previous", "online-next");
-        }
+        screen = screen
+            .page_turns("online-previous", "online-next")
+            .reading_menu(POEM_MENU);
         // A fetched poem makes a card as a bundled one does: today's poem
         // used to lose the card the day it began to come from PoetryDB.
-        screen
-            .bottom_action("card", "Make a quote card")
+        self.with_poem_menu(screen, &poem.title)
             .build()
             .with_auto_hidden_top_bar(true)
     }
@@ -2410,7 +2428,7 @@ impl Verses {
     fn show(&self, context: &mut Context) {
         let screen = self
             .screen(context)
-            .with_own_back(!matches!(self.view, View::Today));
+            .with_own_back(self.poem_menu || !matches!(self.view, View::Today));
         context.set_screen(screen);
     }
 
@@ -2445,14 +2463,18 @@ impl Verses {
         if let Some(poem) = self.current_online().filter(|_| self.card_from_online()) {
             let pages = self.online_pages(context, poem);
             let page = self.online_page.min(pages.len().saturating_sub(1));
-            let screen = ScreenBuilder::new("verses-card")
-                .top_bar(context.clamped_row(&poem.title, 1, false))
-                .reading(true);
-            return set_online_verse(screen, &pages[page])
-                .secondary(context.clamped_row(&poem.author, 1, false))
-                .secondary("From PoetryDB")
-                .build()
-                .with_auto_hidden_top_bar(true);
+            let lines = &pages[page];
+            let card = |shown: usize| {
+                let screen = ScreenBuilder::new("verses-card")
+                    .top_bar(context.clamped_row(&poem.title, 1, false))
+                    .reading(true);
+                set_online_verse(screen, &lines[..shown])
+                    .secondary(context.clamped_row(&poem.author, 1, false))
+                    .secondary("From PoetryDB")
+                    .build()
+                    .with_auto_hidden_top_bar(true)
+            };
+            return Self::fitted_card(context, lines.len(), card);
         }
         let poem = CORPUS[self.poem];
         let (scale, pages) = self.poem_pages(context);
@@ -2461,18 +2483,48 @@ impl Verses {
         // is set at. It also shares the poem's pagination, and pagination is
         // measured at that size: a card measured at one size and drawn at
         // another breaks its lines where the poem does not.
-        let mut screen = ScreenBuilder::new("verses-card")
-            .top_bar(poem.title)
-            .reading(true)
-            .text_scale(scale);
-        screen = set_verse(screen, poem, &pages[page]);
-        screen
-            .secondary(format!("{} · {}", poem.author, poem.year))
-            .secondary(poem.source.to_owned())
-            .build()
-            // The card is set on the poem's own pages, which are the whole
-            // panel, and it is the card that is shown, not the bar.
-            .with_auto_hidden_top_bar(true)
+        let runs = &pages[page];
+        let total: usize = runs.iter().map(|run| run.to - run.from).sum();
+        let card = |shown: usize| {
+            let mut screen = ScreenBuilder::new("verses-card")
+                .top_bar(poem.title)
+                .reading(true)
+                .text_scale(scale);
+            screen = set_verse(screen, poem, &first_lines(runs, shown));
+            screen
+                .secondary(format!("{} · {}", poem.author, poem.year))
+                .secondary(poem.source.to_owned())
+                .build()
+                // The card is set on the poem's own pages, which are the whole
+                // panel, and it is the card that is shown, not the bar.
+                .with_auto_hidden_top_bar(true)
+        };
+        Self::fitted_card(context, total, card)
+    }
+
+    /// The card with as many of the page's lines as leave room for whose
+    /// poem it is and where it came from.
+    ///
+    /// A page of verse fills the panel, and the card sets the same page with
+    /// two lines of attribution under it, so a full page loses its last
+    /// lines rather than its provenance.
+    fn fitted_card(context: &Context, lines: usize, card: impl Fn(usize) -> Screen) -> Screen {
+        let whole = card(lines);
+        if Self::page_fits(context, &whole) {
+            return whole;
+        }
+        // Fewer lines never fit worse, so the most that fit is found by
+        // halving rather than by measuring the card once per line.
+        let (mut fits, mut over) = (0, lines);
+        while over - fits > 1 {
+            let middle = (fits + over) / 2;
+            if Self::page_fits(context, &card(middle)) {
+                fits = middle;
+            } else {
+                over = middle;
+            }
+        }
+        card(fits.max(1))
     }
 
     /// Draws the card and offers it to a paired computer.
@@ -2729,6 +2781,17 @@ impl KoboApp for Verses {
             return;
         }
 
+        // Whatever is tapped next puts the poem's panel away; Back does only
+        // that, and the middle of the page opens it.
+        if std::mem::take(&mut self.poem_menu) && action == ActionId::BACK {
+            self.show(context);
+            return;
+        }
+        if action == action_id(POEM_MENU) {
+            self.poem_menu = true;
+            self.show(context);
+            return;
+        }
         if action == ActionId::BACK {
             self.cancel_request(context);
             self.notice = None;
@@ -2988,6 +3051,24 @@ fn set_online_verse(mut screen: ScreenBuilder, lines: &[OnlineLine]) -> ScreenBu
 /// Sets the runs of a poem as stanzas: one paragraph each, a printed poem's
 /// leading inside it and the poet's space between them. The page and the card
 /// share this so a card is the page it was made from, line for line.
+/// The first `lines` lines of a page's runs.
+fn first_lines(runs: &[VerseRun], lines: usize) -> Vec<VerseRun> {
+    let mut left = lines;
+    let mut kept = Vec::new();
+    for run in runs {
+        if left == 0 {
+            break;
+        }
+        let take = (run.to - run.from).min(left);
+        kept.push(VerseRun {
+            to: run.from + take,
+            ..*run
+        });
+        left -= take;
+    }
+    kept
+}
+
 fn set_verse(mut screen: ScreenBuilder, poem: Poem, runs: &[VerseRun]) -> ScreenBuilder {
     for (index, run) in runs.iter().enumerate() {
         let lines = &poem.stanzas[run.stanza][run.from..run.to];
@@ -3619,6 +3700,7 @@ mod tests {
         let task = runner.app().daily_task.expect("asked");
         let body = br#"[{"title":"A Fetched Poem","author":"A Poet","lines":["One line,","another."],"linecount":"2"}]"#;
         runner.task_outcome(task, TaskOutcome::Completed(body.to_vec()));
+        runner.action(action_id(POEM_MENU));
         assert!(
             format!("{:?}", runner.app().screen(&runner.context())).contains("Make a quote card")
         );

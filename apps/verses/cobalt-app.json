@@ -5,7 +5,7 @@
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
   "version": "0.1.15",
-  "release_notes": "A poem is read on the whole panel, with the sides of the page turning it and the bar a touch at the top away, and a poem from PoetryDB fills each page before turning to the next.",
+  "release_notes": "A poem is read on the whole panel: the sides turn it, the middle offers a quote card, and the bar is a touch at the top away.",
   "glyph": "note",
   "capabilities": [
     "network"

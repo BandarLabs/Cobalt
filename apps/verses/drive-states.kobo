@@ -1,4 +1,5 @@
-wait-for Make a quote card
+# The poem is on the page as soon as the side taps that turn it are.
+wait-for-id poem-menu
 # Today's poem is drawn again when PoetryDB answers, and a screen drawn
 # again starts with its bar out of sight, so the touch waits for it.
 wait-idle 3000
