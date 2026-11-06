@@ -4,7 +4,7 @@
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
   "version": "1.0.22",
-  "release_notes": "The home pages lose the rail down the side; the page count and arrows below say where you are.",
+  "release_notes": "The home pages lose the rail down the side, the Computer card says when it holds a game to resume, and a new board no longer reads \"none\" under it.",
   "glyph": "grid",
   "capabilities": [
     "network",

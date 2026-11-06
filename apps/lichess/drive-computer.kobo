@@ -21,6 +21,7 @@ clean
 shot computer-reply
 tap Back
 expect Computer
+expect Resume game
 tap-id play-computer
 expect Kobo
 clean

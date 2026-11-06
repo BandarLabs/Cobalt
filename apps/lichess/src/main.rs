@@ -735,9 +735,7 @@ impl Lichess {
                 tiles.chunks(grid.columns).all(|row| {
                     let cards = row
                         .iter()
-                        .map(|&index| {
-                            Self::home_tile(index, seek_state, self.seek_rated, grid.brief)
-                        })
+                        .map(|&index| self.home_tile_now(index, seek_state, grid.brief))
                         .collect();
                     !Self::home_card_row(self.home_header(), cards, grid.columns)
                         .build()
@@ -824,6 +822,21 @@ impl Lichess {
         } else {
             TileState::Normal
         }
+    }
+
+    /// A home card as it stands now. The Computer card says when it holds a
+    /// game in progress, because tapping it then returns to that board, and
+    /// the home status alone said only "Board active" with no way back named.
+    fn home_tile_now(&self, index: usize, seek_state: TileState, brief: bool) -> HomeTile {
+        let mut tile = Self::home_tile(index, seek_state, self.seek_rated, brief);
+        if tile.action == "play-computer" && self.computer_game_in_progress() {
+            "Resume game".clone_into(&mut tile.subtitle);
+        }
+        tile
+    }
+
+    fn computer_game_in_progress(&self) -> bool {
+        self.local_game && self.game.as_ref().is_some_and(Game::active)
     }
 
     /// One home card. A time card names the pool it seeks in, so the owner
@@ -930,7 +943,7 @@ impl Lichess {
         for row in tiles.chunks(grid.columns) {
             let cards = row
                 .iter()
-                .map(|index| Self::home_tile(*index, seek_state, self.seek_rated, grid.brief))
+                .map(|index| self.home_tile_now(*index, seek_state, grid.brief))
                 .collect();
             screen = Self::home_card_row(screen, cards, grid.columns);
         }
@@ -4864,7 +4877,7 @@ impl KoboApp for Lichess {
             self.route = Route::Play;
             self.validate_account(context);
         } else if action == action_id("play-computer") {
-            if self.local_game && self.game.as_ref().is_some_and(Game::active) {
+            if self.computer_game_in_progress() {
                 self.route = Route::Game;
                 self.reset_clock(context, self.local_clock_runs());
             } else {
@@ -6447,6 +6460,26 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn the_computer_card_offers_to_resume_while_its_game_is_in_progress() {
+        let computer_subtitle = |app: &mut Lichess| {
+            tile_copy(&app.home(&Context::default()).nodes)
+                .into_iter()
+                .find(|(action, _, _)| *action == action_id("play-computer"))
+                .map(|(_, _, subtitle)| subtitle)
+                .expect("computer card")
+        };
+        let mut runner = AppRunner::new(ready_app());
+        assert_eq!(computer_subtitle(runner.app_mut()), "Offline");
+        runner.action(action_id("play-computer"));
+        runner.action(action_id("start-computer"));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().route, Route::Home);
+        assert_eq!(computer_subtitle(runner.app_mut()), "Resume game");
+        runner.action(action_id("play-computer"));
+        assert_eq!(runner.app().route, Route::Game);
     }
 
     #[test]
