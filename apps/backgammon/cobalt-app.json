@@ -4,7 +4,7 @@
   "short_label": "Backgammon",
   "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
   "version": "0.1.17",
-  "release_notes": "The board sits in a frame with a bar between its halves and its point numbers in plain type. Dice are drawn as dice, a tall stack shows its count, and Bar and Off appear only when in play.",
+  "release_notes": "The board sits in a frame with a bar between its halves and its point numbers in plain type. White checkers are solid, dice are drawn as dice, a tall stack shows its count, and Bar and Off appear only when in play.",
   "minimum_cobalt_version": "0.3.34",
   "glyph": "circle",
   "capabilities": [],

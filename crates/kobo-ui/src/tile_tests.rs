@@ -609,3 +609,54 @@ fn only_chess_and_draughts_boards_are_drawn_without_rules_between_squares() {
         .iter()
         .any(|node| node.kind == LayoutKind::CheckeredFrame));
 }
+
+#[test]
+fn a_white_man_on_a_dark_square_is_solid_paper_inside_its_ring() {
+    // A white piece is a ring of ink round paper. Without the paper the dark
+    // square shows through, and the man reads as an empty outline instead of
+    // a piece standing on the board.
+    let cells = (0..64_u32)
+        .map(|index| {
+            let cell = Cell::new(ActionId(500 + index), "");
+            if index == 28 {
+                cell.with_glyph(Glyph::WhiteDraughtsMan)
+            } else {
+                cell
+            }
+        })
+        .collect();
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 8,
+            square: true,
+            cells,
+        }],
+    );
+    let metrics = CLARA_BW_METRICS;
+    let chrome = Chrome::measuring(true);
+    let layout = screen.layout_with(&metrics, &chrome);
+    let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
+    render_with(&screen, &metrics, &chrome, &mut surface, None);
+    let pixel = |x: i32, y: i32| surface.pixels[y as usize * surface.width + x as usize];
+    let Paint::Grey(dark) = Palette::grey().square_dark() else {
+        panic!("a grey panel's dark square is grey");
+    };
+    let square = layout.rect_of_action(ActionId(528)).unwrap();
+    let (x, y) = (square.x + square.width / 2, square.y + square.height / 2);
+    assert_eq!(
+        pixel(x, y),
+        tone::PAPER,
+        "the dark square shows through the man"
+    );
+    assert_eq!(
+        pixel(square.x + 2, y),
+        dark,
+        "the paper spread past the man to the edge of the square"
+    );
+    let row: Vec<u8> = (square.x..square.x + square.width / 2)
+        .map(|x| pixel(x, y))
+        .collect();
+    assert!(row.contains(&tone::INK), "the man has no ring");
+}

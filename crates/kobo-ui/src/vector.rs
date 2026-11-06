@@ -641,6 +641,22 @@ fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
     Some(shapes)
 }
 
+/// The paper inside a white piece, drawn before its ink.
+///
+/// A white piece is a ring of ink, and without a ground the square under it
+/// shows through: on a grey square a white man read as an empty outline
+/// rather than a piece standing on the board. A real white piece is solid,
+/// so it covers what it stands on, and a white checker in a stack covers the
+/// one beneath it.
+#[must_use]
+pub fn piece_ground(glyph: Glyph) -> Option<Vec<Shape>> {
+    matches!(
+        glyph,
+        Glyph::WhiteDisc | Glyph::WhiteDraughtsMan | Glyph::WhiteDraughtsKing
+    )
+    .then(|| vec![Shape::Fill(Path::circle(500, 500, 365))])
+}
+
 /// A flag on a mine field square: a pole on a short foot, with a pennant
 /// that fills the top half of it. Heavy enough to read on the grey of a
 /// covered square from arm's length.

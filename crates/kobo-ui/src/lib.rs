@@ -18291,6 +18291,9 @@ fn draw_row_lead(
 }
 
 fn draw_glyph_icon(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect) {
+    if let Some(ground) = vector::piece_ground(glyph) {
+        draw_vector(surface, &ground, rect, clip, tone::PAPER);
+    }
     draw_vector(surface, &vector::shapes(glyph), rect, clip, tone::INK);
 }
 
@@ -19242,6 +19245,9 @@ fn draw_backgammon_stack(
         } else {
             tone::INK
         };
+        if let Some(ground) = vector::piece_ground(glyph) {
+            draw_vector(surface, &ground, disc, clip, tone::PAPER);
+        }
         draw_vector(surface, &vector::shapes(glyph), disc, clip, ink);
         if glyph == Glyph::BlackDraughtsKing {
             draw_vector(surface, &vector::king_inlay(), disc, clip, tone::PAPER);
