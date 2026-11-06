@@ -649,6 +649,12 @@ shows bytes received and no percentage. If it does not supply a date, there is
 no date. A fabricated fact is the one failure a reader cannot detect and the
 one this SDK will not help you with. See *Refusing rather than inventing*.
 
+**Dates are said, not logged.** "Updated 2026-11-06 08:13" is a log line.
+`when::spoken(moment, now)` writes a moment the way the reader would say it,
+against their own clock: "Today, 08:13", "Yesterday", "3 Nov", "3 Nov 2025".
+`when::stamp_millis` reads the ISO 8601 stamps services send, so a stamp from a
+feed can be handed straight over.
+
 **State is a field, not a suffix.** `TileState::Held`, not `format!("{title}
 (kept)")`. See the next section, which is the same argument at the renderer's
 level.

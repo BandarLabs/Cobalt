@@ -89,6 +89,7 @@ pub mod snapshot;
 pub mod terminal;
 pub mod validation;
 pub mod verse;
+pub mod when;
 
 pub use audio::{AudioMetadata, AudioPlayer};
 
