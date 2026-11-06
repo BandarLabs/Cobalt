@@ -16501,13 +16501,16 @@ fn paint_layout(
             // The border is the whole control: a field with only a baseline
             // under it reads as an underlined word, and one with a fill reads
             // as a button that has already been pressed.
+            // Rounded like the buttons and chips beside it.
             LayoutKind::Field(_, error) => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
                 if error {
-                    fill_clipped(surface, node.rect, palette.field_error(), clip);
+                    fill_rounded_clipped(surface, node.rect, radius, palette.field_error(), clip);
                 }
-                stroke_clipped(
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
+                    radius,
                     tone::RULE,
                     metrics.rule_thickness(),
                     clip,
@@ -16540,13 +16543,17 @@ fn paint_layout(
             // Inverted when on. With two usable tones there is no third state
             // available, and an outline-versus-heavier-outline distinction is
             // not one anybody reads at arm's length on a reflective panel.
+            // Rounded like a button. A chip or a segment with square corners
+            // beside a rounded button read as a part from a different kit.
             LayoutKind::Chip(_, selected) => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
                 if selected {
-                    fill_clipped(surface, node.rect, palette.emphasis(), clip);
+                    fill_rounded_clipped(surface, node.rect, radius, palette.emphasis(), clip);
                 } else {
-                    stroke_clipped(
+                    stroke_rounded_clipped(
                         surface,
                         node.rect,
+                        radius,
                         tone::RULE,
                         metrics.rule_thickness(),
                         clip,

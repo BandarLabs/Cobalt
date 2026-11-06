@@ -1098,3 +1098,39 @@ fn rows_measured_without_their_buttons_and_badges_run_past_the_page_somewhere() 
     }
     assert!(overflowed);
 }
+
+#[test]
+fn chips_and_fields_are_rounded_like_the_buttons_beside_them() {
+    let metrics = CLARA_BW_METRICS;
+    let screen = screen(vec![
+        Node::Chips {
+            id: NodeId(1),
+            chips: vec![Chip::new(ActionId(2), "Unread")],
+        },
+        Node::Field {
+            id: NodeId(3),
+            action: ActionId(4),
+            value: String::new(),
+            placeholder: "Search the catalogue".to_owned(),
+            clear: None,
+            label: None,
+            hint: None,
+            error: None,
+            kind: FieldKind::Text,
+        },
+    ]);
+    let layout = screen.layout_for(&metrics);
+    let surface = painted(&screen, &metrics);
+    let at = |x: i32, y: i32| {
+        surface.pixels[usize::try_from(y).unwrap() * surface.width + usize::try_from(x).unwrap()]
+    };
+    for rect in [
+        kinds(&layout, |kind| matches!(kind, LayoutKind::Chip(..)))[0].rect,
+        kinds(&layout, |kind| matches!(kind, LayoutKind::Field(..)))[0].rect,
+    ] {
+        // The very corner is paper, where a square outline would have put
+        // its rule, while the middle of the top edge is still ruled.
+        assert_eq!(at(rect.x, rect.y), tone::PAPER, "{rect:?}");
+        assert_ne!(at(rect.x + rect.width / 2, rect.y), tone::PAPER, "{rect:?}");
+    }
+}
