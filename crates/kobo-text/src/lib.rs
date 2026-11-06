@@ -490,6 +490,11 @@ impl Typeface {
     }
 
     /// The distance from the top of a line to the baseline.
+    /// The em at which this face's capitals stand `cap` pixels tall.
+    fn pixels_for_cap(&self, cap: i32) -> f32 {
+        (cap.max(1) as f32 / self.cap_share()).max(1.0)
+    }
+
     fn ascent(&self, pixels: f32) -> i32 {
         self.font
             .horizontal_line_metrics(pixels)
@@ -525,6 +530,14 @@ impl Typeface {
             return (cells.saturating_mul(cell), self.height(size, face));
         }
         let pixels = self.pixels(size, face);
+        (
+            self.advance(text, pixels, fallback).round() as i32,
+            self.height(size, face),
+        )
+    }
+
+    /// How far a proportional run at `pixels` to the em moves the pen.
+    fn advance(&self, text: &str, pixels: f32, fallback: Option<&Self>) -> f32 {
         let mut width = 0f32;
         let mut previous: Option<(&Self, char)> = None;
         for character in text.chars() {
@@ -541,7 +554,19 @@ impl Typeface {
             width += face.font.metrics(glyph, pixels).advance_width;
             previous = Some((face, glyph));
         }
-        (width.round() as i32, self.height(size, face))
+        width
+    }
+
+    /// A capital's height as a share of the em: what turns "capitals this
+    /// tall" into a size to set the face at.
+    fn cap_share(&self) -> f32 {
+        let reference = 1000.0;
+        let height = self.font.metrics('H', reference).height as f32 / reference;
+        if height > 0.1 {
+            height
+        } else {
+            0.7
+        }
     }
 
     /// The baseline-to-baseline distance for this face.
@@ -580,6 +605,21 @@ impl Typeface {
         // glyph, so a letter borrowed from another face sits on the same line
         // as the letters around it instead of a line of its own.
         let baseline = y.saturating_add(self.ascent(pixels));
+        self.draw_on_baseline(text, x, baseline, pixels, cell, fallback, plot);
+    }
+
+    /// Draws one run at `pixels` to the em, standing on `baseline`.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_on_baseline(
+        &self,
+        text: &str,
+        x: i32,
+        baseline: i32,
+        pixels: f32,
+        cell: Option<i32>,
+        fallback: Option<&Self>,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
         let mut pen = x as f32;
         let mut previous: Option<(&Self, char)> = None;
         for character in text.chars() {
@@ -935,6 +975,48 @@ impl SystemFonts {
 impl Typesetter for SystemFonts {
     fn has_italic(&self, face: Face) -> bool {
         face == Face::Reading && self.italic().is_some()
+    }
+
+    fn cap_height(&self, size: FontSize, face: Face) -> Option<i32> {
+        let chosen = self.cut(size, face);
+        Some((chosen.cap_share() * chosen.pixels(size, face)).round() as i32)
+    }
+
+    fn ascent(&self, size: FontSize, face: Face) -> Option<i32> {
+        let chosen = self.cut(size, face);
+        Some(chosen.ascent(chosen.pixels(size, face)))
+    }
+
+    fn measure_initial(&self, text: &str, face: Face, cap: i32) -> Option<i32> {
+        let chosen = self.face(face);
+        let pixels = chosen.pixels_for_cap(cap);
+        Some(
+            chosen
+                .advance(text, pixels, self.fallback(chosen, text, face))
+                .round() as i32,
+        )
+    }
+
+    fn draw_initial(
+        &self,
+        text: &str,
+        x: i32,
+        baseline: i32,
+        face: Face,
+        cap: i32,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        let chosen = self.face(face);
+        let pixels = chosen.pixels_for_cap(cap);
+        chosen.draw_on_baseline(
+            text,
+            x,
+            baseline,
+            pixels,
+            None,
+            self.fallback(chosen, text, face),
+            plot,
+        );
     }
 
     fn measure_italic(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {

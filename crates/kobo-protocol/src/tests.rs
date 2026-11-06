@@ -1571,3 +1571,40 @@ fn each_protocol_is_laid_out_in_the_type_it_measured_with() {
         );
     }
 }
+
+fn verse_paragraph() -> Screen {
+    Screen::new(
+        5,
+        vec![Node::RichText {
+            id: kobo_ui::NodeId(1),
+            text: "That time of year thou mayst in me behold".to_owned(),
+            spans: Vec::new(),
+            links: Vec::new(),
+            presentation: kobo_ui::ParagraphPresentation {
+                start_indent_em: 340,
+                initial_lines: 3,
+                ..kobo_ui::ParagraphPresentation::default()
+            },
+            selection: None,
+            formulae: Vec::new(),
+        }],
+    )
+}
+
+fn paragraph_of(screen: &Screen) -> kobo_ui::ParagraphPresentation {
+    match screen.nodes.as_slice() {
+        [Node::RichText { presentation, .. }] => *presentation,
+        nodes => panic!("expected one paragraph, got {nodes:?}"),
+    }
+}
+
+/// A block indent and an initial reach a runtime that sets them, and an
+/// application at an older protocol never sends bytes its runtime would read
+/// as the paragraph's links.
+#[test]
+fn a_block_indent_and_an_initial_travel_from_protocol_eighteen() {
+    let fine = paragraph_of(&decoded_at(FINE_TYPE_VERSION, verse_paragraph()));
+    assert_eq!((fine.start_indent_em, fine.initial_lines), (340, 3));
+    let quiet = paragraph_of(&decoded_at(QUIET_TYPE_VERSION, verse_paragraph()));
+    assert_eq!((quiet.start_indent_em, quiet.initial_lines), (0, 0));
+}
