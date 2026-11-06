@@ -923,11 +923,10 @@ impl Lichess {
         page: usize,
         page_count: usize,
     ) -> Screen {
-        let page_index = u16::try_from(page).unwrap_or(u16::MAX);
         let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
         let page_count = u16::try_from(page_count).unwrap_or(u16::MAX);
         let seek_state = self.seek_tile_state();
-        let mut screen = self.home_header().page_rail(page_index, page_count);
+        let mut screen = self.home_header();
         for row in tiles.chunks(grid.columns) {
             let cards = row
                 .iter()
