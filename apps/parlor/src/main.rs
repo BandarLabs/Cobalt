@@ -17,7 +17,7 @@ use games::{Draughts, DraughtsMove, Kalah, Morris, MorrisMove, Reversi, ReversiM
 use kobo_sdk::game::{self as chrome, Menu, Tap};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, Chrome, Context, DisplayMetrics, Glyph, KoboApp, Orientation,
-    Screen, ScreenBuilder, SlotWidth, StoreResult, Tile, TileShape,
+    Screen, ScreenBuilder, SlotWidth, Space, StoreResult, Tile, TileShape,
 };
 use std::cmp::Ordering;
 use std::process::ExitCode;
@@ -614,10 +614,21 @@ impl Parlor {
             // The game already in progress is the first thing a reader who put
             // the panel down wants, so it sits above the shelf rather than
             // under it, where a fourth card would have pushed it off the panel.
-            screen.primary_button("resume", "Resume saved game")
+            // It names the game, since the shelf under it offers all four,
+            // and a margin of paper keeps it from reading as the lid of the
+            // first two cards.
+            screen
+                .primary_button("resume", self.resume_label().unwrap_or_default())
+                .spacer(Space::Medium)
         } else {
             screen
         }
+    }
+
+    /// The button that goes back to the game in progress, named for it.
+    fn resume_label(&self) -> Option<String> {
+        let position = self.position.as_ref()?;
+        Some(format!("Resume {}", position.title().name()))
     }
 
     /// What starting a game here would throw away, said before it happens.
@@ -1843,7 +1854,10 @@ impl KoboApp for Parlor {
                             *self = saved;
                             self.landscape = landscape;
                             self.shown_landscape = shown;
-                            self.notice = "Saved game ready. Choose Resume saved game.".into();
+                            self.notice = format!(
+                                "Saved game ready. Choose {}.",
+                                self.resume_label().unwrap_or_default()
+                            );
                             self.view = View::Menu;
                         }
                     }
