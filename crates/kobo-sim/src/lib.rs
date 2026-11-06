@@ -2765,10 +2765,18 @@ fn layout_json_with_chrome(
     // action names, which differ from app to app.
     let content = physical_rect(orientation, layout.content);
     let page_turns = match layout.page_turns.declared() {
-        Some(turns) => format!(
-            "{{\"previous\":{},\"next\":{}}}",
-            turns.previous.0, turns.next.0
-        ),
+        // The middle of the page too, when it opens something: it is as
+        // much a control as the sides are, and as invisible.
+        Some(turns) => match turns.menu {
+            Some(menu) => format!(
+                "{{\"previous\":{},\"next\":{},\"menu\":{}}}",
+                turns.previous.0, turns.next.0, menu.0
+            ),
+            None => format!(
+                "{{\"previous\":{},\"next\":{}}}",
+                turns.previous.0, turns.next.0
+            ),
+        },
         None => "null".to_owned(),
     };
     let mut json = format!(

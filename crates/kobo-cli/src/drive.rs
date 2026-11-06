@@ -331,12 +331,26 @@ impl Driver {
         if let Some((x, y)) = carrying(self.layout()?, true) {
             return self.touch(x, y);
         }
-        let [previous, next] = self.declared_turns()?;
+        let [previous, next, menu] = self.declared_turns()?;
         if next == action {
             return self.post_and_settle("/input", "page next");
         }
         if previous == action {
             return self.post_and_settle("/input", "page back");
+        }
+        if menu == action && menu != 0 {
+            let body = self.get("/layout")?;
+            let body = String::from_utf8_lossy(&body);
+            let content = body
+                .find("\"content\":{")
+                .map(|start| &body[start..])
+                .unwrap_or_default();
+            let number = |key: &str| json_number(content, key).unwrap_or(0);
+            let (x, y) = (
+                number("\"x\"") + number("\"width\"") / 2,
+                number("\"y\"") + number("\"height\"") / 2,
+            );
+            return self.touch(i32::try_from(x).unwrap_or(0), i32::try_from(y).unwrap_or(0));
         }
         // The control may be on a bar that is out of sight.
         self.reveal_bar()?;
@@ -547,11 +561,12 @@ impl Driver {
         }
     }
 
-    /// The previous and next page turns the screen declared, or zeros.
+    /// The previous and next page turns the screen declared, and the middle
+    /// of the page when it opens something, or zeros.
     ///
     /// A reading page has no control for either: the sides of the page are
     /// the control, so a script asks for the declared turn instead.
-    fn declared_turns(&self) -> Result<[u32; 2], String> {
+    fn declared_turns(&self) -> Result<[u32; 3], String> {
         let body = self.get("/layout")?;
         let body = String::from_utf8_lossy(&body);
         let declared = body
@@ -566,7 +581,7 @@ impl Driver {
                 .and_then(|id| u32::try_from(id).ok())
                 .unwrap_or(0)
         };
-        Ok([turn("\"previous\""), turn("\"next\"")])
+        Ok([turn("\"previous\""), turn("\"next\""), turn("\"menu\"")])
     }
 
     fn wait_for_id(&self, action: u32) -> Result<(), String> {
