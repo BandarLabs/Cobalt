@@ -561,7 +561,7 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
     if let Some(shapes) = game_piece_shapes(glyph) {
         return shapes;
     }
-    if let Some(shapes) = puzzle_grid_shapes(glyph) {
+    if let Some(shapes) = puzzle_shapes(glyph) {
         return shapes;
     }
     let width = if matches!(
@@ -586,63 +586,97 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
         .collect()
 }
 
-/// The crossword and the number puzzle, as their grids.
+/// The puzzle marks: noughts and crosses, the crossword, the number puzzle
+/// and the nonogram.
 ///
-/// Tabler draws a square with a grid inside it, whose cells are smaller in the
-/// middle than at the edge, and a letter or digit in a square, which at
-/// launcher size reads as a calculator display. Neither looks like the puzzle.
-/// These are drawn in Tabler's own terms instead: the frame of its
-/// `square` (four to twenty on its grid of twenty-four, with a corner of two)
-/// at the stroke weight of every other icon, cut into three equal cells each
-/// way so the grid is a different picture from the noughts and crosses board
-/// and the nonogram lattice beside it.
-fn puzzle_grid_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
+/// Each of these is played on a grid, and drawn as one they were four squares
+/// of lines a glance could not tell apart. Tabler has nothing better: its
+/// grids are the same picture at different densities, and its letter or digit
+/// in a square reads as a calculator display at launcher size. So each is
+/// drawn here as the one thing only its own puzzle has, in Tabler's terms: the
+/// frame of its `square` (four to twenty on its grid of twenty-four, with a
+/// corner of two) and the stroke weight of every other icon.
+///
+/// - Noughts and crosses is its two marks side by side, without a board.
+/// - The crossword is two words crossing, a run of cells each way.
+/// - The number puzzle is a square cut into nine equal cells.
+/// - The nonogram is its solution: a small picture in filled cells, with no
+///   lines at all.
+fn puzzle_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
     const LOW: i32 = 167;
     const HIGH: i32 = 833;
     const CORNER: i32 = 83;
-    const FIRST: i32 = LOW + (HIGH - LOW) / 3;
-    const SECOND: i32 = HIGH - (HIGH - LOW) / 3;
-    if !matches!(glyph, Glyph::CrosswordGrid | Glyph::CellGrid) {
-        return None;
-    }
-    let mut shapes = Vec::new();
-    if glyph == Glyph::CrosswordGrid {
-        // The black squares sit in opposite corners, as a printed grid's do,
-        // and each follows the rounded corner of the frame it fills.
-        shapes.push(Shape::Fill(
-            Path::new()
-                .move_to(SECOND, LOW)
-                .line_to(HIGH - CORNER, LOW)
-                .quad_to(HIGH, LOW, HIGH, LOW + CORNER)
-                .line_to(HIGH, FIRST)
-                .line_to(SECOND, FIRST)
-                .close(),
-        ));
-        shapes.push(Shape::Fill(
-            Path::new()
-                .move_to(LOW, SECOND)
-                .line_to(FIRST, SECOND)
-                .line_to(FIRST, HIGH)
-                .line_to(LOW + CORNER, HIGH)
-                .quad_to(LOW, HIGH, LOW, HIGH - CORNER)
-                .close(),
-        ));
-    }
-    shapes.push(Shape::Stroke {
-        path: Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, CORNER),
+    let stroke = |path| Shape::Stroke {
+        path,
         width: WEIGHT,
-    });
-    for at in [FIRST, SECOND] {
-        shapes.push(Shape::Stroke {
-            path: Path::line(at, LOW, at, HIGH),
-            width: WEIGHT,
-        });
-        shapes.push(Shape::Stroke {
-            path: Path::line(LOW, at, HIGH, at),
-            width: WEIGHT,
-        });
+    };
+    match glyph {
+        Glyph::NoughtsCrosses => Some(vec![
+            stroke(Path::line(130, 340, 450, 660)),
+            stroke(Path::line(450, 340, 130, 660)),
+            stroke(Path::circle(690, 500, 170)),
+        ]),
+        Glyph::CrosswordGrid => {
+            // An across word on the second row and a down word in the third
+            // column, four cells each, sharing the cell where they cross.
+            const CELL: i32 = (HIGH - LOW) / 4;
+            let across = LOW + CELL;
+            let down = LOW + 2 * CELL;
+            let mut shapes = vec![
+                stroke(Path::rounded(LOW, across, HIGH - LOW, CELL, 40)),
+                stroke(Path::rounded(down, LOW, CELL, HIGH - LOW, 40)),
+            ];
+            for step in 1..4 {
+                let at = LOW + step * CELL;
+                if at != down && at != down + CELL {
+                    shapes.push(stroke(Path::line(at, across, at, across + CELL)));
+                }
+                if at != across && at != across + CELL {
+                    shapes.push(stroke(Path::line(down, at, down + CELL, at)));
+                }
+            }
+            Some(shapes)
+        }
+        Glyph::CellGrid => {
+            let first = LOW + (HIGH - LOW) / 3;
+            let second = HIGH - (HIGH - LOW) / 3;
+            let mut shapes = vec![stroke(Path::rounded(
+                LOW,
+                LOW,
+                HIGH - LOW,
+                HIGH - LOW,
+                CORNER,
+            ))];
+            for at in [first, second] {
+                shapes.push(stroke(Path::line(at, LOW, at, HIGH)));
+                shapes.push(stroke(Path::line(LOW, at, HIGH, at)));
+            }
+            Some(shapes)
+        }
+        Glyph::PixelPicture => {
+            // A face, five cells square: the kind of picture a small
+            // nonogram turns out to be.
+            const FACE: [&str; 5] = [".#.#.", ".#.#.", ".....", "#...#", ".###."];
+            const CELL: i32 = (HIGH - LOW) / 5;
+            const GAP: i32 = 8;
+            let mut shapes = Vec::new();
+            for (row, line) in (0..).zip(FACE) {
+                for (column, cell) in (0..).zip(line.chars()) {
+                    if cell == '#' {
+                        shapes.push(Shape::Fill(Path::rounded(
+                            LOW + column * CELL + GAP,
+                            LOW + row * CELL + GAP,
+                            CELL - 2 * GAP,
+                            CELL - 2 * GAP,
+                            12,
+                        )));
+                    }
+                }
+            }
+            Some(shapes)
+        }
+        _ => None,
     }
-    Some(shapes)
 }
 
 /// A game piece is drawn the way a printed diagram draws it, seen from

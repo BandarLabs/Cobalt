@@ -5277,12 +5277,12 @@ pub enum Glyph {
     /// A letter with a tick beside it: a word guessed and checked letter by
     /// letter.
     LetterCheck,
-    /// Two strokes across two strokes: the board noughts and crosses is drawn
-    /// on with a pencil.
-    Hash,
-    /// A finer grid of three strokes each way: a picture puzzle solved cell
-    /// by cell.
-    Lattice,
+    /// A nought and a cross: the two marks of noughts and crosses, without
+    /// the board, which is a grid like every other puzzle's.
+    NoughtsCrosses,
+    /// A small picture made of filled cells: a nonogram, whose solution is a
+    /// picture drawn one cell at a time.
+    PixelPicture,
     /// A jigsaw piece: a logic puzzle, or a pack of them.
     Puzzle,
     /// A handheld remote with a pad and buttons: this reader controlling
@@ -5295,36 +5295,36 @@ pub enum Glyph {
     Counters,
     /// A question mark in a ring: a quiz, a round of questions.
     Question,
-    /// A sword: adventure, combat and the reference books that go with them.
-    Sword,
-    /// A compass rose: finding a way, which is most of what a text adventure
+    /// Two crossed swords: tabletop combat and the reference books that go
+    /// with it.
+    Swords,
+    /// A folded map: finding a way, which is most of what a text adventure
     /// asks of its player.
-    Compass,
+    Map,
     /// Books standing on a shelf: a library rather than one book.
     Books,
     /// A book with an arrow leaving it: books fetched for reading offline.
     BookDownload,
     /// Three layers in a pile: a stack of papers, a collection.
     Stack,
-    /// A page with lines of text and a turned corner: a paper, a preprint.
-    Document,
-    /// Lines of text in a frame: an article saved to read later.
-    Article,
+    /// A laboratory flask: a research paper, before or after review.
+    Flask,
+    /// A pair of reading glasses: articles kept to be read properly later.
+    Eyeglass,
     /// Two cards fanned: a deck of flashcards.
     Cards,
     /// A ball of yarn: knitting and the patterns for it.
     Yarn,
     /// Two notes joined by a beam: music, or the scores it is read from.
     Music,
-    /// A bound notebook with a ribbon: a collection of notes.
-    Notebook,
+    /// A padlock: a vault, a private collection kept on another machine.
+    Lock,
     /// A pair of quotation marks: words someone else wrote, such as a poem.
     Quote,
     /// A feather: birds, drawn by the one part of a bird that is a line.
     Feather,
-    /// A pair of binoculars: looking for something out of doors and noting
-    /// it down.
-    Binoculars,
+    /// A butterfly: a field guide to the living things outdoors.
+    Butterfly,
     /// An envelope: a letter, sent or received.
     Mail,
     /// A calendar page with a tick: something done today, and on the days
@@ -5336,15 +5336,16 @@ pub enum Glyph {
     House,
     /// A fork and a knife: cooking and the recipes for it.
     Cutlery,
-    /// A page cut into panels at an angle: a comic.
-    Collage,
-    /// A page with the feed mark on it: articles gathered from feeds.
-    FeedPage,
+    /// A lightning bolt: the burst of action a comic is drawn in.
+    Bolt,
+    /// An inbox tray: unread items gathered from somewhere else, waiting to
+    /// be read and cleared.
+    Inbox,
     /// A framed landscape: a photograph.
     Photo,
-    /// A bare prompt with no window around it: a terminal on another machine,
-    /// told apart from the runtime's own Terminal, which keeps the framed one.
-    Prompt,
+    /// A keyboard: typing into a machine somewhere else, told apart from the
+    /// runtime's own Terminal, which keeps the framed prompt.
+    Keyboard,
 }
 
 impl Glyph {
@@ -5428,36 +5429,36 @@ impl Glyph {
         Self::CrosswordGrid,
         Self::CellGrid,
         Self::LetterCheck,
-        Self::Hash,
-        Self::Lattice,
+        Self::NoughtsCrosses,
+        Self::PixelPicture,
         Self::Puzzle,
         Self::Remote,
         Self::Dice,
         Self::Counters,
         Self::Question,
-        Self::Sword,
-        Self::Compass,
+        Self::Swords,
+        Self::Map,
         Self::Books,
         Self::BookDownload,
         Self::Stack,
-        Self::Document,
-        Self::Article,
+        Self::Flask,
+        Self::Eyeglass,
         Self::Cards,
         Self::Yarn,
         Self::Music,
-        Self::Notebook,
+        Self::Lock,
         Self::Quote,
         Self::Feather,
-        Self::Binoculars,
+        Self::Butterfly,
         Self::Mail,
         Self::CalendarCheck,
         Self::Checklist,
         Self::House,
         Self::Cutlery,
-        Self::Collage,
-        Self::FeedPage,
+        Self::Bolt,
+        Self::Inbox,
         Self::Photo,
-        Self::Prompt,
+        Self::Keyboard,
     ];
 }
 

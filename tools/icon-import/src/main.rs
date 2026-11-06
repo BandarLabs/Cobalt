@@ -50,9 +50,9 @@ impl Entry {
 /// The glyphs drawn by hand in the renderer rather than from an outline.
 ///
 /// Board pieces are discs and rings rather than line art, the two keyboard
-/// keys keep geometry of their own, and the two puzzle grids are cells of a
-/// size Tabler does not draw, so none of them has a Tabler icon behind it.
-const HAND_DRAWN: [&str; 13] = [
+/// keys keep geometry of their own, and the puzzle marks are cells and
+/// pieces Tabler does not draw, so none of them has a Tabler icon behind it.
+const HAND_DRAWN: [&str; 15] = [
     "BlackDisc",
     "WhiteDisc",
     "BlackDraughtsKing",
@@ -66,6 +66,8 @@ const HAND_DRAWN: [&str; 13] = [
     "Shift",
     "CrosswordGrid",
     "CellGrid",
+    "NoughtsCrosses",
+    "PixelPicture",
 ];
 
 fn main() -> Result<(), String> {

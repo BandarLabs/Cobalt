@@ -166,7 +166,7 @@ pub const CELL_TONE_VERSION: u8 = 17;
 pub const FINE_TYPE_VERSION: u8 = 18;
 
 /// The protocol whose frames may name the application marks: the glyphs,
-/// such as [`Glyph::Dice`] and [`Glyph::Compass`], that let every application
+/// such as [`Glyph::Dice`] and [`Glyph::Map`], that let every application
 /// on the launcher wear a picture of its own.
 ///
 /// They travel on glyph bytes an older runtime has no reading for, and an
@@ -7220,26 +7220,26 @@ const fn earlier_glyph(glyph: Glyph) -> Glyph {
     match glyph {
         Glyph::CrosswordGrid
         | Glyph::CellGrid
-        | Glyph::Hash
-        | Glyph::Lattice
+        | Glyph::NoughtsCrosses
+        | Glyph::PixelPicture
         | Glyph::Puzzle
         | Glyph::Remote => Glyph::Grid,
         Glyph::Dice | Glyph::Counters => Glyph::Circle,
         Glyph::Question | Glyph::Mail => Glyph::Chat,
-        Glyph::Sword | Glyph::Compass | Glyph::Books | Glyph::BookDownload | Glyph::Stack => {
+        Glyph::Swords | Glyph::Map | Glyph::Books | Glyph::BookDownload | Glyph::Stack => {
             Glyph::Book
         }
-        Glyph::Document | Glyph::LetterCheck | Glyph::Music | Glyph::Notebook | Glyph::Quote => {
+        Glyph::Flask | Glyph::LetterCheck | Glyph::Music | Glyph::Lock | Glyph::Quote => {
             Glyph::Note
         }
-        Glyph::Article | Glyph::Cards | Glyph::Yarn => Glyph::Bookmark,
+        Glyph::Eyeglass | Glyph::Cards | Glyph::Yarn => Glyph::Bookmark,
         Glyph::Feather | Glyph::Photo => Glyph::App,
-        Glyph::Binoculars => Glyph::Search,
+        Glyph::Butterfly => Glyph::Search,
         Glyph::CalendarCheck | Glyph::Checklist => Glyph::Check,
         Glyph::House => Glyph::Light,
-        Glyph::Cutlery | Glyph::Collage => Glyph::Reader,
-        Glyph::FeedPage => Glyph::Rss,
-        Glyph::Prompt => Glyph::Terminal,
+        Glyph::Cutlery | Glyph::Bolt => Glyph::Reader,
+        Glyph::Inbox => Glyph::Rss,
+        Glyph::Keyboard => Glyph::Terminal,
         other => other,
     }
 }
@@ -7321,37 +7321,37 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Mill => 68,
         Glyph::CrosswordGrid => 69,
         Glyph::CellGrid => 70,
-        Glyph::Hash => 71,
-        Glyph::Lattice => 72,
+        Glyph::NoughtsCrosses => 71,
+        Glyph::PixelPicture => 72,
         Glyph::Puzzle => 73,
         Glyph::Remote => 74,
         Glyph::Dice => 75,
         Glyph::Question => 76,
-        Glyph::Sword => 77,
-        Glyph::Compass => 78,
+        Glyph::Swords => 77,
+        Glyph::Map => 78,
         Glyph::Books => 79,
         Glyph::BookDownload => 80,
         Glyph::Stack => 81,
-        Glyph::Document => 82,
-        Glyph::Article => 83,
+        Glyph::Flask => 82,
+        Glyph::Eyeglass => 83,
         Glyph::Cards => 84,
         Glyph::Yarn => 85,
         Glyph::Music => 86,
-        Glyph::Notebook => 87,
+        Glyph::Lock => 87,
         Glyph::Quote => 88,
         Glyph::Feather => 89,
-        Glyph::Binoculars => 90,
+        Glyph::Butterfly => 90,
         Glyph::Mail => 91,
         Glyph::CalendarCheck => 92,
         Glyph::Checklist => 93,
         Glyph::House => 94,
         Glyph::Cutlery => 95,
-        Glyph::Collage => 96,
-        Glyph::FeedPage => 97,
+        Glyph::Bolt => 96,
+        Glyph::Inbox => 97,
         Glyph::Photo => 98,
         Glyph::Counters => 99,
         Glyph::LetterCheck => 100,
-        Glyph::Prompt => 101,
+        Glyph::Keyboard => 101,
     }
 }
 
@@ -7432,37 +7432,37 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         68 => Glyph::Mill,
         69 => Glyph::CrosswordGrid,
         70 => Glyph::CellGrid,
-        71 => Glyph::Hash,
-        72 => Glyph::Lattice,
+        71 => Glyph::NoughtsCrosses,
+        72 => Glyph::PixelPicture,
         73 => Glyph::Puzzle,
         74 => Glyph::Remote,
         75 => Glyph::Dice,
         76 => Glyph::Question,
-        77 => Glyph::Sword,
-        78 => Glyph::Compass,
+        77 => Glyph::Swords,
+        78 => Glyph::Map,
         79 => Glyph::Books,
         80 => Glyph::BookDownload,
         81 => Glyph::Stack,
-        82 => Glyph::Document,
-        83 => Glyph::Article,
+        82 => Glyph::Flask,
+        83 => Glyph::Eyeglass,
         84 => Glyph::Cards,
         85 => Glyph::Yarn,
         86 => Glyph::Music,
-        87 => Glyph::Notebook,
+        87 => Glyph::Lock,
         88 => Glyph::Quote,
         89 => Glyph::Feather,
-        90 => Glyph::Binoculars,
+        90 => Glyph::Butterfly,
         91 => Glyph::Mail,
         92 => Glyph::CalendarCheck,
         93 => Glyph::Checklist,
         94 => Glyph::House,
         95 => Glyph::Cutlery,
-        96 => Glyph::Collage,
-        97 => Glyph::FeedPage,
+        96 => Glyph::Bolt,
+        97 => Glyph::Inbox,
         98 => Glyph::Photo,
         99 => Glyph::Counters,
         100 => Glyph::LetterCheck,
-        101 => Glyph::Prompt,
+        101 => Glyph::Keyboard,
 
         _ => return None,
     })

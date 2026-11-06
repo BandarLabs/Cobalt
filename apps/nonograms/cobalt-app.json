@@ -5,8 +5,8 @@
   "summary": "Solve 78 picture and pattern puzzles, or make your own from photos.",
   "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
   "version": "0.1.16",
-  "release_notes": "Nonograms now has an icon of its own, a fine grid.",
-  "glyph": "lattice",
+  "release_notes": "Nonograms now has an icon of its own, a small picture made of filled cells.",
+  "glyph": "pixel-picture",
   "capabilities": [],
   "setup": {
     "steps": [

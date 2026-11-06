@@ -5,8 +5,8 @@
   "summary": "Log bird sightings anywhere and build your life list.",
   "page_description": "A field-ready eBird companion for quick sightings, species lookup, life lists, and checklist sharing.",
   "version": "0.3.9",
-  "release_notes": "Fieldbook now has an icon of its own, a pair of binoculars.",
-  "glyph": "binoculars",
+  "release_notes": "Fieldbook now has an icon of its own, a butterfly.",
+  "glyph": "butterfly",
   "capabilities": [],
   "setup": {
     "steps": [

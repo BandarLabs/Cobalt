@@ -4,7 +4,7 @@
   "short_label": "Tic-tac-toe",
   "summary": "Play tic-tac-toe together on one Kobo.",
   "version": "1.0.15",
-  "glyph": "hash",
+  "glyph": "noughts-crosses",
   "capabilities": [],
-  "release_notes": "Tic-tac-toe now has an icon of its own, a noughts and crosses board."
+  "release_notes": "Tic-tac-toe now has an icon of its own, a nought and a cross."
 }

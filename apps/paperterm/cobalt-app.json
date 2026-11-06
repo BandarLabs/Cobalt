@@ -4,11 +4,11 @@
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink. Needs your computer.",
   "version": "0.1.17",
-  "glyph": "prompt",
+  "glyph": "keyboard",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Paperterm now has an icon of its own, a bare prompt, so it is no longer mistaken for Terminal.",
+  "release_notes": "Paperterm now has an icon of its own, a keyboard, so it is no longer mistaken for Terminal.",
   "setup": {
     "steps": [
       {

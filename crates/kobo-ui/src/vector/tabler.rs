@@ -87,36 +87,34 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::ChessBlackKnight => CHESS_BLACK_KNIGHT,
         Glyph::ChessBlackPawn => CHESS_BLACK_PAWN,
         Glyph::LetterCheck => LETTER_CHECK,
-        Glyph::Hash => HASH,
-        Glyph::Lattice => LATTICE,
         Glyph::Puzzle => PUZZLE,
         Glyph::Remote => REMOTE,
         Glyph::Dice => DICE,
         Glyph::Counters => COUNTERS,
         Glyph::Question => QUESTION,
-        Glyph::Sword => SWORD,
-        Glyph::Compass => COMPASS,
+        Glyph::Swords => SWORDS,
+        Glyph::Map => MAP,
         Glyph::Books => BOOKS,
         Glyph::BookDownload => BOOK_DOWNLOAD,
         Glyph::Stack => STACK,
-        Glyph::Document => DOCUMENT,
-        Glyph::Article => ARTICLE,
+        Glyph::Flask => FLASK,
+        Glyph::Eyeglass => EYEGLASS,
         Glyph::Cards => CARDS,
         Glyph::Yarn => YARN,
         Glyph::Music => MUSIC,
-        Glyph::Notebook => NOTEBOOK,
+        Glyph::Lock => LOCK,
         Glyph::Quote => QUOTE,
         Glyph::Feather => FEATHER,
-        Glyph::Binoculars => BINOCULARS,
+        Glyph::Butterfly => BUTTERFLY,
         Glyph::Mail => MAIL,
         Glyph::CalendarCheck => CALENDAR_CHECK,
         Glyph::Checklist => CHECKLIST,
         Glyph::House => HOUSE,
         Glyph::Cutlery => CUTLERY,
-        Glyph::Collage => COLLAGE,
-        Glyph::FeedPage => FEED_PAGE,
+        Glyph::Bolt => BOLT,
+        Glyph::Inbox => INBOX,
         Glyph::Photo => PHOTO,
-        Glyph::Prompt => PROMPT,
+        Glyph::Keyboard => KEYBOARD,
         // Board pieces, the keyboard keys and the puzzle grids are drawn in
         // `vector::shapes` rather than imported, for the reasons on `HAND_DRAWN`.
         Glyph::BlackDisc
@@ -131,7 +129,9 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         | Glyph::Backspace
         | Glyph::Shift
         | Glyph::CrosswordGrid
-        | Glyph::CellGrid => &[],
+        | Glyph::CellGrid
+        | Glyph::NoughtsCrosses
+        | Glyph::PixelPicture => &[],
     }
 }
 
@@ -1450,24 +1450,6 @@ static LETTER_CHECK: &[&[Cmd]] = &[
     ],
 ];
 
-/// `grid-3x3` from Tabler Icons.
-static HASH: &[&[Cmd]] = &[
-    &[Cmd::Move(125, 333), Cmd::Line(875, 333)],
-    &[Cmd::Move(125, 667), Cmd::Line(875, 667)],
-    &[Cmd::Move(333, 125), Cmd::Line(333, 875)],
-    &[Cmd::Move(667, 125), Cmd::Line(667, 875)],
-];
-
-/// `grid-4x4` from Tabler Icons.
-static LATTICE: &[&[Cmd]] = &[
-    &[Cmd::Move(125, 250), Cmd::Line(875, 250)],
-    &[Cmd::Move(125, 500), Cmd::Line(875, 500)],
-    &[Cmd::Move(125, 750), Cmd::Line(875, 750)],
-    &[Cmd::Move(250, 125), Cmd::Line(250, 875)],
-    &[Cmd::Move(500, 125), Cmd::Line(500, 875)],
-    &[Cmd::Move(750, 125), Cmd::Line(750, 875)],
-];
-
 /// `puzzle` from Tabler Icons.
 static PUZZLE: &[&[Cmd]] = &[&[
     Cmd::Move(167, 292),
@@ -1630,41 +1612,49 @@ static QUESTION: &[&[Cmd]] = &[
     ],
 ];
 
-/// `sword` from Tabler Icons.
-static SWORD: &[&[Cmd]] = &[
+/// `swords` from Tabler Icons.
+static SWORDS: &[&[Cmd]] = &[
     &[
-        Cmd::Move(833, 167),
-        Cmd::Line(833, 375),
-        Cmd::Line(458, 667),
-        Cmd::Line(292, 833),
-        Cmd::Line(167, 708),
-        Cmd::Line(333, 542),
-        Cmd::Line(625, 167),
-        Cmd::Line(833, 167),
+        Cmd::Move(875, 125),
+        Cmd::Line(875, 333),
+        Cmd::Line(417, 708),
+        Cmd::Line(250, 875),
+        Cmd::Line(125, 750),
+        Cmd::Line(292, 583),
+        Cmd::Line(667, 125),
+        Cmd::Line(875, 125),
     ],
-    &[Cmd::Move(271, 479), Cmd::Line(521, 729)],
+    &[Cmd::Move(208, 542), Cmd::Line(458, 792)],
+    &[
+        Cmd::Move(597, 722),
+        Cmd::Line(750, 875),
+        Cmd::Line(875, 750),
+        Cmd::Line(735, 610),
+    ],
+    &[
+        Cmd::Move(417, 229),
+        Cmd::Line(333, 125),
+        Cmd::Line(125, 125),
+        Cmd::Line(125, 333),
+        Cmd::Line(250, 438),
+    ],
 ];
 
-/// `compass` from Tabler Icons.
-static COMPASS: &[&[Cmd]] = &[
+/// `map` from Tabler Icons.
+static MAP: &[&[Cmd]] = &[
     &[
-        Cmd::Move(333, 667),
-        Cmd::Line(417, 417),
-        Cmd::Line(667, 333),
-        Cmd::Line(583, 583),
-        Cmd::Line(333, 667),
+        Cmd::Move(125, 292),
+        Cmd::Line(375, 167),
+        Cmd::Line(625, 292),
+        Cmd::Line(875, 167),
+        Cmd::Line(875, 708),
+        Cmd::Line(625, 833),
+        Cmd::Line(375, 708),
+        Cmd::Line(125, 833),
+        Cmd::Line(125, 292),
     ],
-    &[
-        Cmd::Move(125, 500),
-        Cmd::Cubic(125, 707, 293, 875, 500, 875),
-        Cmd::Cubic(707, 875, 875, 707, 875, 500),
-        Cmd::Cubic(875, 293, 707, 125, 500, 125),
-        Cmd::Cubic(293, 125, 125, 293, 125, 500),
-    ],
-    &[Cmd::Move(500, 125), Cmd::Line(500, 208)],
-    &[Cmd::Move(500, 792), Cmd::Line(500, 875)],
-    &[Cmd::Move(125, 500), Cmd::Line(208, 500)],
-    &[Cmd::Move(792, 500), Cmd::Line(875, 500)],
+    &[Cmd::Move(375, 167), Cmd::Line(375, 708)],
+    &[Cmd::Move(625, 292), Cmd::Line(625, 833)],
 ];
 
 /// `books` from Tabler Icons.
@@ -1755,46 +1745,53 @@ static STACK: &[&[Cmd]] = &[
     ],
 ];
 
-/// `file-text` from Tabler Icons.
-static DOCUMENT: &[&[Cmd]] = &[
+/// `flask` from Tabler Icons.
+static FLASK: &[&[Cmd]] = &[
+    &[Cmd::Move(375, 125), Cmd::Line(625, 125)],
+    &[Cmd::Move(417, 375), Cmd::Line(583, 375)],
     &[
-        Cmd::Move(583, 125),
-        Cmd::Line(583, 292),
-        Cmd::Cubic(583, 315, 602, 333, 625, 333),
-        Cmd::Line(792, 333),
-    ],
-    &[
-        Cmd::Move(708, 875),
-        Cmd::Line(292, 875),
-        Cmd::Cubic(246, 875, 208, 838, 208, 792),
-        Cmd::Line(208, 208),
-        Cmd::Cubic(208, 162, 246, 125, 292, 125),
+        Cmd::Move(417, 125),
+        Cmd::Line(417, 375),
+        Cmd::Line(250, 833),
+        Cmd::Cubic(246, 842, 246, 851, 250, 859),
+        Cmd::Cubic(254, 868, 262, 873, 271, 875),
+        Cmd::Line(729, 875),
+        Cmd::Cubic(738, 873, 746, 868, 750, 859),
+        Cmd::Cubic(754, 851, 754, 842, 750, 833),
+        Cmd::Line(583, 375),
         Cmd::Line(583, 125),
-        Cmd::Line(792, 333),
-        Cmd::Line(792, 792),
-        Cmd::Cubic(792, 838, 754, 875, 708, 875),
     ],
-    &[Cmd::Move(375, 375), Cmd::Line(417, 375)],
-    &[Cmd::Move(375, 542), Cmd::Line(625, 542)],
-    &[Cmd::Move(375, 708), Cmd::Line(625, 708)],
 ];
 
-/// `article` from Tabler Icons.
-static ARTICLE: &[&[Cmd]] = &[
+/// `eyeglass` from Tabler Icons.
+static EYEGLASS: &[&[Cmd]] = &[
     &[
-        Cmd::Move(125, 250),
-        Cmd::Cubic(125, 204, 162, 167, 208, 167),
-        Cmd::Line(792, 167),
-        Cmd::Cubic(838, 167, 875, 204, 875, 250),
-        Cmd::Line(875, 750),
-        Cmd::Cubic(875, 796, 838, 833, 792, 833),
-        Cmd::Line(208, 833),
-        Cmd::Cubic(162, 833, 125, 796, 125, 750),
-        Cmd::Line(125, 250),
+        Cmd::Move(333, 167),
+        Cmd::Line(250, 167),
+        Cmd::Line(125, 583),
     ],
-    &[Cmd::Move(292, 333), Cmd::Line(708, 333)],
-    &[Cmd::Move(292, 500), Cmd::Line(708, 500)],
-    &[Cmd::Move(292, 667), Cmd::Line(708, 667)],
+    &[
+        Cmd::Move(667, 167),
+        Cmd::Line(750, 167),
+        Cmd::Line(875, 583),
+    ],
+    &[Cmd::Move(417, 667), Cmd::Line(583, 667)],
+    &[
+        Cmd::Move(875, 688),
+        Cmd::Cubic(875, 768, 810, 833, 729, 833),
+        Cmd::Cubic(649, 833, 583, 768, 583, 688),
+        Cmd::Line(583, 583),
+        Cmd::Line(875, 583),
+        Cmd::Line(875, 688),
+    ],
+    &[
+        Cmd::Move(417, 688),
+        Cmd::Cubic(417, 768, 351, 833, 271, 833),
+        Cmd::Cubic(190, 833, 125, 768, 125, 688),
+        Cmd::Line(125, 583),
+        Cmd::Line(417, 583),
+        Cmd::Line(417, 688),
+    ],
 ];
 
 /// `cards` from Tabler Icons.
@@ -1880,23 +1877,33 @@ static MUSIC: &[&[Cmd]] = &[
     &[Cmd::Move(375, 333), Cmd::Line(792, 333)],
 ];
 
-/// `notebook` from Tabler Icons.
-static NOTEBOOK: &[&[Cmd]] = &[
+/// `lock` from Tabler Icons.
+static LOCK: &[&[Cmd]] = &[
     &[
-        Cmd::Move(250, 167),
-        Cmd::Line(708, 167),
-        Cmd::Cubic(754, 167, 792, 204, 792, 250),
-        Cmd::Line(792, 750),
-        Cmd::Cubic(792, 796, 754, 833, 708, 833),
-        Cmd::Line(250, 833),
-        Cmd::Cubic(227, 833, 208, 815, 208, 792),
-        Cmd::Line(208, 208),
-        Cmd::Cubic(208, 185, 227, 167, 250, 167),
-        Cmd::Move(375, 167),
-        Cmd::Line(375, 917),
+        Cmd::Move(208, 542),
+        Cmd::Cubic(208, 496, 246, 458, 292, 458),
+        Cmd::Line(708, 458),
+        Cmd::Cubic(754, 458, 792, 496, 792, 542),
+        Cmd::Line(792, 792),
+        Cmd::Cubic(792, 838, 754, 875, 708, 875),
+        Cmd::Line(292, 875),
+        Cmd::Cubic(246, 875, 208, 838, 208, 792),
+        Cmd::Line(208, 542),
     ],
-    &[Cmd::Move(542, 333), Cmd::Line(625, 333)],
-    &[Cmd::Move(542, 500), Cmd::Line(625, 500)],
+    &[
+        Cmd::Move(458, 667),
+        Cmd::Cubic(458, 690, 477, 708, 500, 708),
+        Cmd::Cubic(523, 708, 542, 690, 542, 667),
+        Cmd::Cubic(542, 644, 523, 625, 500, 625),
+        Cmd::Cubic(477, 625, 458, 644, 458, 667),
+    ],
+    &[
+        Cmd::Move(333, 458),
+        Cmd::Line(333, 292),
+        Cmd::Cubic(333, 200, 408, 125, 500, 125),
+        Cmd::Cubic(592, 125, 667, 200, 667, 292),
+        Cmd::Line(667, 458),
+    ],
 ];
 
 /// `quote` from Tabler Icons.
@@ -1955,54 +1962,30 @@ static FEATHER: &[&[Cmd]] = &[
     ],
 ];
 
-/// `binoculars` from Tabler Icons.
-static BINOCULARS: &[&[Cmd]] = &[
+/// `butterfly` from Tabler Icons.
+static BUTTERFLY: &[&[Cmd]] = &[
     &[
-        Cmd::Move(167, 667),
-        Cmd::Cubic(167, 736, 223, 792, 292, 792),
-        Cmd::Cubic(361, 792, 417, 736, 417, 667),
-        Cmd::Cubic(417, 598, 361, 542, 292, 542),
-        Cmd::Cubic(223, 542, 167, 598, 167, 667),
+        Cmd::Move(500, 757),
+        Cmd::Cubic(497, 814, 455, 861, 400, 873),
+        Cmd::Cubic(344, 884, 288, 856, 263, 805),
+        Cmd::Cubic(238, 754, 251, 692, 294, 655),
+        Cmd::Line(293, 656),
+        Cmd::Cubic(206, 626, 154, 538, 170, 448),
+        Cmd::Cubic(185, 358, 263, 292, 354, 292),
+        Cmd::Cubic(413, 292, 466, 319, 500, 361),
+        Cmd::Cubic(550, 299, 634, 276, 709, 303),
+        Cmd::Cubic(784, 329, 834, 400, 833, 480),
+        Cmd::Cubic(833, 559, 783, 630, 708, 656),
+        Cmd::Cubic(751, 694, 763, 757, 736, 808),
+        Cmd::Cubic(709, 859, 651, 885, 595, 871),
+        Cmd::Cubic(539, 858, 500, 808, 500, 750),
+        Cmd::Line(500, 757),
     ],
+    &[Cmd::Move(500, 792), Cmd::Line(500, 375)],
     &[
-        Cmd::Move(583, 667),
-        Cmd::Cubic(583, 736, 639, 792, 708, 792),
-        Cmd::Cubic(777, 792, 833, 736, 833, 667),
-        Cmd::Cubic(833, 598, 777, 542, 708, 542),
-        Cmd::Cubic(639, 542, 583, 598, 583, 667),
-    ],
-    &[
-        Cmd::Move(681, 382),
-        Cmd::Line(651, 330),
-        Cmd::Cubic(644, 319, 607, 321, 604, 333),
-        Cmd::Line(597, 391),
-    ],
-    &[
-        Cmd::Move(823, 617),
-        Cmd::Line(705, 403),
-        Cmd::Cubic(697, 390, 680, 375, 646, 375),
-        Cmd::Cubic(611, 375, 583, 394, 583, 417),
-        Cmd::Line(583, 667),
-    ],
-    &[
-        Cmd::Move(319, 382),
-        Cmd::Line(349, 330),
-        Cmd::Cubic(356, 319, 393, 321, 396, 333),
-        Cmd::Line(403, 391),
-    ],
-    &[
-        Cmd::Move(177, 617),
-        Cmd::Line(295, 403),
-        Cmd::Cubic(303, 390, 320, 375, 354, 375),
-        Cmd::Cubic(389, 375, 417, 394, 417, 417),
-        Cmd::Line(417, 667),
-    ],
-    &[
-        Cmd::Move(417, 500),
-        Cmd::Line(583, 500),
-        Cmd::Line(583, 583),
-        Cmd::Line(417, 583),
-        Cmd::Line(417, 500),
+        Cmd::Move(375, 125),
+        Cmd::Line(500, 208),
+        Cmd::Line(625, 125),
     ],
 ];
 
@@ -2116,8 +2099,19 @@ static CUTLERY: &[&[Cmd]] = &[&[
     Cmd::Line(458, 167),
 ]];
 
-/// `layout-collage` from Tabler Icons.
-static COLLAGE: &[&[Cmd]] = &[
+/// `bolt` from Tabler Icons.
+static BOLT: &[&[Cmd]] = &[&[
+    Cmd::Move(542, 125),
+    Cmd::Line(542, 417),
+    Cmd::Line(792, 417),
+    Cmd::Line(458, 875),
+    Cmd::Line(458, 583),
+    Cmd::Line(208, 583),
+    Cmd::Line(542, 125),
+]];
+
+/// `inbox` from Tabler Icons.
+static INBOX: &[&[Cmd]] = &[
     &[
         Cmd::Move(167, 250),
         Cmd::Cubic(167, 204, 204, 167, 250, 167),
@@ -2129,38 +2123,14 @@ static COLLAGE: &[&[Cmd]] = &[
         Cmd::Cubic(204, 833, 167, 796, 167, 750),
         Cmd::Line(167, 250),
     ],
-    &[Cmd::Move(417, 167), Cmd::Line(583, 833)],
-    &[Cmd::Move(500, 500), Cmd::Line(167, 583)],
-];
-
-/// `file-rss` from Tabler Icons.
-static FEED_PAGE: &[&[Cmd]] = &[
     &[
-        Cmd::Move(583, 125),
-        Cmd::Line(583, 292),
-        Cmd::Cubic(583, 315, 602, 333, 625, 333),
-        Cmd::Line(792, 333),
+        Cmd::Move(167, 542),
+        Cmd::Line(292, 542),
+        Cmd::Line(417, 667),
+        Cmd::Line(583, 667),
+        Cmd::Line(708, 542),
+        Cmd::Line(833, 542),
     ],
-    &[
-        Cmd::Move(708, 875),
-        Cmd::Line(292, 875),
-        Cmd::Cubic(246, 875, 208, 838, 208, 792),
-        Cmd::Line(208, 208),
-        Cmd::Cubic(208, 162, 246, 125, 292, 125),
-        Cmd::Line(583, 125),
-        Cmd::Line(792, 333),
-        Cmd::Line(792, 792),
-        Cmd::Cubic(792, 838, 754, 875, 708, 875),
-    ],
-    &[
-        Cmd::Move(500, 708),
-        Cmd::Cubic(500, 639, 444, 583, 375, 583),
-    ],
-    &[
-        Cmd::Move(625, 708),
-        Cmd::Cubic(625, 570, 513, 458, 375, 458),
-    ],
-    &[Cmd::Move(375, 708), Cmd::Line(375, 708)],
 ];
 
 /// `photo` from Tabler Icons.
@@ -2191,12 +2161,24 @@ static PHOTO: &[&[Cmd]] = &[
     ],
 ];
 
-/// `prompt` from Tabler Icons.
-static PROMPT: &[&[Cmd]] = &[
+/// `keyboard` from Tabler Icons.
+static KEYBOARD: &[&[Cmd]] = &[
     &[
-        Cmd::Move(208, 292),
-        Cmd::Line(417, 500),
-        Cmd::Line(208, 708),
+        Cmd::Move(83, 333),
+        Cmd::Cubic(83, 287, 121, 250, 167, 250),
+        Cmd::Line(833, 250),
+        Cmd::Cubic(879, 250, 917, 287, 917, 333),
+        Cmd::Line(917, 667),
+        Cmd::Cubic(917, 713, 879, 750, 833, 750),
+        Cmd::Line(167, 750),
+        Cmd::Cubic(121, 750, 83, 713, 83, 667),
+        Cmd::Line(83, 333),
     ],
-    &[Cmd::Move(542, 708), Cmd::Line(792, 708)],
+    &[Cmd::Move(250, 417), Cmd::Line(250, 417)],
+    &[Cmd::Move(417, 417), Cmd::Line(417, 417)],
+    &[Cmd::Move(583, 417), Cmd::Line(583, 417)],
+    &[Cmd::Move(750, 417), Cmd::Line(750, 417)],
+    &[Cmd::Move(250, 583), Cmd::Line(250, 584)],
+    &[Cmd::Move(750, 583), Cmd::Line(750, 584)],
+    &[Cmd::Move(417, 583), Cmd::Line(583, 584)],
 ];
