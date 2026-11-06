@@ -160,21 +160,21 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
         <h3><span class="tag">Terminal</span> One command</h3>
         <p>Plug the Kobo into a computer and tap <strong>Connect</strong> on the reader's screen. Then in Terminal:</p>
         <pre>curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh</pre>
-        <p class="note">Installs Cobalt and NickelMenu, adds the menu entry, ejects the drive. Keeps what is already on the reader. It also turns on the reader's SSH server with a key only this computer holds, then saves the reader when it is back on Wi-Fi, so apps that take files from your computer work straight away.</p>
+        <p class="note">Installs the <code>kobo</code> command, then writes Cobalt and NickelMenu to the reader, adds the menu entry and ejects the drive. Keeps what is already on the reader. It also turns on the reader's SSH server with a key only this computer holds, then saves the reader when it is back on Wi-Fi, so apps that take files from your computer work straight away.</p>
       </section>
 
       <section class="way">
         <h3><span class="tag">From source</span> Build it yourself</h3>
-        <p>Needs Rust. Builds the same thing the others download. Plug the Kobo in and tap <strong>Connect</strong> on its screen first.</p>
+        <p>Needs Rust and an ARM C cross-compiler (the full walkthrough names the package). Builds the same thing the others download. Plug the Kobo in and tap <strong>Connect</strong> on its screen first.</p>
         <pre>git clone https://github.com/BandarLabs/Cobalt.git
 cd Cobalt
 rustup target add armv7-unknown-linux-musleabihf
-cargo run -p kobo-cli -- setup</pre>
+cargo run -p kobo-cli -- setup --source</pre>
       </section>
 
       <section class="way">
         <h3><span class="tag">Any computer</span> Copy one file</h3>
-        <p>No terminal, and any browser. It is the file the steps above would write.</p>
+        <p>No terminal, and any browser. It is the same file the browser install below writes.</p>
         <ol>
           <li>Download <a id="by-hand-archive" href="cobalt-KoboRoot.tgz" download>the Cobalt file</a> <span class="note" id="by-hand-size"></span></li>
           <li>Plug the Kobo in. It asks on its own screen whether to connect: tap <strong>Connect</strong>. It shows up as a drive called <code>KOBOeReader</code>.</li>
