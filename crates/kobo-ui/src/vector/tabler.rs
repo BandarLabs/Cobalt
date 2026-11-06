@@ -55,8 +55,7 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::Globe => GLOBE,
         Glyph::Refresh => REFRESH,
         Glyph::More => MORE,
-        // Headphones rather than the Bluetooth rune, which is a registered
-        // figure mark. See `Glyph::Bluetooth`.
+        // Drawn with the artwork of `Headphones`. See `Glyph::Bluetooth`.
         Glyph::Bluetooth => HEADPHONES,
         Glyph::Key => KEY,
         Glyph::Magnet => MAGNET,

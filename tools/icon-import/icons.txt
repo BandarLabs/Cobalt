@@ -1,12 +1,13 @@
 # Which Tabler icon stands behind each Glyph.
 #
 # One line per glyph: the Rust variant, then the name of the file under
-# `icons/outline/` in the Tabler repository, without its extension.
+# `icons/outline/` in the Tabler repository, without its extension. A name
+# written as `=` and another variant borrows that variant's artwork instead of
+# carrying a second copy of it.
 #
-# Glyphs absent from this file keep their hand-authored geometry. Two do, and
-# for the same reason: `Wifi` takes a signal strength and `Battery` takes a
-# percentage, so their artwork changes with their argument and no fixed icon
-# can express it.
+# Glyphs absent from this file keep their hand-authored geometry, which the
+# importer lists in `HAND_DRAWN`: board pieces, which are filled rather than
+# stroked, and the two keyboard keys.
 
 App                 apps
 Book                book
@@ -36,7 +37,7 @@ Tag                 tag
 Globe               world
 Refresh             refresh
 More                dots
-Bluetooth           bluetooth
+Bluetooth           =Headphones
 Key                 key
 Magnet              magnet
 Play                player-play

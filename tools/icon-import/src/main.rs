@@ -30,8 +30,41 @@ const TARGET_UNITS: f64 = 1000.0;
 /// Which glyph is drawn by which Tabler icon.
 struct Entry {
     glyph: String,
+    /// A Tabler icon name, or `=` and another glyph whose artwork this one
+    /// borrows.
     icon: String,
 }
+
+impl Entry {
+    /// The glyph whose artwork this one is drawn with, when it has none of
+    /// its own.
+    ///
+    /// A glyph that keeps its name and wire number but changes its picture to
+    /// one the set already has would otherwise carry a second copy of the
+    /// same outline, and the two copies could drift apart.
+    fn drawn_as(&self) -> Option<&str> {
+        self.icon.strip_prefix('=')
+    }
+}
+
+/// The glyphs drawn by hand in the renderer rather than from an outline.
+///
+/// Board pieces are discs and rings rather than line art, and the two
+/// keyboard keys keep geometry of their own, so none of them has a Tabler
+/// icon behind it.
+const HAND_DRAWN: [&str; 11] = [
+    "BlackDisc",
+    "WhiteDisc",
+    "BlackDraughtsKing",
+    "WhiteDraughtsKing",
+    "BlackDraughtsMan",
+    "WhiteDraughtsMan",
+    "BoardPoint",
+    "Mill",
+    "LegalPoint",
+    "Backspace",
+    "Shift",
+];
 
 fn main() -> Result<(), String> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -48,6 +81,9 @@ fn main() -> Result<(), String> {
 
     let mut rendered = String::new();
     for entry in &entries {
+        if entry.drawn_as().is_some() {
+            continue;
+        }
         let file = Path::new(source)
             .join("icons")
             .join("outline")
@@ -96,6 +132,22 @@ fn read_manifest(text: &str) -> Result<Vec<Entry>, String> {
             glyph: glyph.to_owned(),
             icon: icon.to_owned(),
         });
+    }
+    for entry in &entries {
+        if let Some(other) = entry.drawn_as() {
+            let borrowed = entries
+                .iter()
+                .find(|candidate| candidate.glyph == other)
+                .ok_or_else(|| {
+                    format!("{} is drawn as {other}, which is not listed", entry.glyph)
+                })?;
+            if borrowed.drawn_as().is_some() {
+                return Err(format!(
+                    "{} is drawn as {other}, which is itself drawn as another glyph",
+                    entry.glyph
+                ));
+            }
+        }
     }
     Ok(entries)
 }
@@ -189,38 +241,28 @@ fn render(entries: &[Entry], glyphs: &str) -> String {
     );
     let _ = writeln!(out, "    match glyph {{");
     for entry in entries {
-        let _ = writeln!(
-            out,
-            "        Glyph::{} => {},",
-            entry.glyph,
-            shout(&entry.glyph)
-        );
+        let artwork = match entry.drawn_as() {
+            Some(other) => {
+                let _ = writeln!(
+                    out,
+                    "        // Drawn with the artwork of `{other}`. See `Glyph::{}`.",
+                    entry.glyph
+                );
+                shout(other)
+            }
+            None => shout(&entry.glyph),
+        };
+        let _ = writeln!(out, "        Glyph::{} => {artwork},", entry.glyph);
     }
     out.push_str(
-        "        Glyph::ChessWhiteKing\n\
-         | Glyph::ChessWhiteQueen\n\
-         | Glyph::ChessWhiteRook\n\
-         | Glyph::ChessWhiteBishop\n\
-         | Glyph::ChessWhiteKnight\n\
-         | Glyph::ChessWhitePawn\n\
-         | Glyph::ChessBlackKing\n\
-         | Glyph::ChessBlackQueen\n\
-         | Glyph::ChessBlackRook\n\
-         | Glyph::ChessBlackBishop\n\
-         | Glyph::ChessBlackKnight\n\
-         | Glyph::ChessBlackPawn\n\
-         | Glyph::BlackDisc\n\
-         | Glyph::WhiteDisc\n\
-         | Glyph::BlackDraughtsKing\n\
-         | Glyph::WhiteDraughtsKing\n\
-         | Glyph::BlackDraughtsMan\n\
-         | Glyph::WhiteDraughtsMan\n\
-         | Glyph::BoardPoint\n\
-         | Glyph::Mill\n\
-         | Glyph::LegalPoint\n\
-         | Glyph::Backspace\n\
-         | Glyph::Shift => &[],\n",
+        "        // Board pieces are discs and rings rather than line art, so they are\n\
+         // filled in `game_piece_shapes` instead of stroked from an outline.\n",
     );
+    for (index, glyph) in HAND_DRAWN.iter().enumerate() {
+        let lead = if index == 0 { "" } else { "| " };
+        let _ = writeln!(out, "        {lead}Glyph::{glyph}");
+    }
+    out.push_str("        => &[],\n");
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}\n");
     out.push_str(glyphs);
@@ -276,9 +318,9 @@ mod tests {
             .expect("the checked-in file has a fallback arm")
             .0;
         let hand_drawn: Vec<&str> = arm
-            .rsplit("Glyph::ChessBlackPawn => CHESS_BLACK_PAWN,")
+            .rsplit("instead of stroked from an outline.")
             .next()
-            .expect("the fallback arm follows the outlined glyphs")
+            .expect("the fallback arm follows its comment")
             .split("Glyph::")
             .skip(1)
             .map(|name| {
@@ -305,6 +347,23 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].glyph, "Trash");
         assert_eq!(entries[1].icon, "x");
+    }
+
+    #[test]
+    fn a_glyph_can_borrow_the_artwork_of_another_listed_glyph() {
+        let entries = read_manifest("Headphones headphones\nBluetooth =Headphones\n").unwrap();
+        let written = render(&entries, "");
+        assert!(
+            written.contains("Glyph::Bluetooth => HEADPHONES,"),
+            "{written}"
+        );
+        assert!(!written.contains("BLUETOOTH"), "{written}");
+    }
+
+    #[test]
+    fn borrowing_the_artwork_of_a_glyph_that_is_not_listed_is_refused() {
+        assert!(read_manifest("Bluetooth =Headphones\n").is_err());
+        assert!(read_manifest("A a\nB =A\nC =B\n").is_err());
     }
 
     #[test]
