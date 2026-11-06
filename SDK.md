@@ -301,7 +301,7 @@ the actual E Ink renderer and is the quickest visual reference.
 | `heading_at_level(level, text)` | A heading in a book or document hierarchy. |
 | `text(text)` | A paragraph. Wraps by measured glyph width and Unicode line-break rules. |
 | `text_linking(text, links)` | A paragraph with tappable byte ranges. |
-| `rich_text(text, spans, presentation)` | Publisher-styled prose with semantic spans and paragraph presentation. |
+| `rich_text(text, spans, presentation)` | Publisher-styled prose with semantic spans and paragraph presentation. From protocol 18 a `ParagraphPresentation` can stand every line in from the start edge (`start_indent_em`) and set the paragraph's first letter down into two to four lines (`initial_lines`). |
 | `rich_text_linking(...)` | Rich text with tappable inline destinations. |
 | `selectable_rich_text_linking(...)` | Rich text whose words can be resolved when held. |
 | `with_formulae(formulae)` | Adds prepared inline formula pictures to the rich-text paragraph just added. |
@@ -501,6 +501,11 @@ headings a step smaller (4.6 mm and 3.8 mm) and a `secondary` line a step
 larger (2.7 mm), so an instruction set in one reads as a sentence rather than a
 footnote. Screens from applications built against an earlier protocol keep the
 type and spacing they were measured in.
+
+Protocol 18 sets emphasis in prose in the reading face's own italic, where the
+face has one (the bundled Literata does), instead of leaning the upright
+letters. An italic is narrower than the leaned roman, so an application built
+against an earlier protocol keeps the leaned emphasis its lines were fitted to.
 
 **Two secondary actions go side by side, not stacked.** Use `buttons`. Stacked,
 each one takes the full width of the panel to say a single word and the bottom
@@ -2108,3 +2113,13 @@ for player names, clocks and controls below it. Wrapping a board in a fixed-widt
 band prevents that height adjustment and can clip controls at large text sizes.
 Selected dark squares retain a visible border. Apps remain responsible for legal
 move hints and for accepting only acknowledged game state.
+
+### Poems
+
+`kobo_sdk::verse` sets a poem the way a printed book of verse does: the lines
+keep their own ragged ends and stand together as a block centred on the page
+by its longest line, the title in italic with the poet beneath it, and the
+first letter set down into the opening lines. Measure the poem once with
+`VerseSetting::measure(context, scale, stanzas)` and pass that setting to
+`verse_head`, each `stanza` and `verse_note`, so every page of the poem stands
+in the same place. Needs protocol 18.
