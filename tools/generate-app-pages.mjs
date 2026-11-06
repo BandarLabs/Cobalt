@@ -38,7 +38,7 @@ const screenshots = {
   brief: ["brief.png", "A numbered daily news brief on a Kobo"],
   "calibre-web": ["calibre-web.png", "The first page of Pride and Prejudice from a calibre-web library on a Kobo, with text-size and front-light controls and the page count."],
   chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
-  crossword: ["crossword.png", "Crossword grid on a Kobo with three answers filled in and the current clue above it."],
+  crossword: ["crossword.png", "Crossword grid on a Kobo with an answer filled in, the current clue above it and every clue below it."],
   deck: ["deck.png", "Deck paired with a computer, showing Test, Format, Lint, Docs and Deploy command pads."],
   fanshelf: ["fanshelf.png", "A followed work in Fanshelf naming its author, fandom, rating and chapter count, with a Download EPUB button."],
   fieldbook: ["fieldbook.png", "Fieldbook during an outing at Lake Merced, listing the birds logged so far with a Finish outing button."],

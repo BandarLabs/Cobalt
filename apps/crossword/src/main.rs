@@ -38,7 +38,7 @@ struct ClueRow {
     number: u16,
 }
 
-const RULES: &str = "Fill the white squares\n\nRead a clue and fill in its answer. Small corner numbers match the clue list. The shaded row or column is the word you are solving, and its clue is above the grid. Some squares belong to one word only.\n\nTap a square to type in it. Enter one letter to move along the word, or the whole word to fill it from its first square. Tap another square in the word to move. Across or Down, at the foot of the grid and at the top while you type, switches direction.\n\nUndo, at the foot of the grid, takes back your last change, up to 32 steps per puzzle. Clues lists every clue; tap one to answer it.\n\nMore holds New game, which opens the next puzzle you have not started, then Check word, Reveal square, Clear square, Restart puzzle and Puzzles. Checking reports wrong and empty letters without changing them. Reveal and Restart ask first and can be undone.\n\nEach puzzle keeps its own letters, and stays marked Completed once solved, even after a restart.\n\nSaves are confirmed by storage. If a save fails, keep the app open and choose Retry saving. Unreadable records are kept intact.";
+const RULES: &str = "Fill the white squares\n\nRead a clue and fill in its answer. Small corner numbers match the clue list. The shaded row or column is the word you are solving, and its clue is above the grid. Some squares belong to one word only.\n\nTap a square to type in it. Enter one letter to move along the word, or the whole word to fill it from its first square. Tap another square in the word to move. Across or Down, at the foot of the grid and at the top while you type, switches direction.\n\nUndo, at the foot of the grid, takes back your last change, up to 32 steps per puzzle. Clues lists every clue; tap one to answer it.\n\nMore holds New game, which opens the next puzzle you have not started, then Check word, Reveal square, Clear square, Restart puzzle and Puzzles. Checking reports wrong and empty letters without changing them. Reveal and Restart ask first and can be undone.\n\nEach puzzle keeps its own letters, and stays marked Completed once solved, even after a restart.\n\nYour letters are saved as you go. If saving fails, keep the app open and choose Retry saving in More.";
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 enum View {
     #[default]
@@ -152,7 +152,31 @@ impl Crossword {
         }
         match self.view {
             View::Puzzles => self.puzzles_screen(b, context),
-            View::Board => self.board_screen(b),
+            View::Board => {
+                // The clues go under the grid only where the grid keeps its
+                // size and everything still fits; otherwise they are a tap
+                // away on Clues, as before.
+                let metrics = context.metrics();
+                let chrome = kobo_sdk::Chrome::measuring(true);
+                let square = |screen: &Screen| {
+                    screen
+                        .layout_with(&metrics, &chrome)
+                        .rect_of_action(kobo_sdk::action_id("cell-0"))
+                        .map(|rect| rect.width)
+                };
+                let alone = self.board_screen(b.clone(), false, true);
+                let with_clues = self.board_screen(b.clone(), true, true);
+                let fits = |screen: &Screen| !screen.diagnostics(&metrics, &chrome).has_errors();
+                if square(&with_clues) == square(&alone) && fits(&with_clues) {
+                    with_clues
+                } else if fits(&alone) {
+                    alone
+                } else {
+                    // At the largest text on the smallest panel the clue in
+                    // body type is more than the room over the grid holds.
+                    self.board_screen(b, false, false)
+                }
+            }
             View::Entry => self.entry_screen(b),
             View::Clues => self.clues_screen(b, context),
             View::Reveal => b
@@ -183,12 +207,15 @@ impl Crossword {
                 for paragraph in &pages[page] {
                     b = b.text(paragraph);
                 }
-                b.page_position(
-                    u16::try_from(page + 1).expect("bounded rules"),
-                    u16::try_from(pages.len()).expect("bounded rules"),
-                )
-                .action_bar([("rules-previous", "Previous"), ("rules-next", "Next")])
-                .build()
+                // Page turns at the foot, which leave out the way back from
+                // the first page and on from the last, rather than a bar
+                // offering Previous on page one.
+                b.page_turns("rules-previous", "rules-next")
+                    .page_position(
+                        u16::try_from(page + 1).expect("bounded rules"),
+                        u16::try_from(pages.len()).expect("bounded rules"),
+                    )
+                    .build()
             }
         }
     }
@@ -309,7 +336,7 @@ impl Crossword {
         b.build()
     }
 
-    fn board_screen(&self, mut b: ScreenBuilder) -> Screen {
+    fn board_screen(&self, mut b: ScreenBuilder, with_clues: bool, large_clue: bool) -> Screen {
         let p = &PUZZLES[self.current];
         let g = self.game();
         let (label, clue) = p.clue(g.position.selected, g.position.down);
@@ -322,9 +349,16 @@ impl Crossword {
         } else {
             format!("{label}: {clue}")
         };
-        b = b.game_top_bar(p.title, self.menu, MENU).secondary(line);
+        // The clue being solved is the line read most, so it is set in the
+        // body size and in ink, not as small grey print over the grid.
+        b = b.game_top_bar(p.title, self.menu, MENU);
+        b = if self.notice.is_some() || !large_clue {
+            b.secondary(line)
+        } else {
+            b.text(line)
+        };
         // Footer controls reserve their band before the square grid is measured.
-        b.crossword_board(
+        let b = b.crossword_board(
             u8::try_from(p.side).expect("small puzzle"),
             (0..p.answer.len()).map(|cell| {
                 (
@@ -338,10 +372,11 @@ impl Crossword {
                     !g.solved(p) && word.contains(&cell),
                 )
             }),
-        )
+        );
+        let b = if with_clues { self.clue_columns(b) } else { b };
         // Undo, then the two things done most between letters: the clue list,
         // and turning the shaded word the other way.
-        .game_actions(
+        b.game_actions(
             true,
             [
                 ("clues", "Clues"),
@@ -349,6 +384,33 @@ impl Crossword {
             ],
         )
         .build()
+    }
+
+    /// Every clue under the grid, Across beside Down, as a printed puzzle
+    /// sets them, where the page has the room: the grid of a small puzzle
+    /// left the lower half of the panel empty.
+    fn clue_columns(&self, b: ScreenBuilder) -> ScreenBuilder {
+        let rows = self.clue_rows();
+        let column = |down: bool| {
+            let lines: Vec<String> = rows
+                .iter()
+                .filter(|row| row.down == down)
+                .map(|row| format!("{} {}", row.number, row.clue))
+                .collect();
+            move |slot: ScreenBuilder| {
+                lines.into_iter().fold(
+                    slot.section(if down { "Down" } else { "Across" }),
+                    ScreenBuilder::secondary,
+                )
+            }
+        };
+        b.spacer(kobo_sdk::Space::Small).band(
+            kobo_sdk::BandAlign::Top,
+            [
+                (kobo_sdk::SlotWidth::Fill, column(false)),
+                (kobo_sdk::SlotWidth::Fill, column(true)),
+            ],
+        )
     }
     fn entry_screen(&self, b: ScreenBuilder) -> Screen {
         let p = &PUZZLES[self.current];
@@ -392,8 +454,6 @@ impl Crossword {
     /// application down with it.
     fn clue_rows(&self) -> Vec<ClueRow> {
         let puzzle = &PUZZLES[self.current];
-        let game = self.game();
-        let solving = puzzle.run(game.position.selected, game.position.down);
         let mut across_heading = true;
         let mut down_heading = true;
         let mut rows = Vec::new();
@@ -404,15 +464,15 @@ impl Crossword {
                 std::mem::take(&mut across_heading).then_some("Across")
             };
             let length = puzzle.run(entry.first, entry.down).len();
-            let here = entry.down == game.position.down && solving.first() == Some(&entry.first);
             rows.push(ClueRow {
                 heading,
-                clue: puzzle.clue_of(&entry).to_owned(),
-                detail: if here {
-                    "Solving now".to_owned()
-                } else {
-                    format!("{length} letters")
-                },
+                // The length after the clue, as a printed puzzle gives it,
+                // so a clue is one line and both directions fit one page.
+                clue: format!("{} ({length})", puzzle.clue_of(&entry)),
+                // The clue being solved is the one that takes you back to
+                // where you were; it is not set apart, so every clue is one
+                // line and Across and Down share a page where they fit.
+                detail: String::new(),
                 first: entry.first,
                 down: entry.down,
                 number: u16::try_from(entry.number).unwrap_or(u16::MAX),
@@ -458,6 +518,52 @@ impl Crossword {
 
     fn clues_screen(&self, mut b: ScreenBuilder, context: &Context) -> Screen {
         let rows = self.clue_rows();
+        // Across beside Down on one page, where both columns fit whole: a
+        // small puzzle's ten clues ran onto a second page with one Down clue
+        // on it, though the panel had the width for both.
+        let side_by_side = {
+            let column = |down: bool| {
+                let entries: Vec<(String, String, String, kobo_sdk::RowLead)> = rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| row.down == down)
+                    .map(|(index, row)| {
+                        (
+                            format!("clue-{index}"),
+                            row.clue.clone(),
+                            String::new(),
+                            kobo_sdk::RowLead::Number(row.number),
+                        )
+                    })
+                    .collect();
+                move |slot: ScreenBuilder| {
+                    slot.section(if down { "Down" } else { "Across" })
+                        .rows(entries)
+                }
+            };
+            b.clone()
+                .top_bar("Clues")
+                .top_bar_action("board", "Grid")
+                .band(
+                    kobo_sdk::BandAlign::Top,
+                    [
+                        (kobo_sdk::SlotWidth::Fill, column(false)),
+                        (kobo_sdk::SlotWidth::Fill, column(true)),
+                    ],
+                )
+                .build()
+        };
+        let metrics = context.metrics();
+        let chrome = kobo_sdk::Chrome::measuring(true);
+        let whole = rows.iter().enumerate().all(|(index, _)| {
+            side_by_side
+                .layout_with(&metrics, &chrome)
+                .rect_of_action(kobo_sdk::action_id(&format!("clue-{index}")))
+                .is_some()
+        });
+        if whole && !side_by_side.diagnostics(&metrics, &chrome).has_errors() {
+            return side_by_side;
+        }
         let pages = self.clue_pages(context);
         let page = self.clue_page.min(pages.len().saturating_sub(1));
         b = b.top_bar("Clues").top_bar_action("board", "Grid");
@@ -479,7 +585,7 @@ impl Crossword {
                     u16::try_from(page + 1).unwrap_or(1),
                     u16::try_from(pages.len()).unwrap_or(1),
                 )
-                .action_bar([("clues-previous", "Previous"), ("clues-next", "Next")]);
+                .page_turns("clues-previous", "clues-next");
         }
         b.build()
     }
