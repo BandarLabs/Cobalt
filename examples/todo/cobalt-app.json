@@ -3,7 +3,7 @@
   "display_name": "Todo",
   "short_label": "Todo",
   "summary": "Keep a simple to-do list that stays on your Kobo.",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "glyph": "checklist",
   "capabilities": [],
   "release_notes": "Todo now has an icon of its own, a checklist."

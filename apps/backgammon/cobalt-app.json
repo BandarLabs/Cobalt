@@ -3,7 +3,7 @@
   "display_name": "Backgammon",
   "short_label": "Backgammon",
   "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "release_notes": "Backgammon now has an icon of its own, a die.",
   "minimum_cobalt_version": "0.3.34",
   "glyph": "dice",

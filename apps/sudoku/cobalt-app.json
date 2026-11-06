@@ -3,7 +3,7 @@
   "display_name": "Sudoku",
   "short_label": "Sudoku",
   "summary": "Play 600 original Sudoku puzzles with pencil notes, undo and saved games.",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "glyph": "cell-grid",
   "capabilities": [],
   "release_notes": "Sudoku now has an icon of its own, a grid of nine boxes with a nine in the middle.",

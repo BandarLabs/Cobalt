@@ -4,7 +4,7 @@
   "short_label": "Deck",
   "summary": "Turn your Kobo into a remote control for your computer. Needs your computer.",
   "page_description": "Pair with your computer and run favorite actions from large, clear controls.",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "release_notes": "Deck now has an icon of its own, a remote control.",
   "glyph": "remote",
   "capabilities": [

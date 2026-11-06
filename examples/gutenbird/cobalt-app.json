@@ -3,7 +3,7 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
-  "version": "1.0.30",
+  "version": "1.0.31",
   "glyph": "book-download",
   "capabilities": [
     "network",

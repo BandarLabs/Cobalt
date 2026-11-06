@@ -4,7 +4,7 @@
   "short_label": "Parser",
   "summary": "Play an original interactive story without Wi-Fi.",
   "page_description": "Play text adventures offline. Parser runs Z-machine stories you send from your computer, with tap shortcuts for common commands and an original tutorial story.",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "release_notes": "Parser now has an icon of its own, a folded map.",
   "glyph": "map",
   "capabilities": [],

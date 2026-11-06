@@ -3,7 +3,7 @@
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
   "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "glyph": "sunrise",
   "capabilities": [
     "network",

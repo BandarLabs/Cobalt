@@ -3,7 +3,7 @@
   "display_name": "Preprints",
   "short_label": "Preprints",
   "summary": "Browse every arXiv category, keep preprints with their figures, and read them offline on your Kobo.",
-  "version": "1.4.12",
+  "version": "1.4.13",
   "glyph": "flask",
   "capabilities": [
     "network"
