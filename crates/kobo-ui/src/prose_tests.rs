@@ -2423,8 +2423,8 @@ fn a_popover_never_gets_wider_than_a_modal() {
                         including the parts nobody read, at once and for good";
     let width = overlay_width(&with_a_menu(&[sentence]));
     let modal = overlay_width(&with_an_overlay(OverlayKind::Modal));
-    assert_eq!(
-        width, modal,
+    assert!(
+        width <= modal,
         "a long menu item pushed the popover past the width a modal is allowed"
     );
 }
@@ -4579,4 +4579,26 @@ fn an_older_applications_dialog_is_still_centred_on_the_panel() {
         .expect("the dialogue")
         .rect;
     assert_eq!(frame.y, (CLARA_BW_METRICS.height - frame.height) / 2);
+}
+
+#[test]
+fn a_dialog_spans_the_page_column_so_nothing_behind_it_shows_at_its_sides() {
+    let layout = dialog_over_a_page(Typography::Fine);
+    let frame = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Overlay)
+        .expect("the dialogue")
+        .rect;
+    let margin = CLARA_BW_METRICS.screen_margin();
+    let column = (CLARA_BW_METRICS.width - 2 * margin).min(CLARA_BW_METRICS.readable_width());
+    let words = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Text)
+        .expect("the words behind")
+        .rect;
+    assert_eq!(frame.width, column);
+    assert_eq!(frame.x, words.x);
+    assert_eq!(frame.x + frame.width, words.x + words.width);
 }

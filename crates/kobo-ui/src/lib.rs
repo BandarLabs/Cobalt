@@ -2633,6 +2633,15 @@ fn layout_overlay(
     // like a mark was pressed. Bounded below so a one word menu is still a
     // comfortable target and still has room for its caret.
     let width = match overlay.kind {
+        // From Fine, the width of the page's own column of words, centred as
+        // it is, so the dialogue's edges are the column's edges. Narrower,
+        // it left the ends of the lines behind it showing at its sides, three
+        // letters of a word on either edge, which reads as the page breaking
+        // through rather than lying under.
+        OverlayKind::Modal | OverlayKind::Dialog { .. } if typography() >= Typography::Fine => max(
+            1,
+            (metrics.width - 2 * margin).min(metrics.readable_width()),
+        ),
         OverlayKind::Modal | OverlayKind::Dialog { .. } => widest,
         OverlayKind::Popover { .. } => {
             let narrowest = min(widest, 3 * metrics.touch_target_default());
