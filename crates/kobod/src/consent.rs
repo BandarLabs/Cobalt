@@ -143,7 +143,7 @@ pub fn notice(standing: Standing, profile: &DeviceProfile, firmware: &str) -> Op
         Standing::Unmeasured => Some(Notice {
             title: "Untested device".to_owned(),
             body: vec![
-                "Cobalt has not been tested on this Kobo. The screen may not draw correctly and taps may land in the wrong place.".to_owned(),
+                "Cobalt has not been tested on this Kobo. The screen may not draw correctly.".to_owned(),
                 "Cobalt does not change how your Kobo starts up. Restart to return to the normal reader.".to_owned(),
                 "Provided without warranty, at your own risk. Not affiliated with Kobo.".to_owned(),
             ],
@@ -201,15 +201,17 @@ mod tests {
     }
 
     #[test]
-    fn an_unmeasured_device_is_told_that_taps_may_land_in_the_wrong_place() {
-        // The notice on unmeasured hardware has to survive being read on a
-        // panel whose touch mapping is itself a guess, so the owner is told
-        // that before they try to answer with it.
+    fn an_unmeasured_device_is_still_told_how_to_close_if_taps_miss() {
+        // By the time this notice is drawn the owner has tapped two dots and
+        // touch has been calibrated, so the body no longer warns that taps
+        // will land in the wrong place. The calibration is still the owner's
+        // own two taps on hardware nobody here has held, so the way out
+        // without touch stays on the screen.
         let notice =
             notice(Standing::Unmeasured, &CLARA_BW_391, "4.28.17623").expect("a notice is owed");
         assert_eq!(notice.title, "Untested device");
         assert!(notice.touch_may_be_wrong);
-        assert!(notice.body.iter().any(|line| line.contains("wrong place")));
+        assert!(notice.body[0].contains("not been tested on this Kobo"));
     }
 
     #[test]

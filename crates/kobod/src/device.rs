@@ -10,8 +10,10 @@
 //! Acquire, in this order:
 //!
 //! 1. Find the reader and save how to restart it.
-//! 2. Arm a watchdog that restarts it even if we are killed outright.
-//! 3. Open the display, which validates the hardware profile exactly.
+//! 2. Record the front light and arm a watchdog that restarts the reader,
+//!    light and all, even if we are killed outright.
+//! 3. Open the display, which validates the hardware profile exactly, and
+//!    record the light again if the profile says it is driven elsewhere.
 //! 4. Snapshot the whole screen.
 //! 5. Take the touch panel.
 //! 6. Suspend Kobo's freeze watchdog.
@@ -779,8 +781,15 @@ pub fn present(
     reader
         .save(&state)
         .map_err(|error| format!("save reader description: {error}"))?;
-    let frontlight = kobo_hal::frontlight::Frontlight::open();
-    if let Some(light) = &frontlight {
+
+    // Recorded and guarded before the display is opened, because opening it
+    // is the first step that can wedge the panel: from here on a crash or a
+    // kill restarts the stock reader with its light as the owner left it.
+    // The profile is not known yet, so the light is recorded by the plain
+    // rule every measured reader uses; a profile that steers it elsewhere
+    // records that control as well, below.
+    let plain_light = kobo_hal::frontlight::Frontlight::open();
+    if let Some(light) = &plain_light {
         light
             .save_recovery(&state)
             .map_err(|error| format!("save original front light before takeover: {error}"))?;
@@ -791,16 +800,45 @@ pub fn present(
 
     // A reader outside the profile table gets a profile derived from its own
     // probe rather than a refusal. The transform below is the one field that
-    // cannot be derived, and `Direct` is a starting point rather than a
-    // measurement: on unmeasured hardware the owner is told taps may land in
-    // the wrong place, because with this they may.
+    // cannot be derived, and `Direct` is only a starting point: such a reader
+    // is asked to tap two dots before its first real screen, and from then on
+    // its own calibration is used. A calibration from an earlier launch is
+    // adopted here, before the touch panel is taken, so the session never
+    // maps a tap through the starting point at all.
     let (display, standing) = DisplaySession::open_including_untested(
         Some(OWNER_UNLOCK_PHRASE),
         kobo_profile::TouchTransform::Direct,
     )
     .map_err(|error| format!("open display: {error}"))?;
+    if standing == kobo_profile::Standing::Unmeasured {
+        if let Some(mapping) =
+            crate::touch_calibration::stored(Path::new(COBALT_ROOT), display.snapshot())
+        {
+            display
+                .adopt_touch_calibration(mapping)
+                .map_err(|error| format!("adopt the stored touch calibration: {error}"))?;
+            trace(&format!("touch: using the stored calibration {mapping:?}"));
+        }
+    }
     let profile = display.profile();
     crate::remember_device_profile(profile)?;
+
+    // Opened once the profile is known, because the profile says which
+    // control is the brightness. Every measured reader keeps the control it
+    // was tested with, and only a provisional i.MX reader is steered to
+    // `mxc_msp430.0`; that control is recorded too before anything writes it.
+    let frontlight = kobo_hal::frontlight::Frontlight::open_for(profile);
+    if let Some(light) = &frontlight {
+        if !plain_light
+            .as_ref()
+            .is_some_and(|plain| plain.same_control(light))
+        {
+            light
+                .save_profile_recovery(&state)
+                .map_err(|error| format!("save original front light before takeover: {error}"))?;
+        }
+    }
+    drop(plain_light);
 
     let geometry = display.geometry();
     let whole_screen = Rect {
@@ -969,6 +1007,23 @@ pub fn present(
     // two portrait poses.
     let forward_is_194 = pose.rotation() % 4 == profile.reference_rotation % 4;
 
+    // A reader nobody has measured is asked to tap two dots before anything
+    // else is drawn, so that the consent notice after it, and every screen
+    // after that, can be answered with a tap that lands where it was aimed.
+    // Without a calibration the session ends here and the reader goes back:
+    // a session whose taps land in the wrong place is worse than none.
+    let calibrated = if standing == kobo_profile::Standing::Unmeasured
+        && !matches!(
+            display.profile().touch_transform,
+            kobo_profile::TouchTransform::Calibrated(_)
+        ) {
+        launch_painter = None;
+        calibrate_touch(&display, &taps, &touch, whole_screen, framebuffer)
+    } else {
+        true
+    };
+    let profile = display.profile();
+
     // Asked here rather than earlier because asking needs the panel and the
     // touch reader, and both are only up once the stock reader has let go.
     // Declining therefore still costs a stop and a start of the reader, which
@@ -980,36 +1035,39 @@ pub fn present(
         .firmware_version
         .clone()
         .unwrap_or_default();
-    let consented = match crate::consent::notice(standing, profile, &firmware) {
-        Some(_) if crate::consent::already_accepted(Path::new(COBALT_ROOT), profile, &firmware) => {
-            true
-        }
-        Some(notice) => {
-            // The question replaces the splash on the panel, so a painter that
-            // remembers the splash would plan the launcher against a picture
-            // that is no longer there.
-            launch_painter = None;
-            match ask_consent(&display, &taps, whole_screen, &notice) {
-                crate::consent::Decision::Accepted => {
-                    if let Err(error) = crate::consent::record(
-                        Path::new(COBALT_ROOT),
-                        profile,
-                        &firmware,
-                        env!("CARGO_PKG_VERSION"),
-                    ) {
-                        // The session still runs. Failing to remember the
-                        // answer costs one more question next time, which is a
-                        // far smaller wrong than refusing an owner who just
-                        // said yes.
-                        trace(&format!("could not record the acceptance: {error}"));
-                    }
-                    true
-                }
-                crate::consent::Decision::Declined => false,
+    let consented = calibrated
+        && match crate::consent::notice(standing, profile, &firmware) {
+            Some(_)
+                if crate::consent::already_accepted(Path::new(COBALT_ROOT), profile, &firmware) =>
+            {
+                true
             }
-        }
-        None => true,
-    };
+            Some(notice) => {
+                // The question replaces the splash on the panel, so a painter that
+                // remembers the splash would plan the launcher against a picture
+                // that is no longer there.
+                launch_painter = None;
+                match ask_consent(&display, &taps, whole_screen, &notice) {
+                    crate::consent::Decision::Accepted => {
+                        if let Err(error) = crate::consent::record(
+                            Path::new(COBALT_ROOT),
+                            profile,
+                            &firmware,
+                            env!("CARGO_PKG_VERSION"),
+                        ) {
+                            // The session still runs. Failing to remember the
+                            // answer costs one more question next time, which is a
+                            // far smaller wrong than refusing an owner who just
+                            // said yes.
+                            trace(&format!("could not record the acceptance: {error}"));
+                        }
+                        true
+                    }
+                    crate::consent::Decision::Declined => false,
+                }
+            }
+            None => true,
+        };
 
     // Held out here rather than in the session, so that teardown can stop a
     // sync still running while the watchdog is fed and the radio is still up.
@@ -1760,6 +1818,226 @@ fn ask_consent(
     taps.set(None);
     trace(&format!("consent notice answered: {decision:?}"));
     decision
+}
+
+/// How many times the two dots are offered before the reader is handed back.
+///
+/// A tap that misses a dot is common enough to deserve a second chance and a
+/// third. Past that, something other than aim is wrong, and an owner left
+/// tapping dots forever would reasonably conclude the device had hung.
+const CALIBRATION_ATTEMPTS: usize = 3;
+
+/// The radius of a calibration dot, as a fraction of the panel's shorter side.
+///
+/// Large enough to see at arm's length and to aim at with a fingertip, small
+/// enough that where it is leaves no doubt about where to tap.
+const CALIBRATION_DOT_DIVISOR: u32 = 36;
+
+/// The screen one calibration dot is drawn on.
+///
+/// Plain on purpose: one dot, one instruction, and a way out. The words sit
+/// in the middle of the panel, well away from both dots, so a tap on either
+/// dot cannot be mistaken for a tap on anything else.
+fn calibration_surface(
+    whole_screen: Rect,
+    dot: (u32, u32),
+    retrying: bool,
+    display_appearance: Appearance,
+) -> Surface {
+    let mut nodes = vec![
+        kobo_ui::Node::Flex {
+            id: kobo_ui::NodeId(1),
+        },
+        kobo_ui::Node::Heading {
+            id: kobo_ui::NodeId(2),
+            text: "Touch the dot".to_owned(),
+            level: 1,
+        },
+    ];
+    if retrying {
+        nodes.push(kobo_ui::Node::Text {
+            id: kobo_ui::NodeId(3),
+            text: "Those taps did not line up. Once more, please.".to_owned(),
+            links: Vec::new(),
+        });
+    }
+    nodes.push(kobo_ui::Node::Secondary {
+        id: kobo_ui::NodeId(4),
+        text: "Press the power button to stop.".to_owned(),
+    });
+    nodes.push(kobo_ui::Node::Flex {
+        id: kobo_ui::NodeId(5),
+    });
+    let screen = Screen::new(0, nodes);
+    let mut surface = Surface::new(
+        usize::try_from(whole_screen.width).unwrap_or(0),
+        usize::try_from(whole_screen.height).unwrap_or(0),
+    );
+    kobo_ui::render_oriented(
+        &screen,
+        &metrics_for(&screen),
+        &Chrome::with_back(false).with_appearance(display_appearance),
+        &(),
+        &mut surface,
+        None,
+        kobo_ui::Orientation::Portrait,
+    );
+    let radius =
+        i64::from((whole_screen.width.min(whole_screen.height) / CALIBRATION_DOT_DIVISOR).max(4));
+    let (centre_x, centre_y) = (i64::from(dot.0), i64::from(dot.1));
+    for dy in -radius..=radius {
+        // The widest run of pixels inside the circle on this row.
+        let mut half = 0;
+        while (half + 1) * (half + 1) + dy * dy <= radius * radius {
+            half += 1;
+        }
+        let row = kobo_ui::Rect {
+            x: i32::try_from(centre_x - half).unwrap_or(0),
+            y: i32::try_from(centre_y + dy).unwrap_or(-1),
+            width: i32::try_from(2 * half + 1).unwrap_or(0),
+            height: 1,
+        };
+        surface.fill_rect(row, kobo_ui::tone::INK);
+    }
+    surface
+}
+
+/// Shows two dots in turn and works out how the digitiser is mounted.
+///
+/// The taps arrive already mapped through the session's starting transform.
+/// That mapping is undone with the same pose to get back the controller's raw
+/// positions, which are what [`kobo_profile::calibration::derive`] compares
+/// with the dots. On success the calibration is adopted, every later tap is
+/// mapped through it, and it is remembered for the next launch.
+///
+/// Returns false when the owner stops with the power button, lets the screen
+/// sit unanswered, or misses the dots on every attempt. The session then ends
+/// without asking anything else.
+fn calibrate_touch(
+    display: &DisplaySession,
+    taps: &TouchSink,
+    touch: &TouchSession,
+    whole_screen: Rect,
+    framebuffer: &kobo_profile::FramebufferSnapshot,
+) -> bool {
+    let Some(mapping) = collect_calibration(display, taps, touch, whole_screen) else {
+        return false;
+    };
+    let profile = match display.adopt_touch_calibration(mapping) {
+        Ok(profile) => profile,
+        Err(error) => {
+            trace(&format!("touch: the calibration was not adopted: {error}"));
+            return false;
+        }
+    };
+    match kobo_profile::PanelPose::resolve(profile, framebuffer) {
+        Ok(pose) => touch.set_pose(pose),
+        Err(error) => {
+            trace(&format!(
+                "touch: the calibrated pose did not resolve: {error}"
+            ));
+            return false;
+        }
+    }
+    trace(&format!("touch: calibrated as {mapping:?}"));
+    if let Err(error) =
+        crate::touch_calibration::remember(Path::new(COBALT_ROOT), display.snapshot(), mapping)
+    {
+        // The session still runs with the calibration it has. Losing the
+        // record costs two taps next launch.
+        trace(&format!(
+            "touch: could not remember the calibration: {error}"
+        ));
+    }
+    true
+}
+
+/// Puts the dots up and reads the taps, giving back the mapping they imply.
+fn collect_calibration(
+    display: &DisplaySession,
+    taps: &TouchSink,
+    touch: &TouchSession,
+    whole_screen: Rect,
+) -> Option<kobo_profile::TouchMapping> {
+    let starting_pose = touch.pose();
+    let profile = display.profile();
+    let dots = kobo_profile::calibration::targets(whole_screen.width, whole_screen.height);
+    let (sender, events) = mpsc::channel();
+    taps.set(Some(sender));
+    let deadline = Instant::now() + CONSENT_PATIENCE;
+    let mut answer = None;
+    'attempts: for attempt in 0..CALIBRATION_ATTEMPTS {
+        let mut raw = [(0, 0); 2];
+        for (index, dot) in dots.into_iter().enumerate() {
+            let surface =
+                calibration_surface(whole_screen, dot, attempt > 0, appearance_of(display));
+            if let Err(error) =
+                Painter::new(surface.width, surface.height).paint(display, whole_screen, &surface)
+            {
+                trace(&format!("touch: could not draw a calibration dot: {error}"));
+                break 'attempts;
+            }
+            // A tap made while the panel was still drawing was aimed at the
+            // previous screen, not at this dot.
+            while events.try_recv().is_ok() {}
+            match next_calibration_tap(&events, deadline) {
+                CalibrationTap::At(x, y) => {
+                    let Some(point) = starting_pose.display_to_touch(x, y) else {
+                        continue 'attempts;
+                    };
+                    raw[index] = point;
+                }
+                CalibrationTap::Stopped(reason) => {
+                    trace(&format!("touch: calibration stopped: {reason}"));
+                    break 'attempts;
+                }
+            }
+        }
+        match kobo_profile::calibration::derive(
+            profile,
+            whole_screen.width,
+            whole_screen.height,
+            raw,
+        ) {
+            Ok(mapping) => {
+                answer = Some(mapping);
+                break;
+            }
+            Err(error) => trace(&format!(
+                "touch: calibration attempt {} failed: {error}",
+                attempt + 1
+            )),
+        }
+    }
+    taps.set(None);
+    answer
+}
+
+enum CalibrationTap {
+    At(u32, u32),
+    Stopped(&'static str),
+}
+
+fn next_calibration_tap(events: &mpsc::Receiver<Event>, deadline: Instant) -> CalibrationTap {
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return CalibrationTap::Stopped("the dots went untapped");
+        };
+        match events.recv_timeout(remaining) {
+            Ok(Event::Touch(TouchEvent::Up { x, y })) => return CalibrationTap::At(x, y),
+            Ok(Event::Gpio(GpioEvent::Button {
+                button: gpio::Button::Power,
+                pressed: true,
+            })) => return CalibrationTap::Stopped("the power button was pressed"),
+            Ok(_) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                return CalibrationTap::Stopped("the dots went untapped");
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                return CalibrationTap::Stopped("the touch reader went away");
+            }
+        }
+    }
 }
 
 /// Describes a stock reader that is already running, if there is one.

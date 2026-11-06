@@ -110,6 +110,12 @@ pub struct Mounted {
     pub serial: String,
     /// Firmware version string.
     pub firmware: String,
+    /// The product id at the end of the version file, when it parses.
+    ///
+    /// The serial prefix names a model for the profiles, but only the
+    /// product id says which hardware family a model nobody has measured
+    /// belongs to, which is what decides whether Cobalt can drive it at all.
+    pub product_id: Option<u16>,
 }
 
 impl Mounted {
@@ -203,7 +209,7 @@ impl Identified {
                 reader.firmware
             ),
             kobo_profile::Standing::Unmeasured => {
-                "untested model. Cobalt has not been tested on this Kobo, so the screen may not draw correctly and taps may land in the wrong place.".to_owned()
+                "untested model. Cobalt has not been tested on this Kobo, so the screen may not draw correctly. Before its first screen it asks for two taps on a dot, so that taps land where they are aimed.".to_owned()
             }
         };
         Some(format!(
@@ -238,6 +244,16 @@ pub fn install_profile(reader: &Mounted) -> Result<Identified, String> {
     // Checked before the model and named for the reason rather than the
     // symptom. This is the one refusal no consent can answer: an installation
     // here would succeed and could never be launched.
+    // Refused before anything is copied. The reader would refuse the same
+    // model at its first launch with these same words, but by then the owner
+    // has installed something that can never run. A version file without a
+    // product id leaves that check on the reader as the only one.
+    if let Some(family) = reader
+        .product_id
+        .and_then(kobo_profile::provisional::UnsupportedFamily::from_product_id)
+    {
+        return Err(family.reason().to_owned());
+    }
     if !kobo_profile::launchable_generation(&reader.firmware) {
         return Err(format!(
             "firmware {} cannot start Cobalt: NickelMenu is the only way in from the \
@@ -389,10 +405,12 @@ pub fn mounted_readers() -> Vec<Mounted> {
 pub fn read_reader(volume: &Path) -> Option<Mounted> {
     let line = fs::read_to_string(volume.join(SYSTEM_FOLDER).join("version")).ok()?;
     let (serial, firmware) = parse_version(&line);
+    let product_id = kobo_profile::IdentitySnapshot::parse(Some(&line), None).device_code;
     is_kobo_serial(&serial).then(|| Mounted {
         volume: volume.to_owned(),
         serial,
         firmware,
+        product_id,
     })
 }
 
@@ -2152,6 +2170,7 @@ mod tests {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: "N365410043013".to_owned(),
             firmware: "4.45.23697".to_owned(),
+            product_id: None,
         };
         let identified = install_profile(&reader).expect("supported");
         assert_eq!(identified.standing, Standing::Measured);
@@ -2185,6 +2204,7 @@ mod tests {
         );
         let moved_on = Mounted {
             firmware: "4.46.23836".to_owned(),
+            product_id: None,
             ..tolino
         };
         assert_eq!(
@@ -2201,6 +2221,7 @@ mod tests {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: serial.to_owned(),
             firmware: firmware.to_owned(),
+            product_id: None,
         };
         let unknown = reader("N999000000000", "4.45.23697");
         let identified = install_profile(&unknown).expect("an untested model installs");
@@ -2210,7 +2231,7 @@ mod tests {
         let note = identified
             .untested(&unknown)
             .expect("an untested model is said");
-        assert!(note.contains("taps may land in the wrong place"), "{note}");
+        assert!(note.contains("two taps on a dot"), "{note}");
         assert!(note.contains("asks before Cobalt first starts"), "{note}");
         // Whatever setup will install onto, it must also be able to remove.
         assert_eq!(super::undo_profile(&unknown).profile, None);
@@ -2236,6 +2257,46 @@ mod tests {
     }
 
     #[test]
+    fn a_model_family_cobalt_cannot_drive_is_refused_before_anything_is_installed() {
+        let reader = |serial: &str, product_id: Option<u16>| Mounted {
+            volume: PathBuf::from("/Volumes/KOBOeReader"),
+            serial: serial.to_owned(),
+            firmware: "4.38.23697".to_owned(),
+            product_id,
+        };
+        let sage = install_profile(&reader("N778000000000", Some(383))).expect_err("Sage");
+        assert_eq!(
+            sage,
+            kobo_profile::provisional::UnsupportedFamily::Allwinner.reason()
+        );
+        let aura_one = install_profile(&reader("N709000000000", Some(373))).expect_err("Aura One");
+        assert_eq!(
+            aura_one,
+            kobo_profile::provisional::UnsupportedFamily::OlderImx.reason()
+        );
+        // A provisional i.MX6SLL reader and a reader whose version file had
+        // no product id both install, leaving the reader to check itself.
+        assert!(install_profile(&reader("N506000000000", Some(386))).is_ok());
+        assert!(install_profile(&reader("N778000000000", None)).is_ok());
+    }
+
+    #[test]
+    fn the_product_id_is_read_from_the_end_of_the_version_file() {
+        let volume = std::env::temp_dir().join(format!("cobalt-setup-pid-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&volume);
+        std::fs::create_dir_all(volume.join(".kobo")).expect("create");
+        std::fs::write(
+            volume.join(".kobo").join("version"),
+            "N778000000000,4.1.15,4.38.23697,4.1.15,4.1.15,00000000-0000-0000-0000-000000000383\n",
+        )
+        .expect("write");
+        let mounted = super::read_reader(&volume).expect("a reader");
+        assert_eq!(mounted.product_id, Some(383));
+        assert!(install_profile(&mounted).is_err());
+        let _ = std::fs::remove_dir_all(volume);
+    }
+
+    #[test]
     fn installation_refuses_a_firmware_generation_that_could_never_be_launched() {
         // Installing here would succeed and leave the owner with a payload no
         // menu entry can reach, so the refusal names NickelMenu rather than
@@ -2244,6 +2305,7 @@ mod tests {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: "N365410043013".to_owned(),
             firmware: "5.0.24000".to_owned(),
+            product_id: None,
         };
         let refusal = install_profile(&reader).expect_err("5.x cannot be launched");
         assert!(refusal.contains("NickelMenu"), "{refusal}");
@@ -2267,6 +2329,7 @@ mod tests {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: "N365410043013".to_owned(),
             firmware: "4.45.23792".to_owned(),
+            product_id: None,
         };
         let identified = install_profile(&reader).expect("supported");
         assert_eq!(identified.standing, Standing::Measured);
@@ -2863,6 +2926,7 @@ mod tests {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: "N365410043013".to_owned(),
             firmware: "4.45.23697".to_owned(),
+            product_id: None,
         };
         assert_eq!(reader.model_code(), "N365");
         assert!(reader.summary().contains("/Volumes/KOBOeReader"));

@@ -16,7 +16,7 @@
 //! left believing a contact is still active. So a grab is only ever taken from a
 //! quiescent state, and the same applies in reverse on release.
 
-use crate::touch::{InputEvent32, TouchDecoder, TouchEvent};
+use crate::touch::{contact_reporting, InputEvent32, TouchDecoder, TouchEvent};
 use kobo_abi::input;
 use kobo_profile::PanelPose;
 use std::fmt;
@@ -26,7 +26,7 @@ use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex, PoisonError,
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -103,6 +103,13 @@ pub struct TouchSession {
     released: bool,
     grabbed: bool,
     quiet: Arc<AtomicBool>,
+    /// The pose the reader thread maps every contact through.
+    ///
+    /// Shared rather than moved into the thread so that a reader calibrated
+    /// during the session can start mapping correctly without the touch
+    /// device being closed and reopened, which would need the panel to go
+    /// quiet a second time.
+    pose: Arc<Mutex<PanelPose<'static>>>,
 }
 
 impl TouchSession {
@@ -129,6 +136,9 @@ impl TouchSession {
         // every report. A decoder that sees some of a report and not the rest
         // never assembles a complete touch, so taps silently did nothing.
         let reader = device.try_clone()?;
+        let reporting = contact_reporting(&device);
+        let shared_pose = Arc::new(Mutex::new(pose));
+        let decoder_pose = Arc::clone(&shared_pose);
         let (sender, events) = mpsc::channel();
         let quiescent = Arc::new(AtomicBool::new(true));
         let decoder_quiescent = Arc::clone(&quiescent);
@@ -138,7 +148,7 @@ impl TouchSession {
         thread::spawn(move || {
             let _health = DecoderLifetime(Arc::clone(&decoder_quiescent));
             let mut reader = reader;
-            let mut decoder = TouchDecoder::default();
+            let mut decoder = TouchDecoder::new(reporting);
             let mut buffer = [0_u8; EVENT_BYTES * READ_CHUNK_EVENTS];
             loop {
                 let Ok(read) = reader.read(&mut buffer) else {
@@ -157,6 +167,7 @@ impl TouchSession {
                             event.kind, event.code, event.value
                         );
                     }
+                    let pose = *decoder_pose.lock().unwrap_or_else(PoisonError::into_inner);
                     let touch = decoder.push(event, &pose);
                     if event.kind == input::EV_SYN
                         && matches!(event.code, input::SYN_REPORT | input::SYN_DROPPED)
@@ -213,7 +224,23 @@ impl TouchSession {
             released: false,
             grabbed,
             quiet: quiescent,
+            pose: shared_pose,
         })
+    }
+
+    /// The pose contacts are currently mapped through.
+    #[must_use]
+    pub fn pose(&self) -> PanelPose<'static> {
+        *self.pose.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Maps every later contact through `pose` instead.
+    ///
+    /// For a calibration taken during the session. A contact already in
+    /// progress finishes under whichever pose its last frame was read with,
+    /// so callers change it between taps rather than during one.
+    pub fn set_pose(&self, pose: PanelPose<'static>) {
+        *self.pose.lock().unwrap_or_else(PoisonError::into_inner) = pose;
     }
 
     /// A live observation from the one input decoder, including dropped-report

@@ -35,7 +35,7 @@ use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -183,6 +183,12 @@ pub struct DisplaySession {
     geometry: SurfaceGeometry,
     backend: Backend,
     profile: &'static DeviceProfile,
+    /// The provisional profile rebuilt around the owner's touch calibration.
+    ///
+    /// Set at most once, and only over a provisional profile, so every caller
+    /// that asked for the profile before the calibration and every caller
+    /// after it see the same panel with nothing but the transform changed.
+    calibrated: OnceLock<&'static DeviceProfile>,
     snapshot: DeviceSnapshot,
     panel_work: Mutex<PanelWork>,
 }
@@ -435,6 +441,7 @@ impl DisplaySession {
             geometry,
             backend: Backend::from_controller(profile.framebuffer_controller),
             profile,
+            calibrated: OnceLock::new(),
             snapshot,
             panel_work: Mutex::new(PanelWork::default()),
         })
@@ -442,7 +449,37 @@ impl DisplaySession {
 
     #[must_use]
     pub fn profile(&self) -> &'static DeviceProfile {
-        self.profile
+        self.calibrated.get().copied().unwrap_or(self.profile)
+    }
+
+    /// Adopts a touch calibration for a reader with no measured profile.
+    ///
+    /// Returns the profile every later tap should be mapped through. The
+    /// rebuilt profile is checked against the probe exactly as the original
+    /// was, so a calibration cannot smuggle in anything but a transform.
+    ///
+    /// # Errors
+    ///
+    /// When the session's profile is a measured one, when a calibration was
+    /// already adopted, or when the rebuilt profile no longer matches the
+    /// probe.
+    pub fn adopt_touch_calibration(
+        &self,
+        mapping: kobo_profile::TouchMapping,
+    ) -> Result<&'static DeviceProfile, DisplayError> {
+        let profile =
+            kobo_profile::provisional::recalibrated(self.profile, &self.snapshot, mapping)
+                .map_err(|reason| DisplayError::ProfileRejected(vec![reason]))?;
+        let report = profile.validate(&self.snapshot);
+        if !report.mismatches.is_empty() {
+            return Err(DisplayError::ProfileRejected(report.mismatches));
+        }
+        self.calibrated.set(profile).map_err(|_| {
+            DisplayError::ProfileRejected(vec![
+                "a touch calibration was already adopted in this session".to_owned(),
+            ])
+        })?;
+        Ok(profile)
     }
 
     #[must_use]
@@ -470,9 +507,10 @@ impl DisplaySession {
     /// them with [`crate::refresh::RefreshIntent::ColourContent`].
     #[must_use]
     pub fn colour(&self) -> Option<surface::ChannelOrder> {
-        self.profile
+        let profile = self.profile();
+        profile
             .colour_panel
-            .then(|| surface::ChannelOrder::from_profile(self.profile))
+            .then(|| surface::ChannelOrder::from_profile(profile))
             .flatten()
     }
 
@@ -728,11 +766,27 @@ impl DisplaySession {
                 hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
             }
             Backend::Mxcfb => {
-                let mut wait = mxcfb::MxcfbUpdateMarkerData {
-                    update_marker: marker,
-                    collision_test: 0,
-                };
-                mxcfb::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+                // Bounded, because some i.MX6SLL drivers hold this call for
+                // about five seconds after the update has finished. Giving up
+                // early treats the update as done, which at worst lets the
+                // next write start on a region still settling. That is a
+                // faint mark for one refresh, and far better than a frozen
+                // screen.
+                let framebuffer = self.framebuffer.try_clone()?;
+                let started = Instant::now();
+                match crate::refresh::wait_bounded(crate::refresh::MXCFB_WAIT_LIMIT, move || {
+                    let mut wait = mxcfb::MxcfbUpdateMarkerData {
+                        update_marker: marker,
+                        collision_test: 0,
+                    };
+                    mxcfb::wait_for_update_complete(&framebuffer, &mut wait)
+                }) {
+                    crate::refresh::BoundedWait::Finished(result) => result?,
+                    crate::refresh::BoundedWait::TimedOut => eprintln!(
+                        "refresh: the panel had not confirmed update {marker:#x} after {} ms; carrying on",
+                        started.elapsed().as_millis()
+                    ),
+                }
             }
         }
         Ok(())
@@ -1249,6 +1303,78 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![2]
         );
+    }
+
+    /// A reader with the Clara BW's panel and an identity no profile claims.
+    fn unclaimed_snapshot() -> DeviceSnapshot {
+        snapshot_for(
+            &CLARA_BW_391,
+            IdentitySnapshot {
+                serial_prefix: Some("N999".into()),
+                firmware_version: Some("4.45.23697".into()),
+                kernel_release: Some("4.9.77".into()),
+                device_code: Some(999),
+            },
+        )
+    }
+
+    const SWAPPED: kobo_profile::TouchMapping = kobo_profile::TouchMapping {
+        swap_axes: true,
+        mirror_x: true,
+        mirror_y: true,
+    };
+
+    #[test]
+    fn a_measured_reader_keeps_its_own_transform_whatever_the_caller_offers() {
+        let (profile, standing) = super::resolve_profile(
+            &matched_snapshot(),
+            kobo_profile::TouchTransform::Calibrated(SWAPPED),
+        )
+        .unwrap();
+        assert_eq!(profile.id, CLARA_BW_391.id);
+        assert_eq!(profile.touch_transform, CLARA_BW_391.touch_transform);
+        assert_eq!(standing, super::Standing::Measured);
+    }
+
+    #[test]
+    fn a_measured_session_refuses_a_touch_calibration() {
+        let display = DisplaySession::open_verified(
+            &CLARA_BW_391,
+            matched_snapshot(),
+            Path::new("/dev/null"),
+            WritePolicy::ReadyOnly,
+        )
+        .unwrap();
+        assert!(display.adopt_touch_calibration(SWAPPED).is_err());
+        assert_eq!(
+            display.profile().touch_transform,
+            CLARA_BW_391.touch_transform
+        );
+    }
+
+    #[test]
+    fn a_provisional_session_adopts_one_calibration_and_only_one() {
+        let snapshot = unclaimed_snapshot();
+        let (profile, standing) =
+            super::resolve_profile(&snapshot, kobo_profile::TouchTransform::Direct).unwrap();
+        assert_eq!(standing, super::Standing::Unmeasured);
+        let display = DisplaySession::open_verified(
+            profile,
+            snapshot,
+            Path::new("/dev/null"),
+            WritePolicy::OwnerAccepted,
+        )
+        .unwrap();
+        let adopted = display.adopt_touch_calibration(SWAPPED).unwrap();
+        assert_eq!(
+            adopted.touch_transform,
+            kobo_profile::TouchTransform::Calibrated(SWAPPED)
+        );
+        assert!(std::ptr::eq(display.profile(), adopted));
+        assert!(display
+            .adopt_touch_calibration(kobo_profile::calibration::ALL_MAPPINGS[0])
+            .is_err());
+        assert!(std::ptr::eq(display.profile(), adopted));
     }
 
     fn matched_snapshot() -> DeviceSnapshot {

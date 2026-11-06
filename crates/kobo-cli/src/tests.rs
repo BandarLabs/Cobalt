@@ -2040,6 +2040,7 @@ mod preparing {
             volume,
             serial: "N365410043013".to_owned(),
             firmware: "4.45.23697".to_owned(),
+            product_id: None,
         }
     }
 

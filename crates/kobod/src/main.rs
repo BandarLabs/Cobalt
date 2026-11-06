@@ -92,6 +92,7 @@ mod consent;
 #[cfg(feature = "device-write")]
 mod device;
 mod syncthing;
+mod touch_calibration;
 mod update;
 
 fn main() -> ExitCode {

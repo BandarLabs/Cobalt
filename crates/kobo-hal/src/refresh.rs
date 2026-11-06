@@ -302,9 +302,72 @@ impl UpdateMarker {
     }
 }
 
+/// How long Cobalt waits for an i.MX panel to confirm an update.
+///
+/// On several i.MX6SLL boards, among them the Libra H2O, Libra 2, Clara 2E
+/// and Nia, the wait for an update to complete can sit for about five
+/// seconds before the driver gives up on it, even though the update itself
+/// finished long before. A full-screen quality update measured on a Libra
+/// H2O completed in about 400 ms, so two seconds leaves several times that
+/// for a cold panel while taking three seconds off every stall.
+pub const MXCFB_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// What came of a wait that was given a deadline.
+#[derive(Debug, Eq, PartialEq)]
+pub enum BoundedWait<T> {
+    /// The wait returned in time, with whatever it returned.
+    Finished(T),
+    /// The deadline passed first. The wait is still running on its own
+    /// thread and its answer will be dropped when it arrives.
+    TimedOut,
+}
+
+/// Runs a blocking wait on its own thread and stops listening at `limit`.
+///
+/// A blocking ioctl cannot be cancelled from user space, so the only way to
+/// stop one from holding the screen is to stop waiting for it. The thread is
+/// left to finish on its own, which it does once the driver gives up. If no
+/// thread can be started the wait runs here, unbounded, exactly as it did
+/// before there was a limit.
+pub fn wait_bounded<T, F>(limit: std::time::Duration, wait: F) -> BoundedWait<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let (sender, answer) = std::sync::mpsc::sync_channel(1);
+    let wait = std::sync::Arc::new(std::sync::Mutex::new(Some(wait)));
+    let on_thread = std::sync::Arc::clone(&wait);
+    let spawned = std::thread::Builder::new()
+        .name("panel-wait".to_owned())
+        // The wait needs almost no stack, and the default reserves megabytes
+        // of address space on a reader with half a gigabyte of memory.
+        .stack_size(64 * 1024)
+        .spawn(move || {
+            let taken = on_thread
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take();
+            if let Some(wait) = taken {
+                let _ignored = sender.send(wait());
+            }
+        });
+    if spawned.is_err() {
+        let taken = wait
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        return taken.map_or(BoundedWait::TimedOut, |wait| BoundedWait::Finished(wait()));
+    }
+    answer
+        .recv_timeout(limit)
+        .map_or(BoundedWait::TimedOut, BoundedWait::Finished)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Backend, Rect, RefreshIntent, RefreshPlan, UpdateMarker};
+    use super::{
+        wait_bounded, Backend, BoundedWait, Rect, RefreshIntent, RefreshPlan, UpdateMarker,
+    };
     use kobo_abi::{hwtcon, mxcfb};
 
     #[test]
@@ -469,5 +532,35 @@ mod tests {
             width: 0,
             height: 40,
         }));
+    }
+    #[test]
+    fn a_wait_that_returns_in_time_hands_back_its_answer() {
+        let started = std::time::Instant::now();
+        assert_eq!(
+            wait_bounded(std::time::Duration::from_secs(5), || 7),
+            BoundedWait::Finished(7)
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn a_stalled_wait_is_given_up_on_at_the_limit_rather_than_holding_the_caller() {
+        let started = std::time::Instant::now();
+        let outcome = wait_bounded(std::time::Duration::from_millis(50), || {
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            1
+        });
+        assert_eq!(outcome, BoundedWait::TimedOut);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "the caller waited {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_i_mx_limit_sits_between_a_slow_update_and_the_driver_stall() {
+        assert!(super::MXCFB_WAIT_LIMIT > std::time::Duration::from_millis(1200));
+        assert!(super::MXCFB_WAIT_LIMIT < std::time::Duration::from_secs(5));
     }
 }
