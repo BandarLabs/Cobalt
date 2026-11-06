@@ -4,8 +4,8 @@
   "short_label": "Fieldbook",
   "summary": "Log bird sightings anywhere and build your life list.",
   "page_description": "A field-ready eBird companion for quick sightings, species lookup, life lists, and checklist sharing.",
-  "version": "0.3.8",
-  "release_notes": "A species page leads with its name, with the scientific name and banding code on one line under it, and has a single Back.",
+  "version": "0.3.9",
+  "release_notes": "An outing with one bird in it says 1 bird, not 1 birds.",
   "glyph": "search",
   "capabilities": [],
   "setup": {

@@ -150,6 +150,15 @@ impl Default for Fieldbook {
     }
 }
 
+/// How many birds were seen, as words: "1 bird", "12 birds".
+fn bird_count(count: u32) -> String {
+    if count == 1 {
+        "1 bird".to_owned()
+    } else {
+        format!("{count} birds")
+    }
+}
+
 fn reader_clock() -> Box<dyn Clock> {
     Box::new(SystemClock::reader())
 }
@@ -672,8 +681,12 @@ impl Fieldbook {
             let (species, birds) = self.outing_totals(outing.id);
             screen = screen
                 .secondary(format!(
-                    "Open outing: {} · {} · {} · {} species, {} birds",
-                    outing.location, outing.date, outing.start, species, birds
+                    "Open outing: {} · {} · {} · {} species, {}",
+                    outing.location,
+                    outing.date,
+                    outing.start,
+                    species,
+                    bird_count(birds)
                 ))
                 .buttons([("resume", "Resume tally"), ("finish", "Finish outing")]);
         } else {
@@ -820,8 +833,12 @@ impl Fieldbook {
         let (species, individuals) = self.outing_totals(outing.id);
         let mut screen = s
             .secondary(format!(
-                "{} · {} · {} · {} species, {} birds",
-                outing.location, outing.date, outing.start, species, individuals
+                "{} · {} · {} · {} species, {}",
+                outing.location,
+                outing.date,
+                outing.start,
+                species,
+                bird_count(individuals)
             ))
             .buttons([
                 ("type-species", "Type a species"),
