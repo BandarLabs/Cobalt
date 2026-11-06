@@ -5,7 +5,7 @@
   "summary": "Play Reversi, Draughts, Nine Men's Morris and Kalah on one Kobo.",
   "page_description": "Four classic board games against the computer at three levels, which marks its last move on the board, or for two players passing one Kobo. Every move is saved.",
   "version": "0.1.13",
-  "release_notes": "Boards are drawn as boards: Kalah has round pits between its stores, reversi and draughts squares meet, pieces fill their squares, and a legal move is a grey dot. Resume names the game.",
+  "release_notes": "Boards are drawn as boards: Kalah has round pits between its stores, reversi squares meet, draughts squares sit edge to edge in one frame, pieces fill their squares, and a legal move is a grey dot. Resume names the game.",
   "minimum_cobalt_version": "0.3.34",
   "glyph": "circle",
   "capabilities": []

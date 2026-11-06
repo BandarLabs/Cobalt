@@ -471,3 +471,141 @@ fn noughts_and_crosses_is_drawn_as_a_hash_with_no_box_round_it() {
     assert_eq!(pixel(first.x, first.y + first.height / 4), tone::PAPER);
     assert_eq!(pixel(first.x + first.width / 4, first.y), tone::PAPER);
 }
+
+fn chess_board(marked: u32) -> Screen {
+    let cells = (0..64_u32)
+        .map(|index| {
+            let cell = Cell::new(ActionId(500 + index), "");
+            let cell = if index == 0 {
+                cell.with_glyph(Glyph::ChessBlackRook)
+            } else {
+                cell
+            };
+            cell.with_selected(index == marked)
+        })
+        .collect();
+    Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 8,
+            square: true,
+            cells,
+        }],
+    )
+}
+
+#[test]
+fn a_chess_board_is_light_and_dark_squares_edge_to_edge_inside_one_thin_frame() {
+    let screen = chess_board(18);
+    let metrics = CLARA_BW_METRICS;
+    let chrome = Chrome::measuring(true);
+    let layout = screen.layout_with(&metrics, &chrome);
+    let frames: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| node.kind == LayoutKind::CheckeredFrame)
+        .collect();
+    assert_eq!(frames.len(), 1, "a board has one frame");
+    let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
+    render_with(&screen, &metrics, &chrome, &mut surface, None);
+    let pixel = |x: i32, y: i32| surface.pixels[y as usize * surface.width + x as usize];
+    let square = |index: u32| layout.rect_of_action(ActionId(500 + index)).unwrap();
+    let Paint::Grey(dark) = Palette::grey().square_dark() else {
+        panic!("a grey panel's dark square is grey");
+    };
+    // Squares 27 and 28 sit side by side in the middle of the board, light
+    // then dark, and 27 and 35 one above the other. Across either boundary
+    // the panel goes straight from one field to the other with no rule.
+    let (light, right, below) = (square(27), square(28), square(35));
+    assert_eq!(right.x, light.x + light.width, "the squares do not meet");
+    let middle = light.y + light.height / 2;
+    for x in light.x + light.width / 2..light.x + light.width {
+        assert_eq!(
+            pixel(x, middle),
+            tone::PAPER,
+            "a rule inside a light square"
+        );
+    }
+    for x in right.x..right.x + right.width / 2 {
+        assert_eq!(pixel(x, middle), dark, "a rule inside a dark square");
+    }
+    let column = light.x + light.width / 2;
+    assert_eq!(pixel(column, below.y - 1), tone::PAPER);
+    assert_eq!(pixel(column, below.y), dark);
+    // The frame closes the outside of the board in ink, and only the frame:
+    // a rule's width in from the edge is the square's own field again.
+    let edge = square(8);
+    let rule = metrics.rule_thickness();
+    let across = edge.y + edge.height / 2;
+    assert_eq!(pixel(edge.x, across), tone::INK, "no frame");
+    assert_eq!(pixel(edge.x + rule, across), dark, "the frame is not thin");
+    // A marked square keeps a heavy ink outline inside its own edges, and
+    // its neighbour keeps its field right up to the boundary.
+    let marked = square(18);
+    let across = marked.y + marked.height / 2;
+    assert_eq!(pixel(marked.x + rule * 2 - 1, across), tone::INK);
+    assert_eq!(pixel(marked.x - 1, across), dark);
+    assert_eq!(pixel(marked.x + marked.width / 4, across), tone::PAPER);
+}
+
+#[test]
+fn only_chess_and_draughts_boards_are_drawn_without_rules_between_squares() {
+    let board = |columns: u8, cells: Vec<Cell>| {
+        Screen::new(
+            1,
+            vec![Node::Grid {
+                id: NodeId(1),
+                columns,
+                square: true,
+                cells,
+            }],
+        )
+    };
+    let empty = |count: u32| -> Vec<Cell> {
+        (0..count)
+            .map(|index| Cell::new(ActionId(700 + index), ""))
+            .collect()
+    };
+    let with = |count: u32, glyph: Glyph| -> Vec<Cell> {
+        let mut cells = empty(count);
+        cells[0] = cells[0].clone().with_glyph(glyph);
+        cells
+    };
+    let digits: Vec<Cell> = (0..81_u32)
+        .map(|index| Cell::new(ActionId(700 + index), (index % 9 + 1).to_string()))
+        .collect();
+    let mut crossword = empty(25);
+    for cell in &mut crossword {
+        cell.corner = Some(1);
+    }
+    let covered: Vec<Cell> = (0..81_u32)
+        .map(|index| Cell::new(ActionId(700 + index), "").with_selected(index != 0))
+        .collect();
+    let others = [
+        ("reversi", board(8, with(64, Glyph::BlackDisc))),
+        ("sudoku", board(9, digits)),
+        ("crossword", board(5, crossword)),
+        ("minesweeper", board(9, covered)),
+        ("morris", board(7, with(49, Glyph::BoardPoint))),
+        ("noughts and crosses", board(3, with(9, Glyph::Circle))),
+    ];
+    let metrics = CLARA_BW_METRICS;
+    let chrome = Chrome::measuring(true);
+    for (name, screen) in others {
+        let layout = screen.layout_with(&metrics, &chrome);
+        assert!(
+            !layout.nodes.iter().any(|node| matches!(
+                node.kind,
+                LayoutKind::CheckeredFrame
+                    | LayoutKind::Cell(_, CellStyle::BoardLight | CellStyle::BoardDark, _)
+            )),
+            "{name} was drawn as a chess board"
+        );
+    }
+    let draughts = board(8, with(64, Glyph::WhiteDraughtsMan)).layout_with(&metrics, &chrome);
+    assert!(draughts
+        .nodes
+        .iter()
+        .any(|node| node.kind == LayoutKind::CheckeredFrame));
+}

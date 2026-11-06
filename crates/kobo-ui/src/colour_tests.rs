@@ -767,7 +767,7 @@ fn a_board_keeps_brown_squares_whatever_the_applications_accent_and_marks_the_sq
     let selected = Screen::new(1, vec![square_grid(8, Some(2))]).with_accent(Some(Accent::Teal));
     let painted = paint(&selected, Appearance::Colour);
     assert!(count_colour(&painted, Accent::Teal.shades().tint) > 0);
-    // Grey panels draw the surface grey they always did.
+    // A grey panel draws the whole board in greys.
     assert!(paint(&selected, Appearance::Grey).chroma.is_none());
 }
 

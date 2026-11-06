@@ -5266,6 +5266,10 @@ pub enum LayoutKind {
     /// The ink frame round a joined board whose squares draw their own
     /// inner rules, a reversi board's.
     RuledBoard,
+    /// The thin ink frame round a chess or draughts board. It follows the
+    /// squares rather than leading them, because a dark square on the edge
+    /// fills to its own edge and would paint over a frame drawn first.
+    CheckeredFrame,
     /// A point's number, printed above or below it on a numbered backgammon
     /// board. Solid is printed in a black box, shaded in an open box, faded
     /// in grey.
@@ -6244,7 +6248,7 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
             let widths: Vec<i32> = chips
                 .iter()
                 .take(MAX_CHIPS)
-                .map(|chip| measure_text(&chip.label, FontSize::Caption).0 + pad * 2)
+                .map(|chip| chip_label_width(&chip.label) + pad * 2)
                 .collect();
             let count = widths.len() as i32;
             let run = if (2..=MAX_SEGMENTS).contains(&widths.len()) {
@@ -7388,9 +7392,10 @@ fn layout_node(
                 let count = shown as i32;
                 let each = width.saturating_sub(gap * (count - 1)) / count;
                 let fits = each >= metrics.touch_target_minimum()
-                    && chips.iter().take(shown).all(|chip| {
-                        measure_text(&chip.label, FontSize::Caption).0 + pad * 2 <= each
-                    });
+                    && chips
+                        .iter()
+                        .take(shown)
+                        .all(|chip| chip_label_width(&chip.label) + pad * 2 <= each);
                 if fits {
                     for (position, chip) in chips.iter().take(shown).enumerate() {
                         if layout.nodes.len() >= MAX_LAYOUT_NODES {
@@ -7428,7 +7433,7 @@ fn layout_node(
                     break;
                 }
                 let label = one_line(&chip.label, max_i32(1, width - pad * 2), FontSize::Caption);
-                let chip_width = (measure_text(&label, FontSize::Caption).0 + pad * 2).min(width);
+                let chip_width = (chip_label_width(&label) + pad * 2).min(width);
                 // Wrapped by the renderer, which is the whole point: an
                 // application that had to place these itself would be choosing
                 // coordinates, and a subject cloud is exactly the content whose
@@ -8607,6 +8612,17 @@ fn layout_node(
                 rows * cell_height + (rows - 1) * gutter + block_gaps
             };
             layout.nodes[index].rect.height = height;
+            // A chess or draughts board is its squares, light and dark edge to
+            // edge, inside one thin frame. Nothing is ruled between squares:
+            // a rule round every square turned the board into a grid of tiles.
+            if (chess_board || draughts_board) && layout.nodes.len() < MAX_LAYOUT_NODES {
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: layout.nodes[index].rect,
+                    kind: LayoutKind::CheckeredFrame,
+                    text_lines: Vec::new(),
+                });
+            }
             y.saturating_add(height)
         }
         Node::Rows { id, rows } => {
@@ -15755,14 +15771,24 @@ fn paint_layout(
                         clip,
                     );
                 }
-                draw_centered(
-                    surface,
-                    &node.text_lines,
-                    node.rect,
-                    FontSize::Caption,
-                    if selected { tone::PAPER } else { tone::INK },
-                    clip,
-                );
+                let ink = if selected { tone::PAPER } else { tone::INK };
+                match node.text_lines.as_slice() {
+                    [label] if ticking_figure(label) => {
+                        let size = FontSize::Caption;
+                        let width = figures_width(label, size, Face::Text);
+                        draw_figures(
+                            surface,
+                            label,
+                            node.rect.x + (node.rect.width - width) / 2,
+                            node.rect.y + (node.rect.height - size.line_height()) / 2,
+                            size,
+                            Face::Text,
+                            ink,
+                            clip,
+                        );
+                    }
+                    lines => draw_centered(surface, lines, node.rect, FontSize::Caption, ink, clip),
+                }
             }
             // Underlined rather than inverted. A tab strip sits directly above
             // the content it filters, and a filled tab there reads as a heading
@@ -16288,27 +16314,22 @@ fn paint_layout(
             LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
             }
-            // The square in hand on a board with light and dark squares takes
-            // the accent's tint. A plain grid's selected cell keeps the quiet
-            // grey, because what selection means there is the application's
-            // business and is not always one cell.
-            LayoutKind::Cell(_, CellStyle::BoardLight, true) => {
-                fill_clipped(surface, node.rect, palette.selection_field(), clip);
-                stroke_clipped(
-                    surface,
-                    node.rect,
-                    tone::INK,
-                    metrics.rule_thickness(),
-                    clip,
-                );
+            // A chess or draughts square is its field and nothing else, so the
+            // squares meet edge to edge the way a printed board's do and the
+            // board's own frame is the only line. A marked square, the one in
+            // hand or either end of the last move, keeps its own field and
+            // takes a heavy ink outline inside its edges, so the mark reads on
+            // light and dark squares alike and never spills onto a neighbour.
+            // On a colour panel a marked light square also takes the accent's
+            // tint.
+            LayoutKind::Cell(_, CellStyle::BoardLight, selected) => {
+                let field = if selected {
+                    palette.square_selected()
+                } else {
+                    Paint::Grey(tone::PAPER)
+                };
+                draw_square(surface, node.rect, field, selected, metrics, clip);
             }
-            LayoutKind::Cell(_, CellStyle::BoardLight, false) => stroke_clipped(
-                surface,
-                node.rect,
-                tone::RULE,
-                metrics.rule_thickness(),
-                clip,
-            ),
             LayoutKind::Cell(_, CellStyle::Board, true) => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 stroke_clipped(
@@ -16384,12 +16405,21 @@ fn paint_layout(
                 }
             }
             LayoutKind::Cell(_, CellStyle::BoardDark, selected) => {
-                fill_clipped(surface, node.rect, palette.board_dark(), clip);
+                draw_square(
+                    surface,
+                    node.rect,
+                    palette.square_dark(),
+                    selected,
+                    metrics,
+                    clip,
+                );
+            }
+            LayoutKind::CheckeredFrame => {
                 stroke_clipped(
                     surface,
                     node.rect,
-                    if selected { tone::INK } else { tone::RULE },
-                    metrics.rule_thickness() * if selected { 2 } else { 1 },
+                    tone::INK,
+                    metrics.rule_thickness(),
                     clip,
                 );
             }
@@ -18776,6 +18806,22 @@ fn draw_morris_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics
     line(point(4, 3), point(6, 3));
 }
 
+/// One square of a chess or draughts board: its field, and the heavy ink
+/// outline of a marked square drawn inside its edges.
+fn draw_square(
+    surface: &mut Surface,
+    rect: Rect,
+    field: Paint,
+    marked: bool,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    fill_clipped(surface, rect, field, clip);
+    if marked {
+        stroke_clipped(surface, rect, tone::INK, metrics.rule_thickness() * 2, clip);
+    }
+}
+
 /// One point of the older backgammon board, whose cells are a twelfth of the
 /// panel each with nothing between them.
 fn draw_backgammon_point(
@@ -19414,6 +19460,30 @@ fn digit_cell(size: FontSize, face: Face) -> i32 {
         .map(|digit| measure_text_in(&digit.to_string(), size, face).0)
         .max()
         .unwrap_or(0)
+}
+
+/// Whether a chip's label is a figure that counts down while the screen
+/// around it stays, a game clock's minutes and seconds.
+///
+/// A clock in a chip was set like any word, so its digits took their own
+/// widths and the figure shifted every time one changed, beside a status band
+/// clock that holds still. Set on a fixed advance it holds still too.
+fn ticking_figure(label: &str) -> bool {
+    label.contains(':')
+        && label.starts_with(|character: char| character.is_ascii_digit())
+        && label
+            .chars()
+            .all(|character| character.is_ascii_digit() || matches!(character, ':' | '.'))
+}
+
+/// How wide a chip's label is set. A clock is measured on its fixed advance,
+/// so its chip keeps one width while it runs.
+fn chip_label_width(label: &str) -> i32 {
+    if ticking_figure(label) {
+        figures_width(label, FontSize::Caption, Face::Text)
+    } else {
+        measure_text(label, FontSize::Caption).0
+    }
 }
 
 /// The width `draw_figures` will take, which does not depend on which digits

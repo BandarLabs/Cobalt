@@ -4,7 +4,7 @@
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
   "version": "1.0.22",
-  "release_notes": "The first screen leads with Play the computer, the times are on Play online in plain words, move targets are even grey dots, a finished game offers New game, and names and clocks line up with the board.",
+  "release_notes": "Play the computer comes first, Play online gives its times in plain words, move targets are even grey dots, a finished game offers New game, the board is plain light and dark squares, and names and clocks line up with it.",
   "glyph": "grid",
   "capabilities": [
     "network",
