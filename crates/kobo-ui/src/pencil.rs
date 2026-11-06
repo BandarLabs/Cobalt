@@ -275,7 +275,7 @@ pub(super) fn layout(
         if !boxes {
             return 0;
         }
-        let mut mask = 0;
+        let mut mask = RULED_BOXES;
         if mark.row % 3 == 0 {
             mask |= 1;
         }
@@ -437,6 +437,10 @@ pub(super) fn label_style(node: &LayoutNode) -> (FontSize, super::TextScale) {
     }
     (FontSize::Caption, current)
 }
+/// Set on every square of a board ruled into 3x3 boxes, beside the bits for
+/// which of its sides are box rules: 1 top, 2 left, 4 bottom, 8 right.
+pub(super) const RULED_BOXES: u8 = 16;
+
 /// How a pencil mark presents: selection, peer shading, and the 3x3 box
 /// rule mask for 9x9 digit boards.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -501,8 +505,34 @@ pub(super) fn draw_mark(
                 },
                 clip,
             );
-            stroke_clipped(surface, rect, tone::INK, line, clip);
-            let heavy = line * 2;
+            // A board ruled into boxes is set the way a printed sudoku is:
+            // a hairline between squares and a clearly heavier rule round
+            // each box. Each square drew its own full outline before, so the
+            // rule between two squares came out twice the outline, and the
+            // box rule on top of that was barely heavier than its neighbours.
+            // A square now draws only its top and left hairlines, which its
+            // neighbours complete, and the box rules fall on the sides the
+            // mask names.
+            let ruled = box_mask & RULED_BOXES != 0;
+            let heavy = if ruled {
+                let hair = metrics.tenth_mm(1).max(1);
+                for side in [
+                    Rect {
+                        height: hair,
+                        ..rect
+                    },
+                    Rect {
+                        width: hair,
+                        ..rect
+                    },
+                ] {
+                    fill_clipped(surface, side, tone::INK, clip);
+                }
+                metrics.tenth_mm(5).max(hair * 3)
+            } else {
+                stroke_clipped(surface, rect, tone::INK, line, clip);
+                line * 2
+            };
             for (bit, side) in [
                 (
                     1,
@@ -825,15 +855,15 @@ mod tests {
         assert_eq!(marks.len(), 3);
         assert!(matches!(
             marks[0].kind,
-            LayoutKind::PencilMark(_, false, false, 0b0011)
+            LayoutKind::PencilMark(_, false, false, 0b1_0011)
         ));
         assert!(matches!(
             marks[1].kind,
-            LayoutKind::PencilMark(_, true, false, 0b0001)
+            LayoutKind::PencilMark(_, true, false, 0b1_0001)
         ));
         assert!(matches!(
             marks[2].kind,
-            LayoutKind::PencilMark(_, false, true, 0b0010)
+            LayoutKind::PencilMark(_, false, true, 0b1_0010)
         ));
         // The selected candidates square shows its four digits and no big number.
         let digits = layout
@@ -847,6 +877,82 @@ mod tests {
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
             .issues
             .is_empty());
+    }
+    /// The widths of the runs of ink along one row of pixels, left to right.
+    fn ink_runs(surface: &crate::Surface, y: usize, from: usize, to: usize) -> Vec<usize> {
+        let mut runs = Vec::new();
+        let mut run = 0;
+        for x in from..to {
+            if surface.pixels[y * surface.width + x] < 0x40 {
+                run += 1;
+            } else if run > 0 {
+                runs.push(run);
+                run = 0;
+            }
+        }
+        if run > 0 {
+            runs.push(run);
+        }
+        runs
+    }
+    #[test]
+    fn a_sudoku_is_ruled_with_hairlines_between_squares_and_heavy_rules_round_boxes() {
+        let board = PencilBoard {
+            columns: 9,
+            rows: 9,
+            cell_tenth_mm: 80,
+            marks: (0..81u8)
+                .map(|cell| PencilMark {
+                    column: cell % 9,
+                    row: cell / 9,
+                    kind: PencilMarkKind::Digit {
+                        value: 0,
+                        given: false,
+                    },
+                    action: Some(ActionId(100 + u32::from(cell))),
+                    selected: false,
+                    peer: false,
+                })
+                .collect(),
+            edges: vec![],
+        };
+        let screen = Screen::new(
+            1,
+            vec![Node::PencilBoard {
+                id: NodeId(1),
+                board,
+            }],
+        );
+        let metrics = CLARA_BW_METRICS;
+        let layout = screen.layout_with(&metrics, &Chrome::default());
+        let squares = layout
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, LayoutKind::PencilMark(..)))
+            .map(|n| n.rect)
+            .collect::<Vec<_>>();
+        let (first, last) = (squares[0], squares[80]);
+        let mut surface = crate::Surface::new(metrics.width as usize, metrics.height as usize);
+        crate::render_with(&screen, &metrics, &Chrome::default(), &mut surface, None);
+        // Through the middle of the fifth row, from just outside the board to
+        // just past it: ten rules, the four box rules at either end and every
+        // third, and hairlines between.
+        let y = usize::try_from(squares[36].y + squares[36].height / 2).unwrap();
+        let runs = ink_runs(
+            &surface,
+            y,
+            usize::try_from(first.x - 4).unwrap(),
+            usize::try_from(last.x + last.width + 4).unwrap(),
+        );
+        assert_eq!(runs.len(), 10, "{runs:?}");
+        let (boxes, hairlines): (Vec<_>, Vec<_>) = runs
+            .iter()
+            .enumerate()
+            .partition(|(index, _)| index % 3 == 0);
+        let thinnest_box = boxes.iter().map(|(_, run)| **run).min().unwrap();
+        let thickest_hairline = hairlines.iter().map(|(_, run)| **run).max().unwrap();
+        assert!(thickest_hairline <= 2, "{runs:?}");
+        assert!(thinnest_box >= thickest_hairline * 3, "{runs:?}");
     }
     #[test]
     fn candidates_and_peers_are_bounded() {
