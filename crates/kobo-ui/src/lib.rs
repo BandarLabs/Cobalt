@@ -5268,12 +5268,12 @@ pub enum Glyph {
     // games once shared one four-square grid and six readers one book, which
     // made a page of tiles look like a placeholder. They arrived with protocol
     // 18; an older frame carries the mark each application wore before.
-    /// A letter in a square: a crossword, where every answer is written one
-    /// letter to a cell.
-    LetterSquare,
-    /// A digit in a square: a number puzzle, where every cell takes one
-    /// figure.
-    NumberSquare,
+    /// Nine cells with two of them blacked out: a crossword, whose answers run
+    /// between the black squares.
+    CrosswordGrid,
+    /// A square cut into nine equal cells: a number puzzle played one figure
+    /// to a cell.
+    CellGrid,
     /// A letter with a tick beside it: a word guessed and checked letter by
     /// letter.
     LetterCheck,
@@ -5425,8 +5425,8 @@ impl Glyph {
         Self::Backspace,
         Self::Shift,
         Self::Mill,
-        Self::LetterSquare,
-        Self::NumberSquare,
+        Self::CrosswordGrid,
+        Self::CellGrid,
         Self::LetterCheck,
         Self::Hash,
         Self::Lattice,

@@ -67,8 +67,6 @@ ChessBlackRook      chess-rook
 ChessBlackBishop    chess-bishop
 ChessBlackKnight    chess-knight
 ChessBlackPawn      chess
-LetterSquare        square-letter-a
-NumberSquare        square-number-9
 LetterCheck         text-spellcheck
 Hash                grid-3x3
 Lattice             grid-4x4

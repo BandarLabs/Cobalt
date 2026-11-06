@@ -561,6 +561,9 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
     if let Some(shapes) = game_piece_shapes(glyph) {
         return shapes;
     }
+    if let Some(shapes) = puzzle_grid_shapes(glyph) {
+        return shapes;
+    }
     let width = if matches!(
         glyph,
         Glyph::ChessBlackKing
@@ -581,6 +584,65 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
             width,
         })
         .collect()
+}
+
+/// The crossword and the number puzzle, as their grids.
+///
+/// Tabler draws a square with a grid inside it, whose cells are smaller in the
+/// middle than at the edge, and a letter or digit in a square, which at
+/// launcher size reads as a calculator display. Neither looks like the puzzle.
+/// These are drawn in Tabler's own terms instead: the frame of its
+/// `square` (four to twenty on its grid of twenty-four, with a corner of two)
+/// at the stroke weight of every other icon, cut into three equal cells each
+/// way so the grid is a different picture from the noughts and crosses board
+/// and the nonogram lattice beside it.
+fn puzzle_grid_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
+    const LOW: i32 = 167;
+    const HIGH: i32 = 833;
+    const CORNER: i32 = 83;
+    const FIRST: i32 = LOW + (HIGH - LOW) / 3;
+    const SECOND: i32 = HIGH - (HIGH - LOW) / 3;
+    if !matches!(glyph, Glyph::CrosswordGrid | Glyph::CellGrid) {
+        return None;
+    }
+    let mut shapes = Vec::new();
+    if glyph == Glyph::CrosswordGrid {
+        // The black squares sit in opposite corners, as a printed grid's do,
+        // and each follows the rounded corner of the frame it fills.
+        shapes.push(Shape::Fill(
+            Path::new()
+                .move_to(SECOND, LOW)
+                .line_to(HIGH - CORNER, LOW)
+                .quad_to(HIGH, LOW, HIGH, LOW + CORNER)
+                .line_to(HIGH, FIRST)
+                .line_to(SECOND, FIRST)
+                .close(),
+        ));
+        shapes.push(Shape::Fill(
+            Path::new()
+                .move_to(LOW, SECOND)
+                .line_to(FIRST, SECOND)
+                .line_to(FIRST, HIGH)
+                .line_to(LOW + CORNER, HIGH)
+                .quad_to(LOW, HIGH, LOW, HIGH - CORNER)
+                .close(),
+        ));
+    }
+    shapes.push(Shape::Stroke {
+        path: Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, CORNER),
+        width: WEIGHT,
+    });
+    for at in [FIRST, SECOND] {
+        shapes.push(Shape::Stroke {
+            path: Path::line(at, LOW, at, HIGH),
+            width: WEIGHT,
+        });
+        shapes.push(Shape::Stroke {
+            path: Path::line(LOW, at, HIGH, at),
+            width: WEIGHT,
+        });
+    }
+    Some(shapes)
 }
 
 /// A game piece is drawn the way a printed diagram draws it, seen from

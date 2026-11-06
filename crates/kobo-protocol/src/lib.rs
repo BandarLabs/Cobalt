@@ -7218,8 +7218,8 @@ const fn is_app_mark(glyph: Glyph) -> bool {
 /// them by.
 const fn earlier_glyph(glyph: Glyph) -> Glyph {
     match glyph {
-        Glyph::LetterSquare
-        | Glyph::NumberSquare
+        Glyph::CrosswordGrid
+        | Glyph::CellGrid
         | Glyph::Hash
         | Glyph::Lattice
         | Glyph::Puzzle
@@ -7319,8 +7319,8 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Backspace => 66,
         Glyph::Shift => 67,
         Glyph::Mill => 68,
-        Glyph::LetterSquare => 69,
-        Glyph::NumberSquare => 70,
+        Glyph::CrosswordGrid => 69,
+        Glyph::CellGrid => 70,
         Glyph::Hash => 71,
         Glyph::Lattice => 72,
         Glyph::Puzzle => 73,
@@ -7430,8 +7430,8 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         66 => Glyph::Backspace,
         67 => Glyph::Shift,
         68 => Glyph::Mill,
-        69 => Glyph::LetterSquare,
-        70 => Glyph::NumberSquare,
+        69 => Glyph::CrosswordGrid,
+        70 => Glyph::CellGrid,
         71 => Glyph::Hash,
         72 => Glyph::Lattice,
         73 => Glyph::Puzzle,

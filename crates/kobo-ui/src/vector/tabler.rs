@@ -86,8 +86,6 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::ChessBlackBishop => CHESS_BLACK_BISHOP,
         Glyph::ChessBlackKnight => CHESS_BLACK_KNIGHT,
         Glyph::ChessBlackPawn => CHESS_BLACK_PAWN,
-        Glyph::LetterSquare => LETTER_SQUARE,
-        Glyph::NumberSquare => NUMBER_SQUARE,
         Glyph::LetterCheck => LETTER_CHECK,
         Glyph::Hash => HASH,
         Glyph::Lattice => LATTICE,
@@ -119,8 +117,8 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::FeedPage => FEED_PAGE,
         Glyph::Photo => PHOTO,
         Glyph::Prompt => PROMPT,
-        // Board pieces are discs and rings rather than line art, so they are
-        // filled in `game_piece_shapes` instead of stroked from an outline.
+        // Board pieces, the keyboard keys and the puzzle grids are drawn in
+        // `vector::shapes` rather than imported, for the reasons on `HAND_DRAWN`.
         Glyph::BlackDisc
         | Glyph::WhiteDisc
         | Glyph::BlackDraughtsKing
@@ -131,7 +129,9 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         | Glyph::Mill
         | Glyph::LegalPoint
         | Glyph::Backspace
-        | Glyph::Shift => &[],
+        | Glyph::Shift
+        | Glyph::CrosswordGrid
+        | Glyph::CellGrid => &[],
     }
 }
 
@@ -1430,57 +1430,6 @@ static CHESS_BLACK_PAWN: &[&[Cmd]] = &[
         Cmd::Line(625, 667),
         Cmd::Line(375, 667),
         Cmd::Line(279, 699),
-    ],
-];
-
-/// `square-letter-a` from Tabler Icons.
-static LETTER_SQUARE: &[&[Cmd]] = &[
-    &[
-        Cmd::Move(125, 208),
-        Cmd::Cubic(125, 162, 162, 125, 208, 125),
-        Cmd::Line(792, 125),
-        Cmd::Cubic(838, 125, 875, 162, 875, 208),
-        Cmd::Line(875, 792),
-        Cmd::Cubic(875, 838, 838, 875, 792, 875),
-        Cmd::Line(208, 875),
-        Cmd::Cubic(162, 875, 125, 838, 125, 792),
-        Cmd::Line(125, 208),
-    ],
-    &[
-        Cmd::Move(417, 667),
-        Cmd::Line(417, 417),
-        Cmd::Cubic(417, 371, 454, 333, 500, 333),
-        Cmd::Cubic(546, 333, 583, 371, 583, 417),
-        Cmd::Line(583, 667),
-    ],
-    &[Cmd::Move(417, 542), Cmd::Line(583, 542)],
-];
-
-/// `square-number-9` from Tabler Icons.
-static NUMBER_SQUARE: &[&[Cmd]] = &[
-    &[
-        Cmd::Move(125, 208),
-        Cmd::Cubic(125, 162, 162, 125, 208, 125),
-        Cmd::Line(792, 125),
-        Cmd::Cubic(838, 125, 875, 162, 875, 208),
-        Cmd::Line(875, 792),
-        Cmd::Cubic(875, 838, 838, 875, 792, 875),
-        Cmd::Line(208, 875),
-        Cmd::Cubic(162, 875, 125, 838, 125, 792),
-        Cmd::Line(125, 208),
-    ],
-    &[
-        Cmd::Move(417, 625),
-        Cmd::Cubic(417, 648, 435, 667, 458, 667),
-        Cmd::Line(542, 667),
-        Cmd::Cubic(565, 667, 583, 648, 583, 625),
-        Cmd::Line(583, 375),
-        Cmd::Cubic(583, 352, 565, 333, 542, 333),
-        Cmd::Line(458, 333),
-        Cmd::Cubic(435, 333, 417, 352, 417, 375),
-        Cmd::Line(417, 458),
-        Cmd::Cubic(417, 481, 435, 500, 458, 500),
-        Cmd::Line(583, 500),
     ],
 ];
 

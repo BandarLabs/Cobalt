@@ -49,10 +49,10 @@ impl Entry {
 
 /// The glyphs drawn by hand in the renderer rather than from an outline.
 ///
-/// Board pieces are discs and rings rather than line art, and the two
-/// keyboard keys keep geometry of their own, so none of them has a Tabler
-/// icon behind it.
-const HAND_DRAWN: [&str; 11] = [
+/// Board pieces are discs and rings rather than line art, the two keyboard
+/// keys keep geometry of their own, and the two puzzle grids are cells of a
+/// size Tabler does not draw, so none of them has a Tabler icon behind it.
+const HAND_DRAWN: [&str; 13] = [
     "BlackDisc",
     "WhiteDisc",
     "BlackDraughtsKing",
@@ -64,6 +64,8 @@ const HAND_DRAWN: [&str; 11] = [
     "LegalPoint",
     "Backspace",
     "Shift",
+    "CrosswordGrid",
+    "CellGrid",
 ];
 
 fn main() -> Result<(), String> {
@@ -255,8 +257,8 @@ fn render(entries: &[Entry], glyphs: &str) -> String {
         let _ = writeln!(out, "        Glyph::{} => {artwork},", entry.glyph);
     }
     out.push_str(
-        "        // Board pieces are discs and rings rather than line art, so they are\n\
-         // filled in `game_piece_shapes` instead of stroked from an outline.\n",
+        "        // Board pieces, the keyboard keys and the puzzle grids are drawn in\n\
+         // `vector::shapes` rather than imported, for the reasons on `HAND_DRAWN`.\n",
     );
     for (index, glyph) in HAND_DRAWN.iter().enumerate() {
         let lead = if index == 0 { "" } else { "| " };
@@ -318,7 +320,7 @@ mod tests {
             .expect("the checked-in file has a fallback arm")
             .0;
         let hand_drawn: Vec<&str> = arm
-            .rsplit("instead of stroked from an outline.")
+            .rsplit("for the reasons on `HAND_DRAWN`.")
             .next()
             .expect("the fallback arm follows its comment")
             .split("Glyph::")
