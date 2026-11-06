@@ -416,6 +416,9 @@ impl Stand {
         };
         let state = self.state_of(&score.id);
         let mut screen = match self.page {
+            // Inside the side margins rather than to the bezel: with Staff
+            // width on, the margins are cropped off the page and the staves
+            // would otherwise run into the frame of the reader.
             Some(picture) => screen.unframed_picture(picture, 500),
             None => screen.activity("Turning the page", None),
         };
@@ -464,7 +467,13 @@ impl Stand {
                     .button(LIBRARY, "Library")
             });
         }
-        screen.build().with_own_back(true)
+        // No clock or title over the staves. The title comes back with a
+        // touch at the top edge, and the middle opens the menu.
+        screen
+            .build()
+            .with_own_back(true)
+            .with_reading(true)
+            .with_auto_hidden_top_bar(true)
     }
 
     fn setlists(&self, context: &Context) -> (Screen, usize) {
@@ -1241,6 +1250,8 @@ mod tests {
             ..Stand::default()
         };
         let screen = stand.stand();
+        // The page has the panel: no clock band, and no bar until asked for.
+        assert!(screen.reading && screen.auto_hide_top_bar);
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert_eq!(
             layout.page_turns.declared().expect("page turns").next,
