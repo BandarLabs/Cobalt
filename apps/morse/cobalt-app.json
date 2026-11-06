@@ -3,12 +3,12 @@
   "display_name": "Morse",
   "short_label": "Morse",
   "summary": "Type a message and send it in Morse code with the front light.",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "glyph": "light",
   "capabilities": [
     "frontlight-control",
     "keep-awake"
   ],
-  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
+  "release_notes": "The letter being sent is drawn in a smooth bold face rather than blocks, Learning draws its code under it as dots and dashes, and the letter reference is one page of three columns.",
   "page_description": "Type a message and send it in Morse code on the reader's front light, a letter at a time, with the outgoing letter drawn across the whole panel."
 }
