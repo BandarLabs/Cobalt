@@ -5290,6 +5290,14 @@ pub enum LayoutKind {
     PencilMark(PencilMarkKind, bool, bool, u8),
     PencilEdge(u8, bool),
     PencilNumber(bool),
+    /// A pencilled candidate in its ninth of a square: set in the caption
+    /// size whenever the digit's own shape fits its ninth, which its line
+    /// height, with the room above and below a digit, never does. Measured
+    /// that way it fell to a size a reader had to lean in for.
+    PencilNote(bool),
+    /// A digit the solver entered rather than one the puzzle gave: the same
+    /// size, in grey, the way a pencilled answer sits beside a printed clue.
+    PencilEntry(bool),
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
     /// The rule around a crossword grid. Its squares draw the lines they share
@@ -14422,7 +14430,10 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
         let Some((size, face)) = style else {
             continue;
         };
-        let scale = if matches!(node.kind, LayoutKind::PencilNumber(_)) {
+        let scale = if matches!(
+            node.kind,
+            LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_)
+        ) {
             pencil::label_style(node).1
         } else if matches!(
             node.kind,
@@ -14453,9 +14464,12 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             };
             // A lone pencil number is its glyph, not its leading: the box may
             // clip a hair of line height the same way it clips a hairline.
-            let leading_allowance = if rows == 1 && matches!(node.kind, LayoutKind::PencilNumber(_))
-            {
-                metrics.rule_thickness() * 2
+            let leading_allowance = if rows == 1
+                && matches!(
+                    node.kind,
+                    LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_)
+                ) {
+                (metrics.rule_thickness() * 2).max(node.rect.height / 6)
             } else {
                 0
             };
@@ -14598,7 +14612,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
         LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true) => board_label_size(node),
-        LayoutKind::PencilNumber(_) => pencil::label_style(node).0,
+        LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_) => pencil::label_style(node).0,
         LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false) => key_label_style(node).0,
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::BarAction(_) => {
@@ -15842,6 +15856,37 @@ fn paint_layout(
                     metrics.tenth_mm(pad_border_tenth_mm()),
                     clip,
                 );
+            }
+            LayoutKind::PencilNote(inverted) => {
+                let size = [FontSize::Caption, FontSize::Terminal]
+                    .into_iter()
+                    .find(|size| size.line_height() * 2 / 3 <= node.rect.height)
+                    .unwrap_or(FontSize::Terminal);
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    size,
+                    if inverted { tone::PAPER } else { tone::INK },
+                    clip,
+                );
+            }
+            LayoutKind::PencilEntry(inverted) => {
+                let (size, scale) = pencil::label_style(&node);
+                with_text_scale(scale, || {
+                    draw_centered(
+                        surface,
+                        &node.text_lines,
+                        node.rect,
+                        size,
+                        if inverted {
+                            tone::RULE_LIGHT
+                        } else {
+                            tone::MUTED
+                        },
+                        clip,
+                    );
+                });
             }
             LayoutKind::PencilNumber(inverted) => {
                 let (size, scale) = pencil::label_style(&node);
