@@ -1399,6 +1399,13 @@ pub enum CellStyle {
     /// that did something, which is a panel mostly made of controls that do
     /// nothing.
     EmptyPad,
+    /// A pit of a sowing game: a round well with its count in it.
+    Pit,
+    /// A store at one end of a sowing game's board, as tall as both rows.
+    Store,
+    /// A square of a joined board ruled in grey, a reversi board's: it
+    /// draws its top and left rules and the board draws the frame.
+    Ruled,
     /// A board square carrying one of the word-game tones.
     Tile(CellTone),
     /// A keyboard key carrying the tone its letter has on the board.
@@ -5177,6 +5184,13 @@ pub enum LayoutKind {
     BackgammonStack(Glyph, u8, bool),
     /// The frame and bar of a numbered backgammon board.
     BackgammonFrame,
+    /// The outline of a sowing game's board.
+    MancalaBoard,
+    /// Whose store it is, under the board below the store.
+    StoreLabel,
+    /// The ink frame round a joined board whose squares draw their own
+    /// inner rules, a reversi board's.
+    RuledBoard,
     /// A point's number, printed above or below it on a numbered backgammon
     /// board. Solid is printed in a black box, shaded in an open box, faded
     /// in grey.
@@ -7966,11 +7980,50 @@ fn layout_node(
             {
                 return layout_numbered_backgammon(*id, cells, x, y, width, metrics, layout);
             }
+            // Two rows of six pits between two stores, as a sowing game's
+            // board is carved: eight squares a row, with a store at each end
+            // of the row that holds it and nothing in the other row's place.
+            if is_mancala(*square, *columns, cells) {
+                return layout_mancala(
+                    *id,
+                    cells,
+                    Rect {
+                        x,
+                        y,
+                        width,
+                        height: bottom.saturating_sub(y),
+                    },
+                    metrics,
+                    layout,
+                );
+            }
             // A row of word-game tiles is five squares too, and is a board.
             let pad_deck = *square
                 && requested == 5
                 && cells.len() <= 15
                 && cells.iter().all(|cell| cell.tone == CellTone::Plain);
+            // Draughts and reversi are joined boards, like a chess board: the
+            // squares meet, and the board is ruled rather than tiled.
+            let draughts_squares = *square
+                && matches!(requested, 8 | 10)
+                && cells.iter().any(|cell| {
+                    matches!(
+                        cell.glyph,
+                        Some(
+                            Glyph::BlackDraughtsMan
+                                | Glyph::WhiteDraughtsMan
+                                | Glyph::BlackDraughtsKing
+                                | Glyph::WhiteDraughtsKing
+                        )
+                    )
+                });
+            let reversi_board = *square
+                && requested == 8
+                && cells.len() == 64
+                && !draughts_squares
+                && cells
+                    .iter()
+                    .any(|cell| matches!(cell.glyph, Some(Glyph::BlackDisc | Glyph::WhiteDisc)));
             let chess_board = *square
                 && requested == 8
                 && cells.len() == 64
@@ -8007,7 +8060,11 @@ fn layout_node(
             };
             let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
-            } else if chess_board || (*square && cells.iter().any(|cell| cell.corner.is_some())) {
+            } else if chess_board
+                || draughts_squares
+                || reversi_board
+                || (*square && cells.iter().any(|cell| cell.corner.is_some()))
+            {
                 (x, width, 0)
             } else if pad_deck {
                 (x, width, metrics.space(Space::Small))
@@ -8087,6 +8144,8 @@ fn layout_node(
                 },
                 kind: if backgammon_board {
                     LayoutKind::BackgammonBoard
+                } else if reversi_board {
+                    LayoutKind::RuledBoard
                 } else if morris_board {
                     LayoutKind::MorrisBoard
                 } else if crossword_board {
@@ -8129,6 +8188,8 @@ fn layout_node(
                     CellStyle::Crossword
                 } else if morris_board {
                     CellStyle::Plain
+                } else if reversi_board {
+                    CellStyle::Ruled
                 } else if (draughts_board || chess_board) && (row + column) % 2 == 1 {
                     CellStyle::BoardDark
                 } else if draughts_board || chess_board {
@@ -8237,7 +8298,19 @@ fn layout_node(
                             }
                         }
                         Some(glyph) => {
-                            let mark = min(cell_height, cell_width) * 3 / 5;
+                            // A piece nearly fills its square, as on a real
+                            // board; a mark on an empty square stays small.
+                            let piece = matches!(
+                                glyph,
+                                Glyph::BlackDisc
+                                    | Glyph::WhiteDisc
+                                    | Glyph::BlackDraughtsMan
+                                    | Glyph::WhiteDraughtsMan
+                                    | Glyph::BlackDraughtsKing
+                                    | Glyph::WhiteDraughtsKing
+                            ) && *square;
+                            let mark = min(cell_height, cell_width) * if piece { 9 } else { 3 }
+                                / if piece { 10 } else { 5 };
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: Rect {
@@ -14333,11 +14406,18 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
         Node::Field { clear, .. } => 1 + usize::from(clear.is_some()),
         Node::Chips { chips, .. } | Node::Tabs { tabs: chips, .. } => chips.len(),
         Node::Card { .. } | Node::Band { .. } => 0,
-        Node::Grid { cells, square, .. } => {
+        Node::Grid {
+            cells,
+            square,
+            columns,
+            ..
+        } => {
             let crossword = *square && cells.iter().any(|cell| cell.corner.is_some());
+            let mancala = is_mancala(*square, *columns, cells);
             cells
                 .iter()
                 .filter(|cell| !crossword || cell.label != "#")
+                .filter(|cell| !mancala || !cell.label.is_empty())
                 .count()
         }
         Node::PencilBoard { board, .. } => board.action_count(),
@@ -15682,6 +15762,78 @@ fn paint_layout(
                     clip,
                 );
             }
+            // A reversi board is one ruled grid, like the board itself: each
+            // square draws the two rules no neighbour above or to its left
+            // has, and the board draws the frame. The square of the last move
+            // takes the selection field.
+            LayoutKind::Cell(_, CellStyle::Ruled, selected) => {
+                if selected {
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
+                }
+                let rule = metrics.rule_thickness();
+                for edge in [
+                    Rect {
+                        height: rule,
+                        ..node.rect
+                    },
+                    Rect {
+                        width: rule,
+                        ..node.rect
+                    },
+                ] {
+                    fill_clipped(surface, edge, tone::RULE, clip);
+                }
+            }
+            LayoutKind::MancalaBoard => {
+                let radius = node.rect.height / 4;
+                fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    radius,
+                    tone::INK,
+                    metrics.rule_thickness() * 2,
+                    clip,
+                );
+            }
+            // A well, not a key: a round hollow in light grey with a rule
+            // round it, and a heavy ink rule round the pits just sown from.
+            LayoutKind::Cell(_, CellStyle::Pit | CellStyle::Store, selected) => {
+                let inset = node.rect.width / 12;
+                let well = Rect {
+                    x: node.rect.x + inset,
+                    y: node.rect.y + inset,
+                    width: node.rect.width - inset * 2,
+                    height: node.rect.height - inset * 2,
+                };
+                let radius = well.width / 2;
+                fill_rounded_clipped(surface, well, radius, tone::SURFACE, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    well,
+                    radius,
+                    if selected { tone::INK } else { tone::RULE },
+                    metrics.rule_thickness() * if selected { 2 } else { 1 },
+                    clip,
+                );
+            }
+            LayoutKind::StoreLabel => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::RuledBoard => {
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness() * 2,
+                    clip,
+                );
+            }
             LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
             }
@@ -16443,6 +16595,14 @@ fn paint_layout(
                     clip,
                     tone::MUTED,
                 );
+            }
+            LayoutKind::InlineGlyph(Glyph::LegalPoint, _) => {
+                draw_glyph_icon_in(surface, Glyph::LegalPoint, node.rect, clip, tone::MUTED);
+            }
+            LayoutKind::TileGlyph(Glyph::BlackDraughtsKing)
+            | LayoutKind::InlineGlyph(Glyph::BlackDraughtsKing, false) => {
+                draw_glyph_icon(surface, Glyph::BlackDraughtsKing, node.rect, clip);
+                draw_vector(surface, &vector::king_inlay(), node.rect, clip, tone::PAPER);
             }
             LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph, false) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
@@ -18333,6 +18493,119 @@ fn draw_point_number(
     draw_centered(surface, &node.text_lines, field, size, ink, clip);
 }
 
+/// Whether a grid is a sowing game's board: two rows of eight squares with a
+/// store among them. The empty cells in its end columns are the places the
+/// stores fill, and are neither drawn nor tapped.
+fn is_mancala(square: bool, columns: u8, cells: &[Cell]) -> bool {
+    square
+        && columns == 8
+        && cells.len() == 16
+        && cells.iter().any(|cell| cell.label.starts_with("Store "))
+}
+
+/// Lays out a sowing game's board: two rows of six round pits between two
+/// tall stores, inside a rounded outline the width of the page.
+///
+/// A store is the cell whose label starts "Store ", followed by whose store
+/// it is and then its count; it stands in its own end column through both
+/// rows. A pit's label is its count. A cell in an end column that is not a
+/// store is the place the other row's store fills, and is not laid out.
+fn layout_mancala(
+    id: NodeId,
+    cells: &[Cell],
+    area: Rect,
+    metrics: &DisplayMetrics,
+    layout: &mut Layout,
+) -> i32 {
+    let Rect { x, y, width, .. } = area;
+    let pad = metrics.space(Space::Small);
+    // As wide as the page allows, and no taller than the room under it,
+    // except that a pit is never smaller than a fingertip.
+    let tall = (area.height - pad * 3 - FontSize::Caption.line_height()) / 2;
+    let column = ((width - pad * 2) / 8)
+        .min(tall.max(metrics.touch_target_minimum()))
+        .max(1);
+    let board = Rect {
+        x: x + (width - column * 8 - pad * 2).max(0) / 2,
+        y,
+        width: column * 8 + pad * 2,
+        height: column * 2 + pad * 2,
+    };
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: board,
+        kind: LayoutKind::MancalaBoard,
+        text_lines: Vec::new(),
+    });
+    for (position, cell) in cells.iter().take(16).enumerate() {
+        if layout.nodes.len() + 2 > MAX_LAYOUT_NODES {
+            break;
+        }
+        let position = i32::try_from(position).unwrap_or(0);
+        let (row, col) = (position / 8, position % 8);
+        let end = col == 0 || col == 7;
+        let store = cell.label.strip_prefix("Store ");
+        if end && store.is_none() {
+            continue;
+        }
+        let rect = Rect {
+            x: board.x + pad + col * column,
+            y: board.y + pad + if end { 0 } else { row * column },
+            width: column,
+            height: if end { column * 2 } else { column },
+        };
+        layout.nodes.push(LayoutNode {
+            id,
+            rect,
+            kind: LayoutKind::Cell(
+                cell.action,
+                if end {
+                    CellStyle::Store
+                } else {
+                    CellStyle::Pit
+                },
+                cell.selected,
+            ),
+            text_lines: Vec::new(),
+        });
+        match store.and_then(|rest| rest.rsplit_once(' ')) {
+            // A store's count is in it; whose store it is goes under the
+            // board below it, where the name has the width of the page
+            // rather than of a store.
+            Some((owner, count)) => {
+                layout.nodes.push(LayoutNode {
+                    id,
+                    rect,
+                    kind: LayoutKind::CellLabel(true),
+                    text_lines: vec![count.to_owned()],
+                });
+                let caption = FontSize::Caption.line_height();
+                let name = measure_text(owner, FontSize::Caption).0 + pad * 2;
+                let centre = rect.x + rect.width / 2;
+                let left = (centre - name / 2).clamp(board.x, board.x + board.width - name);
+                layout.nodes.push(LayoutNode {
+                    id,
+                    rect: Rect {
+                        x: left,
+                        y: board.y + board.height,
+                        width: name,
+                        height: caption + pad,
+                    },
+                    kind: LayoutKind::StoreLabel,
+                    text_lines: vec![owner.to_owned()],
+                });
+            }
+            None => layout.nodes.push(LayoutNode {
+                id,
+                rect,
+                kind: LayoutKind::CellLabel(true),
+                text_lines: vec![cell.label.clone()],
+            }),
+        }
+    }
+    board.y + board.height + FontSize::Caption.line_height() + pad
+}
+
 /// Lays out a backgammon board whose points carry their numbers.
 ///
 /// The board sits inside the page margins in a heavy frame, with a bar
@@ -18476,7 +18749,15 @@ fn draw_backgammon_stack(
             width: side,
             height: side,
         };
-        draw_vector(surface, &vector::shapes(glyph), disc, clip, tone::INK);
+        let ink = if glyph == Glyph::LegalPoint {
+            tone::MUTED
+        } else {
+            tone::INK
+        };
+        draw_vector(surface, &vector::shapes(glyph), disc, clip, ink);
+        if glyph == Glyph::BlackDraughtsKing {
+            draw_vector(surface, &vector::king_inlay(), disc, clip, tone::PAPER);
+        }
         // Past five the stack would run into the middle of the board, so the
         // fifth checker carries how many there are, the way a printed
         // diagram writes the count on the outermost checker.

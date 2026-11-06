@@ -345,3 +345,92 @@ fn an_unnumbered_backgammon_board_keeps_the_columns_its_pictures_were_drawn_for(
         .iter()
         .any(|node| node.kind == LayoutKind::BackgammonBoard));
 }
+
+#[test]
+fn a_sowing_board_stands_each_store_through_both_rows_and_names_its_owner_under_it() {
+    let mut cells = Vec::new();
+    for index in 0..16_u32 {
+        let label = match index {
+            0 => "Store Computer 2".to_owned(),
+            15 => "Store You 1".to_owned(),
+            7 | 8 => String::new(),
+            _ => "4".to_owned(),
+        };
+        cells.push(Cell::new(ActionId(200 + index), label));
+    }
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 8,
+            square: true,
+            cells,
+        }],
+    );
+    let metrics = CLARA_BW_METRICS;
+    let chrome = Chrome::measuring(true);
+    assert!(screen.diagnostics(&metrics, &chrome).issues.is_empty());
+    let layout = screen.layout_with(&metrics, &chrome);
+    let rect = |index: u32| layout.rect_of_action(ActionId(200 + index));
+    let (far, near, pit) = (rect(0).unwrap(), rect(15).unwrap(), rect(1).unwrap());
+    assert_eq!(far.height, pit.height * 2);
+    assert_eq!((far.y, near.y), (pit.y, pit.y));
+    assert!(pit.width >= metrics.touch_target_minimum());
+    // The places the stores fill are neither drawn nor tapped.
+    assert!(rect(7).is_none() && rect(8).is_none());
+    let owners = layout
+        .nodes
+        .iter()
+        .filter(|node| node.kind == LayoutKind::StoreLabel)
+        .map(|node| node.text_lines.join(" "))
+        .collect::<Vec<_>>();
+    assert_eq!(owners, ["Computer", "You"]);
+}
+
+#[test]
+fn a_reversi_board_is_one_ruled_grid_and_a_legal_square_is_a_grey_dot() {
+    let cells = (0..64_u32)
+        .map(|index| {
+            let cell = Cell::new(ActionId(300 + index), "");
+            match index {
+                27 | 36 => cell.with_glyph(Glyph::WhiteDisc),
+                28 | 35 => cell.with_glyph(Glyph::BlackDisc),
+                19 => cell.with_glyph(Glyph::LegalPoint),
+                _ => cell,
+            }
+        })
+        .collect();
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 8,
+            square: true,
+            cells,
+        }],
+    );
+    let metrics = CLARA_BW_METRICS;
+    let chrome = Chrome::measuring(true);
+    let layout = screen.layout_with(&metrics, &chrome);
+    let first = layout.rect_of_action(ActionId(300)).unwrap();
+    let second = layout.rect_of_action(ActionId(301)).unwrap();
+    assert_eq!(second.x, first.x + first.width, "the squares do not meet");
+    assert!(layout
+        .nodes
+        .iter()
+        .any(|node| node.kind == LayoutKind::RuledBoard));
+    let mut surface = Surface::new(metrics.width as usize, metrics.height as usize);
+    render_with(&screen, &metrics, &chrome, &mut surface, None);
+    let centre = |index: u32| {
+        let rect = layout.rect_of_action(ActionId(300 + index)).unwrap();
+        let (x, y) = (rect.x + rect.width / 2, rect.y + rect.height / 2);
+        surface.pixels[y as usize * surface.width + x as usize]
+    };
+    assert_eq!(centre(28), tone::INK, "a black disc is solid");
+    assert_eq!(centre(27), tone::PAPER, "a white disc is a ring");
+    let dot = centre(19);
+    assert!(
+        dot > tone::INK && dot < tone::PAPER,
+        "a legal square is {dot}, not grey"
+    );
+}
