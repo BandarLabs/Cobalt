@@ -8364,13 +8364,20 @@ fn layout_node(
                             // whole square it took the largest size that fit,
                             // which is a headline in a box and left the grid
                             // looking like a toy rather than a puzzle.
+                            // The corner number keeps the top fifth; the
+                            // letter has the rest but a tenth at the foot, so
+                            // it is set as large as a filled-in letter is
+                            // written, a little below the middle.
                             let letter = if style == CellStyle::Crossword {
                                 let inset = rect.height / 5;
                                 Rect {
                                     x: rect.x,
                                     y: rect.y.saturating_add(inset),
                                     width: rect.width,
-                                    height: rect.height.saturating_sub(inset * 2).max(1),
+                                    height: rect
+                                        .height
+                                        .saturating_sub(inset + rect.height / 10)
+                                        .max(1),
                                 }
                             } else {
                                 rect
