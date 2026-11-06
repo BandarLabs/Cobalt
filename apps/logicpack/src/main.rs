@@ -661,7 +661,11 @@ impl Game {
                 head().text("Opening puzzles…").build()
             };
         }
-        if matches!(self.draft.status(), Status::Failed(_)) {
+        // A refused save on a puzzle is a line over the board, not a page
+        // in its place: the board stays in view, as Backgammon keeps its.
+        if matches!(self.draft.status(), Status::Failed(_))
+            && !(self.view == View::Puzzle && self.kind != Kind::Home)
+        {
             return failure_screen(
                 || ScreenBuilder::new("logicpack-save-failed").top_bar("Logic Pack"),
                 &self.metrics,
@@ -793,11 +797,8 @@ impl Game {
     /// have one, and becomes the obvious next step once a puzzle ends: the
     /// next puzzle after a win, a restart after a mine.
     fn play(&self, board: impl FnOnce(ScreenBuilder) -> ScreenBuilder) -> Screen {
-        let saved = match self.draft.status() {
-            Status::Saved => "Saved",
-            Status::Saving | Status::Unsaved => "Saving…",
-            Status::Failed(_) => "Not saved",
-        };
+        // Saving is quiet when it works: "Saved" beside every move said
+        // nothing anybody needed, and a failure has its own line.
         let status = if self.kind == Kind::Mines {
             // A cleared field shows every mine as a flag, so it counts them so.
             let flags: usize = if self.outcome == Outcome::Solved {
@@ -808,9 +809,9 @@ impl Game {
                     .map(|c| usize::from(*c == 2))
                     .sum()
             };
-            format!("{flags} of {} flagged · {saved}", self.mines.count_ones())
+            format!("{flags} of {} flagged", self.mines.count_ones())
         } else {
-            saved.to_owned()
+            String::new()
         };
         let verb = match (self.kind, self.outcome) {
             (_, Outcome::Solved) => Some(("next-puzzle", "Next puzzle")),
@@ -827,6 +828,8 @@ impl Game {
         // The notice and the save state share one line above the board, so
         // the largest field still fits a six-inch panel at the largest text.
         let notice = self.notice.clone();
+        let line_notice = notice.clone();
+        let has_status = !status.is_empty();
         let line: [(SlotWidth, Slot); 2] = [
             (
                 SlotWidth::Fill,
@@ -839,8 +842,19 @@ impl Game {
         ];
         let screen = ScreenBuilder::new("logicpack-play")
             .game_top_bar(self.kind.title(), self.menu, MORE)
-            .owns_back(true)
-            .band(BandAlign::Middle, line);
+            .owns_back(true);
+        let screen = if matches!(self.draft.status(), Status::Failed(_)) {
+            screen
+                .banner(
+                    kobo_sdk::BannerLevel::Error,
+                    "Progress is not saved. Moves wait until it is.",
+                )
+                .banner_action("retry-save", "Retry saving")
+        } else if has_status {
+            screen.band(BandAlign::Middle, line)
+        } else {
+            screen.secondary(line_notice)
+        };
         board(screen).game_actions(true, verb).build()
     }
 
@@ -1927,11 +1941,11 @@ mod p16_tests {
         assert!(button.y >= reason.y + reason.height, "{metrics:?}");
     }
 
-    /// An unreadable record and a refused save each fill the screen, so each
-    /// is a splash with its one fix directly under the reason: Try again for
-    /// the read and Retry saving for the write.
+    /// An unreadable record leaves nothing to show, so it is a splash with
+    /// Try again directly under the reason. A refused save leaves the puzzle
+    /// in place, so it is a line over the board carrying Retry saving.
     #[test]
-    fn load_and_save_failures_are_splashes_with_their_fix_directly_under_them() {
+    fn a_failed_load_is_a_splash_and_a_failed_save_a_line_over_the_board() {
         for (width, height, ppi) in [(1072, 1448, 300), (758, 1024, 212)] {
             for text_scale in TextScale::STEPS {
                 let metrics = clara(width, height, ppi, text_scale);
@@ -1963,7 +1977,20 @@ mod p16_tests {
                 );
                 assert!(matches!(g.draft.status(), Status::Failed(_)));
                 g.metrics = metrics;
-                assert_failure_splash(&g.screen(), metrics, "retry-save", "Retry saving");
+                // A refused save on a puzzle keeps the board in view under a
+                // line that carries its retry, as Backgammon's does.
+                let screen = g.screen();
+                let chrome = Chrome::measuring(true);
+                assert!(
+                    !screen.diagnostics(&metrics, &chrome).has_errors(),
+                    "{metrics:?}"
+                );
+                let layout = screen.layout_with(&metrics, &chrome);
+                assert!(layout.rect_of_action(action_id("retry-save")).is_some());
+                assert!(
+                    layout.rect_of_action(action_id("route-0")).is_some(),
+                    "{metrics:?}: the board is hidden"
+                );
             }
         }
     }

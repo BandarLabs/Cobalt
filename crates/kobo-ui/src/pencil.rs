@@ -275,7 +275,7 @@ pub(super) fn layout(
         if !boxes {
             return 0;
         }
-        let mut mask = 0;
+        let mut mask = RULED_BOXES;
         if mark.row % 3 == 0 {
             mask |= 1;
         }
@@ -324,7 +324,7 @@ pub(super) fn layout(
             LayoutKind::PencilMark(mark.kind, mark.selected, mark.peer, box_mask(mark)),
             vec![],
         );
-        let mut label = |value: u8, area: Rect, inverted: bool| {
+        let mut label = |value: u8, area: Rect, inverted: bool, entered: bool| {
             let pad = metrics.rule_thickness() * 2;
             let area = Rect {
                 x: area.x + pad,
@@ -336,29 +336,38 @@ pub(super) fn layout(
                 layout,
                 id,
                 area,
-                LayoutKind::PencilNumber(inverted),
+                if entered {
+                    LayoutKind::PencilEntry(inverted)
+                } else {
+                    LayoutKind::PencilNumber(inverted)
+                },
                 vec![value.to_string()],
             );
         };
         match mark.kind {
-            PencilMarkKind::Clue(n) | PencilMarkKind::Island(n) => label(n, rect, false),
-            PencilMarkKind::Digit { value, .. } if value != 0 => label(value, rect, mark.selected),
+            PencilMarkKind::Clue(n) | PencilMarkKind::Island(n) => label(n, rect, false, false),
+            PencilMarkKind::Digit { value, given } if value != 0 => {
+                label(value, rect, mark.selected, !given);
+            }
             PencilMarkKind::Candidates(mask) => {
-                // Candidate digits get their whole ninth of the square: the
-                // usual label padding would leave nothing at this size.
-                let third = rect.width / 3;
+                // Candidate digits get a ninth of the square each, in the
+                // place a solver pencils them: 1 top left, 9 bottom right.
+                // The ninths are taken from a square a little inside the
+                // rules, so a note does not sit on the line it is next to.
+                let inset = rect.width / 12;
+                let third = (rect.width - inset * 2) / 3;
                 for d in 0..9_u8 {
                     if mask & (1 << d) != 0 {
                         push(
                             layout,
                             id,
                             Rect {
-                                x: rect.x + i32::from(d % 3) * third,
-                                y: rect.y + i32::from(d / 3) * third,
+                                x: rect.x + inset + i32::from(d % 3) * third,
+                                y: rect.y + inset + i32::from(d / 3) * third,
                                 width: third,
                                 height: third,
                             },
-                            LayoutKind::PencilNumber(mark.selected),
+                            LayoutKind::PencilNote(mark.selected),
                             vec![(d + 1).to_string()],
                         );
                     }
@@ -376,6 +385,7 @@ pub(super) fn layout(
                             height: half,
                         },
                         true,
+                        false,
                     );
                 }
                 if down != 0 {
@@ -388,6 +398,7 @@ pub(super) fn layout(
                             height: half,
                         },
                         true,
+                        false,
                     );
                 }
             }
@@ -398,13 +409,37 @@ pub(super) fn layout(
 }
 pub(super) fn label_style(node: &LayoutNode) -> (FontSize, super::TextScale) {
     let current = super::text_scale();
-    let fits = |size| {
+    // A lone digit is its glyph, not its leading, so it may take a size
+    // whose line is a hair taller than its box, as the layout check allows.
+    // Without that a note in a ninth of a square fell three sizes to one a
+    // reader had to lean in for.
+    let allowance = if node.text_lines.len() == 1 {
+        node.rect.height / 6
+    } else {
+        0
+    };
+    let fits = |size: FontSize| {
         node.text_lines
             .iter()
             .all(|text| measure_text(text, size).0 <= node.rect.width)
-            && size.line_height() <= node.rect.height
+            && size.line_height() <= node.rect.height + allowance
     };
-    for size in [FontSize::Body, FontSize::Caption, FontSize::Terminal] {
+    // A digit in a square is set as large as a printed puzzle sets it.
+    let largest: &[FontSize] = if node
+        .text_lines
+        .first()
+        .is_some_and(|text| text.chars().count() == 1)
+    {
+        &[
+            FontSize::Title,
+            FontSize::Body,
+            FontSize::Caption,
+            FontSize::Terminal,
+        ]
+    } else {
+        &[FontSize::Body, FontSize::Caption, FontSize::Terminal]
+    };
+    for size in largest.iter().copied() {
         if fits(size) {
             return (size, current);
         }
@@ -437,6 +472,10 @@ pub(super) fn label_style(node: &LayoutNode) -> (FontSize, super::TextScale) {
     }
     (FontSize::Caption, current)
 }
+/// Set on every square of a board ruled into 3x3 boxes, beside the bits for
+/// which of its sides are box rules: 1 top, 2 left, 4 bottom, 8 right.
+pub(super) const RULED_BOXES: u8 = 16;
+
 /// How a pencil mark presents: selection, peer shading, and the 3x3 box
 /// rule mask for 9x9 digit boards.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -501,8 +540,34 @@ pub(super) fn draw_mark(
                 },
                 clip,
             );
-            stroke_clipped(surface, rect, tone::INK, line, clip);
-            let heavy = line * 2;
+            // A board ruled into boxes is set the way a printed sudoku is:
+            // a hairline between squares and a clearly heavier rule round
+            // each box. Each square drew its own full outline before, so the
+            // rule between two squares came out twice the outline, and the
+            // box rule on top of that was barely heavier than its neighbours.
+            // A square now draws only its top and left hairlines, which its
+            // neighbours complete, and the box rules fall on the sides the
+            // mask names.
+            let ruled = box_mask & RULED_BOXES != 0;
+            let heavy = if ruled {
+                let hair = metrics.tenth_mm(1).max(1);
+                for side in [
+                    Rect {
+                        height: hair,
+                        ..rect
+                    },
+                    Rect {
+                        width: hair,
+                        ..rect
+                    },
+                ] {
+                    fill_clipped(surface, side, tone::INK, clip);
+                }
+                metrics.tenth_mm(5).max(hair * 3)
+            } else {
+                stroke_clipped(surface, rect, tone::INK, line, clip);
+                line * 2
+            };
             for (bit, side) in [
                 (
                     1,
@@ -825,28 +890,177 @@ mod tests {
         assert_eq!(marks.len(), 3);
         assert!(matches!(
             marks[0].kind,
-            LayoutKind::PencilMark(_, false, false, 0b0011)
+            LayoutKind::PencilMark(_, false, false, 0b1_0011)
         ));
         assert!(matches!(
             marks[1].kind,
-            LayoutKind::PencilMark(_, true, false, 0b0001)
+            LayoutKind::PencilMark(_, true, false, 0b1_0001)
         ));
         assert!(matches!(
             marks[2].kind,
-            LayoutKind::PencilMark(_, false, true, 0b0010)
+            LayoutKind::PencilMark(_, false, true, 0b1_0010)
         ));
-        // The selected candidates square shows its four digits and no big number.
-        let digits = layout
+        // The selected candidates square shows its four notes, each in its
+        // own ninth of the square, and no big number.
+        let notes = layout
             .nodes
             .iter()
-            .filter(|n| matches!(n.kind, LayoutKind::PencilNumber(true)))
+            .filter(|n| matches!(n.kind, LayoutKind::PencilNote(true)))
+            .collect::<Vec<_>>();
+        let digits = notes
+            .iter()
             .map(|n| n.text_lines[0].as_str())
             .collect::<Vec<_>>();
         assert_eq!(digits, ["2", "3", "8", "9"]);
+        let square = marks[1].rect;
+        let place = |note: &LayoutNode| {
+            (
+                (note.rect.x + note.rect.width / 2 - square.x) * 3 / square.width,
+                (note.rect.y + note.rect.height / 2 - square.y) * 3 / square.height,
+            )
+        };
+        assert_eq!(
+            notes.iter().map(|note| place(note)).collect::<Vec<_>>(),
+            [(1, 0), (2, 0), (1, 2), (2, 2)]
+        );
+        assert!(layout
+            .nodes
+            .iter()
+            .all(|n| !matches!(n.kind, LayoutKind::PencilNumber(true))));
         assert!(screen
             .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
             .issues
             .is_empty());
+    }
+    #[test]
+    fn an_entered_digit_is_grey_beside_the_printed_ones() {
+        let mut board = sudoku();
+        board.marks[2].kind = PencilMarkKind::Digit {
+            value: 4,
+            given: false,
+        };
+        let screen = Screen::new(
+            1,
+            vec![Node::PencilBoard {
+                id: NodeId(1),
+                board,
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let kinds = layout
+            .nodes
+            .iter()
+            .filter_map(|n| match n.kind {
+                LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_) => {
+                    Some((n.text_lines[0].clone(), n.kind))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            kinds,
+            [
+                ("5".to_owned(), LayoutKind::PencilNumber(false)),
+                ("4".to_owned(), LayoutKind::PencilEntry(false)),
+            ]
+        );
+        let mut surface = crate::Surface::new(
+            CLARA_BW_METRICS.width as usize,
+            CLARA_BW_METRICS.height as usize,
+        );
+        crate::render_with(
+            &screen,
+            &CLARA_BW_METRICS,
+            &Chrome::default(),
+            &mut surface,
+            None,
+        );
+        let darkest = |kind: LayoutKind| {
+            let rect = layout.nodes.iter().find(|n| n.kind == kind).unwrap().rect;
+            (rect.y..rect.y + rect.height)
+                .flat_map(|y| (rect.x..rect.x + rect.width).map(move |x| (x, y)))
+                .map(|(x, y)| surface.pixels[y as usize * surface.width + x as usize])
+                .min()
+                .unwrap()
+        };
+        assert_eq!(darkest(LayoutKind::PencilNumber(false)), tone::INK);
+        assert!(darkest(LayoutKind::PencilEntry(false)) >= tone::MUTED - 8);
+    }
+    /// The widths of the runs of ink along one row of pixels, left to right.
+    fn ink_runs(surface: &crate::Surface, y: usize, from: usize, to: usize) -> Vec<usize> {
+        let mut runs = Vec::new();
+        let mut run = 0;
+        for x in from..to {
+            if surface.pixels[y * surface.width + x] < 0x40 {
+                run += 1;
+            } else if run > 0 {
+                runs.push(run);
+                run = 0;
+            }
+        }
+        if run > 0 {
+            runs.push(run);
+        }
+        runs
+    }
+    #[test]
+    fn a_sudoku_is_ruled_with_hairlines_between_squares_and_heavy_rules_round_boxes() {
+        let board = PencilBoard {
+            columns: 9,
+            rows: 9,
+            cell_tenth_mm: 80,
+            marks: (0..81u8)
+                .map(|cell| PencilMark {
+                    column: cell % 9,
+                    row: cell / 9,
+                    kind: PencilMarkKind::Digit {
+                        value: 0,
+                        given: false,
+                    },
+                    action: Some(ActionId(100 + u32::from(cell))),
+                    selected: false,
+                    peer: false,
+                })
+                .collect(),
+            edges: vec![],
+        };
+        let screen = Screen::new(
+            1,
+            vec![Node::PencilBoard {
+                id: NodeId(1),
+                board,
+            }],
+        );
+        let metrics = CLARA_BW_METRICS;
+        let layout = screen.layout_with(&metrics, &Chrome::default());
+        let squares = layout
+            .nodes
+            .iter()
+            .filter(|n| matches!(n.kind, LayoutKind::PencilMark(..)))
+            .map(|n| n.rect)
+            .collect::<Vec<_>>();
+        let (first, last) = (squares[0], squares[80]);
+        let mut surface = crate::Surface::new(metrics.width as usize, metrics.height as usize);
+        crate::render_with(&screen, &metrics, &Chrome::default(), &mut surface, None);
+        // Through the middle of the fifth row, from just outside the board to
+        // just past it: ten rules, the four box rules at either end and every
+        // third, and hairlines between.
+        let y = usize::try_from(squares[36].y + squares[36].height / 2).unwrap();
+        let runs = ink_runs(
+            &surface,
+            y,
+            usize::try_from(first.x - 4).unwrap(),
+            usize::try_from(last.x + last.width + 4).unwrap(),
+        );
+        assert_eq!(runs.len(), 10, "{runs:?}");
+        let (boxes, hairlines): (Vec<_>, Vec<_>) = runs
+            .iter()
+            .enumerate()
+            .partition(|(index, _)| index % 3 == 0);
+        let thinnest_box = boxes.iter().map(|(_, run)| **run).min().unwrap();
+        let thickest_hairline = hairlines.iter().map(|(_, run)| **run).max().unwrap();
+        assert!(thickest_hairline <= 2, "{runs:?}");
+        assert!(thinnest_box >= thickest_hairline * 3, "{runs:?}");
     }
     #[test]
     fn candidates_and_peers_are_bounded() {

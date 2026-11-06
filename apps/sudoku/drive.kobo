@@ -12,8 +12,20 @@ tap-id digit-2
 wait-idle
 expect Notes
 shot sudoku-notes
-tap-id game-undo
+# Notes sit in a ninth of their square each, and an entered digit is grey
+# beside the printed ones.
+tap-id digit-3
+tap-id digit-7
 tap-id pencil
+tap-id cell-1
+tap-id digit-6
+tap-id cell-3
+wait-idle
+shot sudoku-entries
+tap-id game-undo
+tap-id game-undo
+tap-id game-undo
+tap-id game-undo
 # Rules are one tap away in the top bar.
 tap-id game-rules
 expect Use 1–9 once

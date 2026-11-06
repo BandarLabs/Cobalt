@@ -15,11 +15,11 @@ expect The computer moved a piece along the marked squares.
 clean
 shot draughts-computer-marked
 tap Back
-tap Kalah 6,4
+tap Kalah
 tap Start game
 tap-id cell-3
 expect The computer sowed
-expect Computer:
+expect Computer
 clean
 shot kalah-computer-marked
 tap Back

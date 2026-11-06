@@ -120,20 +120,20 @@ def main():
                 capture('04-restored-mark')
                 drive('tap-id undo', 'wait-idle')
                 assert saved()['marks'][0] == '.'
-                drive('tap-id more', 'tap-id run-entry', 'tap-id resume', 'wait-idle')
+                drive('tap-id more', 'tap-id run-entry', 'tap Back', 'wait-idle')
                 drive('tap-id board.cell.0', 'tap-id board.cell.4', 'wait-idle')
                 assert saved()['marks'][:5] == '#####'
                 capture('05-whole-run')
                 restart()
                 drive('tap-id undo', 'wait-idle')
                 assert saved()['marks'][:5] == '.....'
-                drive('tap-id more', 'tap-id run-entry', 'tap-id resume', 'wait-idle')
+                drive('tap-id more', 'tap-id run-entry', 'tap Back', 'wait-idle')
                 durable = (store_root/'progress-pack-00').read_bytes()
                 drive('scenario storage-full', 'tap-id board.cell.0', 'wait-idle')
                 assert (store_root/'progress-pack-00').read_bytes() == durable
                 drive('tap-id more')
                 capture('06-save-recovery')
-                drive('scenario normal', 'tap-id retry-save', 'wait-idle', 'tap-id resume')
+                drive('scenario normal', 'tap-id retry-save', 'wait-idle', 'tap Back')
                 latest = saved()
                 assert latest['marks'][0] == '#'
                 restart()
@@ -201,7 +201,7 @@ def main():
                 assert picture_key.read_bytes() == picture_before
                 assert (store_root/'progress-pack-00').read_bytes() == earlier_bytes
                 capture('15-picture-restored')
-                drive('tap-id more', 'tap-id run-entry', 'tap-id resume', 'wait-idle')
+                drive('tap-id more', 'tap-id run-entry', 'tap Back', 'wait-idle')
                 house = (ROOT/'apps/nonograms/assets/pictures.txt').read_text().splitlines()[0].split('|')[3]
                 for cell, target in enumerate(house):
                     for _ in range(8):

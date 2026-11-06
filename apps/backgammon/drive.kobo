@@ -3,6 +3,8 @@ expect You play White against the computer. Tap Roll to begin.
 expect-missing Computer move
 expect-missing How to play
 expect-missing Match
+clean
+shot backgammon-opening
 tap Rules
 expect Tap the checker again to put it back.
 wait 250

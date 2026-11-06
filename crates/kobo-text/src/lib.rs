@@ -1059,6 +1059,57 @@ fn kern(font: &Font, previous: char, current: char, pixels: f32) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// One character in the interface's bold face, set so its capitals stand
+/// `cap_height` pixels tall, as grey bytes on paper: the width, the height and
+/// the pixels.
+///
+/// For a letter meant to be read across a room, larger than any size the
+/// interface sets text at. Drawn from the outlines at that size, so the
+/// curves stay curves, where a small letter blown up came out as blocks. The
+/// box is the same for every character at one size, three quarters as wide as
+/// it is tall with the baseline a sixth up from the foot, so letters drawn one
+/// after another sit in the same place. `None` for a character the face has
+/// no shape for, and for a size of zero.
+#[must_use]
+pub fn display_letter(character: char, cap_height: u32) -> Option<(u32, u32, Vec<u8>)> {
+    static FACE: OnceLock<Option<Font>> = OnceLock::new();
+    let font = FACE
+        .get_or_init(|| Font::from_bytes(DISPLAY_FONT, FontSettings::default()).ok())
+        .as_ref()?;
+    if cap_height == 0 || (character != ' ' && !font.has_glyph(character)) {
+        return None;
+    }
+    // The capital H stands on the baseline and reaches the cap height, so its
+    // height at one size gives the size whose capitals are as tall as asked.
+    let probe = 1000.0_f32;
+    let capitals = u16::try_from(font.metrics('H', probe).height.max(1)).ok()?;
+    let pixels = f32::from(u16::try_from(cap_height).ok()?) * probe / f32::from(capitals);
+    let height = cap_height * 3 / 2;
+    let width = height * 3 / 4;
+    let (width_px, height_px) = (usize::try_from(width).ok()?, usize::try_from(height).ok()?);
+    let baseline = i64::from(height - height / 6);
+    let mut grey = vec![255_u8; width_px * height_px];
+    if character != ' ' {
+        let (metrics, coverage) = font.rasterize(character, pixels);
+        let glyph_width = i64::try_from(metrics.width).ok()?;
+        let glyph_height = i64::try_from(metrics.height).ok()?;
+        let left = (i64::from(width) - glyph_width) / 2;
+        let top = baseline - i64::from(metrics.ymin) - glyph_height;
+        for (index, ink) in coverage.iter().enumerate() {
+            let column = i64::try_from(index % metrics.width.max(1)).ok()?;
+            let row = i64::try_from(index / metrics.width.max(1)).ok()?;
+            let (Ok(x), Ok(y)) = (usize::try_from(left + column), usize::try_from(top + row))
+            else {
+                continue;
+            };
+            if x < width_px && y < height_px {
+                grey[y * width_px + x] = 255 - ink;
+            }
+        }
+    }
+    Some((width, height, grey))
+}
+
 /// Installs the best available face into `kobo-ui`.
 ///
 /// Returns the path that was loaded, or an error explaining why the built-in
@@ -2266,5 +2317,32 @@ mod tests {
         });
         assert_eq!(measured, expected);
         assert!(!kobo_ui::legacy_typography(), "the v11 selection leaked");
+    }
+}
+
+#[cfg(test)]
+mod display_letter_tests {
+    use super::display_letter;
+
+    #[test]
+    fn a_display_letter_stands_as_tall_as_asked_in_a_box_every_letter_shares() {
+        let (width, height, grey) = display_letter('H', 400).expect("a capital");
+        assert_eq!((width, height), (450, 600));
+        let rows_with_ink = (0..height as usize)
+            .filter(|row| {
+                grey[row * width as usize..(row + 1) * width as usize]
+                    .iter()
+                    .any(|pixel| *pixel < 128)
+            })
+            .count();
+        assert!(
+            (390..=410).contains(&rows_with_ink),
+            "{rows_with_ink} rows of ink"
+        );
+        let (other_width, other_height, _) = display_letter('I', 400).expect("a capital");
+        assert_eq!((other_width, other_height), (width, height));
+        let (_, _, blank) = display_letter(' ', 400).expect("a space");
+        assert!(blank.iter().all(|pixel| *pixel == 255));
+        assert!(display_letter('A', 0).is_none());
     }
 }

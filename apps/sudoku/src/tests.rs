@@ -616,9 +616,31 @@ fn undo_comes_first_at_the_foot_and_says_so_when_there_is_nothing_to_undo() {
     tap(&mut r, chrome::UNDO);
     assert_eq!(r.app().game.position.board[c], 0);
 
+    // Notes keeps its name either way and carries a tick while it is on.
+    assert_eq!(foot.destinations[1].glyph, None);
     tap(&mut r, "pencil");
     let foot = shown(&r).nav_bar.unwrap();
-    assert_eq!(foot.destinations[1].label, "Digits");
+    assert_eq!(foot.destinations[1].label, "Notes");
+    assert_eq!(foot.destinations[1].glyph, Some(kobo_sdk::Glyph::Check));
+}
+
+#[test]
+fn the_digit_keys_sit_under_the_boards_nine_columns_when_the_board_is_wide_enough() {
+    let r = ready();
+    let metrics = kobo_ui::CLARA_BW_METRICS;
+    let layout = shown(&r).layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
+    let first = layout.rect_of_action(action_id(&cell_name(0))).unwrap();
+    let last = layout.rect_of_action(action_id(&cell_name(8))).unwrap();
+    let one = layout.rect_of_action(action_id("digit-1")).unwrap();
+    let nine = layout.rect_of_action(action_id("digit-9")).unwrap();
+    // Within a couple of pixels: the keys are placed in tenths of a
+    // millimetre and the board in whole squares.
+    assert!((one.x - first.x).abs() <= 3, "{one:?} against {first:?}");
+    assert!(
+        (nine.x + nine.width - (last.x + last.width)).abs() <= 6,
+        "{nine:?} against {last:?}"
+    );
+    assert!(one.width >= metrics.touch_target_minimum());
 }
 #[test]
 fn erase_and_reveal_say_why_when_they_have_nothing_to_do() {

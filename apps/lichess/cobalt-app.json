@@ -4,7 +4,7 @@
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
   "version": "1.0.22",
-  "release_notes": "The home pages lose the rail down the side, the Computer card says when it holds a game to resume, and a new board no longer reads \"none\" under it.",
+  "release_notes": "Home cards lose the side rail and say Your games, the Computer card says when a game waits, move targets are even grey dots, a finished game offers New game in place of Undo, and Puzzles says how many wait.",
   "glyph": "grid",
   "capabilities": [
     "network",

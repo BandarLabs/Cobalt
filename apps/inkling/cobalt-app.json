@@ -4,8 +4,9 @@
   "short_label": "Inkling",
   "summary": "Solve a fresh five-letter puzzle each day.",
   "page_description": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
-  "version": "0.2.6",
-  "release_notes": "Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.",
+  "version": "0.2.7",
+  "release_notes": "Tiles and keys are black, grey or faint for right spot, wrong spot and not in the word. The keys are letters only, and Statistics shows your streak and a chart of guesses.",
+  "minimum_cobalt_version": "0.3.34",
   "glyph": "note",
   "capabilities": []
 }

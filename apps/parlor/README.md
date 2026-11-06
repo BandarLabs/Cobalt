@@ -20,7 +20,7 @@ Four classic board games against the computer, or for two players passing one Ko
   chains.
 - **Nine Men's Morris**: placing, mills, protected pieces, moving and flying
   with three pieces.
-- **Kalah 6,4**: sowing, captures, extra turns and endgame collection.
+- **Kalah**: sowing, captures, extra turns and endgame collection.
 
 ## Features
 

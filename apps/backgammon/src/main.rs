@@ -2,8 +2,8 @@
 use kobo_sdk::entropy::{Entropy, FixtureEntropy, SystemEntropy};
 use kobo_sdk::game::{self, Menu, Tap};
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, PictureHandle, Screen, ScreenBuilder,
-    StoreResult, TilePicture,
+    action_id, ActionId, BandAlign, CellTone, Context, Glyph, KoboApp, PictureHandle, Screen,
+    ScreenBuilder, SlotWidth, StoreResult, TilePicture,
 };
 use std::process::ExitCode;
 
@@ -22,23 +22,15 @@ const HISTORY: usize = 8;
 /// fixtures. Named on screen whenever it is in use, because a recorded game
 /// that looks like chance and is not would be a lie about the dice.
 const SEED: &str = "KOBO_BACKGAMMON_SEED";
-/// The numbers along the top edge of the board, and along the bottom.
+/// The dice still to play, drawn as dice.
 ///
-/// The points themselves are the runtime's backgammon cells, because a cell
-/// is something a finger can land on and a picture is not: the board used to
-/// be one drawing with a row of numbered keys under it, so a move meant
-/// finding the point on the drawing and then finding its number again among
-/// the keys. The runtime draws the points and the checkers but not their
-/// numbers, so each row is numbered by a strip drawn here, at the panel's own
-/// width and one pixel to one pixel, which puts every number beside the point
-/// it names.
-const TOP_BAND: PictureHandle = PictureHandle(1);
-const BOTTOM_BAND: PictureHandle = PictureHandle(2);
-/// How tall each strip of point numbers is, in panel pixels.
-const BAND_HEIGHT: u32 = 40;
-/// The tallest stack the runtime draws on one point. Anything above it is
-/// written as a count in the strip beside the point.
-const DRAWN_STACK: u8 = 5;
+/// The board is the runtime's, numbers and all; the dice are the one thing
+/// on the screen drawn here, because the runtime has no die to draw and the
+/// pips of a die are read faster than the word for its number.
+const DICE: PictureHandle = PictureHandle(1);
+/// The side of a drawn die, in tenths of a millimetre: about the size of a
+/// real one seen at reading distance.
+const DIE_TENTH_MM: i32 = 90;
 /// What the menu offers after New game.
 const MORE_ITEMS: [(&str, &str); 2] = [
     ("match-settings", "Match settings"),
@@ -1504,12 +1496,16 @@ fn point_marks(game: &Game) -> [Mark; POINTS] {
 /// The 24 points as the runtime's backgammon cells, every one a tap target.
 ///
 /// The runtime draws a cell's checkers from its glyph and the count in its
-/// label, up to five, and ignores the selection flag, so the selection is
-/// carried for any runtime that learns to draw it and the marks the player
-/// needs now are in the numbered strips. An empty point the checker in hand
-/// may go to carries the legal-move ring, which the runtime does draw, where
-/// the checker would land.
-fn board_cells(game: &Game) -> Vec<(String, String, Option<Glyph>, bool)> {
+/// label, and prints the point's number above or below it in the box its
+/// tone asks for: solid for the checker in hand or where the last turn
+/// ended, open for a point that may be played or the last turn left. An
+/// empty point the checker in hand may go to also carries the legal-move
+/// ring, where the checker would land.
+#[allow(
+    clippy::type_complexity,
+    reason = "the numbered board's own cell shape"
+)]
+fn board_cells(game: &Game) -> Vec<(String, String, Option<Glyph>, u8, CellTone, bool)> {
     let marks = point_marks(game);
     let holding = game.selected.is_some() && !game.dice.is_empty();
     board_order(game)
@@ -1541,7 +1537,13 @@ fn board_cells(game: &Game) -> Vec<(String, String, Option<Glyph>, bool)> {
                 _ if open => Some(Glyph::LegalPoint),
                 _ => None,
             };
-            (point_name(point), label, glyph, in_hand)
+            let tone = match marks[point] {
+                Mark::Plain => CellTone::Plain,
+                Mark::Open => CellTone::Shaded,
+                Mark::Solid => CellTone::Solid,
+            };
+            let number = u8::try_from(number).expect("point numbers fit");
+            (point_name(point), label, glyph, number, tone, in_hand)
         })
         .collect()
 }
@@ -1578,11 +1580,18 @@ impl Canvas {
         }
     }
 
-    fn stroke(&mut self, x: i32, y: i32, width: i32, height: i32, thickness: i32, tone: u8) {
-        self.fill(x, y, width, thickness, tone);
-        self.fill(x, y + height - thickness, width, thickness, tone);
-        self.fill(x, y, thickness, height, tone);
-        self.fill(x + width - thickness, y, thickness, height, tone);
+    /// A filled square with its corners rounded off.
+    fn rounded(&mut self, x: i32, y: i32, width: i32, height: i32, radius: i32, tone: u8) {
+        self.fill(x + radius, y, width - radius * 2, height, tone);
+        self.fill(x, y + radius, width, height - radius * 2, tone);
+        for (cx, cy) in [
+            (x + radius, y + radius),
+            (x + width - 1 - radius, y + radius),
+            (x + radius, y + height - 1 - radius),
+            (x + width - 1 - radius, y + height - 1 - radius),
+        ] {
+            self.disc(cx, cy, radius, tone);
+        }
     }
 
     fn disc(&mut self, centre_x: i32, centre_y: i32, radius: i32, tone: u8) {
@@ -1596,194 +1605,65 @@ impl Canvas {
     }
 }
 
-/// The runtime's paper and ink, so the strips sit on the page rather than on
-/// a grey card of their own.
+/// The runtime's paper and ink, so the dice sit on the page rather than on a
+/// grey card of their own.
 const PAPER: u8 = 255;
 const INK: u8 = 0;
 
-/// The size of a drawn digit, in panel pixels.
-///
-/// The numbers were drawn on a board 960 pixels wide and shown at about 830
-/// on a Clara, so a two pixel stroke came out at under two and the gap
-/// between the digits of 13 closed up: 13 to 18 were read as 18 to 88. The
-/// strips are drawn at the panel's own size now, and the gap stays open.
-#[derive(Clone, Copy)]
-struct Digits {
-    width: i32,
-    height: i32,
-    stroke: i32,
-    gap: i32,
+/// Where the pips of a die fall, as fractions of its side in quarters.
+fn pips(value: u8) -> &'static [(i32, i32)] {
+    match value {
+        1 => &[(2, 2)],
+        2 => &[(1, 1), (3, 3)],
+        3 => &[(1, 1), (2, 2), (3, 3)],
+        4 => &[(1, 1), (3, 1), (1, 3), (3, 3)],
+        5 => &[(1, 1), (3, 1), (2, 2), (1, 3), (3, 3)],
+        _ => &[(1, 1), (3, 1), (1, 2), (3, 2), (1, 3), (3, 3)],
+    }
 }
 
-const POINT_DIGITS: Digits = Digits {
-    width: 14,
-    height: 24,
-    stroke: 3,
-    gap: 6,
-};
-const COUNT_DIGITS: Digits = Digits {
-    width: 9,
-    height: 16,
-    stroke: 2,
-    gap: 3,
-};
-/// The room around a point's number, so a box drawn around it does not
-/// touch the digits.
-const MARK_PADDING: i32 = 6;
-/// The width given to a point's number, boxed or not, so every number in a
-/// row sits in the same place whatever it is marked with.
-const MARK_WIDTH: i32 = 2 * POINT_DIGITS.width + POINT_DIGITS.gap + 2 * MARK_PADDING;
-const COUNT_DIAMETER: i32 = 34;
-
-fn seven_segment_digit(canvas: &mut Canvas, x: i32, y: i32, digit: u8, size: Digits, tone: u8) {
-    const SEGMENTS: [[bool; 7]; 10] = [
-        [true, true, true, true, true, true, false],
-        [false, true, true, false, false, false, false],
-        [true, true, false, true, true, false, true],
-        [true, true, true, true, false, false, true],
-        [false, true, true, false, false, true, true],
-        [true, false, true, true, false, true, true],
-        [true, false, true, true, true, true, true],
-        [true, true, true, false, false, false, false],
-        [true, true, true, true, true, true, true],
-        [true, true, true, true, false, true, true],
-    ];
-    let Digits {
-        width: wide,
-        height: tall,
-        stroke,
-        ..
-    } = size;
-    let half = tall / 2;
-    let segments = SEGMENTS[usize::from(digit.min(9))];
-    // A one is the right-hand stroke alone, which left it hugging the next
-    // cell over: 21 read as "2 I" and 11 as two strokes a gap apart. Drawn
-    // down the middle of its cell instead, it sits where a printed 1 does.
-    let x = if digit == 1 {
-        x - (wide - stroke) / 2
-    } else {
-        x
-    };
-    let strokes = [
-        (x + stroke, y, wide - 2 * stroke, stroke),
-        (x + wide - stroke, y + stroke, stroke, half - stroke),
-        (x + wide - stroke, y + half, stroke, half - stroke),
-        (x + stroke, y + tall - stroke, wide - 2 * stroke, stroke),
-        (x, y + half, stroke, half - stroke),
-        (x, y + stroke, stroke, half - stroke),
-        (x + stroke, y + half - stroke / 2, wide - 2 * stroke, stroke),
-    ];
-    for (on, (left, top, width, height)) in segments.into_iter().zip(strokes) {
-        if on {
-            canvas.fill(left, top, width, height, tone);
+/// The dice still to be played, side by side, as a picture `side` pixels
+/// tall: rounded squares in an ink rule with their pips in ink.
+fn dice_pixels(dice: &[u8], side: i32) -> (u32, u32, Vec<u8>) {
+    let gap = side / 3;
+    let count = i32::try_from(dice.len().clamp(1, 4)).unwrap_or(1);
+    let width = side * count + gap * (count - 1);
+    let mut canvas = Canvas::new(
+        u32::try_from(width).unwrap_or(0),
+        u32::try_from(side).unwrap_or(0),
+    );
+    let radius = side / 7;
+    let rule = (side / 24).max(2);
+    let pip = (side / 11).max(2);
+    for (index, value) in dice.iter().take(4).enumerate() {
+        let left = i32::try_from(index).unwrap_or(0) * (side + gap);
+        canvas.rounded(left, 0, side, side, radius, INK);
+        canvas.rounded(
+            left + rule,
+            rule,
+            side - rule * 2,
+            side - rule * 2,
+            (radius - rule).max(0),
+            PAPER,
+        );
+        for (column, row) in pips(*value) {
+            canvas.disc(left + side * column / 4, side * row / 4, pip, INK);
         }
     }
-}
-
-/// Draws a number of one or two digits centred on `centre`.
-fn number(canvas: &mut Canvas, centre: i32, y: i32, value: u8, size: Digits, tone: u8) {
-    let value = value.min(99);
-    if value >= 10 {
-        let left = centre - size.width - size.gap / 2;
-        seven_segment_digit(canvas, left, y, value / 10, size, tone);
-        seven_segment_digit(
-            canvas,
-            left + size.width + size.gap,
-            y,
-            value % 10,
-            size,
-            tone,
-        );
-    } else {
-        seven_segment_digit(canvas, centre - size.width / 2, y, value, size, tone);
-    }
-}
-
-/// The strip of numbers along one row of points, `top` or bottom.
-///
-/// Each number sits under its own cell, at the column the runtime gives it:
-/// the board's width split twelve ways with no gaps. A point with more than
-/// five checkers also gets a counter beside its number, drawn as a checker of
-/// the same colour with the count on it, because the runtime's stack stops at
-/// five and a home board of seven reads as five otherwise.
-fn band_pixels(game: &Game, width: u32, top: bool) -> Vec<u8> {
-    let mut canvas = Canvas::new(width, BAND_HEIGHT);
-    let column = canvas.width / 12;
-    let middle = canvas.height / 2;
-    let order = board_order(game);
-    let row = if top { &order[..12] } else { &order[12..] };
-    let marks = point_marks(game);
-    for (slot, point) in row.iter().enumerate() {
-        let left = i32::try_from(slot).expect("twelve slots") * column;
-        let checkers = game.position.points[*point];
-        let count = checkers.unsigned_abs();
-        let room = MARK_WIDTH + 3 + COUNT_DIAMETER;
-        let counted = count > DRAWN_STACK && column >= room;
-        let centre = if counted {
-            left + (column - room) / 2 + MARK_WIDTH / 2
-        } else {
-            left + column / 2
-        };
-        let box_height = POINT_DIGITS.height + 2 * MARK_PADDING;
-        let box_left = centre - MARK_WIDTH / 2;
-        let box_top = middle - box_height / 2;
-        let digits = match marks[*point] {
-            Mark::Plain => INK,
-            Mark::Open => {
-                canvas.stroke(box_left, box_top, MARK_WIDTH, box_height, 3, INK);
-                INK
-            }
-            Mark::Solid => {
-                canvas.fill(box_left, box_top, MARK_WIDTH, box_height, INK);
-                PAPER
-            }
-        };
-        let shown = u8::try_from(shown_number(game, *point)).expect("point numbers fit");
-        number(
-            &mut canvas,
-            centre,
-            middle - POINT_DIGITS.height / 2,
-            shown,
-            POINT_DIGITS,
-            digits,
-        );
-        if counted {
-            let disc_x = box_left + MARK_WIDTH + 3 + COUNT_DIAMETER / 2;
-            let radius = COUNT_DIAMETER / 2;
-            let figures = if checkers > 0 {
-                canvas.disc(disc_x, middle, radius, INK);
-                canvas.disc(disc_x, middle, radius - 3, PAPER);
-                INK
-            } else {
-                canvas.disc(disc_x, middle, radius, INK);
-                PAPER
-            };
-            number(
-                &mut canvas,
-                disc_x,
-                middle - COUNT_DIGITS.height / 2,
-                count,
-                COUNT_DIGITS,
-                figures,
-            );
-        }
-    }
-    canvas.pixels
-}
-
-/// The two numbered strips, once they have been handed to the runtime.
-#[derive(Clone, Copy, Debug)]
-struct Bands {
-    top: TilePicture,
-    bottom: TilePicture,
+    let (width, height) = (canvas.width, canvas.height);
+    (
+        u32::try_from(width).unwrap_or(0),
+        u32::try_from(height).unwrap_or(0),
+        canvas.pixels,
+    )
 }
 
 #[cfg(test)]
-fn screen(game: &Game, bands: Option<Bands>) -> Screen {
-    screen_for(game, bands, &Context::default())
+fn screen(game: &Game, dice: Option<TilePicture>) -> Screen {
+    screen_for(game, dice, &Context::default())
 }
 
-fn screen_for(game: &Game, bands: Option<Bands>, context: &Context) -> Screen {
+fn screen_for(game: &Game, dice: Option<TilePicture>, context: &Context) -> Screen {
     match game.view {
         View::History => return history_screen(game, context),
         View::NewMatch => {
@@ -1855,7 +1735,7 @@ fn screen_for(game: &Game, bands: Option<Bands>, context: &Context) -> Screen {
             ),
             (game::NEW_GAME, game::NEW_GAME_LABEL),
         ),
-        Phase::Playing => fitted_playing_screen(game, bands, context),
+        Phase::Playing => fitted_playing_screen(game, dice, context),
     }
 }
 
@@ -1894,11 +1774,11 @@ enum Detail {
 /// used to give up height to whatever the notice and the move list needed on
 /// each roll, and changed size under the player's eyes. What does not fit at
 /// a large text size is dropped from the bottom of the status instead.
-fn fitted_playing_screen(game: &Game, bands: Option<Bands>, context: &Context) -> Screen {
+fn fitted_playing_screen(game: &Game, dice: Option<TilePicture>, context: &Context) -> Screen {
     let metrics = context.metrics();
     let chrome = kobo_sdk::Chrome::measuring(true);
     for detail in [Detail::Full, Detail::Short, Detail::Dice] {
-        let candidate = playing_screen(game, bands, detail);
+        let candidate = playing_screen(game, dice, detail);
         if candidate.diagnostics(&metrics, &chrome).has_errors() {
             continue;
         }
@@ -1912,14 +1792,15 @@ fn fitted_playing_screen(game: &Game, bands: Option<Bands>, context: &Context) -
                 .iter()
                 .any(|node| node.text_lines.join(" ") == *value)
         };
-        if facts_for(game, detail)
+        let drawn = dice.is_some() && detail != Detail::Bare && !game.dice.is_empty();
+        if facts_for(game, detail, drawn)
             .iter()
             .all(|(_, value)| shown(value))
         {
             return candidate;
         }
     }
-    playing_screen(game, bands, Detail::Bare)
+    playing_screen(game, dice, Detail::Bare)
 }
 
 /// The status under the board at each level of detail.
@@ -1928,8 +1809,11 @@ fn fitted_playing_screen(game: &Game, bands: Option<Bands>, context: &Context) -
 /// board, where it is read at every text size. It used to be the last row of
 /// these facts, and at the larger sizes it was the first thing dropped, so
 /// the reader who needed the biggest type played a match without its score.
-fn facts_for(game: &Game, detail: Detail) -> Vec<(&'static str, String)> {
-    match detail {
+///
+/// The dice are words only when they cannot be drawn: before a roll there are
+/// none to show, and once rolled they are a picture beside these facts.
+fn facts_for(game: &Game, detail: Detail, dice_drawn: bool) -> Vec<(&'static str, String)> {
+    let mut facts = match detail {
         Detail::Full => vec![
             ("Dice", dice_line(game)),
             ("Cube", cube_line(game)),
@@ -1944,24 +1828,22 @@ fn facts_for(game: &Game, detail: Detail) -> Vec<(&'static str, String)> {
         ],
         Detail::Dice => vec![("Dice", dice_line(game))],
         Detail::Bare => Vec::new(),
+    };
+    if dice_drawn || game.dice.is_empty() {
+        facts.retain(|(label, _)| *label != "Dice");
     }
+    facts
 }
 
-fn playing_screen(game: &Game, bands: Option<Bands>, detail: Detail) -> Screen {
+fn playing_screen(game: &Game, dice: Option<TilePicture>, detail: Detail) -> Screen {
     let mut screen = ScreenBuilder::new("backgammon")
         .game_top_bar("Backgammon", game.menu, MORE_ITEMS)
         // Whose move it is, first and on its own line, with the score at the
         // far end of it. It used to be the first clause of a line that also
         // carried the score, the cube and the dice, which is the one thing
         // somebody picking the reader up again needs to read at a glance.
-        .section_with_value(turn_line(game), score_pair(game));
-    if let Some(bands) = bands {
-        screen = screen.full_bleed_picture(bands.top, 10);
-    }
-    screen = screen.board_with_selection(12, board_cells(game));
-    if let Some(bands) = bands {
-        screen = screen.full_bleed_picture(bands.bottom, 10);
-    }
+        .section_with_value(turn_line(game), score_pair(game))
+        .numbered_board(12, board_cells(game));
     let rolled = !game.dice.is_empty() && !game.computer_due();
     let bar_open = rolled
         && game.selected.is_none()
@@ -1970,30 +1852,55 @@ fn playing_screen(game: &Game, bands: Option<Bands>, detail: Detail) -> Screen {
     let off_open = rolled
         && game.selected.is_some()
         && game.displayed_moves().iter().any(|play| play.to.is_none());
-    screen = screen
-        .grid_with_selection(
-            2,
-            false,
+    // The bar and the tray are small labels, there only while something is
+    // on them or can go to them. They were two grey keys the width of the
+    // page that said "none" for most of every game.
+    let mut places = Vec::new();
+    if bar_open || bar_held || game.position.bar != [0, 0] {
+        places.push((
+            "bar",
+            checker_counter("Bar", game.position.bar),
+            bar_open || bar_held,
+        ));
+    }
+    if off_open || game.position.off != [0, 0] {
+        places.push(("off", checker_counter("Off", game.position.off), off_open));
+    }
+    if !places.is_empty() {
+        screen = screen.chips(places);
+    }
+    screen = screen.secondary(if game.save == SaveState::Refused {
+        SAVE_FAILED
+    } else {
+        &game.message
+    });
+    // The dice as dice beside the cube and the match length in words.
+    let dice = dice.filter(|_| detail != Detail::Bare && !game.dice.is_empty());
+    let facts = facts_for(game, detail, dice.is_some());
+    screen = match dice {
+        Some(dice) => screen.band(
+            BandAlign::Middle,
             [
                 (
-                    "bar",
-                    checker_counter("Bar", game.position.bar),
-                    bar_open || bar_held,
+                    SlotWidth::Fixed(dice_width_tenth_mm(&game.dice)),
+                    Box::new(move |b: ScreenBuilder| b.unframed_picture(dice, 10))
+                        as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
                 ),
-                ("off", checker_counter("Off", game.position.off), off_open),
+                (SlotWidth::Fill, Box::new(move |b| b.facts(facts))),
             ],
-        )
-        .secondary(if game.save == SaveState::Refused {
-            SAVE_FAILED
-        } else {
-            &game.message
-        });
-    // The dice and the cube in words. The board draws neither: the runtime's
-    // bar is a strip too narrow for a die.
-    screen = screen.facts(facts_for(game, detail));
+        ),
+        None => screen.facts(facts),
+    };
     screen
         .game_actions(true, [("roll", "Roll"), ("double", "Double")])
         .build()
+}
+
+/// How wide the dice are on the panel, in tenths of a millimetre.
+fn dice_width_tenth_mm(dice: &[u8]) -> u16 {
+    let count = i32::try_from(dice.len().clamp(1, 4)).unwrap_or(1);
+    let width = DIE_TENTH_MM * count + DIE_TENTH_MM / 3 * (count - 1) + DIE_TENTH_MM / 3;
+    u16::try_from(width).unwrap_or(u16::MAX)
 }
 
 /// Whose move it is, said the way the reader in front of the panel would.
@@ -2350,21 +2257,15 @@ impl Game {
     }
 
     fn show(&self, context: &mut Context) {
-        let bands = if self.phase == Phase::Playing && self.view == View::Board {
-            let width = u32::try_from(context.metrics().width).unwrap_or(0);
-            let top =
-                context.put_picture(TOP_BAND, width, BAND_HEIGHT, band_pixels(self, width, true));
-            let bottom = context.put_picture(
-                BOTTOM_BAND,
-                width,
-                BAND_HEIGHT,
-                band_pixels(self, width, false),
-            );
-            top.zip(bottom).map(|(top, bottom)| Bands { top, bottom })
-        } else {
-            None
-        };
-        context.set_screen(screen_for(self, bands, context));
+        let dice =
+            if self.phase == Phase::Playing && self.view == View::Board && !self.dice.is_empty() {
+                let side = context.metrics().tenth_mm(DIE_TENTH_MM);
+                let (width, height, pixels) = dice_pixels(&self.dice, side);
+                context.put_picture(DICE, width, height, pixels)
+            } else {
+                None
+            };
+        context.set_screen(screen_for(self, dice, context));
     }
 }
 
@@ -2568,15 +2469,13 @@ mod tests {
             let _runner = kobo_sdk::AppRunner::new(Game::default());
             assert!(kobo_ui::has_typesetter());
         });
-        screen(game, Some(test_bands()))
+        screen(game, Some(test_dice(game)))
     }
 
-    /// The two numbered strips as the runtime would hold them on a Clara.
-    fn test_bands() -> Bands {
-        Bands {
-            top: TilePicture::new(TOP_BAND, 1072, BAND_HEIGHT),
-            bottom: TilePicture::new(BOTTOM_BAND, 1072, BAND_HEIGHT),
-        }
+    /// The dice as the runtime would hold them on a Clara.
+    fn test_dice(game: &Game) -> TilePicture {
+        let (width, height, _) = dice_pixels(&game.dice, CLARA_BW_METRICS.tenth_mm(DIE_TENTH_MM));
+        TilePicture::new(DICE, width, height)
     }
 
     /// Every line of text the screen draws, joined, for checking copy.
@@ -2596,7 +2495,7 @@ mod tests {
             .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true))
             .nodes
             .iter()
-            .find(|node| matches!(node.kind, LayoutKind::BackgammonBoard))
+            .find(|node| matches!(node.kind, LayoutKind::BackgammonFrame))
             .expect("the board is drawn")
             .rect
     }
@@ -2615,16 +2514,18 @@ mod tests {
         hit
     }
 
-    /// The pixel at the middle of a point's slot in its numbered strip.
-    fn band_mark(game: &Game, point: usize) -> u8 {
-        let (row, column) = point_slot(game, point);
-        let pixels = band_pixels(game, 1072, row == 0);
-        let x = column * (1072 / 12) + (1072 / 12) / 2;
-        // Just inside the left edge of the box around the number, where a
-        // boxed number has its frame and a solid one its fill.
-        let x = x - usize::try_from(MARK_WIDTH / 2 - 1).expect("positive");
-        let y = usize::try_from(BAND_HEIGHT / 2).expect("fits");
-        pixels[y * 1072 + x]
+    /// The box the runtime prints a point's number in, as laid out.
+    fn number_mark(game: &Game, point: usize) -> CellTone {
+        let number = shown_number(game, point).to_string();
+        test_screen(game)
+            .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .nodes
+            .iter()
+            .find_map(|node| match node.kind {
+                LayoutKind::PointNumber(mark) if node.text_lines == [number.clone()] => Some(mark),
+                _ => None,
+            })
+            .expect("every point is numbered")
     }
 
     fn position(points: &[(usize, i8)], white_bar: u8, black_bar: u8) -> Position {
@@ -3009,10 +2910,26 @@ mod tests {
     }
 
     #[test]
-    fn numeric_renderer_caps_untrusted_values() {
-        let mut canvas = Canvas::new(1072, BAND_HEIGHT);
-        number(&mut canvas, 40, 2, u8::MAX, POINT_DIGITS, INK);
-        assert!(canvas.pixels.contains(&INK));
+    fn every_die_is_drawn_with_its_own_number_of_pips() {
+        let side = 120;
+        let inked = |value: u8| {
+            let (_, _, pixels) = dice_pixels(&[value], side);
+            pixels
+                .iter()
+                .fold(0_usize, |inked, pixel| inked + usize::from(*pixel == INK))
+        };
+        // Each pip adds ink, so the dice from one to six are six amounts.
+        for value in 1..6 {
+            assert!(
+                inked(value + 1) > inked(value),
+                "{} has no more pips than {value}",
+                value + 1
+            );
+        }
+        let (width, height, pixels) = dice_pixels(&[3, 5, 5, 5, 5], side);
+        assert_eq!(height, 120);
+        assert_eq!(pixels.len(), usize::try_from(width * height).unwrap());
+        assert_eq!(width, 120 * 4 + 40 * 3, "more than four dice were drawn");
     }
 
     #[test]
@@ -3095,12 +3012,20 @@ mod tests {
         assert_eq!(marks[5], Mark::Open);
         assert_eq!(marks[4], Mark::Plain, "another checker that could move");
         assert_eq!(
-            band_mark(&game, 6),
-            INK,
+            number_mark(&game, 6),
+            CellTone::Solid,
             "the checker in hand is not filled"
         );
-        assert_eq!(band_mark(&game, 5), INK, "the destination has no frame");
-        assert_eq!(band_mark(&game, 9), PAPER, "an unrelated point was marked");
+        assert_eq!(
+            number_mark(&game, 5),
+            CellTone::Shaded,
+            "the destination has no frame"
+        );
+        assert_eq!(
+            number_mark(&game, 9),
+            CellTone::Plain,
+            "an unrelated point was marked"
+        );
     }
 
     #[test]
@@ -3155,8 +3080,8 @@ mod tests {
         let cells = board_cells(&game);
         let open = cells
             .iter()
-            .filter(|(_, label, _, _)| label.ends_with(", open"))
-            .map(|(name, _, _, _)| name.clone())
+            .filter(|(_, label, ..)| label.ends_with(", open"))
+            .map(|(name, ..)| name.clone())
             .collect::<Vec<_>>();
         assert_eq!(open, ["point-21", "point-22"], "{cells:?}");
         tap(&mut game, "point-21");
@@ -3207,8 +3132,8 @@ mod tests {
         let ring = |point: usize| {
             cells
                 .iter()
-                .find(|(name, _, _, _)| *name == point_name(point))
-                .and_then(|(_, _, glyph, _)| *glyph)
+                .find(|(name, ..)| *name == point_name(point))
+                .and_then(|(_, _, glyph, ..)| *glyph)
         };
         assert_eq!(ring(10), Some(Glyph::LegalPoint));
         assert_eq!(
@@ -3226,35 +3151,24 @@ mod tests {
     }
 
     #[test]
-    fn a_stack_taller_than_the_runtime_draws_is_counted_beside_its_number() {
-        let mut game = Game {
+    fn a_stack_taller_than_five_carries_its_count_to_the_runtime() {
+        let game = Game {
             position: position(&[(5, 7), (4, 8), (18, -15)], 0, 0),
             opening: false,
             ..Game::default()
         };
-        let cells = board_cells(&game);
-        assert!(cells
+        let layout = test_screen(&game).layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+        let counts = layout
+            .nodes
             .iter()
-            .any(|(_, label, _, _)| label == "Point 6 white 7 checkers"));
-        let plain = band_pixels(&Game::default(), 1072, false);
-        let counted = band_pixels(&game, 1072, false);
-        let column = |pixels: &[u8], slot: usize| {
-            (0..usize::try_from(BAND_HEIGHT).expect("fits"))
-                .flat_map(|y| (slot * 89..slot * 89 + 89).map(move |x| y * 1072 + x))
-                .filter(|index| pixels[*index] == INK)
-                .count()
-        };
-        // The six point sits seventh from the left of the bottom row.
-        assert!(
-            column(&counted, 6) > column(&plain, 6) * 2,
-            "no counter drawn"
-        );
-        game.position = position(&[(5, 5), (4, 10), (18, -15)], 0, 0);
-        assert_eq!(
-            column(&band_pixels(&game, 1072, false), 6),
-            column(&plain, 6),
-            "five checkers need no counter"
-        );
+            .filter_map(|node| match node.kind {
+                LayoutKind::BackgammonStack(_, count, _) => Some(count),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        // The runtime draws five and writes the count on the fifth, so the
+        // whole count has to reach it.
+        assert!(counts.contains(&7) && counts.contains(&8) && counts.contains(&15));
     }
 
     #[test]
@@ -3495,39 +3409,36 @@ mod tests {
     }
 
     #[test]
-    fn the_board_is_the_runtimes_backgammon_board_numbered_by_two_strips() {
+    fn the_board_is_the_runtimes_numbered_board_inside_its_frame() {
         let mut game = Game {
             dice_source: Dice::scripted([(2, 1)]),
             ..Game::default()
         };
         game.roll();
         let layout = test_screen(&game).layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        let pictures = layout
-            .nodes
-            .iter()
-            .filter_map(|node| match node.kind {
-                LayoutKind::Picture(handle) => Some((handle, node.rect)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
         let board = layout
             .nodes
             .iter()
-            .find(|node| matches!(node.kind, LayoutKind::BackgammonBoard))
-            .expect("the runtime's board")
+            .find(|node| matches!(node.kind, LayoutKind::BackgammonFrame))
+            .expect("the board is drawn")
             .rect;
-        assert_eq!(pictures.len(), 2);
-        let (top, bottom) = (pictures[0], pictures[1]);
-        assert_eq!(top.0, TOP_BAND);
-        assert_eq!(bottom.0, BOTTOM_BAND);
-        // One pixel to one pixel, across the same width as the board, so
-        // every number sits beside its own point.
-        for (_, rect) in [top, bottom] {
-            assert_eq!((rect.x, rect.width), (board.x, board.width));
-            assert_eq!(rect.height, i32::try_from(BAND_HEIGHT).expect("fits"));
-        }
-        assert!(top.1.y + top.1.height <= board.y);
-        assert!(bottom.1.y >= board.y + board.height);
+        // The board keeps clear of the bezel, and every point has its number
+        // printed by the runtime, above the top row or below the bottom one.
+        assert!(board.x > 0 && board.x + board.width < CLARA_BW_METRICS.width);
+        let numbers = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::PointNumber(_)))
+            .collect::<Vec<_>>();
+        assert_eq!(numbers.len(), 24);
+        assert!(numbers
+            .iter()
+            .all(|node| node.rect.y + node.rect.height <= board.y
+                || node.rect.y >= board.y + board.height));
+        assert!(!layout
+            .nodes
+            .iter()
+            .any(|node| matches!(node.kind, LayoutKind::Picture(handle) if handle != DICE)));
     }
 
     /// What a table can read from across the board, and what a reader picking
@@ -3569,7 +3480,7 @@ mod tests {
             // which the rules' own test covers at every size.
             for view in [View::Board, View::Match, View::History] {
                 game.view = view;
-                let screen = screen_for(&game, Some(test_bands()), &context);
+                let screen = screen_for(&game, Some(test_dice(&game)), &context);
                 let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
                 assert!(
                     diagnostics.issues.is_empty(),
@@ -3744,7 +3655,7 @@ mod tests {
         assert_eq!(shown_number(&game, 23), 1);
         assert!(board_cells(&game)
             .iter()
-            .any(|(name, label, _, _)| name == "point-23" && label.starts_with("Point 1 ")));
+            .any(|(name, label, ..)| name == "point-23" && label.starts_with("Point 1 ")));
         game.mode = Mode::Solo;
         assert_eq!(
             shown_number(&game, 23),
@@ -4060,11 +3971,10 @@ mod large_text_tests {
             // The computer opens and leaves a two line note under the board.
             game.apply_action(action_id("roll"));
             let runner = kobo_sdk::AppRunner::with_metrics(game, metrics);
-            let bands = Bands {
-                top: TilePicture::new(TOP_BAND, 1072, BAND_HEIGHT),
-                bottom: TilePicture::new(BOTTOM_BAND, 1072, BAND_HEIGHT),
-            };
-            let screen = screen_for(runner.app(), Some(bands), &runner.context());
+            let (width, height, _) =
+                dice_pixels(&runner.app().dice, metrics.tenth_mm(DIE_TENTH_MM));
+            let dice = TilePicture::new(DICE, width, height);
+            let screen = screen_for(runner.app(), Some(dice), &runner.context());
             fits(&screen, metrics);
             let text = screen
                 .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
@@ -4099,15 +4009,13 @@ mod large_text_tests {
             };
             game.roll();
             let runner = kobo_sdk::AppRunner::with_metrics(game, metrics);
-            let width = u32::try_from(metrics.width).expect("panel width");
-            let bands = Bands {
-                top: TilePicture::new(TOP_BAND, width, BAND_HEIGHT),
-                bottom: TilePicture::new(BOTTOM_BAND, width, BAND_HEIGHT),
-            };
-            let screen = screen_for(runner.app(), Some(bands), &runner.context());
+            let (width, height, _) =
+                dice_pixels(&runner.app().dice, metrics.tenth_mm(DIE_TENTH_MM));
+            let dice = TilePicture::new(DICE, width, height);
+            let screen = screen_for(runner.app(), Some(dice), &runner.context());
             fits(&screen, metrics);
             let layout = screen.layout_with(&metrics, &kobo_sdk::Chrome::measuring(true));
-            for name in ["roll", "double", game::UNDO, "bar", "off", "point-0"] {
+            for name in ["roll", "double", game::UNDO, "point-0"] {
                 assert!(layout.rect_of_action(action_id(name)).is_some());
             }
         }

@@ -454,3 +454,86 @@ fn a_five_by_five_picture_shows_every_square_at_once_on_a_clara_bw() {
         .issues;
     assert!(issues.is_empty(), "{issues:?}");
 }
+/// The labels of the buttons a play screen draws, enabled or not.
+fn button_labels(layout: &kobo_ui::Layout) -> Vec<String> {
+    layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Button(..)))
+        .flat_map(|node| node.text_lines.clone())
+        .collect()
+}
+#[test]
+fn the_pan_buttons_are_drawn_only_when_part_of_the_board_is_off_the_panel() {
+    let directions = [
+        kobo_sdk::board::Direction::Left,
+        kobo_sdk::board::Direction::Right,
+        kobo_sdk::board::Direction::Up,
+        kobo_sdk::board::Direction::Down,
+    ];
+    let mut seen = (false, false);
+    for (width, height) in [(1072, 1448)] {
+        let metrics = DisplayMetrics {
+            width,
+            height,
+            pixels_per_inch: 300,
+            text_scale: TextScale::default(),
+        };
+        let context = AppRunner::with_metrics(Game::default(), metrics).context();
+        let mut game = Game::default();
+        for index in 0..game.puzzles.len() {
+            game.select(&mut Context::default(), index);
+            let Some((board, clues)) = game.ink_board() else {
+                continue;
+            };
+            let view = game.fitted_view(&context, &board, &clues).unwrap();
+            let pans = directions.iter().any(|direction| view.can_pan(*direction));
+            let screen = game.play(&context).with_own_back(true);
+            let labels = button_labels(&screen.layout_with(&metrics, &Chrome::measuring(true)));
+            for label in ["Left", "Right", "Up", "Down"] {
+                assert_eq!(
+                    labels.iter().any(|drawn| drawn == label),
+                    pans,
+                    "{label} on puzzle {index} at {width}x{height}"
+                );
+            }
+            for label in ["−", "+", "Undo", "More"] {
+                assert!(
+                    labels.iter().any(|drawn| drawn == label),
+                    "{label} on puzzle {index} at {width}x{height}"
+                );
+            }
+            let issues = screen
+                .diagnostics(&metrics, &Chrome::measuring(true))
+                .issues;
+            assert!(
+                issues.is_empty(),
+                "puzzle {index} at {width}x{height}: {issues:?}"
+            );
+            if pans {
+                seen.1 = true;
+            } else {
+                seen.0 = true;
+            }
+        }
+    }
+    assert_eq!(seen, (true, true), "both kinds of board were not tried");
+}
+
+#[test]
+fn options_hold_only_what_the_board_does_not_and_back_returns_to_it() {
+    let mut r = ready(0);
+    r.action(action_id("more"));
+    assert_eq!(r.app().route, Route::Menu);
+    let drawn = format!("{:?}", r.app().menu());
+    assert!(
+        !drawn.contains("\"Undo\"") && !drawn.contains("\"Resume\""),
+        "{drawn}"
+    );
+    assert!(
+        drawn.contains("Restart puzzle") && drawn.contains("Puzzles"),
+        "{drawn}"
+    );
+    r.action(ActionId::BACK);
+    assert_eq!(r.app().route, Route::Play);
+}

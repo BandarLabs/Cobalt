@@ -4769,7 +4769,11 @@ fn physical_feedback_rect(
 
 fn feedback_kind(layout: &Layout, rect: kobo_ui::Rect) -> FeedbackKind {
     if layout.nodes.iter().any(|node| {
-        node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key, _))
+        node.rect == rect
+            && matches!(
+                node.kind,
+                LayoutKind::Cell(_, CellStyle::Key | CellStyle::KeyTile(_), _)
+            )
     }) {
         FeedbackKind::KeyboardKey
     } else {

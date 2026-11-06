@@ -578,7 +578,9 @@ fn notice_line(r: &AppRunner<Crossword>) -> String {
         .nodes
         .iter()
         .find_map(|node| match node {
-            kobo_sdk::Node::Secondary { text, .. } => Some(text.clone()),
+            kobo_sdk::Node::Secondary { text, .. } | kobo_sdk::Node::Text { text, .. } => {
+                Some(text.clone())
+            }
             _ => None,
         })
         .unwrap_or_default()
@@ -809,4 +811,27 @@ fn an_untouched_puzzle_whose_grid_changed_does_not_lock_the_games_that_were_play
 fn a_played_puzzle_whose_grid_changed_is_still_refused_rather_than_dropped() {
     let bytes = br#"{"schema":"crossword.games","version":1,"payload":{"current":"0","games":[{"id":"mini-v1","answer":"CAT##ORE##WEDGE##DOM##YOU","position":{"letters":"CAT##...##.....##...##...","selected":"5","down":false},"undo":[],"reveals":0,"checks":0,"solved":false}]}}"#;
     assert!(crate::saved::decode(bytes).is_err());
+}
+
+#[test]
+fn a_small_puzzle_prints_its_clue_in_ink_and_every_clue_under_the_grid() {
+    let r = on_board(3);
+    let screen = r.app().screen(&r.context());
+    let clue = screen.nodes.iter().find_map(|node| match node {
+        kobo_sdk::Node::Text { text, .. } => Some(text.clone()),
+        _ => None,
+    });
+    assert!(clue.is_some_and(|text| text.contains("Across")));
+    let drawn = screen
+        .layout_with(&r.context().metrics(), &kobo_sdk::Chrome::measuring(true))
+        .nodes
+        .iter()
+        .flat_map(|node| node.text_lines.clone())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        drawn.contains("Across") && drawn.contains("Down"),
+        "{drawn}"
+    );
+    assert!(drawn.contains("Place down (3)"), "{drawn}");
 }

@@ -51,3 +51,14 @@ expect Next puzzle
 tap Next puzzle
 wait-for-id game-more
 expect Starter
+# A refused save is a line over the board carrying its retry, and the board
+# stays in view.
+scenario storage-full
+tap-id route-0
+expect Progress is not saved
+expect Retry saving
+clean
+shot save-failed
+scenario normal
+tap Retry saving
+expect-missing Progress is not saved
