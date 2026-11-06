@@ -422,3 +422,10 @@ fn an_open_outing_and_its_pack_come_back_after_a_restart() {
     let layout = drawn.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
     assert!(layout.rect_of_action(action_id("resume")).is_some());
 }
+
+#[test]
+fn one_bird_is_counted_as_one_bird_and_more_as_birds() {
+    assert_eq!(super::bird_count(1), "1 bird");
+    assert_eq!(super::bird_count(0), "0 birds");
+    assert_eq!(super::bird_count(14), "14 birds");
+}

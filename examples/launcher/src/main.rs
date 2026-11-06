@@ -224,15 +224,14 @@ impl Launcher {
         self.page = self.page.min(pages.len() - 1);
         let page = self.page;
         let page_count = u16::try_from(pages.len()).unwrap_or(u16::MAX);
-        let page_index = u16::try_from(page).unwrap_or(u16::MAX);
         let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
         let entries = pages[page]
             .iter()
             .map(|&index| (self.entry(index), self.working == Some(index)))
             .collect();
-        let screen = ScreenBuilder::new("launcher")
-            .top_bar("Cobalt")
-            .page_rail(page_index, page_count);
+        // "1 of 5" and its arrows say where the reader is and how to turn.
+        // A rail down the side said the first again and narrowed the grid.
+        let screen = ScreenBuilder::new("launcher").top_bar("Cobalt");
         Self::app_grid(screen, entries)
             .page_turns("previous", "next")
             .page_position(page_number, page_count)

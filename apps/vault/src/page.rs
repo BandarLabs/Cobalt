@@ -51,15 +51,9 @@ struct Pager {
 
 impl Pager {
     fn new(metrics: DisplayMetrics) -> Self {
-        // The reading screen's own area: the bars above and below, the status
-        // band the runtime draws over everything, and the strip the page
-        // position takes, which is reserved whether or not one is drawn.
-        let mut area = metrics.prose_area_in(true, true, Face::Reading);
-        area.height = area
-            .height
-            .saturating_sub(metrics.status_band_height())
-            .saturating_sub(metrics.page_position_band())
-            .max(1);
+        // The whole panel: a note is drawn with no status band, its bar
+        // hidden until called back over the page, and nothing at its foot.
+        let area = metrics.prose_area_in(false, false, Face::Reading);
         Self {
             metrics,
             area,

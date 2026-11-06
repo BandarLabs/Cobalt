@@ -14,7 +14,9 @@ shot flashcards-decks
 tap Getting started
 wait-for 1 of 6
 tap-id answer
-wait-for Answer
+# The answer is read under its question.
+wait-for Magnetic north.
+expect What does a compass needle point toward?
 tap-id again
 wait-for 1 of 6
 tap-id answer

@@ -556,9 +556,7 @@ impl Game {
             context.set_screen(self.screen());
             return true;
         }
-        if (action == action_id("restart") || action == action_id("restart-field"))
-            && self.kind != Kind::Home
-        {
+        if action == action_id("restart") && self.kind != Kind::Home {
             self.view = View::Restart;
             context.set_screen(self.screen());
             return true;
@@ -661,7 +659,11 @@ impl Game {
                 head().text("Opening puzzles…").build()
             };
         }
-        if matches!(self.draft.status(), Status::Failed(_)) {
+        // A refused save on a puzzle is a line over the board, not a page
+        // in its place: the board stays in view, as Backgammon keeps its.
+        if matches!(self.draft.status(), Status::Failed(_))
+            && !(self.view == View::Puzzle && self.kind != Kind::Home)
+        {
             return failure_screen(
                 || ScreenBuilder::new("logicpack-save-failed").top_bar("Logic Pack"),
                 &self.metrics,
@@ -789,15 +791,16 @@ impl Game {
 
     /// A play screen: the shared top bar and foot around the game's board.
     ///
-    /// The foot's second place is the way taps work, for the two games that
-    /// have one, and becomes the obvious next step once a puzzle ends: the
-    /// next puzzle after a win, a restart after a mine.
+    /// Every game's foot is the same bar of two: Undo, then the way taps work
+    /// for the two games that have one, or Restart for the two that do not.
+    /// Once a puzzle ends the second place is the obvious next step: the next
+    /// puzzle after a win, a restart after a mine. Kakuro and Hashi used to get
+    /// Undo alone, which the runtime pins as a single outlined button, so two
+    /// games in the pack had a bar at the foot and two a button. A third entry
+    /// does not fit a six-inch panel at the larger text sizes.
     fn play(&self, board: impl FnOnce(ScreenBuilder) -> ScreenBuilder) -> Screen {
-        let saved = match self.draft.status() {
-            Status::Saved => "Saved",
-            Status::Saving | Status::Unsaved => "Saving…",
-            Status::Failed(_) => "Not saved",
-        };
+        // Saving is quiet when it works: "Saved" beside every move said
+        // nothing anybody needed, and a failure has its own line.
         let status = if self.kind == Kind::Mines {
             // A cleared field shows every mine as a flag, so it counts them so.
             let flags: usize = if self.outcome == Outcome::Solved {
@@ -808,25 +811,27 @@ impl Game {
                     .map(|c| usize::from(*c == 2))
                     .sum()
             };
-            format!("{flags} of {} flagged · {saved}", self.mines.count_ones())
+            format!("{flags} of {} flagged", self.mines.count_ones())
         } else {
-            saved.to_owned()
+            String::new()
         };
-        let verb = match (self.kind, self.outcome) {
-            (_, Outcome::Solved) => Some(("next-puzzle", "Next puzzle")),
-            (_, Outcome::Lost) => Some(("restart-field", "Restart")),
-            // A bar cannot hold a switch, so the entry names what the tap
-            // does. "Mode: Line" stated the current mode, which read as an
-            // order as easily as a report.
-            (Kind::Slither, _) if self.marking => Some(("line-mode", "Draw lines")),
-            (Kind::Slither, _) => Some(("line-mode", "Mark crosses")),
-            (Kind::Mines, _) if self.flagging => Some(("mine-mode", "Reveal squares")),
-            (Kind::Mines, _) => Some(("mine-mode", "Flag mines")),
-            _ => None,
+        // A bar cannot hold a switch, so the entry names what the tap does.
+        // "Mode: Line" stated the current mode, which read as an order as
+        // easily as a report. Once a puzzle has ended there is nothing left
+        // to tap on the board, so the mode leaves the bar.
+        let second = match (self.kind, self.outcome) {
+            (_, Outcome::Solved) => ("next-puzzle", "Next puzzle"),
+            (Kind::Slither, Outcome::Playing) if self.marking => ("line-mode", "Draw lines"),
+            (Kind::Slither, Outcome::Playing) => ("line-mode", "Mark crosses"),
+            (Kind::Mines, Outcome::Playing) if self.flagging => ("mine-mode", "Reveal squares"),
+            (Kind::Mines, Outcome::Playing) => ("mine-mode", "Flag mines"),
+            _ => ("restart", "Restart"),
         };
         // The notice and the save state share one line above the board, so
         // the largest field still fits a six-inch panel at the largest text.
         let notice = self.notice.clone();
+        let line_notice = notice.clone();
+        let has_status = !status.is_empty();
         let line: [(SlotWidth, Slot); 2] = [
             (
                 SlotWidth::Fill,
@@ -839,9 +844,20 @@ impl Game {
         ];
         let screen = ScreenBuilder::new("logicpack-play")
             .game_top_bar(self.kind.title(), self.menu, MORE)
-            .owns_back(true)
-            .band(BandAlign::Middle, line);
-        board(screen).game_actions(true, verb).build()
+            .owns_back(true);
+        let screen = if matches!(self.draft.status(), Status::Failed(_)) {
+            screen
+                .banner(
+                    kobo_sdk::BannerLevel::Error,
+                    "Progress is not saved. Moves wait until it is.",
+                )
+                .banner_action("retry-save", "Retry saving")
+        } else if has_status {
+            screen.band(BandAlign::Middle, line)
+        } else {
+            screen.secondary(line_notice)
+        };
+        board(screen).game_actions(true, [second]).build()
     }
 
     /// Hidden squares are drawn filled, as untouched tiles, and open ones
@@ -1419,6 +1435,101 @@ mod tests {
         assert!(!restored.restore(b"bad"));
     }
 
+    /// The labels in the bar at the foot of a play screen, or the one pinned
+    /// button's label where there is no bar.
+    fn foot(screen: &Screen) -> Vec<String> {
+        screen.nav_bar.as_ref().map_or_else(
+            || {
+                screen
+                    .bottom_action
+                    .iter()
+                    .map(|pinned| format!("button {}", pinned.action.label))
+                    .collect()
+            },
+            |bar| {
+                bar.destinations
+                    .iter()
+                    .map(|entry| entry.label.clone())
+                    .collect()
+            },
+        )
+    }
+
+    #[test]
+    fn the_mine_field_is_one_ruled_board_with_counts_in_the_interface_face_and_drawn_flags() {
+        let _fonts = fonts(CLARA_BW_METRICS);
+        let mut game = ready();
+        game.select(Kind::Mines);
+        game.cells[0] = 1;
+        game.cells[1] = 2;
+        let layout = game
+            .screen()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let squares: Vec<_> = layout
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Field { .. }, _)
+                )
+            })
+            .collect();
+        assert_eq!(squares.len(), 16, "every square is a field square");
+        // The squares meet: no paper between one and the next.
+        assert_eq!(squares[0].rect.x + squares[0].rect.width, squares[1].rect.x);
+        assert_eq!(
+            squares[0].rect.y + squares[0].rect.height,
+            squares[4].rect.y
+        );
+        let count = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == kobo_ui::LayoutKind::FieldCount)
+            .expect("the opened square's count");
+        assert_eq!(count.text_lines, ["1"]);
+        assert!(layout.nodes.iter().any(|node| matches!(
+            node.kind,
+            kobo_ui::LayoutKind::FieldMark(kobo_ui::FieldMark::Flag, false)
+        )));
+        assert!(!layout
+            .nodes
+            .iter()
+            .any(|node| matches!(node.kind, kobo_ui::LayoutKind::CellLabel(_))));
+    }
+
+    #[test]
+    fn every_game_in_the_pack_has_the_same_bar_at_its_foot_from_start_to_finish() {
+        let _fonts = fonts(CLARA_BW_METRICS);
+        for kind in KINDS {
+            let mut game = ready();
+            game.select(kind);
+            let second = match kind {
+                Kind::Slither => "Mark crosses",
+                Kind::Mines => "Flag mines",
+                _ => "Restart",
+            };
+            assert_eq!(foot(&game.screen()), [game::UNDO_LABEL, second], "{kind:?}");
+            assert!(
+                game.screen()
+                    .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+                    .issues
+                    .is_empty(),
+                "{kind:?}"
+            );
+            game.outcome = Outcome::Solved;
+            assert_eq!(
+                foot(&game.screen()),
+                [game::UNDO_LABEL, "Next puzzle"],
+                "{kind:?}"
+            );
+        }
+        let mut mines = ready();
+        mines.select(Kind::Mines);
+        mines.outcome = Outcome::Lost;
+        assert_eq!(foot(&mines.screen()), [game::UNDO_LABEL, "Restart"]);
+    }
+
     #[test]
     fn every_play_screen_carries_rules_and_the_menu_on_top_and_undo_first_at_the_foot() {
         let _fonts = fonts(CLARA_BW_METRICS);
@@ -1927,11 +2038,11 @@ mod p16_tests {
         assert!(button.y >= reason.y + reason.height, "{metrics:?}");
     }
 
-    /// An unreadable record and a refused save each fill the screen, so each
-    /// is a splash with its one fix directly under the reason: Try again for
-    /// the read and Retry saving for the write.
+    /// An unreadable record leaves nothing to show, so it is a splash with
+    /// Try again directly under the reason. A refused save leaves the puzzle
+    /// in place, so it is a line over the board carrying Retry saving.
     #[test]
-    fn load_and_save_failures_are_splashes_with_their_fix_directly_under_them() {
+    fn a_failed_load_is_a_splash_and_a_failed_save_a_line_over_the_board() {
         for (width, height, ppi) in [(1072, 1448, 300), (758, 1024, 212)] {
             for text_scale in TextScale::STEPS {
                 let metrics = clara(width, height, ppi, text_scale);
@@ -1963,7 +2074,20 @@ mod p16_tests {
                 );
                 assert!(matches!(g.draft.status(), Status::Failed(_)));
                 g.metrics = metrics;
-                assert_failure_splash(&g.screen(), metrics, "retry-save", "Retry saving");
+                // A refused save on a puzzle keeps the board in view under a
+                // line that carries its retry, as Backgammon's does.
+                let screen = g.screen();
+                let chrome = Chrome::measuring(true);
+                assert!(
+                    !screen.diagnostics(&metrics, &chrome).has_errors(),
+                    "{metrics:?}"
+                );
+                let layout = screen.layout_with(&metrics, &chrome);
+                assert!(layout.rect_of_action(action_id("retry-save")).is_some());
+                assert!(
+                    layout.rect_of_action(action_id("route-0")).is_some(),
+                    "{metrics:?}: the board is hidden"
+                );
             }
         }
     }

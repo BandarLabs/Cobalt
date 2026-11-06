@@ -77,8 +77,7 @@ impl Status {
     const fn short_title(self) -> &'static str {
         match self {
             Self::Starting | Self::Running => "Terminal",
-            Self::Ended(0) => "Closed",
-            Self::Ended(status) if status > 0 => "Error",
+            Self::Ended(status) if status >= 0 => "Closed",
             Self::Ended(_) => "Stopped",
             Self::Refused(ShellError::NotPermitted) => "Refused",
             Self::Refused(ShellError::Unavailable) => "No shell",
@@ -89,8 +88,12 @@ impl Status {
     fn title(self) -> String {
         match self {
             Self::Starting | Self::Running => "Terminal".to_string(),
-            Self::Ended(0) => "Shell closed".to_string(),
-            Self::Ended(status) if status > 0 => "Shell closed after an error".to_string(),
+            // Closed, whatever the last command's status was. A shell ends
+            // with the status of the last thing run in it, so typing exit
+            // after a command that failed read "Shell closed after an
+            // error", which blamed the owner's own exit on an error the
+            // output above already showed.
+            Self::Ended(status) if status >= 0 => "Shell closed".to_string(),
             Self::Ended(_) => "Shell was stopped".to_string(),
             Self::Refused(ShellError::NotPermitted) => {
                 "Terminal is not allowed on this reader".to_string()
@@ -533,7 +536,9 @@ mod tests {
     #[test]
     fn a_status_says_what_happened_in_words_rather_than_an_exit_code() {
         assert_eq!(Status::Ended(0).title(), "Shell closed");
-        assert_eq!(Status::Ended(1).title(), "Shell closed after an error");
+        // An exit after a failed command is still the owner closing it.
+        assert_eq!(Status::Ended(1).title(), "Shell closed");
+        assert_eq!(Status::Ended(1).short_title(), "Closed");
         assert_eq!(Status::Ended(-1).title(), "Shell was stopped");
         for status in [Status::Ended(1), Status::Ended(127), Status::Ended(-9)] {
             assert!(

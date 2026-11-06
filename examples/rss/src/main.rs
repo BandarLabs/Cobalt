@@ -682,8 +682,12 @@ impl Feeds {
             } else {
                 item.link.as_str()
             };
-            self.keeper
-                .keep_markup(context, &article_id(item, feed_url), origin, &item.html);
+            self.keeper.keep_markup(
+                context,
+                &article_id(item, feed_url),
+                origin,
+                &kobo_html::article::main_content(&item.html),
+            );
         }
     }
 
@@ -1407,8 +1411,15 @@ impl Feeds {
                 self.problem = Some("This article could not be opened.".to_owned());
             }
         } else {
-            self.reader
-                .open(context, kobo_doc::html::parse(&item.html), memory);
+            // A feed that carries whole articles often carries the page
+            // around them too: its section menu, its buttons and its labels.
+            // They are cut here exactly as they are for a page fetched from a
+            // link, so the kept copy and this one read the same.
+            self.reader.open(
+                context,
+                kobo_doc::html::parse(&kobo_html::article::main_content(&item.html)),
+                memory,
+            );
             self.illustrations.open(context, &mut self.reader, &origin);
         }
         self.keep_position(context);
@@ -4002,6 +4013,39 @@ mod tests {
         runner.action(kobo_sdk::ActionId::BACK);
         assert_eq!(runner.app_mut().view, View::Items);
         assert_eq!(runner.app_mut().matching_items(), vec![0, 1]);
+    }
+
+    #[test]
+    fn a_feed_that_carries_the_whole_page_opens_without_the_page_menu() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            items: vec![super::feed::Item {
+                title: "A farewell to a telescope".to_owned(),
+                link: "https://example.com/story/".to_owned(),
+                html: "<div class=\"secondary-navigation\"><button type=button>Pictures</button>\
+                    <nav><ol><li><a href=/>Science</a></li><li><a href=/p>Pictures</a></li></ol></nav>\
+                    <div><ul><li><a href=/today>Today</a></li><li><a href=/archive>Archive</a></li>\
+                    <li><a href=/submit>Submissions</a></li><li><a href=/about>About</a></li></ul></div></div>\
+                    <h2>A farewell to a telescope</h2><p>After twenty-two years it came home.</p>"
+                    .to_owned(),
+                body: "After twenty-two years it came home.".to_owned(),
+                ..super::feed::Item::default()
+            }],
+            ..Feeds::default()
+        });
+        runner.action(action_id("item-0"));
+        let reader = runner
+            .app_mut()
+            .reader
+            .reader()
+            .expect("the article opened");
+        assert_eq!(reader.search("twenty-two", 4).len(), 1);
+        for chrome in ["Archive", "Submissions", "Science", "Pictures"] {
+            assert!(reader.search(chrome, 4).is_empty(), "{chrome} was kept");
+        }
     }
 
     #[test]

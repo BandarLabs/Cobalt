@@ -1883,7 +1883,11 @@ enum TextField {
     /// to the panel is the costliest thing a keystroke does, and a finger
     /// sliding across the keys sends a stream of moves, each of which asks
     /// what is on the panel.
-    Open(u32, kobod::text_entry::Field, Screen),
+    ///
+    /// The field is boxed because it carries what is typed, its keyboard and
+    /// its prompt, and held inline it made every application's slot some two
+    /// hundred bytes larger whether a field was open or not.
+    Open(u32, Box<kobod::text_entry::Field>, Screen),
     /// Answered, and left on the panel until the application draws what
     /// comes next. Painting the application's last screen in between would
     /// spend a refresh on a screen it is about to replace.
@@ -4769,7 +4773,11 @@ fn physical_feedback_rect(
 
 fn feedback_kind(layout: &Layout, rect: kobo_ui::Rect) -> FeedbackKind {
     if layout.nodes.iter().any(|node| {
-        node.rect == rect && matches!(node.kind, LayoutKind::Cell(_, CellStyle::Key, _))
+        node.rect == rect
+            && matches!(
+                node.kind,
+                LayoutKind::Cell(_, CellStyle::Key | CellStyle::KeyTile(_), _)
+            )
     }) {
         FeedbackKind::KeyboardKey
     } else {
@@ -5293,7 +5301,7 @@ fn open_text_field(
             }
             app.typing = Some(TextField::Open(
                 request_id,
-                field,
+                Box::new(field),
                 Screen::new(0, Vec::new()),
             ));
             redraw_field(app);

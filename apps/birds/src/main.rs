@@ -15,7 +15,6 @@ const MAX_IMAGE: usize = 4 * 1024 * 1024;
 const PICTURE: PictureHandle = PictureHandle(1);
 const REFRESH: &str = "refresh";
 const MENU: &str = "menu";
-const EXIT: &str = "exit";
 /// How often the shelf is looked at again.
 ///
 /// The companion polls the station every five seconds and publishes the
@@ -102,15 +101,15 @@ impl Birds {
                 .reading_menu(MENU);
         } else {
             // A snapshot without a usable image must not become an empty
-            // screen with no way out: say what happened and keep Refresh and
-            // Exit reachable.
+            // screen with no way out: say what happened and offer Refresh.
+            // The way out is the bar's back, which this screen keeps.
             let detail = self
                 .notice
                 .clone()
                 .unwrap_or_else(|| "The latest bird collage is unavailable.".into());
             screen = screen
                 .splash(Some(Glyph::App), "The collage needs a refresh", &detail)
-                .buttons([(REFRESH, "Refresh"), (EXIT, "Exit")]);
+                .primary_button(REFRESH, "Refresh");
         }
         if self.menu_open {
             let freshness = if age >= 24 * 60 * 60 {
@@ -121,6 +120,9 @@ impl Birds {
                 format!("Updated {} ago", age_label(age))
             };
             let awake = self.awake_note();
+            // Refresh is the menu's one control. An Exit beside it only
+            // closed the menu, which is what the close mark at its corner
+            // already does, so it read as a way out of Birds and was not one.
             screen = screen.modal("Birds", |overlay| {
                 let overlay =
                     overlay.facts([("Status", freshness), ("Source", snapshot.source.clone())]);
@@ -128,13 +130,11 @@ impl Birds {
                     Some(note) => overlay.secondary(note),
                     None => overlay,
                 };
-                if let Some(notice) = &self.notice {
-                    overlay
-                        .banner(BannerLevel::Attention, notice)
-                        .buttons([(REFRESH, "Refresh"), (EXIT, "Exit")])
-                } else {
-                    overlay.buttons([(REFRESH, "Refresh"), (EXIT, "Exit")])
-                }
+                let overlay = match &self.notice {
+                    Some(notice) => overlay.banner(BannerLevel::Attention, notice),
+                    None => overlay,
+                };
+                overlay.button(REFRESH, "Refresh")
             });
         }
         // Fugleramme renders the names into the plate, so a bar across the top
@@ -461,7 +461,7 @@ impl KoboApp for Birds {
         }
     }
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == ActionId::BACK || action == action_id(EXIT) {
+        if action == ActionId::BACK {
             if self.menu_open {
                 self.menu_open = false;
             } else {
@@ -596,6 +596,33 @@ mod tests {
         // The app and the companion must agree on the checksum function.
         assert_eq!(fnv64(b""), "cbf29ce484222325");
         assert_eq!(fnv64(b"a"), "af63dc4c8601ec8c");
+    }
+    #[test]
+    fn the_menu_offers_refresh_and_leaves_closing_to_its_close_mark() {
+        let birds = Birds {
+            snapshot: Some(Snapshot {
+                generated_at: unix_seconds(),
+                source: "Garden Mac".to_owned(),
+                recent: Vec::new(),
+                image_checksum: None,
+                image: None,
+            }),
+            menu_open: true,
+            ..Birds::default()
+        };
+        let screen = birds.screen();
+        let overlay = screen.overlay.as_ref().expect("the menu is open");
+        let labels = overlay
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Button { label, .. } => Some(label.as_str()),
+                kobo_sdk::Node::Band { .. } => Some("a row of buttons"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(labels, ["Refresh"]);
+        assert!(!format!("{screen:?}").contains("\"Exit\""));
     }
     #[test]
     fn age_is_readable() {

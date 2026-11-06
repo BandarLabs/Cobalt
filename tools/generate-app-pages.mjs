@@ -38,7 +38,7 @@ const screenshots = {
   brief: ["brief.png", "A numbered daily news brief on a Kobo"],
   "calibre-web": ["calibre-web.png", "The first page of Pride and Prejudice from a calibre-web library on a Kobo, with text-size and front-light controls and the page count."],
   chat: ["chat.png", "An answer displayed for touch-friendly reading on a Kobo"],
-  crossword: ["crossword.png", "Crossword grid on a Kobo with three answers filled in and the current clue above it."],
+  crossword: ["crossword.png", "Crossword grid on a Kobo with an answer filled in, the current clue above it and every clue below it."],
   deck: ["deck.png", "Deck paired with a computer, showing Test, Format, Lint, Docs and Deploy command pads."],
   fanshelf: ["fanshelf.png", "A followed work in Fanshelf naming its author, fandom, rating and chapter count, with a Download EPUB button."],
   fieldbook: ["fieldbook.png", "Fieldbook during an outing at Lake Merced, listing the birds logged so far with a Finish outing button."],
@@ -50,9 +50,9 @@ const screenshots = {
   habits: ["habits.png", "Habits today screen on a Kobo Clara BW, with daily and weekday streak tasks."],
   hn: ["hackernews.png", "A ranked list of Show HN stories on a Kobo"],
   homepanel: ["homepanel.png", "Home Panel tile grid on a Kobo showing six Home Assistant tiles with the last refresh time."],
-  inkling: ["inkling.png", "A solved Inkling puzzle in three guesses, with right-spot letters shaded and a wrong-spot letter in brackets."],
+  inkling: ["inkling.png", "A solved Inkling puzzle in three guesses, with right-spot letters in black squares and wrong-spot letters in grey."],
   kitchencard: ["kitchencard.png", "Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."],
-  lichess: ["lichess.png", "Lichess on Kobo with Account/Games, Puzzles, Computer and How to play tiles above the rapid and classical time controls."],
+  lichess: ["lichess.png", "Lichess on Kobo with Play the computer first, then Play online, Your games, Puzzles and How to play."],
   logicpack: ["logicpack.png", "A solved Hashi puzzle in Logic Pack, with sixteen islands joined by single and double bridges."],
   launcher: ["launcher.png", "The Cobalt launcher on its Apps tab, with Books, Settings and Kobo reader tabs below"],
   magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
@@ -62,8 +62,8 @@ const screenshots = {
   nonograms: ["nonograms.png", "A Nonograms puzzle with the selected square and its row and column clues highlighted."],
   panels: ["panels.png", "The Panels comic shelf with a cover and saved progress, page 2 of 4."],
   paperterm: ["paperterm.png", "Paperterm showing a laptop terminal session in portrait, with the keyboard open."],
-  parlor: ["parlor.png", "Reversi against the computer on a Kobo, with the computer's last disc marked and the legal moves shown as small rings."],
-  parser: ["parser.png", "Parser opening Lamplight, with tappable words in the story and command buttons for LOOK, TAKE and the compass directions."],
+  parlor: ["parlor.png", "Reversi against the computer on a Kobo, on a ruled board with the computer's last disc marked and the legal moves shown as grey dots."],
+  parser: ["parser.png", "Parser opening Lamplight, with every word of the story tappable, a run of verbs such as Look and Take, and a row of compass directions."],
   post: ["post.png", "Post inbox listing Hermes letters newest first, with Newer and Older paging."],
   pubquiz: ["pubquiz.png", "Pub Quiz pass-around question on Ada's turn, with four numbered answer choices."],
   readlater: ["readlater.png", "Read Later's unread queue of synced Wallabag articles with reading times."],
@@ -73,7 +73,7 @@ const screenshots = {
   settings: ["settings.png", "Cobalt Settings listing Bluetooth, Wi-Fi, Battery, Software update and About"],
   sidekick: ["sidekick.png", "Sidekick showing several coding-agent sessions and their pending approvals."],
   store: ["store.png", "The Cobalt App Store listing installed and available apps"],
-  sudoku: ["sudoku.png", "An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"],
+  sudoku: ["sudoku.png", "An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded"],
   syncthing: ["syncthing.png", "Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."],
   terminal: ["terminal.png", "A shell and touch keyboard on a Kobo"],
   tictactoe: ["tictactoe.png", "A completed game of tic-tac-toe on a Kobo"],
@@ -477,7 +477,7 @@ for (const app of catalog.apps) {
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Already have Cobalt?</p>
     <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong>, tap the globe in the top bar and choose <strong>Link browser</strong>. Scan the QR code, or enter the pairing code and verification key.</p>
+    <p>On your Kobo, open <strong>App Store</strong> and tap <strong>Link a browser</strong> in the top bar, then <strong>Link a browser</strong> again. Scan the QR code, or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>

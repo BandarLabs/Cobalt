@@ -3,7 +3,7 @@ wait-for Inkling
 expect-missing Shapes, not color
 expect-missing Enter guess
 tap Rules
-expect Filled: right spot
+expect Black: right spot.
 expect Hard mode
 expect Guesses can leave out letters found.
 clean
@@ -25,15 +25,20 @@ tap-id kb.backspace
 type crane
 tap Guess
 expect 1 of 6
-expect Right spot: _RA__
+expect-missing Right spot
 clean
 shot inkling-knowledge
 tap-id game-more
 expect New game
 expect-missing Hard mode
 tap Statistics
-expect Played 0. Won 0.
+expect Played
+expect Best streak
 tap Play
+maybe-tap-id enter
+type rival
+tap Guess
+expect 2 of 6
 maybe-tap-id enter
 type gravy
 tap Guess
@@ -41,7 +46,7 @@ expect Solved
 clean
 shot inkling-solved
 tap Statistics
-expect Played 1. Won 1.
+expect 100%
 clean
 shot inkling-stats
 tap Play

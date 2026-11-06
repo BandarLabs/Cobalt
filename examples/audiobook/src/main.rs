@@ -473,10 +473,29 @@ impl Audiobook {
         // composer is the one action the top bar allows.
         let placed = self.library_head(screen.top_bar_glyph(NEW, "Create", Glyph::Plus));
         let showing = self.pages.get(self.page).map_or(&[][..], Vec::as_slice);
+        let playing = self.playing_shown();
         let rows = showing
             .iter()
             .filter_map(|index| books.get(*index).map(|book| (*index, book)))
             .map(|(index, book)| {
+                if playing == Some(index) {
+                    if let Some(status) = self.player_status() {
+                        let status = match self
+                            .place_of(&book.id)
+                            .map(|place| place.author.as_str())
+                            .filter(|author| !author.is_empty())
+                        {
+                            Some(author) => format!("{author} · {status}"),
+                            None => status,
+                        };
+                        return (
+                            NOW_PLAYING.to_owned(),
+                            self.title_of(book),
+                            status,
+                            RowLead::from(Glyph::Headphones),
+                        );
+                    }
+                }
                 let place = self.place_of(&book.id);
                 (
                     play_action(index),
@@ -511,28 +530,50 @@ impl Audiobook {
                 "Only the first two thousand audiobooks are listed.",
             );
         }
-        if let Some(player) = self.player.as_ref() {
-            let title = self.playing_title();
-            let left = player
-                .duration()
-                .saturating_sub(player.position())
-                .as_millis();
-            let left = span(u32::try_from(left).unwrap_or(u32::MAX));
-            let status = if player.is_playing() {
-                format!("Playing · {left} left")
-            } else if player.is_finished() {
-                "Finished".to_owned()
-            } else {
-                format!("Paused · {left} left")
-            };
-            screen = screen.section("Now playing").rows([(
-                NOW_PLAYING,
-                title,
-                status,
-                RowLead::from(Glyph::Headphones),
-            )]);
+        // The book playing has a row of its own on the page that lists it.
+        // Above that page it was listed twice, once playing and once as a
+        // file not yet opened.
+        if self.playing_shown().is_none() {
+            if let Some(status) = self.player_status() {
+                screen = screen.section("Now playing").rows([(
+                    NOW_PLAYING,
+                    self.playing_title(),
+                    status,
+                    RowLead::from(Glyph::Headphones),
+                )]);
+            }
         }
         screen
+    }
+
+    /// Where the player is in the book playing, as its row says it.
+    fn player_status(&self) -> Option<String> {
+        let player = self.player.as_ref()?;
+        let left = player
+            .duration()
+            .saturating_sub(player.position())
+            .as_millis();
+        let left = span(u32::try_from(left).unwrap_or(u32::MAX));
+        Some(if player.is_playing() {
+            format!("Playing · {left} left")
+        } else if player.is_finished() {
+            "Finished".to_owned()
+        } else {
+            format!("Paused · {left} left")
+        })
+    }
+
+    /// The library index of the book playing, when the page showing lists
+    /// it.
+    fn playing_shown(&self) -> Option<usize> {
+        self.player.as_ref()?;
+        let playing = self.playing.as_deref()?;
+        let books = self.library.as_ref()?;
+        self.pages.get(self.page)?.iter().copied().find(|index| {
+            books
+                .get(*index)
+                .is_some_and(|book| same_book(&book.id, playing))
+        })
     }
 
     /// What the book playing is called, by the same rules as its row: the
@@ -811,12 +852,10 @@ impl Audiobook {
             PictureHandle(1),
             COVER_WIDTH,
             COVER_HEIGHT,
-            typographic_cover(
-                &title,
-                Some("Made on this reader"),
-                COVER_WIDTH,
-                COVER_HEIGHT,
-            ),
+            // The title alone. The line beside the cover already says where
+            // the book was made, and a byline set at cover size had room for
+            // "Made on this..." and no more.
+            typographic_cover(&title, None, COVER_WIDTH, COVER_HEIGHT),
         ));
         let id = format!("shelf:{}", self.archive_name);
         self.open_player(context, player, id);
@@ -1914,13 +1953,15 @@ fn language_action(language: pipeline::Language) -> String {
 /// The short name of a listed kind, as the wire numbers them.
 const fn kind_badge(kind: u8) -> &'static str {
     match kind {
-        1 => "MP3",
         2 => "M4B",
         3 => "OGG",
         4 => "OPUS",
         5 => "FLAC",
         6 => "WAV",
-        _ => "MP3Z",
+        // A book made here is kept as its MP3 parts in one archive. The
+        // archive is how it is stored, not what anybody listens to, so it
+        // is named for the parts inside.
+        _ => "MP3",
     }
 }
 

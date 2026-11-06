@@ -389,7 +389,7 @@ impl Todo {
                 _ => String::new(),
             };
             ScreenBuilder::new("Todo")
-                .top_bar(self.title())
+                .top_bar("Todo")
                 .owns_back(true)
                 .text_entry_with_hint(&self.entry, prompt, &added, submit)
                 .build()
@@ -702,7 +702,10 @@ impl Todo {
     }
 
     fn list(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("Todo").top_bar(self.title());
+        // The bar names the app and nothing else. "Todo: 3 left" made the
+        // title a sentence that changed under the reader with every tick;
+        // the counts sit against each group's own heading instead.
+        let mut screen = ScreenBuilder::new("Todo").top_bar("Todo");
         if let Some(notice) = &self.notice {
             screen = screen.banner(kobo_sdk::BannerLevel::Error, notice);
         }
@@ -760,7 +763,12 @@ impl Todo {
                         if !run.is_empty() {
                             screen = screen.checklist(run.drain(..).map(|index| self.row(index)));
                         }
-                        screen = screen.section(*heading);
+                        let count = self
+                            .ordered()
+                            .iter()
+                            .filter(|&&shown| self.items[shown].done == (*heading == "Done"))
+                            .count();
+                        screen = screen.section_with_value(*heading, count.to_string());
                     }
                     run.push(index);
                 }
@@ -780,6 +788,12 @@ impl Todo {
             }
         }
         screen = screen.spacer(Space::Medium);
+        // The buttons sit at the foot of the panel, where they stay put,
+        // rather than under whichever row happens to be last. Floating under
+        // a short list, Add moved every time an item was ticked or added.
+        if !self.items.is_empty() {
+            screen = screen.fill();
+        }
         // Side by side, because stacked they were two full-width bars saying
         // one word each at the bottom of a list.
         if !self.cleared.is_empty() {
@@ -839,6 +853,7 @@ impl Todo {
         }
         screen
             .spacer(Space::Medium)
+            .fill()
             .buttons([(EXPORT, "Save a copy"), (ADD, "Add")])
             .build()
     }
@@ -849,17 +864,45 @@ impl Todo {
             return self.list();
         };
         let last = self.items.len().saturating_sub(1);
+        // Rename and Remove ride in the bar, apart from the controls for
+        // when and where. As a pair of matching buttons Remove looked exactly
+        // as safe as Rename beside it; in the bar it is the bin, the mark
+        // every list on the panel uses for throwing something away.
         let screen = ScreenBuilder::new("Todo")
             .top_bar("Item")
             .owns_back(true)
+            .top_bar_glyph(DELETE, "Remove", Glyph::Trash)
+            .top_bar_action(EDIT, "Rename")
             // The words themselves, set as text rather than as a heading. A
             // heading at the largest reader text setting is four lines of a
             // six inch panel for something the reader wrote and can already
             // read, and the controls that this screen exists for were pushed
             // off the bottom by it.
             .text(item.text.clone())
-            .secondary(self.summary(item))
-            .buttons([(EDIT, "Rename"), (DELETE, "Remove")]);
+            .secondary(self.summary(item));
+        // When it is due comes first: it is what an item is opened to change
+        // far more often than where it sits. One date out of four, side by
+        // side with the one it has filled: a segmented control, because these
+        // are one answer to one question. Chips read as filters, several of
+        // which can be on at once. Where a label will not fit its quarter the
+        // renderer wraps the four. A date already past is none of these, so
+        // none is filled.
+        let chosen = match item.due.map(|day| day - self.today) {
+            Some(0) => 0,
+            Some(1) => 1,
+            Some(days) if days > 1 => 2,
+            Some(_) => usize::MAX,
+            None => 3,
+        };
+        let screen = screen.section("When it is due").segmented(
+            chosen,
+            [
+                (DUE_TODAY, "Today"),
+                (DUE_TOMORROW, "Tomorrow"),
+                (DUE_WEEK, "In a week"),
+                (DUE_NONE, "No date"),
+            ],
+        );
         // The pair stays a pair at the ends of the list, with whichever way
         // it cannot go drawn as unavailable. A control that disappears at the
         // edge of a list moves the other one under the finger reaching for it.
@@ -887,32 +930,7 @@ impl Todo {
         } else {
             screen
         };
-        // One date out of four, side by side with the one it has filled: a
-        // segmented control, because these are one answer to one question.
-        // Chips read as filters, several of which can be on at once. Four
-        // dates set as four rows was most of a panel at the larger text
-        // settings, and where a label will not fit its quarter the renderer
-        // wraps the four as it did before. A date already past is none of
-        // these, so none is filled.
-        let chosen = match item.due.map(|day| day - self.today) {
-            Some(0) => 0,
-            Some(1) => 1,
-            Some(days) if days > 1 => 2,
-            Some(_) => usize::MAX,
-            None => 3,
-        };
-        screen
-            .section("When it is due")
-            .segmented(
-                chosen,
-                [
-                    (DUE_TODAY, "Today"),
-                    (DUE_TOMORROW, "Tomorrow"),
-                    (DUE_WEEK, "In a week"),
-                    (DUE_NONE, "No date"),
-                ],
-            )
-            .build()
+        screen.build()
     }
 
     /// One checklist row: its action name, its text, what it says when done,
@@ -965,19 +983,6 @@ impl Todo {
         match &self.filter {
             None => true,
             Some(tag) => tags_of(&item.text).any(|candidate| candidate == tag),
-        }
-    }
-
-    fn title(&self) -> String {
-        if !self.loaded {
-            return "Todo".to_string();
-        }
-        let left = self.items.iter().filter(|item| !item.done).count();
-        match left {
-            0 if self.items.is_empty() => "Todo".to_string(),
-            0 => "Todo: all done".to_string(),
-            1 => "Todo: 1 left".to_string(),
-            _ => format!("Todo: {left} left"),
         }
     }
 
@@ -1906,6 +1911,67 @@ mod tests {
     }
 
     #[test]
+    fn an_item_keeps_rename_and_remove_in_the_bar_with_remove_as_the_bin() {
+        let mut todo = started(&[("call the dentist", false), ("water the fern", false)]);
+        todo.view = View::Item(0);
+        let screen = todo.item(0);
+        let bar = screen.top_bar.as_ref().expect("a top bar");
+        assert!(
+            bar.actions
+                .iter()
+                .any(|action| action.label == "Remove"
+                    && action.glyph == Some(kobo_sdk::Glyph::Trash))
+        );
+        assert!(bar.actions.iter().any(|action| action.label == "Rename"));
+        let buttons = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Button { label, .. } => Some(label.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !buttons
+                .iter()
+                .any(|label| label == "Remove" || label == "Rename"),
+            "{buttons:?}"
+        );
+    }
+
+    #[test]
+    fn the_list_is_titled_todo_and_counts_each_group_against_its_heading() {
+        let todo = started(&[("a", false), ("b", false), ("c", true)]);
+        let screen = todo.list();
+        assert_eq!(screen.top_bar.as_ref().expect("a top bar").title, "Todo");
+        let sections = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Section { title, value, .. } => {
+                    Some((title.clone(), value.clone()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            sections,
+            [
+                ("To do".to_owned(), Some("2".to_owned())),
+                ("Done".to_owned(), Some("1".to_owned())),
+            ]
+        );
+        let layout = screen.layout_with(&kobo_sdk::CLARA_BW_METRICS, &kobo_sdk::Chrome::default());
+        let add = layout
+            .rect_of_action(action_id(ADD))
+            .expect("an Add button");
+        assert!(
+            add.y > layout.content.y + layout.content.height / 2,
+            "Add sits at the foot rather than under the last row: {add:?}"
+        );
+    }
+
+    #[test]
     fn the_compose_screen_is_titled_like_the_list_and_says_what_was_added() {
         let mut todo = started(&[]);
         let mut context = Context::default();
@@ -1920,7 +1986,7 @@ mod tests {
                 _ => None,
             })
             .expect("a screen was drawn");
-        assert_eq!(screen.top_bar.expect("a top bar").title, "Todo: 1 left");
+        assert_eq!(screen.top_bar.expect("a top bar").title, "Todo");
         assert!(screen.nodes.iter().any(|node| matches!(
             node,
             kobo_sdk::Node::Secondary { text, .. } if text.contains("Added")

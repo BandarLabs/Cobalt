@@ -392,7 +392,9 @@ impl Game {
             self.browser_actions(
                 self.browser_head()
                     .splash(glyph, "No photo puzzles yet", body)
-                    .command("kobo nonograms push photo.jpg --name Garden --size 9"),
+                    // Broken where a shell allows it, before the options,
+                    // so the panel never wraps it in the middle of one.
+                    .command("kobo nonograms push photo.jpg \\\n  --name Garden --size 9"),
             )
             .build()
         };

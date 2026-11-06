@@ -89,7 +89,7 @@ def main():
                 return ' '.join(drawn.split())
 
             def board(layout):
-                found = [node for node in layout['nodes'] if node['kind'] == 'BackgammonBoard']
+                found = [node for node in layout['nodes'] if node['kind'] == 'BackgammonFrame']
                 assert found, words(layout)
                 return tuple(found[0][key] for key in ('x', 'y', 'width', 'height'))
 
@@ -113,7 +113,8 @@ def main():
                     drive('tap-id ' + point(label), 'wait-idle')
                     if message(get('layout')).startswith(('Tap a marked point', 'Tap Off')):
                         return label
-                if 'White' in words(get('layout')).split('Bar')[1][:20]:
+                # The bar is only on the screen while a checker is on it.
+                if 'White' in (words(get('layout')).split('Bar')[1:] or [''])[0][:20]:
                     drive('tap-id bar', 'wait-idle')
                     return 'bar'
                 raise AssertionError('nothing could be picked up: ' + words(get('layout')))
@@ -126,13 +127,15 @@ def main():
                 address = start()
                 drive('wait-for-id roll')
                 opening = capture('01-before-the-first-roll')
-                assert 'Not rolled yet' in words(opening), words(opening)
+                # Before a roll there are no dice on the screen, in words or
+                # pictures; Roll is the way on.
+                assert 'Not rolled yet' not in words(opening), words(opening)
                 assert 'Opening roll' in words(opening), words(opening)
                 assert 'Computer move' not in words(opening), words(opening)
                 bar = [str(n['lines'][0]) for n in opening['nodes'] if n['kind'].startswith('BarAction')
                        or n['kind'].startswith('BarGlyph')]
                 foot = [str(n['lines'][0]) for n in opening['nodes']
-                        if n['kind'].startswith('NavDestination')]
+                        if n['kind'].startswith(('NavDestination', 'ActionBarEntry'))]
                 assert sorted(bar) == ['More', 'Rules'], bar
                 assert foot == ['Undo', 'Roll', 'Double'], foot
                 place = board(opening)

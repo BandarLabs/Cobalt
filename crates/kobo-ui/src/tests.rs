@@ -158,6 +158,53 @@ fn publisher_styled_text_keeps_alignment_and_inline_emphasis() {
 }
 
 #[test]
+fn an_emphasised_word_leans_about_the_middle_of_its_line() {
+    // Leaned about the foot, the top of "very" went a seventh of a line into
+    // the space before "remarkable" and the two read as one word.
+    let line = 70;
+    assert_eq!(super::emphasis_skew(line, line / 2), 0);
+    assert!(super::emphasis_skew(line, 0) > 0);
+    assert!(super::emphasis_skew(line, line) < 0);
+    assert!(super::emphasis_skew(line, 0) <= line / 14);
+    assert!(-super::emphasis_skew(line, line) <= line / 14);
+}
+
+#[test]
+fn a_comma_after_an_emphasised_word_sits_against_it() {
+    // "its waistcoat-pocket, and": the lean is at the top of the letters, and
+    // a comma on the baseline was pushed off by it into what read as a space.
+    let text = "waistcoat-pocket, and";
+    let screen = Screen::new(
+        1,
+        vec![Node::RichText {
+            id: NodeId(1),
+            text: text.into(),
+            spans: vec![RichTextSpan {
+                start: 0,
+                end: 16,
+                presentation: TextPresentation {
+                    emphasis: true,
+                    ..TextPresentation::default()
+                },
+            }],
+            links: Vec::new(),
+            presentation: ParagraphPresentation::default(),
+            selection: None,
+            formulae: Vec::new(),
+        }],
+    )
+    .with_reading(true);
+    let layout = screen.layout();
+    let runs: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::RichText(_)))
+        .collect();
+    assert_eq!(runs[1].text_lines[0], ", and");
+    assert_eq!(runs[1].rect.x, runs[0].rect.x + runs[0].rect.width);
+}
+
+#[test]
 fn a_held_unicode_word_resolves_to_stable_document_offsets() {
     let screen = Screen::new(
         1,
@@ -1473,4 +1520,59 @@ fn extreme_layout_values_are_bounded() {
     let mut surface = Surface::new(128, 128);
     render(&screen, &mut surface, None);
     assert_eq!(surface.pixels.len(), 128 * 128);
+}
+
+/// A story whose every word can be tapped is not a page of links, and is not
+/// underlined; one link in a sentence still is.
+#[test]
+fn a_paragraph_made_of_links_is_drawn_as_words_and_still_answers_every_tap() {
+    let text = "A single lamp burns over the square, and a wooden crate sits in its pool of light.";
+    let mut links = Vec::new();
+    let mut start = None;
+    for (index, character) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        if character.is_alphanumeric() {
+            start.get_or_insert(index);
+        } else if let Some(from) = start.take() {
+            links.push(TextLink {
+                action: ActionId(100 + u32::try_from(links.len()).unwrap()),
+                start: from,
+                end: index,
+            });
+        }
+    }
+    let paragraph = |links: Vec<TextLink>| {
+        Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: text.to_owned(),
+                spans: Vec::new(),
+                links,
+                presentation: ParagraphPresentation::default(),
+                selection: None,
+                formulae: Vec::new(),
+            }],
+        )
+    };
+    let dense = paragraph(links.clone()).layout();
+    assert!(dense
+        .nodes
+        .iter()
+        .all(|node| !matches!(node.kind, LayoutKind::InlineLink(_))));
+    let crate_word = links[10];
+    let rect = dense
+        .rect_of_action(crate_word.action)
+        .expect("a quiet link");
+    assert_eq!(
+        dense.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+        Some(crate_word.action)
+    );
+    let single = paragraph(vec![crate_word]).layout();
+    assert!(single
+        .nodes
+        .iter()
+        .any(|node| node.kind == LayoutKind::InlineLink(crate_word.action)));
 }

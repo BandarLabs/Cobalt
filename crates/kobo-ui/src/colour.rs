@@ -150,6 +150,10 @@ pub struct Shades {
 /// against this at compile time.
 pub const PANEL_LEVEL: u8 = 17;
 
+/// The grey of a dark chess or draughts square on a greyscale panel: the
+/// thirteenth of the sixteen levels, two short of paper.
+const SQUARE_DARK_GREY: u8 = PANEL_LEVEL * 13;
+
 const fn on_panel(colour: [u8; 3]) -> bool {
     colour[0] % PANEL_LEVEL == 0 && colour[1] % PANEL_LEVEL == 0 && colour[2] % PANEL_LEVEL == 0
 }
@@ -398,6 +402,39 @@ impl Palette {
             Paint::Colour(Accent::Brown.shades().tint)
         } else {
             Paint::Grey(tone::SURFACE)
+        }
+    }
+
+    /// The dark squares of a chess or draughts board.
+    ///
+    /// The same brown as [`Self::board_dark`] on a colour panel. On a
+    /// greyscale panel it is a step deeper than the surface grey, because
+    /// these squares meet with no rule between them and the difference in
+    /// tone is all that draws the board. The surface grey sits one level off
+    /// paper on a sixteen-level panel, and without rules the board faded to a
+    /// sheet of paper with pieces on it. Two levels off is still light enough
+    /// that a black piece and the outline of a white one both stand out.
+    #[must_use]
+    pub const fn square_dark(self) -> Paint {
+        if self.colour() {
+            self.board_dark()
+        } else {
+            Paint::Grey(SQUARE_DARK_GREY)
+        }
+    }
+
+    /// The field under a light chess or draughts square that is marked.
+    ///
+    /// The accent's tint on a colour panel. Paper on a greyscale one, because
+    /// the grey that marks a selected cell elsewhere is near enough the dark
+    /// squares' grey that a marked light square read as a dark one and the
+    /// board seemed to lose its pattern. The heavy outline is the mark there.
+    #[must_use]
+    pub const fn square_selected(self) -> Paint {
+        if self.colour() {
+            self.selection_field()
+        } else {
+            Paint::Grey(tone::PAPER)
         }
     }
 

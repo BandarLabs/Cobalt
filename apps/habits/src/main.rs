@@ -26,7 +26,6 @@ const SCHEDULES: [(&str, &str, Schedule); 3] = [
 ];
 const SHOW_TODAY: &str = "show-today";
 const SHOW_YESTERDAY: &str = "show-yesterday";
-const ACTION_NAME_CHARS: usize = 12;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EntryMode {
     Add,
@@ -91,6 +90,8 @@ struct Habits {
     loading: bool,
     save_in_flight: bool,
     queued_save: Option<Vec<u8>>,
+    /// The habit whose menu is open on Today, offering to skip it.
+    skip_menu: Option<usize>,
 }
 impl Default for Habits {
     fn default() -> Self {
@@ -115,6 +116,7 @@ impl Default for Habits {
             loading: false,
             save_in_flight: false,
             queued_save: None,
+            skip_menu: None,
         }
     }
 }
@@ -171,11 +173,23 @@ impl Habits {
         self.manage_page = Self::clamp_page(self.manage_page, self.items.len());
         self.streaks_page = Self::clamp_page(self.streaks_page, streaks);
     }
+    /// Opens and closes a habit's menu on Today. Whatever is tapped while
+    /// one is open closes it, and a tap off the menu arrives as Back and
+    /// does nothing else. Returns whether the tap was spent here.
+    fn handle_skip_menu(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        if self.skip_menu.take().is_some() && a == ActionId::BACK {
+            self.show(cx);
+            return true;
+        }
+        if let Some(i) = (0..self.items.len()).find(|i| a == action_id(&format!("menu-{i}"))) {
+            self.skip_menu = Some(i);
+            self.show(cx);
+            return true;
+        }
+        false
+    }
     fn display_name(name: &str) -> String {
         Self::shortened_name(name, MAX_HABIT_NAME_CHARS)
-    }
-    fn action_name(name: &str) -> String {
-        Self::shortened_name(name, ACTION_NAME_CHARS)
     }
     fn shortened_name(name: &str, maximum: usize) -> String {
         let mut display: String = name.chars().take(maximum).collect();
@@ -316,12 +330,15 @@ impl Habits {
                     let (start, end, page, pages) = Self::page_bounds(self.today_page, due.len());
                     let visible = &due[start..end];
                     // Nothing on the list said that tapping a habit is what
-                    // marks it done, and the skip buttons under it floated
-                    // without a word to say what they were for.
-                    let open = visible
+                    // marks it done. Skipping is the rarer answer, so it is
+                    // in each open habit's menu rather than a row of
+                    // buttons under the list, where three of them had room
+                    // for "Skip read twenty..." and no more.
+                    let open: Vec<usize> = visible
                         .iter()
                         .filter(|(_, h)| !h.done.contains(&day) && !h.skipped.contains(&day))
-                        .count();
+                        .map(|(i, _)| *i)
+                        .collect();
                     s = s
                         .secondary(if self.days_back == 1 {
                             "Tap a habit you did yesterday."
@@ -344,25 +361,24 @@ impl Habits {
                                 done,
                             )
                         }));
-                    if open > 0 {
-                        s = s.section(if self.days_back == 1 {
-                            "Not yesterday?"
-                        } else {
-                            "Not today?"
-                        });
+                    for i in &open {
+                        s = s.row_menu(format!("done-{i}"), format!("menu-{i}"));
                     }
-                    s = s.buttons(
-                        visible
-                            .iter()
-                            .filter(|(_, h)| !h.done.contains(&day) && !h.skipped.contains(&day))
-                            .map(|(i, h)| {
-                                (
-                                    format!("skip-{i}"),
-                                    format!("Skip {}", Self::action_name(&h.name)),
-                                )
-                            })
-                            .take(3),
-                    );
+                    if let Some(i) = self.skip_menu.filter(|i| open.contains(i)) {
+                        s = s.row_overflow(
+                            format!("menu-{i}"),
+                            true,
+                            [(
+                                format!("skip-{i}"),
+                                if self.days_back == 1 {
+                                    "Skip yesterday"
+                                } else {
+                                    "Skip today"
+                                },
+                                Glyph::Next,
+                            )],
+                        );
+                    }
                     if pages > 1 {
                         s = Self::paged(s, page, pages, "due-prev", "due-next");
                     }
@@ -465,10 +481,20 @@ impl Habits {
                 let week = if due == 0 {
                     "This week: nothing was due.".to_owned()
                 } else {
-                    format!("This week: {done} of {due} due days completed, {skipped} skipped.")
+                    format!(
+                        "This week: {done} of {due} due {} completed, {skipped} skipped.",
+                        if due == 1 { "day" } else { "days" }
+                    )
                 };
                 s = s
-                    .heading(format!("{completed} completions"))
+                    .heading(format!(
+                        "{completed} {}",
+                        if completed == 1 {
+                            "completion"
+                        } else {
+                            "completions"
+                        }
+                    ))
                     .text(week)
                     .button("settings", "Settings");
             }
@@ -806,6 +832,9 @@ impl KoboApp for Habits {
     }
     fn on_action(&mut self, cx: &mut Context, a: ActionId) {
         self.normalize_pages();
+        if self.handle_skip_menu(cx, a) {
+            return;
+        }
         if a == ActionId::BACK {
             self.go_back();
             self.show(cx);
@@ -1099,7 +1128,20 @@ mod tests {
         archived.archived = true;
         archived.done = vec![today];
         let (due, done, skipped) = model::week_summary(&[habit, archived], today);
-        assert_eq!((due, done, skipped), (7, 2, 1));
+        assert_eq!((due, done, skipped), (3, 2, 1));
+    }
+
+    #[test]
+    fn habits_added_today_count_only_today_as_due() {
+        let today = 20_000;
+        let mut read = Habit::new("Read".into());
+        read.done = vec![today];
+        let walk = Habit::new("Walk".into());
+        let stretch = Habit::new("Stretch".into());
+        assert_eq!(
+            model::week_summary(&[read, walk, stretch], today),
+            (3, 1, 0)
+        );
     }
 
     #[test]
@@ -1122,9 +1164,11 @@ mod tests {
                 _ => false,
             })
         };
+        assert!(says(&screen, "1 completion"));
+        assert!(!says(&screen, "1 completions"));
         assert!(says(
             &screen,
-            "This week: 1 of 7 due days completed, 0 skipped."
+            "This week: 1 of 1 due day completed, 0 skipped."
         ));
         let settings = Habits {
             loaded: true,
@@ -1297,7 +1341,7 @@ mod tests {
     }
 
     #[test]
-    fn every_due_habit_has_a_skip_control_on_a_clean_page() {
+    fn every_due_habit_can_be_skipped_from_its_own_menu_on_a_clean_page() {
         use kobo_sdk::Node;
         use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
@@ -1308,14 +1352,14 @@ mod tests {
             loaded: true,
             ..Habits::default()
         };
-        for (page, expected_rows, expected_skip, pager) in [
+        for (page, expected_rows, expected_menus, pager) in [
             (
                 0,
                 ["done-0", "done-1", "done-2"].as_slice(),
-                ["skip-0", "skip-1", "skip-2"].as_slice(),
+                ["menu-0", "menu-1", "menu-2"].as_slice(),
                 "due-next",
             ),
-            (1, ["done-3"].as_slice(), ["skip-3"].as_slice(), "due-prev"),
+            (1, ["done-3"].as_slice(), ["menu-3"].as_slice(), "due-prev"),
         ] {
             app.today_page = page;
             let screen = app.screen();
@@ -1334,17 +1378,31 @@ mod tests {
                 );
             }
             let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
-            for action in expected_skip.iter().chain([pager].iter()) {
+            for action in expected_menus.iter().chain([pager].iter()) {
                 assert!(
                     layout.rect_of_action(action_id(action)).is_some(),
                     "{action} is reachable"
                 );
             }
+            assert!(!screen.nodes.iter().any(|node| matches!(
+                node,
+                Node::Button { label, .. } if label.starts_with("Skip")
+            )));
             assert!(screen
                 .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
                 .issues
                 .is_empty());
         }
+        // A habit's menu offers the skip, and choosing it closes the menu.
+        app.today_page = 0;
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("menu-1"));
+        let menu = runner.app().screen();
+        let layout = menu.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(layout.rect_of_action(action_id("skip-1")).is_some());
+        runner.action(action_id("skip-1"));
+        assert!(runner.app().skip_menu.is_none());
+        assert_eq!(runner.app().items[1].skipped, vec![Habits::day()]);
     }
 
     #[test]
@@ -1539,7 +1597,7 @@ mod tests {
         assert!(title.is_some_and(|title| title.ends_with('…')));
         assert!(today
             .layout_with(&kobo_ui::CLARA_BW_METRICS, &kobo_ui::Chrome::default())
-            .rect_of_action(action_id("skip-0"))
+            .rect_of_action(action_id("menu-0"))
             .is_some());
         let diagnostics =
             today.diagnostics(&kobo_ui::CLARA_BW_METRICS, &kobo_ui::Chrome::default());

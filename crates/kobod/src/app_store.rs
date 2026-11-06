@@ -62,8 +62,8 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
     },
     BuiltinApp {
         id: "chat",
-        title: "AI Command Center",
-        label: "AI Chat",
+        title: "Chat",
+        label: "Chat",
         summary: "Ask a question and tap the answer, rather than typing one.",
         version: "1.0.0",
         glyph: Glyph::Chat,

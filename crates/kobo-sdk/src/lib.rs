@@ -33,6 +33,8 @@ pub use kobo_protocol::{
     MAX_TASK_BYTES, MAX_URL_LEN,
 };
 pub use kobo_protocol::{SecretTarget, TextOutcome, TEXT_ENTRY_VERSION};
+/// The three marks a word game prints on a tile and on its key.
+pub use kobo_ui::CellTone;
 pub use kobo_ui::QuoteRole;
 pub use kobo_ui::{
     document_preview, stamp_format_badge, terminal_grid, terminal_grid_for, typographic_cover,

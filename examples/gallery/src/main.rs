@@ -312,7 +312,7 @@ const SPECIMENS: &[(&str, &str)] = &[
     ("store-birds", "You pressed Field guide to birds."),
     ("store-birds-update", "You pressed Update."),
     ("store-moths", "You pressed Moths."),
-    ("store-moths-open", "You pressed Open."),
+    ("store-moths-page", "You pressed the mark beside Moths."),
     ("species-delete", "You pressed Delete."),
     ("token-field", "You tapped the token field."),
 ];
@@ -541,6 +541,10 @@ impl Gallery {
                 Part {
                     draw: Gallery::crossword_page,
                     calls: "crossword_board",
+                },
+                Part {
+                    draw: Gallery::marked_boards_page,
+                    calls: "board_with_tones, numbered_board",
                 },
                 Part {
                     draw: Gallery::pencil_page,
@@ -1079,6 +1083,47 @@ impl Gallery {
                 ("cw-c", 'T', None, false),
             ],
         )
+    }
+
+    /// The boards that mark their squares: a word game's guess in its three
+    /// tones, and a board whose squares carry printed numbers.
+    ///
+    /// Both need the release that draws tones, so an application using
+    /// either names that release as its minimum.
+    fn marked_boards_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("A word game's guess, in its three tones")
+            .board_with_tones(
+                3,
+                [
+                    ("tone-a", "C", kobo_sdk::CellTone::Solid),
+                    ("tone-b", "A", kobo_sdk::CellTone::Shaded),
+                    ("tone-c", "T", kobo_sdk::CellTone::Faded),
+                ],
+            )
+            .section("A board with numbered squares")
+            .numbered_board(
+                3,
+                [
+                    (
+                        "numbered-a",
+                        " ",
+                        Some(Glyph::BlackDisc),
+                        1,
+                        kobo_sdk::CellTone::Plain,
+                        false,
+                    ),
+                    ("numbered-b", " ", None, 2, kobo_sdk::CellTone::Plain, true),
+                    (
+                        "numbered-c",
+                        " ",
+                        Some(Glyph::WhiteDisc),
+                        3,
+                        kobo_sdk::CellTone::Plain,
+                        false,
+                    ),
+                ],
+            )
     }
 
     /// The grids that carry their own meaning: a pencilled square and a
@@ -1662,10 +1707,11 @@ impl Gallery {
             )
     }
 
-    /// A row with a button of its own and a count, which is a Store row.
+    /// A row with a button of its own and a count, and a row that opens
+    /// what it names with a mark for the rest, which are Store rows.
     fn row_extras_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
-            .section("Rows with a button and a count")
+            .section("Rows with a button, a count and a mark")
             .rows([
                 (
                     "store-birds",
@@ -1677,7 +1723,7 @@ impl Gallery {
             ])
             .row_button("store-birds", "store-birds-update", "Update")
             .row_badge("store-birds", 3)
-            .row_button("store-moths", "store-moths-open", "Open")
+            .row_menu("store-moths", "store-moths-page")
     }
 
     /// A checklist, which is a row whose value is whether it is done.

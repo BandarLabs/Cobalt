@@ -1256,7 +1256,11 @@ pub fn ensure_way_back_revealed(
     // the bar and shifts it down, so hiding underneath one would put the way
     // back somewhere other than where the reader is told to reach for it.
     // Full-bleed art is a reading screen, and a reading screen has no band.
-    if screen.auto_hide_top_bar && state == TopBarState::Hidden && chrome.status.is_none() {
+    if screen.auto_hide_top_bar
+        && state == TopBarState::Hidden
+        && chrome.status.is_none()
+        && !bar_holds_open_panel(&screen)
+    {
         screen.top_bar = None;
         return screen;
     }
@@ -1264,6 +1268,24 @@ pub fn ensure_way_back_revealed(
         screen = screen.with_top_bar(TopBar::new(NodeId(0), name));
     }
     screen
+}
+
+/// Whether a panel hangs from one of the top bar's own controls.
+///
+/// Such a bar stays drawn while the panel is open, over the page as a
+/// called-back bar is: a panel pointing at a control that is out of sight
+/// points at nothing, and a bar pushed into the page while it is open moves
+/// the words the reader opened it to adjust.
+#[must_use]
+pub fn bar_holds_open_panel(screen: &Screen) -> bool {
+    let Some(OverlayKind::Popover { anchor }) = screen.overlay.as_ref().map(|overlay| overlay.kind)
+    else {
+        return false;
+    };
+    screen
+        .top_bar
+        .as_ref()
+        .is_some_and(|bar| bar.actions.iter().any(|action| action.action == anchor))
 }
 
 /// What a touch at `y` means for an auto-hiding top bar, if anything.
@@ -1282,7 +1304,7 @@ pub fn top_bar_touch(
 ) -> Option<TopBarState> {
     // The same condition the drawing side uses, so the band is only ever
     // claimed on a screen whose bar really is at the top of the panel.
-    if !screen.auto_hide_top_bar || chrome.status.is_some() {
+    if !screen.auto_hide_top_bar || chrome.status.is_some() || bar_holds_open_panel(screen) {
         return None;
     }
     let within_band = y >= 0 && y < metrics.top_bar_height();
@@ -1309,6 +1331,53 @@ pub struct BarAction {
     /// recognises with no word anywhere near it is how a panel becomes a
     /// puzzle. Only the drawing changes.
     pub glyph: Option<Glyph>,
+}
+
+/// The field of a shaded tile. Mid-grey, an exact level of the panel's
+/// sixteen, so it is neither mistaken for paper nor for the solid square, and
+/// dark enough that ink letters on it stay the darkest thing in the square.
+const TILE_SHADE: u8 = 170;
+
+/// The letter on a faded tile. Light enough to step back from every letter in
+/// ink and still be read without leaning in.
+const TILE_FADED_INK: u8 = 136;
+
+/// What a mine field square shows besides a count.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FieldMark {
+    Flag,
+    Mine,
+}
+
+impl FieldMark {
+    /// The character an application sends for this mark. The runtime draws
+    /// its own picture in place of the character, because the typeface's
+    /// flag came out a few pixels tall in the middle of a square.
+    fn of(label: &str) -> Option<Self> {
+        match label {
+            "\u{2691}" => Some(Self::Flag),
+            "\u{2739}" => Some(Self::Mine),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a square grid is a mine field: four to nine squares a side, each
+/// one blank, a count from 1 to 8, a flag or a mine, at least one of them
+/// still covered, and nothing else on it. Covered is the cell's selection.
+fn is_mine_field(square: bool, columns: i32, cells: &[Cell]) -> bool {
+    square
+        && (4..=9).contains(&columns)
+        && i32::try_from(cells.len()).is_ok_and(|count| count == columns * columns)
+        && cells.iter().any(|cell| cell.selected)
+        && cells.iter().all(|cell| {
+            cell.glyph.is_none()
+                && cell.corner.is_none()
+                && cell.tone == CellTone::Plain
+                && (cell.label.is_empty()
+                    || FieldMark::of(&cell.label).is_some()
+                    || matches!(cell.label.as_bytes(), [b'1'..=b'8']))
+        })
 }
 
 /// What a grid cell is: part of a board, or a key.
@@ -1338,6 +1407,15 @@ pub enum CellStyle {
     BackgammonTop,
     /// A point on a conventional backgammon board, broad at the panel edge.
     BackgammonBottom,
+    /// A point on a backgammon board whose cells carry their numbers, which
+    /// the runtime lays out whole: inside the page margins, in a frame, with
+    /// a bar between its halves. Carries which way the point faces and
+    /// whether it is one of the shaded points, counted along its own row,
+    /// because its position on the panel no longer says.
+    BackgammonPoint {
+        from_top: bool,
+        dark: bool,
+    },
     Key,
     /// A cell that is nothing but the picture in it.
     ///
@@ -1359,6 +1437,37 @@ pub enum CellStyle {
     /// that did something, which is a panel mostly made of controls that do
     /// nothing.
     EmptyPad,
+    /// A pit of a sowing game: a round well with its count in it.
+    Pit,
+    /// A store at one end of a sowing game's board, as tall as both rows.
+    Store,
+    /// A square of a noughts and crosses board: it draws the rule on its
+    /// right and below it where another square follows, so the board is the
+    /// four rules of a # and nothing round it.
+    Hash {
+        right: bool,
+        bottom: bool,
+    },
+    /// A square of a joined board ruled in grey, a reversi board's: it
+    /// draws its top and left rules and the board draws the frame.
+    Ruled,
+    /// A square of a mine field. The squares meet and share their rules, as
+    /// on a printed board, with a heavier frame round the field: drawn as
+    /// separate tiles with paper between them, a field read as a keypad.
+    /// A covered square is grey and an opened one is paper; `struck` is the
+    /// mine that ended the game, set in ink so it is found at a glance. The
+    /// four edges say which sides of the field this square is on.
+    Field {
+        top: bool,
+        left: bool,
+        right: bool,
+        bottom: bool,
+        struck: bool,
+    },
+    /// A board square carrying one of the word-game tones.
+    Tile(CellTone),
+    /// A keyboard key carrying the tone its letter has on the board.
+    KeyTile(CellTone),
 }
 
 /// Whether a control can currently be activated.
@@ -1874,9 +1983,14 @@ impl PageTurns {
     }
 
     /// The position to draw, once nonsense has been discarded.
+    ///
+    /// "1 of 1" is nonsense too. It says there is nowhere to turn to in a
+    /// strip that also takes a line from the foot of the screen, and Panels,
+    /// with one comic on its shelf, drew it under a list of one. A screen of
+    /// one page draws no strip and gets the line back.
     const fn drawable_position(self) -> Option<(u16, u16)> {
         match self.position {
-            Some((page, of)) if of > 0 && page >= 1 && page <= of => Some((page, of)),
+            Some((page, of)) if of > 1 && page >= 1 && page <= of => Some((page, of)),
             _ => None,
         }
     }
@@ -2129,7 +2243,14 @@ impl Screen {
             .as_ref()
             .map_or(0, |status| layout_status_band(status, metrics, &mut layout));
         cursor = cursor.saturating_add(band);
-        if let Some(top_bar) = &self.top_bar {
+        // A bar the reader called back over a screen that hides it is drawn
+        // over the page, as the stock reader draws its own, rather than above
+        // it. The shell only leaves such a bar in place while it is shown, so
+        // its presence is the reveal. Pushed down, the page under it moved a
+        // bar's height for as long as the bar was up, and a page measured for
+        // the whole panel lost its last lines under the foot.
+        let bar_over_content = self.auto_hide_top_bar && band == 0;
+        if let Some(top_bar) = self.top_bar.as_ref().filter(|_| !bar_over_content) {
             cursor = layout_top_bar(top_bar, chrome, metrics, band, &mut layout);
             cursor = cursor.saturating_add(metrics.below_top_bar(prose));
         }
@@ -2180,6 +2301,11 @@ impl Screen {
         };
         let flow_width = metrics.width - 2 * margin - rail_reserved;
 
+        // Every block of facts set straight on the page shares one label
+        // column, so the values of two blocks under two sections start at the
+        // same place rather than wherever each block's longest label ended.
+        let shared_facts = SharedFactLabel::enter(shared_fact_label(&self.nodes));
+        let mut placed: Vec<PlacedFlowNode> = Vec::new();
         for (position, node) in self.nodes.iter().enumerate() {
             if layout.nodes.len() >= MAX_LAYOUT_NODES || cursor >= content_bottom {
                 if self.nodes[position..]
@@ -2240,6 +2366,8 @@ impl Screen {
                 gap,
                 true,
             );
+            let first = layout.nodes.len();
+            let top = cursor;
             cursor = with_flow_height_bound(bottom < content_bottom, || {
                 layout_flow_node(
                     node,
@@ -2253,13 +2381,27 @@ impl Screen {
                     &mut layout,
                 )
             });
+            placed.push(PlacedFlowNode {
+                position,
+                nodes: first..layout.nodes.len(),
+                top,
+                end: cursor,
+                bottom,
+                bounded: bottom < content_bottom,
+            });
             layout.flow_height = cursor.saturating_sub(content_top).max(0);
             if cursor > content_bottom {
                 note_cut_short();
             }
             cursor = cursor.saturating_add(gap);
         }
+        align_bands_with_boards(&self.nodes, &placed, margin, metrics, prose, &mut layout);
+        drop(shared_facts);
 
+        if let Some(top_bar) = self.top_bar.as_ref().filter(|_| bar_over_content) {
+            // Last, so it is drawn over the page and a tap on it is the bar's.
+            layout_top_bar(top_bar, chrome, metrics, band, &mut layout);
+        }
         if let Some(nav_bar) = &self.nav_bar {
             layout_nav_bar(nav_bar, metrics, &mut layout);
         }
@@ -3044,10 +3186,16 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
                 width,
                 height,
             },
-            kind: if nav_bar.style == BarStyle::Navigation && nav_bar.selected == Some(index) {
-                LayoutKind::NavDestinationSelected(destination.action, destination.glyph)
-            } else {
-                LayoutKind::NavDestination(destination.action, destination.glyph)
+            kind: match nav_bar.style {
+                BarStyle::Navigation if nav_bar.selected == Some(index) => {
+                    LayoutKind::NavDestinationSelected(destination.action, destination.glyph)
+                }
+                BarStyle::Navigation => {
+                    LayoutKind::NavDestination(destination.action, destination.glyph)
+                }
+                BarStyle::Actions => {
+                    LayoutKind::ActionBarEntry(destination.action, destination.glyph)
+                }
             },
             text_lines: vec![destination.label.clone()],
         });
@@ -4233,6 +4381,63 @@ pub struct Cell {
     pub selected: bool,
     /// Small crossword clue number in the upper-left corner (1–99).
     pub corner: Option<u8>,
+    /// How strongly the square is marked, for a game whose tiles report
+    /// three things at once. Plain unless the application says otherwise.
+    pub tone: CellTone,
+}
+
+/// The three marks a word game prints on a tile, and on the key for the same
+/// letter.
+///
+/// A printed word puzzle shows a letter in its right place as a solid black
+/// square, a letter that is in the word elsewhere as a grey square with a
+/// heavy rule round it, and a letter that is not in the word at all as a
+/// faint letter on plain paper. Each is a different amount of ink, so the
+/// three can be told apart at arm's length on sixteen greys without reading a
+/// single letter, which brackets and crosses typed beside the letter could
+/// not do.
+///
+/// Sent from protocol 17 in the byte that says whether a cell is selected. A
+/// runtime that has no reading for a tone refuses the screen rather than
+/// drawing every tile alike, so an application that uses one asks the Store
+/// for the release that draws them.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum CellTone {
+    /// Drawn as the cell always was.
+    #[default]
+    Plain,
+    /// Solid ink with the label in paper: the letter is in its place.
+    Solid,
+    /// A mid-grey field inside a heavy rule: the letter is in the word, but
+    /// somewhere else.
+    Shaded,
+    /// A faint label on paper: the letter has been tried and is not used.
+    Faded,
+}
+
+impl CellTone {
+    /// The tone's number on the wire, from zero for plain.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Plain => 0,
+            Self::Solid => 1,
+            Self::Shaded => 2,
+            Self::Faded => 3,
+        }
+    }
+
+    /// The tone a wire number names, if any.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Plain),
+            1 => Some(Self::Solid),
+            2 => Some(Self::Shaded),
+            3 => Some(Self::Faded),
+            _ => None,
+        }
+    }
 }
 
 impl Cell {
@@ -4244,7 +4449,15 @@ impl Cell {
             glyph: None,
             selected: false,
             corner: None,
+            tone: CellTone::Plain,
         }
+    }
+
+    /// Marks the cell with one of the word-game tones.
+    #[must_use]
+    pub const fn with_tone(mut self, tone: CellTone) -> Self {
+        self.tone = tone;
+        self
     }
 
     /// Gives this cell a picture to sit above its label.
@@ -5020,6 +5233,11 @@ pub enum LayoutKind {
     /// and hit-tested ahead of the page turn beneath it because it is pushed
     /// after the paragraph. One of these per line the run covers.
     InlineLink(ActionId),
+    /// A link in a paragraph that is mostly links, such as a story whose
+    /// every word can be tapped. Tapped exactly as a link is, and drawn as
+    /// the words alone: a rule under every word turned the page into a
+    /// ruled form and drowned the story.
+    QuietLink(ActionId),
     /// A line of metadata: smaller than the body, and in the muted tone.
     Secondary,
     /// The name of a group, with a hairline to the right margin and an
@@ -5035,7 +5253,27 @@ pub enum LayoutKind {
     Button(ActionId, ControlState, Emphasis),
     /// A checker stack on a backgammon point. `from_top` pins its base to the
     /// matching board edge so a five-checker point reads as one familiar pile.
+    /// A point's checkers: their colour, how many there are and whether they
+    /// stack down from the top of the board. Five are drawn, and a point
+    /// holding more carries its count on the fifth.
     BackgammonStack(Glyph, u8, bool),
+    /// The frame and bar of a numbered backgammon board.
+    BackgammonFrame,
+    /// The outline of a sowing game's board.
+    MancalaBoard,
+    /// Whose store it is, under the board below the store.
+    StoreLabel,
+    /// The ink frame round a joined board whose squares draw their own
+    /// inner rules, a reversi board's.
+    RuledBoard,
+    /// The thin ink frame round a chess or draughts board. It follows the
+    /// squares rather than leading them, because a dark square on the edge
+    /// fills to its own edge and would paint over a frame drawn first.
+    CheckeredFrame,
+    /// A point's number, printed above or below it on a numbered backgammon
+    /// board. Solid is printed in a black box, shaded in an open box, faded
+    /// in grey.
+    PointNumber(CellTone),
     /// The enclosing field and central bar of a backgammon board.
     BackgammonBoard,
     Card,
@@ -5116,6 +5354,11 @@ pub enum LayoutKind {
     /// screen.
     NavDestination(ActionId, Option<Glyph>),
     NavDestinationSelected(ActionId, Option<Glyph>),
+    /// One verb in an action bar. Drawn in ink like a selected destination
+    /// and never marked: drawn as an unselected destination instead, every
+    /// working action in the bar was the grey of a tab one is not on, and
+    /// Undo, Notes and Add comic all read as switched off.
+    ActionBarEntry(ActionId, Option<Glyph>),
     Row(ActionId),
     Cell(ActionId, CellStyle, bool),
     /// A grid cell's label. Carries whether the cell is a board mark (an X,
@@ -5125,8 +5368,17 @@ pub enum LayoutKind {
     /// columns for its cells to turn taller than they are wide, so the size
     /// this label draws at cannot be read off its own rectangle.
     CellLabel(bool),
+    /// The label of a toned tile or key, set in the ink its tone asks for:
+    /// paper on a solid square, ink on a shaded one, a faint grey on a faded
+    /// one. Carries whether it is a board mark, as [`Self::CellLabel`] does.
+    ToneLabel(CellTone, bool),
     /// Explicit board ink; selection is an outline independent of the mark.
     BoardMark(BoardMark, bool),
+    /// A flag or a mine on a mine field, drawn rather than typed. Carries
+    /// whether it sits on ink, where it is drawn in paper.
+    FieldMark(FieldMark, bool),
+    /// The count on an opened mine field square, in the interface face.
+    FieldCount,
     BoardClue,
     /// The chip marking the selected square's row and column clues. Drawn
     /// behind the clue's numbers and sized to them, never to the gutter: the
@@ -5136,6 +5388,14 @@ pub enum LayoutKind {
     PencilMark(PencilMarkKind, bool, bool, u8),
     PencilEdge(u8, bool),
     PencilNumber(bool),
+    /// A pencilled candidate in its ninth of a square: set in the caption
+    /// size whenever the digit's own shape fits its ninth, which its line
+    /// height, with the room above and below a digit, never does. Measured
+    /// that way it fell to a size a reader had to lean in for.
+    PencilNote(bool),
+    /// A digit the solver entered rather than one the puzzle gave: the same
+    /// size, in grey, the way a pencilled answer sits beside a printed clue.
+    PencilEntry(bool),
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
     /// The rule around a crossword grid. Its squares draw the lines they share
@@ -5285,6 +5545,7 @@ impl LayoutKind {
             | Self::BarGlyph(action, _)
             | Self::NavDestination(action, ..)
             | Self::NavDestinationSelected(action, ..)
+            | Self::ActionBarEntry(action, ..)
             | Self::Tile(action, ControlState::Enabled)
             | Self::Field(action, _)
             | Self::FieldClear(action)
@@ -5299,6 +5560,7 @@ impl LayoutKind {
             | Self::QuoteFold(action, _)
             | Self::PagePrevious(action)
             | Self::InlineLink(action)
+            | Self::QuietLink(action)
             | Self::SectionLink(action)
             | Self::PageNext(action)
             | Self::Toggle(action, ControlState::Enabled)
@@ -5601,6 +5863,7 @@ impl Layout {
                         | LayoutKind::BarGlyph(..)
                         | LayoutKind::NavDestination(..)
                         | LayoutKind::NavDestinationSelected(..)
+                        | LayoutKind::ActionBarEntry(..)
                         | LayoutKind::Row(_)
                         | LayoutKind::RowMenu(_)
                         | LayoutKind::Cell(..)
@@ -5622,7 +5885,24 @@ impl Layout {
             .min_by_key(|node| {
                 i64::from(node.rect.width.max(0)) * i64::from(node.rect.height.max(0))
             })
-            .map(|node| node.rect)
+            .map(|node| match node.kind {
+                // A row sets its words from its very edge, and the press is
+                // drawn as a patch inset from the edge on every side. On a
+                // switch row the patch began past the first letter of the
+                // label and of the line under it, and the pressed row read as
+                // a black bar with two letters hanging off it. These are
+                // widened into the margin by at least the inset, so the patch
+                // still covers what is on the row.
+                LayoutKind::Row(_) | LayoutKind::Toggle(..) | LayoutKind::OptionRow(..) => {
+                    let spare = min(node.rect.x, node.rect.height / 8).max(0);
+                    Rect {
+                        x: node.rect.x - spare,
+                        width: node.rect.width + 2 * spare,
+                        ..node.rect
+                    }
+                }
+                _ => node.rect,
+            })
     }
 
     /// How much of the band between the bars is already spoken for.
@@ -5957,6 +6237,28 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
             })
             .max()
             .unwrap_or(available),
+        // As wide as the run is on one line, so a clock or a single command
+        // in a natural slot sits against the band's far edge. Without an
+        // answer here a run of chips asked for the whole band, which stacked
+        // it under the text it was meant to sit beside. Two or more are
+        // measured as the segmented control a band slot draws them as: every
+        // segment as wide as the widest label.
+        Node::Chips { chips, .. } => {
+            let pad = metrics.space(Space::Small);
+            let widths: Vec<i32> = chips
+                .iter()
+                .take(MAX_CHIPS)
+                .map(|chip| chip_label_width(&chip.label) + pad * 2)
+                .collect();
+            let count = widths.len() as i32;
+            let run = if (2..=MAX_SEGMENTS).contains(&widths.len()) {
+                let widest = widths.iter().copied().max().unwrap_or(0);
+                widest * count + metrics.space(Space::Small) * (count - 1)
+            } else {
+                widths.iter().sum::<i32>() + metrics.space(Space::Tight) * max(0, count - 1)
+            };
+            min(available, run)
+        }
         Node::Picture {
             source,
             max_height_tenths_mm,
@@ -6175,6 +6477,28 @@ fn rich_run_at(start: usize, line_end: usize, spans: &[RichTextSpan]) -> (usize,
         }
     }
     (line_end.max(start + 1), TextPresentation::default())
+}
+
+/// How many keys across a command deck with `keys` keys is laid out.
+///
+/// A deck asks for five across, the shape of the fifteen-key hardware it
+/// stands in for, and a full one is drawn that way. A deck with two keys
+/// drawn five across was two small squares in the top corner of an empty
+/// panel. Fewer keys take fewer columns, so they are larger and the deck
+/// fills the width, and each count takes the columns that leave the fewest
+/// gaps: two and four keys two across, three, six and nine three across,
+/// seven, eight, eleven and twelve four across, and five and ten five across
+/// as they always were. The count is decided here rather than by the
+/// application because a square grid of two to four columns is also a game
+/// board, and those are never drawn as keys.
+fn pad_deck_columns(keys: usize, requested: i32) -> i32 {
+    let columns = match keys {
+        0..=2 | 4 => 2,
+        3 | 6 | 9 => 3,
+        7 | 8 | 11 | 12 => 4,
+        _ => 5,
+    };
+    columns.min(requested)
 }
 
 fn rich_text_spacing(presentation: ParagraphPresentation, prose: Face) -> (i32, i32, i32, i32) {
@@ -6396,6 +6720,20 @@ fn layout_node(
                 note_cut_short();
             }
             let mut line_y = y.saturating_add(before);
+            // Most of the paragraph up to its last link is links: every word
+            // is a way in, and none is singled out by being underlined.
+            let quiet = {
+                let shown = &links[..links.len().min(MAX_TEXT_LINKS)];
+                let reach = shown.iter().map(|link| link.end).max().unwrap_or(0);
+                let linked: usize = shown
+                    .iter()
+                    .map(|link| link.end.saturating_sub(link.start))
+                    .sum();
+                let letters = text.get(..reach.min(text.len())).map_or(0, |head| {
+                    head.chars().filter(|c| !c.is_whitespace()).count()
+                });
+                shown.len() >= 8 && linked * 3 >= letters * 2
+            };
             for (line_index, &(from, to)) in ranges.iter().take(visible_lines).enumerate() {
                 if layout.nodes.len() >= rich_text_limit {
                     break;
@@ -6546,7 +6884,11 @@ fn layout_node(
                                 width: through.saturating_sub(before),
                                 height: line_height,
                             },
-                            kind: LayoutKind::InlineLink(link.action),
+                            kind: if quiet {
+                                LayoutKind::QuietLink(link.action)
+                            } else {
+                                LayoutKind::InlineLink(link.action)
+                            },
                             text_lines: Vec::new(),
                         });
                     }
@@ -6832,27 +7174,16 @@ fn layout_node(
             } else {
                 metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM)
             };
-            let desired = measure_text(label, FontSize::Body)
-                .0
-                .saturating_add(padding.saturating_mul(2))
-                .max(metrics.touch_target_minimum());
-            // A primary control is deliberately dominant. Ordinary controls
-            // stay content-width unless their label would leave too little
-            // surrounding paper to read as a deliberate target.
-            let button_width = if legacy
-                || *emphasis == Emphasis::Primary
-                || in_band_slot()
-                || desired >= width * 4 / 5
-            {
-                width
-            } else {
-                desired.min(width)
-            };
-            let button_x = if button_width == width {
-                x
-            } else {
-                x.saturating_add((width - button_width) / 2)
-            };
+            // Every button takes the width of the column, as a primary and a
+            // pair in a band already did. A button the width of its label was
+            // centred under a full-width one, the one control on the screen
+            // not set from the margin, and a lone one between two pairs (Start
+            // section again, between Needles' pairs) read as a mistake. The
+            // emphasis is the fill, not the width. Wider only ever wraps the
+            // label onto fewer lines, so nothing measured narrow is drawn
+            // taller.
+            let button_width = width;
+            let button_x = x;
             let lines = wrap_text(
                 label,
                 if legacy {
@@ -7061,9 +7392,10 @@ fn layout_node(
                 let count = shown as i32;
                 let each = width.saturating_sub(gap * (count - 1)) / count;
                 let fits = each >= metrics.touch_target_minimum()
-                    && chips.iter().take(shown).all(|chip| {
-                        measure_text(&chip.label, FontSize::Caption).0 + pad * 2 <= each
-                    });
+                    && chips
+                        .iter()
+                        .take(shown)
+                        .all(|chip| chip_label_width(&chip.label) + pad * 2 <= each);
                 if fits {
                     for (position, chip) in chips.iter().take(shown).enumerate() {
                         if layout.nodes.len() >= MAX_LAYOUT_NODES {
@@ -7101,7 +7433,7 @@ fn layout_node(
                     break;
                 }
                 let label = one_line(&chip.label, max_i32(1, width - pad * 2), FontSize::Caption);
-                let chip_width = (measure_text(&label, FontSize::Caption).0 + pad * 2).min(width);
+                let chip_width = (chip_label_width(&label) + pad * 2).min(width);
                 // Wrapped by the renderer, which is the whole point: an
                 // application that had to place these itself would be choosing
                 // coordinates, and a subject cloud is exactly the content whose
@@ -7576,6 +7908,13 @@ fn layout_node(
                 .map(|(label, _)| measure_text(label, label_size).0)
                 .max()
                 .unwrap_or(0);
+            // A block on the page itself takes the column every block there
+            // shares; one inside a band, card or dialog keeps its own.
+            let widest = if depth == 0 && !in_band_slot() {
+                max(widest, SHARED_FACT_LABEL.with(std::cell::Cell::get))
+            } else {
+                widest
+            };
             let column = min(widest, width * FACTS_LABEL_LIMIT_EIGHTHS / 8);
             let value_x = x.saturating_add(column).saturating_add(gap);
             let value_width = max(0, width.saturating_sub(column).saturating_sub(gap));
@@ -7758,7 +8097,70 @@ fn layout_node(
                 && requested == 12
                 && cells.len() == 24
                 && cells.iter().all(|cell| cell.label.starts_with("Point "));
-            let pad_deck = *square && requested == 5 && cells.len() <= 15;
+            // A board whose points carry their numbers is laid out whole here.
+            // One without them came from an application that draws its own
+            // numbers in pictures matched to the old columns, and keeps them.
+            if backgammon_board
+                && !legacy_typography()
+                && cells.iter().any(|cell| cell.corner.is_some())
+            {
+                return layout_numbered_backgammon(*id, cells, x, y, width, metrics, layout);
+            }
+            // Two rows of six pits between two stores, as a sowing game's
+            // board is carved: eight squares a row, with a store at each end
+            // of the row that holds it and nothing in the other row's place.
+            if is_mancala(*square, *columns, cells) {
+                return layout_mancala(
+                    *id,
+                    cells,
+                    Rect {
+                        x,
+                        y,
+                        width,
+                        height: bottom.saturating_sub(y),
+                    },
+                    metrics,
+                    layout,
+                );
+            }
+            // A row of word-game tiles is five squares too, and is a board.
+            let pad_deck = *square
+                && requested == 5
+                && cells.len() <= 15
+                && cells.iter().all(|cell| cell.tone == CellTone::Plain);
+            // Draughts and reversi are joined boards, like a chess board: the
+            // squares meet, and the board is ruled rather than tiled.
+            let draughts_squares = *square
+                && matches!(requested, 8 | 10)
+                && cells.iter().any(|cell| {
+                    matches!(
+                        cell.glyph,
+                        Some(
+                            Glyph::BlackDraughtsMan
+                                | Glyph::WhiteDraughtsMan
+                                | Glyph::BlackDraughtsKing
+                                | Glyph::WhiteDraughtsKing
+                        )
+                    )
+                });
+            let reversi_board = *square
+                && requested == 8
+                && cells.len() == 64
+                && !draughts_squares
+                && cells
+                    .iter()
+                    .any(|cell| matches!(cell.glyph, Some(Glyph::BlackDisc | Glyph::WhiteDisc)));
+            // Noughts and crosses is drawn as the # it is played on: three by
+            // three squares that meet, with only the four rules between them.
+            let hash_board = *square
+                && requested == 3
+                && cells.len() == 9
+                && cells.iter().all(|cell| {
+                    cell.corner.is_none()
+                        && cell.tone == CellTone::Plain
+                        && matches!(cell.glyph, None | Some(Glyph::Circle | Glyph::Close))
+                });
+            let mine_field = is_mine_field(*square, requested, cells);
             let chess_board = *square
                 && requested == 8
                 && cells.len() == 64
@@ -7783,7 +8185,9 @@ fn layout_node(
                 });
             // A board's column count is the board, so narrowing it to the touch
             // target would deal a different game. Only free-form grids shrink.
-            let columns = if legacy_typography() || *square {
+            let columns = if pad_deck && !legacy_typography() {
+                pad_deck_columns(cells.len(), requested)
+            } else if legacy_typography() || *square {
                 requested
             } else {
                 let fits = width
@@ -7795,13 +8199,23 @@ fn layout_node(
             };
             let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
-            } else if chess_board || (*square && cells.iter().any(|cell| cell.corner.is_some())) {
+            } else if chess_board
+                || mine_field
+                || hash_board
+                || draughts_squares
+                || reversi_board
+                || (*square && cells.iter().any(|cell| cell.corner.is_some()))
+            {
                 (x, width, 0)
             } else if pad_deck {
                 (x, width, metrics.space(Space::Small))
             } else {
                 (x, width, tight)
             };
+            // The size of one key five across, measured before a smaller deck
+            // is centred, so a deck of larger keys can keep its marks close to
+            // that size.
+            let five_across = (width - gutter * 4) / 5;
             let crossword_squares = *square && cells.iter().any(|cell| cell.corner.is_some());
             let block_extra =
                 if *square && columns == 9 && cells.len() >= 27 && cells.len() % 27 == 0 {
@@ -7875,6 +8289,8 @@ fn layout_node(
                 },
                 kind: if backgammon_board {
                     LayoutKind::BackgammonBoard
+                } else if reversi_board {
+                    LayoutKind::RuledBoard
                 } else if morris_board {
                     LayoutKind::MorrisBoard
                 } else if crossword_board {
@@ -7917,6 +8333,21 @@ fn layout_node(
                     CellStyle::Crossword
                 } else if morris_board {
                     CellStyle::Plain
+                } else if reversi_board {
+                    CellStyle::Ruled
+                } else if mine_field {
+                    CellStyle::Field {
+                        top: row == 0,
+                        left: column == 0,
+                        right: column == columns - 1,
+                        bottom: (position + columns) >= i32::try_from(cells.len()).unwrap_or(0),
+                        struck: FieldMark::of(&cell.label) == Some(FieldMark::Mine),
+                    }
+                } else if hash_board {
+                    CellStyle::Hash {
+                        right: column < 2,
+                        bottom: row < 2,
+                    }
                 } else if (draughts_board || chess_board) && (row + column) % 2 == 1 {
                     CellStyle::BoardDark
                 } else if draughts_board || chess_board {
@@ -7938,6 +8369,15 @@ fn layout_node(
                     && cell.label.trim().is_empty()
                 {
                     CellStyle::EmptyPad
+                } else if cell.tone != CellTone::Plain && cell.glyph.is_none() {
+                    // Only a plain square or a key takes a tone. The other
+                    // boards already say what their squares are with the
+                    // colour of the square itself.
+                    match style {
+                        CellStyle::Board => CellStyle::Tile(cell.tone),
+                        CellStyle::Key => CellStyle::KeyTile(cell.tone),
+                        other => other,
+                    }
                 } else {
                     style
                 };
@@ -7963,7 +8403,7 @@ fn layout_node(
                             .nth(3)
                             .and_then(|count| count.parse::<u8>().ok())
                             .unwrap_or(1)
-                            .clamp(1, 5);
+                            .clamp(1, 15);
                         layout.nodes.push(LayoutNode {
                             id: *id,
                             rect,
@@ -7980,11 +8420,32 @@ fn layout_node(
                         Some(glyph) if style == CellStyle::Pad => {
                             let inset = metrics.tenth_mm(pad_border_tenth_mm());
                             let mark = min(cell_height, cell_width) * 2 / 5;
+                            // A key larger than five across keeps close to
+                            // the mark a five-across key has, and sets the
+                            // mark and its word together in the middle of the
+                            // key. Grown with the key, two keys on a page
+                            // carried pictures a third of the panel wide and
+                            // read as a toy.
+                            let (mark, mark_top, label_top, label_bottom) = if columns < 5 {
+                                let mark = mark.min(five_across * 3 / 5);
+                                let line = FontSize::Body.line_height() + inset;
+                                let group = mark + inset + line;
+                                let top = rect.y + (cell_height - group).max(0) / 2;
+                                let label_top = top + mark + inset;
+                                (mark, top, label_top, label_top + line)
+                            } else {
+                                (
+                                    mark,
+                                    rect.y.saturating_add(inset + cell_height / 8),
+                                    rect.y + cell_height * 3 / 5,
+                                    rect.y + cell_height - inset,
+                                )
+                            };
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: Rect {
                                     x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
-                                    y: rect.y.saturating_add(inset + cell_height / 8),
+                                    y: mark_top,
                                     width: mark,
                                     height: mark,
                                 },
@@ -8001,14 +8462,13 @@ fn layout_node(
                                 text_lines: vec![cell.label.clone()],
                             });
                             if !cell.label.is_empty() {
-                                let label_top = rect.y + cell_height * 3 / 5;
                                 layout.nodes.push(LayoutNode {
                                     id: *id,
                                     rect: Rect {
                                         x: rect.x + inset,
                                         y: label_top,
                                         width: (cell_width - inset * 2).max(1),
-                                        height: (rect.y + cell_height - inset - label_top).max(1),
+                                        height: (label_bottom - label_top).max(1),
                                     },
                                     kind: LayoutKind::CellLabel(false),
                                     text_lines: vec![cell.label.clone()],
@@ -8016,7 +8476,19 @@ fn layout_node(
                             }
                         }
                         Some(glyph) => {
-                            let mark = min(cell_height, cell_width) * 3 / 5;
+                            // A piece nearly fills its square, as on a real
+                            // board; a mark on an empty square stays small.
+                            let piece = matches!(
+                                glyph,
+                                Glyph::BlackDisc
+                                    | Glyph::WhiteDisc
+                                    | Glyph::BlackDraughtsMan
+                                    | Glyph::WhiteDraughtsMan
+                                    | Glyph::BlackDraughtsKing
+                                    | Glyph::WhiteDraughtsKing
+                            ) && *square;
+                            let mark = min(cell_height, cell_width) * if piece { 9 } else { 3 }
+                                / if piece { 10 } else { 5 };
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: Rect {
@@ -8038,6 +8510,35 @@ fn layout_node(
                                 text_lines: vec![cell.label.clone()],
                             });
                         }
+                        // A count is set in the interface face, about half
+                        // the height of its square; see `field_count_style`.
+                        // A flag or a mine is drawn, not typed.
+                        None if matches!(style, CellStyle::Field { .. }) => {
+                            if let Some(mark) = FieldMark::of(&cell.label) {
+                                let size = min(cell_height, cell_width) * 2 / 3;
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x.saturating_add((cell_width - size) / 2),
+                                        y: rect.y.saturating_add((cell_height - size) / 2),
+                                        width: size,
+                                        height: size,
+                                    },
+                                    kind: LayoutKind::FieldMark(
+                                        mark,
+                                        matches!(style, CellStyle::Field { struck: true, .. }),
+                                    ),
+                                    text_lines: vec![cell.label.clone()],
+                                });
+                            } else if !cell.label.is_empty() {
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect,
+                                    kind: LayoutKind::FieldCount,
+                                    text_lines: vec![cell.label.clone()],
+                                });
+                            }
+                        }
                         None if style == CellStyle::CrosswordBlock => (),
                         None => {
                             // A letter in a crossword square is set the size a
@@ -8046,13 +8547,20 @@ fn layout_node(
                             // whole square it took the largest size that fit,
                             // which is a headline in a box and left the grid
                             // looking like a toy rather than a puzzle.
+                            // The corner number keeps the top fifth; the
+                            // letter has the rest but a tenth at the foot, so
+                            // it is set as large as a filled-in letter is
+                            // written, a little below the middle.
                             let letter = if style == CellStyle::Crossword {
                                 let inset = rect.height / 5;
                                 Rect {
                                     x: rect.x,
                                     y: rect.y.saturating_add(inset),
                                     width: rect.width,
-                                    height: rect.height.saturating_sub(inset * 2).max(1),
+                                    height: rect
+                                        .height
+                                        .saturating_sub(inset + rect.height / 10)
+                                        .max(1),
                                 }
                             } else {
                                 rect
@@ -8060,10 +8568,16 @@ fn layout_node(
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: letter,
-                                kind: LayoutKind::CellLabel(matches!(
-                                    style,
-                                    CellStyle::Board | CellStyle::BoardDark | CellStyle::Crossword
-                                )),
+                                kind: match style {
+                                    CellStyle::Tile(tone) => LayoutKind::ToneLabel(tone, true),
+                                    CellStyle::KeyTile(tone) => LayoutKind::ToneLabel(tone, false),
+                                    _ => LayoutKind::CellLabel(matches!(
+                                        style,
+                                        CellStyle::Board
+                                            | CellStyle::BoardDark
+                                            | CellStyle::Crossword
+                                    )),
+                                },
                                 text_lines: vec![cell.label.clone()],
                             });
                             if let Some(number) = cell.corner.filter(|n| (1..=99).contains(n)) {
@@ -8098,6 +8612,17 @@ fn layout_node(
                 rows * cell_height + (rows - 1) * gutter + block_gaps
             };
             layout.nodes[index].rect.height = height;
+            // A chess or draughts board is its squares, light and dark edge to
+            // edge, inside one thin frame. Nothing is ruled between squares:
+            // a rule round every square turned the board into a grid of tiles.
+            if (chess_board || draughts_board) && layout.nodes.len() < MAX_LAYOUT_NODES {
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: layout.nodes[index].rect,
+                    kind: LayoutKind::CheckeredFrame,
+                    text_lines: Vec::new(),
+                });
+            }
             y.saturating_add(height)
         }
         Node::Rows { id, rows } => {
@@ -10179,6 +10704,44 @@ static BOOK_TYPESETTERS: OnceLock<Mutex<BTreeMap<FontHandle, Box<dyn Typesetter>
     OnceLock::new();
 
 thread_local! {
+    static SHARED_FACT_LABEL: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+/// The widest label of every block of facts set straight on a page, when
+/// there are at least two such blocks; nothing otherwise.
+fn shared_fact_label(nodes: &[Node]) -> i32 {
+    let blocks = nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Facts { entries, .. } => Some(entries),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if blocks.len() < 2 {
+        return 0;
+    }
+    blocks
+        .iter()
+        .flat_map(|entries| entries.iter().take(MAX_FACTS))
+        .map(|(label, _)| measure_text(label, FontSize::Caption).0)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Holds the page's shared fact label width while its flow is laid out.
+struct SharedFactLabel(i32);
+impl SharedFactLabel {
+    fn enter(width: i32) -> Self {
+        Self(SHARED_FACT_LABEL.with(|slot| slot.replace(width)))
+    }
+}
+impl Drop for SharedFactLabel {
+    fn drop(&mut self) {
+        SHARED_FACT_LABEL.with(|slot| slot.set(self.0));
+    }
+}
+
+thread_local! {
     static READING_FONT: std::cell::Cell<Option<FontHandle>> = const { std::cell::Cell::new(None) };
     static TYPOGRAPHY: std::cell::Cell<Typography> = const { std::cell::Cell::new(Typography::CURRENT) };
     static CUT_SHORT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -11710,6 +12273,99 @@ fn space_before(
     metrics
         .space(wanted)
         .saturating_sub(metrics.space(Space::Tight))
+}
+
+/// Where one root flow node landed: which layout nodes it produced, and the
+/// room it was laid out in.
+struct PlacedFlowNode {
+    position: usize,
+    nodes: std::ops::Range<usize>,
+    top: i32,
+    end: i32,
+    bottom: i32,
+    bounded: bool,
+}
+
+/// Sets a band that sits directly above or below a chess or draughts board
+/// to the board's own width.
+///
+/// A board is as large as the height left for it allows, and so is often a
+/// little narrower than the page and centred on it. The bars round it, a
+/// player's name and clock, were set to the page instead, so the clock stood
+/// a few pixels past the board's right edge and the name a few pixels before
+/// its left one. Laying the band out again at the board's width lines both
+/// up with the squares. A band that would come out a different height at
+/// that width keeps the place it had, since everything under it is already
+/// set.
+fn align_bands_with_boards(
+    nodes: &[Node],
+    placed: &[PlacedFlowNode],
+    margin: i32,
+    metrics: &DisplayMetrics,
+    prose: Face,
+    layout: &mut Layout,
+) {
+    let mut replacements: Vec<(std::ops::Range<usize>, Vec<LayoutNode>)> = Vec::new();
+    for (index, board) in placed.iter().enumerate() {
+        let squares = layout.nodes[board.nodes.clone()].iter().filter(|node| {
+            matches!(
+                node.kind,
+                LayoutKind::Cell(_, CellStyle::BoardLight | CellStyle::BoardDark, _)
+            )
+        });
+        let Some((left, right)) = squares.fold(None, |edges: Option<(i32, i32)>, node| {
+            let (left, right) = (node.rect.x, node.rect.x + node.rect.width);
+            Some(edges.map_or((left, right), |(l, r)| (l.min(left), r.max(right))))
+        }) else {
+            continue;
+        };
+        let neighbours = [index.checked_sub(1), Some(index + 1)];
+        for band in neighbours
+            .into_iter()
+            .flatten()
+            .filter_map(|at| placed.get(at))
+        {
+            if band.position.abs_diff(board.position) != 1
+                || !matches!(nodes[band.position], Node::Band { .. })
+                || replacements.iter().any(|(range, _)| *range == band.nodes)
+            {
+                continue;
+            }
+            let was = &layout.nodes[band.nodes.clone()];
+            let band_left = was.iter().map(|node| node.rect.x).min().unwrap_or(margin);
+            let band_right = was
+                .iter()
+                .map(|node| node.rect.x + node.rect.width)
+                .max()
+                .unwrap_or(left);
+            if band_left >= left && band_right <= right {
+                continue;
+            }
+            let mut scratch = Layout {
+                prose_face: layout.prose_face,
+                ..Layout::default()
+            };
+            let end = with_flow_height_bound(band.bounded, || {
+                layout_flow_node(
+                    &nodes[band.position],
+                    left,
+                    band.top,
+                    right - left,
+                    band.bottom,
+                    0,
+                    metrics,
+                    prose,
+                    &mut scratch,
+                )
+            });
+            if end == band.end && scratch.nodes.len() == band.nodes.len() {
+                replacements.push((band.nodes.clone(), scratch.nodes));
+            }
+        }
+    }
+    for (range, replacement) in replacements {
+        layout.nodes.splice(range, replacement);
+    }
 }
 
 /// How much room trailing nodes need, so flexible content can leave it.
@@ -14068,11 +14724,18 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
         Node::Field { clear, .. } => 1 + usize::from(clear.is_some()),
         Node::Chips { chips, .. } | Node::Tabs { tabs: chips, .. } => chips.len(),
         Node::Card { .. } | Node::Band { .. } => 0,
-        Node::Grid { cells, square, .. } => {
+        Node::Grid {
+            cells,
+            square,
+            columns,
+            ..
+        } => {
             let crossword = *square && cells.iter().any(|cell| cell.corner.is_some());
+            let mancala = is_mancala(*square, *columns, cells);
             cells
                 .iter()
                 .filter(|cell| !crossword || cell.label != "#")
+                .filter(|cell| !mancala || !cell.label.is_empty())
                 .count()
         }
         Node::PencilBoard { board, .. } => board.action_count(),
@@ -14141,6 +14804,7 @@ const fn interaction_uses_panel_bounds(kind: LayoutKind) -> bool {
             | LayoutKind::BarGlyph(..)
             | LayoutKind::NavDestination(..)
             | LayoutKind::NavDestinationSelected(..)
+            | LayoutKind::ActionBarEntry(..)
             | LayoutKind::PagePrevious(_)
             | LayoutKind::PageNext(_)
     )
@@ -14164,11 +14828,22 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
         let Some((size, face)) = style else {
             continue;
         };
-        let scale = if matches!(node.kind, LayoutKind::PencilNumber(_)) {
+        let scale = if matches!(
+            node.kind,
+            LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_)
+        ) {
             pencil::label_style(node).1
-        } else if matches!(node.kind, LayoutKind::CellLabel(true)) {
+        } else if matches!(
+            node.kind,
+            LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true)
+        ) {
             board_label_style(node).1
-        } else if matches!(node.kind, LayoutKind::CellLabel(false)) {
+        } else if node.kind == LayoutKind::FieldCount {
+            field_count_style(node).1
+        } else if matches!(
+            node.kind,
+            LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false)
+        ) {
             key_label_style(node).1
         } else {
             text_scale()
@@ -14189,9 +14864,12 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             };
             // A lone pencil number is its glyph, not its leading: the box may
             // clip a hair of line height the same way it clips a hairline.
-            let leading_allowance = if rows == 1 && matches!(node.kind, LayoutKind::PencilNumber(_))
-            {
-                metrics.rule_thickness() * 2
+            let leading_allowance = if rows == 1
+                && matches!(
+                    node.kind,
+                    LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_)
+                ) {
+                (metrics.rule_thickness() * 2).max(node.rect.height / 6)
             } else {
                 0
             };
@@ -14227,6 +14905,7 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::BarGlyph(..)
             | LayoutKind::NavDestination(..)
             | LayoutKind::NavDestinationSelected(..)
+            | LayoutKind::ActionBarEntry(..)
             | LayoutKind::Row(_)
             | LayoutKind::RowMenu(_)
             | LayoutKind::Cell(..)
@@ -14294,6 +14973,33 @@ fn board_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
     }
     (FontSize::Caption, scale)
 }
+/// The size of a count on a mine field square: body type, at the largest
+/// step of the scale whose line is no more than half the square.
+///
+/// Body because it is the interface face. Title and heading are set in the
+/// display cut, whose figures have serifs, and a board of serif ones read as
+/// a page of chapter numbers. The step is the square's, not the reader's
+/// text size, because the count is the content of the square the way a
+/// printed field's numbers are, and a body-sized digit sat lost in the
+/// middle of a two-centimetre square.
+fn field_count_style(node: &LayoutNode) -> (FontSize, TextScale) {
+    let fits = |scale: TextScale| {
+        with_text_scale(scale, || {
+            FontSize::Body.line_height() * 2 <= node.rect.height
+                && node
+                    .text_lines
+                    .iter()
+                    .all(|line| measure_text(line, FontSize::Body).0 * 2 <= node.rect.width)
+        })
+    };
+    let scale = TextScale::STEPS
+        .into_iter()
+        .rev()
+        .find(|scale| fits(*scale))
+        .unwrap_or(TextScale::STEPS[0]);
+    (FontSize::Body, scale)
+}
+
 fn board_label_size(node: &LayoutNode) -> FontSize {
     board_label_style(node).0
 }
@@ -14332,9 +15038,10 @@ fn key_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
-        LayoutKind::CellLabel(true) => board_label_size(node),
-        LayoutKind::PencilNumber(_) => pencil::label_style(node).0,
-        LayoutKind::CellLabel(false) => key_label_style(node).0,
+        LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true) => board_label_size(node),
+        LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_) => pencil::label_style(node).0,
+        LayoutKind::FieldCount => field_count_style(node).0,
+        LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false) => key_label_style(node).0,
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::BarAction(_) => {
             if FontSize::Body.line_height() <= node.rect.height {
@@ -14362,6 +15069,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::ActivityFailure
         | LayoutKind::NavDestination(..)
         | LayoutKind::NavDestinationSelected(..)
+        | LayoutKind::ActionBarEntry(..)
         | LayoutKind::RowBadge
         | LayoutKind::FieldLabel
         | LayoutKind::FieldNote(_)
@@ -15063,14 +15771,24 @@ fn paint_layout(
                         clip,
                     );
                 }
-                draw_centered(
-                    surface,
-                    &node.text_lines,
-                    node.rect,
-                    FontSize::Caption,
-                    if selected { tone::PAPER } else { tone::INK },
-                    clip,
-                );
+                let ink = if selected { tone::PAPER } else { tone::INK };
+                match node.text_lines.as_slice() {
+                    [label] if ticking_figure(label) => {
+                        let size = FontSize::Caption;
+                        let width = figures_width(label, size, Face::Text);
+                        draw_figures(
+                            surface,
+                            label,
+                            node.rect.x + (node.rect.width - width) / 2,
+                            node.rect.y + (node.rect.height - size.line_height()) / 2,
+                            size,
+                            Face::Text,
+                            ink,
+                            clip,
+                        );
+                    }
+                    lines => draw_centered(surface, lines, node.rect, FontSize::Caption, ink, clip),
+                }
             }
             // Underlined rather than inverted. A tab strip sits directly above
             // the content it filters, and a filled tab there reads as a heading
@@ -15402,30 +16120,216 @@ fn paint_layout(
                     clip,
                 );
             }
-            LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
-                fill_clipped(surface, node.rect, tone::INK, clip);
+            // A reversi board is one ruled grid, like the board itself: each
+            // square draws the two rules no neighbour above or to its left
+            // has, and the board draws the frame. The square of the last move
+            // takes the selection field.
+            LayoutKind::Cell(_, CellStyle::Ruled, selected) => {
+                if selected {
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
+                }
+                let rule = metrics.rule_thickness();
+                for edge in [
+                    Rect {
+                        height: rule,
+                        ..node.rect
+                    },
+                    Rect {
+                        width: rule,
+                        ..node.rect
+                    },
+                ] {
+                    fill_clipped(surface, edge, tone::RULE, clip);
+                }
             }
-            // The square in hand on a board with light and dark squares takes
-            // the accent's tint. A plain grid's selected cell keeps the quiet
-            // grey, because what selection means there is the application's
-            // business and is not always one cell.
-            LayoutKind::Cell(_, CellStyle::BoardLight, true) => {
-                fill_clipped(surface, node.rect, palette.selection_field(), clip);
+            LayoutKind::MancalaBoard => {
+                let radius = node.rect.height / 4;
+                fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    radius,
+                    tone::INK,
+                    metrics.rule_thickness() * 2,
+                    clip,
+                );
+            }
+            // A well, not a key: a round hollow in light grey with a rule
+            // round it, and a heavy ink rule round the pits just sown from.
+            LayoutKind::Cell(_, CellStyle::Pit | CellStyle::Store, selected) => {
+                let inset = node.rect.width / 12;
+                let well = Rect {
+                    x: node.rect.x + inset,
+                    y: node.rect.y + inset,
+                    width: node.rect.width - inset * 2,
+                    height: node.rect.height - inset * 2,
+                };
+                let radius = well.width / 2;
+                fill_rounded_clipped(surface, well, radius, tone::SURFACE, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    well,
+                    radius,
+                    if selected { tone::INK } else { tone::RULE },
+                    metrics.rule_thickness() * if selected { 2 } else { 1 },
+                    clip,
+                );
+            }
+            LayoutKind::StoreLabel => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::Cell(_, CellStyle::Hash { right, bottom }, selected) => {
+                if selected {
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
+                }
+                let rule = metrics.rule_thickness() * 2;
+                if right {
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            x: node.rect.x + node.rect.width - rule,
+                            width: rule,
+                            ..node.rect
+                        },
+                        tone::INK,
+                        clip,
+                    );
+                }
+                if bottom {
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            y: node.rect.y + node.rect.height - rule,
+                            height: rule,
+                            ..node.rect
+                        },
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
+            LayoutKind::Cell(
+                _,
+                CellStyle::Field {
+                    top,
+                    left,
+                    right,
+                    bottom,
+                    struck,
+                },
+                covered,
+            ) => {
+                let r = node.rect;
+                if struck {
+                    fill_clipped(surface, r, tone::INK, clip);
+                } else if covered {
+                    fill_clipped(surface, r, tone::SURFACE, clip);
+                }
+                // Each square rules its own top and left, and the squares on
+                // the far edges their right and bottom too, so every rule
+                // between two squares is drawn once and the field is one
+                // ruled board. Its outer edge is the frame, in ink.
+                let rule = metrics.rule_thickness();
+                let frame = rule * 2;
+                let sides = [
+                    (
+                        true,
+                        top,
+                        Rect {
+                            height: if top { frame } else { rule },
+                            ..r
+                        },
+                    ),
+                    (
+                        true,
+                        left,
+                        Rect {
+                            width: if left { frame } else { rule },
+                            ..r
+                        },
+                    ),
+                    (
+                        right,
+                        true,
+                        Rect {
+                            x: r.x + r.width - frame,
+                            width: frame,
+                            ..r
+                        },
+                    ),
+                    (
+                        bottom,
+                        true,
+                        Rect {
+                            y: r.y + r.height - frame,
+                            height: frame,
+                            ..r
+                        },
+                    ),
+                ];
+                for (drawn, edge, side) in sides {
+                    if drawn {
+                        fill_clipped(
+                            surface,
+                            side,
+                            if edge { tone::INK } else { tone::RULE },
+                            clip,
+                        );
+                    }
+                }
+            }
+            LayoutKind::FieldCount => {
+                let (size, scale) = field_count_style(&node);
+                with_text_scale(scale, || {
+                    draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
+                });
+            }
+            LayoutKind::FieldMark(mark, on_ink) => {
+                let shapes = match mark {
+                    FieldMark::Flag => vector::flag(),
+                    FieldMark::Mine => vector::mine(),
+                };
+                draw_vector(
+                    surface,
+                    &shapes,
+                    node.rect,
+                    clip,
+                    if on_ink { tone::PAPER } else { tone::INK },
+                );
+            }
+            LayoutKind::RuledBoard => {
                 stroke_clipped(
                     surface,
                     node.rect,
                     tone::INK,
-                    metrics.rule_thickness(),
+                    metrics.rule_thickness() * 2,
                     clip,
                 );
             }
-            LayoutKind::Cell(_, CellStyle::BoardLight, false) => stroke_clipped(
-                surface,
-                node.rect,
-                tone::RULE,
-                metrics.rule_thickness(),
-                clip,
-            ),
+            LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
+                fill_clipped(surface, node.rect, tone::INK, clip);
+            }
+            // A chess or draughts square is its field and nothing else, so the
+            // squares meet edge to edge the way a printed board's do and the
+            // board's own frame is the only line. A marked square, the one in
+            // hand or either end of the last move, keeps its own field and
+            // takes a heavy ink outline inside its edges, so the mark reads on
+            // light and dark squares alike and never spills onto a neighbour.
+            // On a colour panel a marked light square also takes the accent's
+            // tint.
+            LayoutKind::Cell(_, CellStyle::BoardLight, selected) => {
+                let field = if selected {
+                    palette.square_selected()
+                } else {
+                    Paint::Grey(tone::PAPER)
+                };
+                draw_square(surface, node.rect, field, selected, metrics, clip);
+            }
             LayoutKind::Cell(_, CellStyle::Board, true) => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
                 stroke_clipped(
@@ -15443,13 +16347,79 @@ fn paint_layout(
                 metrics.rule_thickness(),
                 clip,
             ),
+            // A word game's tiles, printed the way a puzzle page prints them:
+            // the right letter in the right place is a black square, a letter
+            // in the word elsewhere is a grey square in a heavy rule, and a
+            // letter that is not in the word sits faintly on paper inside a
+            // lighter rule than an untried square, so it steps back.
+            LayoutKind::Cell(_, CellStyle::Tile(cell_tone), selected) => {
+                let rule = metrics.rule_thickness();
+                match cell_tone {
+                    CellTone::Solid => fill_clipped(surface, node.rect, tone::INK, clip),
+                    CellTone::Shaded => {
+                        fill_clipped(surface, node.rect, TILE_SHADE, clip);
+                        stroke_clipped(surface, node.rect, tone::INK, rule * 2, clip);
+                    }
+                    CellTone::Faded => {
+                        stroke_clipped(surface, node.rect, tone::RULE_LIGHT, rule, clip);
+                    }
+                    CellTone::Plain => stroke_clipped(surface, node.rect, tone::RULE, rule, clip),
+                }
+                if selected && cell_tone != CellTone::Solid {
+                    stroke_clipped(surface, node.rect, tone::INK, rule * 2, clip);
+                }
+            }
+            // The key for a letter says what the board has learned about it,
+            // in the same three amounts of ink, so the next guess can be
+            // chosen from the keys alone. A letter that is not in the word
+            // loses its field and keeps a hairline, so it still reads as a key
+            // and can still be typed.
+            LayoutKind::Cell(_, CellStyle::KeyTile(cell_tone), _) => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+                match cell_tone {
+                    CellTone::Solid => {
+                        fill_rounded_clipped(surface, node.rect, radius, tone::INK, clip);
+                    }
+                    CellTone::Shaded => {
+                        fill_rounded_clipped(surface, node.rect, radius, TILE_SHADE, clip);
+                        stroke_rounded_clipped(
+                            surface,
+                            node.rect,
+                            radius,
+                            tone::INK,
+                            metrics.rule_thickness() * 2,
+                            clip,
+                        );
+                    }
+                    CellTone::Faded => stroke_rounded_clipped(
+                        surface,
+                        node.rect,
+                        radius,
+                        tone::RULE_LIGHT,
+                        metrics.rule_thickness(),
+                        clip,
+                    ),
+                    CellTone::Plain => {
+                        fill_rounded_clipped(surface, node.rect, radius, tone::SURFACE, clip);
+                    }
+                }
+            }
             LayoutKind::Cell(_, CellStyle::BoardDark, selected) => {
-                fill_clipped(surface, node.rect, palette.board_dark(), clip);
+                draw_square(
+                    surface,
+                    node.rect,
+                    palette.square_dark(),
+                    selected,
+                    metrics,
+                    clip,
+                );
+            }
+            LayoutKind::CheckeredFrame => {
                 stroke_clipped(
                     surface,
                     node.rect,
-                    if selected { tone::INK } else { tone::RULE },
-                    metrics.rule_thickness() * if selected { 2 } else { 1 },
+                    tone::INK,
+                    metrics.rule_thickness(),
                     clip,
                 );
             }
@@ -15459,6 +16429,22 @@ fn paint_layout(
             LayoutKind::Cell(_, CellStyle::BackgammonBottom, _) => {
                 draw_backgammon_point(surface, node.rect, false, metrics, palette, clip);
             }
+            LayoutKind::Cell(_, CellStyle::BackgammonPoint { from_top, dark }, _) => {
+                draw_point_triangle(
+                    surface,
+                    node.rect,
+                    from_top,
+                    if dark {
+                        palette.board_dark()
+                    } else {
+                        Paint::Grey(tone::PAPER)
+                    },
+                    metrics,
+                    clip,
+                );
+            }
+            LayoutKind::BackgammonFrame => draw_backgammon_frame(surface, node.rect, metrics, clip),
+            LayoutKind::PointNumber(mark) => draw_point_number(surface, &node, mark, metrics, clip),
             LayoutKind::BackgammonStack(glyph, count, from_top) => {
                 draw_backgammon_stack(surface, glyph, count, from_top, node.rect, clip);
             }
@@ -15503,6 +16489,37 @@ fn paint_layout(
                     metrics.tenth_mm(pad_border_tenth_mm()),
                     clip,
                 );
+            }
+            LayoutKind::PencilNote(inverted) => {
+                let size = [FontSize::Caption, FontSize::Terminal]
+                    .into_iter()
+                    .find(|size| size.line_height() * 2 / 3 <= node.rect.height)
+                    .unwrap_or(FontSize::Terminal);
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    size,
+                    if inverted { tone::PAPER } else { tone::INK },
+                    clip,
+                );
+            }
+            LayoutKind::PencilEntry(inverted) => {
+                let (size, scale) = pencil::label_style(&node);
+                with_text_scale(scale, || {
+                    draw_centered(
+                        surface,
+                        &node.text_lines,
+                        node.rect,
+                        size,
+                        if inverted {
+                            tone::RULE_LIGHT
+                        } else {
+                            tone::MUTED
+                        },
+                        clip,
+                    );
+                });
             }
             LayoutKind::PencilNumber(inverted) => {
                 let (size, scale) = pencil::label_style(&node);
@@ -15587,6 +16604,21 @@ fn paint_layout(
                     draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
                 });
             }
+            LayoutKind::ToneLabel(cell_tone, board) => {
+                let (size, scale) = if board {
+                    board_label_style(&node)
+                } else {
+                    key_label_style(&node)
+                };
+                let ink = match cell_tone {
+                    CellTone::Solid => tone::PAPER,
+                    CellTone::Faded => TILE_FADED_INK,
+                    CellTone::Plain | CellTone::Shaded => tone::INK,
+                };
+                with_text_scale(scale, || {
+                    draw_centered(surface, &node.text_lines, node.rect, size, ink, clip);
+                });
+            }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),
             LayoutKind::RowRule => fill_clipped(surface, node.rect, tone::RULE_LIGHT, clip),
             // A grey track with the done part in ink, both a millimetre tall
@@ -15665,25 +16697,15 @@ fn paint_layout(
                         clip,
                     );
                 }
-                // A byline sits on a tinted strip. Without it, "user 3 hours
-                // ago" is one more line of text in a column of lines of text,
-                // and on a page of nested replies the reader has to re-read
-                // the first line of every comment to work out whether it is
-                // the comment or the name of whoever wrote it. Tone alone did
-                // not do it: muted grey text at caption size reads as a quiet
-                // sentence, not as a label.
-                //
-                // The strip runs the width of the column and is inset only by
-                // the padding, so it also draws the left edge of the comment
-                // for the eye to run down.
+                // A byline is quiet type with air above it, not a tinted
+                // strip. Strips under every comment's name turned a thread
+                // into a stack of grey bands, the heaviest thing on the page
+                // marking the least important line of each comment. What
+                // tells the name from the comment is that it is set smaller
+                // and lighter, after a gap, which is how a printed letters
+                // page sets who wrote each letter.
                 let (left, top) = match role {
-                    QuoteRole::Byline => {
-                        // Exactly the rectangle, because the height already
-                        // includes the air. Painting outside it would run into
-                        // the paragraph underneath.
-                        fill_clipped(surface, node.rect, tone::SURFACE, clip);
-                        (0, metrics.space(Space::Tight))
-                    }
+                    QuoteRole::Byline => (0, metrics.space(Space::Tight)),
                     // The same grey as a key on the keyboard, and the same
                     // corners as a button, so the panel reads as part of this
                     // interface rather than as a picture of a terminal.
@@ -15796,6 +16818,7 @@ fn paint_layout(
             // somewhere" since long before anybody put it on a screen. Set
             // clear of the descenders rather than through them, and a rule
             // thick, because a single pixel at this density is not there.
+            LayoutKind::QuietLink(_) => {}
             LayoutKind::InlineLink(_) => {
                 let thickness = metrics.rule_thickness();
                 let baseline = node
@@ -15946,7 +16969,7 @@ fn paint_layout(
                     &node.text_lines,
                     node.rect,
                     metrics,
-                    false,
+                    NavLabel::Destination,
                     glyph,
                     palette,
                     clip,
@@ -15958,7 +16981,19 @@ fn paint_layout(
                     &node.text_lines,
                     node.rect,
                     metrics,
-                    true,
+                    NavLabel::Selected,
+                    glyph,
+                    palette,
+                    clip,
+                );
+            }
+            LayoutKind::ActionBarEntry(_, glyph) => {
+                draw_nav_label(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    metrics,
+                    NavLabel::Action,
                     glyph,
                     palette,
                     clip,
@@ -16032,6 +17067,14 @@ fn paint_layout(
                     clip,
                     tone::MUTED,
                 );
+            }
+            LayoutKind::InlineGlyph(Glyph::LegalPoint, _) => {
+                draw_glyph_icon_in(surface, Glyph::LegalPoint, node.rect, clip, tone::MUTED);
+            }
+            LayoutKind::TileGlyph(Glyph::BlackDraughtsKing)
+            | LayoutKind::InlineGlyph(Glyph::BlackDraughtsKing, false) => {
+                draw_glyph_icon(surface, Glyph::BlackDraughtsKing, node.rect, clip);
+                draw_vector(surface, &vector::king_inlay(), node.rect, clip, tone::PAPER);
             }
             LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph, false) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
@@ -17050,13 +18093,24 @@ fn draw_centered(
     }
 }
 
+/// How one entry in the bar at the foot is drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NavLabel {
+    /// A place the reader is not on: muted.
+    Destination,
+    /// The place the reader is on: ink, and marked.
+    Selected,
+    /// A verb: ink, and never marked, since it is not a place.
+    Action,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_nav_label(
     surface: &mut Surface,
     lines: &[String],
     rect: Rect,
     metrics: &DisplayMetrics,
-    selected: bool,
+    label: NavLabel,
     glyph: Option<Glyph>,
     palette: Palette,
     clip: Rect,
@@ -17067,7 +18121,8 @@ fn draw_nav_label(
     // foot of the slot to make space, which is the shape both phone platforms
     // draw a bottom bar in.
     let mut text = rect;
-    let mark_tone = if selected || legacy_typography() {
+    let selected = label == NavLabel::Selected;
+    let mark_tone = if label != NavLabel::Destination || legacy_typography() {
         tone::INK
     } else {
         tone::MUTED
@@ -17111,7 +18166,7 @@ fn draw_nav_label(
         lines,
         text,
         FontSize::Caption,
-        if selected || legacy_typography() {
+        if label != NavLabel::Destination || legacy_typography() {
             tone::INK
         } else {
             tone::MUTED
@@ -17236,6 +18291,9 @@ fn draw_row_lead(
 }
 
 fn draw_glyph_icon(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect) {
+    if let Some(ground) = vector::piece_ground(glyph) {
+        draw_vector(surface, &ground, rect, clip, tone::PAPER);
+    }
     draw_vector(surface, &vector::shapes(glyph), rect, clip, tone::INK);
 }
 
@@ -17751,6 +18809,24 @@ fn draw_morris_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics
     line(point(4, 3), point(6, 3));
 }
 
+/// One square of a chess or draughts board: its field, and the heavy ink
+/// outline of a marked square drawn inside its edges.
+fn draw_square(
+    surface: &mut Surface,
+    rect: Rect,
+    field: Paint,
+    marked: bool,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    fill_clipped(surface, rect, field, clip);
+    if marked {
+        stroke_clipped(surface, rect, tone::INK, metrics.rule_thickness() * 2, clip);
+    }
+}
+
+/// One point of the older backgammon board, whose cells are a twelfth of the
+/// panel each with nothing between them.
 fn draw_backgammon_point(
     surface: &mut Surface,
     rect: Rect,
@@ -17765,16 +18841,45 @@ fn draw_backgammon_point(
     } else {
         Paint::Grey(tone::PAPER)
     };
-    let height = rect.height.max(1);
-    let centre = rect.x + rect.width / 2;
+    draw_point_triangle(surface, rect, from_top, fill, metrics, clip);
+}
+
+/// A backgammon point: a long triangle standing on the edge of the board.
+///
+/// It is drawn a little narrower than its cell, so neighbouring points do not
+/// touch at their bases and the bar has a strip of its own, and four fifths
+/// of its height, so the tips of opposing points stop short of each other
+/// across the middle of the board, as they do on a real one. The cell is
+/// still the whole target for a finger.
+fn draw_point_triangle(
+    surface: &mut Surface,
+    rect: Rect,
+    from_top: bool,
+    fill: Paint,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let inset = (rect.width / 10).max(1);
+    let base = Rect {
+        x: rect.x + inset,
+        width: (rect.width - inset * 2).max(1),
+        ..rect
+    };
+    let height = (rect.height * 4 / 5).max(1);
+    let centre = base.x + base.width / 2;
     for row in 0..height {
         let depth = if from_top { row } else { height - 1 - row };
-        let half = (rect.width * (height - depth) / (2 * height)).max(1);
+        let half = (base.width * (height - depth) / (2 * height)).max(1);
+        let y = if from_top {
+            rect.y + row
+        } else {
+            rect.y + rect.height - height + row
+        };
         fill_clipped(
             surface,
             Rect {
                 x: centre - half,
-                y: rect.y + row,
+                y,
                 width: half * 2,
                 height: 1,
             },
@@ -17799,20 +18904,17 @@ fn draw_backgammon_point(
             );
         }
     };
-    let apex = if from_top {
-        (centre, rect.y + height - 1)
+    let (base_y, apex_y) = if from_top {
+        (rect.y, rect.y + height - 1)
     } else {
-        (centre, rect.y)
+        (rect.y + rect.height - 1, rect.y + rect.height - height)
     };
-    let base_y = if from_top {
-        rect.y
-    } else {
-        rect.y + height - 1
-    };
-    edge(rect.x, base_y, apex.0, apex.1);
-    edge(rect.x + rect.width - 1, base_y, apex.0, apex.1);
+    edge(base.x, base_y, centre, apex_y);
+    edge(base.x + base.width - rule, base_y, centre, apex_y);
 }
 
+/// The older board's ground: paper inside a rule, and a straight bar down the
+/// middle in the strip the narrowed points leave between the two halves.
 fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
     fill_clipped(surface, rect, tone::PAPER, clip);
     stroke_clipped(
@@ -17822,7 +18924,8 @@ fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMet
         metrics.rule_thickness() * 2,
         clip,
     );
-    let bar_width = (rect.width / 28).max(metrics.rule_thickness() * 3);
+    let point = (rect.width / 12).max(1);
+    let bar_width = ((point / 10).max(1) * 2 - 2).max(metrics.rule_thickness());
     fill_clipped(
         surface,
         Rect {
@@ -17834,26 +18937,284 @@ fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMet
         tone::MUTED,
         clip,
     );
-    for (x, width) in [
-        (rect.x, (rect.width / 24).max(1)),
-        (
-            rect.x + rect.width - (rect.width / 24).max(1),
-            (rect.width / 24).max(1),
-        ),
-    ] {
-        stroke_clipped(
-            surface,
-            Rect {
-                x,
-                y: rect.y + rect.height / 8,
-                width,
-                height: rect.height * 3 / 4,
-            },
-            tone::MUTED,
-            metrics.rule_thickness(),
-            clip,
-        );
+}
+
+/// A numbered board's frame, or its bar: paper inside a heavy ink rule, the
+/// way a printed diagram of the board draws both.
+fn draw_backgammon_frame(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
+    fill_clipped(surface, rect, tone::PAPER, clip);
+    stroke_clipped(surface, rect, tone::INK, metrics.rule_thickness() * 2, clip);
+}
+
+/// A point's number. A plain number is grey, so twenty-four of them do not
+/// outweigh the checkers; a marked one is in ink, in an open box for a point
+/// that may be played and a solid one for the point in hand.
+fn draw_point_number(
+    surface: &mut Surface,
+    node: &LayoutNode,
+    mark: CellTone,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let size = FontSize::Caption;
+    let text = node.text_lines.first().map_or("", String::as_str);
+    let pad = metrics.space(Space::Tight);
+    let box_height = (size.line_height() + pad).min(node.rect.height);
+    let box_width = (measure_text(text, size).0 + pad * 2)
+        .max(box_height)
+        .min(node.rect.width);
+    let field = Rect {
+        x: node.rect.x + (node.rect.width - box_width) / 2,
+        y: node.rect.y + (node.rect.height - box_height) / 2,
+        width: box_width,
+        height: box_height,
+    };
+    let ink = match mark {
+        CellTone::Solid => {
+            fill_clipped(surface, field, tone::INK, clip);
+            tone::PAPER
+        }
+        CellTone::Shaded => {
+            stroke_clipped(surface, field, tone::INK, metrics.rule_thickness(), clip);
+            tone::INK
+        }
+        CellTone::Faded => tone::RULE,
+        CellTone::Plain => tone::MUTED,
+    };
+    draw_centered(surface, &node.text_lines, field, size, ink, clip);
+}
+
+/// Whether a grid is a sowing game's board: two rows of eight squares with a
+/// store among them. The empty cells in its end columns are the places the
+/// stores fill, and are neither drawn nor tapped.
+fn is_mancala(square: bool, columns: u8, cells: &[Cell]) -> bool {
+    square
+        && columns == 8
+        && cells.len() == 16
+        && cells.iter().any(|cell| cell.label.starts_with("Store "))
+}
+
+/// Lays out a sowing game's board: two rows of six round pits between two
+/// tall stores, inside a rounded outline the width of the page.
+///
+/// A store is the cell whose label starts "Store ", followed by whose store
+/// it is and then its count; it stands in its own end column through both
+/// rows. A pit's label is its count. A cell in an end column that is not a
+/// store is the place the other row's store fills, and is not laid out.
+fn layout_mancala(
+    id: NodeId,
+    cells: &[Cell],
+    area: Rect,
+    metrics: &DisplayMetrics,
+    layout: &mut Layout,
+) -> i32 {
+    let Rect { x, y, width, .. } = area;
+    let pad = metrics.space(Space::Small);
+    // As wide as the page allows, and no taller than the room under it,
+    // except that a pit is never smaller than a fingertip.
+    let tall = (area.height - pad * 3 - FontSize::Caption.line_height()) / 2;
+    let column = ((width - pad * 2) / 8)
+        .min(tall.max(metrics.touch_target_minimum()))
+        .max(1);
+    let board = Rect {
+        x: x + (width - column * 8 - pad * 2).max(0) / 2,
+        y,
+        width: column * 8 + pad * 2,
+        height: column * 2 + pad * 2,
+    };
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: board,
+        kind: LayoutKind::MancalaBoard,
+        text_lines: Vec::new(),
+    });
+    for (position, cell) in cells.iter().take(16).enumerate() {
+        if layout.nodes.len() + 2 > MAX_LAYOUT_NODES {
+            break;
+        }
+        let position = i32::try_from(position).unwrap_or(0);
+        let (row, col) = (position / 8, position % 8);
+        let end = col == 0 || col == 7;
+        let store = cell.label.strip_prefix("Store ");
+        if end && store.is_none() {
+            continue;
+        }
+        let rect = Rect {
+            x: board.x + pad + col * column,
+            y: board.y + pad + if end { 0 } else { row * column },
+            width: column,
+            height: if end { column * 2 } else { column },
+        };
+        layout.nodes.push(LayoutNode {
+            id,
+            rect,
+            kind: LayoutKind::Cell(
+                cell.action,
+                if end {
+                    CellStyle::Store
+                } else {
+                    CellStyle::Pit
+                },
+                cell.selected,
+            ),
+            text_lines: Vec::new(),
+        });
+        match store.and_then(|rest| rest.rsplit_once(' ')) {
+            // A store's count is in it; whose store it is goes under the
+            // board below it, where the name has the width of the page
+            // rather than of a store.
+            Some((owner, count)) => {
+                layout.nodes.push(LayoutNode {
+                    id,
+                    rect,
+                    kind: LayoutKind::CellLabel(true),
+                    text_lines: vec![count.to_owned()],
+                });
+                let caption = FontSize::Caption.line_height();
+                let name = measure_text(owner, FontSize::Caption).0 + pad * 2;
+                let centre = rect.x + rect.width / 2;
+                let left = (centre - name / 2).clamp(board.x, board.x + board.width - name);
+                layout.nodes.push(LayoutNode {
+                    id,
+                    rect: Rect {
+                        x: left,
+                        y: board.y + board.height,
+                        width: name,
+                        height: caption + pad,
+                    },
+                    kind: LayoutKind::StoreLabel,
+                    text_lines: vec![owner.to_owned()],
+                });
+            }
+            None => layout.nodes.push(LayoutNode {
+                id,
+                rect,
+                kind: LayoutKind::CellLabel(true),
+                text_lines: vec![cell.label.clone()],
+            }),
+        }
     }
+    board.y + board.height + FontSize::Caption.line_height() + pad
+}
+
+/// Lays out a backgammon board whose points carry their numbers.
+///
+/// The board sits inside the page margins in a heavy frame, with a bar
+/// between its two halves as wide as a checker is tall, and each point's
+/// number printed above or below it in the interface face. The older board
+/// ran to the edges of the panel with no bar of its own, and its numbers
+/// were pictures an application drew to match columns it could only guess.
+fn layout_numbered_backgammon(
+    id: NodeId,
+    cells: &[Cell],
+    x: i32,
+    y: i32,
+    width: i32,
+    metrics: &DisplayMetrics,
+    layout: &mut Layout,
+) -> i32 {
+    let frame = metrics.rule_thickness() * 2;
+    let numbers = FontSize::Caption.line_height() + metrics.space(Space::Tight) * 2;
+    let inner = (width - frame * 2).max(12);
+    let wanted_bar = (inner / 14).max(metrics.rule_thickness() * 4);
+    // A point is a target for a finger and is never narrower than one. On a
+    // panel whose page is narrower than twelve of those, the board takes
+    // some of the margin, narrows its bar first, and stays centred on the
+    // panel with a sliver of paper either side of its frame.
+    let point = ((inner - wanted_bar) / 12).max(metrics.touch_target_minimum());
+    let room = metrics.width - frame * 2 - point * 12 - metrics.space(Space::Tight) * 2;
+    let bar = wanted_bar.min(room).max(metrics.rule_thickness() * 4);
+    let point_height = point * 10 / 3;
+    let board_width = point * 12 + bar + frame * 2;
+    let left = if board_width <= width {
+        x + (width - board_width) / 2
+    } else {
+        (metrics.width - board_width) / 2
+    };
+    let top = y + numbers;
+    let board_height = point_height * 2 + frame * 2;
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x: left,
+            y: top,
+            width: board_width,
+            height: board_height,
+        },
+        kind: LayoutKind::BackgammonFrame,
+        text_lines: Vec::new(),
+    });
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x: left + frame + point * 6,
+            y: top,
+            width: bar,
+            height: board_height,
+        },
+        kind: LayoutKind::BackgammonFrame,
+        text_lines: Vec::new(),
+    });
+    for (position, cell) in cells.iter().take(24).enumerate() {
+        if layout.nodes.len() + 3 > MAX_LAYOUT_NODES {
+            break;
+        }
+        let position = i32::try_from(position).unwrap_or(0);
+        let column = position % 12;
+        let from_top = position < 12;
+        let rect = Rect {
+            x: left + frame + column * point + if column >= 6 { bar } else { 0 },
+            y: if from_top {
+                top + frame
+            } else {
+                top + frame + point_height
+            },
+            width: point,
+            height: point_height,
+        };
+        // Neighbouring points alternate, and so do the two points facing
+        // each other across the board.
+        let dark = (column % 2 == 0) == from_top;
+        layout.nodes.push(LayoutNode {
+            id,
+            rect,
+            kind: LayoutKind::Cell(
+                cell.action,
+                CellStyle::BackgammonPoint { from_top, dark },
+                cell.selected,
+            ),
+            text_lines: Vec::new(),
+        });
+        if let Some(glyph) = cell.glyph {
+            let count = cell
+                .label
+                .split_whitespace()
+                .nth(3)
+                .and_then(|count| count.parse::<u8>().ok())
+                .unwrap_or(1)
+                .clamp(1, 15);
+            layout.nodes.push(LayoutNode {
+                id,
+                rect,
+                kind: LayoutKind::BackgammonStack(glyph, count, from_top),
+                text_lines: vec![cell.label.clone()],
+            });
+        }
+        if let Some(number) = cell.corner {
+            layout.nodes.push(LayoutNode {
+                id,
+                rect: Rect {
+                    x: rect.x,
+                    y: if from_top { y } else { top + board_height },
+                    width: point,
+                    height: numbers,
+                },
+                kind: LayoutKind::PointNumber(cell.tone),
+                text_lines: vec![number.to_string()],
+            });
+        }
+    }
+    y + board_height + numbers * 2
 }
 
 fn draw_backgammon_stack(
@@ -17866,24 +19227,49 @@ fn draw_backgammon_stack(
 ) {
     let side = (rect.width * 7 / 10).max(1);
     let step = (side * 2 / 3).max(1);
-    for index in 0..i32::from(count) {
+    let drawn = count.min(5);
+    for index in 0..i32::from(drawn) {
         let y = if from_top {
             rect.y + 4 + index * step
         } else {
             rect.y + rect.height - side - 4 - index * step
         };
-        draw_vector(
-            surface,
-            &vector::shapes(glyph),
-            Rect {
-                x: rect.x + (rect.width - side) / 2,
-                y,
-                width: side,
-                height: side,
-            },
-            clip,
-            tone::INK,
-        );
+        let disc = Rect {
+            x: rect.x + (rect.width - side) / 2,
+            y,
+            width: side,
+            height: side,
+        };
+        let ink = if glyph == Glyph::LegalPoint {
+            tone::MUTED
+        } else {
+            tone::INK
+        };
+        if let Some(ground) = vector::piece_ground(glyph) {
+            draw_vector(surface, &ground, disc, clip, tone::PAPER);
+        }
+        draw_vector(surface, &vector::shapes(glyph), disc, clip, ink);
+        if glyph == Glyph::BlackDraughtsKing {
+            draw_vector(surface, &vector::king_inlay(), disc, clip, tone::PAPER);
+        }
+        // Past five the stack would run into the middle of the board, so the
+        // fifth checker carries how many there are, the way a printed
+        // diagram writes the count on the outermost checker.
+        if count > 5 && index == 4 {
+            let ink = if glyph == Glyph::BlackDisc {
+                tone::PAPER
+            } else {
+                tone::INK
+            };
+            draw_centered(
+                surface,
+                &[count.to_string()],
+                disc,
+                FontSize::Caption,
+                ink,
+                clip,
+            );
+        }
     }
 }
 
@@ -18082,6 +19468,30 @@ fn digit_cell(size: FontSize, face: Face) -> i32 {
         .unwrap_or(0)
 }
 
+/// Whether a chip's label is a figure that counts down while the screen
+/// around it stays, a game clock's minutes and seconds.
+///
+/// A clock in a chip was set like any word, so its digits took their own
+/// widths and the figure shifted every time one changed, beside a status band
+/// clock that holds still. Set on a fixed advance it holds still too.
+fn ticking_figure(label: &str) -> bool {
+    label.contains(':')
+        && label.starts_with(|character: char| character.is_ascii_digit())
+        && label
+            .chars()
+            .all(|character| character.is_ascii_digit() || matches!(character, ':' | '.'))
+}
+
+/// How wide a chip's label is set. A clock is measured on its fixed advance,
+/// so its chip keeps one width while it runs.
+fn chip_label_width(label: &str) -> i32 {
+    if ticking_figure(label) {
+        figures_width(label, FontSize::Caption, Face::Text)
+    } else {
+        measure_text(label, FontSize::Caption).0
+    }
+}
+
 /// The width `draw_figures` will take, which does not depend on which digits
 /// these are.
 fn figures_width(text: &str, size: FontSize, face: Face) -> i32 {
@@ -18164,6 +19574,20 @@ fn draw_text_in(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// How far a pixel of an emphasised run moves sideways, `down` pixels below
+/// the top of a line `line` pixels tall.
+///
+/// The upright glyphs are leaned about the middle of the line, the top a
+/// fourteenth of a line right and the foot as far left, rather than about
+/// the foot. Leaned about the foot, the top of the last letter went a whole
+/// seventh of a line into the space after the word, and "very remarkable"
+/// read as one word. The run keeps the advance it was measured with, so
+/// wrapping, links and selection all stay where they were.
+fn emphasis_skew(line: i32, down: i32) -> i32 {
+    let line = line.max(1);
+    (line / 2 - down.clamp(0, line)) / 7
+}
+
 fn draw_rich_text(
     surface: &mut Surface,
     text: &str,
@@ -18191,7 +19615,7 @@ fn draw_rich_text(
             face,
             &mut |pixel_x, pixel_y, coverage| {
                 let skew = if presentation.emphasis {
-                    (line - (pixel_y - y)).clamp(0, line) / 7
+                    emphasis_skew(line, pixel_y - y)
                 } else {
                     0
                 };

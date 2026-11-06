@@ -1,0 +1,24 @@
+# The sample comic opens with the page to itself: no clock, no bar and no
+# position over the art. The middle opens the controls, which say the page.
+wait-for Try a sample comic
+tap Try a sample comic
+wait-for CBZ
+tap-at 536,1378
+wait-for Available on this reader
+tap Open
+wait-for-id comic-next
+wait-idle
+expect-missing Page 1 of
+expect-missing Reading
+clean
+shot reading
+tap-at 536,724
+wait-for Fit page
+expect Page 1 of
+clean
+shot controls
+# The controls are grouped: the page's size, its place, and how it is read,
+# with the way back to the page at the foot.
+expect Page size
+expect Zoom 100%
+expect Back to the page

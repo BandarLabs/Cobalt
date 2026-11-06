@@ -19,6 +19,8 @@ shot nonograms-help
 tap Back
 tap House
 wait-for-id more
+wait-for-id board.cell.24
+expect 2 2
 tap-id board.cell.2
 wait-idle
 tap-id board.column.2
@@ -34,6 +36,13 @@ tap Run entry
 wait-idle
 clean
 shot nonograms-options-on
-tap Resume
+tap Back
+wait-idle
+# Run entry is on, so two taps fill the whole third row.
+tap-id board.cell.10
+tap-id board.cell.14
 wait-idle
 shot nonograms-play
+# A picture this small is whole on the panel, so there is nothing to pan.
+expect-missing Left
+expect-missing Down

@@ -448,7 +448,13 @@ impl ScreenBuilder {
         // above this one, as `terminal_keys` has, changes nothing, because a
         // fill only ever pushes down.
         let mut screen = self.fill();
-        for row in keyboard.keys(submit) {
+        // A word keyboard has three rows and leaves the fourth empty, and an
+        // empty grid would still be laid out as a row of nothing.
+        for row in keyboard
+            .keys(submit)
+            .into_iter()
+            .filter(|row| !row.is_empty())
+        {
             let columns = u8::try_from(row.len()).unwrap_or(u8::MAX);
             screen = screen.grid_with_selection(
                 columns,
@@ -461,6 +467,7 @@ impl ScreenBuilder {
                     if key.glyph.is_some() {
                         cell.glyph = key.glyph;
                     }
+                    cell.tone = key.tone;
                 }
             }
         }

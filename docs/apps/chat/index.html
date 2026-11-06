@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Command Center for Kobo e-readers | Cobalt</title>
+<title>Chat for Kobo e-readers | Cobalt</title>
 <meta name="description" content="Ask a question, then read and navigate the answer with touch controls. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/chat/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="AI Command Center for Kobo e-readers | Cobalt">
+<meta property="og:title" content="Chat for Kobo e-readers | Cobalt">
 <meta property="og:description" content="Ask a question, then read and navigate the answer with touch controls. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/chat/">
 <meta property="og:site_name" content="Cobalt">
@@ -17,17 +17,17 @@
 <meta property="og:image:height" content="1448">
 <meta property="og:image:alt" content="An answer displayed for touch-friendly reading on a Kobo">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="AI Command Center for Kobo e-readers | Cobalt">
+<meta name="twitter:title" content="Chat for Kobo e-readers | Cobalt">
 <meta name="twitter:description" content="Ask a question, then read and navigate the answer with touch controls. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/chat.png">
 <meta name="twitter:image:alt" content="An answer displayed for touch-friendly reading on a Kobo">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-GHjl5DfawdytlsMEzMZEZuy+eD1HY8G1WwgBa+RSIkc='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-mtNKw8CLkDHZ9FkIdT5Dvbs6K6BQsXxXpV0VD1wKc3Q='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
-      "name": "AI Command Center",
+      "name": "Chat",
       "description": "Ask a question, then read and navigate the answer with touch controls. Needs an account.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/chat/",
       "image": {
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "1.0.18",
+      "softwareVersion": "1.0.19",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -68,7 +68,7 @@
         {
           "@type": "ListItem",
           "position": 3,
-          "name": "AI Command Center",
+          "name": "Chat",
           "item": "https://bandarlabs.github.io/Cobalt/apps/chat/"
         }
       ]
@@ -96,10 +96,10 @@
   <div class="app-hero">
     <div class="app-copy">
       <p class="eyebrow">Developer</p>
-      <h1>AI Command Center</h1>
+      <h1>Chat</h1>
       <p class="summary">Ask a question, then read and navigate the answer with touch controls. Needs an account.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>1.0.18</dd></div>
+        <div><dt>Version</dt><dd>1.0.19</dd></div>
         <div><dt>Permissions</dt><dd>network</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.32</dd></div>
       </dl>
@@ -110,15 +110,15 @@
       <img src="../../media/site/apps/chat.png" width="1072" height="1448" alt="An answer displayed for touch-friendly reading on a Kobo">
     </figure>
   </div>
-  <section class="gallery" aria-label="AI Command Center screenshots">
+  <section class="gallery" aria-label="Chat screenshots">
     <div class="strip">
-      <figure><img src="../../media/site/apps/chat/answer.png" width="1072" height="1448" loading="lazy" alt="AI Command Center: An answer set for reading"><figcaption>An answer set for reading</figcaption></figure>
-      <figure><img src="../../media/site/apps/chat/service.png" width="1072" height="1448" loading="lazy" alt="AI Command Center: Choosing OpenAI, Anthropic or Google Gemini"><figcaption>Choosing OpenAI, Anthropic or Google Gemini</figcaption></figure>
+      <figure><img src="../../media/site/apps/chat/answer.png" width="1072" height="1448" loading="lazy" alt="Chat: An answer set for reading"><figcaption>An answer set for reading</figcaption></figure>
+      <figure><img src="../../media/site/apps/chat/service.png" width="1072" height="1448" loading="lazy" alt="Chat: Choosing OpenAI, Anthropic or Google Gemini"><figcaption>Choosing OpenAI, Anthropic or Google Gemini</figcaption></figure>
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 1.0.18</h2>
-    <p>Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.</p>
+    <h2>New in 1.0.19</h2>
+    <p>The app is called Chat, and a saved conversation is named Chat conversation rather than by its file name.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
@@ -129,7 +129,7 @@
       <li>Create an API key with OpenAI, Anthropic or Google Gemini. Save it in a private file named for the service: ~/.openai, ~/.anthropic or ~/.gemini.</li>
       <li>Install the key on the reader under the same name: openai, anthropic or gemini.
         <code class="setup-command">kobo secret set openai</code></li>
-      <li>Open AI Command Center. If the key is not for OpenAI, tap Service and choose its service, then tap Type and ask.</li>
+      <li>Open Chat. If the key is not for OpenAI, tap Service and choose its service, then tap Type and ask.</li>
     </ol>
     <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
       <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
@@ -146,7 +146,7 @@
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Already have Cobalt?</p>
     <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong>, tap the globe in the top bar and choose <strong>Link browser</strong>. Scan the QR code, or enter the pairing code and verification key.</p>
+    <p>On your Kobo, open <strong>App Store</strong> and tap <strong>Link a browser</strong> in the top bar, then <strong>Link a browser</strong> again. Scan the QR code, or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>
@@ -164,7 +164,7 @@
     <h2>Install on <span id="device-name">your Kobo</span></h2>
     <p>Your Kobo checks the app's signature before installing it.</p>
     <div class="actions">
-      <button type="button" id="install">Install AI Command Center</button>
+      <button type="button" id="install">Install Chat</button>
       <button type="button" id="forget" class="secondary">Forget this Kobo</button>
     </div>
     <p class="status" id="install-status" role="status" aria-live="polite"></p>

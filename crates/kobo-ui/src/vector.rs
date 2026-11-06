@@ -583,6 +583,10 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
         .collect()
 }
 
+/// A game piece is drawn the way a printed diagram draws it, seen from
+/// above: a disc, solid for black and a heavy ring for white, nearly filling
+/// its square. A king is the same piece with a ring set inside it, which on a
+/// black piece is cut out of the ink by [`king_inlay`].
 fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
     let (black, king) = match glyph {
         Glyph::BlackDisc => (true, false),
@@ -591,8 +595,10 @@ fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
         Glyph::WhiteDraughtsKing => (false, true),
         Glyph::BlackDraughtsMan => (true, false),
         Glyph::WhiteDraughtsMan => (false, false),
+        // An empty point on a board of lines: a small dot where the lines
+        // meet, so it is never taken for a piece.
         Glyph::BoardPoint => {
-            return Some(vec![Shape::Fill(Path::circle(500, 500, 55))]);
+            return Some(vec![Shape::Fill(Path::circle(500, 500, 90))]);
         }
         Glyph::Mill => {
             // Three points on a rule: the line a player is trying to make.
@@ -609,31 +615,97 @@ fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
                 Shape::Fill(Path::circle(830, 500, 105)),
             ]);
         }
+        // Where a move may go: a solid dot a third the size of a piece. A
+        // ring the size of a small piece was too easily read as a white one.
+        // The renderer sets it in grey.
         Glyph::LegalPoint => {
-            return Some(vec![Shape::Stroke {
-                path: Path::circle(500, 500, 175),
-                width: 54,
-            }]);
+            return Some(vec![Shape::Fill(Path::circle(500, 500, 150))]);
         }
         _ => return None,
     };
-    let paths = if king {
-        vec![Path::circle(500, 590, 270), Path::circle(500, 385, 215)]
+    let piece = if black {
+        Shape::Fill(Path::circle(500, 500, 400))
     } else {
-        vec![Path::circle(500, 500, 300)]
+        Shape::Stroke {
+            path: Path::circle(500, 500, 365),
+            width: 70,
+        }
     };
-    Some(
-        paths
-            .into_iter()
-            .map(|path| {
-                if black {
-                    Shape::Fill(path)
-                } else {
-                    Shape::Stroke { path, width: 64 }
-                }
-            })
-            .collect(),
+    let mut shapes = vec![piece];
+    if king && !black {
+        shapes.push(Shape::Stroke {
+            path: Path::circle(500, 500, 200),
+            width: 60,
+        });
+    }
+    Some(shapes)
+}
+
+/// The paper inside a white piece, drawn before its ink.
+///
+/// A white piece is a ring of ink, and without a ground the square under it
+/// shows through: on a grey square a white man read as an empty outline
+/// rather than a piece standing on the board. A real white piece is solid,
+/// so it covers what it stands on, and a white checker in a stack covers the
+/// one beneath it.
+#[must_use]
+pub fn piece_ground(glyph: Glyph) -> Option<Vec<Shape>> {
+    matches!(
+        glyph,
+        Glyph::WhiteDisc | Glyph::WhiteDraughtsMan | Glyph::WhiteDraughtsKing
     )
+    .then(|| vec![Shape::Fill(Path::circle(500, 500, 365))])
+}
+
+/// A flag on a mine field square: a pole on a short foot, with a pennant
+/// that fills the top half of it. Heavy enough to read on the grey of a
+/// covered square from arm's length.
+#[must_use]
+pub fn flag() -> Vec<Shape> {
+    vec![
+        Shape::Stroke {
+            path: Path::line(420, 150, 420, 840),
+            width: 90,
+        },
+        Shape::Stroke {
+            path: Path::line(270, 840, 660, 840),
+            width: 90,
+        },
+        Shape::Fill(
+            Path::new()
+                .move_to(420, 110)
+                .line_to(840, 310)
+                .line_to(420, 510)
+                .close(),
+        ),
+    ]
+}
+
+/// A mine: a round body with eight spikes, as a printed field draws one.
+#[must_use]
+pub fn mine() -> Vec<Shape> {
+    let mut shapes = vec![Shape::Fill(Path::circle(500, 500, 290))];
+    for (x0, y0, x1, y1) in [
+        (500, 110, 500, 890),
+        (110, 500, 890, 500),
+        (250, 250, 750, 750),
+        (250, 750, 750, 250),
+    ] {
+        shapes.push(Shape::Stroke {
+            path: Path::line(x0, y0, x1, y1),
+            width: 110,
+        });
+    }
+    shapes
+}
+
+/// The ring cut out of a black king, drawn over it in paper.
+#[must_use]
+pub fn king_inlay() -> Vec<Shape> {
+    vec![Shape::Stroke {
+        path: Path::circle(500, 500, 200),
+        width: 60,
+    }]
 }
 
 /// The back control, drawn rather than typed.

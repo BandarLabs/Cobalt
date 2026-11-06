@@ -365,7 +365,7 @@ pub fn score(story: &Story) -> String {
 /// they carry the site's own ordering rather than the best of all time, and
 /// "1 comments" beside it is the kind of small wrongness that makes a screen
 /// look machine-made.
-fn plural(count: u32, noun: &str) -> String {
+pub fn plural(count: u32, noun: &str) -> String {
     if count == 1 {
         format!("1 {noun}")
     } else {

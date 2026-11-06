@@ -3,8 +3,8 @@
   "display_name": "Readeck",
   "short_label": "Readeck",
   "summary": "Read and search your saved Readeck articles. Needs an account.",
-  "version": "0.1.5",
-  "release_notes": "Notes and links in an article now turn in pages when they run long, and tapping a note goes to its passage.",
+  "version": "0.1.6",
+  "release_notes": "Articles open on the whole panel: the sides of the page turn it, and the bar comes back with a touch at the top.",
   "glyph": "bookmark",
   "capabilities": [
     "network",

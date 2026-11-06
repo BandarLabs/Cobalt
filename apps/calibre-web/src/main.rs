@@ -262,7 +262,7 @@ impl Calibre {
                         // the reason under its prompt.
                         self.address.open_with(url);
                         self.notice =
-                            "Use an HTTPS OPDS address without a username or password.".into();
+                            "Use an address that starts with https:// and has no username or password in it.".into();
                     }
                 }
                 Some(Typing::Cancelled) => {
@@ -379,9 +379,16 @@ impl Calibre {
         }
         match self.view {
             View::Libraries => {
-                let mut s = ScreenBuilder::new("calibre-libraries")
-                    .top_bar("Libraries")
-                    .top_bar_action("add", "Add");
+                let mut s = ScreenBuilder::new("calibre-libraries").top_bar("Libraries");
+                // With no library yet, Add library is the screen's one
+                // button, so the bar carries Check again instead of a second
+                // Add: it is how a library set up from a computer shows up
+                // while this screen is open.
+                s = if self.loaded && self.url.is_empty() {
+                    s.top_bar_action("check-again", "Check again")
+                } else {
+                    s.top_bar_action("add", "Add")
+                };
                 if !self.loaded {
                     s = s.secondary("Loading libraries…");
                 } else if self.settings.state == settings::State::Blocked {
@@ -396,10 +403,9 @@ impl Calibre {
                         .splash(
                             Some(kobo_sdk::Glyph::Book),
                             "No libraries",
-                            "Run kobo connect calibre-web on your computer, or add the HTTPS address of your calibre-web library here.",
+                            "Add the address you open calibre-web at, or run kobo connect calibre-web on your computer.",
                         )
-                        .primary_button("add", "Add library")
-                        .button("check-again", "Check again");
+                        .primary_button("add", "Add library");
                 } else {
                     s = s.rows([(
                         "library",
@@ -424,7 +430,7 @@ impl Calibre {
                     &self.address,
                     "Library address",
                     if self.notice.is_empty() {
-                        "Enter the HTTPS OPDS address of your library."
+                        "The address you open calibre-web at, starting with https://."
                     } else {
                         &self.notice
                     },
@@ -1062,7 +1068,7 @@ mod tests {
             commands.iter().any(|c| matches!(
                 c,
                 kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::TypeText { initial, hint, .. })
-                    if initial == "http://library.test/opds" && hint.contains("HTTPS OPDS")
+                    if initial == "http://library.test/opds" && hint.contains("starts with https://")
             )),
             "a refused address comes back to mend with the reason: {commands:?}"
         );
@@ -1114,6 +1120,35 @@ mod tests {
             !format!("{:?}", app.screen(&c)).contains("Steps {"),
             "signing in again is not the add-a-library flow"
         );
+    }
+    #[test]
+    fn an_empty_library_list_offers_add_once_and_keeps_check_again_in_the_bar() {
+        let mut runner = kobo_sdk::AppRunner::new(Calibre::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: REGISTRY.into(),
+            value: None,
+        });
+        let screen = runner.app().screen(&Context::default());
+        let drawn = format!("{screen:?}");
+        let bar = screen.top_bar.as_ref().expect("a top bar");
+        assert_eq!(
+            bar.actions
+                .iter()
+                .map(|action| action.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Check again"]
+        );
+        let buttons = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Button { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(buttons, ["Add library", "Downloaded books"], "{drawn}");
+        assert!(!drawn.contains("OPDS"), "{drawn}");
     }
     #[test]
     fn library_add_fits() {

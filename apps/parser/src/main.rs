@@ -193,13 +193,15 @@ impl Parser {
         let page = self.library_page.min(pages.len().saturating_sub(1));
         let mut builder = builder.tile_grid(
             TileShape::Portrait,
+            // A story's name and nothing else: its size in kilobytes said
+            // nothing about the story to anybody choosing one to play.
             pages[page].iter().map(|&index| {
-                let (name, size) = &self.stories[index];
+                let (name, _) = &self.stories[index];
                 (
                     format!("story-{index}"),
                     display_name(name),
                     Glyph::Book,
-                    move |tile: kobo_sdk::Tile| tile.with_subtitle(format_size(*size)),
+                    |tile: kobo_sdk::Tile| tile,
                 )
             }),
         );
@@ -266,28 +268,45 @@ impl Parser {
                 "Keyboard"
             },
         );
+        // The verbs and the ways out of a room are two short runs of small
+        // labels in ordinary case, under the story rather than a wall of
+        // sixteen grey keys in capitals louder than the story itself.
         builder = if self.keyboard_open {
             builder.keyboard(&self.keyboard, "Run")
         } else if let Some(verb) = self.asking {
-            let mut choices: Vec<(String, String)> = self
+            let mut choices: Vec<(String, String, bool)> = self
                 .objects(text)
                 .into_iter()
                 .enumerate()
-                .map(|(index, word)| (format!("object-{index}"), word.to_uppercase()))
+                .map(|(index, thing)| (format!("object-{index}"), sentence_case(&thing), false))
                 .collect();
-            choices.push(("object-type".to_owned(), "TYPE IT".to_owned()));
-            choices.push(("object-cancel".to_owned(), "CANCEL".to_owned()));
-            builder
-                .secondary(verb_question(verb))
-                .grid(4, false, choices)
+            choices.push(("object-type".to_owned(), "Type it".to_owned(), false));
+            choices.push(("object-cancel".to_owned(), "Cancel".to_owned(), false));
+            builder.secondary(verb_question(verb)).chips(choices)
         } else {
-            builder.grid(
-                4,
-                false,
+            let (ways, verbs): (Vec<_>, Vec<_>) = commands
+                .iter()
+                .partition(|(name, _)| DIRECTIONS.contains(name));
+            let run = |commands: Vec<&(&str, &str)>| {
                 commands
-                    .iter()
-                    .map(|&(name, label)| (name.to_owned(), label.to_owned())),
-            )
+                    .into_iter()
+                    .map(|&(name, label)| (name.to_owned(), label.to_owned(), false))
+                    .collect::<Vec<_>>()
+            };
+            let builder = builder.chips(run(verbs));
+            // The ways out are one row of keys, a compass's worth, rather
+            // than labels as narrow as "Up", which no finger could be sure
+            // of at the smallest text.
+            if ways.is_empty() {
+                builder
+            } else {
+                builder.grid(
+                    u8::try_from(ways.len()).unwrap_or(6),
+                    false,
+                    ways.iter()
+                        .map(|&&(name, label)| (name.to_owned(), label.to_owned())),
+                )
+            }
         };
         builder = builder.page_turns("page-back", "page-next").page_position(
             u16::try_from(page).unwrap_or(u16::MAX),
@@ -306,20 +325,35 @@ impl Parser {
         let Some(machine) = self.machine.as_ref() else {
             return Vec::new();
         };
+        // Words the story knows that stand next to each other on the page,
+        // "wooden crate", are one thing and are offered as one: offered one
+        // word at a time, Open what? asked whether to open the wooden or
+        // the crate.
         let mut found: Vec<String> = Vec::new();
-        for (_, _, _, word) in word_links(text) {
+        let mut previous_end = None;
+        for (_, start, end, word) in word_links(text) {
             let word = word
                 .trim_matches(|character: char| !character.is_alphanumeric())
                 .to_lowercase();
             if word.chars().count() < 3
                 || NOT_OBJECTS.contains(&word.as_str())
                 || CHIPS.iter().any(|(probe, ..)| *probe == word)
-                || found.contains(&word)
                 || !machine.knows_word(&word)
             {
+                previous_end = None;
                 continue;
             }
-            found.push(word);
+            let joined = previous_end
+                .is_some_and(|before: usize| text.get(before..start).is_some_and(|gap| gap == " "));
+            previous_end = Some(end);
+            match found.last_mut() {
+                Some(last) if joined => {
+                    last.push(' ');
+                    last.push_str(&word);
+                }
+                _ => found.push(word),
+            }
+            found.dedup();
             if found.len() == 8 {
                 break;
             }
@@ -336,17 +370,22 @@ impl Parser {
     }
 
     fn slot_rows(&self) -> Vec<(String, String, String, Glyph)> {
-        let slot_rows = (1..=10).map(|slot| {
+        // Restoring lists only the slots that hold a game: five empty
+        // slots offered to restore from were five taps that could only say
+        // a slot was empty.
+        let slot_rows = (1..=10).filter_map(|slot| {
             let occupied = self.machine.as_ref().is_some_and(|machine| {
                 self.saves
                     .contains(&save_name(machine.info(), &slot.to_string()))
             });
-            (
-                format!("slot-{slot}"),
-                format!("Slot {slot}"),
-                slot_subtitle(self.slot_action, occupied),
-                Glyph::Bookmark,
-            )
+            (occupied || self.slot_action == SlotAction::Save).then(|| {
+                (
+                    format!("slot-{slot}"),
+                    format!("Slot {slot}"),
+                    slot_subtitle(self.slot_action, occupied),
+                    Glyph::Bookmark,
+                )
+            })
         });
         // The story's own checkpoint (its "save" command) is restorable from
         // here too, so a story-initiated restore can find it. It is paged
@@ -419,6 +458,12 @@ impl Parser {
 
     fn slots_screen_for(&self, context: &Context) -> Screen {
         let rows = self.slot_rows();
+        if rows.is_empty() {
+            return self
+                .slots_prefix()
+                .secondary("No saved games yet. Tap Save while you play to keep one.")
+                .build();
+        }
         let pages = self.slot_pages(context);
         let page = self.slots_page.min(pages.len().saturating_sub(1));
         let mut builder = self
@@ -1157,23 +1202,34 @@ fn save_name(info: &StoryInfo, slot: &str) -> String {
 /// Verbs first, then directions, then meta; the save/restore slot screens
 /// are app-owned and always offered.
 const CHIPS: &[(&str, &str, &str, &str)] = &[
-    ("look", "look", "LOOK", "look"),
-    ("inventory", "inventory", "INVENTORY", "inventory"),
-    ("examine", "examine", "EXAMINE", "examine "),
-    ("take", "take", "TAKE", "take "),
-    ("north", "north", "N", "north"),
-    ("south", "south", "S", "south"),
-    ("east", "east", "E", "east"),
-    ("west", "west", "W", "west"),
-    ("up", "up", "UP", "up"),
-    ("down", "down", "DOWN", "down"),
-    ("drop", "drop", "DROP", "drop "),
-    ("open", "open", "OPEN", "open "),
-    ("read", "read", "READ", "read "),
-    ("light", "light", "LIGHT", "light "),
-    ("undo", "undo", "UNDO", "undo"),
-    ("again", "again", "AGAIN", "again"),
+    ("look", "look", "Look", "look"),
+    ("inventory", "inventory", "Inventory", "inventory"),
+    ("examine", "examine", "Examine", "examine "),
+    ("take", "take", "Take", "take "),
+    ("north", "north", "North", "north"),
+    ("south", "south", "South", "south"),
+    ("east", "east", "East", "east"),
+    ("west", "west", "West", "west"),
+    ("up", "up", "Up", "up"),
+    ("down", "down", "Down", "down"),
+    ("drop", "drop", "Drop", "drop "),
+    ("open", "open", "Open", "open "),
+    ("read", "read", "Read", "read "),
+    ("light", "light", "Light", "light "),
+    ("undo", "undo", "Undo", "undo"),
+    ("again", "again", "Again", "again"),
 ];
+
+/// The commands that are ways out of a room, set in a row of their own.
+const DIRECTIONS: &[&str] = &["north", "south", "east", "west", "up", "down"];
+
+/// "wooden crate" as "Wooden crate", for a label.
+fn sentence_case(text: &str) -> String {
+    let mut characters = text.chars();
+    characters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(characters).collect()
+    })
+}
 
 /// Commands the story actually understands, in a stable order, plus the
 /// app-owned save/restore screens. A story that never mentions a verb or a
@@ -1185,8 +1241,8 @@ fn palette(machine: Option<&Machine>) -> Vec<(&'static str, &'static str)> {
         .filter(|(probe, _, _, _)| machine.is_some_and(|machine| machine.knows_word(probe)))
         .map(|(_, name, label, _)| (*name, *label))
         .collect();
-    commands.push(("save", "SAVE"));
-    commands.push(("restore", "RESTORE"));
+    commands.push(("save", "Save"));
+    commands.push(("restore", "Restore"));
     commands
 }
 
@@ -1296,14 +1352,6 @@ fn display_name(name: &str) -> String {
         .join(" ")
 }
 
-fn format_size(bytes: u32) -> String {
-    if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", f64::from(bytes) / (1024.0 * 1024.0))
-    } else {
-        format!("{} KB", bytes.div_ceil(1024))
-    }
-}
-
 fn main() -> ExitCode {
     match kobo_sdk::run("parser", Parser::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -1387,17 +1435,17 @@ mod tests {
         assert_eq!(
             labels,
             [
-                "LOOK",
-                "INVENTORY",
-                "EXAMINE",
-                "TAKE",
-                "N",
-                "S",
-                "DROP",
-                "READ",
-                "LIGHT",
-                "SAVE",
-                "RESTORE"
+                "Look",
+                "Inventory",
+                "Examine",
+                "Take",
+                "North",
+                "South",
+                "Drop",
+                "Read",
+                "Light",
+                "Save",
+                "Restore"
             ]
         );
     }
@@ -1467,17 +1515,19 @@ mod tests {
             sent,
             "nothing is sent without an object"
         );
+        // "a wooden crate" is one thing on the page, offered as one.
         let objects = app.objects(app.page_text());
-        assert!(objects.contains(&"crate".to_owned()), "{objects:?}");
+        assert!(objects.contains(&"wooden crate".to_owned()), "{objects:?}");
+        assert!(!objects.contains(&"wooden".to_owned()), "{objects:?}");
         assert!(!objects.contains(&"the".to_owned()));
         let index = objects
             .iter()
-            .position(|word| word == "crate")
+            .position(|word| word == "wooden crate")
             .expect("crate");
         app.on_action(&mut context, action_id(&format!("object-{index}")));
         assert_eq!(app.asking, None);
         assert!(
-            app.transcript.contains("> open crate"),
+            app.transcript.contains("> open wooden crate"),
             "{}",
             app.transcript
         );

@@ -3,7 +3,7 @@
   "display_name": "Feeds",
   "short_label": "Feeds",
   "summary": "Follow feeds, search saved articles and read offline with images.",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "glyph": "rss",
   "capabilities": [
     "network"
@@ -27,5 +27,5 @@
       }
     ]
   },
-  "release_notes": "Notes and links in an article now turn in pages when they run long, and tapping a note goes to its passage."
+  "release_notes": "Articles open at their own words, without the site menus and buttons some feeds carry with them."
 }

@@ -28,10 +28,9 @@
 //! largest type this platform sets is [`kobo_ui::FontSize::Heading`] at 5.4 mm,
 //! which is a heading and not a signal, and pictures are never enlarged to fit
 //! -- `fit_within` returns a small source untouched. So the letter is drawn
-//! here, at the size it will be seen, out of a five by seven block alphabet.
-//! Blocks rather than a real face because a glyph made of filled rectangles
-//! costs a memset and needs no typesetter, and at this size the difference is
-//! invisible.
+//! here, at the size it will be seen, from the outlines of the interface's
+//! bold face. It was a five by seven block alphabet, which at nine centimetres
+//! tall was a staircase of black rectangles rather than a letter.
 //!
 //! The picture is rebuilt when the *letter* changes, not when the light does.
 //! That is what keeps the panel calm: a message of ten letters repaints ten
@@ -45,6 +44,19 @@ use kobo_sdk::{
 use kobo_ui::tone;
 use std::process::ExitCode;
 use std::time::Duration;
+
+/// Letters to a row of the letter reference.
+const REFERENCE_COLUMNS: usize = 3;
+
+/// A code as it is printed in a manual: a raised dot and a long dash with a
+/// space between, where the full stops and hyphens it is stored in read as
+/// punctuation.
+fn marks(code: &str) -> String {
+    code.chars()
+        .map(|mark| if mark == '-' { "\u{2014}" } else { "\u{2022}" })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 /// The one picture this application draws, reused for every letter.
 ///
@@ -269,83 +281,64 @@ fn spoken(seconds: usize) -> String {
     }
 }
 
-/// A five by seven block alphabet, one `u8` a row, the fifth bit leftmost.
+/// Paints one letter at the size it will be seen, `room` pixels tall, as
+/// grey bytes: the width, the height and the pixels.
 ///
-/// Only the characters [`CODE`] can send, plus the space between words, because
-/// a shape with no code behind it could never reach the screen.
-fn glyph(character: char) -> Option<[u8; 7]> {
-    let rows = match character {
-        ' ' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-        'A' => [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-        'B' => [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E],
-        'C' => [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E],
-        'D' => [0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E],
-        'E' => [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F],
-        'F' => [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10],
-        'G' => [0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F],
-        'H' => [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-        'I' => [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E],
-        'J' => [0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C],
-        'K' => [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
-        'L' => [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F],
-        'M' => [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11],
-        'N' => [0x11, 0x19, 0x19, 0x15, 0x13, 0x13, 0x11],
-        'O' => [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-        'P' => [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10],
-        'Q' => [0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D],
-        'R' => [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11],
-        'S' => [0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E],
-        'T' => [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-        'U' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-        'V' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04],
-        'W' => [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11],
-        'X' => [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11],
-        'Y' => [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04],
-        'Z' => [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F],
-        '0' => [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E],
-        '1' => [0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E],
-        '2' => [0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F],
-        '3' => [0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E],
-        '4' => [0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02],
-        '5' => [0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E],
-        '6' => [0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E],
-        '7' => [0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
-        '8' => [0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E],
-        '9' => [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C],
-        '.' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C],
-        ',' => [0x00, 0x00, 0x00, 0x00, 0x0C, 0x04, 0x08],
-        '?' => [0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
-        '/' => [0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10],
-        _ => return None,
-    };
-    Some(rows)
-}
-
-/// Paints one letter at the size it will be seen, as grey bytes.
-///
-/// Returns the width, the height and the pixels. The cell is whatever divides
-/// the room evenly, so the letter is always made of exact rectangles and never
-/// of a scaled bitmap with one row of blocks a pixel taller than its neighbour.
-fn paint(character: char, room: i32) -> Option<(u32, u32, Vec<u8>)> {
-    let rows = glyph(character)?;
-    let cell = usize::try_from((room / 7).max(1)).ok()?;
-    let width = cell * 5;
-    let height = cell * 7;
-    let mut pixels = vec![tone::PAPER; width * height];
-    for (index, bits) in rows.iter().enumerate() {
-        for column in 0..5 {
-            if bits & (0x10 >> column) == 0 {
-                continue;
+/// With `code`, the dots and dashes that carry the letter are drawn under it
+/// as dots and dashes, a sixth of the height given to them and the letter a
+/// little smaller to make the room. They were the full stops and hyphens of
+/// the code typed into the top bar, which read as an ellipsis.
+fn paint(character: char, room: i32, code: Option<&str>) -> Option<(u32, u32, Vec<u8>)> {
+    // Only what the code can send, and the space between words: a shape
+    // with no code behind it could never reach the screen.
+    if character != ' ' && !CODE.iter().any(|(sent, _)| *sent == character) {
+        return None;
+    }
+    let room = u32::try_from(room).ok()?;
+    let strip = if code.is_some() { room / 6 } else { 0 };
+    let (width, letter_height, letter) =
+        kobo_text::display_letter(character, (room - strip) * 2 / 3)?;
+    let height = letter_height + strip;
+    let mut pixels = letter;
+    pixels.resize(
+        pixels.len() + usize::try_from(width * strip).ok()?,
+        tone::PAPER,
+    );
+    if let Some(code) = code {
+        let width = i64::from(width);
+        let unit = i64::from((strip / 3).max(2));
+        let marks: Vec<i64> = code
+            .chars()
+            .map(|mark| if mark == '-' { unit * 3 } else { unit })
+            .collect();
+        let span =
+            marks.iter().sum::<i64>() + unit * i64::try_from(marks.len().saturating_sub(1)).ok()?;
+        let mut x = (width - span) / 2;
+        let middle = i64::from(letter_height + strip / 2);
+        let radius = unit / 2;
+        for length in marks {
+            // A dot is a round mark and a dash is a bar with round ends, three
+            // dots long, as the code is printed in a manual.
+            for px in x..x + length {
+                for py in middle - radius..=middle + radius {
+                    let edge = (px - x - radius).min(x + length - 1 - radius - px);
+                    let inside = edge >= 0 || {
+                        let centre = if px - x < radius {
+                            x + radius
+                        } else {
+                            x + length - 1 - radius
+                        };
+                        (px - centre).pow(2) + (py - middle).pow(2) <= radius * radius
+                    };
+                    if inside && (0..width).contains(&px) && py >= 0 && py < i64::from(height) {
+                        let at = usize::try_from(py * width + px).ok()?;
+                        pixels[at] = tone::INK;
+                    }
+                }
             }
-            for y in index * cell..(index + 1) * cell {
-                let start = y * width + column * cell;
-                pixels[start..start + cell].fill(tone::INK);
-            }
+            x += length + unit;
         }
     }
-    let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) else {
-        return None;
-    };
     Some((width, height, pixels))
 }
 
@@ -521,25 +514,14 @@ impl Morse {
         // under the letter. It is the same fact either way, and a bar that
         // already exists costs the letter nothing, where a line of text under
         // it costs the letter that line on every panel.
+        // In learning mode the code is drawn under the letter as dots and
+        // dashes, so the bar only counts the letters off.
         let title = if self.running {
-            let progress = format!(
-                "{} of {}",
+            format!(
+                "Letter {} of {}",
                 self.sent().min(self.signals.len().max(1)),
                 self.signals.len()
-            );
-            if self.learn {
-                // The letter on the panel, spelled in the code the light is
-                // flashing. A word gap has no code of its own, so while one is
-                // going out the bar keeps the plain count.
-                match self.showing.and_then(|index| self.signals.get(index)) {
-                    Some(signal) if !signal.code.is_empty() => {
-                        format!("{} {} ({})", signal.character, signal.code, progress)
-                    }
-                    _ => progress,
-                }
-            } else {
-                progress
-            }
+            )
         } else {
             "Morse".to_owned()
         };
@@ -553,17 +535,14 @@ impl Morse {
         // panel is an empty frame the size of the screen sitting where a letter
         // had just been. So the picture belongs to the run, and the resting
         // screen carries the code and the estimate in its place.
-        if let Some(character) = self
-            .showing
-            .and_then(|index| self.signals.get(index))
-            .map(|signal| signal.character)
-        {
+        if let Some(signal) = self.showing.and_then(|index| self.signals.get(index)) {
             let room = context.metrics().tenth_mm(LETTER_SENDING_TENTHS_MM);
-            if let Some(picture) = paint(character, room)
+            let code = (self.learn && !signal.code.is_empty()).then_some(signal.code);
+            if let Some(picture) = paint(signal.character, room, code)
                 .and_then(|(width, height, grey)| context.put_picture(LETTER, width, height, grey))
             {
                 let millimetres = u16::try_from(LETTER_SENDING_TENTHS_MM / 10).unwrap_or(u16::MAX);
-                screen = screen.picture(picture, millimetres);
+                screen = screen.unframed_picture(picture, millimetres);
             }
         }
         if !self.running {
@@ -619,9 +598,20 @@ impl Morse {
     /// to say so. Paging is measured against this panel at this text size, so
     /// the largest setting simply turns more pages.
     fn reference(&self, context: &Context) -> Screen {
+        // The whole chart on one page where it fits, three letters to a row,
+        // as a printed card sets it: forty letters in seven pages of six
+        // was a chart nobody could look anything up in.
+        let metrics = context.metrics();
+        let chart = Self::reference_chart();
+        if !chart
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+        {
+            return chart;
+        }
         let entries: Vec<(String, String)> = CODE
             .iter()
-            .map(|(letter, code)| (letter.to_string(), (*code).to_owned()))
+            .map(|(letter, code)| (letter.to_string(), marks(code)))
             .collect();
         let measuring: Vec<(&str, &str, &str)> = entries
             .iter()
@@ -648,6 +638,28 @@ impl Morse {
                 u16::try_from(page + 1).unwrap_or(u16::MAX),
                 u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
             )
+            .build()
+    }
+
+    fn reference_chart() -> Screen {
+        let rows = CODE
+            .chunks(REFERENCE_COLUMNS)
+            .map(|row| kobo_ui::TableRow {
+                header: false,
+                cells: row
+                    .iter()
+                    .flat_map(|(letter, code)| [letter.to_string(), marks(code)])
+                    .chain(std::iter::repeat_n(
+                        String::new(),
+                        (REFERENCE_COLUMNS - row.len()) * 2,
+                    ))
+                    .collect(),
+            })
+            .collect();
+        ScreenBuilder::new("morse-reference")
+            .top_bar("Letter reference")
+            .section_with_value("The letters Morse can send", format!("{}", CODE.len()))
+            .table(rows, Vec::new())
             .build()
     }
 
@@ -931,7 +943,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        beats, encode, glyph, letter_at, paint, Beat, Morse, AGAIN, CODE, LEARN, MAX_MESSAGE, MORE,
+        beats, encode, letter_at, marks, paint, Beat, Morse, AGAIN, CODE, LEARN, MAX_MESSAGE, MORE,
         NEXT_PAGE, REFERENCE, STOP, TOGGLE_LIGHT,
     };
     use kobo_sdk::{action_id, ActionId, AppRunner, Command, DeviceRequest, TaskOutcome};
@@ -1019,23 +1031,67 @@ mod tests {
     #[test]
     fn every_letter_the_beacon_can_send_has_a_shape_to_draw() {
         for (character, _) in CODE {
-            assert!(glyph(*character).is_some(), "no shape for {character}");
+            assert!(
+                paint(*character, 700, None).is_some(),
+                "no shape for {character}"
+            );
         }
-        assert!(glyph(' ').is_some(), "the gap between words needs a blank");
+        assert!(
+            paint(' ', 700, None).is_some(),
+            "the gap between words needs a blank"
+        );
     }
 
     #[test]
     fn a_painted_letter_is_the_size_it_says_it_is_and_has_ink_in_it() {
-        let (width, height, pixels) = paint('A', 700).expect("a letter");
+        let (width, height, pixels) = paint('A', 700, None).expect("a letter");
         assert_eq!(pixels.len(), (width * height) as usize);
-        assert_eq!(width * 7, height * 5, "the cell is not square");
+        assert!((698..=700).contains(&height), "{height} pixels tall");
         assert!(pixels.contains(&tone::INK));
         assert!(pixels.contains(&tone::PAPER));
+        // Drawn from outlines, so its edges are shaded rather than stepped.
+        assert!(pixels
+            .iter()
+            .any(|grey| *grey > tone::INK && *grey < tone::PAPER));
+    }
+
+    #[test]
+    fn learning_draws_the_code_as_dots_and_dashes_under_the_letter() {
+        let (width, height, plain) = paint('A', 700, None).expect("a letter");
+        let (coded_width, coded_height, coded) = paint('A', 700, Some(".-")).expect("a letter");
+        assert_eq!(
+            height, coded_height,
+            "the code took more than the letter gave up"
+        );
+        // The foot of the picture is empty without the code and carries one
+        // short and one long run of ink with it.
+        let row = usize::try_from(height - 700 / 12).unwrap();
+        let runs = |pixels: &[u8], width: u32| {
+            let line = &pixels[row * width as usize..(row + 1) * width as usize];
+            let mut runs = Vec::new();
+            let mut run = 0;
+            for grey in line.iter().chain([&tone::PAPER]) {
+                if *grey == tone::INK {
+                    run += 1;
+                } else if run > 0 {
+                    runs.push(run);
+                    run = 0;
+                }
+            }
+            runs
+        };
+        assert!(runs(&plain, width).is_empty());
+        let marks = runs(&coded, coded_width);
+        assert_eq!(marks.len(), 2, "{marks:?}");
+        assert!(
+            marks[1] > marks[0] * 2,
+            "the dash is no longer than the dot: {marks:?}"
+        );
     }
 
     #[test]
     fn the_gap_between_words_is_painted_as_nothing_at_all() {
-        let (_, _, pixels) = paint(' ', 700).expect("a blank");
+        let (_, _, pixels) = paint(' ', 700, None).expect("a blank");
         assert!(pixels.iter().all(|grey| *grey == tone::PAPER));
     }
 
@@ -1194,7 +1250,7 @@ mod tests {
             .map(|(character, _)| *character)
             .chain([' '])
             .find(|character| {
-                paint(*character, room).is_some_and(|(drawn_width, drawn_height, pixels)| {
+                paint(*character, room, None).is_some_and(|(drawn_width, drawn_height, pixels)| {
                     drawn_width == width && drawn_height == height && pixels == grey
                 })
             })
@@ -1359,9 +1415,15 @@ mod tests {
             drawn.push_str(&format!("{screen:?}"));
             commands = runner.action(action_id(NEXT_PAGE));
         }
+        // Printed with dots and dashes, not the full stops and hyphens the
+        // codes are kept in.
         for code in [".-", "-.--", "-----", ".-.-.-", "-..-."] {
-            assert!(drawn.contains(code), "the code {code} is missing");
+            assert!(drawn.contains(&marks(code)), "the code {code} is missing");
         }
+        assert!(
+            !drawn.contains("\".-\""),
+            "a code is printed as punctuation"
+        );
     }
 
     /// Back from the chart returns to the message, with the typing untouched.
@@ -1387,10 +1449,10 @@ mod tests {
         );
     }
 
-    /// Learning mode names the letter the light is flashing, in the code it is
-    /// being flashed in, on the bar that already counts the letters off.
+    /// Learning mode draws the code under the letter, so the bar only counts
+    /// the letters off, the same with it as without.
     #[test]
-    fn learning_mode_names_the_letter_the_light_is_flashing() {
+    fn learning_mode_leaves_the_code_to_the_picture_and_the_count_to_the_bar() {
         let mut runner = AppRunner::new(Morse::default());
         runner.start();
         runner.action(action_id(LEARN));
@@ -1405,8 +1467,8 @@ mod tests {
             .expect("a beacon screen");
         let drawn = format!("{screen:?}");
         assert!(
-            drawn.contains("S ... (1 of 3)"),
-            "the bar does not name the letter and its code: {drawn}"
+            drawn.contains("Letter 1 of 3") && !drawn.contains("S ..."),
+            "the bar does not count the letters off on their own: {drawn}"
         );
     }
 

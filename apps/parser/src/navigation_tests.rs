@@ -182,6 +182,14 @@ fn every_restore_slot_and_checkpoint_is_reachable_in_both_poses() {
             parser
                 .saves
                 .push(save_name(parser.machine.as_ref().unwrap().info(), "game"));
+            // Restoring lists only slots that hold a game, so every slot
+            // holds one here.
+            for slot in 1..=10 {
+                parser.saves.push(save_name(
+                    parser.machine.as_ref().unwrap().info(),
+                    &slot.to_string(),
+                ));
+            }
             parser.command(&mut context, "restore");
             let pages = parser.slot_pages(&context);
             assert_eq!(
@@ -364,4 +372,28 @@ fn the_empty_library_puts_the_command_on_your_computer_and_the_check_under_it_at
             }
         }
     }
+}
+
+#[test]
+fn restoring_offers_only_the_slots_that_hold_a_game() {
+    let runner = AppRunner::with_metrics(Parser::default(), CLARA_BW_METRICS);
+    let mut context = runner.context();
+    let mut parser = ready_story();
+    parser.command(&mut context, "restore");
+    assert!(parser.slot_rows().is_empty());
+    let screen = parser.slots_screen_for(&context);
+    let words = screen
+        .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true))
+        .nodes
+        .iter()
+        .flat_map(|node| node.text_lines.clone())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(words.contains("No saved games yet."), "{words}");
+    parser
+        .saves
+        .push(save_name(parser.machine.as_ref().unwrap().info(), "3"));
+    let rows = parser.slot_rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].1, "Slot 3");
 }

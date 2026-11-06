@@ -13,6 +13,27 @@ use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
 type BuildSlot<'a> = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder + 'a>;
 
+/// Where to put the digit keys so they sit under the board's nine columns:
+/// how far in from the page's edge they start, and how wide they are, both in
+/// tenths of a millimetre. `None` when the board is too narrow for nine keys
+/// a finger can hit, and the keys keep the page's width.
+fn keypad_under_board(probe: &Screen, metrics: &kobo_sdk::DisplayMetrics) -> Option<(u16, u16)> {
+    let layout = probe.layout_with(metrics, &kobo_sdk::Chrome::measuring(true));
+    let left = layout.rect_of_action(action_id(&cell_name(0)))?.x;
+    let last = layout.rect_of_action(action_id(&cell_name(8)))?;
+    let right = last.x + last.width;
+    let page = layout.rect_of_action(action_id(&digit_name(1)))?.x;
+    let gap = metrics.space(kobo_sdk::Space::Small);
+    let tight = metrics.space(kobo_sdk::Space::Tight);
+    let width = right - left;
+    if width < metrics.touch_target_minimum() * 9 + tight * 8 || left - page < gap {
+        return None;
+    }
+    // Rounded down, so the keys never run a pixel past the board.
+    let tenths = |pixels: i32| u16::try_from(pixels * 254 / metrics.pixels_per_inch.max(1)).ok();
+    Some((tenths(left - page - gap)?, tenths(width)?))
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum View {
     #[default]
@@ -240,11 +261,22 @@ impl Sudoku {
         // plain bar and Back returns to the board.
         let away = |title| ScreenBuilder::new("sudoku").top_bar(title).owns_back(true);
         match self.view {
-            View::Play => self.play_screen(ScreenBuilder::new("sudoku").game_top_bar(
-                self.title(),
-                self.menu,
-                self.more_items(),
-            )),
+            View::Play => {
+                let head = || {
+                    ScreenBuilder::new("sudoku").game_top_bar(
+                        self.title(),
+                        self.menu,
+                        self.more_items(),
+                    )
+                };
+                // The keys are laid out the board's width when it is wide
+                // enough for nine keys a finger can hit, which is measured
+                // against a screen whose keys run the page's width.
+                let metrics = context.metrics().oriented(self.orientation());
+                let probe = self.play_screen(head(), None);
+                let keypad = keypad_under_board(&probe, &metrics);
+                self.play_screen(head(), keypad)
+            }
             View::New => self.new_game_screen(context),
             View::Restart => away("Sudoku")
                 .confirmation(
@@ -331,7 +363,7 @@ impl Sudoku {
             stacked
         }
     }
-    fn play_screen(&self, builder: ScreenBuilder) -> Screen {
+    fn play_screen(&self, builder: ScreenBuilder, keypad: Option<(u16, u16)>) -> Screen {
         let builder = if self.game.landscape {
             // The status line and a keypad of three rows sit beside the
             // board, so the board keeps every line of height the foot bar
@@ -346,16 +378,34 @@ impl Sudoku {
             ];
             builder.band(BandAlign::Top, slots)
         } else {
-            self.digits(self.board(builder.secondary(self.status())), 9)
+            let builder = self.board(builder.secondary(self.status()));
+            match keypad {
+                // The keys are the board's width and under its columns, so
+                // the row of digits reads as part of the puzzle rather than
+                // a row of buttons running past both of its edges.
+                Some((indent, width)) => {
+                    let slots: [(SlotWidth, BuildSlot<'_>); 2] = [
+                        (SlotWidth::Fixed(indent), Box::new(|b| b)),
+                        (SlotWidth::Fixed(width), Box::new(|b| self.digits(b, 9))),
+                    ];
+                    builder.band(BandAlign::Top, slots)
+                }
+                None => self.digits(builder, 9),
+            }
         };
+        // Notes is a switch that keeps its name, with a tick over it while it
+        // is on. It used to change its word to Digits, so the bar named the
+        // mode the player was not in, and read as either an order or a state.
         builder
-            .game_actions(
-                true,
-                [
-                    ("pencil", if self.game.pencil { "Digits" } else { "Notes" }),
-                    ("erase", "Erase"),
-                ],
-            )
+            .action_bar_marked([
+                (chrome::UNDO, chrome::UNDO_LABEL, None),
+                (
+                    "pencil",
+                    "Notes",
+                    self.game.pencil.then_some(kobo_sdk::Glyph::Check),
+                ),
+                ("erase", "Erase", None),
+            ])
             .build()
     }
     /// Whether starting another puzzle would throw anything away.
@@ -389,7 +439,7 @@ impl Sudoku {
         let each = self.puzzles.len() / Level::ALL.len();
         context.paginate_oriented(&format!("Use 1–9 once in each row, column and 3×3 box. The shaded cross follows your selection; a bracketed number or small square marks your target. Given numbers cannot change.
 
-Tap Notes, then numbers to add or remove notes. A dot marks a square with notes; its selected numbers have outlined keys. Tap Digits to enter answers. Erase clears the selected square, so notes can go where an answer was.
+Tap Notes, then numbers to add or remove notes; a tick over Notes shows they are on. Each note sits in its own place in the square, and the selected square's notes have outlined keys. Tap Notes again to enter answers, which are grey beside the printed numbers. Erase clears the selected square, so notes can go where an answer was.
 
 Mistakes are hidden at first. Show mistakes in More marks a wrong answer in the selected square without removing it, and Hide mistakes turns that off again. Reveal square in More fills the selected square after asking, and counts as a hint.
 

@@ -16,7 +16,7 @@ expect Step 2 of 3
 clean
 shot account-choice
 tap-id sign-in
-wait-for Username and password
+wait-for Password
 expect Step 2 of 3
 clean
 shot sign-in

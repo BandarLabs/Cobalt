@@ -1,22 +1,20 @@
 # Populated shelf after `kobo frame init --sim` and `kobo frame push … --sim`.
-expect Frame
-expect Photographs
+# The photograph is the panel inside a narrow mat: no caption, no buttons and
+# no bar until somebody asks. The sides turn it, which is how it is waited for.
 expect-missing Your frame is empty
 expect-missing kobo frame
-# "Open" also matches the loading message "Opening this photograph".
-# Next appears alongside the real Open button after the photo has loaded.
-wait-for Next
-clean
-shot shelf
-tap Open
-wait 800
+wait-for-id next
+wait-idle
+expect-missing Photographs
 expect-missing Open
-expect-missing Your frame is empty
 clean
 shot photo
-# Settings are a named control in the bar, every choice on one screen.
-tap Back
-wait-for Photographs
+# The middle says what the photograph is, and leads to Settings.
+tap-at 536,724
+wait-for Taken
+expect Photo 1 of 1
+clean
+shot details
 tap Settings
 wait-for Change the photo every
 expect Frame mode
@@ -26,4 +24,5 @@ clean
 shot settings
 tap 5 minutes
 tap Back
-wait-for Photographs
+wait-for-id next
+expect-missing Change the photo every

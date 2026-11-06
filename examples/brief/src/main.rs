@@ -436,8 +436,11 @@ impl Brief {
     fn brief_prefix(&self, context: &Context) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("brief")
             .top_bar("Daily brief")
-            .top_bar_action("sources", "Source")
-            .secondary(self.as_of());
+            .top_bar_action("sources", "Source");
+        if self.refresh_in_bar() {
+            screen = screen.top_bar_glyph(REFRESH, "Refresh", Glyph::Refresh);
+        }
+        let mut screen = screen.secondary(self.as_of());
         if !self.stories.is_empty() {
             screen = screen.secondary(self.offline_line());
         }
@@ -453,6 +456,15 @@ impl Brief {
         // whole headline on every page.
         let _ = context;
         screen
+    }
+
+    /// Whether Refresh is the mark in the top bar rather than the button at
+    /// the foot. Over a list of stories it is something done once a day at
+    /// most, and a full-width button under every page cost a headline. With
+    /// nothing listed, or after a failure, it is the one thing to do, so it
+    /// keeps the button.
+    fn refresh_in_bar(&self) -> bool {
+        !self.stories.is_empty() && self.failure.is_none() && self.fetching == Fetching::Nothing
     }
 
     /// How the brief's stories divide into pages.
@@ -473,7 +485,7 @@ impl Brief {
         let highest = u16::try_from(self.stories.len()).unwrap_or(u16::MAX);
         let pages = context.paginate_ranked_rows_under(
             &borrowed,
-            true,
+            !self.refresh_in_bar(),
             highest,
             kobo_sdk::Position::AtTheFoot,
             &self.brief_prefix(context).build(),
@@ -566,16 +578,20 @@ impl Brief {
             // Pinned to the foot of the panel rather than set after the last
             // story. Placed inline it was drawn wherever the list happened to
             // end, and with a full brief that was past the bottom edge: the
-            // one control on the screen, off the screen.
-            screen = screen.bottom_action_marked(
-                REFRESH,
-                if self.failure.is_some() {
-                    "Try again"
-                } else {
-                    "Refresh"
-                },
-                Glyph::Refresh,
-            );
+            // one control on the screen, off the screen. Over a list of
+            // stories Refresh is in the top bar instead, and the foot is left
+            // to the headlines.
+            if !self.refresh_in_bar() {
+                screen = screen.bottom_action_marked(
+                    REFRESH,
+                    if self.failure.is_some() {
+                        "Try again"
+                    } else {
+                        "Refresh"
+                    },
+                    Glyph::Refresh,
+                );
+            }
         } else {
             // A bar against a known total, not a spinner: the count of stories
             // is fixed, so an indeterminate animation would be claiming the end
@@ -1588,6 +1604,59 @@ mod tests {
             .collect::<Vec<_>>()
             .join(" ");
         assert!(drawn.contains("Try again"), "{drawn}");
+    }
+
+    /// Over a list of stories Refresh is the mark in the top bar, so the foot
+    /// of every page is headlines. Before the first fetch it is the button.
+    #[test]
+    fn refresh_moves_into_the_top_bar_once_there_are_stories() {
+        let kinds = |brief: &Brief| {
+            brief
+                .screen(&Context::default())
+                .layout_with(
+                    &kobo_ui::CLARA_BW_METRICS,
+                    &kobo_ui::Chrome::measuring(true),
+                )
+                .nodes
+                .into_iter()
+                .map(|node| node.kind)
+                .collect::<Vec<_>>()
+        };
+        let refresh = action_id(REFRESH);
+        let in_bar = |kinds: &[kobo_ui::LayoutKind]| {
+            kinds.iter().any(|kind| {
+                matches!(kind, kobo_ui::LayoutKind::BarGlyph(action, kobo_ui::Glyph::Refresh) if *action == refresh)
+            })
+        };
+        let at_foot = |kinds: &[kobo_ui::LayoutKind]| {
+            kinds
+                .iter()
+                .any(|kind| matches!(kind, kobo_ui::LayoutKind::Button(action, ..) if *action == refresh))
+        };
+        let mut brief = ready();
+        let empty = kinds(&brief);
+        assert!(at_foot(&empty) && !in_bar(&empty));
+        brief.stories = vec![Story {
+            title: "A headline".into(),
+            site: "e.org".into(),
+            ..Story::default()
+        }];
+        let listed = kinds(&brief);
+        assert!(in_bar(&listed) && !at_foot(&listed));
+        // Nothing is being fetched, so there is no progress to report either.
+        assert!(
+            !listed.iter().any(|kind| matches!(
+                kind,
+                kobo_ui::LayoutKind::ActivityLabel | kobo_ui::LayoutKind::ActivityProgress
+            )),
+            "an idle brief drew a progress bar over its stories"
+        );
+        assert!(
+            !listed
+                .iter()
+                .any(|kind| matches!(kind, kobo_ui::LayoutKind::Button(..))),
+            "an idle brief drew a button at its foot"
+        );
     }
 
     /// Choosing another list does not leave the last one's stories under the

@@ -10,3 +10,15 @@ clean
 shot setlists
 tap Back
 wait-for Minuet
+# The score on the stand has the panel: no clock or title over the staves,
+# and the middle of the page opens the menu.
+tap Minuet
+wait-for-id next
+wait-idle
+expect-missing Library
+clean
+shot stand
+tap-at 536,724
+wait-for Staff width
+clean
+shot stand-menu

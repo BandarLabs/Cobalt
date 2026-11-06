@@ -52,6 +52,9 @@ type abc234
 tap-id kb.enter
 wait-for This reader is not on Wi-Fi.
 expect-missing Check that Sidekick is open
+# The banner says why; the line under it names the computer rather than
+# saying the same thing again.
+expect Paired with 192.168.1.20:9331.
 clean
 shot offline
 # Pairing in the top bar is the way out of a pairing gone wrong, and the

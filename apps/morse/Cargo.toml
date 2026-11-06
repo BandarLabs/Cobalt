@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-text = { path = "../../crates/kobo-text" }
 kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]

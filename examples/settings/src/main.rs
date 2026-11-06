@@ -443,13 +443,7 @@ impl Settings {
                 self.update_summary(),
                 Glyph::Download,
             ),
-            SettingsRow::new(
-                None,
-                ABOUT,
-                "About",
-                "Model, versions and Wi-Fi address",
-                Glyph::Reader,
-            ),
+            SettingsRow::new(None, ABOUT, "About", "Model and versions", Glyph::Reader),
         ]
     }
 
@@ -501,7 +495,11 @@ impl Settings {
     /// invitation to start it.
     fn update_summary(&self) -> String {
         match &self.update {
-            UpdateFlow::Idle => format!("Cobalt {VERSION}"),
+            // The installed version closes the page, so before a check this
+            // row says how updates arrive rather than repeating it.
+            UpdateFlow::Idle => self
+                .update_options_summary()
+                .unwrap_or_else(|| "Not checked yet".to_owned()),
             UpdateFlow::Checking { .. }
             | UpdateFlow::Manifest { .. }
             | UpdateFlow::ManifestSignature { .. } => "Checking".to_owned(),
@@ -523,7 +521,7 @@ impl Settings {
             UpdateFlow::Idle => {
                 screen = screen
                     .section_with_value("Installed", VERSION)
-                    .text("Checking asks GitHub for the newest published release. Nothing is downloaded until you choose to install it.")
+                    .text("Checking looks online for a newer Cobalt. Nothing is downloaded until you choose to install it.")
                     .button(CHECK, "Check for updates");
             }
             UpdateFlow::Checking { .. }
@@ -1037,11 +1035,14 @@ impl Settings {
     /// reader whose driver is thinner gets a shorter list, which is honest,
     /// rather than a column of dashes.
     fn battery(&self) -> Screen {
+        // No refresh mark in the bar. The gauge is read when this screen
+        // opens and again whenever Settings comes back to the front, so a
+        // mark that read it a third time only asked the owner to do the
+        // reader's job. A reading that failed carries the way to read again
+        // on its banner, where the failure is.
         let mut screen = ScreenBuilder::new("settings-battery")
             .top_bar("Battery")
             .owns_back(true);
-        // A failed reading carries the way to read again, in place of the
-        // button at the foot.
         let trouble = self.banner_for(Topic::Battery);
         if let Some(trouble) = &trouble {
             screen = screen
@@ -1089,9 +1090,6 @@ impl Settings {
         } else {
             screen = screen.section("Details").facts(facts);
         }
-        if trouble.is_none() {
-            screen = screen.button(RESCAN, "Read again");
-        }
         screen.build()
     }
 
@@ -1118,16 +1116,16 @@ impl Settings {
         if let Some(address) = &self.address {
             facts.push(("Wi-Fi address".to_owned(), address.clone()));
         }
-        let mut support: Vec<(String, String)> = vec![
-            ("Profile".to_owned(), identity.profile_id.clone()),
-            (
-                "Screen".to_owned(),
-                format!(
-                    "{} × {} pixels",
-                    identity.panel_width, identity.panel_height
-                ),
+        // The runtime's own name for the hardware profile is left off. It
+        // is a developer's identifier ("SIMULATOR:clara-bw-391" in the
+        // simulator) that says nothing the model and device code do not.
+        let mut support: Vec<(String, String)> = vec![(
+            "Screen".to_owned(),
+            format!(
+                "{} × {} pixels",
+                identity.panel_width, identity.panel_height
             ),
-        ];
+        )];
         if identity.device_code != 0 {
             support.push(("Device code".to_owned(), identity.device_code.to_string()));
         }
@@ -1188,6 +1186,8 @@ impl Settings {
     }
 
     fn about_page_screen(&self, parts: &[usize], page: usize, pages: usize) -> Screen {
+        // No refresh mark: nothing on this page changes while it is open.
+        // A failed read carries Read again on its banner.
         let mut screen = ScreenBuilder::new("settings-about")
             .top_bar("About")
             .owns_back(true);
@@ -1206,11 +1206,6 @@ impl Settings {
                 AboutPart::Facts(title, facts) => screen.section(*title).facts(facts.clone()),
                 AboutPart::Text(title, text) => screen.section(*title).text(*text),
             };
-        }
-        // Read again sits at the foot of the last page, after everything it
-        // reads, and only when a banner is not already offering it.
-        if trouble.is_none() && page + 1 >= pages {
-            screen = screen.button(RESCAN, "Read again");
         }
         page_controls(screen, page, pages).build()
     }
@@ -1389,6 +1384,20 @@ impl Settings {
     fn delay_refresh(&mut self, context: &mut Context, pending: Pending) {
         self.pending = Some(pending);
         self.delayed = context.spawn(Task::Sleep { seconds: 3 });
+    }
+
+    /// Says so when the switch was turned on and the radio came back off.
+    ///
+    /// Saying nothing left the switch where it started, under a note about
+    /// restarting, and nothing on the screen said the tap had failed.
+    fn check_bluetooth_started(&mut self, request: &DeviceRequest, available: bool, enabled: bool) {
+        if matches!(request, DeviceRequest::SetBluetooth { enabled: true }) && available && !enabled
+        {
+            self.fail(
+                Topic::Bluetooth,
+                "Bluetooth did not start. Restart the reader, then turn it on again.",
+            );
+        }
     }
 
     /// Records a failure against the row that caused it, so it is reported
@@ -1570,6 +1579,19 @@ impl KoboApp for Settings {
         Some(kobo_sdk::Accent::Cobalt)
     }
 
+    /// The battery screen reads the gauge again whenever Settings comes
+    /// back to the front or the reader wakes, which is what its refresh mark
+    /// used to be pressed for.
+    fn on_foreground(&mut self, context: &mut Context) {
+        if self.view == View::Battery {
+            context.device().read_battery_detail();
+        }
+    }
+
+    fn on_resume(&mut self, context: &mut Context) {
+        self.on_foreground(context);
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         self.address = Self::read_address();
         Self::refresh(context);
@@ -1720,6 +1742,7 @@ impl KoboApp for Settings {
                 // reader has already been shown.
                 self.restart_on_exit |= restart_on_exit;
                 self.settled(Topic::Bluetooth);
+                self.check_bluetooth_started(&request, available, enabled);
                 if matches!(request, DeviceRequest::PairBluetooth { .. }) {
                     if let Some(Pending::ConnectAfterPair(address)) = self.pending.take() {
                         context.device().connect_bluetooth(address);
@@ -1905,14 +1928,14 @@ const fn check_failure_words(error: TaskError) -> &'static str {
     match error {
         TaskError::Offline => "This reader is not on Wi-Fi. Join a network, then check again.",
         TaskError::Unreachable | TaskError::TimedOut => {
-            "GitHub did not answer. Check that Wi-Fi reaches the internet, then try again."
+            "The update server did not answer. Check that Wi-Fi reaches the internet, then try again."
         }
         TaskError::RateLimited(_) => {
-            "GitHub asked this reader to wait before checking again. Try again in an hour."
+            "The update server asked this reader to wait. Try again in an hour."
         }
         TaskError::Denied | TaskError::NoCredential | TaskError::Unauthorized => NO_NETWORK_ALLOWED,
         TaskError::NotFound | TaskError::TooLarge => {
-            "GitHub's list of releases could not be read. Try again later."
+            "The list of updates could not be read. Try again later."
         }
     }
 }
@@ -2035,9 +2058,9 @@ fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String>
     // GitHub that is not there.
     let value = kobo_json::parse(body).map_err(|_| {
         if body.len() >= release_window(channel) as usize {
-            "GitHub's release list is longer than this reader can read.".to_owned()
+            "The list of updates is longer than this reader can read.".to_owned()
         } else {
-            "GitHub sent something that is not a release.".to_owned()
+            "The update server sent something that is not an update.".to_owned()
         }
     })?;
     match channel {
@@ -2050,7 +2073,7 @@ fn latest_release(body: &str, channel: UpdateChannel) -> Result<Release, String>
                     .filter_map(|release| release_value(release, "beta-v", true))
                     .max_by_key(|release| numbers(&release.version))
             })
-            .ok_or_else(|| "GitHub has no valid beta release for this reader.".to_owned()),
+            .ok_or_else(|| "There is no beta update for this reader yet.".to_owned()),
     }
 }
 
@@ -2212,6 +2235,19 @@ mod tests {
             paired: index % 2 == 0,
             connected: index == 0,
         }
+    }
+
+    #[test]
+    fn the_home_page_names_the_installed_version_once() {
+        let settings = Settings {
+            auto_update: Some((true, true)),
+            update_channel: Some(UpdateChannel::Beta),
+            ..Settings::default()
+        };
+        let rendered = format!("{:?}", settings.home());
+        assert_eq!(rendered.matches(VERSION).count(), 1, "{rendered}");
+        assert!(rendered.contains("Beta · Cobalt and apps update on their own"));
+        assert_eq!(Settings::default().update_summary(), "Not checked yet");
     }
 
     #[test]
@@ -2627,7 +2663,6 @@ mod tests {
         let drawn = format!("{:?}", screen.nodes);
         for needle in [
             "Kobo Clara BW",
-            "CLARA_BW_391",
             "391",
             "4.41.23145",
             "5.10.117",
@@ -2679,11 +2714,14 @@ mod tests {
         let issues = screen.validate(&CLARA_BW_METRICS);
         assert!(issues.is_empty(), "{issues:?}");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
-        assert!(layout.rect_of_action(action_id(RESCAN)).is_some());
+        assert!(
+            layout.rect_of_action(action_id(RESCAN)).is_none(),
+            "the battery is read on opening, not from a mark in the bar"
+        );
     }
 
     /// A reader whose driver publishes almost nothing gets a short screen
-    /// rather than a column of dashes, and the button stays reachable.
+    /// rather than a column of dashes.
     #[test]
     fn a_gauge_that_publishes_almost_nothing_says_so_rather_than_showing_zeroes() {
         let settings = Settings {
@@ -2698,7 +2736,53 @@ mod tests {
         let issues = screen.validate(&CLARA_BW_METRICS);
         assert!(issues.is_empty(), "{issues:?}");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
-        assert!(layout.rect_of_action(action_id(RESCAN)).is_some());
+        assert!(
+            layout.rect_of_action(action_id(RESCAN)).is_none(),
+            "the battery is read on opening, not from a mark in the bar"
+        );
+    }
+
+    #[test]
+    fn the_battery_is_read_again_when_settings_comes_back_to_the_front() {
+        use kobo_sdk::KoboApp;
+        let mut settings = Settings {
+            view: super::View::Battery,
+            ..Settings::default()
+        };
+        let mut context = kobo_sdk::Context::default();
+        settings.on_foreground(&mut context);
+        assert!(context.take_commands().iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::ReadBatteryDetail)
+        )));
+        settings.view = super::View::Home;
+        settings.on_foreground(&mut context);
+        assert!(context.take_commands().is_empty());
+    }
+
+    #[test]
+    fn about_names_the_reader_without_the_runtime_profile_or_a_refresh_mark() {
+        let settings = Settings {
+            identity: Some(DeviceIdentity {
+                profile_id: "SIMULATOR:clara-bw-391".to_owned(),
+                model: "Kobo Clara BW".to_owned(),
+                device_code: 391,
+                firmware: "4.41.23145".to_owned(),
+                kernel: "5.10.117".to_owned(),
+                runtime_version: "0.3.0".to_owned(),
+                panel_width: 1072,
+                panel_height: 1448,
+            }),
+            ..Settings::default()
+        };
+        let screen = settings.about();
+        let drawn = format!("{screen:?}");
+        assert!(!drawn.contains("SIMULATOR"), "{drawn}");
+        assert!(!drawn.contains("\"Profile\""), "{drawn}");
+        assert!(screen
+            .top_bar
+            .as_ref()
+            .is_some_and(|bar| bar.actions.is_empty()));
     }
 
     #[test]
@@ -2836,6 +2920,20 @@ mod tests {
     }
 
     #[test]
+    fn update_copy_says_what_happens_without_naming_where_releases_are_kept() {
+        for error in [
+            super::TaskError::Unreachable,
+            super::TaskError::RateLimited(60),
+            super::TaskError::NotFound,
+        ] {
+            let failure = super::check_failure_words(error);
+            assert!(!failure.contains("GitHub"), "{failure}");
+        }
+        let failure = super::latest_release("<html>", UpdateChannel::Beta).expect_err("not a feed");
+        assert!(!failure.contains("GitHub"), "{failure}");
+    }
+
+    #[test]
     fn a_feed_cut_off_at_its_window_is_reported_as_too_long_not_as_nonsense() {
         let window = super::release_window(UpdateChannel::Beta) as usize;
         let cut_off = r#"[{"tag_name":"beta-v9.8.0","draft":false,"prerelease":true,"assets":[{"#
@@ -2850,7 +2948,7 @@ mod tests {
         assert!(
             super::latest_release("<html>", UpdateChannel::Beta)
                 .expect_err("not a feed at all")
-                .contains("not a release"),
+                .contains("not an update"),
             "a short reply that is not a feed keeps its own sentence"
         );
     }
@@ -2979,7 +3077,7 @@ mod tests {
             },
             super::UpdateFlow::Failed("The download did not match its digest.".to_owned()),
             super::UpdateFlow::Failed(
-                "GitHub's release list is longer than this reader can read.".to_owned(),
+                "The list of updates is longer than this reader can read.".to_owned(),
             ),
         ];
         for flow in flows {
@@ -3137,11 +3235,11 @@ mod tests {
         use super::{check_failure_words, refusal_words};
         use kobo_sdk::TaskError;
         for error in [
-            TaskError::Unreachable,
+            super::TaskError::Unreachable,
             TaskError::TimedOut,
             TaskError::RateLimited(60),
             TaskError::Denied,
-            TaskError::NotFound,
+            super::TaskError::NotFound,
         ] {
             let words = check_failure_words(error);
             assert!(words.starts_with(char::is_uppercase), "{words}");
@@ -3219,13 +3317,12 @@ mod tests {
                     runner.action(action_id(MORE));
                 }
             }
-            assert_eq!(rescans, 1, "{metrics:?}: Read again once, at the end");
+            assert_eq!(rescans, 0, "{metrics:?}: no refresh mark on About");
             for fact in [
                 "Kobo Clara BW",
                 "0.3.0",
                 "4.41.23145",
                 "192.168.1.23",
-                "CLARA_BW_391",
                 "1072 × 1448 pixels",
                 "391",
                 "5.10.117",
@@ -3358,7 +3455,7 @@ mod tests {
             },
             super::UpdateFlow::Offline,
             super::UpdateFlow::Failed(
-                "GitHub did not answer. Check that Wi-Fi reaches the internet, then try again."
+                "The update server did not answer. Check that Wi-Fi reaches the internet, then try again."
                     .to_owned(),
             ),
         ];
@@ -3543,6 +3640,47 @@ mod tests {
                 "{view:?}: {commands:?}"
             );
         }
+    }
+
+    #[test]
+    fn bluetooth_that_comes_back_off_after_being_turned_on_says_it_did_not_start() {
+        let mut settings = Settings {
+            view: View::Bluetooth,
+            bluetooth_state: RadioState::Off,
+            ..Settings::default()
+        };
+        let mut context = kobo_sdk::Context::default();
+        kobo_sdk::KoboApp::on_device_result(
+            &mut settings,
+            &mut context,
+            DeviceRequest::SetBluetooth { enabled: true },
+            DeviceResult::Bluetooth {
+                available: true,
+                enabled: false,
+                devices: Vec::new(),
+                restart_on_exit: true,
+            },
+        );
+        let screen = format!("{:?}", settings.bluetooth());
+        assert!(screen.contains("Bluetooth did not start"), "{screen}");
+        // Turning it off and getting off back is what was asked for.
+        let mut settings = Settings {
+            view: View::Bluetooth,
+            bluetooth_state: RadioState::On,
+            ..Settings::default()
+        };
+        kobo_sdk::KoboApp::on_device_result(
+            &mut settings,
+            &mut context,
+            DeviceRequest::SetBluetooth { enabled: false },
+            DeviceResult::Bluetooth {
+                available: true,
+                enabled: false,
+                devices: Vec::new(),
+                restart_on_exit: true,
+            },
+        );
+        assert!(!format!("{:?}", settings.bluetooth()).contains("did not start"));
     }
 
     #[test]

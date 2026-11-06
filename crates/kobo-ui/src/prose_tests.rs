@@ -1662,11 +1662,10 @@ fn a_byline(fold: Option<Fold>) -> Screen {
 }
 
 #[test]
-fn a_byline_is_set_on_a_tint_and_the_words_underneath_it_are_not() {
-    // Muted caption text alone was not enough to tell a name apart from a
-    // sentence, so the byline gets a band. The band has to stop at the
-    // byline: a comment drawn entirely on a tint is a card, and a page of
-    // cards is a page with no white space in it.
+fn a_byline_is_quiet_type_on_bare_paper_set_apart_by_the_air_above_it() {
+    // A tinted strip under every name turned a thread into a stack of grey
+    // bands, the heaviest thing on the page marking the least important line
+    // of each comment.
     let screen = a_byline(None);
     let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
     let (surface, stride) = paint(&screen);
@@ -1675,19 +1674,18 @@ fn a_byline_is_set_on_a_tint_and_the_words_underneath_it_are_not() {
         .iter()
         .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Byline)))
         .expect("a byline");
-    let body = layout
-        .nodes
-        .iter()
-        .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Body)))
-        .expect("a body");
-    assert!(
-        tone_count(&surface, byline.rect, tone::SURFACE, stride) > 0,
-        "the byline was drawn on bare paper, so it still reads as a sentence"
-    );
     assert_eq!(
-        tone_count(&surface, body.rect, tone::SURFACE, stride),
+        tone_count(&surface, byline.rect, tone::SURFACE, stride),
         0,
-        "the tint ran on past the byline and under the comment"
+        "the byline was drawn on a band"
+    );
+    assert!(
+        tone_count(&surface, byline.rect, tone::MUTED, stride) > 0,
+        "the byline is set in the muted tone"
+    );
+    assert!(
+        byline.rect.height > FontSize::Caption.line_height(),
+        "the byline keeps the air that sets it apart from the comment above"
     );
 }
 
@@ -2183,6 +2181,58 @@ fn a_popover_is_only_as_wide_as_what_is_in_it() {
         narrow < CLARA_BW_METRICS.width / 2,
         "a one word menu took half the panel: {narrow}"
     );
+}
+
+/// The key rectangles of a five-across deck with `keys` labelled keys.
+fn deck_keys(keys: u32) -> Vec<Rect> {
+    let cells = (0..keys)
+        .map(|index| Cell::new(ActionId(index + 1), "Build").with_glyph(Glyph::Terminal))
+        .collect();
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 5,
+            square: true,
+            cells,
+        }],
+    );
+    screen
+        .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
+        .map(|node| node.rect)
+        .collect()
+}
+
+#[test]
+fn a_deck_with_few_keys_lays_them_out_fewer_across_so_they_fill_the_width() {
+    // Two keys drawn five across were two small squares in the corner of an
+    // empty panel.
+    for (keys, across) in [
+        (2, 2),
+        (3, 3),
+        (4, 2),
+        (5, 5),
+        (6, 3),
+        (7, 4),
+        (9, 3),
+        (10, 5),
+        (12, 4),
+        (15, 5),
+    ] {
+        let rects = deck_keys(keys);
+        assert_eq!(rects.len(), keys as usize);
+        let first_row = rects.iter().filter(|rect| rect.y == rects[0].y).count();
+        assert_eq!(first_row, across, "{keys} keys");
+        let left = rects.iter().map(|rect| rect.x).min().unwrap();
+        let right = rects.iter().map(|rect| rect.x + rect.width).max().unwrap();
+        assert!(
+            right - left >= CLARA_BW_METRICS.width * 4 / 5,
+            "{keys} keys span {left}..{right}"
+        );
+    }
 }
 
 #[test]
@@ -4092,6 +4142,107 @@ fn a_natural_slot_takes_only_what_it_measures() {
         rect(3).width >= measure_text("32", FontSize::Caption).0,
         "a natural slot was clamped below what its content measures"
     );
+}
+
+#[test]
+fn a_chip_in_a_natural_slot_sits_beside_the_text_against_the_far_edge() {
+    let screen = Screen::new(
+        1,
+        vec![Node::Band {
+            id: NodeId(1),
+            align: BandAlign::Top,
+            slots: vec![
+                BandSlot::fill(vec![Node::Text {
+                    id: NodeId(2),
+                    text: "You".to_owned(),
+                    links: Vec::new(),
+                }]),
+                BandSlot::natural(vec![Node::Chips {
+                    id: NodeId(3),
+                    chips: vec![Chip {
+                        action: ActionId(7),
+                        label: "Undo".to_owned(),
+                        selected: false,
+                    }],
+                }]),
+            ],
+        }],
+    );
+    let layout = screen.layout();
+    let band = layout
+        .nodes
+        .iter()
+        .find(|node| node.id == NodeId(1))
+        .expect("band")
+        .rect;
+    let text = layout
+        .nodes
+        .iter()
+        .find(|node| node.id == NodeId(2))
+        .expect("text")
+        .rect;
+    let chip = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::Chip(..)))
+        .expect("chip")
+        .rect;
+    assert_eq!(chip.y, text.y, "the chip was stacked under the text");
+    assert_eq!(
+        chip.x + chip.width,
+        band.x + band.width,
+        "the chip stopped short of the band's edge"
+    );
+}
+
+#[test]
+fn two_blocks_of_facts_on_one_page_start_their_values_in_one_column() {
+    let facts = |id: u32, labels: &[&str]| Node::Facts {
+        id: NodeId(id),
+        entries: labels
+            .iter()
+            .map(|label| ((*label).to_owned(), "4.9.77".to_owned()))
+            .collect(),
+    };
+    let screen = Screen::new(
+        1,
+        vec![
+            facts(1, &["Model", "Kobo software", "Wi-Fi address"]),
+            Node::Section {
+                id: NodeId(2),
+                title: "For support".to_owned(),
+                value: None,
+                link: None,
+            },
+            facts(3, &["Profile", "Device code"]),
+        ],
+    );
+    let layout = screen.layout();
+    let starts = |id: u32| {
+        layout
+            .nodes
+            .iter()
+            .filter(|node| node.id == NodeId(id) && node.kind == LayoutKind::FactValue)
+            .map(|node| node.rect.x)
+            .collect::<Vec<_>>()
+    };
+    let (first, second) = (starts(1), starts(3));
+    assert_eq!((first.len(), second.len()), (3, 2));
+    assert!(
+        first.iter().chain(&second).all(|x| *x == first[0]),
+        "{first:?} {second:?}"
+    );
+    // A block alone on its page keeps the column its own labels need.
+    let alone = Screen::new(1, vec![facts(3, &["Profile", "Device code"])]);
+    let own = alone
+        .layout()
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::FactValue)
+        .expect("a value")
+        .rect
+        .x;
+    assert!(own < first[0], "{own} {first:?}");
 }
 
 /// A panel narrow enough that two columns cannot both stay readable.

@@ -141,3 +141,33 @@ fn landscape_rotation_maps_each_logical_corner_to_its_physical_corner() {
     rotate_landscape(&logical, &mut physical, LandscapeTurn::Clockwise);
     assert_eq!(physical.pixels, vec![4, 1, 5, 2, 6, 3]);
 }
+
+#[test]
+fn a_clock_in_a_chip_keeps_one_width_while_its_digits_change() {
+    let width = |label: &str| {
+        let screen = Screen::new(
+            1,
+            vec![Node::Chips {
+                id: NodeId(1),
+                chips: vec![Chip::new(ActionId(1), label)],
+            }],
+        );
+        screen
+            .layout()
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Chip(..)))
+            .map(|node| node.rect.width)
+            .unwrap()
+    };
+    // The face spaces its digits by their shapes, so set as words these two
+    // times are different widths, and a running clock in a chip twitched.
+    assert_eq!(width("11:11"), width("00:00"));
+    assert_eq!(width("1:11:11"), width("8:00:00"));
+    // A word in a chip keeps the width its letters give it.
+    let pad = CLARA_BW_METRICS.space(Space::Small);
+    assert_eq!(
+        width("Blitz"),
+        measure_text("Blitz", FontSize::Caption).0 + pad * 2
+    );
+}

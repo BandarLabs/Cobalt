@@ -43,8 +43,10 @@ tap Artificial Intelligence
 wait-for This reader is not on a network
 wait-idle
 expect This reader is not on a network
+expect Join Wi-Fi
 expect Try again
 expect-missing No papers found
+expect-missing Any time
 clean
 shot listing-offline
 scenario normal

@@ -250,10 +250,31 @@ pub(super) fn layout(
                     lines.push("…".into());
                 }
                 lines
-            } else if clue.values.len() == 1 {
-                vec![all.clone()]
             } else {
-                vec![format!("{} …", clue.values[0])]
+                // A row clue reads across its gutter, so it keeps as many of
+                // its numbers as the gutter holds and ends in an ellipsis only
+                // when some are left out. Cutting every clue after its first
+                // number hid "2 2" in a gutter with room for "64 …", and a
+                // nonogram cannot be read a row at a time through taps.
+                let room = rect.width - metrics.space(Space::Tight) * 2;
+                let fits = |line: &str| measure_text(line, FontSize::Caption).0 <= room;
+                if clue.values.len() == 1 || fits(&all) {
+                    vec![all.clone()]
+                } else {
+                    let shown = (1..clue.values.len())
+                        .rev()
+                        .map(|count| {
+                            let head = clue.values[..count]
+                                .iter()
+                                .map(u8::to_string)
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            format!("{head} …")
+                        })
+                        .find(|line| fits(line))
+                        .unwrap_or_else(|| format!("{} …", clue.values[0]));
+                    vec![shown]
+                }
             };
             layout.nodes.push(LayoutNode {
                 id,
@@ -427,6 +448,52 @@ mod tests {
             };
             assert_eq!(clue.text_lines, expected);
         }
+    }
+
+    fn row_clue_lines(values: Vec<u8>) -> (Vec<String>, i32) {
+        let surface = BoardSurface {
+            columns: 1,
+            row_start: 0,
+            column_start: 0,
+            cell_tenth_mm: 120,
+            cells: vec![BoardCell {
+                action: ActionId(7),
+                mark: BoardMark::Empty,
+                given: false,
+                selected: false,
+            }],
+            row_clues: vec![BoardClue {
+                action: ActionId(8),
+                values,
+            }],
+            column_clues: vec![],
+        };
+        let screen = Screen::new(
+            1,
+            vec![Node::Board {
+                id: NodeId(1),
+                surface,
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let clue = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::BoardClue)
+            .unwrap();
+        (clue.text_lines.clone(), clue.rect.width)
+    }
+
+    #[test]
+    fn a_row_clue_shows_every_number_its_gutter_has_room_for() {
+        assert_eq!(row_clue_lines(vec![2, 2]).0, vec!["2 2".to_owned()]);
+        let (lines, width) = row_clue_lines((1..=12).collect());
+        let [line] = lines.as_slice() else {
+            panic!("one line: {lines:?}");
+        };
+        assert!(line.starts_with("1 2 ") && line.ends_with(" …"), "{line}");
+        let room = width - CLARA_BW_METRICS.space(Space::Tight) * 2;
+        assert!(measure_text(line, FontSize::Caption).0 <= room, "{line}");
     }
 
     #[test]

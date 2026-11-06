@@ -145,8 +145,26 @@ impl Notice {
     }
 }
 
+/// What a refresh that failed says, in the owner's words and with the one
+/// thing to do next.
+///
+/// It used to append the runtime's own description, so an owner with Wi-Fi off
+/// read "the device or network is unreachable" and then that the last
+/// verified list was still shown, which is two sentences about the machinery
+/// and none about what to do.
+fn refresh_failure(error: DeviceError) -> String {
+    match error {
+        DeviceError::Unreachable | DeviceError::NotFound | DeviceError::TimedOut => {
+            "The list could not be updated, so it may be out of date. Connect to Wi-Fi and refresh."
+                .to_owned()
+        }
+        _ => "The list could not be updated, so it may be out of date. Refresh again later."
+            .to_owned(),
+    }
+}
+
 /// The labels a catalog row's own button can carry.
-const ROW_BUTTONS: [&str; 3] = ["Install", "Update", "Open"];
+const ROW_BUTTONS: [&str; 2] = ["Install", "Update"];
 
 struct Store {
     entries: Vec<AppInfo>,
@@ -244,7 +262,7 @@ impl Store {
         let mut screen = ScreenBuilder::new("store-catalog")
             .top_bar("App Store")
             .top_bar_glyph(REFRESH, "Refresh", Glyph::Refresh)
-            .top_bar_action(APP_LINK, "Link browser");
+            .top_bar_action(APP_LINK, "Link a browser");
         // Try again belongs to the app's page, where the permissions are,
         // so the list says what happened without offering it.
         if let Some(notice) = &self.notice {
@@ -327,6 +345,11 @@ impl Store {
         nav_bar: bool,
         compact: bool,
     ) -> Vec<Vec<usize>> {
+        // An installed app with an update carries both a button and a mark.
+        let both = self
+            .listed()
+            .iter()
+            .any(|entry| opens_from_row(entry) && row_button(entry, false).is_some());
         let metrics = context.metrics();
         let head = self.catalog_head(&metrics, 0, 1, compact).build();
         let pages = kobo_ui::with_text_scale(metrics.text_scale, || {
@@ -339,7 +362,7 @@ impl Store {
                 .saturating_sub(metrics.status_band_height())
                 .saturating_sub(used.saturating_add(area.gap))
                 .max(1);
-            // A row's button keeps its own column, which the title and the
+            // A row's button or mark keeps its own column, which the title and the
             // summary wrap beside. Nothing paginates rows with a button, so
             // the column is taken off the width here, as wide as the widest
             // label: a row with a narrower button or none is measured a
@@ -347,7 +370,7 @@ impl Store {
             // per page and never puts one under the bottom bar.
             area.width = area
                 .width
-                .saturating_sub(row_button_column(&metrics))
+                .saturating_sub(row_button_column(&metrics, both))
                 .max(1);
             kobo_ui::paginate_rows_with_trailing(rows, &metrics, area)
         });
@@ -379,23 +402,26 @@ impl Store {
             let mut screen = ScreenBuilder::new("store-catalog")
                 .top_bar("App Store")
                 .top_bar_glyph(REFRESH, "Refresh", Glyph::Refresh)
-                .top_bar_action(APP_LINK, "Link browser");
+                .top_bar_action(APP_LINK, "Link a browser");
             if let Some(notice) = &self.notice {
                 screen = notice.draw(screen);
+            }
+            // While the catalog is being fetched there is nothing to press:
+            // a Refresh button then would only start the same fetch again.
+            if self.refreshing {
+                return screen
+                    .splash(
+                        Some(Glyph::Download),
+                        "Refreshing apps",
+                        "The list of apps is being fetched.",
+                    )
+                    .build();
             }
             return screen
                 .splash(
                     Some(Glyph::Download),
-                    if self.refreshing {
-                        "Refreshing apps"
-                    } else {
-                        "No apps available"
-                    },
-                    if self.refreshing {
-                        "The last verified catalog is shown first; the current GitHub release is being checked now."
-                    } else {
-                        "Connect Wi-Fi and refresh the catalog."
-                    },
+                    "No apps available",
+                    "Connect Wi-Fi and refresh the catalog.",
                 )
                 .bottom_action_marked(REFRESH, "Refresh", Glyph::Refresh)
                 .build();
@@ -467,7 +493,11 @@ impl Store {
 
     fn app_link(&self) -> Screen {
         let mut screen = ScreenBuilder::new("store-app-link")
-            .top_bar("Install from a browser")
+            // One name for this everywhere it appears: the bar on the list,
+            // this screen's title and the button that starts it. It used to
+            // be "Link browser", "Install from a browser" and "Link this
+            // Kobo" on three consecutive taps.
+            .top_bar("Link a browser")
             .owns_back(true);
         if let Some(notice) = &self.notice {
             screen = notice.draw(screen);
@@ -476,8 +506,8 @@ impl Store {
             AppLinkState::Unpaired => screen
                 .splash(
                     Some(Glyph::Globe),
-                    "Link this Kobo",
-                    "Link a browser to install apps from Cobalt app pages. Requests are encrypted for this Kobo.",
+                    "No browser linked",
+                    "Link the browser on your computer or phone to install apps from Cobalt's app pages. What it sends is encrypted for this Kobo.",
                 )
                 .bottom_action_marked(
                     if self.notice.is_some() {
@@ -488,7 +518,7 @@ impl Store {
                     if self.notice.is_some() {
                         "Reset link"
                     } else {
-                        "Link browser"
+                        "Link a browser"
                     },
                     if self.notice.is_some() {
                         Glyph::Refresh
@@ -504,8 +534,8 @@ impl Store {
             } => {
                 let minutes = (*expires_in).div_ceil(60);
                 let verification = pairing_verification(url).unwrap_or_else(|| "Unavailable".into());
-                let mut screen = screen.heading("Link this browser").text(
-                    "Scan the QR code. To pair manually, open the address below and enter both values.",
+                let mut screen = screen.text(
+                    "Scan the code with your phone, or open the address below in a browser and enter the code and key shown.",
                 );
                 if let Some(picture) = self.pairing_qr {
                     screen = screen.picture(picture, 58);
@@ -1215,10 +1245,7 @@ impl KoboApp for Store {
             }
             (DeviceRequest::RefreshAppCatalog, DeviceResult::Failed(error)) => {
                 self.refreshing = false;
-                self.notice = Some(Notice::attention(format!(
-                    "The catalog could not be refreshed: {}. The last verified list is still shown.",
-                    error.describe()
-                )));
+                self.notice = Some(Notice::attention(refresh_failure(error)));
             }
             (DeviceRequest::ReadAppCatalog, DeviceResult::Failed(_)) => {
                 refresh_after_paint = self.refresh_after_cache;
@@ -1402,9 +1429,14 @@ fn app_failure(error: DeviceError) -> &'static str {
     }
 }
 
+/// The words at the edge of an app's catalog row that has no button.
+///
+/// An installed app shows only its version: the row opening the app already
+/// says it is installed, and on the Installed tab the word would be on
+/// every row.
 fn app_state(entry: &AppInfo) -> String {
     if is_system_app(&entry.id) {
-        return "Installed · system".to_owned();
+        return "Built in".to_owned();
     }
     if !entry.is_compatible_with(env!("CARGO_PKG_VERSION")) {
         return format!("Requires Cobalt {}", entry.minimum_cobalt_version);
@@ -1412,15 +1444,18 @@ fn app_state(entry: &AppInfo) -> String {
     match &entry.installed_version {
         None => "Available".to_owned(),
         Some(version) if entry.has_update() => format!("{version} → {}", entry.version),
-        Some(version) => format!("Installed · {version}"),
+        Some(version) => version.clone(),
     }
 }
 
 /// The rows of one catalog page.
 ///
-/// Install, Update or Open on the row itself, so the owner does not open an
-/// app's page to do the one thing its row is for. A row with no button says
-/// why in words: it needs a newer Cobalt.
+/// A tap on an installed app's row opens the app, as it would on the home
+/// screen, and the mark at its edge leads to the app's page, where it is
+/// uninstalled. Any other row opens the app's page. Install and Update sit
+/// on the row itself, so the owner does not open a page to do the one thing
+/// the row is for. A row with no button says why in words: it needs a newer
+/// Cobalt, or its app is already installed.
 fn catalog_rows(
     screen: ScreenBuilder,
     shown: &[&AppInfo],
@@ -1428,7 +1463,7 @@ fn catalog_rows(
 ) -> ScreenBuilder {
     let mut screen = screen.rows_with_trailing(shown.iter().map(|entry| {
         (
-            app_action(&entry.id),
+            row_action(entry),
             entry.title.clone(),
             entry.summary.clone(),
             RowLead::from(entry.glyph),
@@ -1441,16 +1476,34 @@ fn catalog_rows(
     }));
     for entry in shown {
         if let Some((action, label)) = row_button(entry, quiet(entry)) {
-            screen = screen.row_button(app_action(&entry.id), action, label);
+            screen = screen.row_button(row_action(entry), action, label);
+        }
+        if opens_from_row(entry) {
+            screen = screen.row_menu(row_action(entry), app_action(&entry.id));
         }
     }
     screen
 }
 
+/// Whether a tap on the app's catalog row opens the app itself.
+fn opens_from_row(entry: &AppInfo) -> bool {
+    is_system_app(&entry.id) || entry.is_installed()
+}
+
+/// What a tap on the app's catalog row does: open the app, or its page.
+fn row_action(entry: &AppInfo) -> String {
+    if opens_from_row(entry) {
+        open_action(&entry.id)
+    } else {
+        app_action(&entry.id)
+    }
+}
+
 /// The button a catalog row carries, as its action and its label.
 ///
-/// None for an app that needs a newer Cobalt: its row says so instead, and
-/// a tap on it opens the app's page, which offers the Cobalt update.
+/// None for an installed app with nothing to update, whose row opens it,
+/// and for an app that needs a newer Cobalt: its row says so instead, and a
+/// tap on it opens the app's page, which offers the Cobalt update.
 ///
 /// Install opens the app's page rather than installing, so what the app may
 /// do is read before anything is installed; the page's own Install is the
@@ -1458,21 +1511,18 @@ fn catalog_rows(
 /// version asks for nothing the owner has not already granted; otherwise it
 /// opens the page too, where the permissions are listed.
 fn row_button(entry: &AppInfo, quiet_update: bool) -> Option<(String, &'static str)> {
-    if is_system_app(&entry.id) {
-        return Some((open_action(&entry.id), "Open"));
-    }
-    if !entry.is_compatible_with(env!("CARGO_PKG_VERSION")) {
+    if is_system_app(&entry.id) || !entry.is_compatible_with(env!("CARGO_PKG_VERSION")) {
         return None;
     }
-    Some(if !entry.is_installed() {
-        (app_action(&entry.id), "Install")
+    if !entry.is_installed() {
+        Some((app_action(&entry.id), "Install"))
     } else if entry.has_update() && quiet_update {
-        (install_action(&entry.id), "Update")
+        Some((install_action(&entry.id), "Update"))
     } else if entry.has_update() {
-        (app_action(&entry.id), "Update")
+        Some((app_action(&entry.id), "Update"))
     } else {
-        (open_action(&entry.id), "Open")
-    })
+        None
+    }
 }
 
 /// Which tabs carry their counts. See [`Store::tab_labels`].
@@ -1553,12 +1603,13 @@ fn tabs_read_whole(metrics: &kobo_ui::DisplayMetrics, labels: &[String]) -> bool
     })
 }
 
-/// The width a row's button takes from its title, for the widest label a
-/// catalog row can carry: the label, its padding and the gap before it, as
-/// the layout measures them.
-fn row_button_column(metrics: &kobo_ui::DisplayMetrics) -> i32 {
+/// The width a row's button and mark take from its title, for the widest
+/// label a catalog row can carry: the label, its padding and the gap before
+/// it, as the layout measures them, beside the mark when `both` are drawn.
+fn row_button_column(metrics: &kobo_ui::DisplayMetrics, both: bool) -> i32 {
     let padding = metrics.space(kobo_ui::Space::Small);
-    ROW_BUTTONS
+    let mark = metrics.touch_target_default();
+    let button = ROW_BUTTONS
         .iter()
         .map(|label| {
             kobo_ui::measure_text(label, kobo_ui::FontSize::Body)
@@ -1568,7 +1619,12 @@ fn row_button_column(metrics: &kobo_ui::DisplayMetrics) -> i32 {
                 .saturating_add(padding)
         })
         .max()
-        .unwrap_or(0)
+        .unwrap_or(0);
+    if both {
+        button.saturating_add(mark)
+    } else {
+        button.max(mark)
+    }
 }
 
 /// An update this reader can actually take now.
@@ -2262,7 +2318,7 @@ mod tests {
     }
 
     #[test]
-    fn system_apps_are_marked_installed_and_cannot_be_removed() {
+    fn system_apps_are_marked_built_in_and_cannot_be_removed() {
         let mut settings = app("settings", Some("0.2.0"));
         settings.version = "0.2.0".to_owned();
         let store = Store {
@@ -2270,7 +2326,7 @@ mod tests {
             view: View::Detail("settings".to_owned()),
             ..Store::default()
         };
-        assert_eq!(app_state(&store.entries[0]), "Installed · system");
+        assert_eq!(app_state(&store.entries[0]), "Built in");
         let screen = store.detail("settings");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
         assert!(layout
@@ -2443,6 +2499,20 @@ mod tests {
             .collect()
     }
 
+    /// Each catalog row's own action and the action of its overflow mark.
+    fn row_taps(screen: &Screen) -> Vec<(ActionId, Option<ActionId>)> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Rows { rows, .. } => Some(rows),
+                _ => None,
+            })
+            .flatten()
+            .map(|row| (row.action, row.menu))
+            .collect()
+    }
+
     fn row_buttons(screen: &Screen) -> Vec<(ActionId, String)> {
         screen
             .nodes
@@ -2461,7 +2531,7 @@ mod tests {
     }
 
     #[test]
-    fn each_catalog_row_carries_install_update_or_open_and_one_that_needs_cobalt_says_so() {
+    fn a_catalog_row_offers_install_or_update_and_an_installed_app_opens_from_its_row() {
         let (zebra, zebra_installed) = behind("zebra", &["network"]);
         let (moth, moth_installed) = behind("moth", &[]);
         let mut future = app("future", None);
@@ -2482,18 +2552,36 @@ mod tests {
         for (action, label) in [
             // Install opens the app's page, where its permissions are.
             (app_action("apple"), "Install"),
-            (open_action("yak"), "Open"),
             // An update asking for nothing new installs from the row.
             (install_action("zebra"), "Update"),
             // One asking for a new permission opens the page first.
             (app_action("moth"), "Update"),
-            (open_action("settings"), "Open"),
         ] {
             assert!(
                 buttons.contains(&(action_id(&action), label.to_owned())),
                 "{action}: {buttons:?}"
             );
         }
+        // An installed app with nothing to update has no button: its row
+        // opens it, and the mark at its edge leads to its page.
+        assert_eq!(buttons.len(), 3, "{buttons:?}");
+        let mut later = runner.app().clone_for_test();
+        later.page = 1;
+        let taps = [screen.clone(), later.catalog(&runner.context())]
+            .iter()
+            .flat_map(row_taps)
+            .collect::<Vec<_>>();
+        for id in ["yak", "settings", "zebra"] {
+            assert!(
+                taps.contains(&(
+                    action_id(&open_action(id)),
+                    Some(action_id(&app_action(id)))
+                )),
+                "{id}: {taps:?}"
+            );
+        }
+        assert!(taps.contains(&(action_id(&app_action("apple")), None)));
+        assert!(taps.contains(&(action_id(&app_action("future")), None)));
         assert!(!buttons
             .iter()
             .any(|(action, _)| *action == action_id(&install_action("apple"))
@@ -2609,7 +2697,7 @@ mod tests {
                         let screen = store.catalog(&context);
                         let report = screen.diagnostics(&metrics, &Chrome::measuring(true));
                         assert!(!report.has_errors(), "{metrics:?}: {:?}", report.issues);
-                        shown.extend(row_buttons(&screen).into_iter().map(|(action, _)| action));
+                        shown.extend(row_taps(&screen).into_iter().map(|(action, _)| action));
                         if store.page < page {
                             break;
                         }
@@ -2744,7 +2832,29 @@ mod tests {
             link.glyph.is_none(),
             "the browser link is an unlabelled icon"
         );
-        assert!(words(&screen, &CLARA_BW_METRICS).contains("Link browser"));
+        assert!(words(&screen, &CLARA_BW_METRICS).contains("Link a browser"));
+    }
+
+    #[test]
+    fn linking_a_browser_has_one_name_from_the_list_to_its_own_screen() {
+        let mut runner = opened(&[app("apple", None)]);
+        let screen = painted(&runner.action(action_id(APP_LINK)));
+        assert_eq!(
+            screen.top_bar.as_ref().map(|bar| bar.title.as_str()),
+            Some("Link a browser")
+        );
+        let drawn = format!("{screen:?}");
+        for other in ["Install from a browser", "Link this Kobo", "Link browser\""] {
+            assert!(!drawn.contains(other), "{other}: {drawn}");
+        }
+    }
+
+    #[test]
+    fn a_refresh_that_could_not_reach_the_network_says_what_to_do_in_plain_words() {
+        let offline = super::refresh_failure(DeviceError::Unreachable);
+        assert!(offline.contains("Connect to Wi-Fi"), "{offline}");
+        assert!(!offline.contains("unreachable"), "{offline}");
+        assert!(!super::refresh_failure(DeviceError::Backend).contains("Wi-Fi"));
     }
 
     #[test]

@@ -15,13 +15,13 @@
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/sudoku.png">
 <meta property="og:image:width" content="1072">
 <meta property="og:image:height" content="1448">
-<meta property="og:image:alt" content="An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column">
+<meta property="og:image:alt" content="An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Sudoku for Kobo e-readers | Cobalt">
 <meta name="twitter:description" content="Play 600 original Sudoku puzzles, 200 at each of three difficulties, each with exactly one solution. Pencil notes, undo, an optional mistakes check, and saved games survive reopening. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/sudoku.png">
-<meta name="twitter:image:alt" content="An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-5+jF46sBbzhLdxjhMNPZ/gBgVBObhmEQs8zUEGTcKmI='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta name="twitter:image:alt" content="An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-JeSrjJZZ+ffk8bS7UZJoAbQdL0JIkXYjTE1m/DnWLSA='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -35,12 +35,12 @@
         "url": "https://bandarlabs.github.io/Cobalt/media/site/apps/sudoku.png",
         "width": 1072,
         "height": 1448,
-        "caption": "An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"
+        "caption": "An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded"
       },
       "applicationSuite": "Cobalt",
       "applicationCategory": "GameApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "1.0.20",
+      "softwareVersion": "1.0.21",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Sudoku</h1>
       <p class="summary">Play 600 original Sudoku puzzles, 200 at each of three difficulties, each with exactly one solution. Pencil notes, undo, an optional mistakes check, and saved games survive reopening.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>1.0.20</dd></div>
+        <div><dt>Version</dt><dd>1.0.21</dd></div>
         <div><dt>Permissions</dt><dd>No additional permissions</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.32</dd></div>
       </dl>
@@ -107,7 +107,7 @@
       <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/sudoku">Source code on GitHub</a></p>
     </div>
     <figure class="app-shot">
-      <img src="../../media/site/apps/sudoku.png" width="1072" height="1448" alt="An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column">
+      <img src="../../media/site/apps/sudoku.png" width="1072" height="1448" alt="An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded">
     </figure>
   </div>
   <section class="gallery" aria-label="Sudoku screenshots">
@@ -119,8 +119,8 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 1.0.20</h2>
-    <p>Headings are a step smaller, small print such as hints and dates a step larger, and there is more room under the top bar.</p>
+    <h2>New in 1.0.21</h2>
+    <p>Printed numbers are set larger and your answers are grey beside them. Notes sit in their own place in the square, the digit keys line up under the board, and Notes keeps its name with a tick while on.</p>
   </section>
   <section class="panel get-cobalt" id="setup-panel">
     <div class="get-cobalt-copy">
@@ -134,7 +134,7 @@
   <section class="panel" id="pair-panel">
     <p class="eyebrow">Already have Cobalt?</p>
     <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong>, tap the globe in the top bar and choose <strong>Link browser</strong>. Scan the QR code, or enter the pairing code and verification key.</p>
+    <p>On your Kobo, open <strong>App Store</strong> and tap <strong>Link a browser</strong> in the top bar, then <strong>Link a browser</strong> again. Scan the QR code, or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>

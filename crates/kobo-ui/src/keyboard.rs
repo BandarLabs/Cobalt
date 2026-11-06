@@ -25,7 +25,7 @@
 //! tens of milliseconds a repaint, and the payoff is editing in the middle of
 //! a search query.
 
-use crate::{ActionId, Cell, FieldKind, Glyph};
+use crate::{ActionId, Cell, CellTone, FieldKind, Glyph};
 
 /// The longest string the keyboard will accumulate, in characters.
 ///
@@ -111,6 +111,8 @@ pub struct Key {
     pub glyph: Option<Glyph>,
     /// Drawn inverted, for a shift that is held.
     pub selected: bool,
+    /// What a word game has learned about this key's letter.
+    pub tone: CellTone,
 }
 
 impl Key {
@@ -120,6 +122,7 @@ impl Key {
             label: label.into(),
             glyph: None,
             selected: false,
+            tone: CellTone::Plain,
         }
     }
 
@@ -127,7 +130,8 @@ impl Key {
     #[must_use]
     pub fn cell(&self) -> Cell {
         let cell = Cell::new(ActionId::from_name(&self.name), self.label.clone())
-            .with_selected(self.selected);
+            .with_selected(self.selected)
+            .with_tone(self.tone);
         match self.glyph {
             Some(glyph) => cell.with_glyph(glyph),
             None => cell,
@@ -142,6 +146,11 @@ pub struct Keyboard {
     shift: bool,
     layer: Layer,
     kind: FieldKind,
+    /// Letters only, for a word game. See [`Keyboard::for_words`].
+    words: bool,
+    /// The tone of each letter's key, `a` first. Only a word keyboard draws
+    /// them.
+    tones: [CellTone; 26],
 }
 
 impl Keyboard {
@@ -179,6 +188,61 @@ impl Keyboard {
             kind,
             ..Self::default()
         }
+    }
+
+    /// The keys of a word game: the alphabet, a key to submit and a key to
+    /// rub out, and nothing else.
+    ///
+    /// A guess is a run of letters, so Shift, the symbol page and the space
+    /// bar are three keys that can only type something the game refuses, and
+    /// a row of them is a whole row of the panel the board could have. The
+    /// submit key and the rub-out key go either end of the bottom row of
+    /// letters, where the shift and the rub-out are on the ordinary keyboard,
+    /// so the keyboard is three rows tall instead of four.
+    ///
+    /// Letters type in lower case whatever is drawn on the key: a word game
+    /// sets its keys in capitals, as its tiles are, and compares words in one
+    /// case.
+    #[must_use]
+    pub fn for_words() -> Self {
+        Self {
+            words: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether this is a word game's keyboard.
+    #[must_use]
+    pub fn is_for_words(&self) -> bool {
+        self.words
+    }
+
+    /// Marks the key for `letter` with what the game has learned about it.
+    /// Anything other than a letter from `a` to `z`, in either case, is
+    /// ignored.
+    pub fn set_tone(&mut self, letter: char, tone: CellTone) {
+        if let Some(slot) = Self::letter_index(letter).and_then(|index| self.tones.get_mut(index)) {
+            *slot = tone;
+        }
+    }
+
+    /// The tone the key for `letter` is drawn in.
+    #[must_use]
+    pub fn tone(&self, letter: char) -> CellTone {
+        Self::letter_index(letter)
+            .and_then(|index| self.tones.get(index).copied())
+            .unwrap_or_default()
+    }
+
+    /// Returns every key to plain, for a new puzzle.
+    pub fn clear_tones(&mut self) {
+        self.tones = Default::default();
+    }
+
+    fn letter_index(letter: char) -> Option<usize> {
+        letter
+            .is_ascii_alphabetic()
+            .then(|| usize::from(letter.to_ascii_lowercase() as u8 - b'a'))
     }
 
     /// Starts with text already typed, truncated to [`MAX_TEXT`].
@@ -243,6 +307,15 @@ impl Keyboard {
     /// receives here first and handle its own afterwards without having to
     /// know which identifiers the keyboard claimed.
     pub fn press(&mut self, action: ActionId) -> Option<Pressed> {
+        // A word keyboard has no shift, symbols or space bar on it, so an
+        // action naming one is not this keyboard's to answer.
+        if self.words
+            && [SHIFT, LAYER, SPACE]
+                .iter()
+                .any(|name| action == ActionId::from_name(name))
+        {
+            return None;
+        }
         if action == ActionId::from_name(SHIFT) {
             self.shift = !self.shift;
             return Some(Pressed::Shifted);
@@ -296,7 +369,7 @@ impl Keyboard {
                     return Some(character);
                 }
             }
-        } else if action == ActionId::from_name(SPACE) {
+        } else if !self.words && action == ActionId::from_name(SPACE) {
             return Some(' ');
         }
         for (row, characters) in self.rows().iter().enumerate() {
@@ -337,8 +410,15 @@ impl Keyboard {
     /// the alphabet's rows are ten, nine and nine keys wide and a single grid
     /// would either leave a ragged edge or need padding cells that look like
     /// keys but do nothing.
+    ///
+    /// A word keyboard has three rows, with submit and rub-out either end of
+    /// the last, its letters in capitals and in the tones the game set; the
+    /// fourth row is empty.
     #[must_use]
     pub fn keys(&self, submit: &str) -> [Vec<Key>; 4] {
+        if self.words {
+            return self.word_keys(submit);
+        }
         let rows = self.rows();
         let mut drawn: [Vec<Key>; 4] = Default::default();
         for (index, characters) in rows.iter().enumerate() {
@@ -381,6 +461,32 @@ impl Keyboard {
         drawn
     }
 
+    fn word_keys(&self, submit: &str) -> [Vec<Key>; 4] {
+        let mut drawn: [Vec<Key>; 4] = Default::default();
+        for (index, characters) in LETTERS.iter().enumerate() {
+            let keys = &mut drawn[index];
+            if index == 2 {
+                keys.push(Key::new(ENTER, submit));
+            }
+            for (column, character) in characters.chars().enumerate() {
+                keys.push(Key {
+                    tone: self.tone(character),
+                    ..Key::new(
+                        key_name(index, column),
+                        character.to_ascii_uppercase().to_string(),
+                    )
+                });
+            }
+            if index == 2 {
+                keys.push(Key {
+                    glyph: Some(Glyph::Backspace),
+                    ..Key::new(BACKSPACE, "Delete character")
+                });
+            }
+        }
+        drawn
+    }
+
     fn push(&mut self, character: char) {
         // Counted in characters rather than bytes so the limit means the same
         // thing whatever alphabet the reader is using.
@@ -393,7 +499,7 @@ impl Keyboard {
 #[cfg(test)]
 mod tests {
     use super::{Keyboard, Layer, Pressed, MAX_TEXT};
-    use crate::{ActionId, FieldKind};
+    use crate::{ActionId, CellTone, FieldKind};
 
     /// The pages a reader can reach from a fresh keyboard, as the taps that
     /// reach them.
@@ -439,6 +545,61 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_word_keyboard_is_three_rows_of_capitals_with_submit_and_rub_out_on_the_last() {
+        let keyboard = Keyboard::for_words();
+        let rows = keyboard.keys("Guess");
+        let labels = |row: &Vec<super::Key>| {
+            row.iter()
+                .map(|key| key.label.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        assert_eq!(labels(&rows[0]), "Q W E R T Y U I O P");
+        assert_eq!(labels(&rows[1]), "A S D F G H J K L");
+        assert_eq!(labels(&rows[2]), "Guess Z X C V B N M Delete character");
+        assert!(rows[3].is_empty(), "a word keyboard drew a fourth row");
+        assert_eq!(rows[2].len(), rows[1].len(), "the last row is ragged");
+    }
+
+    #[test]
+    fn a_word_keyboard_types_lower_case_letters_and_nothing_else() {
+        let mut keyboard = Keyboard::for_words();
+        for name in ["kb.r2c0", "kb.r1c0", "kb.r0c4"] {
+            assert_eq!(tap(&mut keyboard, name), Some(Pressed::Edited));
+        }
+        assert_eq!(keyboard.text(), "zat");
+        for name in ["kb.shift", "kb.layer", "kb.space"] {
+            assert_eq!(tap(&mut keyboard, name), None, "{name} reached a word game");
+        }
+        assert_eq!(keyboard.text(), "zat");
+        assert_eq!(tap(&mut keyboard, "kb.backspace"), Some(Pressed::Edited));
+        assert_eq!(tap(&mut keyboard, "kb.enter"), Some(Pressed::Submitted));
+        assert_eq!(keyboard.text(), "za");
+    }
+
+    #[test]
+    fn a_letter_keeps_its_tone_on_its_key_until_the_tones_are_cleared() {
+        let mut keyboard = Keyboard::for_words();
+        keyboard.set_tone('R', CellTone::Solid);
+        keyboard.set_tone('v', CellTone::Shaded);
+        keyboard.set_tone('?', CellTone::Faded);
+        let tone_of = |keyboard: &Keyboard, label: &str| {
+            keyboard
+                .keys("Guess")
+                .iter()
+                .flatten()
+                .find(|key| key.label == label)
+                .map(|key| key.cell().tone)
+        };
+        assert_eq!(tone_of(&keyboard, "R"), Some(CellTone::Solid));
+        assert_eq!(tone_of(&keyboard, "V"), Some(CellTone::Shaded));
+        assert_eq!(tone_of(&keyboard, "Q"), Some(CellTone::Plain));
+        assert_eq!(tone_of(&keyboard, "Guess"), Some(CellTone::Plain));
+        keyboard.clear_tones();
+        assert_eq!(tone_of(&keyboard, "R"), Some(CellTone::Plain));
     }
 
     #[test]

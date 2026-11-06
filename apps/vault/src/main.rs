@@ -775,21 +775,19 @@ impl Vault {
         };
         let pages = self.note_pages(cx);
         let index = self.note_page.min(pages.len().saturating_sub(1));
-        let origin_label = match self.origin {
-            View::Browse => "Browse",
-            View::Tags | View::TagNotes => "Tags",
-            View::Recent => "Recent",
-            View::Search => "Search results",
-            _ => "Vault",
-        };
         let backlinks = self.backlinks(self.current).len();
+        // A note is a page to read, set the way a book is: the whole panel,
+        // the sides of it turning the page, and the bar out of sight until a
+        // touch at the top calls it back over the page. It used to keep a bar
+        // above, a row of Previous, Browse and Next below and a page number
+        // over that, a third of the panel spent on furniture. Back from the
+        // bar returns to wherever the note was opened from.
         let mut screen = ScreenBuilder::new("vault-note")
             .top_bar(entry.title.clone())
-            .reading(true)
-            .page_position(
-                u16::try_from(index + 1).unwrap_or(u16::MAX),
-                u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
-            );
+            .reading(true);
+        if pages.len() > 1 {
+            screen = screen.page_turns("previous-page", "next-page");
+        }
         if backlinks > 0 {
             screen = screen.top_bar_action("backlinks", format!("Links ({backlinks})"));
         }
@@ -814,13 +812,9 @@ impl Vault {
             }
         }
         screen
-            .action_bar([
-                ("previous-page", "Previous".to_owned()),
-                ("origin", origin_label.to_owned()),
-                ("next-page", "Next".to_owned()),
-            ])
             .build()
             .with_own_back(true)
+            .with_auto_hidden_top_bar(true)
     }
 }
 

@@ -7,7 +7,7 @@ captures. No live Komga service or account appears in them.
 | Image | What it shows |
 | --- | --- |
 | library.png | The bundled sample comic on the shelf, saved at page 2 of 4 |
-| reader.png | Page 1 of the sample comic |
+| reader.png | Page 1 of the sample comic, with the panel to itself |
 | download-recovery.png | A completed download checkpoint, recovered offline |
 | import-guide.png | The folder step of the USB guide |
 

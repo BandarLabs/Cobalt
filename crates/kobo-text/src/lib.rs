@@ -323,6 +323,11 @@ impl Typeface {
         Self::bundled_serif(metrics, false).map_or_else(|| Self::discover(metrics), Ok)
     }
 
+    /// The compiled-in interface bold.
+    fn bundled_display(metrics: DisplayMetrics) -> Result<Self, Error> {
+        Self::from_bytes(DISPLAY_FONT, "AtkinsonHyperlegible-Bold.ttf", metrics)
+    }
+
     /// The compiled-in serif.
     fn bundled_serif(metrics: DisplayMetrics, heading: bool) -> Option<Self> {
         let (bytes, name) = if heading {
@@ -733,39 +738,46 @@ impl Typesetter for BookFont {
 }
 
 impl SystemFonts {
-    /// Finds the reader's own face for prose and compiles in the one for grids.
+    /// The faces every process on the reader lays text out in.
+    ///
+    /// Only the compiled-in faces, never the reader's own. Applications run in
+    /// a jail that holds their binary and nothing else, so the reader's font
+    /// directory is not there for them to find and they measure in the copies
+    /// compiled into them. The runtime used to look in that directory first
+    /// and set books in Bitter, which is shorter in the line than the Literata
+    /// every application had paginated in: each page was cut for one face and
+    /// drawn in the other, and ended a quarter of the panel early. A face only
+    /// one side of the socket can see cannot be the face either side uses.
+    ///
+    /// `KOBO_FONT` and `KOBO_READING_FONT` still choose a face, for a developer
+    /// who sets them on both sides.
     ///
     /// # Errors
     ///
-    /// Returns an error only when a face that was found cannot be read or
-    /// parsed. A machine with no fonts at all still gets the compiled-in
-    /// pair.
+    /// Returns an error only when an override names a face that cannot be read
+    /// or parsed. Without one, the compiled-in set always loads.
     pub fn discover(metrics: DisplayMetrics) -> Result<Self, Error> {
-        let text = Typeface::discover(metrics)?;
-        // Typography is the one thing here that must never be load-bearing. A
-        // prose face that cannot be loaded means books are set in the interface
-        // face, which is a slightly worse read; letting it fail the whole set
-        // means *nothing* is installed and `kobo-ui` falls back to its built-in
-        // bitmap for every character on the device, which is a far worse one.
-        // That is not hypothetical -- it is what shipped, because the first
-        // prose candidate turned out not to be a font.
-        let reading = Arc::new(match Typeface::discover_reading(metrics) {
-            Ok(face) => face,
-            Err(_) => Typeface::discover(metrics)?,
+        let text = match std::env::var_os(FONT_OVERRIDE) {
+            Some(path) => Typeface::load(PathBuf::from(path), metrics)?,
+            None => Typeface::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)?,
+        };
+        let reading = Arc::new(match std::env::var_os(READING_FONT_OVERRIDE) {
+            Some(path) => Typeface::load(PathBuf::from(path), metrics)?,
+            None => match Typeface::bundled_serif(metrics, false) {
+                Some(face) => face,
+                None => {
+                    Typeface::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)?
+                }
+            },
         });
-        // The regular title face is searched for in the same files as the
-        // prose face, in the same order, with the same compiled-in fallback,
-        // so wherever the prose face came from one of them it is the title
-        // face too. It used to be parsed a second time.
-        let display_title = if Self::reading_serves_as_title(&reading) {
+        // The title face is the prose face wherever that is the bundled serif,
+        // so the one face is parsed once rather than twice.
+        let display_title = if reading.source() == Path::new("Literata-Regular.ttf") {
             Arc::clone(&reading)
         } else {
-            // The panel's own serif, then the bundled one, then Atkinson Bold.
             Arc::new(
-                Typeface::discover_display_serif(metrics, DISPLAY_SERIF_REGULAR_CANDIDATES)
-                    .ok()
-                    .or_else(|| Typeface::bundled_serif(metrics, false))
-                    .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
+                Typeface::bundled_serif(metrics, false)
+                    .map_or_else(|| Typeface::bundled_display(metrics), Ok)?,
             )
         };
         Ok(Self {
@@ -773,13 +785,8 @@ impl SystemFonts {
             text,
             legacy_display: OnceLock::new(),
             display_title,
-            display_heading: Typeface::discover_display_serif(
-                metrics,
-                DISPLAY_SERIF_BOLD_CANDIDATES,
-            )
-            .ok()
-            .or_else(|| Typeface::bundled_serif(metrics, true))
-            .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
+            display_heading: Typeface::bundled_serif(metrics, true)
+                .map_or_else(|| Typeface::bundled_display(metrics), Ok)?,
             mono: OnceLock::new(),
             reading,
         })
@@ -797,24 +804,7 @@ impl SystemFonts {
         if let Some(face) = self.legacy_display.get() {
             return face.source();
         }
-        DEVICE_DISPLAY_FONT_CANDIDATES
-            .iter()
-            .map(Path::new)
-            .find(|path| path.exists())
-            .unwrap_or(Path::new("AtkinsonHyperlegible-Bold.ttf"))
-    }
-
-    /// Whether the title search would have found the face the prose search
-    /// did. Only when no override chose the prose face and both searches walk
-    /// the same list: `KOBO_READING_FONT` is for prose alone, and pointing it at
-    /// Vollkorn on a reader with Bitter must not reset every title in Vollkorn.
-    fn reading_serves_as_title(reading: &Typeface) -> bool {
-        std::env::var_os(READING_FONT_OVERRIDE).is_none()
-            && READING_FONT_CANDIDATES == DISPLAY_SERIF_REGULAR_CANDIDATES
-            && (reading.source() == Path::new("Literata-Regular.ttf")
-                || DISPLAY_SERIF_REGULAR_CANDIDATES
-                    .iter()
-                    .any(|candidate| reading.source() == Path::new(candidate)))
+        Path::new("AtkinsonHyperlegible-Bold.ttf")
     }
 
     /// The grid face, parsed on first use. The compiled-in bytes are checked by
@@ -834,8 +824,7 @@ impl SystemFonts {
         if let Some(face) = self.legacy_display.get() {
             return face;
         }
-        match Typeface::discover_display(self.metrics).or_else(|_| Typeface::discover(self.metrics))
-        {
+        match Typeface::bundled_display(self.metrics) {
             Ok(face) => self.legacy_display.get_or_init(|| face),
             Err(_) => &self.text,
         }
@@ -1070,6 +1059,57 @@ fn kern(font: &Font, previous: char, current: char, pixels: f32) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// One character in the interface's bold face, set so its capitals stand
+/// `cap_height` pixels tall, as grey bytes on paper: the width, the height and
+/// the pixels.
+///
+/// For a letter meant to be read across a room, larger than any size the
+/// interface sets text at. Drawn from the outlines at that size, so the
+/// curves stay curves, where a small letter blown up came out as blocks. The
+/// box is the same for every character at one size, three quarters as wide as
+/// it is tall with the baseline a sixth up from the foot, so letters drawn one
+/// after another sit in the same place. `None` for a character the face has
+/// no shape for, and for a size of zero.
+#[must_use]
+pub fn display_letter(character: char, cap_height: u32) -> Option<(u32, u32, Vec<u8>)> {
+    static FACE: OnceLock<Option<Font>> = OnceLock::new();
+    let font = FACE
+        .get_or_init(|| Font::from_bytes(DISPLAY_FONT, FontSettings::default()).ok())
+        .as_ref()?;
+    if cap_height == 0 || (character != ' ' && !font.has_glyph(character)) {
+        return None;
+    }
+    // The capital H stands on the baseline and reaches the cap height, so its
+    // height at one size gives the size whose capitals are as tall as asked.
+    let probe = 1000.0_f32;
+    let capitals = u16::try_from(font.metrics('H', probe).height.max(1)).ok()?;
+    let pixels = f32::from(u16::try_from(cap_height).ok()?) * probe / f32::from(capitals);
+    let height = cap_height * 3 / 2;
+    let width = height * 3 / 4;
+    let (width_px, height_px) = (usize::try_from(width).ok()?, usize::try_from(height).ok()?);
+    let baseline = i64::from(height - height / 6);
+    let mut grey = vec![255_u8; width_px * height_px];
+    if character != ' ' {
+        let (metrics, coverage) = font.rasterize(character, pixels);
+        let glyph_width = i64::try_from(metrics.width).ok()?;
+        let glyph_height = i64::try_from(metrics.height).ok()?;
+        let left = (i64::from(width) - glyph_width) / 2;
+        let top = baseline - i64::from(metrics.ymin) - glyph_height;
+        for (index, ink) in coverage.iter().enumerate() {
+            let column = i64::try_from(index % metrics.width.max(1)).ok()?;
+            let row = i64::try_from(index / metrics.width.max(1)).ok()?;
+            let (Ok(x), Ok(y)) = (usize::try_from(left + column), usize::try_from(top + row))
+            else {
+                continue;
+            };
+            if x < width_px && y < height_px {
+                grey[y * width_px + x] = 255 - ink;
+            }
+        }
+    }
+    Some((width, height, grey))
+}
+
 /// Installs the best available face into `kobo-ui`.
 ///
 /// Returns the path that was loaded, or an error explaining why the built-in
@@ -1289,7 +1329,9 @@ mod tests {
         let screen = kobo_ui::Screen {
             page_turns: screen
                 .page_turns
-                .map(|turns| turns.with_position(1, pages.len() as u16)),
+                // At least two: "1 of 1" draws no strip, and the strip is
+                // what this checks the rows against.
+                .map(|turns| turns.with_position(1, pages.len().max(2) as u16)),
             ..screen
         };
         let layout = screen.layout();
@@ -2275,5 +2317,32 @@ mod tests {
         });
         assert_eq!(measured, expected);
         assert!(!kobo_ui::legacy_typography(), "the v11 selection leaked");
+    }
+}
+
+#[cfg(test)]
+mod display_letter_tests {
+    use super::display_letter;
+
+    #[test]
+    fn a_display_letter_stands_as_tall_as_asked_in_a_box_every_letter_shares() {
+        let (width, height, grey) = display_letter('H', 400).expect("a capital");
+        assert_eq!((width, height), (450, 600));
+        let rows_with_ink = (0..height as usize)
+            .filter(|row| {
+                grey[row * width as usize..(row + 1) * width as usize]
+                    .iter()
+                    .any(|pixel| *pixel < 128)
+            })
+            .count();
+        assert!(
+            (390..=410).contains(&rows_with_ink),
+            "{rows_with_ink} rows of ink"
+        );
+        let (other_width, other_height, _) = display_letter('I', 400).expect("a capital");
+        assert_eq!((other_width, other_height), (width, height));
+        let (_, _, blank) = display_letter(' ', 400).expect("a space");
+        assert!(blank.iter().all(|pixel| *pixel == 255));
+        assert!(display_letter('A', 0).is_none());
     }
 }
