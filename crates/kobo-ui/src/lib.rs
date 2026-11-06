@@ -16944,10 +16944,12 @@ fn paint_layout(
                 clip,
             ),
             LayoutKind::Card => {
-                fill_clipped(surface, node.rect, tone::SURFACE, clip);
-                stroke_clipped(
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+                fill_rounded_clipped(surface, node.rect, radius, tone::SURFACE, clip);
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
+                    radius,
                     tone::RULE,
                     metrics.rule_thickness(),
                     clip,
@@ -18254,9 +18256,10 @@ fn paint_layout(
                 );
             }
             LayoutKind::ChoiceOption(_, chosen) => {
-                stroke_clipped(
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
                     tone::INK,
                     metrics.rule_thickness(),
                     clip,
@@ -18292,9 +18295,10 @@ fn paint_layout(
             // Outlined in a lighter tone and set in muted ink, so the escape
             // hatch reads as secondary to the options above it.
             LayoutKind::ChoiceFreeform(_) => {
-                stroke_clipped(
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
                     tone::RULE,
                     metrics.rule_thickness(),
                     clip,
