@@ -3393,7 +3393,7 @@ mod tests {
         const BUILDER: &str = include_str!("../../../crates/kobo-sdk/src/builder.rs");
         // Not controls: they build, inspect or arrange, and there is nothing
         // for an eye to check.
-        const NOT_DRAWN: [(&str, &str); 8] = [
+        const NOT_DRAWN: [(&str, &str); 9] = [
             ("new", "starts a screen"),
             ("build", "ends one"),
             (
@@ -3408,6 +3408,11 @@ mod tests {
                 "attaches typeset mathematics to text already shown",
             ),
             ("text_scale", "sets the size of prose already shown"),
+            (
+                "modal",
+                "shown as the dialog on the overlays page, the same frame with its own Close \
+                 in place of the cross",
+            ),
         ];
         let drawn: String = SOURCE
             .lines()

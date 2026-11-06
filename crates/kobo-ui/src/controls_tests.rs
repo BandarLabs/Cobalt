@@ -567,23 +567,18 @@ fn a_banner_action_sits_beside_or_under_the_words_inside_the_banner_and_answers_
         let layout = banner(BannerLevel::Error, true).layout_for(&metrics);
         let band = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].clone();
         let action = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerAction(_)))[0].rect;
-        let words_bottom = band.rect.y
-            + metrics.space(Space::Small)
-            + i32::try_from(band.text_lines.len()).unwrap()
-                * with_text_scale(metrics.text_scale, || FontSize::Body.line_height());
+        let words = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerWords(..)))[0].clone();
+        let words_bottom = words.rect.y + words.rect.height;
         let widest = with_text_scale(metrics.text_scale, || {
-            band.text_lines
+            words
+                .text_lines
                 .iter()
                 .map(|line| measure_text(line, FontSize::Body).0)
                 .max()
                 .unwrap_or(0)
         });
-        let words_right = band.rect.x
-            + metrics.space(Space::Small)
-            + with_text_scale(metrics.text_scale, || {
-                banner_mark_column(BannerLevel::Error, &metrics)
-            })
-            + widest;
+        let words_right =
+            words.rect.x + with_text_scale(metrics.text_scale, || notice_column(&metrics)) + widest;
         assert!(
             action.y >= words_bottom || action.x >= words_right,
             "{name}: the action covers the words"
@@ -643,7 +638,8 @@ fn a_short_banner_carries_its_action_at_the_end_of_its_words_on_one_band() {
         let layout = short_banner(Typography::Fine).layout_for(&metrics);
         let band = kinds(&layout, |kind| matches!(kind, LayoutKind::Banner(_)))[0].clone();
         let action = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerAction(_)))[0].rect;
-        assert_eq!(band.text_lines.len(), 1, "{name}");
+        let words = kinds(&layout, |kind| matches!(kind, LayoutKind::BannerWords(..)))[0].clone();
+        assert_eq!(words.text_lines.len(), 1, "{name}");
         // Centred in the band, with the same margin above and below.
         assert_eq!(
             action.y - band.rect.y,
@@ -1143,4 +1139,63 @@ fn a_fact_label_stands_on_its_values_baseline_rather_than_at_the_foot_of_its_lin
     assert_eq!(label_drop(Some(36), Some(22), 46 - 30), 14);
     assert_eq!(label_drop(None, Some(22), 16), 16);
     assert_eq!(label_drop(Some(10), Some(22), 16), 0);
+}
+
+#[test]
+fn a_short_hyphenated_word_is_kept_whole_and_a_long_compound_still_breaks() {
+    let text = "Check Wi-Fi and try again.";
+    let at_hyphen = text.find("Wi-").unwrap() + "Wi-".len();
+    assert!(strands_a_fragment(text, at_hyphen));
+    let compound = "a state-of-the-art reader";
+    let after_state = compound.find("state-").unwrap() + "state-".len();
+    assert!(strands_a_fragment(compound, after_state));
+    let long = "the counter-argument holds";
+    let after_counter = long.find("counter-").unwrap() + "counter-".len();
+    assert!(!strands_a_fragment(long, after_counter));
+    // Laid out, a measure that ends inside "Wi-Fi" takes the whole word to
+    // the next line rather than leaving "Wi-" behind.
+    let width = with_typography(Typography::Fine, || {
+        measure_text("Check Wi-", FontSize::Body).0 + 1
+    });
+    let lines = with_typography(Typography::Fine, || wrap_text(text, width, FontSize::Body));
+    assert!(lines.iter().all(|line| !line.ends_with('-')), "{lines:?}");
+}
+
+#[test]
+fn an_info_banner_gives_up_its_mark_rather_than_grow_a_line_taller() {
+    // Wide enough for the words on one line, and not for the words and the
+    // mark's column beside them.
+    let text = "Your saved comics are here.";
+    let column = notice_column(&CLARA_BW_METRICS);
+    let padding = CLARA_BW_METRICS.space(Space::Small);
+    let tight = measure_text(text, FontSize::Body).0 + 2 * padding + column / 2;
+    let layout = |level| {
+        screen(vec![Node::Banner {
+            id: NodeId(1),
+            level,
+            text: text.to_owned(),
+            action: None,
+        }])
+        .layout_with(
+            &DisplayMetrics {
+                width: tight + 2 * CLARA_BW_METRICS.screen_margin(),
+                ..CLARA_BW_METRICS
+            },
+            &Chrome::default(),
+        )
+    };
+    let info = layout(BannerLevel::Info);
+    let words = kinds(&info, |kind| matches!(kind, LayoutKind::BannerWords(..)))[0].clone();
+    assert_eq!(
+        words.kind,
+        LayoutKind::BannerWords(BannerLevel::Info, false)
+    );
+    assert_eq!(words.text_lines.len(), 1);
+    // A success always carries its check, as it always did.
+    let success = layout(BannerLevel::Success);
+    let words = kinds(&success, |kind| matches!(kind, LayoutKind::BannerWords(..)))[0].clone();
+    assert_eq!(
+        words.kind,
+        LayoutKind::BannerWords(BannerLevel::Success, true)
+    );
 }

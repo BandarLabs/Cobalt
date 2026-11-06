@@ -5677,6 +5677,9 @@ pub enum LayoutKind {
     ChoiceOption(ActionId, bool),
     ChoiceFreeform(ActionId),
     Banner(BannerLevel),
+    /// A banner's words, from [`Typography::Fine`], with the level's mark
+    /// ahead of them when the bool says the banner had room for it.
+    BannerWords(BannerLevel, bool),
     Skeleton,
     ActivityLabel,
     ActivityProgress,
@@ -10053,6 +10056,33 @@ fn layout_node(
                 width,
                 metrics,
             );
+            let padding = metrics.space(Space::Small);
+            let fine = typography() >= Typography::Fine;
+            let count = plan.lines.len();
+            // From Fine the words are a node of their own, set in the middle
+            // of the band they own: the whole banner when the action is
+            // beside them or there is none, the part above the action when
+            // it is under them. The banner is then only its surface.
+            let words = fine.then(|| {
+                let band = match &plan.action {
+                    Some(button) if !button.beside => banner_height_for_lines(count, metrics),
+                    _ => plan.height,
+                };
+                let tall = i32::try_from(count)
+                    .unwrap_or(0)
+                    .saturating_mul(FontSize::Body.line_height());
+                LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: x.saturating_add(padding),
+                        y: y.saturating_add((band - tall) / 2),
+                        width: max(1, width - 2 * padding),
+                        height: tall,
+                    },
+                    kind: LayoutKind::BannerWords(*level, plan.marked),
+                    text_lines: Vec::new(),
+                }
+            });
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -10062,10 +10092,13 @@ fn layout_node(
                     height: plan.height,
                 },
                 kind: LayoutKind::Banner(*level),
-                text_lines: plan.lines,
+                text_lines: if fine { Vec::new() } else { plan.lines.clone() },
             });
+            if let Some(mut words) = words {
+                words.text_lines = plan.lines;
+                layout.nodes.push(words);
+            }
             if let (Some(action), Some(button)) = (action, plan.action) {
-                let padding = metrics.space(Space::Small);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
@@ -10971,20 +11004,19 @@ fn banner_action_height(metrics: &DisplayMetrics) -> i32 {
     max(metrics.touch_target_default(), FontSize::Body.line_height())
 }
 
-/// The column a banner gives its mark ahead of the words.
-///
-/// Every level has one in [`Typography::Fine`], so the four levels are one
-/// shape told apart by their marks. Before that only a success and an error
-/// had one, and an application at an older protocol measured its info and
-/// attention banners without it.
-fn banner_mark_column(level: BannerLevel, metrics: &DisplayMetrics) -> i32 {
-    let column = FontSize::Body
+/// The column a banner's mark takes ahead of its words.
+fn notice_column(metrics: &DisplayMetrics) -> i32 {
+    FontSize::Body
         .line_height()
-        .saturating_add(metrics.space(Space::Tight));
+        .saturating_add(metrics.space(Space::Tight))
+}
+
+/// The column a banner laid out before [`Typography::Fine`] gives its mark:
+/// a success and an error had one, info and attention none.
+fn banner_mark_column(level: BannerLevel, metrics: &DisplayMetrics) -> i32 {
     match level {
-        _ if typography() >= Typography::Fine => column,
         BannerLevel::Info | BannerLevel::Attention => 0,
-        BannerLevel::Success | BannerLevel::Error => column,
+        BannerLevel::Success | BannerLevel::Error => notice_column(metrics),
     }
 }
 
@@ -11004,6 +11036,8 @@ struct BannerPlan {
     lines: Vec<String>,
     height: i32,
     action: Option<BannerButton>,
+    /// Whether the words stand in from a column holding the level's mark.
+    marked: bool,
 }
 
 struct BannerButton {
@@ -11032,9 +11066,44 @@ fn plan_banner(
     width: i32,
     metrics: &DisplayMetrics,
 ) -> BannerPlan {
+    if typography() < Typography::Fine {
+        return plan_banner_with(
+            text,
+            label,
+            width,
+            banner_mark_column(level, metrics),
+            false,
+            metrics,
+        );
+    }
+    let column = notice_column(metrics);
+    let marked = plan_banner_with(text, label, width, column, true, metrics);
+    // A success and an error always carried their mark. Info and attention
+    // gained one in Fine, and take it only where it costs no height: on a
+    // small panel at the largest size, a column for the mark put the notice
+    // a line taller and pushed the last row of a page off it.
+    if matches!(level, BannerLevel::Info | BannerLevel::Attention) {
+        let plain = plan_banner_with(text, label, width, 0, true, metrics);
+        if plain.height < marked.height {
+            return plain;
+        }
+    }
+    marked
+}
+
+/// [`plan_banner`] with the mark's column decided: `column` wide, or none.
+/// `beside` allows the action at the end of the words.
+fn plan_banner_with(
+    text: &str,
+    label: Option<&str>,
+    width: i32,
+    column: i32,
+    beside: bool,
+    metrics: &DisplayMetrics,
+) -> BannerPlan {
     let padding = metrics.space(Space::Small);
     let tight = metrics.space(Space::Tight);
-    let measure = max(1, width - 2 * padding - banner_mark_column(level, metrics));
+    let measure = max(1, width - 2 * padding - column);
     let button = label.map(|label| {
         let inner = max(1, width - 2 * padding);
         let label = one_line(label, max(1, inner - 2 * padding), FontSize::Body);
@@ -11046,9 +11115,9 @@ fn plan_banner(
         (label, wide)
     });
     if let Some((label, wide)) = button.as_ref() {
-        let beside = measure - padding - wide;
-        if typography() >= Typography::Fine && beside * 2 >= measure {
-            let lines = wrap_text(text, beside, FontSize::Body);
+        let room = measure - padding - wide;
+        if beside && room * 2 >= measure {
+            let lines = wrap_text(text, room, FontSize::Body);
             if lines.len() <= 2 {
                 let words = banner_height_for_lines(lines.len(), metrics);
                 // As tall as the words leave room for, so the button sits
@@ -11067,6 +11136,7 @@ fn plan_banner(
                         height: finger,
                         beside: true,
                     }),
+                    marked: column > 0,
                 };
             }
         }
@@ -11087,6 +11157,7 @@ fn plan_banner(
             height: finger,
             beside: false,
         }),
+        marked: column > 0,
     }
 }
 
@@ -13732,8 +13803,13 @@ fn wrap_ranges_from(
     if text.is_empty() || from >= text.len() || !text.is_char_boundary(from) {
         return Vec::new();
     }
-    let opportunities = with_typesetter(face, |typesetter| typesetter.line_breaks(text))
+    let mut opportunities = with_typesetter(face, |typesetter| typesetter.line_breaks(text))
         .unwrap_or_else(|| fallback_line_breaks(text));
+    if typography() >= Typography::Fine {
+        opportunities.retain(|&(end, opportunity)| {
+            opportunity == BreakOpportunity::Mandatory || !strands_a_fragment(text, end)
+        });
+    }
     let graphemes = with_typesetter(face, |typesetter| typesetter.grapheme_boundaries(text))
         .unwrap_or_else(|| {
             text.char_indices()
@@ -13801,6 +13877,41 @@ fn wrap_ranges_from(
         }
     }
     lines
+}
+
+/// Whether breaking a line at `end`, just after a hyphen, would leave two
+/// letters or fewer on either side of it.
+///
+/// A short hyphenated word is read as one word: "Wi-" at the end of a line
+/// and "Fi" at the start of the next is a word nobody recognises until they
+/// have read both, and in a banner set beside its button it happened in the
+/// commonest sentence there is, the one telling the reader to check their
+/// Wi-Fi. A long compound still breaks at its hyphen, which is what the
+/// hyphen is for. Only in [`Typography::Fine`]: an application at an older
+/// protocol wrapped its lines at every hyphen.
+fn strands_a_fragment(text: &str, end: usize) -> bool {
+    let Some(before) = text.get(..end) else {
+        return false;
+    };
+    let Some(hyphen) = before.chars().last() else {
+        return false;
+    };
+    if !matches!(hyphen, '-' | '\u{2010}') {
+        return false;
+    }
+    let head = before[..before.len() - hyphen.len_utf8()]
+        .chars()
+        .rev()
+        .take_while(|character| !character.is_whitespace())
+        .count();
+    let tail = text[end..]
+        .chars()
+        .take_while(|character| {
+            !character.is_whitespace() && !matches!(character, '-' | '\u{2010}')
+        })
+        .filter(|character| character.is_alphanumeric())
+        .count();
+    head < 3 || tail < 3
 }
 
 fn skip_soft_whitespace(text: &str, mut offset: usize) -> usize {
@@ -16021,6 +16132,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::StepperValue
         | LayoutKind::ChoiceFreeform(_)
         | LayoutKind::Banner(_)
+        | LayoutKind::BannerWords(..)
         | LayoutKind::ActivityLabel
         | LayoutKind::ToggleLabel(_)
         | LayoutKind::RowButton(_)
@@ -18321,51 +18433,16 @@ fn paint_layout(
                 if typography() >= Typography::Fine {
                     // One shape for every level: the quiet surface, rounded
                     // like the buttons beside it, with the level's mark ahead
-                    // of the words. The levels used to be three different
-                    // objects, a black bar down one edge, a box ruled in ink
-                    // and a plain grey field, which on one panel read as three
-                    // components rather than one speaking at three volumes.
+                    // of the words in [`LayoutKind::BannerWords`]. The levels
+                    // used to be three different objects, a black bar down
+                    // one edge, a box ruled in ink and a plain grey field,
+                    // which on one panel read as three components rather than
+                    // one speaking at three volumes.
                     fill_rounded_clipped(
                         surface,
                         node.rect,
                         metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
                         palette.banner(level),
-                        clip,
-                    );
-                    // The words sit in the middle of the band they own: the
-                    // whole banner when the action is beside them or there is
-                    // none, the part above the action when it is under them.
-                    let count = i32::try_from(node.text_lines.len()).unwrap_or(0);
-                    let words = banner_height_for_lines(node.text_lines.len(), metrics);
-                    let under = words
-                        .saturating_add(banner_action_height(metrics))
-                        .saturating_add(metrics.space(Space::Tight));
-                    let band = if node.rect.height >= under {
-                        words
-                    } else {
-                        node.rect.height
-                    };
-                    let top = node.rect.y + (band - count.saturating_mul(line)) / 2;
-                    let text_x = node.rect.x + padding;
-                    draw_vector(
-                        surface,
-                        &banner_mark(level),
-                        Rect {
-                            x: text_x,
-                            y: top,
-                            width: line,
-                            height: line,
-                        },
-                        clip,
-                        tone::INK,
-                    );
-                    draw_lines(
-                        surface,
-                        &node.text_lines,
-                        text_x.saturating_add(mark),
-                        top,
-                        FontSize::Body,
-                        tone::INK,
                         clip,
                     );
                 } else {
@@ -18412,6 +18489,34 @@ fn paint_layout(
                         clip,
                     );
                 }
+            }
+            LayoutKind::BannerWords(level, marked) => {
+                let line = FontSize::Body.line_height();
+                let mut text_x = node.rect.x;
+                if marked {
+                    draw_vector(
+                        surface,
+                        &banner_mark(level),
+                        Rect {
+                            x: text_x,
+                            y: node.rect.y,
+                            width: line,
+                            height: line,
+                        },
+                        clip,
+                        tone::INK,
+                    );
+                    text_x = text_x.saturating_add(notice_column(metrics));
+                }
+                draw_lines(
+                    surface,
+                    &node.text_lines,
+                    text_x,
+                    node.rect.y,
+                    FontSize::Body,
+                    tone::INK,
+                    clip,
+                );
             }
             LayoutKind::Skeleton => {
                 let count = node
