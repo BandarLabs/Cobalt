@@ -1,4 +1,4 @@
-# AI Command Center
+# Chat
 
 Ask OpenAI, Anthropic or Google Gemini a question and read the answer on your
 Kobo.
@@ -26,7 +26,7 @@ Kobo.
 
 ## Setup
 
-AI Command Center uses your own API key, so it needs an account with one of
+Chat uses your own API key, so it needs an account with one of
 the three services.
 
 1. Set up the reader once over USB, if you have not already:
@@ -45,7 +45,7 @@ the three services.
    kobo secret set openai
    ```
 
-4. Open AI Command Center. If the key is not for OpenAI, tap **Service** and
+4. Open Chat. If the key is not for OpenAI, tap **Service** and
    choose its service, then tap **Type** and ask.
 
 The first screen names the key the chosen service needs before you type

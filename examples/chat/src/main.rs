@@ -99,7 +99,7 @@ enum View {
 }
 
 /// What the application calls itself, in the one place it says so.
-const TITLE: &str = "AI Command Center";
+const TITLE: &str = "Chat";
 
 /// The three destinations, in one place so that no screen can disagree with
 /// another about where the bar goes or what is on it.
@@ -500,7 +500,7 @@ impl Chat {
             self.confirming_new = false;
         } else if action == action_id(EXPORT) {
             let text = self.conversation.transcript_text(self.provider.label());
-            match Export::new("chat-conversation", ExportFormat::Text, text.into_bytes()) {
+            match Export::new("Chat conversation", ExportFormat::Text, text.into_bytes()) {
                 Ok(mut export) => {
                     export.begin(context);
                     self.export = Some(export);
@@ -1514,6 +1514,11 @@ mod tests {
         let export = chat.export.as_ref().expect("a copy was prepared");
         assert_eq!(export.offer().format, super::ExportFormat::Text);
         assert!(export.offer().bytes > 0);
+        // Its page names it in words, not by a file name with a hyphen in it.
+        assert_eq!(export.offer().title, "Chat conversation");
+        assert!(shown(&chat.screen())
+            .iter()
+            .any(|line| line.contains("Chat conversation")));
         // Back lifts the export layer and returns the transcript.
         let mut context = Context::default();
         chat.on_action(&mut context, ActionId::BACK);

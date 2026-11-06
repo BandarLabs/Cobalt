@@ -92,12 +92,12 @@ Screenshots are from a Kobo Clara BW or its simulator.
 <!-- store-apps:start -->
 <table>
 <tr>
-<td width="33%" valign="top"><a href="examples/chat/README.md"><img width="230" src="docs/media/site/apps/chat.png" alt="An answer displayed for touch-friendly reading on a Kobo"></a><br><b><a href="examples/chat/README.md">AI Command Center</a></b><br>Ask a question, then read and navigate the answer with touch controls. Needs an account.</td>
 <td width="33%" valign="top"><a href="examples/audiobook/README.md"><img width="230" src="docs/media/site/apps/audiobook.png" alt="An audiobook player with cover art and playback controls on a Kobo"></a><br><b><a href="examples/audiobook/README.md">Audiobooks</a></b><br>Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.</td>
 <td width="33%" valign="top"><a href="apps/backgammon/README.md"><img width="230" src="docs/media/site/apps/backgammon.png" alt="Backgammon on a Kobo in the middle of a game against the computer, with its last move marked on the board and described below it."></a><br><b><a href="apps/backgammon/README.md">Backgammon</a></b><br>Play complete solo or pass-and-play backgammon on one Kobo.</td>
+<td width="33%" valign="top"><a href="apps/birds/README.md"><img width="230" src="docs/media/site/apps/birds.png" alt="A labelled collage of public-domain bird plates filling a Kobo screen."></a><br><b><a href="apps/birds/README.md">Birds</a></b><br>Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.</td>
 </tr>
 <tr>
-<td width="33%" valign="top"><a href="apps/birds/README.md"><img width="230" src="docs/media/site/apps/birds.png" alt="A labelled collage of public-domain bird plates filling a Kobo screen."></a><br><b><a href="apps/birds/README.md">Birds</a></b><br>Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.</td>
+<td width="33%" valign="top"><a href="examples/chat/README.md"><img width="230" src="docs/media/site/apps/chat.png" alt="An answer displayed for touch-friendly reading on a Kobo"></a><br><b><a href="examples/chat/README.md">Chat</a></b><br>Ask a question, then read and navigate the answer with touch controls. Needs an account.</td>
 <td width="33%" valign="top"><a href="examples/gallery/README.md"><img width="230" src="docs/media/site/apps/components.png" alt="Cobalt typography and interface components on a Kobo"></a><br><b><a href="examples/gallery/README.md">Components</a></b><br>See every Cobalt UI component on the device in one reference app.</td>
 <td width="33%" valign="top"><a href="apps/crossword/README.md"><img width="230" src="docs/media/site/apps/crossword.png" alt="Crossword grid on a Kobo with three answers filled in and the current clue above it."></a><br><b><a href="apps/crossword/README.md">Crossword</a></b><br>Sixty-one offline crosswords with clue navigation and saved progress.</td>
 </tr>

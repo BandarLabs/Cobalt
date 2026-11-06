@@ -1,5 +1,5 @@
 wait 800
-expect AI Command Center
+expect Chat
 expect question 7
 clean
 shot conversation
