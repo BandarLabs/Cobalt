@@ -2744,11 +2744,11 @@ mod tests {
 
     #[test]
     fn the_battery_is_read_again_when_settings_comes_back_to_the_front() {
+        use kobo_sdk::KoboApp;
         let mut settings = Settings {
             view: super::View::Battery,
             ..Settings::default()
         };
-        use kobo_sdk::KoboApp;
         let mut context = kobo_sdk::Context::default();
         settings.on_foreground(&mut context);
         assert!(context.take_commands().iter().any(|command| matches!(
@@ -2762,17 +2762,19 @@ mod tests {
 
     #[test]
     fn about_names_the_reader_without_the_runtime_profile_or_a_refresh_mark() {
-        let mut settings = Settings::default();
-        settings.identity = Some(DeviceIdentity {
-            profile_id: "SIMULATOR:clara-bw-391".to_owned(),
-            model: "Kobo Clara BW".to_owned(),
-            device_code: 391,
-            firmware: "4.41.23145".to_owned(),
-            kernel: "5.10.117".to_owned(),
-            runtime_version: "0.3.0".to_owned(),
-            panel_width: 1072,
-            panel_height: 1448,
-        });
+        let settings = Settings {
+            identity: Some(DeviceIdentity {
+                profile_id: "SIMULATOR:clara-bw-391".to_owned(),
+                model: "Kobo Clara BW".to_owned(),
+                device_code: 391,
+                firmware: "4.41.23145".to_owned(),
+                kernel: "5.10.117".to_owned(),
+                runtime_version: "0.3.0".to_owned(),
+                panel_width: 1072,
+                panel_height: 1448,
+            }),
+            ..Settings::default()
+        };
         let screen = settings.about();
         let drawn = format!("{screen:?}");
         assert!(!drawn.contains("SIMULATOR"), "{drawn}");
