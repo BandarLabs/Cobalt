@@ -543,6 +543,10 @@ impl Gallery {
                     calls: "crossword_board",
                 },
                 Part {
+                    draw: Gallery::marked_boards_page,
+                    calls: "board_with_tones, numbered_board",
+                },
+                Part {
                     draw: Gallery::pencil_page,
                     calls: "pencil_board, terminal",
                 },
@@ -1079,6 +1083,47 @@ impl Gallery {
                 ("cw-c", 'T', None, false),
             ],
         )
+    }
+
+    /// The boards that mark their squares: a word game's guess in its three
+    /// tones, and a board whose squares carry printed numbers.
+    ///
+    /// Both need the release that draws tones, so an application using
+    /// either names that release as its minimum.
+    fn marked_boards_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("A word game's guess, in its three tones")
+            .board_with_tones(
+                3,
+                [
+                    ("tone-a", "C", kobo_sdk::CellTone::Solid),
+                    ("tone-b", "A", kobo_sdk::CellTone::Shaded),
+                    ("tone-c", "T", kobo_sdk::CellTone::Faded),
+                ],
+            )
+            .section("A board with numbered squares")
+            .numbered_board(
+                3,
+                [
+                    (
+                        "numbered-a",
+                        " ",
+                        Some(Glyph::BlackDisc),
+                        1,
+                        kobo_sdk::CellTone::Plain,
+                        false,
+                    ),
+                    ("numbered-b", " ", None, 2, kobo_sdk::CellTone::Plain, true),
+                    (
+                        "numbered-c",
+                        " ",
+                        Some(Glyph::WhiteDisc),
+                        3,
+                        kobo_sdk::CellTone::Plain,
+                        false,
+                    ),
+                ],
+            )
     }
 
     /// The grids that carry their own meaning: a pencilled square and a
