@@ -57,16 +57,24 @@ reader must be on the home Wi-Fi, and no Wi-Fi offers **Join Wi-Fi**.
 
 - Inbox: latest 50 unread/reading article or photo bookmarks.
 - Search: includes read and archived articles, paged in batches of 50.
-- Reader: article actions, text size, and frontlight controls.
+- Reader: the sides of the page turn it and a touch at the top brings the bar
+  back. **Article controls** hold **Mark read**, **Archive**, **Favorite**,
+  **Delete article**, text size and front light.
 - Reading positions: saved per server and case-sensitive article ID.
 - Images: ordinary same-origin reader fetches, without bearer tokens. Images
   requiring authentication will not load.
-- No offline article library, OAuth, or synced annotations in this version.
+- Only articles you have opened are kept offline; there is no download of the
+  whole library. No OAuth or synced annotations.
 
 Credentials live in `secrets/apps/readeck/servers/readeck`. App state contains
 only the server address, reading size, and article positions. The standard
 updater preserves secrets, state, and installed Store apps. Official
 installation requires the signed Store package and compatible platform release.
+
+## Permissions
+
+- `network`: reads and updates bookmarks on your Readeck server.
+- `frontlight-control`: the **Dimmer** and **Brighter** article controls.
 
 ## Checks
 

@@ -13,8 +13,9 @@ Browse your Zotero collections and read papers on your Kobo.
 - Browse several collections. **Collections** in the header switches between
   them.
 - Read each paper's details, abstract and Zotero's indexed full text.
-- Search locally, keep papers available offline, and keep your reading
-  position and annotations.
+- **Search** looks through the papers already on the reader. **Keep offline**
+  saves a paper for reading without Wi-Fi. Your reading position and
+  annotations are kept.
 - Read-only. Stacks never changes your Zotero library.
 
 ## Setup
@@ -61,10 +62,13 @@ and [self-hosting guide](https://andreclerigo.github.io/cobalt-zotero-reader/sel
 
 ```sh
 cargo test -p kobo-zotero-reader
-cargo run -p kobo-cli -- run --sim --app zotero-reader
+python3 scripts/check-apps-sim.py zotero-reader
 ```
 
-The test fixtures are synthetic and contain no account data.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. To try it by hand in the browser simulator, run `kobo dev` in
+`apps/zotero-reader`. The test fixtures are synthetic and contain no account
+data.
 
 ## Credits
 

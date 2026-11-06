@@ -21,12 +21,14 @@ A read-only, offline reader for your Obsidian notes.
 
 - Browse folders, filter by tag, see recent notes and search every note's
   text.
-- Headings are set as headings.
+- Headings are set as headings, and lists, tables and code keep their
+  bullets, cells and lines.
 - Wiki links (`[[Note]]` and `[[Note|label]]`) open the note they name when it
-  is on the reader. Back returns to the page you followed the link from. Each
-  note also lists the notes that link to it.
-- Long notes are paged, and each note reopens where you left off. The page
-  buttons turn pages.
+  is on the reader. Back returns to the page you followed the link from. **Links**
+  in a note's top bar lists the notes that link to it.
+- A note has the whole panel. Tap the sides of the page or use the page
+  buttons to turn it, and touch the top to bring the bar back. Each note
+  reopens where you left off.
 - Notes you push appear the next time you come back to Vault.
 
 ## Setup

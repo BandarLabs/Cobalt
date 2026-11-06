@@ -15,18 +15,18 @@ without Wi-Fi.
 
 ## Features
 
-- Unread, Starred and Read tabs, all available offline after a sync.
+- Unread, Starred and History tabs, all available offline after a sync.
 - Articles open in the document reader, with headings, quotes, tables and
   pictures. Pictures are saved after the first view. Your place in each
   article is remembered.
 - **Load full article** asks Miniflux to fetch the full page when a feed only
   carries a summary, and saves it for offline reading.
-- Opening an article marks it read. The row menu stars, keeps unread and
-  archives.
+- Opening an article marks it read. The menu beside each article has **Star**,
+  **Mark read** or **Keep unread**, **Load full article** and **Archive**.
 - Changes made offline are saved on the reader, shown straight away and sent
   on the next sync, before anything new is downloaded.
-- **Settings ▸ Suggested feeds** adds one of two public feeds to your
-  account.
+- **Suggested feeds**, under **Settings**, adds one of two public feeds to
+  your account.
 
 ## Setup
 
@@ -58,7 +58,8 @@ The account cannot be changed while changes are waiting to be sent.
 
 ## Limits
 
-- Each sync keeps up to 100 articles: 60 unread, 20 starred and 20 read.
+- Each sync keeps up to 100 articles: 60 unread, 20 starred and 20 read (shown
+  under History).
 - Article bodies up to 256 KiB, and server responses up to 768 KiB. A response
   that is too large or invalid leaves your saved articles unchanged.
 

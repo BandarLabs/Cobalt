@@ -87,7 +87,6 @@ from the reader and checking every photo.
 - Up to 500 photos and 150 MB of prepared images.
 - Source files up to 32 MB and 50 million pixels.
 - HEIC and HEIF are not supported. Convert them to JPEG first.
-- Photos are shown in greyscale.
 - Cobalt cannot yet keep a reader awake for Frame mode or wake it for the
   slow slideshow, and Frame says so in **Settings**. Until it can, keep the
   reader on its charger in Frame mode: a charging reader does not go back to

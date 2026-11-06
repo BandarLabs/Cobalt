@@ -29,8 +29,8 @@ Home Assistant controls on a Kobo, for a desk or a wall.
   and the fix.
 - If Home Assistant stops responding, the last readings stay on screen with
   the time of the last successful refresh.
-- **Settings** removes and reorders tiles, and switches to a one-column layout
-  for a wall-mounted reader.
+- In **Settings**, **Edit tiles** removes and reorders tiles, and **Wall
+  panel** switches to one large tile per row for a wall-mounted reader.
 
 ## Setup
 

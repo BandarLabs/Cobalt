@@ -20,18 +20,20 @@ your own photos.
   finished when every square is filled or crossed correctly.
 - The selected square's row and column clues are highlighted. Tap a clue to
   read all of it. **…** means there are more numbers than fit.
-- Large boards show a movable window instead of shrinking the squares. Use the
-  arrow controls to move it and **−** and **+** to change the square size.
-- **Run on** fills a straight run between two taps.
-- **Guided** mode names a row or column whose marks contradict its clues. It
-  never changes your marks. **Free** mode gives no warnings.
+- Large boards show a movable window instead of shrinking the squares.
+  **Left**, **Right**, **Up** and **Down** move it, and **−** and **+** change
+  the square size. The arrows appear only when part of the board is off the
+  panel.
+- **More** holds two switches. **Run entry** fills a straight run between two
+  taps. **Guided** names a row or column whose marks contradict its clues; it
+  never changes your marks. With Guided off there are no warnings.
 - **Undo** reverses one square, a run or a restart. The last 64 steps survive
-  reopening. **Restart** asks first.
+  reopening. **Restart puzzle**, also under More, asks first.
 - Three tabs: **Pictures**, the 60 **Patterns** puzzles that shipped first
   (progress kept), and **Photos**, your own.
 
 Each puzzle saves separately. If a save fails, your moves stay in memory and
-**More → Retry save** tries again. Finish saving before switching puzzles or
+**More**, then **Retry save**, tries again. Finish saving before switching puzzles or
 closing the app.
 
 ## Photo puzzles
@@ -40,12 +42,14 @@ Turn a photo into a puzzle from your computer:
 
 ```sh
 kobo nonograms preview IMAGE --out DIRECTORY
-kobo nonograms push IMAGE --name NAME --size N --device IP
+kobo nonograms push IMAGE --name NAME --size N
 kobo nonograms push first.jpg --name Harbour --size 15 \
-  --add second.jpg --name Garden --size 20 --device IP
+  --add second.jpg --name Garden --size 20
 ```
 
 Set up the reader once over USB with `kobo setup`, if you have not already.
+Commands use the reader it saved; add `--device IP` for another reader or
+`--sim` for the simulator.
 `preview` shows the puzzle a photo would make before you send it. Sizes run
 from 5 to 25. Each push adds to the photo puzzles already on the reader and
 prints the list; the reader keeps up to 24. `--replace` keeps only the photos

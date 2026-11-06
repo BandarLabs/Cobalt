@@ -44,8 +44,8 @@ Fanshelf is a personal reading tool, not a crawler.
 
 - Every request follows something you did: opening a work, downloading it,
   opening a tag or checking for updates. Update all checks your works in
-  progress one at a time and downloads only the ones that changed. There is no background checking,
-  prefetching, search scraping or mirroring.
+  progress one at a time and downloads only the ones that changed. There is
+  no background checking, prefetching, search scraping or mirroring.
 - One request at a time, at least one second apart, identified as
   `kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)`.
 - When AO3 asks it to slow down, it waits as long as AO3 says, up to an hour.
@@ -94,5 +94,4 @@ requests to AO3.
 
 Fanshelf is unofficial and not affiliated with the Organization for
 Transformative Works. Works belong to their authors and Fanshelf never
-republishes them. [FanFicFare](https://github.com/JimmXinu/FanFicFare) was a
-behaviour reference; none of its code is used.
+republishes them.

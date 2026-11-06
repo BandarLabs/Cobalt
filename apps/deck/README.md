@@ -17,9 +17,10 @@ Run commands, open apps and open links on your computer from your Kobo.
 - Up to six pages of up to fifteen pads each.
 - A pad can run a shell command, open an app or open a link on the paired
   computer.
-- The top bar names the current page. A status line says which computer the
-  deck is talking to and whether it answered.
-- Unassigned pads are drawn faintly so they do not look like controls.
+- The top bar names the current page, and tabs switch between pages. A status
+  line says which computer the deck is talking to and whether it answered.
+- Only assigned pads are drawn, so a page with three commands shows three
+  pads.
 - After a command runs, Deck shows its result, whether it succeeded or not.
 - If the computer stops answering, the last working layout stays on screen.
 
@@ -41,9 +42,10 @@ Deck needs your computer. It uses the same helper and pairing as
    ```
 
    The build pads run in the folder you ran this from. `--preset home` gives
-   play, pause, next, volume, mute, a five-minute timer and a screen lock,
-   using the Music app and `pmset` on macOS, or `playerctl`, `pactl`,
-   `notify-send` and `loginctl` on Linux.
+   play, pause, next, volume, mute and a five-minute timer, plus a pad that
+   turns the screen off on macOS (using the Music app and `pmset`) or locks
+   the session on Linux (using `playerctl`, `pactl`, `notify-send` and
+   `loginctl`).
 
 3. Pair this computer with the reader. There is nothing to type on the
    reader. The first time, close Cobalt and open it again afterwards so it
