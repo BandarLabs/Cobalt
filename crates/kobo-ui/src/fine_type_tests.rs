@@ -47,7 +47,15 @@ impl Typesetter for Leaning {
     }
 }
 
-const LEANING: FontHandle = FontHandle(91);
+/// A handle of its own for each use, because tests run side by side and the
+/// faces they install share one table: a test that dropped a shared handle
+/// would take the face out from under another one mid-layout.
+fn leaning() -> FontHandle {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(9_100);
+    let handle = FontHandle(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    put_book_typesetter(handle, Box::new(Leaning));
+    handle
+}
 
 /// A paragraph set entirely in emphasis, as a poem's title or a book's
 /// stressed sentence is.
@@ -72,14 +80,14 @@ fn emphasised(text: &str) -> Node {
 
 /// The widths of the runs a paragraph was set as, line by line in order.
 fn run_widths(typography: Typography, text: &str, width: i32) -> Vec<i32> {
-    put_book_typesetter(LEANING, Box::new(Leaning));
+    let face = leaning();
     let metrics = DisplayMetrics {
         width,
         ..CLARA_BW_METRICS
     };
     let screen = Screen::new(1, vec![emphasised(text)])
         .with_reading(true)
-        .with_reading_font(Some(LEANING))
+        .with_reading_font(Some(face))
         .with_typography(typography);
     let widths = screen
         .layout_with(&metrics, &Chrome::with_back(false))
@@ -91,7 +99,7 @@ fn run_widths(typography: Typography, text: &str, width: i32) -> Vec<i32> {
         })
         .map(|node| node.rect.width)
         .collect();
-    drop_book_typesetter(LEANING);
+    drop_book_typesetter(face);
     widths
 }
 
@@ -121,7 +129,7 @@ fn paragraph(
     presentation: ParagraphPresentation,
     column: i32,
 ) -> Vec<LayoutNode> {
-    put_book_typesetter(LEANING, Box::new(Leaning));
+    let face = leaning();
     let metrics = DisplayMetrics {
         width: column + 2 * CLARA_BW_METRICS.screen_margin(),
         ..CLARA_BW_METRICS
@@ -137,11 +145,11 @@ fn paragraph(
     };
     let nodes = Screen::new(1, vec![node])
         .with_reading(true)
-        .with_reading_font(Some(LEANING))
+        .with_reading_font(Some(face))
         .with_typography(typography)
         .layout_with(&metrics, &Chrome::with_back(false))
         .nodes;
-    drop_book_typesetter(LEANING);
+    drop_book_typesetter(face);
     nodes
 }
 
@@ -228,4 +236,21 @@ fn an_application_on_an_older_protocol_opens_its_paragraphs_as_it_measured_them(
         .iter()
         .any(|node| matches!(node.kind, LayoutKind::Initial { .. })));
     assert_eq!(line_starts(&nodes), vec![(0, "Abbb cccc".to_owned())]);
+}
+
+#[test]
+fn a_poem_is_centred_on_its_longest_line_and_set_from_the_margin_when_one_would_wrap() {
+    let face = leaning();
+    let indent = with_reading_font(Some(face), || {
+        let short: [&[&str]; 2] = [&["aaaa bbbb", "cc"], &["dddddd"]];
+        let long: [&[&str]; 1] = [&["aaaa bbbb cccc dddd eeee ffff"]];
+        (
+            // The longest line is ninety pixels in a column of two hundred,
+            // so it stands in fifty-five: five and a half ems of ten.
+            verse_indent(&short, 200, ParagraphPresentation::PLAIN, Face::Reading),
+            verse_indent(&long, 200, ParagraphPresentation::PLAIN, Face::Reading),
+        )
+    });
+    drop_book_typesetter(face);
+    assert_eq!(indent, (550, 0));
 }
