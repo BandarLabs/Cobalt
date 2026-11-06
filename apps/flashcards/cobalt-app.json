@@ -4,8 +4,8 @@
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
   "page_description": "Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends.",
-  "version": "0.2.13",
-  "release_notes": "The commands that import and send a deck are set on grey panels in a fixed-width face, and the first screen fits held sideways at the largest text size. Its licence notice now names every library it is built with.",
+  "version": "0.2.14",
+  "release_notes": "Cards graded before the reader kept review dates come due again instead of always being days away.",
   "glyph": "bookmark",
   "capabilities": [],
   "setup": {
