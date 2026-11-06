@@ -292,7 +292,9 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
 
     let snapshot = kobo_hal::probe_device()?;
-    let profile = kobo_profile::write_ready_profile(&snapshot)
+    // An attended probe, so a firmware branch nobody measured is not a reason
+    // to refuse: the touch node sits beneath the stock reader.
+    let profile = kobo_profile::attended_write_profile(&snapshot)
         .map_err(|blockers| format!("device write refused: {}", blockers.join("; ")))?;
     let touch_path = snapshot
         .touch

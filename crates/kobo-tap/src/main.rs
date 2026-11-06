@@ -52,7 +52,7 @@
 use kobo_abi::input;
 use kobo_hal::probe_device;
 use kobo_hal::touch::InputEvent32;
-use kobo_profile::{write_ready_profile, DeviceSnapshot, PanelPose};
+use kobo_profile::{attended_write_profile, DeviceSnapshot, PanelPose};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::process::ExitCode;
@@ -144,8 +144,13 @@ fn tap() -> Result<(), String> {
 /// orientation it was measured at. Resolving the pose here means a reader held
 /// the wrong way up refuses the whole sequence rather than tapping somewhere
 /// nobody asked for.
+///
+/// A firmware branch nobody measured is not a reason to refuse. The tap is
+/// written beneath the stock reader, so the branch has no say in where it
+/// lands; the device code, serial prefix and kernel release do, and they are
+/// still checked exactly.
 fn writable_pose(snapshot: &DeviceSnapshot) -> Result<PanelPose<'static>, String> {
-    let profile = write_ready_profile(snapshot)
+    let profile = attended_write_profile(snapshot)
         .map_err(|blockers| format!("device write refused: {}", blockers.join("; ")))?;
     let framebuffer = snapshot
         .framebuffer
@@ -391,6 +396,22 @@ mod tests {
         );
         let pose = writable_pose(&snapshot)
             .expect("completed attended evidence authorizes synthetic touch");
+        assert_eq!(pose.profile().id, ELIPSA_2E_389.id);
+    }
+
+    #[test]
+    fn a_reviewed_reader_on_a_firmware_branch_nobody_measured_can_still_receive_a_tap() {
+        let snapshot = snapshot_for(
+            &ELIPSA_2E_389,
+            IdentitySnapshot {
+                serial_prefix: Some("N605".into()),
+                firmware_version: Some("4.46.23852".into()),
+                kernel_release: Some("4.9.77".into()),
+                device_code: Some(389),
+            },
+        );
+        let pose = writable_pose(&snapshot)
+            .expect("the branch does not decide where a tap beneath the reader lands");
         assert_eq!(pose.profile().id, ELIPSA_2E_389.id);
     }
 
