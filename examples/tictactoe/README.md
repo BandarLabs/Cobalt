@@ -19,9 +19,10 @@ Tic-tac-toe for two players on one Kobo, or against the Kobo.
   it, and **Clear score** resets it. The score survives closing the app. An
   unfinished game does not.
 
-The board is built from the SDK's ordinary `grid`, with no game-specific
-components. It is a quick check that the layout engine still handles the
-basics.
+The board is the SDK's ordinary grid node, drawn with
+`board_with_selection`, the same node a keypad uses. The top bar menu and
+**Next game** come from the shared `kobo_sdk::game` helpers. It is a quick
+check that the layout engine still handles the basics.
 
 ## Permissions
 
@@ -31,9 +32,9 @@ None.
 
 ```sh
 cargo test -p kobo-tictactoe
-kobo run --sim --app tictactoe      # in the browser simulator
+(cd examples/tictactoe && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py tictactoe
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

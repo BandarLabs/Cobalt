@@ -64,9 +64,9 @@ what you get. For a Miniflux account, use [Digest](../../apps/rss-miniflux/).
 
 ```sh
 cargo test -p kobo-rss
-kobo run --sim --app rss      # in the browser simulator
+(cd examples/rss && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py rss
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

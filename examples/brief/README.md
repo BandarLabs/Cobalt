@@ -40,9 +40,9 @@ A news brief that keeps loading while you use other apps.
 
 ```sh
 cargo test -p kobo-brief
-kobo run --sim --app brief      # in the browser simulator
+(cd examples/brief && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py brief
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

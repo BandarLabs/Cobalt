@@ -28,9 +28,10 @@ allowed to use it.
 
 ```sh
 cargo test -p kobo-terminal
-kobo run --sim --app terminal      # in the browser simulator
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo dev --runtime --apps terminal   # the launcher and this app in the browser simulator
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
+
 The simulator starts a real `/bin/sh` on your computer.
 
 ---
