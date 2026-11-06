@@ -1439,16 +1439,17 @@ impl Lichess {
         let last = game
             .last_san
             .as_deref()
-            .or_else(|| game.state.moves.last().map(String::as_str))
-            .unwrap_or("none");
+            .or_else(|| game.state.moves.last().map(String::as_str));
         let sent = self
             .pending_move
             .as_ref()
             .filter(|pending| pending.game_id == game.id);
+        // Before the first move there is no move to name, and the status
+        // simply ends at the kind of game rather than reading "none".
         let move_status = match (self.selected.as_deref(), sent) {
-            (Some(square), _) => format!("{square} →"),
-            (None, Some(pending)) => pending.movement.clone(),
-            (None, None) => last.to_owned(),
+            (Some(square), _) => format!(" · {square} →"),
+            (None, Some(pending)) => format!(" · {}", pending.movement),
+            (None, None) => last.map(|last| format!(" · {last}")).unwrap_or_default(),
         };
         let live = self.board_is_live(&game.id);
         let blocked = !live || self.pending_action.is_some() || self.pending_move.is_some();
@@ -1557,7 +1558,7 @@ impl Lichess {
             SlotWidth::Fill,
             Box::new(move |slot| {
                 slot.text(you_name).secondary(format!(
-                    "{you_color} · {turn} · {game_kind} · {move_status}{check}"
+                    "{you_color} · {turn} · {game_kind}{move_status}{check}"
                 ))
             }),
         )];
@@ -6487,6 +6488,25 @@ mod tests {
         assert_eq!(app.session.as_ref().expect("session").color, Color::Black);
         let cells = board_cells(&game.fen, Color::Black, None, None, None);
         assert_eq!(cells.first().expect("first").0, "square-h1");
+    }
+
+    #[test]
+    fn a_new_board_ends_its_status_at_the_kind_of_game_until_a_move_is_made() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("play-computer"));
+        app.on_action(&mut context, action_id("start-computer"));
+        let fresh = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(fresh.contains("White · Your move · Casual\""), "{fresh}");
+        assert!(!fresh.contains("none"), "{fresh}");
+
+        app.on_action(&mut context, action_id("square-e2"));
+        app.on_action(&mut context, action_id("square-e4"));
+        let replied = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(
+            replied.contains("White · Your move · Casual · "),
+            "{replied}"
+        );
     }
 
     #[test]
