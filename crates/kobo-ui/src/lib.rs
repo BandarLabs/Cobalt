@@ -2214,6 +2214,10 @@ impl Screen {
         };
         let flow_width = metrics.width - 2 * margin - rail_reserved;
 
+        // Every block of facts set straight on the page shares one label
+        // column, so the values of two blocks under two sections start at the
+        // same place rather than wherever each block's longest label ended.
+        let shared_facts = SharedFactLabel::enter(shared_fact_label(&self.nodes));
         for (position, node) in self.nodes.iter().enumerate() {
             if layout.nodes.len() >= MAX_LAYOUT_NODES || cursor >= content_bottom {
                 if self.nodes[position..]
@@ -2293,6 +2297,7 @@ impl Screen {
             }
             cursor = cursor.saturating_add(gap);
         }
+        drop(shared_facts);
 
         if let Some(top_bar) = self.top_bar.as_ref().filter(|_| bar_over_content) {
             // Last, so it is drawn over the page and a tap on it is the bar's.
@@ -7655,6 +7660,13 @@ fn layout_node(
                 .map(|(label, _)| measure_text(label, label_size).0)
                 .max()
                 .unwrap_or(0);
+            // A block on the page itself takes the column every block there
+            // shares; one inside a band, card or dialog keeps its own.
+            let widest = if depth == 0 && !in_band_slot() {
+                max(widest, SHARED_FACT_LABEL.with(std::cell::Cell::get))
+            } else {
+                widest
+            };
             let column = min(widest, width * FACTS_LABEL_LIMIT_EIGHTHS / 8);
             let value_x = x.saturating_add(column).saturating_add(gap);
             let value_width = max(0, width.saturating_sub(column).saturating_sub(gap));
@@ -10256,6 +10268,44 @@ static TYPESETTER: OnceLock<Box<dyn Typesetter>> = OnceLock::new();
 /// session, so clearing it when an app leaves releases every glyph cache.
 static BOOK_TYPESETTERS: OnceLock<Mutex<BTreeMap<FontHandle, Box<dyn Typesetter>>>> =
     OnceLock::new();
+
+thread_local! {
+    static SHARED_FACT_LABEL: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+/// The widest label of every block of facts set straight on a page, when
+/// there are at least two such blocks; nothing otherwise.
+fn shared_fact_label(nodes: &[Node]) -> i32 {
+    let blocks = nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Facts { entries, .. } => Some(entries),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if blocks.len() < 2 {
+        return 0;
+    }
+    blocks
+        .iter()
+        .flat_map(|entries| entries.iter().take(MAX_FACTS))
+        .map(|(label, _)| measure_text(label, FontSize::Caption).0)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Holds the page's shared fact label width while its flow is laid out.
+struct SharedFactLabel(i32);
+impl SharedFactLabel {
+    fn enter(width: i32) -> Self {
+        Self(SHARED_FACT_LABEL.with(|slot| slot.replace(width)))
+    }
+}
+impl Drop for SharedFactLabel {
+    fn drop(&mut self) {
+        SHARED_FACT_LABEL.with(|slot| slot.set(self.0));
+    }
+}
 
 thread_local! {
     static READING_FONT: std::cell::Cell<Option<FontHandle>> = const { std::cell::Cell::new(None) };

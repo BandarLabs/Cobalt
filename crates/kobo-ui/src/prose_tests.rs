@@ -4145,6 +4145,56 @@ fn a_chip_in_a_natural_slot_sits_beside_the_text_against_the_far_edge() {
     );
 }
 
+#[test]
+fn two_blocks_of_facts_on_one_page_start_their_values_in_one_column() {
+    let facts = |id: u32, labels: &[&str]| Node::Facts {
+        id: NodeId(id),
+        entries: labels
+            .iter()
+            .map(|label| ((*label).to_owned(), "4.9.77".to_owned()))
+            .collect(),
+    };
+    let screen = Screen::new(
+        1,
+        vec![
+            facts(1, &["Model", "Kobo software", "Wi-Fi address"]),
+            Node::Section {
+                id: NodeId(2),
+                title: "For support".to_owned(),
+                value: None,
+                link: None,
+            },
+            facts(3, &["Profile", "Device code"]),
+        ],
+    );
+    let layout = screen.layout();
+    let starts = |id: u32| {
+        layout
+            .nodes
+            .iter()
+            .filter(|node| node.id == NodeId(id) && node.kind == LayoutKind::FactValue)
+            .map(|node| node.rect.x)
+            .collect::<Vec<_>>()
+    };
+    let (first, second) = (starts(1), starts(3));
+    assert_eq!((first.len(), second.len()), (3, 2));
+    assert!(
+        first.iter().chain(&second).all(|x| *x == first[0]),
+        "{first:?} {second:?}"
+    );
+    // A block alone on its page keeps the column its own labels need.
+    let alone = Screen::new(1, vec![facts(3, &["Profile", "Device code"])]);
+    let own = alone
+        .layout()
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::FactValue)
+        .expect("a value")
+        .rect
+        .x;
+    assert!(own < first[0], "{own} {first:?}");
+}
+
 /// A panel narrow enough that two columns cannot both stay readable.
 fn metrics_width_for_one_column() -> i32 {
     CLARA_BW_METRICS.tenth_mm(MIN_BAND_SLOT_TENTH_MM) * 2
