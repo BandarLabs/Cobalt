@@ -1521,3 +1521,58 @@ fn extreme_layout_values_are_bounded() {
     render(&screen, &mut surface, None);
     assert_eq!(surface.pixels.len(), 128 * 128);
 }
+
+/// A story whose every word can be tapped is not a page of links, and is not
+/// underlined; one link in a sentence still is.
+#[test]
+fn a_paragraph_made_of_links_is_drawn_as_words_and_still_answers_every_tap() {
+    let text = "A single lamp burns over the square, and a wooden crate sits in its pool of light.";
+    let mut links = Vec::new();
+    let mut start = None;
+    for (index, character) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        if character.is_alphanumeric() {
+            start.get_or_insert(index);
+        } else if let Some(from) = start.take() {
+            links.push(TextLink {
+                action: ActionId(100 + u32::try_from(links.len()).unwrap()),
+                start: from,
+                end: index,
+            });
+        }
+    }
+    let paragraph = |links: Vec<TextLink>| {
+        Screen::new(
+            1,
+            vec![Node::RichText {
+                id: NodeId(1),
+                text: text.to_owned(),
+                spans: Vec::new(),
+                links,
+                presentation: ParagraphPresentation::default(),
+                selection: None,
+                formulae: Vec::new(),
+            }],
+        )
+    };
+    let dense = paragraph(links.clone()).layout();
+    assert!(dense
+        .nodes
+        .iter()
+        .all(|node| !matches!(node.kind, LayoutKind::InlineLink(_))));
+    let crate_word = links[10];
+    let rect = dense
+        .rect_of_action(crate_word.action)
+        .expect("a quiet link");
+    assert_eq!(
+        dense.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+        Some(crate_word.action)
+    );
+    let single = paragraph(vec![crate_word]).layout();
+    assert!(single
+        .nodes
+        .iter()
+        .any(|node| node.kind == LayoutKind::InlineLink(crate_word.action)));
+}

@@ -5163,6 +5163,11 @@ pub enum LayoutKind {
     /// and hit-tested ahead of the page turn beneath it because it is pushed
     /// after the paragraph. One of these per line the run covers.
     InlineLink(ActionId),
+    /// A link in a paragraph that is mostly links, such as a story whose
+    /// every word can be tapped. Tapped exactly as a link is, and drawn as
+    /// the words alone: a rule under every word turned the page into a
+    /// ruled form and drowned the story.
+    QuietLink(ActionId),
     /// A line of metadata: smaller than the body, and in the muted tone.
     Secondary,
     /// The name of a group, with a hairline to the right margin and an
@@ -5476,6 +5481,7 @@ impl LayoutKind {
             | Self::QuoteFold(action, _)
             | Self::PagePrevious(action)
             | Self::InlineLink(action)
+            | Self::QuietLink(action)
             | Self::SectionLink(action)
             | Self::PageNext(action)
             | Self::Toggle(action, ControlState::Enabled)
@@ -6613,6 +6619,20 @@ fn layout_node(
                 note_cut_short();
             }
             let mut line_y = y.saturating_add(before);
+            // Most of the paragraph up to its last link is links: every word
+            // is a way in, and none is singled out by being underlined.
+            let quiet = {
+                let shown = &links[..links.len().min(MAX_TEXT_LINKS)];
+                let reach = shown.iter().map(|link| link.end).max().unwrap_or(0);
+                let linked: usize = shown
+                    .iter()
+                    .map(|link| link.end.saturating_sub(link.start))
+                    .sum();
+                let letters = text.get(..reach.min(text.len())).map_or(0, |head| {
+                    head.chars().filter(|c| !c.is_whitespace()).count()
+                });
+                shown.len() >= 8 && linked * 3 >= letters * 2
+            };
             for (line_index, &(from, to)) in ranges.iter().take(visible_lines).enumerate() {
                 if layout.nodes.len() >= rich_text_limit {
                     break;
@@ -6763,7 +6783,11 @@ fn layout_node(
                                 width: through.saturating_sub(before),
                                 height: line_height,
                             },
-                            kind: LayoutKind::InlineLink(link.action),
+                            kind: if quiet {
+                                LayoutKind::QuietLink(link.action)
+                            } else {
+                                LayoutKind::InlineLink(link.action)
+                            },
                             text_lines: Vec::new(),
                         });
                     }
@@ -16347,6 +16371,7 @@ fn paint_layout(
             // somewhere" since long before anybody put it on a screen. Set
             // clear of the descenders rather than through them, and a rule
             // thick, because a single pixel at this density is not there.
+            LayoutKind::QuietLink(_) => {}
             LayoutKind::InlineLink(_) => {
                 let thickness = metrics.rule_thickness();
                 let baseline = node
