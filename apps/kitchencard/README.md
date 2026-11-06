@@ -18,7 +18,9 @@ time.
 
 - Pick tonight's recipe and cook one large instruction at a time.
 - Tap the left or right side of the screen to move between steps. The
-  Ingredients tab is always one tap away.
+  Ingredients tab is always one tap away, and its lines tick off as you go.
+- Set the servings from 1 to 12 before you cook, and ingredient amounts
+  scale to match.
 - The chosen recipe and servings stay available offline.
 - Read-only. Kitchen Card does not edit recipes, meal plans or shopping lists.
 

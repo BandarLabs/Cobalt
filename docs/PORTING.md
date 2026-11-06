@@ -8,10 +8,13 @@ on hardware at the firmware recorded in the
 [device support matrix](DEVICES.md#device-support-matrix).
 
 On a model or firmware without a tested profile, Cobalt derives a profile from
-the device, lists what is untested and asks the owner before starting.
-Developer display and touch tools still require an exact profile match. A
-read-only match is a porting milestone, not permission to ship the profile. Review every other path that takes device ownership against the
-same identity boundary.
+the device, asks for two calibration taps, lists what is untested and asks the
+owner before starting (see
+[Models without a profile](DEVICES.md#models-without-a-profile)). The developer
+display and touch tools still need a registered profile that matches the
+device on everything but the firmware branch. A read-only match is a porting
+milestone, not permission to ship the profile. Review every other path that
+takes device ownership against the same identity boundary.
 
 Open or join a device issue before writing code. Check for an existing pull
 request and agree on the profile or backend shape there to avoid duplicate
@@ -91,9 +94,9 @@ cargo run -p kobo-cli -- doctor --reader kobo           # the saved reader
 cargo run -p kobo-cli -- touch-probe --seconds 30
 ```
 
-`--no-menu` leaves the reader's own menus alone, which is what you want here:
-Cobalt itself will refuse to run on an unrecognised device, so a launcher
-entry for it would only be a button that declines. `--dry-run` shows what
+`--no-menu` leaves the reader's own menus alone, which is what you want while
+you only collect numbers: a menu entry would start Cobalt on a derived profile
+before anyone has checked the numbers it was derived from. `--dry-run` shows what
 would be written without writing it, and `setup --undo` switches SSH back off
 and removes everything it wrote.
 
@@ -130,8 +133,8 @@ touch: cyttsp5_mt X=0..1447 Y=0..1071
 result: write ready
 ```
 
-The Libra Colour probe, from a device whose profile is registered but whose
-attended evidence is still pending, reads:
+The first Libra Colour probe, captured while its attended evidence was still
+pending, read:
 
 ```
 profile: libra-colour-390 (Kobo Libra Colour)
@@ -161,8 +164,7 @@ as unsupported after its raw fields are printed, making that report the
 starting evidence for a new profile. The touch probe then checks a physical
 touch at a known corner against the proposed rotated transform.
 
-The full serial number is never read past its four-character
-model prefix.
+The full serial number is never read past its four-character model prefix.
 
 ## What will refuse to work until the profile is right
 

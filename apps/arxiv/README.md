@@ -40,6 +40,8 @@ Browse and search arXiv preprints, and read them on your Kobo.
   Followed subjects also sit at the top of the first screen.
 - The bar over a paper shows its title.
 - Results come 25 at a time. **Older papers** appears when there are more.
+  The button at the foot of a listing cycles its reach between **Any time**,
+  **This week** and **Last 30 days**.
 
 ## Permissions
 

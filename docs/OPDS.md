@@ -1,8 +1,9 @@
 # OPDS in Cobalt
 
 Gutenbird and Library read book catalogs through OPDS, the Open Publication
-Distribution System. This page describes the OPDS client, how it handles real
-catalogs, and the rules it follows.
+Distribution System, and Panels reads a Komga comic server's feeds with the
+same parser. This page describes the OPDS client, how it handles real catalogs,
+and the rules it follows.
 
 Gutenbird originally used [Gutendex](https://gutendex.com), a JSON service for
 Project Gutenberg only. OPDS is the standard that Project Gutenberg, Standard
@@ -34,8 +35,10 @@ These behaviours were found by testing each live service.
 
 ### Project Gutenberg
 
-`https://www.gutenberg.org/ebooks/search.opds/?query=…` serves OPDS 1.2 without
-authentication. It is the default catalog.
+`https://www.gutenberg.org/ebooks.opds/` serves OPDS 1.2 without
+authentication. It is the first of Gutenbird's three built-in catalogs, beside
+Standard Ebooks' new releases and Open Library. Searches go to
+`/ebooks/search.opds/?query=…`.
 
 - **Search results are navigation feeds.** Entries are partial, with
   `rel="subsection"` and no download links. Download links are in a separate
@@ -120,7 +123,7 @@ both produce the same text on screen.
 A pull scanner for elements, attributes and text. It decodes the five XML
 entities and numeric references, limits nesting depth, and stops at the first
 error while keeping what it has already read, because truncated feeds are
-common. Feeds and OPDS 1.2 both use it.
+common. OPDS 1.2, Feeds, OPML import and several apps use it.
 
 ### `kobo-opds`
 

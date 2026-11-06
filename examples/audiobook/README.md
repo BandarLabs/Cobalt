@@ -118,9 +118,9 @@ come back.
 
 ```sh
 cargo test -p kobo-audiobook
-kobo run --sim --app audiobook      # in the browser simulator
+(cd examples/audiobook && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py audiobook --all-routes
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 The simulator check seeds two books from `crates/kobo-audio/fixtures` and

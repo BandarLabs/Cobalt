@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cobalt FAQ: running apps on a Kobo e-reader</title>
-<meta name="description" content="How Cobalt differs from NickelMenu, KOReader and Plato, and what its SDK, runtime and Store do.">
+<meta name="description" content="How Cobalt sits beside the stock Kobo reader, how it differs from a standalone reading app, and what its SDK, runtime and Store do.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/faq.html">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
@@ -24,18 +24,18 @@
   "mainEntity": [
     {
       "@type": "Question",
-      "name": "How is Cobalt different from NickelMenu?",
+      "name": "Does Cobalt replace the stock reader?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "NickelMenu adds actions to Kobo's stock menu. Cobalt uses one action to add its entry, then launches and manages apps with shared support for screens, lifecycle, e-ink drawing, touch input, storage, networking and device access."
+        "text": "No. The installer adds one Cobalt entry to the stock reader's menu, and the Kobo reader tab in Cobalt's launcher goes back to it. Once started, Cobalt launches and manages apps with shared support for screens, lifecycle, e-ink drawing, touch input, storage, networking and device access."
       }
     },
     {
       "@type": "Question",
-      "name": "How is Cobalt different from KOReader or Plato?",
+      "name": "How is Cobalt different from a standalone reading app?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "KOReader and Plato are reading apps. Cobalt is a platform for building many kinds of Kobo apps with a shared SDK and runtime."
+        "text": "A standalone reading app carries its own UI and device support. Cobalt is a platform for building many kinds of Kobo apps, Books among them, with a shared SDK and runtime."
       }
     },
     {
@@ -200,19 +200,19 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
   <div class="intro">
     <p class="kicker">FAQ</p>
     <h1>Frequently asked questions</h1>
-    <p class="lede">How Cobalt compares to NickelMenu, KOReader and Plato, and how its apps are built and installed.</p>
+    <p class="lede">What Cobalt is next to the stock reader and other reading software, and how its apps are built and installed.</p>
   </div>
 
   <section class="faq">
-    <h2>How is Cobalt different from NickelMenu?</h2>
-    <p><a href="https://pgaskin.net/NickelMenu/">NickelMenu</a> adds actions to Kobo's stock menu. Cobalt uses one action to add its entry to that menu.</p>
+    <h2>Does Cobalt replace the stock reader?</h2>
+    <p>No. The installer adds one entry, <strong>Cobalt</strong>, to the stock reader's menu, through a small menu add-on it installs alongside. The stock reader stays as it was, and the <strong>Kobo reader</strong> tab in Cobalt's launcher takes you back to it.</p>
     <p>Once started, Cobalt launches and manages apps. It handles their screens, lifecycle, e-ink drawing, partial refreshes, touch input, storage, networking and device access.</p>
   </section>
 
   <section class="faq">
-    <h2>How is Cobalt different from KOReader or Plato?</h2>
-    <p><a href="https://koreader.rocks/">KOReader</a> and <a href="https://github.com/baskerville/plato">Plato</a> are reading apps. Their code includes the UI and device support they need.</p>
-    <p>Cobalt is a platform for building many kinds of apps. Apps use the same SDK and runtime for the common device work.</p>
+    <h2>How is Cobalt different from a standalone reading app?</h2>
+    <p>A standalone reading app carries its own UI and device support inside its own code.</p>
+    <p>Cobalt is a platform for building many kinds of apps, and Books is one of them. Apps use the same SDK and runtime for the common device work.</p>
   </section>
 
   <section class="faq">

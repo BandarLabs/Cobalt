@@ -11,15 +11,15 @@ serves it to the reader across the room over TLS. The tap comes back and the
 hook returns it as if the person had been at the terminal.
 
 Nothing about the agents' setup changes. The hooks are registered once in
-their configuration files and fire no matter which frontend asked -- the
+their configuration files and fire no matter which frontend asked: the
 Codex CLI and the Codex desktop app run the same core and read the same
-hooks. And the failure mode is honest: when this daemon is unreachable or
+hooks. The failure mode is honest: when this daemon is unreachable or
 the reader stays silent, the hook declines to decide, the question falls
 through to the terminal prompt it always was, and nothing is worse than
 before.
 
 Owners never need to call it by name: it ships beside `kobo` in every host
-release, and `kobo sidekick init | setup | run | status | stop | test` drive
+release, and `kobo sidekick init | setup | run | status | stop | sample | test` drive
 it. `kobo sidekick init` also installs the trust roots and writes the
 pairing for Sidekick, Deck and Paperterm onto the saved reader over SSH, so
 nothing is typed on the reader.
@@ -30,6 +30,8 @@ nothing is typed on the reader.
 kobo-sidekickd --version
 kobo-sidekickd init    # certificate with the LAN address in it, pairing code
 kobo-sidekickd run     # both listeners, until killed
+kobo-sidekickd sample  # one built-in question, to check the reader path
+kobo-sidekickd agents  # which agents are installed and registered
 kobo-sidekickd setup          # choose one integration by number
 kobo-sidekickd setup claude --dry-run  # preview one integration
 kobo-sidekickd setup claude --print    # print configuration for manual setup
@@ -49,20 +51,19 @@ and where `kobo setup` looks, so a reader picks it up with the install.
 
 `setup` displays supported integrations, whether each was detected, and its
 configuration path. Choose one number to configure that integration, or press
-Enter or **0** to cancel. It no longer configures every detected integration
-at once. When input or output is redirected, it lists status and explicit
+Enter or **0** to cancel. When input or output is redirected, it lists status and explicit
 commands without changing configuration.
 
-`setup AGENT --dry-run` previews the change. `setup --dry-run` retains the
-preview of all detected integrations. `setup AGENT --print` prints manual
+`setup AGENT --dry-run` previews the change. `setup --dry-run` previews every
+detected integration. `setup AGENT --print` prints manual
 configuration. Explicit setup merges the selected hooks with the existing configuration.
 Before replacement it saves the previous file as `.json.bak`, then
 `.json.bak.1`, `.json.bak.2` and so on, without overwriting earlier backups.
 New configuration is written and synced to a staging file before publication.
 An occupied staging file or invalid existing JSON stops setup and preserves
-the original. Repeating an already completed setup creates no extra backup. Help (`--help`, `-h`, or `help`) returns success; subcommand help is
-also available without initializing pairing, starting listeners or installing
-hooks.
+the original. Repeating an already completed setup creates no extra backup. Help (`--help`,
+`-h`, or `help`) returns success, and `COMMAND --help` prints usage without
+initializing pairing, starting listeners or installing hooks.
 
 ## The two listeners
 

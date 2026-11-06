@@ -22,6 +22,8 @@ library.
   **Saved page 2 of 4**.
 - Browse and search a Komga library, and download comics up to 32 MiB.
 - Interrupted downloads can be continued or removed from **Download**.
+- Tap the left or right third of a page to turn it, or the middle for the
+  reading controls.
 - **Try a sample comic** opens *A small garden*, a four-page comic made for
   Cobalt.
 
@@ -61,12 +63,12 @@ computer first.
 4. Choose **Add comic**, check the title and size, then **Add to library**.
 
 Panels keeps its own verified copy, so you can copy the next comic to
-`volume.cbz` without losing the last one. **Available on this reader** appears
-once the copy is saved.
+`volume.cbz` without losing the last one. The comic appears under **On this
+reader** once the copy is saved.
 
 ## Connecting Komga
 
-1. Choose **Browse Komga** and enter your server's HTTPS address. Paths such
+1. Choose **Browse** and enter your server's HTTPS address. Paths such
    as `https://books.example/komga` work.
 2. Open **Account details** and enter your username and password.
 

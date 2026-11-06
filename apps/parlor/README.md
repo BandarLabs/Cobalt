@@ -38,7 +38,9 @@ Four classic board games against the computer, or for two players passing one Ko
   move it is; the choice is kept until Use portrait.
 - The setup screen is a form: nothing changes until Start game, and Back
   leaves the game in progress as it was.
-- Legal destinations are marked with hollow rings.
+- Legal destinations are marked with grey dots.
+- A match is the best of three rounds; **Next round** plays on. **Moves**
+  lists every move so far.
 - Every move is saved, and reopening offers to resume the exact position.
 
 ## Rules references

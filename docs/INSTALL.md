@@ -22,7 +22,8 @@ You do not need Rust or a copy of the source code.
 
 Open the [browser installer](https://bandarlabs.github.io/Cobalt/install/) in
 Chrome, Edge or Opera, plug in your Kobo and follow the steps. It writes
-Cobalt and NickelMenu to the Kobo and can add apps at the same time. It also
+Cobalt and NickelMenu, the menu add-on that starts it, to the Kobo and can add
+apps at the same time. It also
 lists the apps already on the reader and can remove one, and it can put the
 reader on the Beta channel instead of Stable. Then continue from
 [Restart the reader](#3-restart-the-reader).
@@ -56,8 +57,9 @@ Options:
    storage, and the only place Cobalt writes to.
 
 The installer shows the model, firmware and what it will change, and asks
-before writing. It does not show the full serial number. It will not continue
-with more than one Kobo connected.
+before writing. It does not show the full serial number. With more than one
+Kobo connected it will not guess: it lists them, and you name one with
+`kobo setup --volume PATH`.
 
 To see what would happen without writing anything, run `kobo setup --dry-run`.
 
@@ -87,16 +89,16 @@ also always returns to the stock reader.
 
 ## Installing apps
 
-Open **Store** in the launcher. It shows the last catalog it downloaded, then
+Open **App Store** in the launcher. It shows the last catalog it downloaded, then
 checks for updates over Wi-Fi. Apps install, update and uninstall one at a
 time, and appear in the launcher straight away.
 
-To install from the website, open **Install links** in Store and scan the QR
-code, or enter the pairing code and verification key in your browser. After
+To install from the website, tap **Link a browser** in App Store and scan the
+QR code, or enter the pairing code and verification key in your browser. After
 that, the **Install** button on any
 [app page](https://bandarlabs.github.io/Cobalt/#apps) sends the app to your
-Kobo over Wi-Fi. If the Kobo is offline, connect it and open Store within 72
-hours.
+Kobo over Wi-Fi. If the Kobo is offline, connect it and open App Store within
+72 hours.
 
 If a catalog refresh fails, the last catalog stays usable. If an install
 fails, the previous version stays in place.
@@ -129,7 +131,7 @@ fails, the previous version stays in place.
 
 - **Cobalt**: use **Settings → Software update** on the Kobo. Settings also
   switches between Stable and Beta, keeping your apps and data.
-- **Apps**: use **Store**.
+- **Apps**: use **App Store**.
 - **The `kobo` command**: run `kobo update`, or `kobo update --channel beta`
   for the beta command. This never changes the Kobo.
 
@@ -151,7 +153,7 @@ already trust, not from the release you are checking. Its SHA-256 fingerprint
 is `SHA256:ufJnWeLeZxeWlrY7KXb1MadhxMHYZdHSmk21Nmovgbo`.
 
 ```sh
-version=0.3.22   # the release to install
+version=0.3.31   # the release to install
 tag=v$version
 base=https://github.com/BandarLabs/Cobalt/releases/download/$tag
 dir=cobalt-installer-$version
@@ -182,19 +184,19 @@ sh ./install.sh --version "$version"
 
 ## Building from source
 
+You need [rustup](https://rustup.rs) and an ARM C cross-compiler:
+
 ```sh
-rustup toolchain install stable
-git clone https://github.com/BandarLabs/Cobalt.git
-cd Cobalt
-rustup override set stable
-rustup target add armv7-unknown-linux-musleabihf
 # macOS: brew install messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf
 # Debian/Ubuntu: sudo apt-get install gcc-arm-linux-gnueabihf
+git clone https://github.com/BandarLabs/Cobalt.git
+cd Cobalt
 cargo run -p kobo-cli -- setup --source
 ```
 
-`--source` builds the package before writing. Everything else works the same
-as the prebuilt install.
+`rust-toolchain.toml` names the compiler and the ARM target, and rustup
+installs both on the first build. `--source` builds the package before
+writing. Everything else works the same as the prebuilt install.
 
 `kobo setup` also turns on the Kobo's SSH server, with this computer's key as
 the only way in, waits for the reader to restart onto Wi-Fi, and saves it. The
@@ -212,8 +214,9 @@ partitions. To remove it:
 kobo setup --undo
 ```
 
-This removes Cobalt, its launcher script and its menu entry. Before deleting
-anything, it moves your `secrets`, `trust`, `state`, `data`, `apps` and
+This removes Cobalt, its launcher script and its menu entry, and the menu
+add-on too unless another mod still has a configuration file beside it. Before
+deleting anything, it moves your `secrets`, `trust`, `state`, `data`, `apps` and
 `store` folders to `.adds/cobalt.recovery.N` on the Kobo, and it reports any
 `.adds/cobalt.unusable` folders. Check those before deleting them. SSH is
 turned off again.

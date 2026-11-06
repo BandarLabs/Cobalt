@@ -20,6 +20,8 @@ Row counters and your Ravelry library, with patterns you own readable offline.
 - **+1 row** saves on every tap. **Undo** reverses the last count.
 - **Start section again** sets the section back to row 0 for the second
   sleeve or the second sock. Undo brings the old count back.
+- **Follow this pattern** on a pattern starts a project with its own
+  counters, and **Projects** in the top bar switches between them.
 - Keep several patterns. Each opens on the page you left it at.
 - Following a project keeps the screen on.
 - **Use landscape**, under More, turns the counter on its side with the

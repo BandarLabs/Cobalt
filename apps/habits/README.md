@@ -22,12 +22,16 @@ An offline habit tracker with daily and weekday schedules and streaks.
 - Days turn over at the reader's own midnight. **Yesterday** on the Today
   tab marks or skips a habit for the day before, so one done late at night
   or forgotten until morning still counts.
+- A habit's menu on Today skips it for the day. A missed day breaks a streak;
+  a skipped day keeps it.
 - Habits and completions stay on the reader. There is no account and nothing
   is uploaded.
-- **Backup** exports a verified text copy for a paired computer.
-- **Import** reads a backup from the shelf. **Replace** removes the habits on
-  this reader first. **Merge** keeps them and adds days from the backup when a
-  habit's name matches. Nothing changes until you confirm.
+- **Settings**, at the foot of the Stats tab, holds the backup. **Export a
+  backup** exports a verified text copy for a paired computer.
+- **Import a backup** reads a backup from the shelf. **Replace habits on this
+  reader** removes the habits here first. **Merge with habits on this reader**
+  keeps them and adds days from the backup when a habit's name matches.
+  Nothing changes until you confirm.
 
 ## Permissions
 

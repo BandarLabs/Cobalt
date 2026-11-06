@@ -1,7 +1,7 @@
 # Sync
 
 Sync folders between your computer and your Kobo with Syncthing. Sync when
-you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.
+you tap **Sync now**, or on a schedule while Cobalt is open on Wi-Fi.
 
 <table>
 <tr>
@@ -19,9 +19,10 @@ you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.
 - Four fixed folders. Files in `vault`, `frame` and `books` come to the Kobo,
   and changes made on the Kobo never go back. Files in `out` go to the
   computer.
-- Sync now sends and receives for up to five minutes. A schedule (every
+- **Sync now** sends and receives for up to five minutes. A schedule (every
   hour, every 4 hours or once a day) syncs while Cobalt is open on Wi-Fi, and
-  catches up when Cobalt next opens. Turn off Sync stops both.
+  catches up when Cobalt next opens. Turning the **Sync** switch off stops
+  both.
 - The status screen shows what happened last time, when the next sync is due,
   and the reason a sync did not finish, such as the computer not being found.
 - Notes in `vault` open in [Vault](../vault/) and photos in `frame` appear as a
@@ -51,8 +52,8 @@ you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.
    kobo sync run
    ```
 
-4. On the reader, open Sync and tap Turn on Sync. The first sync starts at
-   once and takes up to five minutes.
+4. On the reader, open Sync and turn on the **Sync** switch. The first sync
+   starts at once and takes up to five minutes.
 
 `kobo sync status` shows each folder, and `kobo sync stop` stops this
 computer's side.
@@ -79,7 +80,7 @@ it can match to their original notes. A copy you edited since is left alone.
 
 ## How it runs on the reader
 
-Cobalt starts each sync itself: when you tap Sync now, when you turn Sync on,
+Cobalt starts each sync itself: when you tap **Sync now**, when you turn Sync on,
 and when the schedule comes round while Cobalt is open on Wi-Fi. A sync runs
 for at most five minutes and finishes even if the reader goes back to the
 Kobo home screen. The reader cannot yet wake from sleep to sync, so a

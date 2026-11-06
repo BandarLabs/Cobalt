@@ -36,9 +36,9 @@ Read Hacker News stories, discussions and articles on your Kobo.
 
 ```sh
 cargo test -p kobo-hn
-kobo run --sim --app hn      # in the browser simulator
+(cd examples/hn && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py hn
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

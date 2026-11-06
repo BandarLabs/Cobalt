@@ -5,7 +5,7 @@ time.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/sending.png" alt="The letter S filling the screen while it is sent, with its code in the top bar"><br>The letter S filling the screen while it is sent, with its code in the top bar</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/sending.png" alt="The letter S filling the screen while it is sent, with its dots and dashes under it"><br>The letter S filling the screen while it is sent, with its dots and dashes under it</td>
 </tr>
 </table>
 
@@ -15,12 +15,17 @@ time.
   room.
 - The front light flashes at full brightness on each beat and goes dark
   between them.
-- An estimate of how long the message will take updates as you type, next to
-  **Send**.
-- **Learning** is a switch under the message. While it is on, the bar names
-  each letter and its code as the light sends it.
+- A message can be up to 30 characters. An estimate of how long it will take
+  updates as you type, next to **Send**.
+- **Learning** is a switch under the message. While it is on, each letter's
+  dots and dashes are drawn under it as the light sends it. The bar counts the
+  letters either way.
 - **Turn light off** in the bar keeps the letters on the panel without the
   flashing, and **Turn light on** brings it back.
+- When the message ends, **Send again** repeats it and **Edit** goes back to
+  the message.
+- **Letter reference** in the **More** menu lists every character Morse can
+  send, with its code.
 - Your previous brightness comes back when the message ends, when you turn the
   light off or when you leave the app.
 - The screen changes once per letter, during the pause before it, so the

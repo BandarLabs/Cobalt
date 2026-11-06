@@ -307,6 +307,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
           <tbody>
             <tr><td><code>on_start</code></td><td>The application session starts. Draw the first screen and request initial data.</td></tr>
             <tr><td><code>on_action</code></td><td>A named button, row, tile, key, navigation item or Back action was activated.</td></tr>
+            <tr><td><code>on_page_turn</code></td><td>A physical page-turn key was pressed, already resolved to forward or back for how the reader is held.</td></tr>
             <tr><td><code>on_text_hold</code></td><td>A selectable rich-text word was held, with stable text coordinates.</td></tr>
             <tr><td><code>on_task</code></td><td>An asynchronous fetch, post, file read or sleep completed, failed or was cancelled.</td></tr>
             <tr><td><code>on_device_result</code></td><td>A device, radio, audio, dictionary, update or app-catalog request answered.</td></tr>
@@ -325,7 +326,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
 
     <section id="ui">
       <h2>UI components</h2>
-      <p><code>ScreenBuilder</code> provides 94 component and configuration methods. The renderer handles physical size, wrapping, grayscale tone, touch geometry and refresh strategy.</p>
+      <p><code>ScreenBuilder</code> has a method for each component and screen setting. The renderer handles physical size, wrapping, grayscale tone, touch geometry and refresh strategy.</p>
       <div class="cards">
         <div class="card"><h3>Text and documents</h3><p><code>heading</code>, hierarchical headings, plain and linked text, styled and selectable rich text, inline formulae, metadata, sections, facts, quotes, bylines, tables and pictures.</p></div>
         <div class="card"><h3>Actions and input</h3><p>Primary, secondary and disabled buttons, fields with clear actions, chips, choices, steppers, text entry and terminal keyboards.</p></div>
@@ -342,9 +343,9 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
 
     <section id="measured-lists">
       <h2>Lists with notices and menus</h2>
-      <p>Measure the same content you draw. Use <code>Context::paginate_rows_below_notice(rows, bottom_action_present, notice)</code> when a notice appears above a list. It reserves the notice's measured height at the current interface text size before dividing rows into pages. Pass the same notice text to the screen builder.</p>
-      <p>For rows with an overflow menu, use <code>paginate_rows_with_menu_below_notice</code> and <code>clamped_row_with_menu(text, lines, bottom_action_present)</code>. These helpers account for the menu column when measuring and shortening text. Pass whether the screen has a bottom action so the last row leaves room for it. Feeds uses these helpers for refresh history, unread counts and save-recovery notices.</p>
-      <p>When more than a notice sits above the list, such as tabs, a heading or a pending count, measure against the screen itself: <code>paginate_rows_under(rows, nav_bar, position, &amp;prefix)</code>, or <code>paginate_rows_with_menu_under</code> for rows carrying a mark. Both reserve the measured height of the prefix you pass, so build it with the same function the screen uses and leave the list and the page-position strip out of it. The Miniflux reader measures its tabbed article list this way.</p>
+      <p>Measure the same content you draw. Use <code>Context::paginate_rows_below_notice(rows, nav_bar, notice)</code> when a notice appears above a list. It reserves the notice's measured height at the current interface text size before dividing rows into pages. Pass the same notice text to the screen builder.</p>
+      <p>For rows with an overflow menu, use <code>paginate_rows_with_menu_below_notice</code> and <code>clamped_row_with_menu(text, lines, nav_bar)</code>. These helpers account for the menu column when measuring and shortening text. Pass <code>nav_bar</code> as true when the screen has a fixed bottom action, so the last row leaves room for it. Feeds uses these helpers for refresh history, unread counts and save-recovery notices.</p>
+      <p>When more than a notice sits above the list, such as tabs, a heading or a pending count, measure against the screen itself: <code>paginate_rows_under(rows, nav_bar, position, &amp;prefix)</code>, or <code>paginate_rows_with_menu_under</code> for rows carrying a mark. Both reserve the measured height of the prefix you pass, so build it with the same function the screen uses and leave the list and the page-position strip out of it. Digest, the Miniflux reader, measures its tabbed article list this way.</p>
     </section>
 
     <section id="offline-snapshots">
@@ -395,7 +396,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
       <p><code>pencil_board(PencilBoard)</code> draws dots, clue numbers, circular islands, connected single/double strokes and joined cross-sum cells. A board uses integer row/column positions and a physical cell size; fixed clues have no action. Edge targets occupy the space between endpoints, so tapping an island or clue does not accidentally change a line. The reader and simulator use the same layout and ink.</p>
       <p>Build marks with <code>PencilMarkKind::{Dot, Clue, Island, Block, Sum, Digit}</code> and stable <code>action_id</code> values for editable marks or edges. Sum clues use <code>across</code> at upper right and <code>down</code> at lower left; zero omits that direction. Edge states are blank (0), single (1), double (2), and excluded (3). Given digits and clues carry no action. Number fitting retains the board’s physical geometry, including at large text settings.</p>
       <p>The component is bounded to 9 × 9 positions, 81 marks and 144 orthogonal edges, with additional layout-node limits. Endpoints must be dots or islands at least two positions apart; duplicate coordinates, edges or actions, reserved action IDs and invalid values are rejected. Use endpoint selection instead of overlapping direct edge targets when a puzzle has crossing candidate routes. Applications own the rules, selection, progress and undo. Keep the board within the area left after controls; invalid or oversized layouts fail diagnostics.</p>
-      <p>This beta component uses protocol 14 node tag 34. Earlier wire versions reject it; existing board/grid tags are unchanged. Rebuild the runtime and simulator together with an app that uses it.</p>
+      <p>Pencil boards are node tag 34, added in protocol 14. A runtime older than that rejects the screen; existing board and grid tags are unchanged.</p>
       <figure><img src="media/site/sdk/pencil-boards.png" width="536" height="724" alt="Logic Pack showing Hashi islands joined by continuous bridges" loading="lazy"><figcaption>Shared pencil-board geometry in the Clara BW simulator.</figcaption></figure>
       <p><code>paginate_oriented(text, nav_bar, orientation)</code> measures interface prose for the requested app orientation. Pair it with <code>set_orientation</code> and <code>metrics().oriented(orientation)</code>. Sudoku uses these contracts for pencil-note keys and landscape help.</p>
       <figure><img src="media/site/apps/sudoku.png" width="536" height="724" alt="Sudoku with pencil-note keys selected and the row and column highlighted" loading="lazy"><figcaption>Sudoku in the Clara BW simulator at the extra-large text size.</figcaption></figure>
@@ -406,7 +407,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
       <p>For cover lists, use <code>clamped_cover_row</code> and <code>paginate_cover_rows_below_section</code> so measurement reserves the same picture column as rendering. <code>ComicView::cover_preview</code> supplies a bounded cover without moving the page. <code>Memory::saved_page</code> validates a small saved record for a shelf summary without decoding its archive; use unchanged page order, such as a content-addressed CBZ.</p>
       <figure><img src="media/site/apps/panels.png" width="320" alt="Panels shelf showing a comic cover and saved progress, page 2 of 4" loading="lazy"><figcaption>The Panels shelf in the Clara BW simulator, with covers and saved progress.</figcaption></figure>
       <p><code>Task::Update</code> accepts <code>UpdateMethod::Put</code> or <code>UpdateMethod::Patch</code>, with named credentials, bounded bodies and responses, and cancellation. POST permissions do not authorize these methods. The reviewed Miniflux token policy permits bounded entry PUTs within its saved server scope. Other providers require their own method, destination and body review.</p>
-      <p>Updates use beta protocol 14 task tag 4: rebuild the app, runtime and simulator together. They are sent once, even through <code>spawn_retrying</code>. After a lost response, read back server state before retrying; cancellation cannot undo a request already accepted by the server.</p>
+      <p>Updates are task tag 4, added in protocol 14. They are sent once, even through <code>spawn_retrying</code>. After a lost response, read back server state before retrying; cancellation cannot undo a request already accepted by the server.</p>
       <p>Owner-hosted accounts use <code>CredentialSetup::bind_server</code> or <code>secrets().set_server</code> to bind an authorized account to an HTTPS origin, port and base path. <code>ProviderSetup::with_server_accounts</code> supplies separate username and password steps. Changing servers requires account entry for that address. The reviewed server-bound Basic providers are Panels (<code>komga</code>) and calibre-web (<code>calibre</code>); both permit reads within the saved server scope, never writes. Miniflux (<code>miniflux</code>, <code>X-Auth-Token</code>) additionally permits reviewed entry updates and feed creation; unknown routes, toggle bookmarks and unbound writes are refused.</p>
     </section>
 
@@ -447,15 +448,15 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
           <thead><tr><th>Crate</th><th>Use it when</th><th>Reference app</th></tr></thead>
           <tbody>
             <tr><td><code>kobo-sdk</code></td><td>Every app: lifecycle, UI, tasks, storage and runtime services.</td><td>All examples and apps</td></tr>
-            <tr><td><code>kobo-ui</code></td><td>You need advanced public UI types, pagination helpers or renderer-level layout assertions. Most component types are re-exported by <code>kobo-sdk</code>.</td><td>Gallery, Sudoku tests</td></tr>
-            <tr><td><code>kobo-image</code></td><td>Decode bounded JPEG/PNG bytes, fit/crop them and dither to panel greys before <code>put_picture</code>.</td><td>Gallery, readers</td></tr>
-            <tr><td><code>kobo-json</code></td><td>Parse untrusted JSON or build request objects without Serde.</td><td>Brief, Chat, RSS</td></tr>
-            <tr><td><code>kobo-html</code></td><td>Turn untrusted HTML fragments into bounded text, or rasterise mathematical formulae with its optional feature.</td><td>Hacker News, RSS, arXiv</td></tr>
-            <tr><td><code>kobo-xml</code></td><td>Scan bounded XML/Atom/RSS input without external entities or recursive allocation.</td><td>RSS, arXiv</td></tr>
-            <tr><td><code>kobo-opds</code></td><td>Read OPDS 1.2 Atom and OPDS 2.0 JSON catalogues into one model.</td><td>Store/catalog clients</td></tr>
-            <tr><td><code>kobo-doc</code></td><td>Sniff and parse EPUB, HTML, Markdown or plain-text bytes into structured document blocks.</td><td>arXiv, book readers</td></tr>
-            <tr><td><code>kobo-read</code></td><td>Paginate a structured document and manage stable locations, contents, search and annotations.</td><td>arXiv</td></tr>
-            <tr><td><code>kobo-bookview</code></td><td>You need an end-to-end reading surface with deferred image loading and stable repagination.</td><td>arXiv</td></tr>
+            <tr><td><code>kobo-ui</code></td><td>You need advanced public UI types, pagination helpers or renderer-level layout assertions. Most component types are re-exported by <code>kobo-sdk</code>.</td><td>Components gallery, Sudoku tests</td></tr>
+            <tr><td><code>kobo-image</code></td><td>Decode bounded JPEG/PNG bytes, fit/crop them and dither to panel greys before <code>put_picture</code>.</td><td>Frame, Panels, Books</td></tr>
+            <tr><td><code>kobo-json</code></td><td>Parse untrusted JSON or build request objects without Serde.</td><td>Daily Brief, Chat, Feeds</td></tr>
+            <tr><td><code>kobo-html</code></td><td>Turn untrusted HTML fragments into bounded text, or rasterise mathematical formulae with its optional feature.</td><td>Hacker News, Feeds, Preprints</td></tr>
+            <tr><td><code>kobo-xml</code></td><td>Scan bounded XML/Atom/RSS input without external entities or recursive allocation.</td><td>Feeds, Preprints</td></tr>
+            <tr><td><code>kobo-opds</code></td><td>Read OPDS 1.2 Atom and OPDS 2.0 JSON catalogues into one model.</td><td>Library (calibre-web), Panels, Gutenbird</td></tr>
+            <tr><td><code>kobo-doc</code></td><td>Sniff and parse EPUB, HTML, Markdown or plain-text bytes into structured document blocks.</td><td>Books, Preprints</td></tr>
+            <tr><td><code>kobo-read</code></td><td>Paginate a structured document and manage stable locations, contents, search and annotations.</td><td>Books, Preprints</td></tr>
+            <tr><td><code>kobo-bookview</code></td><td>You need an end-to-end reading surface with deferred image loading and stable repagination.</td><td>Books, Preprints</td></tr>
             <tr><td><code>kobo-term</code></td><td>Turn VT100 output bytes into rows and a cursor for <code>ScreenBuilder::terminal</code>.</td><td>Terminal</td></tr>
           </tbody>
         </table>
@@ -465,7 +466,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
 
     <section id="cli">
       <h2>CLI commands</h2>
-      <p>The CLI creates and tests applications, manages developer devices, and builds Store artifacts. Commands accepting <code>--device</code> also accept <code>-s</code>.</p>
+      <p>The CLI creates and tests applications, manages developer devices, and builds Store artifacts. Commands accepting <code>--device</code> also accept <code>-s</code>. Device commands use the reader saved by <code>setup</code> or <code>pair</code> when no <code>--device</code> or <code>--reader NAME</code> is given.</p>
 
       <h3>Build and exercise applications</h3>
       <div class="table-wrap">
@@ -474,14 +475,15 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
           <tbody>
             <tr><td><code>new &lt;name&gt;</code></td><td>Create a Rust SDK application. Aliases: <code>init</code>, <code>create</code>.</td></tr>
             <tr><td><code>dev [--builtin] [address]</code></td><td>Run the current SDK app in the browser simulator. Aliases: <code>sim</code>, <code>simulator</code>.</td></tr>
-            <tr><td><code>run --sim [--app NAME]</code></td><td>Run the SDK transport, daemon and one application together on the host.</td></tr>
-            <tr><td><code>drive --script PATH</code></td><td>Drive a running simulator with taps, typing, expectations, scenarios and PNG screenshots.</td></tr>
+            <tr><td><code>dev --runtime [address] [--apps IDs]</code></td><td>Run the launcher and selected local apps in the browser simulator.</td></tr>
+            <tr><td><code>run --sim [--app NAME]</code></td><td>Run the SDK transport, daemon and one built-in or Store application from this repository together on the host.</td></tr>
+            <tr><td><code>drive --script PATH [--record DIR]</code></td><td>Drive a running simulator with taps, typing, expectations, scenarios and PNG screenshots.</td></tr>
             <tr><td><code>shot [--device HOST]</code></td><td>Save a PNG of the simulated or real panel. Device capture is read-only.</td></tr>
-            <tr><td><code>build [--device]</code></td><td>Build the host workspace or the ARM safe doctor, disabled runtime and sample app.</td></tr>
+            <tr><td><code>build [--device]</code></td><td>Build the host workspace or the device binaries.</td></tr>
             <tr><td><code>package [--out PATH] [--folder PATH]</code></td><td>Build the <code>KoboRoot.tgz</code> an owner installs over USB.</td></tr>
             <tr><td><code>inspect &lt;package&gt;</code></td><td>List a package and verify that no entry can write outside Cobalt's install folder.</td></tr>
             <tr><td><code>verify &lt;arm-binary&gt;</code></td><td>Verify static ARMv7 hard-float binary format.</td></tr>
-            <tr><td><code>version</code></td><td>Print the CLI version.</td></tr>
+            <tr><td><code>version [--full]</code></td><td>Print the CLI version, or the full compatibility report with host helpers.</td></tr>
           </tbody>
         </table>
       </div>
@@ -499,9 +501,9 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
             <tr><td><code>present &lt;app&gt; --device IP [--seconds N]</code></td><td>Run one installed application on the real panel for a bounded presentation.</td></tr>
             <tr><td><code>stop --device IP</code></td><td>Stop the Cobalt session and hand the panel back to the stock reader.</td></tr>
             <tr><td><code>session --device IP [--hold [minutes]]</code></td><td>Keep a development device reachable, awake and associated with Wi-Fi.</td></tr>
-            <tr><td><code>wait --device IP</code></td><td>Block until a device answers again. Alias: <code>wait-for-device</code>.</td></tr>
+            <tr><td><code>wait --device IP [--timeout SECONDS]</code></td><td>Block until a device answers again. Alias: <code>wait-for-device</code>.</td></tr>
             <tr><td><code>logs --device IP [--follow] [--lines N]</code></td><td>Read or follow the runtime trace. Alias: <code>logcat</code>.</td></tr>
-            <tr><td><code>shell --device IP [command ...]</code></td><td>Run one developer command on the reader, or open an interactive SSH session.</td></tr>
+            <tr><td><code>shell --device IP [command ...]</code></td><td>Run one developer command on the reader, or open an interactive SSH session. Alias: <code>sh</code>.</td></tr>
             <tr><td><code>record --device IP [--seconds N] [--fps F] [--out DIR]</code></td><td>Capture a read-only sequence of panel frames.</td></tr>
             <tr><td><code>touch-probe --device IP [--seconds N]</code></td><td>Watch touch input read-only to verify the hardware profile's coordinate transform.</td></tr>
             <tr><td><code>guard-test --device IP --confirm ...</code></td><td>Attended proof that the session guardian restores the previous screen.</td></tr>
@@ -536,14 +538,14 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
 <pre><code><span class="com"># Browser simulator from an app directory</span>
 <span class="cmd">kobo</span> dev
 
-<span class="com"># Host runtime</span>
-<span class="cmd">cargo</span> run -p kobo-cli -- run --sim --app my-app
+<span class="com"># Host runtime, for an app in this repository</span>
+<span class="cmd">cargo</span> run -p kobo-cli -- run --sim --app sudoku
 
 <span class="com"># Drive taps, typing, expectations and screenshots</span>
 <span class="cmd">cargo</span> run -p kobo-cli -- drive --script tour.kobo --shots target/shots
 
-<span class="com"># Targeted application tests</span>
-<span class="cmd">cargo</span> test -p kobo-my-app
+<span class="com"># Application tests, from the app directory</span>
+<span class="cmd">cargo</span> test
 
 <span class="com"># Package a device build</span>
 <span class="cmd">cargo</span> run -p kobo-cli -- package</code></pre>

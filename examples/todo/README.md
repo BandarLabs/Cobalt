@@ -30,9 +30,9 @@ None.
 
 ```sh
 cargo test -p kobo-todo
-kobo run --sim --app todo      # in the browser simulator
+(cd examples/todo && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py todo
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

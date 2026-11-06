@@ -28,6 +28,8 @@ built from the SRD.
 - Stat blocks and rules open in the document reader, with abilities and
   headings intact. Tables are written out row by row so they stay readable at
   large text sizes.
+- **Dice**: roll a d20 with a modifier from -10 to +10, normally or with
+  advantage or disadvantage, which rolls two and keeps the higher or lower.
 - **Initiative**: add combatants by name or from the monster reference. A
   monster brings its hit points from its stat block; a typed name can be
   given some. It sorts the order, tracks the active turn and round, and

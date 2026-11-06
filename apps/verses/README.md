@@ -18,7 +18,10 @@ A public-domain poem each day, set as a reading page.
 - A new public-domain poem every day. With no network, the day's poem comes
   from 41 bundled poems by Shakespeare, Keats, Rossetti, Whitman and others.
 - Sonnets and short poems sit whole on one page. Longer poems turn the page
-  between stanzas.
+  between stanzas. Tap the sides of the page to turn it, and touch the top to
+  bring the bar back.
+- Tap the middle of a poem for **Make a quote card**. The card is kept on the
+  reader and offered to your paired computer.
 - An offline shelf that keeps each poem's author, first publication year and
   source.
 - Search [PoetryDB](https://poetrydb.org/) by title, poet or line, and keep

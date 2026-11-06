@@ -38,9 +38,10 @@ Brightness, time zone, accounts and firmware stay in the Kobo's own settings.
 
 ```sh
 cargo test -p kobo-settings
-kobo run --sim --app settings      # in the browser simulator
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo dev --runtime --apps settings   # the launcher and this app in the browser simulator
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
+
 Network names in the screenshots are hidden with `scripts/redact-ssids.py`.
 
 ---
