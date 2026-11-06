@@ -145,6 +145,24 @@ impl Notice {
     }
 }
 
+/// What a refresh that failed says, in the owner's words and with the one
+/// thing to do next.
+///
+/// It used to append the runtime's own description, so an owner with Wi-Fi off
+/// read "the device or network is unreachable" and then that the last
+/// verified list was still shown, which is two sentences about the machinery
+/// and none about what to do.
+fn refresh_failure(error: DeviceError) -> String {
+    match error {
+        DeviceError::Unreachable | DeviceError::NotFound | DeviceError::TimedOut => {
+            "The list could not be updated, so it may be out of date. Connect to Wi-Fi and refresh."
+                .to_owned()
+        }
+        _ => "The list could not be updated, so it may be out of date. Refresh again later."
+            .to_owned(),
+    }
+}
+
 /// The labels a catalog row's own button can carry.
 const ROW_BUTTONS: [&str; 2] = ["Install", "Update"];
 
@@ -244,7 +262,7 @@ impl Store {
         let mut screen = ScreenBuilder::new("store-catalog")
             .top_bar("App Store")
             .top_bar_glyph(REFRESH, "Refresh", Glyph::Refresh)
-            .top_bar_action(APP_LINK, "Link browser");
+            .top_bar_action(APP_LINK, "Link a browser");
         // Try again belongs to the app's page, where the permissions are,
         // so the list says what happened without offering it.
         if let Some(notice) = &self.notice {
@@ -384,7 +402,7 @@ impl Store {
             let mut screen = ScreenBuilder::new("store-catalog")
                 .top_bar("App Store")
                 .top_bar_glyph(REFRESH, "Refresh", Glyph::Refresh)
-                .top_bar_action(APP_LINK, "Link browser");
+                .top_bar_action(APP_LINK, "Link a browser");
             if let Some(notice) = &self.notice {
                 screen = notice.draw(screen);
             }
@@ -475,7 +493,11 @@ impl Store {
 
     fn app_link(&self) -> Screen {
         let mut screen = ScreenBuilder::new("store-app-link")
-            .top_bar("Install from a browser")
+            // One name for this everywhere it appears: the bar on the list,
+            // this screen's title and the button that starts it. It used to
+            // be "Link browser", "Install from a browser" and "Link this
+            // Kobo" on three consecutive taps.
+            .top_bar("Link a browser")
             .owns_back(true);
         if let Some(notice) = &self.notice {
             screen = notice.draw(screen);
@@ -484,8 +506,8 @@ impl Store {
             AppLinkState::Unpaired => screen
                 .splash(
                     Some(Glyph::Globe),
-                    "Link this Kobo",
-                    "Link a browser to install apps from Cobalt app pages. Requests are encrypted for this Kobo.",
+                    "No browser linked",
+                    "Link the browser on your computer or phone to install apps from Cobalt's app pages. What it sends is encrypted for this Kobo.",
                 )
                 .bottom_action_marked(
                     if self.notice.is_some() {
@@ -496,7 +518,7 @@ impl Store {
                     if self.notice.is_some() {
                         "Reset link"
                     } else {
-                        "Link browser"
+                        "Link a browser"
                     },
                     if self.notice.is_some() {
                         Glyph::Refresh
@@ -512,8 +534,8 @@ impl Store {
             } => {
                 let minutes = (*expires_in).div_ceil(60);
                 let verification = pairing_verification(url).unwrap_or_else(|| "Unavailable".into());
-                let mut screen = screen.heading("Link this browser").text(
-                    "Scan the QR code. To pair manually, open the address below and enter both values.",
+                let mut screen = screen.text(
+                    "Scan the code with your phone, or open the address below in a browser and enter the code and key shown.",
                 );
                 if let Some(picture) = self.pairing_qr {
                     screen = screen.picture(picture, 58);
@@ -1223,10 +1245,7 @@ impl KoboApp for Store {
             }
             (DeviceRequest::RefreshAppCatalog, DeviceResult::Failed(error)) => {
                 self.refreshing = false;
-                self.notice = Some(Notice::attention(format!(
-                    "The catalog could not be refreshed: {}. The last verified list is still shown.",
-                    error.describe()
-                )));
+                self.notice = Some(Notice::attention(refresh_failure(error)));
             }
             (DeviceRequest::ReadAppCatalog, DeviceResult::Failed(_)) => {
                 refresh_after_paint = self.refresh_after_cache;
@@ -2813,7 +2832,29 @@ mod tests {
             link.glyph.is_none(),
             "the browser link is an unlabelled icon"
         );
-        assert!(words(&screen, &CLARA_BW_METRICS).contains("Link browser"));
+        assert!(words(&screen, &CLARA_BW_METRICS).contains("Link a browser"));
+    }
+
+    #[test]
+    fn linking_a_browser_has_one_name_from_the_list_to_its_own_screen() {
+        let mut runner = opened(&[app("apple", None)]);
+        let screen = painted(&runner.action(action_id(APP_LINK)));
+        assert_eq!(
+            screen.top_bar.as_ref().map(|bar| bar.title.as_str()),
+            Some("Link a browser")
+        );
+        let drawn = format!("{screen:?}");
+        for other in ["Install from a browser", "Link this Kobo", "Link browser\""] {
+            assert!(!drawn.contains(other), "{other}: {drawn}");
+        }
+    }
+
+    #[test]
+    fn a_refresh_that_could_not_reach_the_network_says_what_to_do_in_plain_words() {
+        let offline = super::refresh_failure(DeviceError::Unreachable);
+        assert!(offline.contains("Connect to Wi-Fi"), "{offline}");
+        assert!(!offline.contains("unreachable"), "{offline}");
+        assert!(!super::refresh_failure(DeviceError::Backend).contains("Wi-Fi"));
     }
 
     #[test]
