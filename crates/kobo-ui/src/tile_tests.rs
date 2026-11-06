@@ -271,3 +271,77 @@ fn the_three_tones_of_a_word_game_print_three_different_amounts_of_ink() {
         );
     }
 }
+
+fn backgammon(numbered: bool) -> Screen {
+    let cells = (0..24)
+        .map(|index| {
+            let mut cell = Cell::new(ActionId(100 + index), format!("Point {} empty", index + 1));
+            if numbered {
+                cell.corner = Some(u8::try_from(index + 1).unwrap());
+            }
+            cell
+        })
+        .collect();
+    Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 12,
+            square: true,
+            cells,
+        }],
+    )
+}
+
+#[test]
+fn a_numbered_backgammon_board_sits_in_a_frame_with_a_bar_and_prints_its_own_numbers() {
+    for (_, metrics) in PANELS {
+        let chrome = Chrome::measuring(true);
+        let screen = backgammon(true);
+        let issues = screen.diagnostics(&metrics, &chrome).issues;
+        assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
+        let layout = screen.layout_with(&metrics, &chrome);
+        let frames = layout
+            .nodes
+            .iter()
+            .filter(|node| node.kind == LayoutKind::BackgammonFrame)
+            .map(|node| node.rect)
+            .collect::<Vec<_>>();
+        let (board, bar) = (frames[0], frames[1]);
+        assert!(
+            board.x > 0 && board.x + board.width < metrics.width,
+            "{metrics:?}"
+        );
+        let point = |index: u32| layout.rect_of_action(ActionId(100 + index)).unwrap();
+        // The sixth point ends at the bar and the seventh starts after it.
+        assert!(point(5).x + point(5).width <= bar.x);
+        assert!(point(6).x >= bar.x + bar.width);
+        assert!(point(0).width >= metrics.touch_target_minimum());
+        let numbers = layout
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, LayoutKind::PointNumber(_)))
+            .count();
+        assert_eq!(numbers, 24);
+    }
+}
+
+#[test]
+fn an_unnumbered_backgammon_board_keeps_the_columns_its_pictures_were_drawn_for() {
+    // An installed application that draws its own numbers lines them up with
+    // twelve equal columns across the whole panel, so that board keeps them.
+    let metrics = CLARA_BW_METRICS;
+    let layout = backgammon(false).layout_with(&metrics, &Chrome::measuring(true));
+    let column = metrics.width / 12;
+    for index in 0..12 {
+        let rect = layout.rect_of_action(ActionId(100 + index)).unwrap();
+        assert_eq!(
+            (rect.x, rect.width),
+            (i32::try_from(index).unwrap() * column, column)
+        );
+    }
+    assert!(layout
+        .nodes
+        .iter()
+        .any(|node| node.kind == LayoutKind::BackgammonBoard));
+}

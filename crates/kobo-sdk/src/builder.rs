@@ -2403,6 +2403,45 @@ impl ScreenBuilder {
         self
     }
 
+    /// A board whose squares each carry a number printed beside them, as well
+    /// as a picture, a tone and a selection.
+    ///
+    /// A backgammon board built this way, twelve columns of points named
+    /// "Point ...", is laid out whole by the runtime: inside the page, in a
+    /// frame, with a bar between its halves and each point's number printed
+    /// above or below it in a box its tone asks for. Numbers run from 1 to
+    /// 99, and a zero leaves a square unnumbered. Needs the release that
+    /// draws tones.
+    #[must_use]
+    pub fn numbered_board<I, N, L>(mut self, columns: u8, cells: I) -> Self
+    where
+        I: IntoIterator<Item = (N, L, Option<Glyph>, u8, crate::CellTone, bool)>,
+        N: AsRef<str>,
+        L: Into<String>,
+    {
+        let id = self.next_id();
+        let mut source = cells.into_iter();
+        let mut cells = Vec::new();
+        for (name, label, glyph, number, tone, selected) in source.by_ref().take(MAX_CELLS) {
+            let mut cell = Cell::new(self.register(name.as_ref()), label)
+                .with_tone(tone)
+                .with_selected(selected);
+            cell.glyph = glyph;
+            cell.corner = (1..=99).contains(&number).then_some(number);
+            cells.push(cell);
+        }
+        if source.next().is_some() {
+            self.warn_limit(id, "grid cells", MAX_CELLS);
+        }
+        self.nodes.push(Node::Grid {
+            id,
+            columns: columns.clamp(1, MAX_COLUMNS),
+            square: true,
+            cells,
+        });
+        self
+    }
+
     /// Physical pencil-puzzle geometry shared by the reader and simulator.
     /// Actions use stable IDs from `action_id`; fixed clues carry no action.
     /// Requires the protocol-14 beta runtime's pencil-board node.

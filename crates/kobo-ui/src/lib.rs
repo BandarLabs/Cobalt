@@ -1369,6 +1369,15 @@ pub enum CellStyle {
     BackgammonTop,
     /// A point on a conventional backgammon board, broad at the panel edge.
     BackgammonBottom,
+    /// A point on a backgammon board whose cells carry their numbers, which
+    /// the runtime lays out whole: inside the page margins, in a frame, with
+    /// a bar between its halves. Carries which way the point faces and
+    /// whether it is one of the shaded points, counted along its own row,
+    /// because its position on the panel no longer says.
+    BackgammonPoint {
+        from_top: bool,
+        dark: bool,
+    },
     Key,
     /// A cell that is nothing but the picture in it.
     ///
@@ -5162,7 +5171,16 @@ pub enum LayoutKind {
     Button(ActionId, ControlState, Emphasis),
     /// A checker stack on a backgammon point. `from_top` pins its base to the
     /// matching board edge so a five-checker point reads as one familiar pile.
+    /// A point's checkers: their colour, how many there are and whether they
+    /// stack down from the top of the board. Five are drawn, and a point
+    /// holding more carries its count on the fifth.
     BackgammonStack(Glyph, u8, bool),
+    /// The frame and bar of a numbered backgammon board.
+    BackgammonFrame,
+    /// A point's number, printed above or below it on a numbered backgammon
+    /// board. Solid is printed in a black box, shaded in an open box, faded
+    /// in grey.
+    PointNumber(CellTone),
     /// The enclosing field and central bar of a backgammon board.
     BackgammonBoard,
     Card,
@@ -7931,6 +7949,15 @@ fn layout_node(
                 && requested == 12
                 && cells.len() == 24
                 && cells.iter().all(|cell| cell.label.starts_with("Point "));
+            // A board whose points carry their numbers is laid out whole here.
+            // One without them came from an application that draws its own
+            // numbers in pictures matched to the old columns, and keeps them.
+            if backgammon_board
+                && !legacy_typography()
+                && cells.iter().any(|cell| cell.corner.is_some())
+            {
+                return layout_numbered_backgammon(*id, cells, x, y, width, metrics, layout);
+            }
             // A row of word-game tiles is five squares too, and is a board.
             let pad_deck = *square
                 && requested == 5
@@ -8149,7 +8176,7 @@ fn layout_node(
                             .nth(3)
                             .and_then(|count| count.parse::<u8>().ok())
                             .unwrap_or(1)
-                            .clamp(1, 5);
+                            .clamp(1, 15);
                         layout.nodes.push(LayoutNode {
                             id: *id,
                             rect,
@@ -15755,6 +15782,22 @@ fn paint_layout(
             LayoutKind::Cell(_, CellStyle::BackgammonBottom, _) => {
                 draw_backgammon_point(surface, node.rect, false, metrics, palette, clip);
             }
+            LayoutKind::Cell(_, CellStyle::BackgammonPoint { from_top, dark }, _) => {
+                draw_point_triangle(
+                    surface,
+                    node.rect,
+                    from_top,
+                    if dark {
+                        palette.board_dark()
+                    } else {
+                        Paint::Grey(tone::PAPER)
+                    },
+                    metrics,
+                    clip,
+                );
+            }
+            LayoutKind::BackgammonFrame => draw_backgammon_frame(surface, node.rect, metrics, clip),
+            LayoutKind::PointNumber(mark) => draw_point_number(surface, &node, mark, metrics, clip),
             LayoutKind::BackgammonStack(glyph, count, from_top) => {
                 draw_backgammon_stack(surface, glyph, count, from_top, node.rect, clip);
             }
@@ -18086,6 +18129,8 @@ fn draw_morris_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics
     line(point(4, 3), point(6, 3));
 }
 
+/// One point of the older backgammon board, whose cells are a twelfth of the
+/// panel each with nothing between them.
 fn draw_backgammon_point(
     surface: &mut Surface,
     rect: Rect,
@@ -18100,16 +18145,45 @@ fn draw_backgammon_point(
     } else {
         Paint::Grey(tone::PAPER)
     };
-    let height = rect.height.max(1);
-    let centre = rect.x + rect.width / 2;
+    draw_point_triangle(surface, rect, from_top, fill, metrics, clip);
+}
+
+/// A backgammon point: a long triangle standing on the edge of the board.
+///
+/// It is drawn a little narrower than its cell, so neighbouring points do not
+/// touch at their bases and the bar has a strip of its own, and four fifths
+/// of its height, so the tips of opposing points stop short of each other
+/// across the middle of the board, as they do on a real one. The cell is
+/// still the whole target for a finger.
+fn draw_point_triangle(
+    surface: &mut Surface,
+    rect: Rect,
+    from_top: bool,
+    fill: Paint,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let inset = (rect.width / 10).max(1);
+    let base = Rect {
+        x: rect.x + inset,
+        width: (rect.width - inset * 2).max(1),
+        ..rect
+    };
+    let height = (rect.height * 4 / 5).max(1);
+    let centre = base.x + base.width / 2;
     for row in 0..height {
         let depth = if from_top { row } else { height - 1 - row };
-        let half = (rect.width * (height - depth) / (2 * height)).max(1);
+        let half = (base.width * (height - depth) / (2 * height)).max(1);
+        let y = if from_top {
+            rect.y + row
+        } else {
+            rect.y + rect.height - height + row
+        };
         fill_clipped(
             surface,
             Rect {
                 x: centre - half,
-                y: rect.y + row,
+                y,
                 width: half * 2,
                 height: 1,
             },
@@ -18134,20 +18208,17 @@ fn draw_backgammon_point(
             );
         }
     };
-    let apex = if from_top {
-        (centre, rect.y + height - 1)
+    let (base_y, apex_y) = if from_top {
+        (rect.y, rect.y + height - 1)
     } else {
-        (centre, rect.y)
+        (rect.y + rect.height - 1, rect.y + rect.height - height)
     };
-    let base_y = if from_top {
-        rect.y
-    } else {
-        rect.y + height - 1
-    };
-    edge(rect.x, base_y, apex.0, apex.1);
-    edge(rect.x + rect.width - 1, base_y, apex.0, apex.1);
+    edge(base.x, base_y, centre, apex_y);
+    edge(base.x + base.width - rule, base_y, centre, apex_y);
 }
 
+/// The older board's ground: paper inside a rule, and a straight bar down the
+/// middle in the strip the narrowed points leave between the two halves.
 fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
     fill_clipped(surface, rect, tone::PAPER, clip);
     stroke_clipped(
@@ -18157,7 +18228,8 @@ fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMet
         metrics.rule_thickness() * 2,
         clip,
     );
-    let bar_width = (rect.width / 28).max(metrics.rule_thickness() * 3);
+    let point = (rect.width / 12).max(1);
+    let bar_width = ((point / 10).max(1) * 2 - 2).max(metrics.rule_thickness());
     fill_clipped(
         surface,
         Rect {
@@ -18169,26 +18241,171 @@ fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMet
         tone::MUTED,
         clip,
     );
-    for (x, width) in [
-        (rect.x, (rect.width / 24).max(1)),
-        (
-            rect.x + rect.width - (rect.width / 24).max(1),
-            (rect.width / 24).max(1),
-        ),
-    ] {
-        stroke_clipped(
-            surface,
-            Rect {
-                x,
-                y: rect.y + rect.height / 8,
-                width,
-                height: rect.height * 3 / 4,
+}
+
+/// A numbered board's frame, or its bar: paper inside a heavy ink rule, the
+/// way a printed diagram of the board draws both.
+fn draw_backgammon_frame(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
+    fill_clipped(surface, rect, tone::PAPER, clip);
+    stroke_clipped(surface, rect, tone::INK, metrics.rule_thickness() * 2, clip);
+}
+
+/// A point's number. A plain number is grey, so twenty-four of them do not
+/// outweigh the checkers; a marked one is in ink, in an open box for a point
+/// that may be played and a solid one for the point in hand.
+fn draw_point_number(
+    surface: &mut Surface,
+    node: &LayoutNode,
+    mark: CellTone,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let size = FontSize::Caption;
+    let text = node.text_lines.first().map_or("", String::as_str);
+    let pad = metrics.space(Space::Tight);
+    let box_height = (size.line_height() + pad).min(node.rect.height);
+    let box_width = (measure_text(text, size).0 + pad * 2)
+        .max(box_height)
+        .min(node.rect.width);
+    let field = Rect {
+        x: node.rect.x + (node.rect.width - box_width) / 2,
+        y: node.rect.y + (node.rect.height - box_height) / 2,
+        width: box_width,
+        height: box_height,
+    };
+    let ink = match mark {
+        CellTone::Solid => {
+            fill_clipped(surface, field, tone::INK, clip);
+            tone::PAPER
+        }
+        CellTone::Shaded => {
+            stroke_clipped(surface, field, tone::INK, metrics.rule_thickness(), clip);
+            tone::INK
+        }
+        CellTone::Faded => tone::RULE,
+        CellTone::Plain => tone::MUTED,
+    };
+    draw_centered(surface, &node.text_lines, field, size, ink, clip);
+}
+
+/// Lays out a backgammon board whose points carry their numbers.
+///
+/// The board sits inside the page margins in a heavy frame, with a bar
+/// between its two halves as wide as a checker is tall, and each point's
+/// number printed above or below it in the interface face. The older board
+/// ran to the edges of the panel with no bar of its own, and its numbers
+/// were pictures an application drew to match columns it could only guess.
+fn layout_numbered_backgammon(
+    id: NodeId,
+    cells: &[Cell],
+    x: i32,
+    y: i32,
+    width: i32,
+    metrics: &DisplayMetrics,
+    layout: &mut Layout,
+) -> i32 {
+    let frame = metrics.rule_thickness() * 2;
+    let numbers = FontSize::Caption.line_height() + metrics.space(Space::Tight) * 2;
+    let inner = (width - frame * 2).max(12);
+    let wanted_bar = (inner / 14).max(metrics.rule_thickness() * 4);
+    // A point is a target for a finger and is never narrower than one. On a
+    // panel whose page is narrower than twelve of those, the board takes
+    // some of the margin, narrows its bar first, and stays centred on the
+    // panel with a sliver of paper either side of its frame.
+    let point = ((inner - wanted_bar) / 12).max(metrics.touch_target_minimum());
+    let room = metrics.width - frame * 2 - point * 12 - metrics.space(Space::Tight) * 2;
+    let bar = wanted_bar.min(room).max(metrics.rule_thickness() * 4);
+    let point_height = point * 10 / 3;
+    let board_width = point * 12 + bar + frame * 2;
+    let left = if board_width <= width {
+        x + (width - board_width) / 2
+    } else {
+        (metrics.width - board_width) / 2
+    };
+    let top = y + numbers;
+    let board_height = point_height * 2 + frame * 2;
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x: left,
+            y: top,
+            width: board_width,
+            height: board_height,
+        },
+        kind: LayoutKind::BackgammonFrame,
+        text_lines: Vec::new(),
+    });
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x: left + frame + point * 6,
+            y: top,
+            width: bar,
+            height: board_height,
+        },
+        kind: LayoutKind::BackgammonFrame,
+        text_lines: Vec::new(),
+    });
+    for (position, cell) in cells.iter().take(24).enumerate() {
+        if layout.nodes.len() + 3 > MAX_LAYOUT_NODES {
+            break;
+        }
+        let position = i32::try_from(position).unwrap_or(0);
+        let column = position % 12;
+        let from_top = position < 12;
+        let rect = Rect {
+            x: left + frame + column * point + if column >= 6 { bar } else { 0 },
+            y: if from_top {
+                top + frame
+            } else {
+                top + frame + point_height
             },
-            tone::MUTED,
-            metrics.rule_thickness(),
-            clip,
-        );
+            width: point,
+            height: point_height,
+        };
+        // Neighbouring points alternate, and so do the two points facing
+        // each other across the board.
+        let dark = (column % 2 == 0) == from_top;
+        layout.nodes.push(LayoutNode {
+            id,
+            rect,
+            kind: LayoutKind::Cell(
+                cell.action,
+                CellStyle::BackgammonPoint { from_top, dark },
+                cell.selected,
+            ),
+            text_lines: Vec::new(),
+        });
+        if let Some(glyph) = cell.glyph {
+            let count = cell
+                .label
+                .split_whitespace()
+                .nth(3)
+                .and_then(|count| count.parse::<u8>().ok())
+                .unwrap_or(1)
+                .clamp(1, 15);
+            layout.nodes.push(LayoutNode {
+                id,
+                rect,
+                kind: LayoutKind::BackgammonStack(glyph, count, from_top),
+                text_lines: vec![cell.label.clone()],
+            });
+        }
+        if let Some(number) = cell.corner {
+            layout.nodes.push(LayoutNode {
+                id,
+                rect: Rect {
+                    x: rect.x,
+                    y: if from_top { y } else { top + board_height },
+                    width: point,
+                    height: numbers,
+                },
+                kind: LayoutKind::PointNumber(cell.tone),
+                text_lines: vec![number.to_string()],
+            });
+        }
     }
+    y + board_height + numbers * 2
 }
 
 fn draw_backgammon_stack(
@@ -18201,24 +18418,38 @@ fn draw_backgammon_stack(
 ) {
     let side = (rect.width * 7 / 10).max(1);
     let step = (side * 2 / 3).max(1);
-    for index in 0..i32::from(count) {
+    let drawn = count.min(5);
+    for index in 0..i32::from(drawn) {
         let y = if from_top {
             rect.y + 4 + index * step
         } else {
             rect.y + rect.height - side - 4 - index * step
         };
-        draw_vector(
-            surface,
-            &vector::shapes(glyph),
-            Rect {
-                x: rect.x + (rect.width - side) / 2,
-                y,
-                width: side,
-                height: side,
-            },
-            clip,
-            tone::INK,
-        );
+        let disc = Rect {
+            x: rect.x + (rect.width - side) / 2,
+            y,
+            width: side,
+            height: side,
+        };
+        draw_vector(surface, &vector::shapes(glyph), disc, clip, tone::INK);
+        // Past five the stack would run into the middle of the board, so the
+        // fifth checker carries how many there are, the way a printed
+        // diagram writes the count on the outermost checker.
+        if count > 5 && index == 4 {
+            let ink = if glyph == Glyph::BlackDisc {
+                tone::PAPER
+            } else {
+                tone::INK
+            };
+            draw_centered(
+                surface,
+                &[count.to_string()],
+                disc,
+                FontSize::Caption,
+                ink,
+                clip,
+            );
+        }
     }
 }
 
