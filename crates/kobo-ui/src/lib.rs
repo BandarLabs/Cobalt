@@ -6245,6 +6245,28 @@ fn rich_run_at(start: usize, line_end: usize, spans: &[RichTextSpan]) -> (usize,
     (line_end.max(start + 1), TextPresentation::default())
 }
 
+/// How many keys across a command deck with `keys` keys is laid out.
+///
+/// A deck asks for five across, the shape of the fifteen-key hardware it
+/// stands in for, and a full one is drawn that way. A deck with two keys
+/// drawn five across was two small squares in the top corner of an empty
+/// panel. Fewer keys take fewer columns, so they are larger and the deck
+/// fills the width, and each count takes the columns that leave the fewest
+/// gaps: two and four keys two across, three, six and nine three across,
+/// seven, eight, eleven and twelve four across, and five and ten five across
+/// as they always were. The count is decided here rather than by the
+/// application because a square grid of two to four columns is also a game
+/// board, and those are never drawn as keys.
+fn pad_deck_columns(keys: usize, requested: i32) -> i32 {
+    let columns = match keys {
+        0..=2 | 4 => 2,
+        3 | 6 | 9 => 3,
+        7 | 8 | 11 | 12 => 4,
+        _ => 5,
+    };
+    columns.min(requested)
+}
+
 fn rich_text_spacing(presentation: ParagraphPresentation, prose: Face) -> (i32, i32, i32, i32) {
     let natural = FontSize::Body.line_height_in(prose).max(1);
     let line_height =
@@ -7840,7 +7862,9 @@ fn layout_node(
                 });
             // A board's column count is the board, so narrowing it to the touch
             // target would deal a different game. Only free-form grids shrink.
-            let columns = if legacy_typography() || *square {
+            let columns = if pad_deck && !legacy_typography() {
+                pad_deck_columns(cells.len(), requested)
+            } else if legacy_typography() || *square {
                 requested
             } else {
                 let fits = width
@@ -7859,6 +7883,10 @@ fn layout_node(
             } else {
                 (x, width, tight)
             };
+            // The size of one key five across, measured before a smaller deck
+            // is centred, so a deck of larger keys can keep its marks close to
+            // that size.
+            let five_across = (width - gutter * 4) / 5;
             let crossword_squares = *square && cells.iter().any(|cell| cell.corner.is_some());
             let block_extra =
                 if *square && columns == 9 && cells.len() >= 27 && cells.len() % 27 == 0 {
@@ -8037,11 +8065,32 @@ fn layout_node(
                         Some(glyph) if style == CellStyle::Pad => {
                             let inset = metrics.tenth_mm(pad_border_tenth_mm());
                             let mark = min(cell_height, cell_width) * 2 / 5;
+                            // A key larger than five across keeps close to
+                            // the mark a five-across key has, and sets the
+                            // mark and its word together in the middle of the
+                            // key. Grown with the key, two keys on a page
+                            // carried pictures a third of the panel wide and
+                            // read as a toy.
+                            let (mark, mark_top, label_top, label_bottom) = if columns < 5 {
+                                let mark = mark.min(five_across * 3 / 5);
+                                let line = FontSize::Body.line_height() + inset;
+                                let group = mark + inset + line;
+                                let top = rect.y + (cell_height - group).max(0) / 2;
+                                let label_top = top + mark + inset;
+                                (mark, top, label_top, label_top + line)
+                            } else {
+                                (
+                                    mark,
+                                    rect.y.saturating_add(inset + cell_height / 8),
+                                    rect.y + cell_height * 3 / 5,
+                                    rect.y + cell_height - inset,
+                                )
+                            };
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: Rect {
                                     x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
-                                    y: rect.y.saturating_add(inset + cell_height / 8),
+                                    y: mark_top,
                                     width: mark,
                                     height: mark,
                                 },
@@ -8058,14 +8107,13 @@ fn layout_node(
                                 text_lines: vec![cell.label.clone()],
                             });
                             if !cell.label.is_empty() {
-                                let label_top = rect.y + cell_height * 3 / 5;
                                 layout.nodes.push(LayoutNode {
                                     id: *id,
                                     rect: Rect {
                                         x: rect.x + inset,
                                         y: label_top,
                                         width: (cell_width - inset * 2).max(1),
-                                        height: (rect.y + cell_height - inset - label_top).max(1),
+                                        height: (label_bottom - label_top).max(1),
                                     },
                                     kind: LayoutKind::CellLabel(false),
                                     text_lines: vec![cell.label.clone()],

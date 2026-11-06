@@ -2185,6 +2185,58 @@ fn a_popover_is_only_as_wide_as_what_is_in_it() {
     );
 }
 
+/// The key rectangles of a five-across deck with `keys` labelled keys.
+fn deck_keys(keys: u32) -> Vec<Rect> {
+    let cells = (0..keys)
+        .map(|index| Cell::new(ActionId(index + 1), "Build").with_glyph(Glyph::Terminal))
+        .collect();
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 5,
+            square: true,
+            cells,
+        }],
+    );
+    screen
+        .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
+        .map(|node| node.rect)
+        .collect()
+}
+
+#[test]
+fn a_deck_with_few_keys_lays_them_out_fewer_across_so_they_fill_the_width() {
+    // Two keys drawn five across were two small squares in the corner of an
+    // empty panel.
+    for (keys, across) in [
+        (2, 2),
+        (3, 3),
+        (4, 2),
+        (5, 5),
+        (6, 3),
+        (7, 4),
+        (9, 3),
+        (10, 5),
+        (12, 4),
+        (15, 5),
+    ] {
+        let rects = deck_keys(keys);
+        assert_eq!(rects.len(), keys as usize);
+        let first_row = rects.iter().filter(|rect| rect.y == rects[0].y).count();
+        assert_eq!(first_row, across, "{keys} keys");
+        let left = rects.iter().map(|rect| rect.x).min().unwrap();
+        let right = rects.iter().map(|rect| rect.x + rect.width).max().unwrap();
+        assert!(
+            right - left >= CLARA_BW_METRICS.width * 4 / 5,
+            "{keys} keys span {left}..{right}"
+        );
+    }
+}
+
 #[test]
 fn a_deck_place_with_nothing_on_it_is_drawn_lighter_than_a_key() {
     // Fifteen places with three assigned used to be twelve boxes as heavy
