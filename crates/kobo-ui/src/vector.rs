@@ -599,8 +599,8 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
 ///   of its corners, drawn to the edge of the box so the marks can be read.
 /// - The crossword is nine cells with two black squares in opposite
 ///   corners, as a printed grid sets them.
-/// - The number puzzle is three boxes each way, with its cells as hairlines
-///   inside them and no black squares, so it is not the crossword.
+/// - The number puzzle is nine boxes with a nine drawn in the middle one
+///   and no black squares, so it is not the crossword.
 /// - The nonogram is nine cells with four filled as a shape and its clues
 ///   counted off above the columns, which no other grid has.
 /// - The comic is a page cut into panels of unequal size, one gutter slanted.
@@ -610,7 +610,6 @@ fn drawn_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
     const LOW: i32 = 167;
     const HIGH: i32 = 833;
     const CORNER: i32 = 83;
-    const HAIRLINE: i32 = 18;
     let stroke = |path| Shape::Stroke {
         path,
         width: WEIGHT,
@@ -678,24 +677,45 @@ fn drawn_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
             Some(shapes)
         }
         Glyph::CellGrid => {
-            const CELL: i32 = (HIGH - LOW) / 9;
-            let mut shapes = vec![frame()];
-            for step in 1..9 {
-                let at = LOW + step * CELL;
-                if step % 3 == 0 {
-                    shapes.push(stroke(Path::line(at, LOW, at, HIGH)));
-                    shapes.push(stroke(Path::line(LOW, at, HIGH, at)));
-                } else {
-                    for path in [
-                        Path::line(at, LOW + 33, at, HIGH - 33),
-                        Path::line(LOW + 33, at, HIGH - 33, at),
-                    ] {
-                        shapes.push(Shape::Stroke {
-                            path,
-                            width: HAIRLINE,
-                        });
-                    }
+            // Nine boxes in the crossword's frame, with no black squares and
+            // a nine drawn in the middle one as the other marks are drawn: a
+            // ring and a tail at one stroke weight, rather than a display
+            // digit. Cell walls inside the boxes made a mesh nearly twice the
+            // weight of the marks around it, so there are none.
+            const LOW: i32 = 200;
+            const HIGH: i32 = 800;
+            const BOX: i32 = (HIGH - LOW) / 3;
+            let mut shapes = vec![stroke(Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, 75))];
+            for at in [LOW + BOX, HIGH - BOX] {
+                for path in [Path::line(at, LOW, at, HIGH), Path::line(LOW, at, HIGH, at)] {
+                    shapes.push(Shape::Stroke { path, width: 34 });
                 }
+            }
+            // The nine, in units of its box: a ring above, and a stem down
+            // the right of it that turns under to the left.
+            let at = |x: i32, y: i32| {
+                (
+                    500 + (x - 500) * BOX * 115 / 20_000,
+                    500 + (y - 500) * BOX * 115 / 20_000,
+                )
+            };
+            let (ring, radius) = (at(500, 476), 40 * BOX * 115 / 20_000);
+            let tail = [
+                at(540, 476),
+                at(540, 520),
+                at(540, 566),
+                at(496, 566),
+                at(472, 560),
+            ];
+            for path in [
+                Path::circle(ring.0, ring.1, radius),
+                Path::new()
+                    .move_to(tail[0].0, tail[0].1)
+                    .line_to(tail[1].0, tail[1].1)
+                    .quad_to(tail[2].0, tail[2].1, tail[3].0, tail[3].1)
+                    .line_to(tail[4].0, tail[4].1),
+            ] {
+                shapes.push(Shape::Stroke { path, width: 40 });
             }
             Some(shapes)
         }

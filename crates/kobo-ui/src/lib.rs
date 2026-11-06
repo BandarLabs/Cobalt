@@ -5271,8 +5271,8 @@ pub enum Glyph {
     /// Nine cells with two of them blacked out: a crossword, whose answers run
     /// between the black squares.
     CrosswordGrid,
-    /// A square cut into nine equal cells: a number puzzle played one figure
-    /// to a cell.
+    /// Nine boxes with a nine in the middle one: a number puzzle played one
+    /// figure to a cell.
     CellGrid,
     /// A letter with a tick beside it: a word guessed and checked letter by
     /// letter.
