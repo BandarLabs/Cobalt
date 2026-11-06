@@ -236,8 +236,10 @@ impl Magnet {
             // against the bezel.
             Sensor::Watching { magnet_present } => {
                 let mut screen = builder
+                    // "Magnet found" rather than "Magnet", which only said
+                    // the bar's title a second time in larger type.
                     .heading(if magnet_present {
-                        "Magnet"
+                        "Magnet found"
                     } else {
                         "No magnet"
                     })
@@ -452,6 +454,20 @@ mod tests {
         let text = format!("{screen:?}");
         assert!(text.contains("Asking the sensor"), "{text}");
         assert!(!text.contains("No magnet"), "{text}");
+    }
+
+    #[test]
+    fn a_magnet_against_the_bezel_is_named_as_found_rather_than_by_the_app_name() {
+        let screen = watching(true).screen(Some(drawn()));
+        let headings: Vec<String> = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Heading { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(headings, ["Magnet found"]);
     }
 
     #[test]

@@ -8,5 +8,5 @@
   "capabilities": [
     "cover-sensor"
   ],
-  "release_notes": "The four readings line up in one column."
+  "release_notes": "The four readings line up in one column, and a magnet against the bezel is headed Magnet found."
 }
