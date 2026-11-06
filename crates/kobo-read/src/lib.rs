@@ -2630,16 +2630,6 @@ impl Reader {
             .collect()
     }
 
-    /// What kind of thing a piece is, for deciding what stands around it.
-    fn set_of(&self, piece: &Piece) -> Set {
-        match piece.kind {
-            Kind::Caption => Set::Plate,
-            Kind::Picture if self.illustration_at(piece.block) => Set::Plate,
-            Kind::Picture => Set::Formula,
-            _ => Set::Prose,
-        }
-    }
-
     /// The air owed between two pieces that follow each other on a page.
     ///
     /// Only at the seam between a group and what is not in it. A plate asks
@@ -2649,14 +2639,10 @@ impl Reader {
     /// sentence of the paper, set as mathematics -- and wants to be told apart
     /// from the paragraph it interrupts rather than lifted out of it.
     fn between(&self, previous: &Piece, piece: &Piece) -> Option<kobo_ui::Space> {
-        let (before, after) = (self.set_of(previous), self.set_of(piece));
-        if before == after {
-            return None;
-        }
-        if before == Set::Plate || after == Set::Plate {
-            return Some(kobo_ui::Space::Small);
-        }
-        Some(kobo_ui::Space::Tight)
+        between(
+            set_of(&self.document, previous.block, previous.kind),
+            set_of(&self.document, piece.block, piece.kind),
+        )
     }
 
     /// Whether a block is an illustration rather than a drawn piece of text.
@@ -2818,6 +2804,65 @@ enum Set {
     Formula,
 }
 
+/// What kind of thing a piece of a block is, for deciding what stands around
+/// it.
+fn set_of(document: &Document, block: Locator, kind: Kind) -> Set {
+    let illustration = usize::try_from(block)
+        .ok()
+        .and_then(|at| document.blocks.get(at))
+        .is_some_and(|block| {
+            matches!(
+                block,
+                Block::Picture {
+                    illustration: true,
+                    ..
+                }
+            )
+        });
+    match kind {
+        Kind::Caption => Set::Plate,
+        Kind::Picture if illustration => Set::Plate,
+        Kind::Picture => Set::Formula,
+        _ => Set::Prose,
+    }
+}
+
+/// The air owed at the seam between two kinds of piece, if any.
+fn between(before: Set, after: Set) -> Option<kobo_ui::Space> {
+    if before == after {
+        return None;
+    }
+    if before == Set::Plate || after == Set::Plate {
+        return Some(kobo_ui::Space::Small);
+    }
+    Some(kobo_ui::Space::Tight)
+}
+
+/// The room the seam before a piece takes on the page: the spacer the screen
+/// puts there and the gap the layout leaves after it.
+///
+/// Charged when the page is packed because the screen draws it. Left out,
+/// a page with a picture in the middle of it held two seams' worth more
+/// prose than the panel could show, and the renderer refused the page rather
+/// than cut its last lines.
+fn seam_height(
+    document: &Document,
+    previous: Option<&Piece>,
+    block: Locator,
+    kind: Kind,
+    metrics: &kobo_ui::DisplayMetrics,
+    gap: i32,
+) -> i32 {
+    previous
+        .and_then(|previous| {
+            between(
+                set_of(document, previous.block, previous.kind),
+                set_of(document, block, kind),
+            )
+        })
+        .map_or(0, |space| metrics.space(space).saturating_add(gap))
+}
+
 fn is_outline_font(bytes: &[u8]) -> bool {
     bytes.starts_with(b"\0\x01\0\0")
         || bytes.starts_with(b"OTTO")
@@ -2848,6 +2893,8 @@ struct Placing<'a> {
     page: &'a mut Vec<Piece>,
     used: &'a mut i32,
     gap: i32,
+    /// The room the seam before the picture takes, if it goes on this page.
+    seam: i32,
 }
 
 /// Puts a picture on the page, or on the next one when it will not fit.
@@ -2862,14 +2909,15 @@ fn place_picture(
     area: ProseArea,
 ) {
     let height = picture_height(drawn, metrics, area);
-    if !placing.page.is_empty() && *placing.used + placing.gap + height > area.height {
+    if !placing.page.is_empty() && *placing.used + placing.gap + placing.seam + height > area.height
+    {
         placing.pages.push(std::mem::take(placing.page));
         *placing.used = 0;
     }
     *placing.used += if placing.page.is_empty() {
         height
     } else {
-        placing.gap + height
+        placing.gap + placing.seam + height
     };
     placing.page.push(piece);
 }
@@ -3411,12 +3459,13 @@ fn paginate(
             if page.is_empty() {
                 continue;
             }
-            if used + gap + height > area.height {
+            let seam = seam_height(document, page.last(), index, kind, metrics, gap);
+            if used + gap + seam + height > area.height {
                 pages.push(std::mem::take(&mut page));
                 used = 0;
                 continue;
             }
-            used += gap + height;
+            used += gap + seam + height;
             page.push(Piece {
                 block: index,
                 text: String::new(),
@@ -3451,7 +3500,8 @@ fn paginate(
             } else {
                 row_height(cells, &columns, labels, row_index, metrics, area)
             };
-            if !page.is_empty() && used + gap + height > area.height {
+            let seam = seam_height(document, page.last(), index, kind, metrics, gap);
+            if !page.is_empty() && used + gap + seam + height > area.height {
                 pages.push(std::mem::take(&mut page));
                 used = 0;
                 // The heading row goes at the top of the continuation, drawn
@@ -3466,7 +3516,7 @@ fn paginate(
             used += if page.is_empty() {
                 height
             } else {
-                row_gap + height
+                row_gap + seam_height(document, page.last(), index, kind, metrics, gap) + height
             };
             // Marked as the heading it is, whatever the markup called it:
             // LaTeXML writes every cell as data, and the layout has to know
@@ -3506,6 +3556,7 @@ fn paginate(
                         row: None,
                     },
                     &mut Placing {
+                        seam: seam_height(document, page.last(), index, kind, metrics, gap),
                         pages: &mut pages,
                         page: &mut page,
                         used: &mut used,
@@ -3552,6 +3603,14 @@ fn paginate(
                 .unwrap_or(i32::MAX)
                 .saturating_mul(height)
                 .saturating_add(gap)
+                .saturating_add(seam_height(
+                    document,
+                    page.last(),
+                    index,
+                    kind,
+                    metrics,
+                    gap,
+                ))
                 .saturating_add(following_height(
                     document,
                     index_of(index),
@@ -3569,7 +3628,12 @@ fn paginate(
         let mut placed = 0;
         let mut source_at = 0usize;
         while placed < lines.len() {
-            let room = area.height - used - if page.is_empty() { 0 } else { gap };
+            let seam = if placed == 0 {
+                seam_height(document, page.last(), index, kind, metrics, gap)
+            } else {
+                0
+            };
+            let room = area.height - used - seam - if page.is_empty() { 0 } else { gap };
             // What the margin above shrinks to against the paragraph before
             // it, counted before deciding how much fits rather than after.
             let shared = if placed == 0 {
@@ -3669,7 +3733,7 @@ fn paginate(
                 continue;
             }
             if !page.is_empty() {
-                used += gap;
+                used += gap + seam;
             }
             let text = rejoined(text, &lines, offsets.as_deref(), placed, placed + take);
             let (spans, formulae, presentation) =
@@ -6217,6 +6281,58 @@ mod tests {
             );
             turned.act("reader-next", &panel);
         }
+    }
+
+    // An article with its picture in the middle of a page. The screen sets
+    // the picture apart with a space above and below it, and the pages were
+    // packed without counting those spaces, so the paragraph after the
+    // picture ran two lines past the foot and the panel refused the page.
+    #[test]
+    fn a_page_with_a_picture_in_the_middle_holds_only_what_the_panel_shows() {
+        let opening =
+            "Each day a different picture of the sky is shown with a few lines about it. ";
+        let explanation = "It is time to say goodbye to an observatory that served for years. ";
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("Picture of the day".to_owned()),
+                Block::Paragraph(opening.repeat(2)),
+                Block::Picture {
+                    name: "telescope.jpg".to_owned(),
+                    alt: "The observatory".to_owned(),
+                    illustration: true,
+                },
+                Block::Heading {
+                    level: 1,
+                    text: "A farewell".to_owned(),
+                },
+                Block::Paragraph(explanation.repeat(14)),
+            ],
+            ..Document::default()
+        };
+        let panel = panel();
+        let mut reader = Reader::open(document, Memory::default(), &panel);
+        reader.set_pictures(
+            BTreeMap::from([(
+                "telescope.jpg".to_owned(),
+                kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 2048, 1460),
+            )]),
+            &panel,
+        );
+        assert!(
+            reader.page_count() > 1,
+            "the explanation has to go overleaf"
+        );
+        reader.go_to(0, &panel);
+        let issues = reader
+            .screen("Article")
+            .diagnostics(&panel, &kobo_ui::Chrome::default())
+            .issues;
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| issue.kind == kobo_ui::LayoutIssueKind::TextOverflow),
+            "{issues:?}"
+        );
     }
 
     // A paragraph that runs over the foot of a page is drawn there without
