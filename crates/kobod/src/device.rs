@@ -10,10 +10,10 @@
 //! Acquire, in this order:
 //!
 //! 1. Find the reader and save how to restart it.
-//! 2. Open the display, which validates the hardware profile exactly. This
-//!    writes nothing, and the front light needs the profile it resolves.
-//! 3. Record the front light, then arm a watchdog that restarts the reader
-//!    even if we are killed outright.
+//! 2. Record the front light and arm a watchdog that restarts the reader,
+//!    light and all, even if we are killed outright.
+//! 3. Open the display, which validates the hardware profile exactly, and
+//!    record the light again if the profile says it is driven elsewhere.
 //! 4. Snapshot the whole screen.
 //! 5. Take the touch panel.
 //! 6. Suspend Kobo's freeze watchdog.
@@ -782,6 +782,22 @@ pub fn present(
         .save(&state)
         .map_err(|error| format!("save reader description: {error}"))?;
 
+    // Recorded and guarded before the display is opened, because opening it
+    // is the first step that can wedge the panel: from here on a crash or a
+    // kill restarts the stock reader with its light as the owner left it.
+    // The profile is not known yet, so the light is recorded by the plain
+    // rule every measured reader uses; a profile that steers it elsewhere
+    // records that control as well, below.
+    let plain_light = kobo_hal::frontlight::Frontlight::open();
+    if let Some(light) = &plain_light {
+        light
+            .save_recovery(&state)
+            .map_err(|error| format!("save original front light before takeover: {error}"))?;
+    }
+    let watchdog = Arc::new(
+        Watchdog::arm(&state, WATCHDOG_CHECK).map_err(|error| format!("arm watchdog: {error}"))?,
+    );
+
     // A reader outside the profile table gets a profile derived from its own
     // probe rather than a refusal. The transform below is the one field that
     // cannot be derived, and `Direct` is only a starting point: such a reader
@@ -810,17 +826,19 @@ pub fn present(
     // Opened once the profile is known, because the profile says which
     // control is the brightness. Every measured reader keeps the control it
     // was tested with, and only a provisional i.MX reader is steered to
-    // `mxc_msp430.0`. Still recorded before the watchdog is armed, so crash
-    // recovery always has the original to put back.
+    // `mxc_msp430.0`; that control is recorded too before anything writes it.
     let frontlight = kobo_hal::frontlight::Frontlight::open_for(profile);
     if let Some(light) = &frontlight {
-        light
-            .save_recovery(&state)
-            .map_err(|error| format!("save original front light before takeover: {error}"))?;
+        if !plain_light
+            .as_ref()
+            .is_some_and(|plain| plain.same_control(light))
+        {
+            light
+                .save_profile_recovery(&state)
+                .map_err(|error| format!("save original front light before takeover: {error}"))?;
+        }
     }
-    let watchdog = Arc::new(
-        Watchdog::arm(&state, WATCHDOG_CHECK).map_err(|error| format!("arm watchdog: {error}"))?,
-    );
+    drop(plain_light);
 
     let geometry = display.geometry();
     let whole_screen = Rect {
