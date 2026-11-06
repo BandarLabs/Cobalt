@@ -38,7 +38,7 @@ impl Game {
             },
         ))
     }
-    fn play_header(&self, wide: bool) -> ScreenBuilder {
+    fn play_status(&self) -> String {
         let side = self.puzzle().map_or(1, |puzzle| puzzle.side);
         // The focused square is visible on the board; the header carries
         // coordinates only when a zoomed window leaves the focus outside the
@@ -62,7 +62,7 @@ impl Game {
         } else {
             String::new()
         };
-        let status = match self.draft.status() {
+        match self.draft.status() {
             Status::Failed(_) => "Not saved · More to retry".into(),
             Status::Saving | Status::Unsaved => "Saving…".into(),
             Status::Saved if self.run_start.is_some() => "Tap the other end of the run".into(),
@@ -80,13 +80,33 @@ impl Game {
                     format!("{position} · {marked}/{total}")
                 }
             }
-        };
+        }
+    }
+    /// Every line the status can show on this board, the current one first.
+    ///
+    /// The board is fitted to the room the tallest of them leaves. Fitted to
+    /// the current line alone, a status that wraps once the window is panned
+    /// would take a row of squares away in the middle of a puzzle.
+    fn status_lines(&self) -> Vec<String> {
+        let side = self.puzzle().map_or(1, |puzzle| puzzle.side);
+        let total = side * side;
+        vec![
+            self.play_status(),
+            format!("Rows {side}–{side} · Cols {side}–{side} · {total}/{total}"),
+            "Not saved · More to retry".into(),
+            "Tap the other end of the run".into(),
+        ]
+    }
+    fn play_header_with(status: String, wide: bool) -> ScreenBuilder {
         let builder = ScreenBuilder::new("nonograms-play").top_bar("Nonograms");
         if wide {
             builder
         } else {
             builder.secondary(status)
         }
+    }
+    fn play_header(&self, wide: bool) -> ScreenBuilder {
+        Self::play_header_with(self.play_status(), wide)
     }
     fn play_tools(
         &self,
@@ -175,19 +195,26 @@ impl Game {
             metrics.height,
         )
         .ok()?;
-        let skeleton = self
-            .play_tools(
-                self.play_header(metrics.width > metrics.height),
-                &probe,
-                metrics.width > metrics.height,
-            )
-            .build();
+        let wide = metrics.width > metrics.height;
         // Measured as the board's screen is laid out, which is without the
-        // room the runtime leaves on a screen with no board in it.
-        let layout = kobo_sdk::with_room_given_up(|| {
-            skeleton.layout_with(&metrics, &Chrome::measuring(true))
-        });
-        let height = layout.content.height - layout.flow_height - metrics.space(Space::Medium) * 2;
+        // room the runtime leaves on a screen with no board in it. The board
+        // joins that flow as one more node, so it costs one more of the gaps
+        // between nodes and nothing else. Taking two Medium gaps here cost a
+        // 5x5 picture its last row on a Clara BW, with a fifth of the panel
+        // left empty under the controls.
+        let height = self
+            .status_lines()
+            .into_iter()
+            .map(|status| {
+                let skeleton = self
+                    .play_tools(Self::play_header_with(status, wide), &probe, wide)
+                    .build();
+                let layout = kobo_sdk::with_room_given_up(|| {
+                    skeleton.layout_with(&metrics, &Chrome::measuring(true))
+                });
+                layout.content.height - layout.flow_height - metrics.space(Space::Tight)
+            })
+            .min()?;
         let mut view = self.viewport.clone().unwrap_or(probe);
         // Reflow only for the allocated space. Retain a panned window even when
         // its previously selected square is now outside the window.

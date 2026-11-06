@@ -432,3 +432,25 @@ fn checking_and_run_entry_are_switches_that_show_how_they_are_set() {
         [("Guided".to_owned(), true), ("Run entry".to_owned(), true)]
     );
 }
+#[test]
+fn a_five_by_five_picture_shows_every_square_at_once_on_a_clara_bw() {
+    let metrics = DisplayMetrics {
+        width: 1072,
+        height: 1448,
+        pixels_per_inch: 300,
+        text_scale: TextScale::default(),
+    };
+    let context = AppRunner::with_metrics(Game::default(), metrics).context();
+    let mut game = Game::default();
+    game.select(&mut Context::default(), 0);
+    let (board, clues) = game.ink_board().unwrap();
+    assert_eq!((board.rows(), board.columns()), (5, 5));
+    let view = game.fitted_view(&context, &board, &clues).unwrap();
+    assert_eq!(view.cells().count(), 25, "{:?}", view.visible_rows());
+    game.viewport = Some(view);
+    let screen = game.play(&context).with_own_back(true);
+    let issues = screen
+        .diagnostics(&metrics, &Chrome::measuring(true))
+        .issues;
+    assert!(issues.is_empty(), "{issues:?}");
+}

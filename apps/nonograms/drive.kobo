@@ -19,6 +19,8 @@ shot nonograms-help
 tap Back
 tap House
 wait-for-id more
+wait-for-id board.cell.24
+expect 2 2
 tap-id board.cell.2
 wait-idle
 tap-id board.column.2
