@@ -519,3 +519,15 @@ fn the_pan_buttons_are_drawn_only_when_part_of_the_board_is_off_the_panel() {
     }
     assert_eq!(seen, (true, true), "both kinds of board were not tried");
 }
+
+#[test]
+fn options_hold_only_what_the_board_does_not_and_back_returns_to_it() {
+    let mut r = ready(0);
+    r.action(action_id("more"));
+    assert_eq!(r.app().route, Route::Menu);
+    let drawn = format!("{:?}", r.app().menu());
+    assert!(!drawn.contains("\"Undo\"") && !drawn.contains("\"Resume\""), "{drawn}");
+    assert!(drawn.contains("Restart puzzle") && drawn.contains("Puzzles"), "{drawn}");
+    r.action(ActionId::BACK);
+    assert_eq!(r.app().route, Route::Play);
+}

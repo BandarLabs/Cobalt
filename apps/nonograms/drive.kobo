@@ -36,7 +36,7 @@ tap Run entry
 wait-idle
 clean
 shot nonograms-options-on
-tap Resume
+tap Back
 wait-idle
 # Run entry is on, so two taps fill the whole third row.
 tap-id board.cell.10

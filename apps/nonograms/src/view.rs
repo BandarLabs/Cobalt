@@ -319,11 +319,12 @@ impl Game {
         // was. How Guided does it is on the help pages: a line of summary
         // under each switch is what pushes Puzzles off a small panel held
         // sideways at the larger text sizes.
+        // Undo is on the board and Back returns to it, so neither is
+        // repeated here; what is left is what only this page does.
         screen
             .toggle("policy", "Guided", "", self.guided)
             .toggle("run-entry", "Run entry", "", self.run_entry)
-            .grid(2, false, [("reset", "Restart"), ("resume", "Resume")])
-            .button_with_state("undo", "Undo", state(!self.undo.is_empty()))
+            .button("reset", "Restart puzzle")
             .button("back-browser", "Puzzles")
             .build()
     }
