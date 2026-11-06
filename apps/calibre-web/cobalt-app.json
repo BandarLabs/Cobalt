@@ -4,8 +4,8 @@
   "short_label": "Library",
   "summary": "Browse and read books from your calibre-web library. Needs an account.",
   "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.",
-  "version": "0.1.11",
-  "release_notes": "A long table of contents now turns in pages, so every chapter can be reached, and opens at the chapter you are reading. Notes and links turn in pages too, and tapping a note goes to its passage.",
+  "version": "0.1.12",
+  "release_notes": "Sign in now asks for a username and a password in two fields, with the password masked, and adding a library asks for the address you open calibre-web at.",
   "glyph": "book",
   "capabilities": [
     "network"
@@ -21,7 +21,7 @@
         "command": "kobo connect calibre-web"
       },
       {
-        "text": "Or add the HTTPS OPDS address on the reader and choose Sign in, or Use public library for a library without an account."
+        "text": "Or choose Add library on the reader, enter the address you open calibre-web at, and choose Sign in, or Use public library for a library without an account."
       },
       {
         "text": "For a private certificate authority, install its trust root on the reader. Pass the same file to kobo connect with --ca.",

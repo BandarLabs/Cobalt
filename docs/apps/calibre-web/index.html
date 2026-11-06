@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/calibre-web.png">
 <meta name="twitter:image:alt" content="The first page of Pride and Prejudice from a calibre-web library on a Kobo, with text-size and front-light controls and the page count.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-qLE4jZ0lQJ8qLt00DlI+Y9V88pe7huwMHZPmk8Zk/zk='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-SnCjPHbFyIB13k+oMiXiuzbDB28xeFbR0cb/42l6cfI='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "ReferenceApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.11",
+      "softwareVersion": "0.1.12",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,7 +99,7 @@
       <h1>Library</h1>
       <p class="summary">Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.11</dd></div>
+        <div><dt>Version</dt><dd>0.1.12</dd></div>
         <div><dt>Permissions</dt><dd>network</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.32</dd></div>
       </dl>
@@ -119,8 +119,8 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.1.11</h2>
-    <p>A long table of contents now turns in pages, so every chapter can be reached, and opens at the chapter you are reading. Notes and links turn in pages too, and tapping a note goes to its passage.</p>
+    <h2>New in 0.1.12</h2>
+    <p>Sign in now asks for a username and a password in two fields, with the password masked, and adding a library asks for the address you open calibre-web at.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>
@@ -130,7 +130,7 @@
         <code class="setup-command">kobo setup</code></li>
       <li>Connect your library from your computer. It asks for the OPDS address, your username and password, checks them, and sets Library up. Open Library, or tap Check again.
         <code class="setup-command">kobo connect calibre-web</code></li>
-      <li>Or add the HTTPS OPDS address on the reader and choose Sign in, or Use public library for a library without an account.</li>
+      <li>Or choose Add library on the reader, enter the address you open calibre-web at, and choose Sign in, or Use public library for a library without an account.</li>
       <li>For a private certificate authority, install its trust root on the reader. Pass the same file to kobo connect with --ca.
         <code class="setup-command">kobo trust set calibre --from root-ca.pem</code></li>
     </ol>
