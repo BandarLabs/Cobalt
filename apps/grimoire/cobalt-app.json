@@ -4,8 +4,8 @@
   "short_label": "Grimoire",
   "summary": "Browse offline SRD references and manage tabletop combat.",
   "page_description": "Offline SRD reference and table tools for spell lookups, monster stat blocks, dice, initiative, and party HP.",
-  "version": "0.1.10",
-  "release_notes": "A long table of contents now turns in pages, so every section can be reached, and opens at the section you are reading. Notes and links turn in pages too, and tapping a note goes to its passage.",
+  "version": "0.1.11",
+  "release_notes": "Dice show the total large in the middle of the page, really roll, throw two dice for advantage, and can go back to a normal roll.",
   "glyph": "book",
   "capabilities": []
 }

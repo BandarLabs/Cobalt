@@ -214,10 +214,15 @@ struct Grimoire {
     detail_page: usize,
     bookmarks: Vec<usize>,
     bookmarks_page: usize,
-    roll: u16,
+    /// The dice kept and dropped by the last roll, before the modifier.
+    roll: Option<(u16, Option<u16>)>,
     modifier: i8,
     advantage: i8,
-    history: Vec<u16>,
+    /// The totals of the rolls before the last one, oldest first.
+    history: Vec<i16>,
+    /// The state of the dice. Zero until the first roll, which seeds it
+    /// from the clock, so two sessions never throw the same sequence.
+    dice_state: u64,
     round: u16,
     current: usize,
     initiative: Vec<Combatant>,
@@ -261,10 +266,11 @@ impl Default for Grimoire {
             detail_page: 0,
             bookmarks: vec![],
             bookmarks_page: 0,
-            roll: 20,
+            roll: None,
             modifier: 0,
             advantage: 0,
             history: vec![],
+            dice_state: 0,
             round: 1,
             current: 0,
             initiative: vec![],
@@ -713,36 +719,112 @@ impl Grimoire {
         screen.bottom_action("back", "Back").build()
     }
 
+    /// The dice: the total as the largest thing on the page, how it was
+    /// made under it, and the roll button at the foot where a thumb is.
+    ///
+    /// The total used to be a grey label beside a rule, "Result: 20", the
+    /// smallest words on the page, with "Last 10:" and nothing after it
+    /// below the buttons.
     fn dice(&self, s: ScreenBuilder) -> Screen {
-        s.secondary(format!(
-            "d20 {} · modifier {:+}",
-            match self.advantage {
-                -1 => "disadvantage",
-                1 => "advantage",
-                _ => "normal",
-            },
-            self.modifier
-        ))
-        .section(format!(
-            "Result: {}",
-            i16::try_from(self.roll).unwrap_or(20) + i16::from(self.modifier)
-        ))
-        .primary_button("roll", "Roll d20")
-        .buttons([
-            ("modifier-down", "− modifier"),
-            ("modifier-up", "+ modifier"),
-        ])
-        .buttons([("disadvantage", "Disadvantage"), ("advantage", "Advantage")])
-        .text(format!(
-            "Last 10: {}",
-            self.history
+        let s = s
+            .segmented(
+                usize::try_from(self.advantage + 1).unwrap_or(1),
+                [
+                    ("disadvantage", "Disadvantage"),
+                    ("normal", "Normal"),
+                    ("advantage", "Advantage"),
+                ],
+            )
+            .stepper(
+                format!("Modifier {:+}", self.modifier),
+                "modifier-down",
+                Glyph::Minus,
+                "modifier-up",
+                Glyph::Plus,
+            )
+            .stepper_ends(self.modifier > -10, self.modifier < 10);
+        let s = match self.roll {
+            None => s.splash(None, "d20", "Roll to see the total here."),
+            Some(roll) => s.splash(
+                None,
+                self.roll_total(roll).to_string(),
+                self.roll_detail(roll),
+            ),
+        };
+        s.primary_button("roll", "Roll d20").build()
+    }
+
+    /// The total of a roll: the die kept, and the modifier.
+    fn roll_total(&self, (kept, _): (u16, Option<u16>)) -> i16 {
+        i16::try_from(kept).unwrap_or(20) + i16::from(self.modifier)
+    }
+
+    /// How a total was made, and the totals before it.
+    fn roll_detail(&self, (kept, dropped): (u16, Option<u16>)) -> String {
+        let mut detail = match dropped {
+            Some(dropped) => format!("Rolled {kept} and {dropped}, kept {kept}"),
+            None => format!("Rolled {kept}"),
+        };
+        if self.modifier != 0 {
+            detail.push_str(&format!(", {:+}", self.modifier));
+        }
+        detail.push('.');
+        if !self.history.is_empty() {
+            let earlier = self
+                .history
                 .iter()
                 .rev()
-                .map(u16::to_string)
+                .map(i16::to_string)
                 .collect::<Vec<_>>()
-                .join(" · ")
-        ))
-        .build()
+                .join(", ");
+            detail.push_str(&format!(" Before: {earlier}."));
+        }
+        detail
+    }
+
+    /// One face of a d20, from a small generator seeded once from the clock.
+    fn d20(&mut self) -> u16 {
+        if self.dice_state == 0 {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |time| time.as_nanos());
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "only the fast-changing low bits of the clock are wanted"
+            )]
+            let seed = nanos as u64;
+            self.dice_state = seed | 1;
+        }
+        // Xorshift: plenty for a die, and no dependency for one.
+        let mut x = self.dice_state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.dice_state = x;
+        u16::try_from(x % 20).unwrap_or(0) + 1
+    }
+
+    fn throw(&mut self) {
+        if let Some(previous) = self.roll {
+            let total = self.roll_total(previous);
+            self.history.push(total);
+            if self.history.len() > 5 {
+                self.history.remove(0);
+            }
+        }
+        let first = self.d20();
+        self.roll = Some(match self.advantage {
+            0 => (first, None),
+            advantage => {
+                let second = self.d20();
+                let (high, low) = (first.max(second), first.min(second));
+                if advantage > 0 {
+                    (high, Some(low))
+                } else {
+                    (low, Some(high))
+                }
+            }
+        });
     }
     /// The order of battle.
     ///
@@ -1573,12 +1655,7 @@ impl KoboApp for Grimoire {
                 self.save(c);
             }
         } else if a == action_id("roll") {
-            let n = u16::try_from(self.history.len()).unwrap_or(0);
-            self.roll = ((n.wrapping_mul(11).wrapping_add(7)) % 20) + 1;
-            self.history.push(self.roll);
-            if self.history.len() > 10 {
-                self.history.remove(0);
-            }
+            self.throw();
         } else if a == action_id("modifier-up") {
             self.modifier = (self.modifier + 1).min(10);
         } else if a == action_id("modifier-down") {
@@ -1587,6 +1664,8 @@ impl KoboApp for Grimoire {
             self.advantage = 1;
         } else if a == action_id("disadvantage") {
             self.advantage = -1;
+        } else if a == action_id("normal") {
+            self.advantage = 0;
         } else if a == action_id("init-add") {
             self.init_menu = None;
             self.start_edit(Editor::Init(None));
@@ -1738,6 +1817,58 @@ mod tests {
             .position(|known| known == value)
             .expect("filter value")
     }
+    #[test]
+    fn a_roll_with_advantage_keeps_the_higher_of_two_dice_and_shows_the_total_large() {
+        let mut app = Grimoire {
+            view: View::Dice,
+            advantage: 1,
+            modifier: 2,
+            dice_state: 0x9e37_79b9_7f4a_7c15,
+            ..Grimoire::default()
+        };
+        app.throw();
+        let (kept, dropped) = app.roll.expect("a roll");
+        let dropped = dropped.expect("advantage throws two dice");
+        assert!(kept >= dropped);
+        assert!((1..=20).contains(&kept) && (1..=20).contains(&dropped));
+        let total = i16::try_from(kept).unwrap() + 2;
+        let screen = app.screen(&Context::default());
+        let splash = screen.nodes.iter().find_map(|node| match node {
+            kobo_sdk::Node::Splash { title, summary, .. } => Some((title.clone(), summary.clone())),
+            _ => None,
+        });
+        let (title, summary) = splash.expect("the total is the page's hero");
+        assert_eq!(title, total.to_string());
+        assert_eq!(
+            summary,
+            format!("Rolled {kept} and {dropped}, kept {kept}, +2.")
+        );
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+    }
+
+    #[test]
+    fn rolls_are_not_a_fixed_sequence_and_normal_can_be_chosen_again() {
+        let mut app = Grimoire {
+            view: View::Dice,
+            dice_state: 12_345,
+            ..Grimoire::default()
+        };
+        let faces: Vec<u16> = (0..40).map(|_| app.d20()).collect();
+        assert!(faces.iter().all(|face| (1..=20).contains(face)));
+        let distinct: std::collections::BTreeSet<_> = faces.iter().collect();
+        assert!(distinct.len() > 10, "{faces:?}");
+        let mut runner = kobo_sdk::AppRunner::new(Grimoire {
+            view: View::Dice,
+            advantage: 1,
+            ..Grimoire::default()
+        });
+        runner.action(action_id("normal"));
+        assert_eq!(runner.app().advantage, 0);
+    }
+
     #[test]
     fn generated_spell_tags_drive_all_requested_filters() {
         let mut app = Grimoire {
