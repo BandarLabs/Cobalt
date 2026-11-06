@@ -20,6 +20,7 @@
 use std::env;
 use std::io::{BufRead, IsTerminal, Write};
 
+use kobo_host::error::Kind;
 use serde_json::{json, Value};
 
 /// Version of the machine-output object [`Console::print_json`] prints.
@@ -40,66 +41,17 @@ pub const EXIT_TARGET: u8 = 3;
 /// do it.
 pub const EXIT_UNSUPPORTED: u8 = 4;
 
-/// Prefix an error string carries when the failure is a wrong invocation.
-///
-/// Errors have been plain strings since the first command, and the string is
-/// how the category travels from the command that knows what went wrong to
-/// `main`, which owns the process exit. [`category_of`] reads the prefix and
-/// [`display`] strips it, so the person reading the error never sees it.
-pub const USAGE_PREFIX: &str = "usage: ";
-/// The same, for a target that could not be reached or chosen.
-pub const TARGET_PREFIX: &str = "target: ";
-/// The same, for something this build or host cannot do.
-pub const UNSUPPORTED_PREFIX: &str = "unsupported: ";
+pub use kobo_host::error::{display, target, unsupported, usage};
 
-/// Tags an error as a wrong invocation: the fix is in how the command was
-/// spelled, and the exit status should say so.
-#[must_use]
-pub fn usage(message: impl Into<String>) -> String {
-    format!("{USAGE_PREFIX}{}", message.into())
-}
-
-/// Tags an error as a target problem: the reader or simulator to act on
-/// could not be reached, found, or chosen without guessing.
-#[must_use]
-pub fn target(message: impl Into<String>) -> String {
-    format!("{TARGET_PREFIX}{}", message.into())
-}
-
-/// Tags an error as beyond this build or host: the command is spelled
-/// correctly and still cannot run here.
-#[must_use]
-pub fn unsupported(message: impl Into<String>) -> String {
-    format!("{UNSUPPORTED_PREFIX}{}", message.into())
-}
-
-/// Reads the category an error was tagged with.
-///
-/// Usage errors predate the tags: their messages have always started with
-/// "usage:" and unknown commands with "unknown command", and both are read
-/// as [`EXIT_USAGE`] without rewriting every usage line in one pass.
+/// Reads the exit status an error was tagged for.
 #[must_use]
 pub fn category_of(error: &str) -> u8 {
-    if error.starts_with(USAGE_PREFIX) || error.starts_with("unknown command") {
-        EXIT_USAGE
-    } else if error.starts_with(TARGET_PREFIX) {
-        EXIT_TARGET
-    } else if error.starts_with(UNSUPPORTED_PREFIX) {
-        EXIT_UNSUPPORTED
-    } else {
-        EXIT_FAILURE
+    match kobo_host::error::kind_of(error) {
+        Kind::Usage => EXIT_USAGE,
+        Kind::Target => EXIT_TARGET,
+        Kind::Unsupported => EXIT_UNSUPPORTED,
+        Kind::Failure => EXIT_FAILURE,
     }
-}
-
-/// The error as the person should read it, with its category tag removed.
-#[must_use]
-pub fn display(error: &str) -> &str {
-    for prefix in [TARGET_PREFIX, UNSUPPORTED_PREFIX] {
-        if let Some(rest) = error.strip_prefix(prefix) {
-            return rest;
-        }
-    }
-    error
 }
 
 /// The narrowest terminal the wrap still respects. Below this, columns are
