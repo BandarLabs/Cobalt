@@ -5,7 +5,7 @@
   "summary": "Keep Mealie recipes handy in a counter-friendly cooking view. Needs an account.",
   "page_description": "A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.",
   "version": "0.1.13",
-  "release_notes": "A cooking step has no Next step button: tap the right of the page for the next step, as in a book.",
+  "release_notes": "Recipes open straight to the list, Settings asks only for the Mealie address, and a cooking step turns with a tap on the right of the page.",
   "glyph": "reader",
   "capabilities": [
     "network",

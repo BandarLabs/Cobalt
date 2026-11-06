@@ -55,7 +55,6 @@ enum View {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Setting {
     Server,
-    Credential,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingTask {
@@ -109,6 +108,31 @@ impl Kitchen {
     }
     fn problem(&mut self, text: impl Into<String>) {
         self.note = Some((true, text.into()));
+    }
+    /// Takes down the note that no account had arrived, once one has. Left
+    /// up, it sat over the empty shelf of an app that was ready to sync.
+    fn clear_no_account_note(&mut self) {
+        if self
+            .note
+            .as_ref()
+            .is_some_and(|(_, note)| note == NO_ACCOUNT_YET)
+        {
+            self.note = None;
+        }
+    }
+    /// Whether the list of recipes is the page showing: picked from the bar,
+    /// or the home page itself while nothing is chosen for tonight.
+    fn browsing(&self) -> bool {
+        match self.view {
+            Some(View::Browse) => true,
+            None | Some(View::Tonight) => {
+                self.editing.is_none()
+                    && self.ready()
+                    && !self.recipes.is_empty()
+                    && self.recipe().is_none()
+            }
+            _ => false,
+        }
     }
 
     fn open_cache(&mut self, context: &mut Context) {
@@ -388,12 +412,14 @@ impl Kitchen {
     }
 
     fn browse_prefix(&self) -> ScreenBuilder {
-        Self::banner(
+        let screen = if self.view == Some(View::Browse) {
+            ScreenBuilder::new("kitchencard").top_bar("Pick a recipe")
+        } else {
             ScreenBuilder::new("kitchencard")
-                .top_bar("Pick a recipe")
-                .top_bar_action("sync", "Sync"),
-            self.note.as_ref(),
-        )
+                .top_bar("Kitchen Card")
+                .top_bar_glyph("settings", "Settings", Glyph::Settings)
+        };
+        Self::banner(screen.top_bar_action("sync", "Sync"), self.note.as_ref())
     }
 
     fn browse_order(&self) -> Vec<usize> {
@@ -696,7 +722,6 @@ impl Kitchen {
         if let Some(setting) = self.editing {
             let prompt = match setting {
                 Setting::Server => "Mealie HTTPS address",
-                Setting::Credential => "Credential name",
             };
             return ScreenBuilder::new("kitchencard")
                 .top_bar("Kitchen Card settings")
@@ -726,25 +751,11 @@ impl Kitchen {
                     .build()
             }
             View::Tonight => {
+                // With nothing chosen for tonight, the recipes are the home
+                // page. A page between them saying how many were waiting
+                // and offering to show them was one more tap to the list.
                 let Some(recipe) = self.recipe() else {
-                    return Self::banner(
-                        ScreenBuilder::new("kitchencard")
-                            .top_bar("Kitchen Card")
-                            .top_bar_glyph("settings", "Settings", Glyph::Settings),
-                        self.note.as_ref(),
-                    )
-                    .splash(
-                        Some(Glyph::Book),
-                        "Pick tonight's dinner",
-                        format!(
-                            "{} recipe{} from Mealie {} waiting.",
-                            self.recipes.len(),
-                            if self.recipes.len() == 1 { "" } else { "s" },
-                            if self.recipes.len() == 1 { "is" } else { "are" }
-                        ),
-                    )
-                    .primary_button("browse", "Pick a recipe")
-                    .build();
+                    return self.browse_screen(context);
                 };
                 self.tonight_screen(context, recipe)
             }
@@ -774,8 +785,11 @@ impl Kitchen {
                 // keeps body type rather than losing its end or its buttons.
                 let large = self.cook_screen(recipe, step, true);
                 let metrics = context.metrics();
-                let chrome =
-                    kobo_sdk::Chrome::for_screen(&large, false, kobo_sdk::Chrome::measuring(true).status);
+                let chrome = kobo_sdk::Chrome::for_screen(
+                    &large,
+                    false,
+                    kobo_sdk::Chrome::measuring(true).status,
+                );
                 let fits = !large
                     .diagnostics(&metrics, &chrome)
                     .issues
@@ -789,7 +803,9 @@ impl Kitchen {
             }
             View::Ingredients => self.ingredients_screen(context),
             View::Finished => {
-                let name = self.recipe().map_or("Dinner", |recipe| recipe.name.as_str());
+                let name = self
+                    .recipe()
+                    .map_or("Dinner", |recipe| recipe.name.as_str());
                 let mut screen = ScreenBuilder::new("kitchencard")
                     .top_bar("Kitchen Card")
                     .splash(Some(Glyph::Check), "Dinner's ready", name);
@@ -799,20 +815,20 @@ impl Kitchen {
                         ("Steps", recipe.steps.len().to_string()),
                     ]);
                 }
-                screen
-                    .button("again", "Cook again")
-                    .build()
+                screen.button("again", "Cook again").build()
             }
+            // The address is all there is to type here. The API token is
+            // long and secret, so it comes from the computer with the same
+            // command the first screen gives, and nothing on this screen
+            // names a second way of doing it.
             View::Settings => ScreenBuilder::new("kitchencard")
                 .top_bar("Kitchen Card settings")
                 .field("server", &self.server, "https://mealie.example")
                 .field_label("Mealie address")
                 .field_kind(FieldKind::Address)
-                .field("credential", &self.credential, "mealie")
-                .field_label("Credential name")
-                .secondary(
-                    "On your computer run kobo secret set mealie with a Mealie API token, then sync here.",
-                )
+                .section("API token")
+                .secondary("Sent from your computer. Run this there, then sync here.")
+                .command("kobo connect kitchencard")
                 .build(),
         }
     }
@@ -963,6 +979,8 @@ impl KoboApp for Kitchen {
                 }
                 if std::mem::take(&mut self.checking) && !self.ready() {
                     self.problem(NO_ACCOUNT_YET);
+                } else if self.ready() {
+                    self.clear_no_account_note();
                 }
             }
             if key == TONIGHT {
@@ -1000,6 +1018,7 @@ impl KoboApp for Kitchen {
                             Setting::Server => {
                                 if value.starts_with("https://") {
                                     self.server = value;
+                                    self.clear_no_account_note();
                                     self.recipes.clear();
                                     self.recipes_origin = None;
                                     self.tonight = None;
@@ -1011,15 +1030,6 @@ impl KoboApp for Kitchen {
                                         "The address needs to start with https:// - plain http is not supported.",
                                     );
                                 }
-                            }
-                            Setting::Credential => {
-                                self.credential = value;
-                                self.recipes.clear();
-                                self.recipes_origin = None;
-                                self.tonight = None;
-                                self.persist_config(context);
-                                self.persist_tonight(context);
-                                self.open_cache(context);
                             }
                         }
                     }
@@ -1048,10 +1058,6 @@ impl KoboApp for Kitchen {
                 &self.server
             });
             self.editing = Some(Setting::Server);
-        } else if action == action_id("credential") {
-            self.entry = TextEntry::new();
-            self.entry.open_with(&self.credential);
-            self.editing = Some(Setting::Credential);
         } else if action == action_id("back") || action == ActionId::BACK {
             if self.view == Some(View::Ingredients) {
                 self.view = Some(View::Cook);
@@ -1086,8 +1092,9 @@ impl KoboApp for Kitchen {
         } else if action == action_id("ingredients") {
             self.view = Some(View::Ingredients);
         } else if action == action_id("list-previous") || action == action_id("list-next") {
+            let browsing = self.browsing();
             let (page, count) = match self.view {
-                Some(View::Browse) => (self.browse_page, self.browse_pages(context).len()),
+                _ if browsing => (self.browse_page, self.browse_pages(context).len()),
                 Some(View::Ingredients) => {
                     (self.ingredients_page, self.ingredients_pages(context).len())
                 }
@@ -1100,7 +1107,7 @@ impl KoboApp for Kitchen {
             } else {
                 page.saturating_sub(1)
             };
-            if self.view == Some(View::Browse) {
+            if browsing {
                 self.browse_page = next;
             } else {
                 self.ingredients_page = next;
@@ -1315,7 +1322,7 @@ mod tests {
     }
 
     #[test]
-    fn the_address_and_the_credential_name_are_typed_on_the_runtime_with_their_own_keys() {
+    fn the_address_is_typed_on_the_runtime_with_its_own_keys() {
         let mut runner = kobo_sdk::AppRunner::new(Kitchen {
             view: Some(View::Settings),
             ..Kitchen::default()
@@ -1337,11 +1344,48 @@ mod tests {
         );
         runner.type_text("https://mealie.example");
         assert_eq!(runner.app().server, "https://mealie.example");
-        let commands = runner.action(action_id("credential"));
-        assert_eq!(asked(&commands), Some((FieldKind::Text, String::new())));
-        runner.cancel_text();
         assert!(runner.app().editing.is_none());
-        assert!(runner.app().credential.is_empty());
+    }
+
+    fn drawn(app: &Kitchen) -> String {
+        format!("{:?}", app.screen(&Context::default()))
+    }
+
+    #[test]
+    fn settings_send_the_token_with_the_same_command_as_the_first_screen() {
+        let app = Kitchen {
+            view: Some(View::Settings),
+            ..cooking()
+        };
+        let settings = drawn(&app);
+        assert!(settings.contains("kobo connect kitchencard"), "{settings}");
+        assert!(!settings.contains("secret set"), "{settings}");
+        assert!(!settings.contains("Credential"), "{settings}");
+    }
+
+    #[test]
+    fn the_note_that_no_account_arrived_goes_once_an_address_is_saved() {
+        let mut runner = kobo_sdk::AppRunner::new(Kitchen {
+            view: Some(View::Settings),
+            credential: "mealie".to_owned(),
+            ..Kitchen::default()
+        });
+        runner.app_mut().problem(NO_ACCOUNT_YET);
+        runner.action(action_id("server"));
+        runner.type_text("https://mealie.example");
+        assert!(runner.app().note.is_none());
+    }
+
+    #[test]
+    fn with_nothing_chosen_for_tonight_the_recipes_are_the_home_page() {
+        let app = Kitchen {
+            tonight: None,
+            ..cooking()
+        };
+        let home = drawn(&app);
+        assert!(!home.contains("Pick tonight"), "{home}");
+        assert!(home.contains(&app.recipes[0].name), "{home}");
+        assert!(home.contains("Settings"), "{home}");
     }
 
     #[test]
