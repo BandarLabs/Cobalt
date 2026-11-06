@@ -482,6 +482,13 @@ pub mod input {
     /// A press means the magnet arrived, a release means it left.
     pub const KEY_COVER: u16 = 35;
 
+    /// The code most i.MX Kobos use for the same hall sensor.
+    ///
+    /// Linux calls 59 `KEY_F1`, and the NTX boards before the `MediaTek` ones
+    /// send the magnet on it instead of on 35. Nothing else on that node uses
+    /// it, so reading either code as the cover is safe on every reader.
+    pub const KEY_COVER_ALTERNATE: u16 = 59;
+
     /// Builds an `EVIOCGBIT` query for the codes one event type supports.
     ///
     /// # Panics
