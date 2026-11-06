@@ -1739,8 +1739,8 @@ fn listed_at(version: u8, glyph: Glyph) -> Glyph {
 }
 
 #[test]
-fn the_application_marks_are_the_thirty_two_glyphs_added_with_protocol_eighteen() {
-    assert_eq!(app_marks().count(), 32);
+fn the_application_marks_are_the_thirty_three_glyphs_added_with_protocol_eighteen() {
+    assert_eq!(app_marks().count(), 33);
 }
 
 #[test]

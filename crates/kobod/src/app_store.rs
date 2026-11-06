@@ -1524,6 +1524,7 @@ fn glyph(name: &str) -> Option<Glyph> {
         "collage" => Glyph::Collage,
         "feed-page" => Glyph::FeedPage,
         "photo" => Glyph::Photo,
+        "prompt" => Glyph::Prompt,
         _ => return None,
     })
 }

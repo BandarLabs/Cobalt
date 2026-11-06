@@ -99,3 +99,4 @@ Cutlery             tools-kitchen-2
 Collage             layout-collage
 FeedPage            file-rss
 Photo               photo
+Prompt              prompt

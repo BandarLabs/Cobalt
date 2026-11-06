@@ -7239,6 +7239,7 @@ const fn earlier_glyph(glyph: Glyph) -> Glyph {
         Glyph::House => Glyph::Light,
         Glyph::Cutlery | Glyph::Collage => Glyph::Reader,
         Glyph::FeedPage => Glyph::Rss,
+        Glyph::Prompt => Glyph::Terminal,
         other => other,
     }
 }
@@ -7350,6 +7351,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Photo => 98,
         Glyph::Counters => 99,
         Glyph::LetterCheck => 100,
+        Glyph::Prompt => 101,
     }
 }
 
@@ -7460,6 +7462,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         98 => Glyph::Photo,
         99 => Glyph::Counters,
         100 => Glyph::LetterCheck,
+        101 => Glyph::Prompt,
 
         _ => return None,
     })

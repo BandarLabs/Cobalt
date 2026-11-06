@@ -5342,6 +5342,9 @@ pub enum Glyph {
     FeedPage,
     /// A framed landscape: a photograph.
     Photo,
+    /// A bare prompt with no window around it: a terminal on another machine,
+    /// told apart from the runtime's own Terminal, which keeps the framed one.
+    Prompt,
 }
 
 impl Glyph {
@@ -5352,7 +5355,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 101] = [
+    pub const ALL: [Self; 102] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5454,6 +5457,7 @@ impl Glyph {
         Self::Collage,
         Self::FeedPage,
         Self::Photo,
+        Self::Prompt,
     ];
 }
 

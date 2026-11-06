@@ -118,6 +118,7 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::Collage => COLLAGE,
         Glyph::FeedPage => FEED_PAGE,
         Glyph::Photo => PHOTO,
+        Glyph::Prompt => PROMPT,
         // Board pieces are discs and rings rather than line art, so they are
         // filled in `game_piece_shapes` instead of stroked from an outline.
         Glyph::BlackDisc
@@ -2239,4 +2240,14 @@ static PHOTO: &[&[Cmd]] = &[
         Cmd::Cubic(664, 504, 711, 504, 750, 542),
         Cmd::Line(875, 667),
     ],
+];
+
+/// `prompt` from Tabler Icons.
+static PROMPT: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(208, 292),
+        Cmd::Line(417, 500),
+        Cmd::Line(208, 708),
+    ],
+    &[Cmd::Move(542, 708), Cmd::Line(792, 708)],
 ];
