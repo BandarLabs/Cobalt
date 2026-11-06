@@ -1256,7 +1256,11 @@ pub fn ensure_way_back_revealed(
     // the bar and shifts it down, so hiding underneath one would put the way
     // back somewhere other than where the reader is told to reach for it.
     // Full-bleed art is a reading screen, and a reading screen has no band.
-    if screen.auto_hide_top_bar && state == TopBarState::Hidden && chrome.status.is_none() {
+    if screen.auto_hide_top_bar
+        && state == TopBarState::Hidden
+        && chrome.status.is_none()
+        && !bar_holds_open_panel(&screen)
+    {
         screen.top_bar = None;
         return screen;
     }
@@ -1264,6 +1268,24 @@ pub fn ensure_way_back_revealed(
         screen = screen.with_top_bar(TopBar::new(NodeId(0), name));
     }
     screen
+}
+
+/// Whether a panel hangs from one of the top bar's own controls.
+///
+/// Such a bar stays drawn while the panel is open, over the page as a
+/// called-back bar is: a panel pointing at a control that is out of sight
+/// points at nothing, and a bar pushed into the page while it is open moves
+/// the words the reader opened it to adjust.
+#[must_use]
+pub fn bar_holds_open_panel(screen: &Screen) -> bool {
+    let Some(OverlayKind::Popover { anchor }) = screen.overlay.as_ref().map(|overlay| overlay.kind)
+    else {
+        return false;
+    };
+    screen
+        .top_bar
+        .as_ref()
+        .is_some_and(|bar| bar.actions.iter().any(|action| action.action == anchor))
 }
 
 /// What a touch at `y` means for an auto-hiding top bar, if anything.
@@ -1282,7 +1304,7 @@ pub fn top_bar_touch(
 ) -> Option<TopBarState> {
     // The same condition the drawing side uses, so the band is only ever
     // claimed on a screen whose bar really is at the top of the panel.
-    if !screen.auto_hide_top_bar || chrome.status.is_some() {
+    if !screen.auto_hide_top_bar || chrome.status.is_some() || bar_holds_open_panel(screen) {
         return None;
     }
     let within_band = y >= 0 && y < metrics.top_bar_height();

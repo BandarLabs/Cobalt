@@ -312,7 +312,7 @@ const SPECIMENS: &[(&str, &str)] = &[
     ("store-birds", "You pressed Field guide to birds."),
     ("store-birds-update", "You pressed Update."),
     ("store-moths", "You pressed Moths."),
-    ("store-moths-open", "You pressed Open."),
+    ("store-moths-page", "You pressed the mark beside Moths."),
     ("species-delete", "You pressed Delete."),
     ("token-field", "You tapped the token field."),
 ];
@@ -1662,10 +1662,11 @@ impl Gallery {
             )
     }
 
-    /// A row with a button of its own and a count, which is a Store row.
+    /// A row with a button of its own and a count, and a row that opens
+    /// what it names with a mark for the rest, which are Store rows.
     fn row_extras_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
-            .section("Rows with a button and a count")
+            .section("Rows with a button, a count and a mark")
             .rows([
                 (
                     "store-birds",
@@ -1677,7 +1678,7 @@ impl Gallery {
             ])
             .row_button("store-birds", "store-birds-update", "Update")
             .row_badge("store-birds", 3)
-            .row_button("store-moths", "store-moths-open", "Open")
+            .row_menu("store-moths", "store-moths-page")
     }
 
     /// A checklist, which is a row whose value is whether it is done.

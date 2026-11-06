@@ -637,3 +637,50 @@ fn legacy_nav_glyph_is_half_a_touch_target() {
     });
     assert_eq!(rendered, expected);
 }
+
+#[test]
+fn a_hidden_bar_stays_drawn_over_the_page_while_a_panel_hangs_from_it() {
+    // A reading page opens its type panel from a control in the bar. With
+    // the bar put away the panel pointed at nothing, and with the bar laid
+    // out above the page the page moved down and lost its last lines.
+    let metrics = &CLARA_BW_METRICS;
+    let chrome = Chrome::with_back(true);
+    let words = Node::Text {
+        id: NodeId(2),
+        text: "A page of a book.".into(),
+        links: Vec::new(),
+    };
+    let open = Screen::new(1, vec![words.clone()])
+        .with_top_bar(TopBar::new(NodeId(3), "Alice").action(ActionId(9), "Aa"))
+        .with_overlay(Overlay {
+            id: NodeId(4),
+            kind: OverlayKind::Popover {
+                anchor: ActionId(9),
+            },
+            title: String::new(),
+            nodes: Vec::new(),
+        })
+        .with_auto_hidden_top_bar(true);
+    assert!(bar_holds_open_panel(&open));
+    let drawn = ensure_way_back_revealed(open.clone(), &chrome, "Books", TopBarState::Hidden);
+    assert!(drawn.top_bar.is_some(), "the panel's control was put away");
+    let layout = drawn.layout_with(metrics, &chrome);
+    let bare = Screen::new(1, vec![words]).layout_with(metrics, &chrome);
+    let top = |layout: &Layout| {
+        layout
+            .nodes
+            .iter()
+            .find(|node| {
+                node.text_lines
+                    .first()
+                    .is_some_and(|line| line.starts_with("A page"))
+            })
+            .map(|node| node.rect.y)
+    };
+    assert_eq!(top(&layout), top(&bare), "the bar pushed the page down");
+    assert_eq!(
+        top_bar_touch(&open, metrics, &chrome, TopBarState::Hidden, 1),
+        None,
+        "a touch on the bar while its panel is open is the bar's own"
+    );
+}

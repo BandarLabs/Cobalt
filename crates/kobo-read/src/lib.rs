@@ -1463,6 +1463,14 @@ impl Reader {
     /// would have to keep its own copy of that list in step, and the failure
     /// when it drifted would be a control that silently did nothing.
     pub fn act_on(&mut self, action: kobo_ui::ActionId, panel: &DisplayMetrics) -> Outcome {
+        // A tap off an open panel arrives as Back from the scrim, and puts
+        // the panel away. Passed on, it closed the book under the reader.
+        if action == kobo_ui::ActionId::BACK
+            && matches!(self.chrome, Chrome::Controls | Chrome::Light)
+        {
+            self.set_chrome(Chrome::Hidden, panel);
+            return Outcome::Repaint;
+        }
         if action == kobo_ui::ActionId::BACK && !self.navigation.is_empty() {
             self.return_from_link(panel);
             return Outcome::Save;
@@ -1711,6 +1719,10 @@ impl Reader {
         //
         // It also holds more than five things, which the bar could not: the
         // bar dropped its sixth control silently.
+        //
+        // On a page measured without the bar, the bar the panel hangs from is
+        // drawn over the page too. Laid out above it, it pushed the page down
+        // and the last lines were cut off for as long as the panel was open.
         match self.chrome {
             Chrome::Light => screen
                 .popover(action::LIGHT, |panel| Self::light_panel(self, panel))
@@ -1719,6 +1731,7 @@ impl Reader {
                 .popover(action::CONTROLS, |panel| self.controls_panel(panel))
                 .build(),
         }
+        .with_auto_hidden_top_bar(self.memory.full_page)
     }
 
     /// What the light control opens: the front light and nothing else.
@@ -3296,7 +3309,13 @@ fn paginate(
     let mut pages: Vec<Vec<Piece>> = Vec::new();
     let mut page: Vec<Piece> = Vec::new();
     let mut used = 0;
-    let gap = metrics.space(kobo_ui::Space::Small);
+    // The space the layout leaves between two pieces, which the area carries
+    // for this. Counted as the larger step instead, every paragraph on a page
+    // cost a little more than it took, and a page of short paragraphs ended a
+    // line or two above its foot.
+    let gap = area.gap;
+    // A table's rows are set further apart than paragraphs.
+    let row_gap = metrics.space(kobo_ui::Space::Small);
     if area.width <= 0 || area.height <= 0 {
         return (pages, !document.blocks.is_empty());
     }
@@ -3447,7 +3466,7 @@ fn paginate(
             used += if page.is_empty() {
                 height
             } else {
-                gap + height
+                row_gap + height
             };
             // Marked as the heading it is, whatever the markup called it:
             // LaTeXML writes every cell as data, and the layout has to know
@@ -3568,13 +3587,36 @@ fn paginate(
             } else {
                 0
             };
-            let extra_height = extra_height.saturating_sub(shared);
-            let fits = if room < height.saturating_add(extra_height) {
+            // Only the paragraph's first piece is drawn with the margin above
+            // it, and only its last with the margin below. A piece that goes
+            // on overleaf was charged the margin below as well, so a page
+            // ended a line early whenever a paragraph crossed its foot.
+            let (above, below) = rich_layout.map_or((0, 0), |rich| {
+                let margin = |em: u16| natural_height.saturating_mul(i32::from(em)) / 100;
+                let above = if placed == 0 {
+                    margin(rich.style.margin_before_em).saturating_sub(shared)
+                } else {
+                    0
+                };
+                (above, margin(rich.style.margin_after_em))
+            });
+            let left = lines.len() - placed;
+            let whole = i32::try_from(left)
+                .unwrap_or(i32::MAX)
+                .saturating_mul(height)
+                .saturating_add(above)
+                .saturating_add(below);
+            let fits = if room >= whole {
+                left
+            } else if room < height.saturating_add(above) {
                 0
             } else {
-                usize::try_from((room - extra_height) / height).unwrap_or(usize::MAX)
+                // Short of the whole paragraph, so the piece taken here ends
+                // without the margin below.
+                usize::try_from((room - above) / height)
+                    .unwrap_or(usize::MAX)
+                    .min(left.saturating_sub(1))
             };
-            let left = lines.len() - placed;
             // Either the rest fits, or enough of it fits to be worth
             // breaking: two lines here and two over the page.
             //
@@ -5995,6 +6037,21 @@ mod tests {
     }
 
     #[test]
+    fn a_tap_off_an_open_panel_puts_it_away_and_keeps_the_book_open() {
+        for opener in [action::CONTROLS, action::LIGHT] {
+            let mut reader = reader(40);
+            reader.act(opener, &panel());
+            assert_ne!(reader.chrome(), Chrome::Hidden);
+            assert_eq!(
+                reader.act_on(kobo_ui::ActionId::BACK, &panel()),
+                Outcome::Repaint,
+                "the tap off {opener} was passed on and closed the book"
+            );
+            assert_eq!(reader.chrome(), Chrome::Hidden);
+        }
+    }
+
+    #[test]
     fn following_a_footnote_and_back_preserves_the_logical_origin() {
         let mut document = book(40);
         document.anchors.insert("note".into(), 30);
@@ -6160,6 +6217,44 @@ mod tests {
             );
             turned.act("reader-next", &panel);
         }
+    }
+
+    // A paragraph that runs over the foot of a page is drawn there without
+    // the margin below it, which belongs to its last line overleaf. Charged
+    // it anyway, a book with a generous margin under each paragraph ended
+    // every such page a line or more early.
+    #[test]
+    fn a_paragraph_that_goes_on_overleaf_fills_the_page_it_starts_on() {
+        let sentence = "The rabbit-hole went straight on like a tunnel for some way. ";
+        let document = Document {
+            blocks: vec![Block::Paragraph(sentence.repeat(80))],
+            rich: std::iter::once((
+                0,
+                kobo_doc::RichBlock {
+                    spans: Vec::new(),
+                    style: kobo_doc::BlockStyle {
+                        margin_after_em: 250,
+                        ..kobo_doc::BlockStyle::default()
+                    },
+                },
+            ))
+            .collect(),
+            ..Document::default()
+        };
+        let panel = panel();
+        let reader = Reader::open(document, Memory::default(), &panel);
+        assert!(
+            reader.page_count() > 1,
+            "the paragraph has to go on overleaf"
+        );
+        no_words_fall_off_a_page(&reader);
+        let floor = panel.height - panel.screen_margin();
+        let natural = kobo_ui::FontSize::Body.line_height_in(kobo_ui::Face::Reading);
+        let left = floor - text_bottom_on_page(&reader, &panel);
+        assert!(
+            left < 2 * natural,
+            "the first page stopped {left} short of its foot, room for another line"
+        );
     }
 
     // A heading is drawn by the toolkit at one size in its own face, whatever
