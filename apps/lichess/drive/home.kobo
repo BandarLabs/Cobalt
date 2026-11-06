@@ -1,5 +1,5 @@
 expect Ready
-expect Account/Games
+expect Your games
 expect Puzzles
 expect Computer
 # At the larger text sizes the cards are set two to a row, so the time cards

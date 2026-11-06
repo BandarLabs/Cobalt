@@ -1,5 +1,5 @@
 expect Offline
-expect Account/Games
+expect Your games
 expect Puzzles
 # At the larger text sizes the time cards are on the second page.
 maybe-tap-id home-next

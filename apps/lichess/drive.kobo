@@ -14,7 +14,7 @@ expect Outlined squares show the last move.
 # How to play turns a page at the larger text sizes; at the default size it
 # is one page and draws no pager.
 maybe-tap-id help-next
-expect Choose rated or casual games in Account/Games.
+expect Choose rated or casual games in Your games.
 wait 250
 clean
 shot lichess-help

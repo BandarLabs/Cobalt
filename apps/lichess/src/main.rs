@@ -847,12 +847,12 @@ impl Lichess {
         if index == 0 {
             HomeTile {
                 action: "play".to_owned(),
-                label: "Account/Games".to_owned(),
-                glyph: Glyph::Settings,
+                label: "Your games".to_owned(),
+                glyph: Glyph::Person,
                 subtitle: if brief {
                     "Challenges"
                 } else {
-                    "Challenges · boards"
+                    "Challenges and boards"
                 }
                 .to_owned(),
                 state: TileState::Normal,
@@ -959,17 +959,17 @@ impl Lichess {
     }
 
     fn puzzles_screen(&self) -> Screen {
+        // How many are waiting, in a sentence. "Ready 0" and "Current None"
+        // were a database's fields, and the current puzzle's id meant
+        // nothing to anybody solving it.
+        let remaining = self.remaining_puzzles();
         let mut screen = ScreenBuilder::new("lichess-puzzles")
             .top_bar("Puzzles")
-            .facts([
-                ("Ready", self.remaining_puzzles().to_string()),
-                (
-                    "Current",
-                    self.puzzles
-                        .get(self.current_puzzle)
-                        .map_or_else(|| "None".to_owned(), |puzzle| puzzle.id.clone()),
-                ),
-            ]);
+            .text(match remaining {
+                0 => "No puzzles yet. Download a set to solve them offline.".to_owned(),
+                1 => "One puzzle is waiting.".to_owned(),
+                count => format!("{count} puzzles are waiting."),
+            });
         if let Some(notice) = &self.notice {
             screen = screen.banner(notice.level, &notice.text);
         }
@@ -996,8 +996,8 @@ impl Lichess {
         "Tap a piece, then a marked square. Tap the selected piece again to cancel.",
         "Outlined squares show the last move.",
         "Computer starts an offline game. Choose your side and whether to use a clock.",
-        "Time tiles seek a live opponent. Choose rated or casual games in Account/Games.",
-        "Account/Games holds challenges and ongoing boards. Puzzles work offline after download.",
+        "A time, such as 10+5, finds a live opponent at that pace. Choose rated or casual games in Your games.",
+        "Your games holds challenges and games in progress. Puzzles work offline after download.",
         "During a live game, the clock and board update while this screen is open.",
     ];
 
@@ -1126,7 +1126,7 @@ impl Lichess {
         reason = "one declarative screen keeps all account, challenge, and ongoing-game states visible"
     )]
     fn play_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("lichess-play").top_bar("Account/Games");
+        let mut screen = ScreenBuilder::new("lichess-play").top_bar("Your games");
         screen = match &self.account {
             AccountState::Unknown => screen.secondary("Offline"),
             AccountState::Missing => screen.secondary("Not connected").text(
@@ -1199,7 +1199,7 @@ impl Lichess {
         // One pool or the other, never both, so the two are segments of one
         // control rather than chips, which read as filters that can be on
         // together.
-        screen = screen.section("Time tiles").segmented(
+        screen = screen.section("Games against people").segmented(
             usize::from(!self.seek_rated),
             [("seek-rated", "Rated"), ("seek-casual", "Casual")],
         );
@@ -1580,10 +1580,18 @@ impl Lichess {
                 SlotWidth::Natural,
                 Box::new(move |slot| slot.chips([("your-clock", you_clock, your_active)])),
             ));
-        } else {
+        } else if game.active() {
             you_slots.push((
                 SlotWidth::Natural,
                 Box::new(|slot| slot.chips([("take-back", "Undo", false)])),
+            ));
+        } else {
+            // Once the game is over its place holds the next game rather
+            // than Undo, which offered to take a move back into a game that
+            // had finished.
+            you_slots.push((
+                SlotWidth::Natural,
+                Box::new(|slot| slot.chips([("computer-again", "New game", false)])),
             ));
         }
         screen = screen.band(BandAlign::Top, you_slots);
@@ -2393,7 +2401,7 @@ impl Lichess {
             self.notice = Some(Notice::info(if self.local_game {
                 "Finish or resign the computer game first. Tap Computer to return to it.".to_owned()
             } else {
-                "Finish your current game first. It is under Account/Games.".to_owned()
+                "Finish your current game first. It is under Your games.".to_owned()
             }));
         } else {
             self.notice = Some(Notice::info(
@@ -5239,7 +5247,10 @@ fn board_cells(
             let (label, glyph) = if invalid_square == Some(square.as_str()) {
                 ("×".to_owned(), None)
             } else if piece.is_none() && destinations.contains(&square) {
-                ("·".to_owned(), None)
+                // The runtime's legal-move dot, the same size and grey on
+                // every square; a typed middle dot came out at whatever size
+                // the square's label was set, a different one on each.
+                ("Legal square".to_owned(), Some(Glyph::LegalPoint))
             } else {
                 (" ".to_owned(), piece.and_then(piece_glyph))
             };
@@ -6144,8 +6155,8 @@ mod tests {
             }
             for (action, label, subtitle) in tile_copy(&screen.nodes) {
                 if action == action_id("play") {
-                    assert_eq!(label, "Account/Games");
-                    assert_eq!(subtitle, "Challenges · boards");
+                    assert_eq!(label, "Your games");
+                    assert_eq!(subtitle, "Challenges and boards");
                 } else if action == action_id("puzzles") {
                     assert_eq!(label, "Puzzles");
                     assert_eq!(subtitle, "Offline training");
@@ -6425,7 +6436,13 @@ mod tests {
             assert_eq!(cells[0].rect.x + cells[0].rect.width, cells[1].rect.x);
             assert_eq!(cells[0].rect.y + cells[0].rect.height, cells[8].rect.y);
             let moves = board_cells(super::chess::START, Color::White, Some("e2"), None, None);
-            assert_eq!(moves.iter().filter(|cell| cell.1 == "·").count(), 2);
+            assert_eq!(
+                moves
+                    .iter()
+                    .filter(|cell| cell.2 == Some(Glyph::LegalPoint))
+                    .count(),
+                2
+            );
         }
     }
 
@@ -6629,6 +6646,27 @@ mod tests {
         black.on_action(&mut context, action_id("take-back"));
         assert_eq!(black.game.as_ref().expect("game").state.moves.len(), 1);
         assert!(black.game.as_ref().expect("game").my_turn());
+    }
+
+    #[test]
+    fn a_finished_game_offers_the_next_game_where_undo_was() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        let playing = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(playing.contains("\"Undo\""), "{playing}");
+        app.on_action(&mut context, action_id("confirm-resign"));
+        app.on_action(&mut context, action_id("resign"));
+        app.on_action(&mut context, action_id("dismiss-result"));
+        let finished = app.game_screen(&Context::default());
+        let drawn = format!("{finished:?}");
+        assert!(!drawn.contains("\"Undo\""), "{drawn}");
+        let layout = finished.layout_with(
+            &kobo_ui::CLARA_BW_METRICS,
+            &kobo_ui::Chrome::measuring(true),
+        );
+        assert!(layout.rect_of_action(action_id("computer-again")).is_some());
+        assert!(layout.rect_of_action(action_id("take-back")).is_none());
     }
 
     #[test]
@@ -9121,7 +9159,7 @@ mod tests {
             .iter()
             .any(|command| matches!(command, Command::Device(_))));
         let screen = format!("{:?}", painted(commands).expect("account games"));
-        assert!(screen.contains("Account/Games"), "{screen}");
+        assert!(screen.contains("Your games"), "{screen}");
         assert!(screen.contains("Connect Lichess"), "{screen}");
         assert!(!runner.app_mut().credential.is_open());
         assert_eq!(runner.app_mut().route, Route::Play);

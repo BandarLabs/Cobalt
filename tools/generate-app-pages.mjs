@@ -52,7 +52,7 @@ const screenshots = {
   homepanel: ["homepanel.png", "Home Panel tile grid on a Kobo showing six Home Assistant tiles with the last refresh time."],
   inkling: ["inkling.png", "A solved Inkling puzzle in three guesses, with right-spot letters in black squares and wrong-spot letters in grey."],
   kitchencard: ["kitchencard.png", "Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."],
-  lichess: ["lichess.png", "Lichess on Kobo with Account/Games, Puzzles, Computer and How to play tiles above the rapid and classical time controls."],
+  lichess: ["lichess.png", "Lichess on Kobo with Your games, Puzzles, Computer and How to play cards above the rapid and classical time controls."],
   logicpack: ["logicpack.png", "A solved Hashi puzzle in Logic Pack, with sixteen islands joined by single and double bridges."],
   launcher: ["launcher.png", "The Cobalt launcher on its Apps tab, with Books, Settings and Kobo reader tabs below"],
   magnet: ["magnet.png", "The Kobo hall sensor responding to a magnet"],
