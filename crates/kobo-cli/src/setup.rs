@@ -203,7 +203,7 @@ impl Identified {
                 reader.firmware
             ),
             kobo_profile::Standing::Unmeasured => {
-                "untested model. Cobalt has not been tested on this Kobo, so the screen may not draw correctly and taps may land in the wrong place.".to_owned()
+                "untested model. Cobalt has not been tested on this Kobo, so the screen may not draw correctly. Before its first screen it asks for two taps on a dot, so that taps land where they are aimed.".to_owned()
             }
         };
         Some(format!(
@@ -2210,7 +2210,7 @@ mod tests {
         let note = identified
             .untested(&unknown)
             .expect("an untested model is said");
-        assert!(note.contains("taps may land in the wrong place"), "{note}");
+        assert!(note.contains("two taps on a dot"), "{note}");
         assert!(note.contains("asks before Cobalt first starts"), "{note}");
         // Whatever setup will install onto, it must also be able to remove.
         assert_eq!(super::undo_profile(&unknown).profile, None);

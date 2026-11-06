@@ -176,12 +176,47 @@ pub fn recalibrated(
 /// prefix cannot stand in for these exact roots.
 const MXCFB_V2_ROOTS: [&str; 3] = ["fsl,imx6sll", "fsl,imx6sll-lpddr3-arm2", "fsl,imx6ull"];
 
+/// The platform families whose display driver this build does not speak,
+/// with the plain reason an owner is given.
+///
+/// Recognised by name so the refusal can say what the reader is, rather than
+/// only that nothing matched. Neither family is attempted: a wrong guess at
+/// an update struct is read past by the driver, and nothing catches that.
+fn unsupported_family(compatible: &[String]) -> Option<&'static str> {
+    let allwinner = compatible.iter().any(|name| {
+        name.starts_with("allwinner,") || name.contains("sun8i") || name.contains("sunxi")
+    });
+    let older_imx = compatible.iter().any(|name| {
+        name.starts_with("fsl,imx5")
+            || ["fsl,imx6sl", "fsl,imx6sx", "fsl,imx6dl", "fsl,imx6q"].contains(&name.as_str())
+    });
+    let qualified_imx = MXCFB_V2_ROOTS
+        .iter()
+        .any(|root| compatible.iter().any(|name| name == root));
+    if allwinner {
+        Some(
+            "this Kobo model is not supported yet. It uses an Allwinner display controller, \
+             which Cobalt cannot drive",
+        )
+    } else if older_imx && !qualified_imx {
+        Some(
+            "this Kobo model is not supported yet. It uses an older i.MX display driver with \
+             16-bit pixels, which Cobalt cannot drive",
+        )
+    } else {
+        None
+    }
+}
+
 /// Select only qualified compatible tokens and the matching framebuffer ID.
 /// The same framebuffer ID exists on older, incompatible i.MX drivers.
 fn controller_for(
     compatible: &[String],
     framebuffer_id: &str,
 ) -> Result<FramebufferController, String> {
+    if let Some(reason) = unsupported_family(compatible) {
+        return Err(reason.to_owned());
+    }
     let has = |token: &str| compatible.iter().any(|name| name == token);
     let imx = MXCFB_V2_ROOTS.iter().any(|root| has(root));
     let mtk = has("mediatek,mt8110") || has("mediatek,mt8512");
@@ -463,6 +498,39 @@ mod tests {
                 .is_err(),
                 "{} accepted a calibration",
                 profile.id
+            );
+        }
+    }
+    #[test]
+    fn an_allwinner_reader_is_told_plainly_that_it_is_not_supported_yet() {
+        for tokens in [
+            vec!["kobo,elipsa", "allwinner,sun8iw15p1"],
+            vec!["allwinner,sun8i"],
+        ] {
+            let names = tokens.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+            let reason = super::controller_for(&names, "sunxi-fb").expect_err("refused");
+            assert!(reason.contains("not supported yet"), "{reason}");
+            assert!(reason.contains("Allwinner"), "{reason}");
+        }
+    }
+
+    #[test]
+    fn an_older_imx_reader_is_told_plainly_that_it_is_not_supported_yet() {
+        for root in ["fsl,imx50", "fsl,imx6sl"] {
+            let reason =
+                super::controller_for(&[root.to_owned()], "mxc_epdc_fb").expect_err("refused");
+            assert!(reason.contains("not supported yet"), "{root}: {reason}");
+            assert!(reason.contains("older i.MX"), "{root}: {reason}");
+        }
+    }
+
+    #[test]
+    fn the_imx6sll_and_imx6ull_readers_take_the_provisional_path() {
+        for root in ["fsl,imx6sll", "fsl,imx6ull"] {
+            assert_eq!(
+                super::controller_for(&[root.to_owned()], "mxc_epdc_fb"),
+                Ok(FramebufferController::MxcfbV2),
+                "{root}"
             );
         }
     }
