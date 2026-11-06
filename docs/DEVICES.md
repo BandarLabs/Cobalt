@@ -78,8 +78,11 @@ check to move a model into the table.
 | Allwinner | sunxi display engine | Elipsa, Sage | Not supported yet |
 | i.MX50 and i.MX6SL | EPDC v1, 16-bit pixels | Most readers released before the Clara HD | Not supported yet |
 
-The last two families are refused before the reader is stopped, with a
-message that says the model is not supported yet and why. Their display
+The last two families are refused with a message that says the model is not
+supported yet and why. `kobo setup` refuses them before installing anything,
+going by the product id at the end of the reader's `.kobo/version` file, and
+the reader refuses them again at launch, before it is stopped, in case Cobalt
+reached it some other way. Their display
 drivers take a different update request from the ones Cobalt sends, and a
 request the driver misreads is not an error anything can catch, so neither is
 attempted.
