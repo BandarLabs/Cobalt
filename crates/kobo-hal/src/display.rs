@@ -761,11 +761,27 @@ impl DisplaySession {
                 hwtcon::wait_for_update_complete(&self.framebuffer, &mut wait)?;
             }
             Backend::Mxcfb => {
-                let mut wait = mxcfb::MxcfbUpdateMarkerData {
-                    update_marker: marker,
-                    collision_test: 0,
-                };
-                mxcfb::wait_for_update_complete(&self.framebuffer, &mut wait)?;
+                // Bounded, because some i.MX6SLL drivers hold this call for
+                // about five seconds after the update has finished. Giving up
+                // early treats the update as done, which at worst lets the
+                // next write start on a region still settling. That is a
+                // faint mark for one refresh, and far better than a frozen
+                // screen.
+                let framebuffer = self.framebuffer.try_clone()?;
+                let started = Instant::now();
+                match crate::refresh::wait_bounded(crate::refresh::MXCFB_WAIT_LIMIT, move || {
+                    let mut wait = mxcfb::MxcfbUpdateMarkerData {
+                        update_marker: marker,
+                        collision_test: 0,
+                    };
+                    mxcfb::wait_for_update_complete(&framebuffer, &mut wait)
+                }) {
+                    crate::refresh::BoundedWait::Finished(result) => result?,
+                    crate::refresh::BoundedWait::TimedOut => eprintln!(
+                        "refresh: the panel had not confirmed update {marker:#x} after {} ms; carrying on",
+                        started.elapsed().as_millis()
+                    ),
+                }
             }
         }
         Ok(())
