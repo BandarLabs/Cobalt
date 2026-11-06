@@ -39,11 +39,7 @@ impl Error for ProbeError {
 /// touch device remains part of the snapshot so the doctor can report unknown
 /// hardware read-only.
 pub fn probe_device() -> Result<DeviceSnapshot, ProbeError> {
-    let compatible = read_nul_list(&[
-        "/sys/firmware/devicetree/base/compatible",
-        "/proc/device-tree/compatible",
-    ])
-    .unwrap_or_default();
+    let compatible = device_tree_compatible();
     let model = read_nul_string(&[
         "/sys/firmware/devicetree/base/model",
         "/proc/device-tree/model",
@@ -62,6 +58,17 @@ pub fn probe_device() -> Result<DeviceSnapshot, ProbeError> {
         touch,
         identity: probe_identity(),
     })
+}
+
+/// The device tree's compatible list, most specific first, or nothing when
+/// the kernel publishes none.
+#[must_use]
+pub fn device_tree_compatible() -> Vec<String> {
+    read_nul_list(&[
+        "/sys/firmware/devicetree/base/compatible",
+        "/proc/device-tree/compatible",
+    ])
+    .unwrap_or_default()
 }
 
 /// Reads the non-identifying parts of the Kobo version file and the kernel
