@@ -38,4 +38,11 @@ clean
 shot nonograms-options-on
 tap Resume
 wait-idle
+# Run entry is on, so two taps fill the whole third row.
+tap-id board.cell.10
+tap-id board.cell.14
+wait-idle
 shot nonograms-play
+# A picture this small is whole on the panel, so there is nothing to pan.
+expect-missing Left
+expect-missing Down
