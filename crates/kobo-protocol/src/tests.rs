@@ -1608,3 +1608,30 @@ fn a_block_indent_and_an_initial_travel_from_protocol_eighteen() {
     let quiet = paragraph_of(&decoded_at(QUIET_TYPE_VERSION, verse_paragraph()));
     assert_eq!((quiet.start_indent_em, quiet.initial_lines), (0, 0));
 }
+
+#[test]
+fn a_muted_run_keeps_its_tone_on_the_wire_alongside_every_other_style() {
+    let every = kobo_ui::TextPresentation {
+        strong: true,
+        emphasis: true,
+        underline: true,
+        superscript: true,
+        subscript: true,
+        highlighted: true,
+        muted: true,
+    };
+    for style in [
+        every,
+        kobo_ui::TextPresentation {
+            muted: true,
+            ..kobo_ui::TextPresentation::default()
+        },
+        kobo_ui::TextPresentation::default(),
+    ] {
+        assert_eq!(
+            text_presentation_from_byte(text_presentation_byte(style)),
+            Ok(style)
+        );
+    }
+    assert!(text_presentation_from_byte(0x80).is_err());
+}

@@ -6140,10 +6140,11 @@ fn text_presentation_byte(style: kobo_ui::TextPresentation) -> u8 {
         | (u8::from(style.superscript) << 3)
         | (u8::from(style.subscript) << 4)
         | (u8::from(style.highlighted) << 5)
+        | (u8::from(style.muted) << 6)
 }
 
 fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, ProtocolError> {
-    if value & !0x3f != 0 {
+    if value & !0x7f != 0 {
         return Err(ProtocolError::InvalidValue("rich text style"));
     }
     Ok(kobo_ui::TextPresentation {
@@ -6153,6 +6154,7 @@ fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, P
         superscript: value & 8 != 0,
         subscript: value & 16 != 0,
         highlighted: value & 32 != 0,
+        muted: value & 64 != 0,
     })
 }
 

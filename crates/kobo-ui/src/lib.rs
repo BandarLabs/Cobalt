@@ -3246,6 +3246,12 @@ pub struct TextPresentation {
     /// A reader annotation behind this exact run, rendered as a light ink
     /// wash that remains distinct from selection focus in grayscale.
     pub highlighted: bool,
+    /// Set in the muted tone: words that stand in for something not yet
+    /// there, such as the prompt in an empty field. Drawn the colour of a
+    /// placeholder everywhere else in the interface, so "Type here" is not
+    /// read as something already typed. Changes no width: the run is the
+    /// same face at the same size.
+    pub muted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17421,7 +17427,11 @@ fn paint_layout(
                         node.rect,
                         prose,
                         presentation,
-                        tone::INK,
+                        if presentation.muted {
+                            tone::MUTED
+                        } else {
+                            tone::INK
+                        },
                         clip,
                     );
                 }

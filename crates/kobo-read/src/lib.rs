@@ -3905,6 +3905,7 @@ fn piece_presentation(
                 superscript: span.style.superscript,
                 subscript: span.style.subscript,
                 highlighted: false,
+                muted: false,
             },
         });
     }
