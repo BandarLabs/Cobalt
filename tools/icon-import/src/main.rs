@@ -52,7 +52,7 @@ impl Entry {
 /// Board pieces are discs and rings rather than line art, the two keyboard
 /// keys keep geometry of their own, and the puzzle marks are cells and
 /// pieces Tabler does not draw, so none of them has a Tabler icon behind it.
-const HAND_DRAWN: [&str; 15] = [
+const HAND_DRAWN: [&str; 17] = [
     "BlackDisc",
     "WhiteDisc",
     "BlackDraughtsKing",
@@ -67,7 +67,9 @@ const HAND_DRAWN: [&str; 15] = [
     "CrosswordGrid",
     "CellGrid",
     "NoughtsCrosses",
-    "PixelPicture",
+    "CluedGrid",
+    "ComicPanels",
+    "BoardPieces",
 ];
 
 fn main() -> Result<(), String> {

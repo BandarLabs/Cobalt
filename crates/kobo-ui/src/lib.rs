@@ -5280,9 +5280,9 @@ pub enum Glyph {
     /// A nought and a cross: the two marks of noughts and crosses, without
     /// the board, which is a grid like every other puzzle's.
     NoughtsCrosses,
-    /// A small picture made of filled cells: a nonogram, whose solution is a
-    /// picture drawn one cell at a time.
-    PixelPicture,
+    /// A small grid with some cells filled and the clues counted off along
+    /// its top and left edges: a nonogram.
+    CluedGrid,
     /// A jigsaw piece: a logic puzzle, or a pack of them.
     Puzzle,
     /// A handheld remote with a pad and buttons: this reader controlling
@@ -5290,9 +5290,9 @@ pub enum Glyph {
     Remote,
     /// A die showing five: a game of chance, or one with dice in it.
     Dice,
-    /// Three plain counters: the pieces of the old board games, which are
-    /// discs whatever the board.
-    Counters,
+    /// A board of four squares with a black piece and a white one: the old
+    /// board games, whose pieces are discs whatever the board.
+    BoardPieces,
     /// A question mark in a ring: a quiz, a round of questions.
     Question,
     /// Two crossed swords: tabletop combat and the reference books that go
@@ -5309,8 +5309,8 @@ pub enum Glyph {
     Stack,
     /// A laboratory flask: a research paper, before or after review.
     Flask,
-    /// A pair of reading glasses: articles kept to be read properly later.
-    Eyeglass,
+    /// A paperclip: an article clipped from the web to read properly later.
+    Paperclip,
     /// Two cards fanned: a deck of flashcards.
     Cards,
     /// A ball of yarn: knitting and the patterns for it.
@@ -5323,8 +5323,9 @@ pub enum Glyph {
     Quote,
     /// A feather: birds, drawn by the one part of a bird that is a line.
     Feather,
-    /// A butterfly: a field guide to the living things outdoors.
-    Butterfly,
+    /// A pair of binoculars: looking for birds out of doors and noting them
+    /// down.
+    Binoculars,
     /// An envelope: a letter, sent or received.
     Mail,
     /// A calendar page with a tick: something done today, and on the days
@@ -5336,8 +5337,8 @@ pub enum Glyph {
     House,
     /// A fork and a knife: cooking and the recipes for it.
     Cutlery,
-    /// A lightning bolt: the burst of action a comic is drawn in.
-    Bolt,
+    /// A page cut into panels of unequal size, one gutter at a slant: a comic.
+    ComicPanels,
     /// An inbox tray: unread items gathered from somewhere else, waiting to
     /// be read and cleared.
     Inbox,
@@ -5346,6 +5347,8 @@ pub enum Glyph {
     /// A keyboard: typing into a machine somewhere else, told apart from the
     /// runtime's own Terminal, which keeps the framed prompt.
     Keyboard,
+    /// The sun coming up over the horizon: a briefing to read in the morning.
+    Sunrise,
 }
 
 impl Glyph {
@@ -5356,7 +5359,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 102] = [
+    pub const ALL: [Self; 103] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5430,11 +5433,11 @@ impl Glyph {
         Self::CellGrid,
         Self::LetterCheck,
         Self::NoughtsCrosses,
-        Self::PixelPicture,
+        Self::CluedGrid,
         Self::Puzzle,
         Self::Remote,
         Self::Dice,
-        Self::Counters,
+        Self::BoardPieces,
         Self::Question,
         Self::Swords,
         Self::Map,
@@ -5442,23 +5445,24 @@ impl Glyph {
         Self::BookDownload,
         Self::Stack,
         Self::Flask,
-        Self::Eyeglass,
+        Self::Paperclip,
         Self::Cards,
         Self::Yarn,
         Self::Music,
         Self::Lock,
         Self::Quote,
         Self::Feather,
-        Self::Butterfly,
+        Self::Binoculars,
         Self::Mail,
         Self::CalendarCheck,
         Self::Checklist,
         Self::House,
         Self::Cutlery,
-        Self::Bolt,
+        Self::ComicPanels,
         Self::Inbox,
         Self::Photo,
         Self::Keyboard,
+        Self::Sunrise,
     ];
 }
 

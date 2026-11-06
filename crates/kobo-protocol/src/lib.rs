@@ -7221,10 +7221,10 @@ const fn earlier_glyph(glyph: Glyph) -> Glyph {
         Glyph::CrosswordGrid
         | Glyph::CellGrid
         | Glyph::NoughtsCrosses
-        | Glyph::PixelPicture
+        | Glyph::CluedGrid
         | Glyph::Puzzle
         | Glyph::Remote => Glyph::Grid,
-        Glyph::Dice | Glyph::Counters => Glyph::Circle,
+        Glyph::Dice | Glyph::BoardPieces => Glyph::Circle,
         Glyph::Question | Glyph::Mail => Glyph::Chat,
         Glyph::Swords | Glyph::Map | Glyph::Books | Glyph::BookDownload | Glyph::Stack => {
             Glyph::Book
@@ -7232,14 +7232,15 @@ const fn earlier_glyph(glyph: Glyph) -> Glyph {
         Glyph::Flask | Glyph::LetterCheck | Glyph::Music | Glyph::Lock | Glyph::Quote => {
             Glyph::Note
         }
-        Glyph::Eyeglass | Glyph::Cards | Glyph::Yarn => Glyph::Bookmark,
+        Glyph::Paperclip | Glyph::Cards | Glyph::Yarn => Glyph::Bookmark,
         Glyph::Feather | Glyph::Photo => Glyph::App,
-        Glyph::Butterfly => Glyph::Search,
+        Glyph::Binoculars => Glyph::Search,
         Glyph::CalendarCheck | Glyph::Checklist => Glyph::Check,
         Glyph::House => Glyph::Light,
-        Glyph::Cutlery | Glyph::Bolt => Glyph::Reader,
+        Glyph::Cutlery | Glyph::ComicPanels => Glyph::Reader,
         Glyph::Inbox => Glyph::Rss,
         Glyph::Keyboard => Glyph::Terminal,
+        Glyph::Sunrise => Glyph::Clock,
         other => other,
     }
 }
@@ -7322,7 +7323,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::CrosswordGrid => 69,
         Glyph::CellGrid => 70,
         Glyph::NoughtsCrosses => 71,
-        Glyph::PixelPicture => 72,
+        Glyph::CluedGrid => 72,
         Glyph::Puzzle => 73,
         Glyph::Remote => 74,
         Glyph::Dice => 75,
@@ -7333,25 +7334,26 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::BookDownload => 80,
         Glyph::Stack => 81,
         Glyph::Flask => 82,
-        Glyph::Eyeglass => 83,
+        Glyph::Paperclip => 83,
         Glyph::Cards => 84,
         Glyph::Yarn => 85,
         Glyph::Music => 86,
         Glyph::Lock => 87,
         Glyph::Quote => 88,
         Glyph::Feather => 89,
-        Glyph::Butterfly => 90,
+        Glyph::Binoculars => 90,
         Glyph::Mail => 91,
         Glyph::CalendarCheck => 92,
         Glyph::Checklist => 93,
         Glyph::House => 94,
         Glyph::Cutlery => 95,
-        Glyph::Bolt => 96,
+        Glyph::ComicPanels => 96,
         Glyph::Inbox => 97,
         Glyph::Photo => 98,
-        Glyph::Counters => 99,
+        Glyph::BoardPieces => 99,
         Glyph::LetterCheck => 100,
         Glyph::Keyboard => 101,
+        Glyph::Sunrise => 102,
     }
 }
 
@@ -7433,7 +7435,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         69 => Glyph::CrosswordGrid,
         70 => Glyph::CellGrid,
         71 => Glyph::NoughtsCrosses,
-        72 => Glyph::PixelPicture,
+        72 => Glyph::CluedGrid,
         73 => Glyph::Puzzle,
         74 => Glyph::Remote,
         75 => Glyph::Dice,
@@ -7444,25 +7446,26 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         80 => Glyph::BookDownload,
         81 => Glyph::Stack,
         82 => Glyph::Flask,
-        83 => Glyph::Eyeglass,
+        83 => Glyph::Paperclip,
         84 => Glyph::Cards,
         85 => Glyph::Yarn,
         86 => Glyph::Music,
         87 => Glyph::Lock,
         88 => Glyph::Quote,
         89 => Glyph::Feather,
-        90 => Glyph::Butterfly,
+        90 => Glyph::Binoculars,
         91 => Glyph::Mail,
         92 => Glyph::CalendarCheck,
         93 => Glyph::Checklist,
         94 => Glyph::House,
         95 => Glyph::Cutlery,
-        96 => Glyph::Bolt,
+        96 => Glyph::ComicPanels,
         97 => Glyph::Inbox,
         98 => Glyph::Photo,
-        99 => Glyph::Counters,
+        99 => Glyph::BoardPieces,
         100 => Glyph::LetterCheck,
         101 => Glyph::Keyboard,
+        102 => Glyph::Sunrise,
 
         _ => return None,
     })

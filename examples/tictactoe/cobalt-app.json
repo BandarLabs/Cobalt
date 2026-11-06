@@ -6,5 +6,5 @@
   "version": "1.0.15",
   "glyph": "noughts-crosses",
   "capabilities": [],
-  "release_notes": "Tic-tac-toe now has an icon of its own, a nought and a cross."
+  "release_notes": "Tic-tac-toe now has an icon of its own, a board with a nought and a cross."
 }

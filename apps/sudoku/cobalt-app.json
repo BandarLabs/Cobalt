@@ -6,7 +6,7 @@
   "version": "1.0.21",
   "glyph": "cell-grid",
   "capabilities": [],
-  "release_notes": "Sudoku now has an icon of its own, a square of nine cells.",
+  "release_notes": "Sudoku now has an icon of its own, a grid of nine boxes.",
   "minimum_cobalt_version": "0.3.18",
   "page_description": "Play 600 original Sudoku puzzles, 200 at each of three difficulties, each with exactly one solution. Pencil notes, undo, an optional mistakes check, and saved games survive reopening."
 }

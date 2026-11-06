@@ -5,8 +5,8 @@
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Read CBZ comics on your Kobo with zoom, spreads and right-to-left reading. Add comics over USB or download them from your Komga library.",
   "version": "0.1.10",
-  "release_notes": "Panels now has an icon of its own, a lightning bolt.",
-  "glyph": "bolt",
+  "release_notes": "Panels now has an icon of its own, a page cut into comic panels.",
+  "glyph": "comic-panels",
   "capabilities": [
     "network"
   ],

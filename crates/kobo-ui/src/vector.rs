@@ -561,7 +561,7 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
     if let Some(shapes) = game_piece_shapes(glyph) {
         return shapes;
     }
-    if let Some(shapes) = puzzle_shapes(glyph) {
+    if let Some(shapes) = drawn_shapes(glyph) {
         return shapes;
     }
     let width = if matches!(
@@ -586,95 +586,172 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
         .collect()
 }
 
-/// The puzzle marks: noughts and crosses, the crossword, the number puzzle
-/// and the nonogram.
+/// The marks drawn here rather than imported: the four puzzles, the comic
+/// and the board games.
 ///
-/// Each of these is played on a grid, and drawn as one they were four squares
-/// of lines a glance could not tell apart. Tabler has nothing better: its
-/// grids are the same picture at different densities, and its letter or digit
-/// in a square reads as a calculator display at launcher size. So each is
-/// drawn here as the one thing only its own puzzle has, in Tabler's terms: the
-/// frame of its `square` (four to twenty on its grid of twenty-four, with a
-/// corner of two) and the stroke weight of every other icon.
+/// Each puzzle is played on a grid, and drawn as Tabler draws a grid they were
+/// four squares of lines a glance could not tell apart. So each is drawn as
+/// the grid only its own puzzle has, in Tabler's terms: the frame of its
+/// `square` (four to twenty on its grid of twenty-four, with a corner of two)
+/// at the stroke weight of every other icon.
 ///
-/// - Noughts and crosses is its two marks side by side, without a board.
-/// - The crossword is two words crossing, a run of cells each way.
-/// - The number puzzle is a square cut into nine equal cells.
-/// - The nonogram is its solution: a small picture in filled cells, with no
-///   lines at all.
-fn puzzle_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
+/// - Noughts and crosses is the open board with a cross and a nought in two
+///   of its corners, drawn to the edge of the box so the marks can be read.
+/// - The crossword is four cells each way with black squares, set
+///   symmetrically as a printed grid's are.
+/// - The number puzzle is three boxes each way, with its cells as hairlines
+///   inside them and no black squares, so it is not the crossword.
+/// - The nonogram is a smaller grid with its clues counted off along the top
+///   and left edges, which no other grid has.
+/// - The comic is a page cut into panels of unequal size, one gutter slanted.
+/// - The board games are a board of four squares with a black piece and a
+///   white one.
+fn drawn_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
     const LOW: i32 = 167;
     const HIGH: i32 = 833;
     const CORNER: i32 = 83;
+    const HAIRLINE: i32 = 18;
     let stroke = |path| Shape::Stroke {
         path,
         width: WEIGHT,
     };
+    let frame = || stroke(Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, CORNER));
     match glyph {
-        Glyph::NoughtsCrosses => Some(vec![
-            stroke(Path::line(130, 340, 450, 660)),
-            stroke(Path::line(450, 340, 130, 660)),
-            stroke(Path::circle(690, 500, 170)),
-        ]),
+        Glyph::NoughtsCrosses => {
+            // The board's lines run nearly to the edge of the box and are
+            // lighter than the marks, and the outer cells are the larger, so
+            // the cross and the nought in two corners are big enough to read
+            // as a game in play rather than as specks on a grid.
+            const SPAN: (i32, i32) = (80, 920);
+            const LINES: [i32; 2] = [360, 640];
+            let mut shapes = Vec::new();
+            for at in LINES {
+                for path in [
+                    Path::line(at, SPAN.0, at, SPAN.1),
+                    Path::line(SPAN.0, at, SPAN.1, at),
+                ] {
+                    shapes.push(Shape::Stroke { path, width: 44 });
+                }
+            }
+            let (cross, nought, arm) = (190, 810, 100);
+            shapes.push(stroke(Path::line(
+                cross - arm,
+                cross - arm,
+                cross + arm,
+                cross + arm,
+            )));
+            shapes.push(stroke(Path::line(
+                cross + arm,
+                cross - arm,
+                cross - arm,
+                cross + arm,
+            )));
+            shapes.push(stroke(Path::circle(nought, nought, 105)));
+            Some(shapes)
+        }
         Glyph::CrosswordGrid => {
-            // An across word on the second row and a down word in the third
-            // column, four cells each, sharing the cell where they cross.
             const CELL: i32 = (HIGH - LOW) / 4;
-            let across = LOW + CELL;
-            let down = LOW + 2 * CELL;
-            let mut shapes = vec![
-                stroke(Path::rounded(LOW, across, HIGH - LOW, CELL, 40)),
-                stroke(Path::rounded(down, LOW, CELL, HIGH - LOW, 40)),
-            ];
+            let mut shapes = Vec::new();
+            for (row, column) in [(0, 3), (1, 1), (2, 2), (3, 0)] {
+                let (x, y) = (LOW + column * CELL, LOW + row * CELL);
+                // A black square in a corner of the frame follows its curve.
+                let path = match (row, column) {
+                    (0, 3) => Path::new()
+                        .move_to(x, y)
+                        .line_to(HIGH - CORNER, y)
+                        .quad_to(HIGH, y, HIGH, y + CORNER)
+                        .line_to(HIGH, y + CELL)
+                        .line_to(x, y + CELL)
+                        .close(),
+                    (3, 0) => Path::new()
+                        .move_to(x, y)
+                        .line_to(x + CELL, y)
+                        .line_to(x + CELL, HIGH)
+                        .line_to(x + CORNER, HIGH)
+                        .quad_to(x, HIGH, x, HIGH - CORNER)
+                        .close(),
+                    _ => Path::rounded(x, y, CELL, CELL, 0),
+                };
+                shapes.push(Shape::Fill(path));
+            }
+            shapes.push(frame());
+            // The cell walls are lighter than the frame, so sixteen cells
+            // stay open enough to read at launcher size.
             for step in 1..4 {
                 let at = LOW + step * CELL;
-                if at != down && at != down + CELL {
-                    shapes.push(stroke(Path::line(at, across, at, across + CELL)));
-                }
-                if at != across && at != across + CELL {
-                    shapes.push(stroke(Path::line(down, at, down + CELL, at)));
+                for path in [Path::line(at, LOW, at, HIGH), Path::line(LOW, at, HIGH, at)] {
+                    shapes.push(Shape::Stroke { path, width: 36 });
                 }
             }
             Some(shapes)
         }
         Glyph::CellGrid => {
-            let first = LOW + (HIGH - LOW) / 3;
-            let second = HIGH - (HIGH - LOW) / 3;
-            let mut shapes = vec![stroke(Path::rounded(
-                LOW,
-                LOW,
-                HIGH - LOW,
-                HIGH - LOW,
-                CORNER,
-            ))];
-            for at in [first, second] {
-                shapes.push(stroke(Path::line(at, LOW, at, HIGH)));
-                shapes.push(stroke(Path::line(LOW, at, HIGH, at)));
-            }
-            Some(shapes)
-        }
-        Glyph::PixelPicture => {
-            // A face, five cells square: the kind of picture a small
-            // nonogram turns out to be.
-            const FACE: [&str; 5] = [".#.#.", ".#.#.", ".....", "#...#", ".###."];
-            const CELL: i32 = (HIGH - LOW) / 5;
-            const GAP: i32 = 8;
-            let mut shapes = Vec::new();
-            for (row, line) in (0..).zip(FACE) {
-                for (column, cell) in (0..).zip(line.chars()) {
-                    if cell == '#' {
-                        shapes.push(Shape::Fill(Path::rounded(
-                            LOW + column * CELL + GAP,
-                            LOW + row * CELL + GAP,
-                            CELL - 2 * GAP,
-                            CELL - 2 * GAP,
-                            12,
-                        )));
+            const CELL: i32 = (HIGH - LOW) / 9;
+            let mut shapes = vec![frame()];
+            for step in 1..9 {
+                let at = LOW + step * CELL;
+                if step % 3 == 0 {
+                    shapes.push(stroke(Path::line(at, LOW, at, HIGH)));
+                    shapes.push(stroke(Path::line(LOW, at, HIGH, at)));
+                } else {
+                    for path in [
+                        Path::line(at, LOW + 33, at, HIGH - 33),
+                        Path::line(LOW + 33, at, HIGH - 33, at),
+                    ] {
+                        shapes.push(Shape::Stroke {
+                            path,
+                            width: HAIRLINE,
+                        });
                     }
                 }
             }
             Some(shapes)
         }
+        Glyph::CluedGrid => {
+            // A grid three cells square in the lower right, its filled cells
+            // set apart so they read as cells rather than as one blot, with
+            // one clue mark above each column and beside each row.
+            const ORIGIN: i32 = 397;
+            const INSET: i32 = 22;
+            const CELL: i32 = (HIGH - INSET - ORIGIN) / 3;
+            const CLUE: (i32, i32) = (LOW, 271);
+            let mut shapes = Vec::new();
+            for (row, column) in [(0, 0), (0, 1), (1, 1), (2, 1), (2, 2)] {
+                shapes.push(Shape::Fill(Path::rounded(
+                    ORIGIN + column * CELL + INSET,
+                    ORIGIN + row * CELL + INSET,
+                    CELL - 2 * INSET,
+                    CELL - 2 * INSET,
+                    12,
+                )));
+            }
+            shapes.push(stroke(Path::rounded(
+                ORIGIN - INSET,
+                ORIGIN - INSET,
+                3 * CELL + 2 * INSET,
+                3 * CELL + 2 * INSET,
+                54,
+            )));
+            for step in 0..3 {
+                let at = ORIGIN + step * CELL + CELL / 2;
+                shapes.push(stroke(Path::line(at, CLUE.0, at, CLUE.1)));
+                shapes.push(stroke(Path::line(CLUE.0, at, CLUE.1, at)));
+            }
+            Some(shapes)
+        }
+        Glyph::ComicPanels => Some(vec![
+            frame(),
+            stroke(Path::line(LOW, 458, HIGH, 458)),
+            stroke(Path::line(542, LOW, 542, 458)),
+            stroke(Path::line(417, 458, 354, HIGH)),
+        ]),
+        Glyph::BoardPieces => Some(vec![
+            frame(),
+            stroke(Path::line(500, LOW, 500, HIGH)),
+            stroke(Path::line(LOW, 500, HIGH, 500)),
+            Shape::Fill(Path::circle(333, 333, 96)),
+            stroke(Path::circle(667, 667, 92)),
+        ]),
         _ => None,
     }
 }

@@ -113,16 +113,16 @@ pub fn is_earlier_glyph(name: &str) -> bool {
 /// `chess-white-knight` were drawable before then but never publishable, so
 /// they stand in for themselves nowhere and take the glyph of the application
 /// that first wore them.
-const MARKS: [(&str, &str); 35] = [
+const MARKS: [(&str, &str); 36] = [
     ("crossword-grid", "grid"),
     ("cell-grid", "grid"),
     ("noughts-crosses", "grid"),
-    ("pixel-picture", "grid"),
+    ("clued-grid", "grid"),
     ("puzzle", "grid"),
     ("remote", "grid"),
     ("chess-white-knight", "grid"),
     ("dice", "circle"),
-    ("counters", "circle"),
+    ("board-pieces", "circle"),
     ("question", "chat"),
     ("mail", "chat"),
     ("swords", "book"),
@@ -136,19 +136,20 @@ const MARKS: [(&str, &str); 35] = [
     ("music", "note"),
     ("lock", "note"),
     ("quote", "note"),
-    ("eyeglass", "bookmark"),
+    ("paperclip", "bookmark"),
     ("cards", "bookmark"),
     ("yarn", "bookmark"),
     ("feather", "app"),
     ("photo", "app"),
-    ("butterfly", "search"),
+    ("binoculars", "search"),
     ("calendar-check", "check"),
     ("checklist", "check"),
     ("house", "light"),
     ("cutlery", "reader"),
-    ("bolt", "reader"),
+    ("comic-panels", "reader"),
     ("inbox", "rss"),
     ("keyboard", "terminal"),
+    ("sunrise", "clock"),
 ];
 
 /// The glyph runtimes up to 0.3.33 are shown in place of `name`: `name`

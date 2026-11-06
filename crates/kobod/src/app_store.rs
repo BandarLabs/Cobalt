@@ -70,7 +70,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         label: "Daily Brief",
         summary: "Collects the day's stories while you read something else.",
         version: "1.0.0",
-        glyph: Glyph::Clock,
+        glyph: Glyph::Sunrise,
         capabilities: &["network"],
     },
     BuiltinApp {
@@ -1536,11 +1536,11 @@ fn glyph(name: &str) -> Option<Glyph> {
         "cell-grid" => Glyph::CellGrid,
         "letter-check" => Glyph::LetterCheck,
         "noughts-crosses" => Glyph::NoughtsCrosses,
-        "pixel-picture" => Glyph::PixelPicture,
+        "clued-grid" => Glyph::CluedGrid,
         "puzzle" => Glyph::Puzzle,
         "remote" => Glyph::Remote,
         "dice" => Glyph::Dice,
-        "counters" => Glyph::Counters,
+        "board-pieces" => Glyph::BoardPieces,
         "question" => Glyph::Question,
         "swords" => Glyph::Swords,
         "map" => Glyph::Map,
@@ -1548,23 +1548,24 @@ fn glyph(name: &str) -> Option<Glyph> {
         "book-download" => Glyph::BookDownload,
         "stack" => Glyph::Stack,
         "flask" => Glyph::Flask,
-        "eyeglass" => Glyph::Eyeglass,
+        "paperclip" => Glyph::Paperclip,
         "cards" => Glyph::Cards,
         "yarn" => Glyph::Yarn,
         "music" => Glyph::Music,
         "lock" => Glyph::Lock,
         "quote" => Glyph::Quote,
         "feather" => Glyph::Feather,
-        "butterfly" => Glyph::Butterfly,
+        "binoculars" => Glyph::Binoculars,
         "mail" => Glyph::Mail,
         "calendar-check" => Glyph::CalendarCheck,
         "checklist" => Glyph::Checklist,
         "house" => Glyph::House,
         "cutlery" => Glyph::Cutlery,
-        "bolt" => Glyph::Bolt,
+        "comic-panels" => Glyph::ComicPanels,
         "inbox" => Glyph::Inbox,
         "photo" => Glyph::Photo,
         "keyboard" => Glyph::Keyboard,
+        "sunrise" => Glyph::Sunrise,
         _ => return None,
     })
 }
@@ -1946,7 +1947,7 @@ mod tests {
                 assert_eq!(glyph(earlier), Some(wire), "{name}");
             }
         }
-        assert_eq!(marks, 33);
+        assert_eq!(marks, 34);
     }
 
     /// A glyph name this runtime has never heard of costs the application its
