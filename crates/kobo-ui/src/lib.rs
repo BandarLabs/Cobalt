@@ -5263,6 +5263,85 @@ pub enum Glyph {
     /// before this existed, and a single dot the width of a full stop is not
     /// an emblem anyone reads at arm's length.
     Mill,
+    // The marks below exist so that every application on the launcher can be
+    // told from its neighbours by its picture as well as its name. Seven
+    // games once shared one four-square grid and six readers one book, which
+    // made a page of tiles look like a placeholder. They arrived with protocol
+    // 18; an older frame carries the mark each application wore before.
+    /// A letter in a square: a crossword, where every answer is written one
+    /// letter to a cell.
+    LetterSquare,
+    /// A digit in a square: a number puzzle, where every cell takes one
+    /// figure.
+    NumberSquare,
+    /// A letter with a tick beside it: a word guessed and checked letter by
+    /// letter.
+    LetterCheck,
+    /// Two strokes across two strokes: the board noughts and crosses is drawn
+    /// on with a pencil.
+    Hash,
+    /// A finer grid of three strokes each way: a picture puzzle solved cell
+    /// by cell.
+    Lattice,
+    /// A jigsaw piece: a logic puzzle, or a pack of them.
+    Puzzle,
+    /// A handheld remote with a pad and buttons: this reader controlling
+    /// another machine.
+    Remote,
+    /// A die showing five: a game of chance, or one with dice in it.
+    Dice,
+    /// Three plain counters: the pieces of the old board games, which are
+    /// discs whatever the board.
+    Counters,
+    /// A question mark in a ring: a quiz, a round of questions.
+    Question,
+    /// A sword: adventure, combat and the reference books that go with them.
+    Sword,
+    /// A compass rose: finding a way, which is most of what a text adventure
+    /// asks of its player.
+    Compass,
+    /// Books standing on a shelf: a library rather than one book.
+    Books,
+    /// A book with an arrow leaving it: books fetched for reading offline.
+    BookDownload,
+    /// Three layers in a pile: a stack of papers, a collection.
+    Stack,
+    /// A page with lines of text and a turned corner: a paper, a preprint.
+    Document,
+    /// Lines of text in a frame: an article saved to read later.
+    Article,
+    /// Two cards fanned: a deck of flashcards.
+    Cards,
+    /// A ball of yarn: knitting and the patterns for it.
+    Yarn,
+    /// Two notes joined by a beam: music, or the scores it is read from.
+    Music,
+    /// A bound notebook with a ribbon: a collection of notes.
+    Notebook,
+    /// A pair of quotation marks: words someone else wrote, such as a poem.
+    Quote,
+    /// A feather: birds, drawn by the one part of a bird that is a line.
+    Feather,
+    /// A pair of binoculars: looking for something out of doors and noting
+    /// it down.
+    Binoculars,
+    /// An envelope: a letter, sent or received.
+    Mail,
+    /// A calendar page with a tick: something done today, and on the days
+    /// before.
+    CalendarCheck,
+    /// Three ticks beside three lines: a list of things to do.
+    Checklist,
+    /// A house with a door: home, and the things in it.
+    House,
+    /// A fork and a knife: cooking and the recipes for it.
+    Cutlery,
+    /// A page cut into panels at an angle: a comic.
+    Collage,
+    /// A page with the feed mark on it: articles gathered from feeds.
+    FeedPage,
+    /// A framed landscape: a photograph.
+    Photo,
 }
 
 impl Glyph {
@@ -5273,7 +5352,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 69] = [
+    pub const ALL: [Self; 101] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5343,6 +5422,38 @@ impl Glyph {
         Self::Backspace,
         Self::Shift,
         Self::Mill,
+        Self::LetterSquare,
+        Self::NumberSquare,
+        Self::LetterCheck,
+        Self::Hash,
+        Self::Lattice,
+        Self::Puzzle,
+        Self::Remote,
+        Self::Dice,
+        Self::Counters,
+        Self::Question,
+        Self::Sword,
+        Self::Compass,
+        Self::Books,
+        Self::BookDownload,
+        Self::Stack,
+        Self::Document,
+        Self::Article,
+        Self::Cards,
+        Self::Yarn,
+        Self::Music,
+        Self::Notebook,
+        Self::Quote,
+        Self::Feather,
+        Self::Binoculars,
+        Self::Mail,
+        Self::CalendarCheck,
+        Self::Checklist,
+        Self::House,
+        Self::Cutlery,
+        Self::Collage,
+        Self::FeedPage,
+        Self::Photo,
     ];
 }
 

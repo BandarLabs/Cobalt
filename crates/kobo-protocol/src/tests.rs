@@ -1687,3 +1687,119 @@ fn a_dialogue_cannot_name_the_runtimes_own_back_as_its_way_out() {
     };
     assert!(encode(&frame).is_err());
 }
+
+fn marked_tiles(glyph: Glyph) -> Screen {
+    Screen::new(
+        6,
+        vec![Node::TileGrid {
+            id: kobo_ui::NodeId(1),
+            tiles: vec![kobo_ui::Tile::new(ActionId(7), "Backgammon", glyph)],
+            shape: kobo_ui::TileShape::Square,
+        }],
+    )
+}
+
+fn tile_glyph(screen: &Screen) -> Glyph {
+    let [Node::TileGrid { tiles, .. }] = screen.nodes.as_slice() else {
+        panic!("expected one tile grid");
+    };
+    tiles[0].glyph
+}
+
+fn app_marks() -> impl Iterator<Item = Glyph> {
+    Glyph::ALL.into_iter().filter(|glyph| is_app_mark(*glyph))
+}
+
+fn listed_at(version: u8, glyph: Glyph) -> Glyph {
+    let frame = Frame {
+        version,
+        request_id: 2,
+        message: Message::DeviceResult(DeviceResult::Apps {
+            entries: vec![AppInfo {
+                id: "backgammon".to_owned(),
+                title: "Backgammon".to_owned(),
+                label: "Backgammon".to_owned(),
+                summary: "Play backgammon.".to_owned(),
+                version: "0.1.17".to_owned(),
+                minimum_cobalt_version: "0.3.34".to_owned(),
+                glyph,
+                capabilities: Vec::new(),
+                installed_version: None,
+            }],
+        }),
+    };
+    let Message::DeviceResult(DeviceResult::Apps { entries }) =
+        decode(&encode(&frame).expect("encodes"))
+            .expect("decodes")
+            .message
+    else {
+        panic!("expected an application list");
+    };
+    entries[0].glyph
+}
+
+#[test]
+fn the_application_marks_are_the_thirty_two_glyphs_added_with_protocol_eighteen() {
+    assert_eq!(app_marks().count(), 32);
+}
+
+#[test]
+fn every_application_mark_travels_as_itself_at_protocol_eighteen() {
+    for mark in app_marks() {
+        assert_eq!(
+            tile_glyph(&decoded_at(APP_MARK_VERSION, marked_tiles(mark))),
+            mark
+        );
+        assert_eq!(listed_at(APP_MARK_VERSION, mark), mark);
+    }
+}
+
+/// A runtime older than the marks refuses a frame over a glyph byte it cannot
+/// read, so a frame written for it carries the picture the application wore
+/// before instead.
+#[test]
+fn an_application_mark_written_below_protocol_eighteen_becomes_the_glyph_it_replaced() {
+    for version in [QUIET_TYPE_VERSION, CONTROLS_VERSION, SUSPEND_VERSION] {
+        for mark in app_marks() {
+            let earlier = earlier_glyph(mark);
+            assert_ne!(earlier, mark);
+            assert!(!is_app_mark(earlier), "{mark:?} falls back to another mark");
+            assert_eq!(
+                tile_glyph(&decoded_at(version, marked_tiles(mark))),
+                earlier
+            );
+            assert_eq!(listed_at(version, mark), earlier);
+        }
+    }
+    assert_eq!(earlier_glyph(Glyph::Dice), Glyph::Circle);
+    assert_eq!(earlier_glyph(Glyph::Grid), Glyph::Grid);
+}
+
+#[test]
+fn a_frame_below_protocol_eighteen_that_names_an_application_mark_is_refused() {
+    let at = |glyph| {
+        encode(&Frame {
+            version: QUIET_TYPE_VERSION,
+            request_id: 1,
+            message: Message::SetScreen(marked_tiles(glyph)),
+        })
+        .expect("encodes")
+    };
+    let grid = at(Glyph::Grid);
+    let circle = at(Glyph::Circle);
+    let differing: Vec<usize> = (0..grid.len()).filter(|&i| grid[i] != circle[i]).collect();
+    let [index] = differing.as_slice() else {
+        panic!("expected the two frames to differ in the glyph byte alone");
+    };
+    let mut forged = grid;
+    forged[*index] = encode_glyph(Glyph::Dice);
+    assert!(decode(&forged).is_err());
+    assert_eq!(
+        glyph_at(encode_glyph(Glyph::Dice), QUIET_TYPE_VERSION),
+        None
+    );
+    assert_eq!(
+        glyph_at(encode_glyph(Glyph::Dice), APP_MARK_VERSION),
+        Some(Glyph::Dice)
+    );
+}

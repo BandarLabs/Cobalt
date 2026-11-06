@@ -43,6 +43,14 @@ capability policy in `tools/protocol-minimums.json`. An app may supply a newer
 version as an explicit compatibility floor; it can never lower the derived
 minimum.
 
+`glyph` names the mark the launcher and the Store draw for the app, such as
+`book`, `dice` or `compass`. The runtime's names are listed in
+`crates/kobod/src/app_store.rs`. Only the names in
+`kobo_app_store::is_public_glyph` can be published, because a runtime up to
+0.3.33 refuses the whole catalog over a name it does not know and every reader
+fetches the same catalog. Runtimes from 0.3.34 draw an unknown name as the
+generic app mark instead.
+
 Optional `setup.steps` may describe account or self-hosting prerequisites.
 Use one to six short steps. Links must be absolute HTTPS URLs without embedded
 credentials. Setup text is website-only and never enters the signed package.

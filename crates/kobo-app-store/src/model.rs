@@ -43,7 +43,13 @@ pub fn is_public_reserved_app_id(id: &str) -> bool {
     PUBLIC_RESERVED_APP_IDS.contains(&id)
 }
 
-/// Returns whether the released runtime can render this manifest glyph.
+/// Returns whether every released runtime can render this manifest glyph.
+///
+/// This is the publisher's list, not the reader's. A runtime up to and
+/// including 0.3.33 refuses a whole catalog when one entry names a glyph it
+/// does not know, and every reader fetches the same catalog, so a name may
+/// join this list only once no reader that old can still be fetching it. A
+/// newer runtime reads any well-formed name; see [`Manifest::parse_installable`].
 #[must_use]
 pub fn is_public_glyph(name: &str) -> bool {
     matches!(
@@ -241,6 +247,25 @@ impl Manifest {
         Self::validate_public_manifest(Self::parse(json, public_reserved_app_ids())?)
     }
 
+    /// Parses a signed manifest as a reader does before installing or listing
+    /// it.
+    ///
+    /// Everything [`Self::parse_public`] checks except that the glyph is one
+    /// every released runtime knows. The glyph only chooses a picture, and a
+    /// reader that cannot draw the one named draws the generic application
+    /// mark instead, so a later release can give an application a new mark
+    /// without this reader refusing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::parse`], and refuses a manifest that
+    /// asks for shell access.
+    pub fn parse_installable(json: &[u8]) -> Result<Self, FormatError> {
+        let manifest = Self::parse(json, public_reserved_app_ids())?;
+        manifest.ensure_installable()?;
+        Ok(manifest)
+    }
+
     fn validate_public_manifest(manifest: Manifest) -> Result<Manifest, FormatError> {
         manifest.ensure_public()?;
         Ok(manifest)
@@ -253,6 +278,10 @@ impl Manifest {
                 reason: "is not supported by released Cobalt runtimes",
             });
         }
+        self.ensure_installable()
+    }
+
+    pub(crate) fn ensure_installable(&self) -> Result<(), FormatError> {
         if self.capabilities.holds(Capability::Shell) {
             return Err(FormatError::InvalidValue {
                 field: "capabilities",
@@ -462,6 +491,24 @@ impl Catalog {
         let catalog = Self::parse(json, public_reserved_app_ids())?;
         for entry in &catalog.entries {
             entry.manifest.ensure_public()?;
+        }
+        Ok(catalog)
+    }
+
+    /// Parses a signed catalog as a reader does.
+    ///
+    /// The reader's half of [`Manifest::parse_installable`]: one entry naming
+    /// a glyph this release has never heard of costs that entry its picture,
+    /// not the owner the whole Store.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::parse`], and refuses a catalog with
+    /// an entry that asks for shell access.
+    pub fn parse_installable(json: &[u8]) -> Result<Self, FormatError> {
+        let catalog = Self::parse(json, public_reserved_app_ids())?;
+        for entry in &catalog.entries {
+            entry.manifest.ensure_installable()?;
         }
         Ok(catalog)
     }
@@ -901,6 +948,57 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn a_shell_request_is_refused_by_a_reader_as_well_as_by_the_publisher() {
+        let mut requested = input("shell-tool", b"binary");
+        requested.capabilities = vec!["shell".to_owned()];
+        let manifest = Manifest::new(requested, &[]).expect("generic shell manifest");
+        assert!(Manifest::parse_installable(&manifest.to_canonical_bytes()).is_err());
+        let catalog = Catalog::new(vec![CatalogEntry::new(CatalogEntryInput {
+            manifest,
+            package_url: "https://apps.example/shell-tool.cobalt-app".to_owned(),
+            package_sha256: hex_digest(b"package"),
+            package_bytes: 100,
+        })
+        .expect("entry")])
+        .expect("catalog");
+        assert!(Catalog::parse_installable(&catalog.to_canonical_bytes()).is_err());
+    }
+
+    /// Runtimes up to 0.3.33 refused the whole catalog over one glyph name
+    /// they did not know, so the publisher keeps to the names they know while
+    /// a reader accepts any well-formed one and draws what it can.
+    #[test]
+    fn a_glyph_released_runtimes_cannot_draw_is_refused_for_publishing_but_read_by_a_reader() {
+        let mut marked = input("backgammon", b"binary");
+        marked.glyph = "dice".to_owned();
+        assert!(!is_public_glyph("dice"));
+        assert!(matches!(
+            Manifest::new_public(marked.clone()),
+            Err(FormatError::InvalidValue { field: "glyph", .. })
+        ));
+
+        let manifest = Manifest::new(marked, &[]).expect("well-formed manifest");
+        let bytes = manifest.to_canonical_bytes();
+        assert!(Manifest::parse_public(&bytes).is_err());
+        assert_eq!(Manifest::parse_installable(&bytes), Ok(manifest.clone()));
+
+        let catalog = Catalog::new(vec![
+            entry("brief"),
+            CatalogEntry::new(CatalogEntryInput {
+                manifest,
+                package_url: "https://apps.example/backgammon.cobalt-app".to_owned(),
+                package_sha256: hex_digest(b"package"),
+                package_bytes: 100,
+            })
+            .expect("entry"),
+        ])
+        .expect("catalog");
+        let bytes = catalog.to_canonical_bytes();
+        assert!(Catalog::parse_public(&bytes).is_err());
+        assert_eq!(Catalog::parse_installable(&bytes), Ok(catalog));
     }
 
     #[test]

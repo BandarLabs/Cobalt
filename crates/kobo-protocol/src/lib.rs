@@ -165,6 +165,17 @@ pub const CELL_TONE_VERSION: u8 = 17;
 /// instead of drawing a narrower italic into lines it did not fit.
 pub const FINE_TYPE_VERSION: u8 = 18;
 
+/// The protocol whose frames may name the application marks: the glyphs,
+/// such as [`Glyph::Dice`] and [`Glyph::Compass`], that let every application
+/// on the launcher wear a picture of its own.
+///
+/// They travel on glyph bytes an older runtime has no reading for, and an
+/// older runtime refuses a whole frame over one byte it cannot read rather
+/// than drawing a blank. So a frame encoded at an earlier protocol carries,
+/// in place of each mark, the glyph the application wore before the mark
+/// existed, and a frame at an earlier protocol that names one is refused.
+pub const APP_MARK_VERSION: u8 = 18;
+
 pub const VERSION: u8 = 18;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
@@ -4012,7 +4023,7 @@ fn encode_device_result(
                 u16::try_from(entries.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
             );
             for entry in entries {
-                encode_app_info(output, entry)?;
+                encode_app_info(output, entry, version)?;
             }
         }
         DeviceResult::Dictionary { word, entries } => {
@@ -4221,7 +4232,11 @@ fn encode_remote_install(
     Ok(())
 }
 
-fn encode_app_info(output: &mut Vec<u8>, entry: &AppInfo) -> Result<(), ProtocolError> {
+fn encode_app_info(
+    output: &mut Vec<u8>,
+    entry: &AppInfo,
+    protocol: u8,
+) -> Result<(), ProtocolError> {
     validate_app_info(entry)?;
     for text in [
         &entry.id,
@@ -4233,7 +4248,7 @@ fn encode_app_info(output: &mut Vec<u8>, entry: &AppInfo) -> Result<(), Protocol
     ] {
         push_string(output, text)?;
     }
-    output.push(encode_glyph(entry.glyph));
+    output.push(glyph_tag(entry.glyph, protocol));
     output.push(u8::try_from(entry.capabilities.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
     for capability in &entry.capabilities {
         push_string(output, capability)?;
@@ -4346,7 +4361,7 @@ fn decode_device_result(
         }
         8 => Ok(DeviceResult::Failed(DeviceError::try_from(reader.u8()?)?)),
         9 => decode_audio_result(reader),
-        12 => decode_apps_result(reader),
+        12 => decode_apps_result(reader, version),
         13 => decode_dictionary_result(reader),
         14 => decode_app_link(reader),
         15 => decode_remote_install(reader),
@@ -4686,7 +4701,10 @@ fn decode_dictionary_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Pro
     Ok(DeviceResult::Dictionary { word, entries })
 }
 
-fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+fn decode_apps_result(
+    reader: &mut Reader<'_>,
+    protocol: u8,
+) -> Result<DeviceResult, ProtocolError> {
     let count = usize::from(reader.u16()?);
     if count > MAX_APP_CATALOG_ENTRIES {
         return Err(ProtocolError::InvalidValue("too many applications"));
@@ -4699,8 +4717,8 @@ fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolE
         let summary = reader.string()?;
         let version = reader.string()?;
         let minimum_cobalt_version = reader.string()?;
-        let glyph =
-            decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("application glyph"))?;
+        let glyph = glyph_at(reader.u8()?, protocol)
+            .ok_or(ProtocolError::InvalidValue("application glyph"))?;
         let capability_count = usize::from(reader.u8()?);
         if capability_count > MAX_APP_CAPABILITIES {
             return Err(ProtocolError::InvalidValue(
@@ -5925,7 +5943,7 @@ fn encode_top_bar(
     let actions = &top_bar.actions[..min(top_bar.actions.len(), MAX_BAR_ACTIONS)];
     output.push(u8::try_from(actions.len()).unwrap_or(0));
     for action in actions {
-        encode_bar_action(output, action)?;
+        encode_bar_action(output, action, version)?;
     }
     Ok(())
 }
@@ -5983,7 +6001,7 @@ fn encode_screen(
                 None => NAV_SELECTION_NONE,
             });
             for destination in &nav_bar.destinations {
-                encode_bar_action(output, destination)?;
+                encode_bar_action(output, destination, version)?;
             }
         }
     }
@@ -5996,7 +6014,7 @@ fn encode_screen(
         Some(bottom) if screen.nav_bar.is_none() => {
             output.push(1);
             push_u32(output, bottom.id.0);
-            encode_bar_action(output, &bottom.action)?;
+            encode_bar_action(output, &bottom.action, version)?;
         }
         _ => output.push(0),
     }
@@ -6100,7 +6118,11 @@ fn encode_screen(
     Ok(())
 }
 
-fn encode_bar_action(output: &mut Vec<u8>, action: &BarAction) -> Result<(), ProtocolError> {
+fn encode_bar_action(
+    output: &mut Vec<u8>,
+    action: &BarAction,
+    version: u8,
+) -> Result<(), ProtocolError> {
     push_u32(output, action.action.0);
     // The mark travels with every bar action rather than only the top bar's.
     // It used to be encoded beside the top bar alone, on the reasoning that a
@@ -6111,7 +6133,7 @@ fn encode_bar_action(output: &mut Vec<u8>, action: &BarAction) -> Result<(), Pro
         None => output.push(0),
         Some(glyph) => {
             output.push(1);
-            output.push(encode_glyph(glyph));
+            output.push(glyph_tag(glyph, version));
         }
     }
     push_string(output, &action.label)
@@ -6128,7 +6150,7 @@ fn encoded_bar_action_len(action: &BarAction) -> Result<usize, ProtocolError> {
     Ok(length)
 }
 
-fn decode_bar_action(reader: &mut Reader<'_>) -> Result<BarAction, ProtocolError> {
+fn decode_bar_action(reader: &mut Reader<'_>, version: u8) -> Result<BarAction, ProtocolError> {
     let action = ActionId(reader.u32()?);
     // The runtime owns going back, so an application is not allowed to name
     // that identifier. Rejecting it here means a hostile frame cannot forge a
@@ -6138,7 +6160,7 @@ fn decode_bar_action(reader: &mut Reader<'_>) -> Result<BarAction, ProtocolError
     }
     let glyph = match reader.u8()? {
         0 => None,
-        1 => Some(decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("bar glyph"))?),
+        1 => Some(glyph_at(reader.u8()?, version).ok_or(ProtocolError::InvalidValue("bar glyph"))?),
         _ => return Err(ProtocolError::InvalidValue("bar glyph flag")),
     };
     Ok(BarAction {
@@ -6566,7 +6588,7 @@ fn encode_node(
                     None => output.push(0),
                     Some(glyph) => {
                         output.push(1);
-                        output.push(encode_glyph(glyph));
+                        output.push(glyph_tag(glyph, version));
                     }
                 }
                 if cell.tone != kobo_ui::CellTone::Plain && version < CELL_TONE_VERSION {
@@ -6594,7 +6616,7 @@ fn encode_node(
                 push_u32(output, row.action.0);
                 push_string(output, &row.title)?;
                 push_string(output, &row.summary)?;
-                push_row_lead(output, row.lead);
+                push_row_lead(output, row.lead, version);
                 output.push(encode_row_state(row.state));
                 output.push(u8::from(row.trailing.is_some()));
                 if let Some(trailing) = &row.trailing {
@@ -6612,7 +6634,7 @@ fn encode_node(
                     match &row.button {
                         Some(button) => {
                             output.push(1);
-                            encode_bar_action(output, button)?;
+                            encode_bar_action(output, button, version)?;
                         }
                         None => output.push(0),
                     }
@@ -6641,7 +6663,7 @@ fn encode_node(
             for tile in tiles {
                 push_u32(output, tile.action.0);
                 push_string(output, &tile.label)?;
-                output.push(encode_glyph(tile.glyph));
+                output.push(glyph_tag(tile.glyph, version));
                 output.push(match tile.state {
                     TileState::Normal => 0,
                     TileState::Held => 1,
@@ -6736,8 +6758,8 @@ fn encode_node(
             output.push(29);
             push_u32(output, id.0);
             push_string(output, label)?;
-            encode_bar_action(output, less)?;
-            encode_bar_action(output, more)?;
+            encode_bar_action(output, less, version)?;
+            encode_bar_action(output, more, version)?;
             for state in [less_state, more_state] {
                 output.push(match state {
                     ControlState::Enabled => 0,
@@ -6763,7 +6785,7 @@ fn encode_node(
             push_string(output, prompt)?;
             output.push(u8::try_from(options.len()).map_err(|_| ProtocolError::TooManyNodes)?);
             for option in options {
-                encode_bar_action(output, option)?;
+                encode_bar_action(output, option, version)?;
             }
             // Sent as one past the index so that "no answer yet" is zero, which
             // is what a peer that never sets it produces.
@@ -6804,7 +6826,7 @@ fn encode_node(
                 match action {
                     Some(action) => {
                         output.push(1);
-                        encode_bar_action(output, action)?;
+                        encode_bar_action(output, action, version)?;
                     }
                     None => output.push(0),
                 }
@@ -6827,7 +6849,7 @@ fn encode_node(
                 None => output.push(0),
                 Some(glyph) => {
                     output.push(1);
-                    output.push(encode_glyph(*glyph));
+                    output.push(glyph_tag(*glyph, version));
                 }
             }
             push_string(output, title)?;
@@ -6855,7 +6877,7 @@ fn encode_node(
                 None => output.push(0),
                 Some(cancel) => {
                     output.push(1);
-                    encode_bar_action(output, cancel)?;
+                    encode_bar_action(output, cancel, version)?;
                 }
             }
             match transferred {
@@ -6934,7 +6956,7 @@ fn encode_node(
             push_u32(output, *count);
             output.push(u8::try_from(actions.len()).map_err(|_| ProtocolError::TooManyNodes)?);
             for action in actions {
-                encode_bar_action(output, action)?;
+                encode_bar_action(output, action, version)?;
             }
         }
         Node::Options {
@@ -7159,6 +7181,72 @@ fn store_result_len(result: &StoreResult) -> Result<usize, ProtocolError> {
     Ok(length)
 }
 
+/// The byte a glyph travels as in a frame encoded at `version`.
+///
+/// An application mark sent at a protocol that predates it becomes the glyph
+/// its application wore before, so a runtime that has never heard of the mark
+/// still opens the frame and draws something the owner has seen before.
+const fn glyph_tag(glyph: Glyph, version: u8) -> u8 {
+    if version >= APP_MARK_VERSION {
+        encode_glyph(glyph)
+    } else {
+        encode_glyph(earlier_glyph(glyph))
+    }
+}
+
+/// The glyph a frame encoded at `version` names with `tag`.
+///
+/// Refused rather than read as the earlier glyph when an older frame names an
+/// application mark, because no sender at that protocol could have meant one.
+const fn glyph_at(tag: u8, version: u8) -> Option<Glyph> {
+    match decode_glyph(tag) {
+        Some(glyph) if version < APP_MARK_VERSION && is_app_mark(glyph) => None,
+        decoded => decoded,
+    }
+}
+
+/// Whether `glyph` arrived with [`APP_MARK_VERSION`], which is the same as
+/// whether it has an earlier glyph to stand in for it.
+const fn is_app_mark(glyph: Glyph) -> bool {
+    encode_glyph(earlier_glyph(glyph)) != encode_glyph(glyph)
+}
+
+/// The glyph an application drew before it had a mark of its own.
+///
+/// Each mark falls back to the picture the applications it was drawn for used
+/// to share, which is the picture an owner on an older runtime already knows
+/// them by.
+const fn earlier_glyph(glyph: Glyph) -> Glyph {
+    match glyph {
+        Glyph::LetterSquare
+        | Glyph::NumberSquare
+        | Glyph::Hash
+        | Glyph::Lattice
+        | Glyph::Puzzle
+        | Glyph::Remote => Glyph::Grid,
+        Glyph::Dice | Glyph::Counters => Glyph::Circle,
+        Glyph::Question | Glyph::Mail => Glyph::Chat,
+        Glyph::Sword | Glyph::Compass | Glyph::Books | Glyph::BookDownload | Glyph::Stack => {
+            Glyph::Book
+        }
+        Glyph::Document | Glyph::LetterCheck | Glyph::Music | Glyph::Notebook | Glyph::Quote => {
+            Glyph::Note
+        }
+        Glyph::Article | Glyph::Cards | Glyph::Yarn => Glyph::Bookmark,
+        Glyph::Feather | Glyph::Photo => Glyph::App,
+        Glyph::Binoculars => Glyph::Search,
+        Glyph::CalendarCheck | Glyph::Checklist => Glyph::Check,
+        Glyph::House => Glyph::Light,
+        Glyph::Cutlery | Glyph::Collage => Glyph::Reader,
+        Glyph::FeedPage => Glyph::Rss,
+        other => other,
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per glyph, so the wire table reads as a table"
+)]
 const fn encode_glyph(glyph: Glyph) -> u8 {
     match glyph {
         Glyph::App => 0,
@@ -7230,9 +7318,45 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Backspace => 66,
         Glyph::Shift => 67,
         Glyph::Mill => 68,
+        Glyph::LetterSquare => 69,
+        Glyph::NumberSquare => 70,
+        Glyph::Hash => 71,
+        Glyph::Lattice => 72,
+        Glyph::Puzzle => 73,
+        Glyph::Remote => 74,
+        Glyph::Dice => 75,
+        Glyph::Question => 76,
+        Glyph::Sword => 77,
+        Glyph::Compass => 78,
+        Glyph::Books => 79,
+        Glyph::BookDownload => 80,
+        Glyph::Stack => 81,
+        Glyph::Document => 82,
+        Glyph::Article => 83,
+        Glyph::Cards => 84,
+        Glyph::Yarn => 85,
+        Glyph::Music => 86,
+        Glyph::Notebook => 87,
+        Glyph::Quote => 88,
+        Glyph::Feather => 89,
+        Glyph::Binoculars => 90,
+        Glyph::Mail => 91,
+        Glyph::CalendarCheck => 92,
+        Glyph::Checklist => 93,
+        Glyph::House => 94,
+        Glyph::Cutlery => 95,
+        Glyph::Collage => 96,
+        Glyph::FeedPage => 97,
+        Glyph::Photo => 98,
+        Glyph::Counters => 99,
+        Glyph::LetterCheck => 100,
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per glyph, so the wire table reads as a table"
+)]
 const fn decode_glyph(tag: u8) -> Option<Glyph> {
     Some(match tag {
         0 => Glyph::App,
@@ -7304,6 +7428,38 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         66 => Glyph::Backspace,
         67 => Glyph::Shift,
         68 => Glyph::Mill,
+        69 => Glyph::LetterSquare,
+        70 => Glyph::NumberSquare,
+        71 => Glyph::Hash,
+        72 => Glyph::Lattice,
+        73 => Glyph::Puzzle,
+        74 => Glyph::Remote,
+        75 => Glyph::Dice,
+        76 => Glyph::Question,
+        77 => Glyph::Sword,
+        78 => Glyph::Compass,
+        79 => Glyph::Books,
+        80 => Glyph::BookDownload,
+        81 => Glyph::Stack,
+        82 => Glyph::Document,
+        83 => Glyph::Article,
+        84 => Glyph::Cards,
+        85 => Glyph::Yarn,
+        86 => Glyph::Music,
+        87 => Glyph::Notebook,
+        88 => Glyph::Quote,
+        89 => Glyph::Feather,
+        90 => Glyph::Binoculars,
+        91 => Glyph::Mail,
+        92 => Glyph::CalendarCheck,
+        93 => Glyph::Checklist,
+        94 => Glyph::House,
+        95 => Glyph::Cutlery,
+        96 => Glyph::Collage,
+        97 => Glyph::FeedPage,
+        98 => Glyph::Photo,
+        99 => Glyph::Counters,
+        100 => Glyph::LetterCheck,
 
         _ => return None,
     })
@@ -7337,7 +7493,7 @@ fn decode_screen(
             }
             let mut actions = Vec::with_capacity(count);
             for _ in 0..count {
-                actions.push(decode_bar_action(reader)?);
+                actions.push(decode_bar_action(reader, version)?);
             }
             Some(TopBar {
                 id: bar_id,
@@ -7360,7 +7516,7 @@ fn decode_screen(
             let selected = usize::from(reader.u8()?);
             let mut destinations = Vec::with_capacity(len);
             for _ in 0..len {
-                destinations.push(decode_bar_action(reader)?);
+                destinations.push(decode_bar_action(reader, version)?);
             }
             if destinations.len() < MIN_NAV_DESTINATIONS {
                 return Err(ProtocolError::InvalidValue("nav bar destinations"));
@@ -7387,7 +7543,7 @@ fn decode_screen(
         0 => None,
         1 => Some(BottomAction::new(
             NodeId(reader.u32()?),
-            decode_bar_action(reader)?,
+            decode_bar_action(reader, version)?,
         )),
         _ => return Err(ProtocolError::InvalidValue("bottom action flag")),
     };
@@ -7939,8 +8095,8 @@ fn decode_node(
                     return Err(ProtocolError::InvalidValue("reserved action id"));
                 }
                 let label = reader.string()?;
-                let glyph =
-                    decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("tile glyph"))?;
+                let glyph = glyph_at(reader.u8()?, version)
+                    .ok_or(ProtocolError::InvalidValue("tile glyph"))?;
                 let state = match reader.u8()? {
                     0 => TileState::Normal,
                     1 => TileState::Held,
@@ -8019,7 +8175,7 @@ fn decode_node(
             let len = usize::from(reader.u8()?);
             let mut options = Vec::with_capacity(len);
             for _ in 0..len {
-                options.push(decode_bar_action(reader)?);
+                options.push(decode_bar_action(reader, version)?);
             }
             // Clamped rather than refused: an answer that does not name one of
             // the options is a caller mistake, and refusing the frame would
@@ -8079,8 +8235,8 @@ fn decode_node(
         }
         29 => {
             let label = reader.string()?;
-            let less = decode_bar_action(reader)?;
-            let more = decode_bar_action(reader)?;
+            let less = decode_bar_action(reader, version)?;
+            let more = decode_bar_action(reader, version)?;
             let mut states = [ControlState::Enabled; 2];
             for state in &mut states {
                 *state = match reader.u8()? {
@@ -8119,7 +8275,7 @@ fn decode_node(
             } else {
                 match reader.u8()? {
                     0 => None,
-                    1 => Some(decode_bar_action(reader)?),
+                    1 => Some(decode_bar_action(reader, version)?),
                     _ => return Err(ProtocolError::InvalidValue("banner action flag")),
                 }
             };
@@ -8160,7 +8316,7 @@ fn decode_node(
             }
             let mut actions = Vec::with_capacity(shown);
             for _ in 0..shown {
-                actions.push(decode_bar_action(reader)?);
+                actions.push(decode_bar_action(reader, version)?);
             }
             Ok(Node::SelectionBar { id, count, actions })
         }
@@ -8245,7 +8401,7 @@ fn decode_node(
             let glyph = match reader.u8()? {
                 0 => None,
                 1 => Some(
-                    decode_glyph(reader.u8()?)
+                    glyph_at(reader.u8()?, version)
                         .ok_or(ProtocolError::InvalidValue("splash glyph"))?,
                 ),
                 _ => return Err(ProtocolError::InvalidValue("splash glyph flag")),
@@ -8266,7 +8422,7 @@ fn decode_node(
             };
             let cancel = match reader.u8()? {
                 0 => None,
-                1 => Some(decode_bar_action(reader)?),
+                1 => Some(decode_bar_action(reader, version)?),
                 _ => return Err(ProtocolError::InvalidValue("activity cancel flag")),
             };
             let transferred = match reader.u8()? {
@@ -8353,7 +8509,8 @@ fn decode_node(
                 let cell = match reader.u8()? {
                     0 => cell,
                     1 => cell.with_glyph(
-                        decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("glyph"))?,
+                        glyph_at(reader.u8()?, version)
+                            .ok_or(ProtocolError::InvalidValue("glyph"))?,
                     ),
                     _ => return Err(ProtocolError::InvalidValue("cell glyph flag")),
                 };
@@ -8398,7 +8555,7 @@ fn decode_node(
                 }
                 let title = reader.string()?;
                 let summary = reader.string()?;
-                let lead = read_row_lead(reader)?;
+                let lead = read_row_lead(reader, version)?;
                 let state = decode_row_state(reader.u8()?, version)
                     .ok_or(ProtocolError::InvalidValue("row state"))?;
                 let trailing = if reader.u8()? == 0 {
@@ -8420,7 +8577,7 @@ fn decode_node(
                 } else {
                     let button = match reader.u8()? {
                         0 => None,
-                        1 => Some(decode_bar_action(reader)?),
+                        1 => Some(decode_bar_action(reader, version)?),
                         _ => return Err(ProtocolError::InvalidValue("row button flag")),
                     };
                     let badge = match reader.u8()? {
@@ -8457,12 +8614,12 @@ fn decode_node(
 /// arithmetic that has already produced one `debug_assert` panic in this file.
 /// Thirteen wasted bytes per row is the price of keeping that prediction a
 /// constant, and it is a price worth paying twice.
-fn push_row_lead(output: &mut Vec<u8>, lead: RowLead) {
+fn push_row_lead(output: &mut Vec<u8>, lead: RowLead, version: u8) {
     let before = output.len();
     match lead {
         RowLead::Icon(glyph) => {
             output.push(0);
-            push_u16(output, u16::from(encode_glyph(glyph)));
+            push_u16(output, u16::from(glyph_tag(glyph, version)));
         }
         RowLead::Number(number) => {
             output.push(1);
@@ -8470,7 +8627,7 @@ fn push_row_lead(output: &mut Vec<u8>, lead: RowLead) {
         }
         RowLead::Picture(picture, glyph) => {
             output.push(2);
-            push_u16(output, u16::from(encode_glyph(glyph)));
+            push_u16(output, u16::from(glyph_tag(glyph, version)));
             push_u32(output, picture.handle.0);
             push_u32(output, picture.source.0);
             push_u32(output, picture.source.1);
@@ -8483,13 +8640,13 @@ fn push_row_lead(output: &mut Vec<u8>, lead: RowLead) {
 /// The fixed width of an encoded row lead.
 const ROW_LEAD_LEN: usize = 15;
 
-fn read_row_lead(reader: &mut Reader<'_>) -> Result<RowLead, ProtocolError> {
+fn read_row_lead(reader: &mut Reader<'_>, version: u8) -> Result<RowLead, ProtocolError> {
     let tag = reader.u8()?;
     let value = reader.u16()?;
     let glyph = || {
         u8::try_from(value)
             .ok()
-            .and_then(decode_glyph)
+            .and_then(|tag| glyph_at(tag, version))
             .ok_or(ProtocolError::InvalidValue("row glyph"))
     };
     let lead = match tag {

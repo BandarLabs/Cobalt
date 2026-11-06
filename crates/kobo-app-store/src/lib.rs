@@ -13,7 +13,9 @@ mod model;
 mod release;
 mod signing;
 
-pub use bundle::{build_bundle, parse_bundle, parse_public_bundle, ParsedBundle};
+pub use bundle::{
+    build_bundle, parse_bundle, parse_installable_bundle, parse_public_bundle, ParsedBundle,
+};
 pub use error::{BundleError, FormatError, SignatureError};
 pub use model::{
     cobalt_version_at_least, is_public_glyph, is_public_reserved_app_id, public_reserved_app_ids,
