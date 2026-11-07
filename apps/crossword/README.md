@@ -61,7 +61,9 @@ stays marked Completed once solved, even after a restart.
 Progress is marked saved only once storage confirms it. If storage is full,
 keep the app open, free some space and choose **Retry saving**. Your latest
 letters stay in memory, and the reader will not suspend until they are saved.
-Saves that cannot be read are left untouched.
+Saves that cannot be read are left untouched: **Try again** reads them once
+more, and **Start over** keeps a copy on the reader before every puzzle
+starts again empty.
 
 ## Limits
 

@@ -835,3 +835,100 @@ fn a_small_puzzle_prints_its_clue_in_ink_and_every_clue_under_the_grid() {
     );
     assert!(drawn.contains("Place down (3)"), "{drawn}");
 }
+
+fn store_saves(commands: &[Command]) -> Vec<(String, Vec<u8>)> {
+    commands
+        .iter()
+        .filter_map(|c| match c {
+            Command::Store(StoreRequest::Save { key, value }) => Some((key.clone(), value.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn says(r: &AppRunner<Crossword>, words: &str) -> bool {
+    format!("{:?}", r.app().screen(&r.context()).nodes).contains(words)
+}
+
+/// Try again reads the same bytes and fails the same way, so it alone was a
+/// dead end. Start over keeps those bytes under a key of their own, and only
+/// then lets the unreadable record go.
+#[test]
+fn start_over_copies_unreadable_progress_aside_before_writing_a_fresh_record() {
+    let unreadable = b"not a saved game".to_vec();
+    let mut r = AppRunner::new(Crossword::default());
+    r.start();
+    r.store_result(StoreResult::Loaded {
+        key: saved::KEY.into(),
+        value: Some(unreadable.clone()),
+    });
+    assert!(says(&r, "Start over"));
+    r.action(action_id(recover::START_OVER));
+    assert!(says(&r, "Start over?"));
+    r.action(ActionId::BACK);
+    assert!(!says(&r, "Start over?"));
+    r.action(action_id(recover::START_OVER));
+    let commands = r.action(action_id(recover::CONFIRM));
+    assert!(commands
+        .iter()
+        .any(|c| matches!(c, Command::Store(StoreRequest::List))));
+    let commands = r.store_result(StoreResult::Keys(vec![saved::KEY.into()]));
+    let copy = format!("{}-unreadable-1", saved::KEY);
+    assert_eq!(store_saves(&commands), [(copy.clone(), unreadable)]);
+    assert!(!r.app().loaded);
+    let commands = r.store_result(StoreResult::Saved { key: copy });
+    assert!(r.app().loaded);
+    assert!(r.app().view == View::Puzzles);
+    // The unreadable record goes once its copy is kept, so reopening finds
+    // the shelf as on the first day.
+    assert!(store_saves(&commands).is_empty());
+    assert!(commands.iter().any(|c| matches!(
+        c,
+        Command::Store(StoreRequest::Forget { key }) if key == saved::KEY
+    )));
+}
+
+#[test]
+fn the_shelf_names_its_page_and_rules_opened_there_return_to_the_same_page() {
+    let mut r = AppRunner::new(Crossword::default());
+    r.start();
+    r.store_result(StoreResult::Loaded {
+        key: saved::KEY.into(),
+        value: None,
+    });
+    r.action(action_id("puzzles-next"));
+    assert_eq!(r.app().puzzle_page, 1);
+    let drawn: Vec<String> = r
+        .app()
+        .screen(&r.context())
+        .layout_with(&kobo_ui::CLARA_BW_METRICS, &Chrome::measuring(true))
+        .nodes
+        .into_iter()
+        .flat_map(|node| node.text_lines)
+        .collect();
+    assert!(
+        drawn.iter().any(|line| line.starts_with("2 of ")),
+        "{drawn:?}"
+    );
+    r.action(action_id(chrome::RULES));
+    r.action(ActionId::BACK);
+    assert!(r.app().view == View::Puzzles);
+    assert_eq!(r.app().puzzle_page, 1);
+}
+
+#[test]
+fn each_answer_opens_on_the_letters_even_after_the_last_one_went_to_the_symbols() {
+    let mut r = AppRunner::new(Crossword::default());
+    r.start();
+    r.store_result(StoreResult::Loaded {
+        key: saved::KEY.into(),
+        value: None,
+    });
+    r.action(action_id("puzzle-3"));
+    r.action(action_id("cell-1"));
+    r.action(action_id(kobo_ui::keyboard::LAYER));
+    assert_ne!(r.app().keyboard.layer(), Keyboard::new().layer());
+    r.action(ActionId::BACK);
+    r.action(action_id("cell-1"));
+    assert_eq!(r.app().keyboard.layer(), Keyboard::new().layer());
+}
