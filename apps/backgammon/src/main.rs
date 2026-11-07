@@ -649,22 +649,24 @@ impl Game {
             vec![first, second]
         };
         let side = self.side(self.turn);
-        let rolled = if opening { "opened with" } else { "rolled" };
+        let rolled = rolled_words(opening, &self.dice);
         if legal_turns(&self.position, self.turn, &self.dice).is_empty() {
             self.end_turn();
-            self.message = format!("{side} {rolled} {first} and {second} and cannot move.");
+            self.message = format!("{side} {rolled} and cannot move.");
             if self.mode == Mode::PassAndPlay {
                 self.message = format!("{} {}", self.message, self.to_roll());
             }
         } else {
-            self.message = format!(
-                "{side} {rolled} {first} and {second}. {}",
-                if self.next_moves().len() == 1 {
-                    "Only one move is legal. Tap its checker."
-                } else {
-                    "Tap a checker to pick it up."
-                }
-            );
+            let moves = self.next_moves();
+            // A checker on the bar is moved by tapping Bar, not a checker.
+            let from_bar = moves.iter().all(|play| play.from.is_none());
+            let next = match (moves.len() == 1, from_bar) {
+                (true, true) => "Only one move is legal. Tap Bar to bring a checker in.",
+                (true, false) => "Only one move is legal. Tap its checker.",
+                (false, true) => "Tap Bar to bring a checker in.",
+                (false, false) => "Tap a checker to pick it up.",
+            };
+            self.message = format!("{side} {rolled}. {next}");
         }
     }
 
@@ -708,10 +710,20 @@ impl Game {
             player: self.turn,
             plays: plays.clone(),
         });
-        if plays.is_empty() {
-            return;
-        }
-        let line = format!("{} {}", self.side(self.turn), self.written(&plays));
+        // A turn with no legal move is still a turn, so the record says so
+        // rather than skip it. The dice are still on the table here.
+        let line = if plays.is_empty() {
+            if self.dice.is_empty() {
+                return;
+            }
+            format!(
+                "{} {} and could not move",
+                self.side(self.turn),
+                rolled_words(false, &self.dice)
+            )
+        } else {
+            format!("{} {}", self.side(self.turn), self.written(&plays))
+        };
         self.note(&line);
     }
 
@@ -888,17 +900,23 @@ impl Game {
 
     fn confirm_double(&mut self) {
         self.phase = Phase::Offered(self.turn);
-        self.message = format!("{} offers the cube at {}.", self.turn.name(), self.cube * 2);
+        let side = self.side(self.turn);
+        self.message = format!(
+            "{side} {} the cube at {}.",
+            agree(side, "offers", "offer"),
+            self.cube * 2
+        );
     }
 
     fn take(&mut self, offered: Player) {
         self.cube = self.cube.saturating_mul(2).min(MAX_CUBE);
         self.cube_owner = Some(offered.other());
         self.phase = Phase::Playing;
+        let taker = self.side(offered.other());
         self.message = format!(
-            "{} takes. {} to roll.",
-            offered.other().name(),
-            self.turn.name()
+            "{taker} {}. {}",
+            agree(taker, "takes", "take"),
+            self.to_roll()
         );
     }
 
@@ -1029,14 +1047,7 @@ impl Game {
                 return self.turn != Player::Black;
             }
         }
-        let rolled = match self.dice.as_slice() {
-            [die, _, _, _] => format!("rolled double {die}s"),
-            dice => format!(
-                "{} {}",
-                if opened { "opened with" } else { "rolled" },
-                dice_words(dice)
-            ),
-        };
+        let rolled = rolled_words(opened, &self.dice);
         while !self.dice.is_empty() && self.phase == Phase::Playing {
             let mut choices = self.next_moves();
             choices.sort_by_key(|play| std::cmp::Reverse(self.score_after(*play)));
@@ -1161,7 +1172,7 @@ impl Game {
             opening: saved_flag(fields[13])?,
             phase,
             history: Vec::new(),
-            message: saved_message(phase),
+            message: String::new(),
             save: SaveState::Kept,
             initial_load: InitialLoad::Pending,
             view: View::Board,
@@ -1170,6 +1181,7 @@ impl Game {
         if !saved_game_is_safe(&game) {
             return None;
         }
+        game.message = saved_message(&game);
         if game.phase == Phase::Playing {
             // Somebody coming back to a match wants the next step, not only
             // the fact that it was saved.
@@ -1195,7 +1207,7 @@ impl Game {
             && legal_turns(&self.position, self.turn, &self.dice).is_empty()
         {
             self.end_turn();
-            self.message = format!("No legal play. {} to roll.", self.turn.name());
+            self.message = format!("No legal play. {}", self.to_roll());
         }
     }
 }
@@ -1379,16 +1391,19 @@ fn saved_game_is_safe(game: &Game) -> bool {
     }
 }
 
-fn saved_message(phase: Phase) -> String {
-    match phase {
+fn saved_message(game: &Game) -> String {
+    match game.phase {
         Phase::Playing => "Resumed saved game.".into(),
         Phase::ConfirmDouble => "Resume the pending double offer.".into(),
-        Phase::Offered(player) => format!("{} still offers the cube.", player.name()),
-        Phase::ConfirmDrop(player) => {
-            format!("Confirm whether to drop {}'s double.", player.name())
+        Phase::Offered(player) => {
+            let side = game.side(player);
+            format!("{side} still {} the cube.", agree(side, "offers", "offer"))
         }
-        Phase::GameOver(winner) => format!("{} won the saved game.", winner.name()),
-        Phase::MatchOver(winner) => format!("{} won the saved match.", winner.name()),
+        Phase::ConfirmDrop(player) => {
+            format!("Confirm whether to drop {}'s double.", game.side(player))
+        }
+        Phase::GameOver(winner) => format!("{} won the saved game.", game.side(winner)),
+        Phase::MatchOver(winner) => format!("{} won the saved match.", game.side(winner)),
     }
 }
 
@@ -1700,10 +1715,15 @@ fn screen_for(game: &Game, dice: Option<TilePicture>, context: &Context) -> Scre
         Phase::Offered(player) => ScreenBuilder::new("backgammon-cube")
             .top_bar("Backgammon")
             .confirmation(
-                format!("{} offers the cube at {}", player.name(), game.cube * 2),
+                format!(
+                    "{} {} the cube at {}",
+                    game.side(player),
+                    agree(game.side(player), "offers", "offer"),
+                    game.cube * 2
+                ),
                 format!(
                     "{} may take and play on for {}, or drop and give up {} now.",
-                    player.other().name(),
+                    game.side(player.other()),
                     points(game.cube * 2),
                     points(game.cube)
                 ),
@@ -1714,7 +1734,7 @@ fn screen_for(game: &Game, dice: Option<TilePicture>, context: &Context) -> Scre
         Phase::ConfirmDrop(player) => ScreenBuilder::new("backgammon-drop")
             .top_bar("Backgammon")
             .confirmation(
-                format!("Drop {}'s double?", player.name()),
+                format!("Drop {}'s double?", game.side(player)),
                 "This ends the game and cannot be undone.",
                 kobo_sdk::DialogAction::new("confirm-drop", "Drop cube"),
                 kobo_sdk::DialogAction::new("cancel-drop", "Cancel"),
@@ -1741,9 +1761,10 @@ fn screen_for(game: &Game, dice: Option<TilePicture>, context: &Context) -> Scre
 
 /// Between games: who won, the score, and the one thing to do next.
 ///
-/// It keeps the game's top bar and Undo in their places, so the rules and the
-/// menu are where they were a move ago. At the end of a match the next thing
-/// is New game itself, the same action under the same name as in the menu.
+/// It keeps the game's top bar, so the rules and the menu are where they were
+/// a move ago. Undo goes: a finished game has nothing left to take back. At
+/// the end of a match the next thing is New game itself, the same action
+/// under the same name as in the menu.
 fn result_screen(game: &Game, heading: String, next: (&str, &str)) -> Screen {
     ScreenBuilder::new("backgammon-result")
         .game_top_bar("Backgammon", game.menu, MORE_ITEMS)
@@ -1754,7 +1775,7 @@ fn result_screen(game: &Game, heading: String, next: (&str, &str)) -> Screen {
         } else {
             &game.message
         })
-        .game_actions(true, [next])
+        .game_actions(false, [next])
         .build()
 }
 
@@ -1925,6 +1946,25 @@ fn dice_words(dice: &[u8]) -> String {
     }
 }
 
+/// The verb that goes with a side: "Computer takes", but "You take".
+fn agree(side: &str, one: &'static str, you: &'static str) -> &'static str {
+    if side == "You" {
+        you
+    } else {
+        one
+    }
+}
+
+/// "rolled 4 and 6", "rolled double 5s", or "opened with 3 and 1": the same
+/// words whichever side threw them.
+fn rolled_words(opening: bool, dice: &[u8]) -> String {
+    match dice {
+        [pair, _, _, _] => format!("rolled double {pair}s"),
+        dice if opening => format!("opened with {}", dice_words(dice)),
+        dice => format!("rolled {}", dice_words(dice)),
+    }
+}
+
 fn dice_line(game: &Game) -> String {
     if game.dice.is_empty() {
         return "Not rolled yet".to_owned();
@@ -1936,7 +1976,10 @@ fn cube_line(game: &Game) -> String {
     match game.cube_owner {
         None if game.crawford_active => format!("{} · no doubling this game", game.cube),
         None => format!("{} · either side may double", game.cube),
-        Some(owner) => format!("{} · {} owns it", game.cube, owner.name()),
+        Some(owner) => match game.side(owner) {
+            "You" => format!("{} · You own it", game.cube),
+            side => format!("{} · {side} owns it", game.cube),
+        },
     }
 }
 
@@ -2906,7 +2949,7 @@ mod tests {
         assert_eq!(restored.selected, None);
         assert!(restored.history.is_empty());
         assert_eq!(restored.phase, Phase::Playing);
-        assert_eq!(restored.message, "No legal play. Black to roll.");
+        assert_eq!(restored.message, "No legal play. Computer to roll.");
     }
 
     #[test]
@@ -3886,7 +3929,7 @@ mod tests {
     }
 
     #[test]
-    fn between_games_the_next_step_and_the_shared_controls_are_on_screen() {
+    fn between_games_the_next_step_and_the_shared_controls_are_on_screen_without_undo() {
         let mut game = Game {
             opening: false,
             ..Game::default()
@@ -3903,9 +3946,11 @@ mod tests {
         assert!(text.contains("You won this game."), "{text}");
         assert!(text.contains("The game was worth 3 points."), "{text}");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
-        for name in ["next-game", game::UNDO, game::RULES, game::MORE] {
+        for name in ["next-game", game::RULES, game::MORE] {
             assert!(layout.rect_of_action(action_id(name)).is_some(), "{name}");
         }
+        // A finished game has no move left to take back.
+        assert!(layout.rect_of_action(action_id(game::UNDO)).is_none());
         assert!(layout.rect_of_action(action_id("new-match")).is_none());
         tap(&mut game, "next-game");
         assert_eq!(game.phase, Phase::Playing);
@@ -3915,9 +3960,112 @@ mod tests {
         game.phase = Phase::MatchOver(Player::White);
         let layout = test_screen(&game).layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
         assert!(layout.rect_of_action(action_id(game::NEW_GAME)).is_some());
+        assert!(layout.rect_of_action(action_id(game::UNDO)).is_none());
         tap(&mut game, game::NEW_GAME);
         assert_eq!(game.view, View::Board, "a finished match needs no question");
         assert_eq!(game.score, [0, 0]);
+    }
+
+    #[test]
+    fn against_the_computer_the_cube_line_names_you_and_the_computer() {
+        let mut game = Game {
+            cube: 2,
+            cube_owner: Some(Player::Black),
+            ..Game::default()
+        };
+        assert_eq!(cube_line(&game), "2 · Computer owns it");
+        game.cube_owner = Some(Player::White);
+        assert_eq!(cube_line(&game), "2 · You own it");
+        game.mode = Mode::PassAndPlay;
+        assert_eq!(cube_line(&game), "2 · White owns it");
+    }
+
+    #[test]
+    fn against_the_computer_cube_messages_say_you_and_computer_rather_than_colours() {
+        let mut game = Game {
+            opening: false,
+            ..Game::default()
+        };
+        game.confirm_double();
+        assert_eq!(game.message, "You offer the cube at 2.");
+        game.take(Player::Black);
+        assert!(game.message.starts_with("You take. "), "{}", game.message);
+        game.phase = Phase::Offered(Player::Black);
+        assert_eq!(saved_message(&game), "Computer still offers the cube.");
+        let text = format!("{:?}", test_screen(&game));
+        assert!(text.contains("Computer offers the cube at"), "{text}");
+        assert!(text.contains("You may take"), "{text}");
+        assert!(!text.contains("White"), "{text}");
+    }
+
+    #[test]
+    fn a_double_reads_the_same_whichever_side_rolls_it() {
+        let mut game = Game {
+            opening: false,
+            dice_source: Dice::scripted([(5, 5)]),
+            ..Game::default()
+        };
+        game.roll();
+        assert!(
+            game.message.starts_with("You rolled double 5s."),
+            "{}",
+            game.message
+        );
+    }
+
+    #[test]
+    fn a_single_entry_from_the_bar_tells_the_player_to_tap_bar() {
+        let mut game = Game {
+            position: position(
+                &[
+                    (5, 13),
+                    (19, -2),
+                    (20, -2),
+                    (21, -2),
+                    (22, -2),
+                    (23, -2),
+                    (0, -5),
+                ],
+                2,
+                0,
+            ),
+            opening: false,
+            dice_source: Dice::scripted([(6, 1)]),
+            ..Game::default()
+        };
+        game.roll();
+        assert_eq!(
+            game.message,
+            "You rolled 6 and 1. Only one move is legal. Tap Bar to bring a checker in."
+        );
+    }
+
+    #[test]
+    fn a_turn_with_no_legal_move_is_kept_in_the_turn_history() {
+        let mut game = Game {
+            position: position(
+                &[
+                    (5, 14),
+                    (18, -2),
+                    (19, -2),
+                    (20, -2),
+                    (21, -2),
+                    (22, -2),
+                    (23, -2),
+                    (0, -3),
+                ],
+                1,
+                0,
+            ),
+            opening: false,
+            dice_source: Dice::scripted([(2, 1), (6, 5)]),
+            ..Game::default()
+        };
+        game.apply_action(action_id("roll"));
+        assert_eq!(
+            game.played.first().map(String::as_str),
+            Some("You rolled 2 and 1 and could not move")
+        );
     }
 }
 
