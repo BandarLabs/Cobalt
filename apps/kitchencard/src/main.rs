@@ -7,11 +7,15 @@ mod mealie;
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::snapshot::{Snapshot, SnapshotEvent};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Credential, FieldKind, Glyph, KoboApp, Position,
-    RowState, Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Credential, DeviceRequest, DeviceResult, FieldKind,
+    Glyph, KoboApp, Position, RowState, Screen, ScreenBuilder, StoreResult, Task, TaskId,
+    TaskOutcome,
 };
 use mealie::Recipe;
-use std::{process::ExitCode, time::Duration};
+use std::{
+    process::ExitCode,
+    time::{Duration, SystemTime},
+};
 
 const CONFIG: &str = "config";
 const TONIGHT: &str = "tonight";
@@ -56,6 +60,51 @@ enum View {
 enum Setting {
     Server,
 }
+/// A cooking timer, counted against the clock rather than by the ticks that
+/// redraw it, so time spent asleep or in another app still counts.
+///
+/// The ticks are short sleeps that end on each minute boundary while the app
+/// is in front. A scheduled wake is asked for as well, for a reader that goes
+/// to sleep mid-cook; the runtime may grant it later than asked, so whichever
+/// comes first ends the timer and the clock says how late that was.
+#[derive(Clone, Debug)]
+struct Timer {
+    step: usize,
+    minutes: u32,
+    ends: SystemTime,
+    tick: Option<TaskId>,
+    /// The reader would not wake for the timer, so it only ends while
+    /// Kitchen Card is open.
+    wake_refused: bool,
+}
+
+impl Timer {
+    fn left(&self, now: SystemTime) -> Duration {
+        self.ends.duration_since(now).unwrap_or_default()
+    }
+
+    /// Seconds to the next whole minute left, or to the end, whichever is
+    /// first, so the banner changes when its number does.
+    fn next_tick(&self, now: SystemTime) -> u32 {
+        let left = u32::try_from(self.left(now).as_secs()).unwrap_or(u32::MAX);
+        (left.saturating_sub(1) % 60) + 1
+    }
+
+    fn banner(&self, now: SystemTime) -> String {
+        let left = self.left(now).as_secs();
+        let left = if left < 60 {
+            "under a minute left".to_owned()
+        } else {
+            format!("{} min left", left.div_ceil(60))
+        };
+        let mut text = format!("Timer: {left}, set on step {}.", self.step + 1);
+        if self.wake_refused {
+            text.push_str(" Keep Kitchen Card open: this reader cannot wake itself for it.");
+        }
+        text
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingTask {
     List,
@@ -83,7 +132,10 @@ struct Kitchen {
     /// Which half of tonight's recipe is shown where it takes two pages.
     tonight_page: usize,
     checked: Vec<usize>,
-    timer: Option<(usize, u32)>,
+    timer: Option<Timer>,
+    /// What the last timer did, said on the cooking pages where the timer
+    /// was, since the note at the top of the home page is not seen there.
+    timer_note: Option<(bool, String)>,
     view: Option<View>,
     note: Option<(bool, String)>,
     offline: bool,
@@ -372,16 +424,84 @@ impl Kitchen {
         }
     }
 
-    fn start_timer(&mut self, context: &mut Context, minutes: u32) {
-        context
-            .device()
-            .schedule_wake(Duration::from_secs(u64::from(minutes) * 60));
-        self.timer = Some((self.step, minutes));
+    fn start_timer(&mut self, context: &mut Context, minutes: u32, now: SystemTime) {
+        let length = Duration::from_secs(u64::from(minutes) * 60);
+        context.device().schedule_wake(length);
+        self.timer = Some(Timer {
+            step: self.step,
+            minutes,
+            ends: now + length,
+            tick: None,
+            wake_refused: false,
+        });
+        self.timer_note = None;
+        self.arm_tick(context, now);
+    }
+
+    fn arm_tick(&mut self, context: &mut Context, now: SystemTime) {
+        if let Some(timer) = self.timer.as_mut().filter(|timer| timer.tick.is_none()) {
+            timer.tick = context.spawn(Task::Sleep {
+                seconds: timer.next_tick(now),
+            });
+        }
+    }
+
+    /// Ends the timer once its time has come, or keeps it ticking.
+    fn check_timer(&mut self, context: &mut Context, now: SystemTime) {
+        let Some(timer) = &self.timer else {
+            return;
+        };
+        if timer.left(now) > Duration::ZERO {
+            self.arm_tick(context, now);
+            return;
+        }
+        let late = now.duration_since(timer.ends).unwrap_or_default().as_secs() / 60;
+        let what = format!(
+            "the {} min timer from step {}",
+            timer.minutes,
+            timer.step + 1
+        );
+        self.timer_note = Some((
+            true,
+            if late >= 2 {
+                format!("Time was up {late} min ago: {what}.")
+            } else {
+                format!("Time is up: {what}.")
+            },
+        ));
+        self.stop_timer(context);
+    }
+
+    fn finish(&mut self, context: &mut Context) {
+        self.stop_timer(context);
+        self.view = Some(View::Finished);
+        self.step = 0;
+        self.persist_tonight(context);
+    }
+
+    /// Back in front, the timer may have run out while away.
+    fn resume_timer(&mut self, context: &mut Context) {
+        if self.timer.is_some() {
+            self.check_timer(context, SystemTime::now());
+            self.show(context);
+        }
     }
 
     fn stop_timer(&mut self, context: &mut Context) {
-        if self.timer.take().is_some() {
+        if let Some(timer) = self.timer.take() {
             context.device().cancel_wake();
+            if let Some(tick) = timer.tick {
+                context.cancel(tick);
+            }
+        }
+    }
+
+    /// The timer's banner on the cooking pages: how long is left while it
+    /// runs, then what it did.
+    fn timer_banner(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        match &self.timer {
+            Some(timer) => screen.banner(BannerLevel::Info, timer.banner(SystemTime::now())),
+            None => Self::banner(screen, self.timer_note.as_ref()),
         }
     }
 
@@ -412,14 +532,18 @@ impl Kitchen {
     }
 
     fn browse_prefix(&self) -> ScreenBuilder {
+        // Sync then Settings, in the order tonight's page has them.
         let screen = if self.view == Some(View::Browse) {
-            ScreenBuilder::new("kitchencard").top_bar("Pick a recipe")
+            ScreenBuilder::new("kitchencard")
+                .top_bar("Pick a recipe")
+                .top_bar_action("sync", "Sync")
         } else {
             ScreenBuilder::new("kitchencard")
                 .top_bar("Kitchen Card")
+                .top_bar_action("sync", "Sync")
                 .top_bar_glyph("settings", "Settings", Glyph::Settings)
         };
-        Self::banner(screen.top_bar_action("sync", "Sync"), self.note.as_ref())
+        Self::banner(screen, self.note.as_ref())
     }
 
     fn browse_order(&self) -> Vec<usize> {
@@ -497,13 +621,14 @@ impl Kitchen {
     }
 
     fn ingredients_prefix(&self) -> ScreenBuilder {
-        ScreenBuilder::new("kitchencard")
+        let screen = ScreenBuilder::new("kitchencard")
             .top_bar("Ingredients")
             .tabs(1, [("cook", "Steps"), ("ingredients", "Ingredients")])
             .secondary(format!(
                 "Serves {} · tap a line to check it off",
                 self.servings
-            ))
+            ));
+        self.timer_banner(screen)
     }
 
     /// The ingredient lines as a checklist. Each line carries whether it is
@@ -640,6 +765,11 @@ impl Kitchen {
     /// foot, and held sideways the recipe's counts and description then move
     /// to a second page the owner turns to; nothing is dropped.
     fn tonight_screen(&self, context: &Context, recipe: &Recipe) -> Screen {
+        let cook = if self.step > 0 && self.step < recipe.steps.len() {
+            format!("Continue from step {}", self.step + 1)
+        } else {
+            "Start cooking".to_owned()
+        };
         let build = |shape: TonightShape, page: usize| {
             let first = shape != TonightShape::Paged || page == 0;
             let second = shape != TonightShape::Paged || page == 1;
@@ -690,7 +820,7 @@ impl Kitchen {
                 screen = if recipe.steps.is_empty() {
                     screen.disabled_button("cook", "Start cooking")
                 } else {
-                    screen.primary_button("cook", "Start cooking")
+                    screen.primary_button("cook", &cook)
                 };
                 return screen.button("browse", "Pick recipe").build();
             }
@@ -700,7 +830,7 @@ impl Kitchen {
                 screen.bottom_action("browse", "Pick recipe").build()
             } else {
                 screen
-                    .action_bar([("cook", "Start cooking"), ("browse", "Pick recipe")])
+                    .action_bar([("cook", cook.as_str()), ("browse", "Pick recipe")])
                     .build()
             }
         };
@@ -821,15 +951,19 @@ impl Kitchen {
             // long and secret, so it comes from the computer with the same
             // command the first screen gives, and nothing on this screen
             // names a second way of doing it.
-            View::Settings => ScreenBuilder::new("kitchencard")
-                .top_bar("Kitchen Card settings")
-                .field("server", &self.server, "https://mealie.example")
-                .field_label("Mealie address")
-                .field_kind(FieldKind::Address)
-                .section("API token")
-                .secondary("Sent from your computer. Run this there, then sync here.")
-                .command("kobo connect kitchencard")
-                .build(),
+            // A problem is said here too, since an address refused on this
+            // page otherwise just disappears from the field.
+            View::Settings => Self::banner(
+                ScreenBuilder::new("kitchencard").top_bar("Kitchen Card settings"),
+                self.note.as_ref().filter(|(problem, _)| *problem),
+            )
+            .field("server", &self.server, "https://mealie.example")
+            .field_label("Mealie address")
+            .field_kind(FieldKind::Address)
+            .section("API token")
+            .secondary("Sent from your computer. Run this there, then sync here.")
+            .command("kobo connect kitchencard")
+            .build(),
         }
     }
 }
@@ -841,12 +975,7 @@ impl Kitchen {
             .top_bar(format!("Cooking · {} of {}", step + 1, recipe.steps.len()))
             .tabs(0, [("cook", "Steps"), ("ingredients", "Ingredients")])
             .secondary(&recipe.name);
-        if let Some((on, minutes)) = self.timer {
-            screen = screen.banner(
-                BannerLevel::Info,
-                format!("Timer running: {minutes} min, set on step {}.", on + 1),
-            );
-        }
+        screen = self.timer_banner(screen);
         screen = if large {
             screen.heading_at_level(2, &recipe.steps[step])
         } else {
@@ -903,10 +1032,12 @@ fn step_timer(step: &str) -> Option<u32> {
 impl KoboApp for Kitchen {
     fn on_foreground(&mut self, context: &mut Context) {
         self.reload_config(context);
+        self.resume_timer(context);
     }
 
     fn on_resume(&mut self, context: &mut Context) {
         self.reload_config(context);
+        self.resume_timer(context);
     }
 
     fn on_start(&mut self, context: &mut Context) {
@@ -1010,6 +1141,15 @@ impl KoboApp for Kitchen {
 
     #[allow(clippy::too_many_lines)] // Actions are flat by design; each arm is one behavior.
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        // "Timer stopped." answers the tap that stopped it and goes with the
+        // next one; "Time is up" stays until the cook moves on.
+        if self
+            .timer_note
+            .as_ref()
+            .is_some_and(|(problem, _)| !problem)
+        {
+            self.timer_note = None;
+        }
         if let Some(setting) = self.editing {
             match self.entry.handle(action) {
                 Some(Typing::Submitted(value)) => {
@@ -1027,7 +1167,7 @@ impl KoboApp for Kitchen {
                                     self.open_cache(context);
                                 } else {
                                     self.problem(
-                                        "The address needs to start with https:// - plain http is not supported.",
+                                        "The address must start with https://. Kitchen Card does not use plain http.",
                                     );
                                 }
                             }
@@ -1083,10 +1223,13 @@ impl KoboApp for Kitchen {
             }
             self.view = Some(View::Tonight);
         } else if action == action_id("cook") {
-            if self.view != Some(View::Ingredients) {
-                self.step = 0;
-            }
+            // The step is kept, so a cook who stepped away, or whose reader
+            // restarted, carries on where they were. Finishing starts the
+            // next cook at the top.
             self.view = Some(View::Cook);
+            if self.timer.is_none() {
+                self.timer_note = None;
+            }
             context.device().keep_awake(Duration::from_secs(3600));
             self.persist_tonight(context);
         } else if action == action_id("ingredients") {
@@ -1128,16 +1271,14 @@ impl KoboApp for Kitchen {
                     self.step += 1;
                     self.persist_tonight(context);
                 } else {
-                    self.stop_timer(context);
-                    self.view = Some(View::Finished);
+                    self.finish(context);
                 }
             }
         } else if action == action_id("previous") && self.step > 0 {
             self.step -= 1;
             self.persist_tonight(context);
         } else if action == action_id("finish") {
-            self.stop_timer(context);
-            self.view = Some(View::Finished);
+            self.finish(context);
         } else if action == action_id("again") {
             self.step = 0;
             self.checked.clear();
@@ -1146,12 +1287,12 @@ impl KoboApp for Kitchen {
         } else if action == action_id("timer") {
             if let Some(recipe) = self.recipe() {
                 if let Some(minutes) = recipe.steps.get(self.step).and_then(|s| step_timer(s)) {
-                    self.start_timer(context, minutes);
+                    self.start_timer(context, minutes, SystemTime::now());
                 }
             }
         } else if action == action_id("stop-timer") {
             self.stop_timer(context);
-            self.info("Timer stopped.");
+            self.timer_note = Some((false, "Timer stopped.".to_owned()));
         } else if let Some(index) =
             (0..self.recipes.len()).find(|index| action == action_id(&format!("recipe-{index}")))
         {
@@ -1173,16 +1314,37 @@ impl KoboApp for Kitchen {
     }
 
     fn on_scheduled_wake(&mut self, context: &mut Context) {
-        if let Some((step, minutes)) = self.timer.take() {
-            self.info(format!(
-                "Timer done: {minutes} min, set on step {}.",
-                step + 1
-            ));
+        if self.timer.is_some() {
+            self.check_timer(context, SystemTime::now());
             self.show(context);
         }
     }
 
+    fn on_device_result(
+        &mut self,
+        context: &mut Context,
+        request: DeviceRequest,
+        result: DeviceResult,
+    ) {
+        if let (DeviceRequest::ScheduleWake { .. }, DeviceResult::Denied(_)) = (request, result) {
+            if let Some(timer) = &mut self.timer {
+                timer.wake_refused = true;
+                self.show(context);
+            }
+        }
+    }
+
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if let Some(timer) = self.timer.as_mut().filter(|timer| timer.tick == Some(task)) {
+            timer.tick = None;
+            // A tick cut short by the app going to the back is armed again
+            // when it comes to the front.
+            if matches!(outcome, TaskOutcome::Completed(_)) {
+                self.check_timer(context, SystemTime::now());
+                self.show(context);
+            }
+            return;
+        }
         let Some((id, kind)) = self.task else {
             return;
         };
@@ -1363,6 +1525,118 @@ mod tests {
         assert!(!settings.contains("Credential"), "{settings}");
     }
 
+    fn timing(minutes: u32) -> (Kitchen, Context, SystemTime) {
+        let mut app = Kitchen {
+            view: Some(View::Cook),
+            step: 1,
+            ..cooking()
+        };
+        let mut context = Context::default();
+        let start = SystemTime::UNIX_EPOCH + Duration::from_secs(1_800_000_000);
+        app.start_timer(&mut context, minutes, start);
+        (app, context, start)
+    }
+
+    #[test]
+    fn a_timer_asks_for_a_wake_and_ticks_on_the_next_minute_boundary() {
+        let (app, context, start) = timing(20);
+        let asked: Vec<_> = context
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                kobo_sdk::Command::Device(DeviceRequest::ScheduleWake { seconds }) => {
+                    Some(*seconds)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asked, [1200]);
+        let timer = app.timer.as_ref().unwrap();
+        assert!(timer.tick.is_some());
+        assert_eq!(timer.next_tick(start), 60);
+        assert_eq!(timer.next_tick(start + Duration::from_secs(90)), 30);
+        assert_eq!(timer.banner(start), "Timer: 20 min left, set on step 2.");
+    }
+
+    #[test]
+    fn a_timer_keeps_counting_until_its_time_and_then_says_time_is_up() {
+        let (mut app, mut context, start) = timing(20);
+        app.timer.as_mut().unwrap().tick = None;
+        app.check_timer(&mut context, start + Duration::from_secs(5 * 60));
+        let timer = app.timer.as_ref().expect("still running at five minutes");
+        assert!(timer.tick.is_some(), "the next tick is armed");
+        app.check_timer(&mut context, start + Duration::from_secs(20 * 60));
+        assert!(app.timer.is_none());
+        assert_eq!(
+            app.timer_note,
+            Some((true, "Time is up: the 20 min timer from step 2.".to_owned()))
+        );
+        assert!(drawn(&app).contains("Time is up"), "{}", drawn(&app));
+    }
+
+    #[test]
+    fn a_timer_that_ran_out_while_the_reader_slept_says_how_long_ago() {
+        let (mut app, mut context, start) = timing(5);
+        app.check_timer(&mut context, start + Duration::from_secs(15 * 60));
+        assert_eq!(
+            app.timer_note,
+            Some((
+                true,
+                "Time was up 10 min ago: the 5 min timer from step 2.".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_refused_wake_keeps_the_timer_and_says_the_app_must_stay_open() {
+        let mut runner = kobo_sdk::AppRunner::new(Kitchen {
+            view: Some(View::Cook),
+            step: 1,
+            ..cooking()
+        });
+        runner.action(action_id("timer"));
+        runner.device_result(DeviceResult::Denied(kobo_sdk::DenyReason::Unsupported));
+        let app = runner.app();
+        assert!(app.timer.as_ref().is_some_and(|timer| timer.wake_refused));
+        assert!(
+            drawn(app).contains("this reader cannot wake itself for it"),
+            "{}",
+            drawn(app)
+        );
+    }
+
+    #[test]
+    fn a_cook_who_steps_away_continues_from_the_saved_step_and_finishing_starts_over() {
+        let mut runner = kobo_sdk::AppRunner::new(Kitchen {
+            view: Some(View::Tonight),
+            step: 2,
+            ..cooking()
+        });
+        assert!(drawn(runner.app()).contains("Continue from step 3"));
+        runner.action(action_id("cook"));
+        assert_eq!(runner.app().step, 2);
+        runner.action(action_id("finish"));
+        assert_eq!(runner.app().step, 0);
+        runner.action(action_id("tonight"));
+        let tonight = drawn(runner.app());
+        assert!(tonight.contains("Start cooking"), "{tonight}");
+        assert!(!tonight.contains("Continue from"), "{tonight}");
+    }
+
+    #[test]
+    fn a_plain_http_address_is_refused_with_the_reason_on_the_settings_page() {
+        let mut runner = kobo_sdk::AppRunner::new(Kitchen {
+            view: Some(View::Settings),
+            credential: "mealie".to_owned(),
+            ..Kitchen::default()
+        });
+        runner.action(action_id("server"));
+        runner.type_text("http://mealie.invalid");
+        assert!(runner.app().server.is_empty());
+        let settings = drawn(runner.app());
+        assert!(settings.contains("does not use plain http"), "{settings}");
+    }
+
     #[test]
     fn the_note_that_no_account_arrived_goes_once_an_address_is_saved() {
         let mut runner = kobo_sdk::AppRunner::new(Kitchen {
@@ -1407,7 +1681,13 @@ mod tests {
             (
                 Some(View::Cook),
                 Kitchen {
-                    timer: Some((1, 10)),
+                    timer: Some(Timer {
+                        step: 1,
+                        minutes: 10,
+                        ends: SystemTime::now() + Duration::from_secs(600),
+                        tick: None,
+                        wake_refused: true,
+                    }),
                     step: 1,
                     ..cooking()
                 },

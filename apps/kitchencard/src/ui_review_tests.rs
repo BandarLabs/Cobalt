@@ -128,8 +128,8 @@ fn ingredient_detours_keep_the_cooking_step_and_checked_items() {
     runner.action(action_id("cook"));
     assert_eq!(
         runner.app().step,
-        0,
-        "starting a fresh cook still begins at step one"
+        1,
+        "coming back from tonight's page carries on at the same step"
     );
 }
 
