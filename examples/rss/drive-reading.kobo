@@ -19,20 +19,47 @@ wait-idle 20000
 clean
 shot article
 # Page turns to the end of the article; the reader says when there is no more.
+# The article is live, so its length changes; turning past the end is
+# harmless, so the route turns well past any article the feed has carried.
 page next
-wait-idle
 page next
-wait-idle
 page next
-wait-idle
 page next
-wait-idle
 page next
-wait-idle
 page next
-wait-idle
 page next
-wait-idle
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
 page next
 wait-idle
 wait-for This is the end
