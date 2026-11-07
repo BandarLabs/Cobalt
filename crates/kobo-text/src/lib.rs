@@ -2342,6 +2342,7 @@ mod tests {
         let inked = |clock: &str| {
             let chrome = kobo_ui::Chrome {
                 back: false,
+                notice: None,
                 appearance: kobo_ui::Appearance::Grey,
                 status: Some(kobo_ui::Status::standard(
                     clock,
