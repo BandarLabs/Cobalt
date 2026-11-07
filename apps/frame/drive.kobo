@@ -26,3 +26,96 @@ tap 5 minutes
 tap Back
 wait-for-id next
 expect-missing Change the photo every
+expect-missing Taken
+# The overlay names the photo and says its bytes match what was pushed.
+tap-at 536,724
+wait-for Taken
+expect File
+expect sample-photo.jpg
+expect Verified against the manifest
+# The cross closes the overlay and leaves the photograph where it was.
+tap-at 942,543
+wait-idle
+expect-missing Taken
+wait-for-id next
+# A second push while Frame is open is seen when the reader comes back to it.
+companion frame push scripts/fixtures/frame/lighthouse.jpg --album Coast --sim
+lifecycle background
+lifecycle foreground
+wait-idle
+wait-for-id next
+tap-at 536,724
+wait-for Photo 1 of 2
+tap-at 942,543
+wait-idle
+# The right side turns to the next photo, the left side back again.
+tap-id next
+wait-idle
+wait-for-id next
+tap-at 536,724
+wait-for Photo 2 of 2
+expect lighthouse.jpg
+expect Coast
+clean
+shot details-second
+tap-at 942,543
+wait-idle
+tap-id previous
+wait-idle
+wait-for-id next
+tap-at 536,724
+wait-for Photo 1 of 2
+expect sample-photo.jpg
+tap-at 942,543
+wait-idle
+# Turning past the last photo comes round to the first.
+tap-id previous
+wait-idle
+wait-for-id next
+tap-at 536,724
+wait-for Photo 2 of 2
+tap-at 942,543
+wait-idle
+# A photo removed from the computer leaves the frame, even the one showing.
+companion frame rm photo-72cbbc7a7a54bc6e --sim
+lifecycle background
+lifecycle foreground
+wait-idle
+wait-for-id next
+tap-at 536,724
+wait-for Photo 1 of 1
+expect sample-photo.jpg
+expect-missing lighthouse.jpg
+# The slow slideshow offers hours, not minutes, and shuffle changes the order note.
+tap Settings
+wait-for Change the photo every
+tap Slow slideshow
+wait-for 24 hours
+expect 6 hours
+expect-missing 5 minutes
+expect-missing 15 minutes
+tap 24 hours
+tap Shuffle
+wait-for Photos come in a random order.
+clean
+shot settings-slow
+# Every choice is kept across a restart of the app.
+restart
+wait-idle
+wait-for-id next
+tap Settings
+wait-for Change the photo every
+expect 24 hours
+expect Photos come in a random order.
+expect-missing 5 minutes
+shot settings-after-restart
+# Back in Frame mode the minutes return and the order goes back to dates.
+tap Frame mode
+wait-for 5 minutes
+expect 15 minutes
+expect-missing 24 hours
+tap Shuffle
+wait-for Photos come in date order.
+tap Back
+wait-for-id next
+expect-missing Change the photo every

@@ -1,0 +1,125 @@
+# A setlist is built from the library, ordered, played through and deleted.
+companion musicstand push scripts/fixtures/musicstand/Minuet scripts/fixtures/musicstand/Gavotte --sim
+tap Check for scores
+wait-for Library
+tap Setlists
+wait-for New setlist
+expect-missing Setlist 1
+# New setlist goes straight to the library to choose from, and each choice
+# says where on the list it went.
+tap New setlist
+wait-for Add from library
+expect Setlist 1
+expect Tap a score to add it
+tap Gavotte
+wait-for On this setlist as number 1
+tap Minuet
+wait-for On this setlist as number 2
+clean
+shot picker
+tap Done
+wait-for 1. Gavotte
+expect 2. Minuet
+expect Resumes at page 1
+clean
+shot setlist
+# The row menu offers only the moves that make sense at each end.
+tap-id entry-1-menu
+wait-for Move up
+expect Remove from setlist
+expect-missing Move down
+clean
+shot entry-menu
+tap Move up
+wait-for 1. Minuet
+expect 2. Gavotte
+tap-id entry-0-menu
+wait-for Move down
+expect-missing Move up
+tap Move down
+wait-for 1. Gavotte
+expect 2. Minuet
+# Back out to the list of setlists, which counts the scores, and in again.
+tap-id 4294967295
+wait-for 2 scores
+clean
+shot setlists
+tap Setlist 1
+wait-for 1. Gavotte
+# Remove takes the entry off the setlist and leaves the score in the library.
+tap-id entry-1-menu
+wait-for Remove from setlist
+tap Remove from setlist
+wait-for 1. Gavotte
+expect-missing 2. Minuet
+tap Add from library
+wait-for Tap a score to add it
+expect On this setlist as number 1
+tap Minuet
+wait-for On this setlist as number 2
+tap Done
+wait-for 2. Minuet
+# The setlist survives Music Stand being closed.
+restart
+wait-for Library
+tap Setlists
+wait-for 2 scores
+tap Setlist 1
+wait-for 2. Minuet
+# Playing the setlist turns from the end of one score to the next.
+tap 1. Gavotte
+wait-for-id next
+wait-idle
+tap-id next
+wait-idle
+tap-id next
+wait-idle
+tap-at 536,724
+wait-for Minuet
+expect 1 of 2 · top half
+tap-at 942,489
+wait-idle
+tap-id 4294967295
+wait-for Setlists
+# Delete asks first; Keep leaves the setlist alone.
+tap Setlists
+wait-for Setlist 1
+tap Setlist 1
+wait-for 1. Gavotte
+tap Delete
+wait-for Delete this setlist?
+expect its scores stay in your library
+clean
+shot delete-confirm
+tap Keep
+wait-idle
+expect-missing Delete this setlist?
+expect 1. Gavotte
+tap Delete
+wait-for Delete this setlist?
+tap-id confirm-delete
+wait-for New setlist
+expect-missing Setlist 1
+tap-id 4294967295
+wait-for Library
+expect Minuet
+expect Gavotte
+# At the end of the last score of a setlist the stand says so.
+tap Setlists
+wait-for New setlist
+tap New setlist
+wait-for Add from library
+tap Gavotte
+wait-for On this setlist as number 1
+tap Done
+wait-for 1. Gavotte
+tap 1. Gavotte
+wait-for-id next
+wait-idle
+tap-id next
+wait-idle
+tap-id next
+wait-idle
+wait-for End of the setlist.
+clean
+shot setlist-end

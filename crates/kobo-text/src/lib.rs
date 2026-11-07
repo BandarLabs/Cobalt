@@ -1193,8 +1193,8 @@ fn substitute(character: char) -> Option<char> {
         | '\u{205f}'
         | '\u{3000}' => ' ',
         '\u{2022}' | '\u{2023}' | '\u{2043}' | '\u{25cf}' | '\u{25aa}' => '*',
-        '\u{2190}' | '\u{27f5}' => '<',
-        '\u{2192}' | '\u{27f6}' => '>',
+        // No arrows: "e7 →" set as "e7 >" reads as a comparison. The
+        // compiled-in grid face draws real arrows, and is borrowed for them.
         '\u{2044}' | '\u{2215}' | '\u{ff0f}' => '/',
         '\u{02dc}' | '\u{ff5e}' => '~',
         _ => return None,
@@ -1941,6 +1941,19 @@ mod tests {
             );
         }
         assert!(checked > 20, "only {checked} substitutions were examined");
+    }
+
+    /// An arrow is drawn as an arrow, borrowed from the grid face, rather
+    /// than stood in for by a greater-than sign.
+    #[test]
+    fn an_arrow_is_drawn_as_an_arrow_and_not_as_a_comparison() {
+        let text = Typeface::from_bytes(TEXT_FONT, "text", CLARA).expect("text face");
+        let mono = Typeface::from_bytes(MONO_FONT, "mono", CLARA).expect("grid face");
+        for arrow in ['\u{2192}', '\u{2190}'] {
+            let (face, drawn) = text.pick(arrow, Some(&mono)).expect("drawn");
+            assert_eq!(drawn, arrow);
+            assert!(face.has(arrow), "U+{:04X} has no shape", arrow as u32);
+        }
     }
 
     /// Nothing in ordinary web text should reach the panel as an empty box.

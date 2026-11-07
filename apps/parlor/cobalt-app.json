@@ -4,8 +4,8 @@
   "short_label": "Parlor",
   "summary": "Play Reversi, Draughts, Nine Men's Morris and Kalah on one Kobo.",
   "page_description": "Four classic board games against the computer at three levels, which marks its last move on the board, or for two players passing one Kobo. Every move is saved.",
-  "version": "0.1.14",
-  "release_notes": "Parlor now has an icon of its own, a board with a black piece and a white one.",
+  "version": "0.1.15",
+  "release_notes": "The last move on the Nine Men's Morris board is marked with a ring, and so is the piece you are about to slide.",
   "minimum_cobalt_version": "0.3.34",
   "glyph": "board-pieces",
   "capabilities": []

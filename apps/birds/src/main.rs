@@ -51,7 +51,7 @@ struct Birds {
     snapshot_load: Option<ShelfDownload>,
     image_load: Option<ShelfDownload>,
     loading: bool,
-    notice: Option<String>,
+    notice: Option<Notice>,
     image_bytes: Option<Vec<u8>>,
     identity: Option<kobo_sdk::DeviceIdentity>,
     menu_open: bool,
@@ -63,6 +63,62 @@ struct Birds {
     awake_refused: Option<kobo_sdk::DenyReason>,
 }
 
+/// What went wrong with the last look at the shelf, in the owner's words.
+///
+/// Each kind carries its own heading. One heading used to cover them all,
+/// so a snapshot that was read but whose picture never came was headed "The
+/// snapshot could not be read", and a damaged file showed the parser's own
+/// words under it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Notice {
+    /// The snapshot file is cut short or is not a Birds snapshot.
+    SnapshotDamaged,
+    /// The snapshot was written by a newer companion than this app knows.
+    SnapshotNewer,
+    /// The reader would not open the snapshot file.
+    SnapshotUnopened,
+    CollageMissing,
+    CollageDamaged,
+    CollageTooLarge,
+    /// The snapshot and the collage on the shelf are from different updates.
+    Incomplete,
+}
+
+impl Notice {
+    fn title(self) -> &'static str {
+        match self {
+            Self::SnapshotDamaged | Self::SnapshotNewer | Self::SnapshotUnopened => {
+                "The latest birds could not be read"
+            }
+            Self::CollageMissing => "The bird collage is missing",
+            Self::CollageDamaged | Self::CollageTooLarge => "The bird collage could not be shown",
+            Self::Incomplete => "The update is not complete",
+        }
+    }
+
+    fn detail(self) -> &'static str {
+        match self {
+            Self::SnapshotDamaged => {
+                "The file from your computer is damaged. Keep kobo birds listen running there, then tap Refresh."
+            }
+            Self::SnapshotNewer => {
+                "It was sent by a newer Cobalt on your computer. Update Birds from the Store, then tap Refresh."
+            }
+            Self::SnapshotUnopened => "The reader could not open the file. Tap Refresh to try again.",
+            Self::CollageMissing => {
+                "The list of birds arrived without its picture. Keep kobo birds listen running on your computer, then tap Refresh."
+            }
+            Self::CollageDamaged => {
+                "The picture from your computer is damaged. Keep kobo birds listen running there, then tap Refresh."
+            }
+            Self::CollageTooLarge => "The picture is larger than this reader can show.",
+            Self::Incomplete => {
+                "The last complete view is kept until the rest arrives. Tap Refresh to look again."
+            }
+        }
+    }
+}
+
 impl Birds {
     fn screen(&self) -> Screen {
         let Some(snapshot) = &self.snapshot else {
@@ -71,9 +127,9 @@ impl Birds {
             let screen = ScreenBuilder::new("birds-home").top_bar("Birds");
             return if self.loading {
                 screen.activity("Opening the latest birds", None).build()
-            } else if let Some(notice) = &self.notice {
+            } else if let Some(notice) = self.notice {
                 screen
-                    .splash(Some(Glyph::App), "The snapshot could not be read", notice)
+                    .splash(Some(Glyph::App), notice.title(), notice.detail())
                     .buttons([(REFRESH, "Refresh")])
                     .build()
             } else {
@@ -103,12 +159,15 @@ impl Birds {
             // A snapshot without a usable image must not become an empty
             // screen with no way out: say what happened and offer Refresh.
             // The way out is the bar's back, which this screen keeps.
-            let detail = self
-                .notice
-                .clone()
-                .unwrap_or_else(|| "The latest bird collage is unavailable.".into());
+            let (title, detail) = self.notice.map_or(
+                (
+                    "The collage needs a refresh",
+                    "The latest bird collage is unavailable.",
+                ),
+                |notice| (notice.title(), notice.detail()),
+            );
             screen = screen
-                .splash(Some(Glyph::App), "The collage needs a refresh", &detail)
+                .splash(Some(Glyph::App), title, detail)
                 .primary_button(REFRESH, "Refresh");
         }
         if self.menu_open {
@@ -130,8 +189,11 @@ impl Birds {
                     Some(note) => overlay.secondary(note),
                     None => overlay,
                 };
-                let overlay = match &self.notice {
-                    Some(notice) => overlay.banner(BannerLevel::Attention, notice),
+                let overlay = match self.notice {
+                    Some(notice) => overlay.banner(
+                        BannerLevel::Attention,
+                        format!("{} {}", notice.title(), notice.detail()),
+                    ),
                     None => overlay,
                 };
                 overlay.button(REFRESH, "Refresh")
@@ -240,9 +302,9 @@ impl Birds {
                         self.pending = Some(snapshot);
                         self.load_image(context);
                     }
-                    Err(error) => {
+                    Err(notice) => {
                         self.loading = false;
-                        self.notice = Some(error);
+                        self.notice = Some(notice);
                     }
                 }
                 true
@@ -255,7 +317,7 @@ impl Birds {
             ShelfProgress::Failed(_) => {
                 self.snapshot_load = None;
                 self.loading = false;
-                self.notice = Some("The Birds snapshot could not be opened.".into());
+                self.notice = Some(Notice::SnapshotUnopened);
                 true
             }
             ShelfProgress::Moving { .. } => true,
@@ -304,9 +366,9 @@ impl Birds {
                     self.notice = None;
                     return true;
                 }
-                self.notice = Some("The bird collage exceeds this reader's picture budget.".into());
+                self.notice = Some(Notice::CollageTooLarge);
             }
-            Err(_) => self.notice = Some("The bird collage is damaged.".into()),
+            Err(_) => self.notice = Some(Notice::CollageDamaged),
         }
         // A failed attempt keeps the previous picture on screen, but reports
         // failure so the caller does not commit new metadata over old art.
@@ -330,9 +392,7 @@ impl Birds {
                         // different generations; keep the last complete view.
                         self.pending = None;
                         self.loading = false;
-                        self.notice = Some(
-                            "The update is incomplete, so the last complete view is kept.".into(),
-                        );
+                        self.notice = Some(Notice::Incomplete);
                         return true;
                     }
                 }
@@ -352,7 +412,7 @@ impl Birds {
                 self.image_load = None;
                 self.pending = None;
                 self.loading = false;
-                self.notice = Some("The bird collage is missing.".into());
+                self.notice = Some(Notice::CollageMissing);
                 true
             }
             ShelfProgress::Moving { .. } => true,
@@ -477,17 +537,19 @@ impl KoboApp for Birds {
     }
 }
 
-fn decode_snapshot(bytes: &[u8]) -> Result<Snapshot, String> {
-    let text = std::str::from_utf8(bytes).map_err(|_| "Birds snapshot is not UTF-8")?;
-    let value = kobo_json::parse(text).map_err(|_| "Birds snapshot is invalid JSON")?;
-    if value.get("format").and_then(kobo_json::Value::as_str) != Some("cobalt-birds-v1") {
-        return Err("Birds snapshot has an unsupported version".into());
+fn decode_snapshot(bytes: &[u8]) -> Result<Snapshot, Notice> {
+    let text = std::str::from_utf8(bytes).map_err(|_| Notice::SnapshotDamaged)?;
+    let value = kobo_json::parse(text).map_err(|_| Notice::SnapshotDamaged)?;
+    match value.get("format").and_then(kobo_json::Value::as_str) {
+        Some("cobalt-birds-v1") => {}
+        Some(format) if format.starts_with("cobalt-birds-") => return Err(Notice::SnapshotNewer),
+        _ => return Err(Notice::SnapshotDamaged),
     }
     let generated_at = value
         .get("generated_at")
         .and_then(kobo_json::Value::as_i64)
         .and_then(|v| u64::try_from(v).ok())
-        .ok_or("Birds snapshot has no valid time")?;
+        .ok_or(Notice::SnapshotDamaged)?;
     let source = value
         .get("source")
         .and_then(kobo_json::Value::as_str)
@@ -572,6 +634,29 @@ mod tests {
         let s=decode_snapshot(br#"{"format":"cobalt-birds-v1","generated_at":1,"source":"garden","recent":["Robin","Wren"]}"#).unwrap();
         assert_eq!(s.recent, ["Robin", "Wren"]);
         assert!(decode_snapshot(b"{}").is_err());
+    }
+    #[test]
+    fn a_damaged_or_newer_snapshot_is_named_in_plain_words() {
+        assert_eq!(
+            decode_snapshot(br#"{"format":"cobalt-birds-v1","#),
+            Err(Notice::SnapshotDamaged)
+        );
+        assert_eq!(
+            decode_snapshot(br#"{"format":"cobalt-birds-v2","generated_at":1}"#),
+            Err(Notice::SnapshotNewer)
+        );
+        let mut birds = Birds {
+            notice: Some(Notice::SnapshotDamaged),
+            ..Birds::default()
+        };
+        let text = format!("{:?}", birds.screen());
+        assert!(text.contains("The latest birds could not be read"));
+        assert!(!text.contains("JSON"));
+        // A snapshot read without its picture is headed as a missing picture.
+        birds.notice = Some(Notice::CollageMissing);
+        let text = format!("{:?}", birds.screen());
+        assert!(text.contains("The bird collage is missing"));
+        assert!(!text.contains("could not be read"));
     }
     #[test]
     fn snapshot_carries_the_pairing_checksum() {

@@ -26,7 +26,9 @@ built from the SRD.
 - Filter spells by class, level, school, ritual and concentration. Filter
   monsters by challenge rating and type.
 - Stat blocks and rules open in the document reader, with abilities and
-  headings intact. Tables are written out row by row so they stay readable at
+  headings intact. A spell opens with its casting time, range, components
+  and duration; a monster with its armor class, hit points, speed, senses
+  and challenge rating. Tables are written out row by row so they stay readable at
   large text sizes.
 - **Dice**: roll a d20 with a modifier from -10 to +10, normally or with
   advantage or disadvantage, which rolls two and keeps the higher or lower.

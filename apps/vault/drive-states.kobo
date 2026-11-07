@@ -1,23 +1,65 @@
 # Seeded path: run `kobo vault push DIR --sim` before starting the simulator.
+# What the computer sends later reaches Vault the next time it comes back:
+# a push that adds notes and fails on one, and a folder delivered by sync.
 wait 500
-expect Vault
-expect notes
+expect 3 notes
+companion vault push apps/vault/fixtures/broken --sim
+companion vault ingest apps/vault/fixtures/synced --sim
+lifecycle background
+lifecycle foreground
+wait-for 4 notes + 1 synced
+# A note that did not import is an error the owner fixes on the computer,
+# and the banner leads to the reason.
+expect 1 note did not import.
+expect-missing About Vault
 clean
-shot home
+shot home-import-failed
+tap See why
+wait-for Did not import
+expect Garbled.md
+expect not UTF-8 text
+clean
+shot about-failures
+tap Garbled.md
+wait-for not UTF-8 text
+clean
+shot import-problem
+tap-id 4294967295
+wait-for About Vault
+tap-id 4294967295
+wait-for 4 notes + 1 synced
+# Synced notes sit beside pushed ones and say where they came from.
 tap Browse
-expect Welcome
-expect Alpha
+wait-for Kept
+expect Field notes.md · synced
+expect Kept.md · pushed
 clean
-shot browse
-tap Welcome
-expect home note of the fixture
-clean
-shot note
-tap Back
-wait-for Welcome
-tap Back
-wait-for notes
+shot browse-synced
+tap Field notes
+wait-for Delivered by sync
+tap-id 4294967295
+wait-for Field notes
+tap-id 4294967295
+wait-for 4 notes + 1 synced
 tap Tags
-expect Tags
+wait-for #garden
+expect 2 notes
+tap-id 4294967295
+wait-for 4 notes + 1 synced
+# A note taken off the shelf while it is open says so and leads home.
+tap Browse
+wait-for Welcome
+tap Welcome
+wait-for home note of the fixture
+companion vault push apps/vault/fixtures/broken --replace --sim
+lifecycle background
+lifecycle foreground
+wait-for This note is no longer on the shelf.
 clean
-shot tags
+shot note-gone
+tap Vault
+wait-for 1 note + 1 synced
+tap Browse
+wait-for Kept
+expect-missing Welcome
+expect-missing Projects

@@ -339,7 +339,7 @@ impl<'a> Service<'a> {
                         seconds.div_ceil(60)
                     ),
                     Some(_) => format!("{name} asked this reader to slow down. Try again in a minute."),
-                    None => format!("{name} asked this reader to slow down. Try again later."),
+                    None => format!("{name} asked this reader to slow down. Wait a little, then try again."),
                 },
                 true,
                 StandardState::Error,
@@ -360,7 +360,8 @@ impl<'a> Service<'a> {
                 StandardState::Error,
             ),
             Cause::Unreachable => (
-                format!("{name} did not answer, or its certificate is not one this reader trusts. Try again later."),
+                // No "try again later" beside the Try again the banner carries.
+                format!("{name} did not answer, or its certificate is not one this reader trusts."),
                 true,
                 StandardState::Error,
             ),

@@ -107,11 +107,59 @@ mod tests {
             "the trap table lost its rows"
         );
         assert!(
-            corpus
-                .iter()
-                .all(|entry| entry.kind != "monster" || entry.body.starts_with("<p>AC ")),
-            "a stat block lost its opening line"
+            corpus.iter().all(|entry| entry.kind != "monster"
+                || entry.body.contains("<p><strong>Armor Class</strong> ")),
+            "a stat block lost its armor class"
         );
+    }
+
+    /// The source records describe armour as nested fields with lookup
+    /// addresses, and a stat block once printed them as they were: "AC type:
+    /// armor, value: 15, armor: index: leather-armor, ... url: /api/...".
+    #[test]
+    fn stat_blocks_are_written_for_a_reader_rather_than_as_the_source_fields() {
+        let corpus = load();
+        for entry in corpus.iter().filter(|entry| entry.kind == "monster") {
+            for raw in ["/api/", "type: ", "value: ", "index: ", "walk: "] {
+                assert!(!entry.body.contains(raw), "{}: {raw}", entry.name);
+            }
+            assert!(!entry.subtitle.contains("0."), "{}", entry.subtitle);
+        }
+        let goblin = corpus
+            .iter()
+            .find(|entry| entry.edition == 2014 && entry.name == "Goblin")
+            .expect("the goblin");
+        assert_eq!(goblin.subtitle, "Small humanoid · CR 1/4");
+        for line in [
+            "<strong>Armor Class</strong> 15 (leather armor, shield)",
+            "<strong>Hit Points</strong> 7 (2d6)",
+            "<strong>Speed</strong> 30 ft.",
+            "<strong>Challenge</strong> 1/4 (50 XP)",
+        ] {
+            assert!(goblin.body.contains(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_spell_says_its_casting_time_range_components_and_duration_before_its_text() {
+        let corpus = load();
+        let fireball = corpus
+            .iter()
+            .find(|entry| entry.edition == 2014 && entry.name == "Fireball")
+            .expect("fireball");
+        assert_eq!(fireball.subtitle, "Level 3 · Evocation · Sorcerer, Wizard");
+        assert!(fireball.body.starts_with(
+            "<p><strong>Casting time</strong> 1 action</p>\
+             <p><strong>Range</strong> 150 feet</p>\
+             <p><strong>Components</strong> V, S, M (a tiny ball of bat guano and sulfur)</p>\
+             <p><strong>Duration</strong> Instantaneous</p>"
+        ));
+        assert!(corpus
+            .iter()
+            .filter(|entry| entry.kind == "spell")
+            .all(|entry| ["Casting time", "Range", "Components", "Duration"]
+                .iter()
+                .all(|label| entry.body.contains(&format!("<strong>{label}</strong>")))));
     }
 
     #[test]

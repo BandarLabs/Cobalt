@@ -173,6 +173,22 @@ impl RadioState {
     }
 }
 
+/// What the Wi-Fi radio was last asked to do and has not yet shown on a
+/// reading. The radio answers a join or a switch some seconds after the
+/// request, and until then the page says what it is doing rather than
+/// showing the state from before the tap.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum WifiBusy {
+    Switching(bool),
+    Joining { ssid: String, secured: bool },
+    Disconnecting(String),
+}
+
+/// How long a join may take to show as connected before the page says it
+/// did not work. A wrong password never associates, and the radio has no
+/// answer that says so, only readings that never name the network.
+const JOIN_PATIENCE_SECONDS: u64 = 20;
+
 #[derive(Clone, Debug)]
 enum Pending {
     BluetoothRefresh,
@@ -264,14 +280,7 @@ impl Topic {
 /// runtime that cannot read or keep those choices reports it there, as well
 /// as over the choices themselves.
 fn update_screen_owns(request: &DeviceRequest) -> bool {
-    matches!(
-        request,
-        DeviceRequest::Update { .. }
-            | DeviceRequest::ReadAutoUpdate
-            | DeviceRequest::SetAutoUpdate { .. }
-            | DeviceRequest::ReadUpdateChannel
-            | DeviceRequest::SetUpdateChannel { .. }
-    )
+    matches!(request, DeviceRequest::Update { .. }) || is_standing_choice(request)
 }
 
 /// Whether this request reads or keeps one of the standing update choices,
@@ -309,7 +318,28 @@ struct Settings {
     /// device into another room, and asking them to press a button to find
     /// that out is asking them to do the radio's job.
     scan_clock: Heartbeat,
-    scanning: bool,
+    /// Scans answered since the list was opened. The radio's first answer
+    /// is what it had before, which can be nothing, so an empty list is
+    /// only reported once a second scan has also come back empty.
+    scans_heard: u8,
+    wifi_busy: Option<WifiBusy>,
+    /// Ticks while a join waits to show on a reading, and reads the radio.
+    join_clock: Heartbeat,
+    /// The network a join gave up on, with whether it asked for a password.
+    /// Said over the list until the owner taps something else.
+    join_failed: Option<(String, bool)>,
+    /// Where Back on the Wi-Fi page goes: home, or the update check that
+    /// sent the owner to join a network.
+    wifi_back: View,
+    /// The state the Bluetooth switch was tapped towards, until the radio
+    /// says it got there. Bringing it up can take tens of seconds.
+    bluetooth_switching: Option<bool>,
+    /// The device a pair, connect or disconnect is under way for, and the
+    /// word its row shows meanwhile.
+    bluetooth_busy: Option<(String, &'static str)>,
+    /// Reads the battery again while its page is open, so plugging in shows
+    /// there as it does in the status bar.
+    battery_clock: Heartbeat,
     selected_ssid: Option<String>,
     password: Keyboard,
     battery: Option<BatteryDetail>,
@@ -336,6 +366,11 @@ struct Settings {
 impl Settings {
     fn show(&mut self, context: &mut Context) {
         self.keep_scanning(context);
+        if self.view == View::Battery {
+            self.battery_clock.start(context);
+        } else {
+            self.battery_clock.stop(context);
+        }
         self.clamp_page(context);
         let screen = match self.view {
             View::Home => self.home_for(context),
@@ -388,12 +423,11 @@ impl Settings {
         if self.view == View::Wifi && self.wifi_state.enabled() {
             if !self.scan_clock.is_running() {
                 self.scan_clock.start(context);
-                self.scanning = true;
+                self.scans_heard = 0;
                 context.device().scan_wifi();
             }
         } else {
             self.scan_clock.stop(context);
-            self.scanning = false;
         }
     }
 
@@ -412,14 +446,17 @@ impl Settings {
                 format!("On · {connected} connected")
             }
         };
-        let wifi = match (self.wifi_state, &self.connected_ssid) {
-            (RadioState::Unknown, _) => "Checking…".to_owned(),
-            (RadioState::Unavailable, _) => "Not available on this device".to_owned(),
-            (RadioState::Unsupported, _) => "Not available in this version of Cobalt".to_owned(),
-            (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
-            (RadioState::On, None) => "On · Not connected".to_owned(),
-            (RadioState::Off, _) => "Off".to_owned(),
+        let wifi = match (&self.wifi_busy, self.wifi_state, &self.connected_ssid) {
+            (Some(WifiBusy::Joining { ssid, .. }), ..) => format!("Joining {ssid}…"),
+            (_, RadioState::Unknown, _) => "Checking…".to_owned(),
+            (_, RadioState::Unavailable, _) => "Not available on this device".to_owned(),
+            (_, RadioState::Unsupported, _) => "Not available in this version of Cobalt".to_owned(),
+            (_, RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
+            (_, RadioState::On, None) => "On · Not connected".to_owned(),
+            (_, RadioState::Off, _) => "Off".to_owned(),
         };
+        // Each row is measured as the longest line it can show, so a summary
+        // that grows or shrinks never moves a row to another page.
         vec![
             SettingsRow::new(
                 Some("Connections"),
@@ -427,22 +464,26 @@ impl Settings {
                 "Bluetooth",
                 bluetooth,
                 Glyph::Bluetooth,
-            ),
-            SettingsRow::new(None, WIFI, "Wi-Fi", wifi, Glyph::Wifi),
+            )
+            .measured_as("Not available in this version of Cobalt"),
+            SettingsRow::new(None, WIFI, "Wi-Fi", wifi, Glyph::Wifi)
+                .measured_as("Not available in this version of Cobalt"),
             SettingsRow::new(
                 Some("Device"),
                 BATTERY,
                 "Battery",
                 self.battery_summary(),
                 Glyph::Battery,
-            ),
+            )
+            .measured_as("100% · Not charging"),
             SettingsRow::new(
                 None,
                 UPDATE,
                 "Software update",
                 self.update_summary(),
                 Glyph::Download,
-            ),
+            )
+            .measured_as("Stable · Cobalt and apps update on their own"),
             SettingsRow::new(None, ABOUT, "About", "Model and versions", Glyph::Reader),
         ]
     }
@@ -451,7 +492,7 @@ impl Settings {
         let rows = self.home_rows();
         let measured: Vec<_> = rows
             .iter()
-            .map(|row| (row.section, row.title.as_str(), row.summary.as_str()))
+            .map(|row| (row.section, row.title.as_str(), row.measure.as_str()))
             .collect();
         let around = ScreenBuilder::new("settings")
             .top_bar("Settings")
@@ -517,6 +558,18 @@ impl Settings {
         let mut screen = ScreenBuilder::new("settings-update")
             .top_bar("Software update")
             .owns_back(true);
+        // A standing choice the runtime would not read or keep is said here
+        // too, but it is not a failed check: the check stays on offer, and
+        // the banner goes as soon as a later choice is kept.
+        if let (Some(trouble), false) = (
+            &self.choice_trouble,
+            matches!(self.update, UpdateFlow::Failed(_)),
+        ) {
+            screen = screen.banner(BannerLevel::Error, trouble.clone());
+            if self.auto_update.is_none() || self.update_channel.is_none() {
+                screen = screen.banner_action(RESCAN, "Read again");
+            }
+        }
         match &self.update {
             UpdateFlow::Idle => {
                 screen = screen
@@ -641,12 +694,12 @@ impl Settings {
         let metrics = context.metrics();
         // Each step gives up one more thing, least needed first: the
         // switches' own lines, which restate what the switch shows; the
-        // sentence that warns about Beta; the channels' lines; and last the
-        // list's prompt, which only repeats what the two choices under it
-        // say, and only where a refusal over the choices would otherwise push
-        // a switch off a panel held sideways.
+        // heading over the switches, whose names already say what they are;
+        // the sentence that warns about Beta; the channels' lines; and last
+        // the channels' heading, only where a refusal over the choices would
+        // otherwise push a switch off a panel held sideways.
         let mut screen = self.update_options_shaped(0);
-        for given_up in 0..=4 {
+        for given_up in 0..=5 {
             screen = self.update_options_shaped(given_up);
             if !screen
                 .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
@@ -667,9 +720,10 @@ impl Settings {
     /// [`Self::update_options_for`] can do without left out.
     fn update_options_shaped(&self, given_up: usize) -> Screen {
         let switch_lines = given_up < 1;
-        let explain = given_up < 2;
-        let summaries = given_up < 3;
-        let prompt = given_up < 4;
+        let switches_header = given_up < 2;
+        let explain = given_up < 3;
+        let summaries = given_up < 4;
+        let channel_header = given_up < 5;
         let mut screen = ScreenBuilder::new("settings-update-options")
             .top_bar("Update options")
             .owns_back(true);
@@ -680,9 +734,14 @@ impl Settings {
             return screen.text("Reading the update choices.").build();
         };
         let summary = |words: &'static str| if summaries { words } else { "" };
+        // Headed like every other group of choices in Settings. The list's
+        // own prompt is drawn as body text, which read as a stray sentence.
+        if channel_header {
+            screen = screen.section("Update channel");
+        }
         screen = screen
             .option_list(
-                if prompt { "Update channel" } else { "" },
+                "",
                 0,
                 CHANNEL_PREVIOUS,
                 CHANNEL_NEXT,
@@ -706,6 +765,9 @@ impl Settings {
         } else {
             ("", "")
         };
+        if switches_header {
+            screen = screen.section("Automatic updates");
+        }
         screen
             .toggle(
                 AUTO_COBALT,
@@ -785,9 +847,11 @@ impl Settings {
     }
 
     fn bluetooth_prefix(&self) -> ScreenBuilder {
-        let summary = match self.bluetooth_state {
-            RadioState::Unknown => "Checking…".to_owned(),
-            RadioState::On => match self
+        let summary = match (self.bluetooth_switching, self.bluetooth_state) {
+            (Some(true), _) => "Turning on. This can take up to a minute.".to_owned(),
+            (Some(false), _) => "Turning off…".to_owned(),
+            (None, RadioState::Unknown) => "Checking…".to_owned(),
+            (None, RadioState::On) => match self
                 .devices
                 .iter()
                 .filter(|device| device.connected)
@@ -796,12 +860,22 @@ impl Settings {
                 0 => "Nothing connected".to_owned(),
                 connected => format!("{connected} connected"),
             },
+            // Already used since the reader was turned on, so it will not
+            // start again until a restart; said before the owner waits on it.
+            (None, RadioState::Off) if self.restart_on_exit => {
+                "Restart the reader to turn it on again".to_owned()
+            }
             _ => "Turn on to find devices".to_owned(),
         };
+        // The switch moves on the tap, so the press is answered at once even
+        // when the radio takes half a minute to come up.
+        let on = self
+            .bluetooth_switching
+            .unwrap_or_else(|| self.bluetooth_state.enabled());
         let mut screen = ScreenBuilder::new("settings-bluetooth")
             .top_bar("Bluetooth")
             .owns_back(true)
-            .toggle(TOGGLE, "Bluetooth", summary, self.bluetooth_state.enabled());
+            .toggle(TOGGLE, "Bluetooth", summary, on);
         if let Some(trouble) = self.banner_for(Topic::Bluetooth) {
             screen = screen.banner(BannerLevel::Error, trouble);
         } else if self.restart_on_exit {
@@ -819,8 +893,14 @@ impl Settings {
                     None,
                     bluetooth_action(&device.address),
                     context.clamped_row(&device.name, 2, true),
-                    if device.connected {
-                        "Connected"
+                    if let Some((_, words)) = self
+                        .bluetooth_busy
+                        .as_ref()
+                        .filter(|(address, _)| *address == device.address)
+                    {
+                        words
+                    } else if device.connected {
+                        "Connected · Tap to disconnect"
                     } else if device.paired {
                         "Paired · Tap to connect"
                     } else {
@@ -887,20 +967,43 @@ impl Settings {
         // The network joined is said under the switch, where the "Connected"
         // fact under the heading used to be. Its row in the list below has
         // the whole name if a long one is cut short here.
-        let summary = match (self.wifi_state, &self.connected_ssid) {
-            (RadioState::Unknown, _) => "Checking…".to_owned(),
-            (RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
-            (RadioState::On, None) => "Not connected".to_owned(),
+        let summary = match (&self.wifi_busy, self.wifi_state, &self.connected_ssid) {
+            (Some(WifiBusy::Switching(true)), ..) => "Turning on…".to_owned(),
+            (Some(WifiBusy::Switching(false)), ..) => "Turning off…".to_owned(),
+            (Some(WifiBusy::Joining { ssid, .. }), ..) => format!("Joining {ssid}…"),
+            (Some(WifiBusy::Disconnecting(ssid)), ..) => format!("Disconnecting from {ssid}…"),
+            (None, RadioState::Unknown, _) => "Checking…".to_owned(),
+            (None, RadioState::On, Some(ssid)) => format!("Connected to {ssid}"),
+            (None, RadioState::On, None) => "Not connected".to_owned(),
             _ => "Turn on to see networks".to_owned(),
+        };
+        let on = match self.wifi_busy {
+            Some(WifiBusy::Switching(target)) => target,
+            _ => self.wifi_state.enabled(),
         };
         let mut screen = ScreenBuilder::new("settings-wifi")
             .top_bar("Wi-Fi")
             .owns_back(true)
-            .toggle(TOGGLE, "Wi-Fi", summary, self.wifi_state.enabled());
+            .toggle(TOGGLE, "Wi-Fi", summary, on);
         if let Some(trouble) = self.banner_for(Topic::Wifi) {
             screen = screen.banner(BannerLevel::Error, trouble);
+        } else if let Some((ssid, secured)) = &self.join_failed {
+            screen = screen.banner(
+                BannerLevel::Error,
+                if *secured {
+                    format!("Could not join {ssid}. Check the password, then try again.")
+                } else {
+                    format!("Could not join {ssid}. Move closer to it, then try again.")
+                },
+            );
         }
         screen
+    }
+
+    /// Whether the reader is on `ssid` now. Read from the radio's own
+    /// answer rather than the list, which is only as fresh as the last scan.
+    fn joined(&self, ssid: &str) -> bool {
+        self.connected_ssid.as_deref() == Some(ssid)
     }
 
     fn wifi_rows(&self, context: &Context) -> Vec<SettingsRow> {
@@ -913,10 +1016,17 @@ impl Settings {
                     "No password"
                 };
                 let signal = signal_words(network.signal_dbm);
-                let summary = if network.connected {
-                    format!("Connected · {signal} · Tap to disconnect")
-                } else {
-                    format!("{security} · {signal}")
+                let summary = match &self.wifi_busy {
+                    Some(WifiBusy::Joining { ssid, .. }) if *ssid == network.ssid => {
+                        "Joining…".to_owned()
+                    }
+                    Some(WifiBusy::Disconnecting(ssid)) if *ssid == network.ssid => {
+                        "Disconnecting…".to_owned()
+                    }
+                    _ if self.joined(&network.ssid) => {
+                        format!("Connected · {signal} · Tap to disconnect")
+                    }
+                    _ => format!("{security} · {signal}"),
                 };
                 SettingsRow::new(
                     None,
@@ -956,10 +1066,10 @@ impl Settings {
         let mut screen = self.wifi_prefix();
         if self.wifi_state.enabled() {
             if self.networks.is_empty() {
-                screen = screen.text(if self.scanning {
+                screen = screen.text(if self.scans_heard < 2 {
                     "Looking for networks…"
                 } else {
-                    "No networks found."
+                    "No networks found yet. Settings keeps looking while this page is open."
                 });
             } else {
                 let rows = self.wifi_rows(context);
@@ -1049,7 +1159,11 @@ impl Settings {
                 .banner(BannerLevel::Error, trouble.clone())
                 .banner_action(RESCAN, "Read again");
         }
+        // Under a refusal nothing is being read, so the page does not say so.
         let Some(detail) = &self.battery else {
+            if trouble.is_some() {
+                return screen.build();
+            }
             return screen.text("Reading the battery.").build();
         };
         if let Some(percent) = detail.percent {
@@ -1198,8 +1312,12 @@ impl Settings {
                 .banner_action(RESCAN, "Read again");
         }
         if self.identity.is_none() {
+            if trouble.is_some() {
+                return screen.build();
+            }
             return screen.text("Reading this reader's details.").build();
         }
+
         let all = self.about_parts();
         for part in parts.iter().filter_map(|&index| all.get(index)) {
             screen = match part {
@@ -1390,12 +1508,27 @@ impl Settings {
     ///
     /// Saying nothing left the switch where it started, under a note about
     /// restarting, and nothing on the screen said the tap had failed.
-    fn check_bluetooth_started(&mut self, request: &DeviceRequest, available: bool, enabled: bool) {
+    ///
+    /// `started_before` is whether the runtime had already said Bluetooth
+    /// was used since the reader was turned on. On the readers that share
+    /// one chip with Wi-Fi it starts once per boot, so a second start fails
+    /// for that reason and nothing the owner does now will change it.
+    fn check_bluetooth_started(
+        &mut self,
+        request: &DeviceRequest,
+        available: bool,
+        enabled: bool,
+        started_before: bool,
+    ) {
         if matches!(request, DeviceRequest::SetBluetooth { enabled: true }) && available && !enabled
         {
             self.fail(
                 Topic::Bluetooth,
-                "Bluetooth did not start. Restart the reader, then turn it on again.",
+                if started_before {
+                    "Bluetooth can start once each time the reader is turned on. Restart the reader to use it again."
+                } else {
+                    "Bluetooth did not start. Restart the reader, then turn it on again."
+                },
             );
         }
     }
@@ -1478,36 +1611,121 @@ impl Settings {
     }
 
     fn choose_bluetooth(&mut self, context: &mut Context, index: usize) {
+        // One request per device at a time: a second tap while the first is
+        // under way would undo it or ask twice.
+        if self.bluetooth_busy.is_some() {
+            return;
+        }
         let Some(device) = self.devices.get(index).cloned() else {
             return;
         };
         self.settled(Topic::Bluetooth);
         if device.connected {
-            context.device().disconnect_bluetooth(device.address);
+            context
+                .device()
+                .disconnect_bluetooth(device.address.clone());
+            self.bluetooth_busy = Some((device.address, "Disconnecting…"));
         } else if device.paired {
-            context.device().connect_bluetooth(device.address);
+            context.device().connect_bluetooth(device.address.clone());
+            self.bluetooth_busy = Some((device.address, "Connecting…"));
         } else if context.device().pair_bluetooth(device.address.clone()) {
-            self.pending = Some(Pending::ConnectAfterPair(device.address));
+            self.pending = Some(Pending::ConnectAfterPair(device.address.clone()));
+            self.bluetooth_busy = Some((device.address, "Pairing…"));
         }
         self.show(context);
     }
 
+    /// Lets go of the switch or the device row once a Bluetooth reading
+    /// shows the request was answered.
+    fn took_bluetooth_reading(&mut self, request: &DeviceRequest) {
+        if matches!(request, DeviceRequest::SetBluetooth { .. })
+            || self.bluetooth_switching == Some(self.bluetooth_state.enabled())
+        {
+            self.bluetooth_switching = None;
+        }
+        // A pair that goes on to connect keeps its row busy until the
+        // connect answers.
+        let pairing_on = matches!(request, DeviceRequest::PairBluetooth { .. })
+            && matches!(self.pending, Some(Pending::ConnectAfterPair(_)));
+        if pairing_on {
+            if let Some(busy) = &mut self.bluetooth_busy {
+                busy.1 = "Connecting…";
+            }
+        } else if !matches!(
+            request,
+            DeviceRequest::ScanBluetooth | DeviceRequest::SetBluetooth { .. }
+        ) {
+            self.bluetooth_busy = None;
+        }
+    }
+
     fn choose_network(&mut self, context: &mut Context, index: usize) {
+        // A tap while the radio is still doing the last one would ask it to
+        // leave or join twice.
+        if self.wifi_busy.is_some() {
+            return;
+        }
         let Some(network) = self.networks.get(index).cloned() else {
             return;
         };
         self.settled(Topic::Wifi);
-        if network.connected {
+        self.join_failed = None;
+        if self.joined(&network.ssid) {
             context.device().disconnect_wifi();
-            return;
-        }
-        if network.secured {
+            self.wifi_busy = Some(WifiBusy::Disconnecting(network.ssid));
+        } else if network.secured {
             self.selected_ssid = Some(network.ssid);
             self.password.clear();
             self.view = View::WifiPassword;
+        } else {
+            context.device().join_wifi(network.ssid.clone(), "");
+            self.start_join(context, network.ssid, false);
+        }
+        self.show(context);
+    }
+
+    /// Says the join is under way and starts timing it. The radio answers a
+    /// join before it has associated, so success is a later reading that
+    /// names the network, and failure is none doing so in time.
+    fn start_join(&mut self, context: &mut Context, ssid: String, secured: bool) {
+        self.wifi_busy = Some(WifiBusy::Joining { ssid, secured });
+        self.join_clock.stop(context);
+        self.join_clock.start(context);
+    }
+
+    /// Lets go of whatever the Wi-Fi page was waiting on once a reading
+    /// shows it happened.
+    fn took_wifi_reading(&mut self, context: &mut Context, request: &DeviceRequest) {
+        let done = match &self.wifi_busy {
+            None => false,
+            Some(WifiBusy::Switching(target)) => {
+                matches!(request, DeviceRequest::SetWifi { .. })
+                    || self.wifi_state.enabled() == *target
+            }
+            Some(WifiBusy::Joining { ssid, .. }) => {
+                self.joined(ssid) || self.wifi_state != RadioState::On
+            }
+            Some(WifiBusy::Disconnecting(ssid)) => !self.joined(ssid),
+        };
+        if done {
+            self.wifi_busy = None;
+            self.join_clock.stop(context);
+        }
+    }
+
+    /// A join tick: read the radio again, or give up and say so.
+    fn join_tick(&mut self, context: &mut Context) {
+        let Some(WifiBusy::Joining { ssid, secured }) = self.wifi_busy.clone() else {
+            self.join_clock.stop(context);
+            return;
+        };
+        if self.join_clock.waited().as_secs() >= JOIN_PATIENCE_SECONDS {
+            self.join_clock.stop(context);
+            self.wifi_busy = None;
+            self.join_failed = Some((ssid, secured));
             self.show(context);
         } else {
-            context.device().join_wifi(network.ssid, "");
+            context.device().read_wifi();
         }
     }
     /// Keystrokes for the Wi-Fi password screen, which owns every action
@@ -1525,7 +1743,8 @@ impl Settings {
                 if (8..=63).contains(&self.password.text().len()) {
                     let password = self.password.take();
                     if let Some(ssid) = self.selected_ssid.take() {
-                        context.device().join_wifi(ssid, password);
+                        context.device().join_wifi(ssid.clone(), password);
+                        self.start_join(context, ssid, true);
                     }
                     self.settled(Topic::Wifi);
                     self.view = View::Wifi;
@@ -1550,16 +1769,45 @@ impl Settings {
     /// radio reading may also settle that radio; see
     /// [`Self::settle_unreadable_radio`].
     fn took_trouble(&mut self, request: &DeviceRequest, words: &str, refused: Option<DenyReason>) {
+        // A refused choice is not a failed check, so it does not take the
+        // check's place; the update screen says it over the check instead.
         if is_standing_choice(request) {
             self.choice_trouble = Some(words.to_owned());
-        }
-        if update_screen_owns(request) {
+        } else if update_screen_owns(request) {
             self.update = UpdateFlow::Failed(words.to_owned());
         } else if let Some(topic) = Topic::of(request) {
             if let Some(reason) = refused {
                 self.settle_unreadable_radio(topic, reason);
             }
             self.fail(topic, words);
+            self.drop_busy(request);
+        }
+    }
+
+    /// Forgets the progress a failed request was showing, so the failure is
+    /// said instead of a wait that will never end.
+    fn drop_busy(&mut self, request: &DeviceRequest) {
+        let wifi = matches!(
+            (&self.wifi_busy, request),
+            (Some(WifiBusy::Switching(_)), DeviceRequest::SetWifi { .. })
+                | (
+                    Some(WifiBusy::Joining { .. }),
+                    DeviceRequest::JoinWifi { .. }
+                )
+                | (
+                    Some(WifiBusy::Disconnecting(_)),
+                    DeviceRequest::DisconnectWifi
+                )
+        );
+        if wifi {
+            self.wifi_busy = None;
+        }
+        match request {
+            DeviceRequest::SetBluetooth { .. } => self.bluetooth_switching = None,
+            DeviceRequest::PairBluetooth { .. }
+            | DeviceRequest::ConnectBluetooth { .. }
+            | DeviceRequest::DisconnectBluetooth { .. } => self.bluetooth_busy = None,
+            _ => {}
         }
     }
 
@@ -1621,6 +1869,7 @@ impl KoboApp for Settings {
             self.view = match self.view {
                 View::UpdateChannelConfirm => View::UpdateOptions,
                 View::UpdateOptions => View::Update,
+                View::Wifi => self.wifi_back,
                 _ => View::Home,
             };
             self.show(context);
@@ -1630,6 +1879,7 @@ impl KoboApp for Settings {
             self.show(context);
         } else if action == action_id(WIFI) {
             self.view = View::Wifi;
+            self.wifi_back = View::Home;
             context.device().read_wifi();
             self.show(context);
         } else if action == action_id(BATTERY) {
@@ -1648,7 +1898,10 @@ impl KoboApp for Settings {
             self.view = View::UpdateOptions;
             self.show(context);
         } else if action == action_id(JOIN_WIFI) {
+            // Back from here returns to the check that sent the owner, which
+            // is where they will want to check again.
             self.view = View::Wifi;
+            self.wifi_back = View::Update;
             context.device().read_wifi();
             self.show(context);
         } else if action == action_id(CHECK) {
@@ -1665,11 +1918,22 @@ impl KoboApp for Settings {
             context.exit();
         } else if action == action_id(TOGGLE) {
             match self.view {
-                View::Bluetooth => context
-                    .device()
-                    .set_bluetooth(!self.bluetooth_state.enabled()),
-                View::Wifi => context.device().set_wifi(!self.wifi_state.enabled()),
-                View::Home
+                View::Bluetooth if self.bluetooth_switching.is_none() => {
+                    let target = !self.bluetooth_state.enabled();
+                    context.device().set_bluetooth(target);
+                    self.bluetooth_switching = Some(target);
+                    self.show(context);
+                }
+                View::Wifi if self.wifi_busy.is_none() => {
+                    let target = !self.wifi_state.enabled();
+                    context.device().set_wifi(target);
+                    self.wifi_busy = Some(WifiBusy::Switching(target));
+                    self.join_failed = None;
+                    self.show(context);
+                }
+                View::Bluetooth
+                | View::Wifi
+                | View::Home
                 | View::WifiPassword
                 | View::Battery
                 | View::About
@@ -1691,9 +1955,12 @@ impl KoboApp for Settings {
                 }
                 View::Battery => context.device().read_battery_detail(),
                 View::About => context.device().read_identity(),
+                View::Update => {
+                    context.device().read_auto_update();
+                    context.device().read_update_channel();
+                }
                 View::Home
                 | View::WifiPassword
-                | View::Update
                 | View::UpdateOptions
                 | View::UpdateChannelConfirm => {}
             }
@@ -1738,11 +2005,13 @@ impl KoboApp for Settings {
             } => {
                 self.bluetooth_state = RadioState::new(available, enabled);
                 self.devices = devices;
+                self.took_bluetooth_reading(&request);
                 // Latched, so a later reading cannot withdraw a warning the
                 // reader has already been shown.
+                let started_before = self.restart_on_exit;
                 self.restart_on_exit |= restart_on_exit;
                 self.settled(Topic::Bluetooth);
-                self.check_bluetooth_started(&request, available, enabled);
+                self.check_bluetooth_started(&request, available, enabled, started_before);
                 if matches!(request, DeviceRequest::PairBluetooth { .. }) {
                     if let Some(Pending::ConnectAfterPair(address)) = self.pending.take() {
                         context.device().connect_bluetooth(address);
@@ -1761,9 +2030,13 @@ impl KoboApp for Settings {
                     self.networks = networks;
                 }
                 if matches!(request, DeviceRequest::ScanWifi) {
-                    self.scanning = false;
+                    self.scans_heard = self.scans_heard.saturating_add(1);
+                }
+                if self.connected_ssid.is_some() {
+                    self.join_failed = None;
                 }
                 self.settled(Topic::Wifi);
+                self.took_wifi_reading(context, &request);
             }
             DeviceResult::BatteryDetail(detail) => {
                 self.battery = Some(detail);
@@ -1832,11 +2105,23 @@ impl KoboApp for Settings {
         // is taken before the pending request is consulted.
         if self.scan_clock.on_task(context, task, &outcome) {
             if self.view == View::Wifi && self.wifi_state.enabled() {
-                self.scanning = true;
                 context.device().scan_wifi();
             }
             return;
         }
+        if self.join_clock.on_task(context, task, &outcome) {
+            if !matches!(outcome, TaskOutcome::Cancelled) {
+                self.join_tick(context);
+            }
+            return;
+        }
+        if self.battery_clock.on_task(context, task, &outcome) {
+            if self.view == View::Battery && !matches!(outcome, TaskOutcome::Cancelled) {
+                context.device().read_battery_detail();
+            }
+            return;
+        }
+
         if self.update_task == Some(task) {
             self.update_task = None;
             match outcome {
@@ -1954,6 +2239,8 @@ struct SettingsRow {
     action: String,
     title: String,
     summary: String,
+    /// The summary as pagination measures it.
+    measure: String,
     lead: RowLead,
 }
 
@@ -1965,14 +2252,26 @@ impl SettingsRow {
         summary: impl Into<String>,
         glyph: Glyph,
     ) -> Self {
+        let summary = summary.into();
         Self {
             section,
             action: action.into(),
             title: title.into(),
-            summary: summary.into(),
+            measure: summary.clone(),
+            summary,
             lead: glyph.into(),
         }
     }
+
+    /// Measures the row as `widest` when that is longer than what it says
+    /// now, which keeps every row on its page as the summary changes.
+    fn measured_as(mut self, widest: &str) -> Self {
+        if widest.chars().count() > self.measure.chars().count() {
+            widest.clone_into(&mut self.measure);
+        }
+        self
+    }
+
     fn as_row(&self) -> (&str, &str, &str, RowLead) {
         (&self.action, &self.title, &self.summary, self.lead)
     }
@@ -2293,9 +2592,24 @@ mod tests {
         );
         assert!(screen.nodes.iter().any(|node| matches!(
             node,
-            Node::Options { prompt, selected: Some(1), .. } if prompt == "Update channel"
+            Node::Options {
+                selected: Some(1),
+                ..
+            }
         )));
+        // The channels and the switches are each headed as a section, as
+        // every other group in Settings is.
+        let sections: Vec<_> = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Section { title, .. } => Some(title.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sections, ["Update channel", "Automatic updates"]);
         let text = text_of(&screen);
+
         assert!(text.contains("change back here at any time"), "{text}");
         assert!(text.contains("saved keys are kept"), "{text}");
         assert!(!text.contains("state, and secrets"), "{text}");
@@ -2576,15 +2890,25 @@ mod tests {
     fn an_empty_wifi_list_says_whether_it_is_still_looking() {
         let looking = Settings {
             wifi_state: RadioState::On,
-            scanning: true,
+            scans_heard: 0,
+            ..Settings::default()
+        };
+        // The first answer reports the scan before it, which can be empty,
+        // so one empty answer is still looking.
+        let once = Settings {
+            wifi_state: RadioState::On,
+            scans_heard: 1,
             ..Settings::default()
         };
         let settled = Settings {
             wifi_state: RadioState::On,
+            scans_heard: 2,
             ..Settings::default()
         };
         assert!(text_of(&looking.wifi()).contains("Looking for networks"));
-        assert!(text_of(&settled.wifi()).contains("No networks found."));
+        assert!(text_of(&once.wifi()).contains("Looking for networks"));
+        assert!(text_of(&settled.wifi()).contains("No networks found yet."));
+
         // And neither offers a Scan button, because pressing one would ask
         // for what is already happening every five seconds.
         let layout = looking
@@ -3825,6 +4149,360 @@ mod tests {
                     fits(&screen, metrics, &format!("{topic:?}"));
                 }
             }
+        }
+    }
+
+    fn wifi_reading(connected: Option<&str>, networks: Vec<WifiNetwork>) -> DeviceResult {
+        DeviceResult::Wifi {
+            available: true,
+            enabled: true,
+            connected_ssid: connected.map(str::to_owned),
+            networks,
+        }
+    }
+
+    fn network(ssid: &str, secured: bool, connected: bool) -> WifiNetwork {
+        WifiNetwork {
+            ssid: ssid.to_owned(),
+            signal_dbm: -65,
+            secured,
+            connected,
+        }
+    }
+
+    #[test]
+    fn a_refused_update_choice_leaves_the_check_on_offer_and_goes_once_a_choice_is_kept() {
+        let mut settings = Settings {
+            view: View::UpdateOptions,
+            auto_update: Some((true, true)),
+            update_channel: Some(UpdateChannel::Beta),
+            ..Settings::default()
+        };
+        let mut context = kobo_sdk::Context::default();
+        kobo_sdk::KoboApp::on_device_result(
+            &mut settings,
+            &mut context,
+            DeviceRequest::SetAutoUpdate {
+                cobalt: true,
+                apps: false,
+            },
+            DeviceResult::Denied(DenyReason::PolicyRejected),
+        );
+        assert_eq!(settings.update, super::UpdateFlow::Idle);
+        let update = drawn_words(&settings.update());
+        assert!(update.contains("Cobalt did not allow Settings"), "{update}");
+        assert!(update.contains("Check for updates"), "{update}");
+        kobo_sdk::KoboApp::on_device_result(
+            &mut settings,
+            &mut context,
+            DeviceRequest::SetAutoUpdate {
+                cobalt: true,
+                apps: false,
+            },
+            DeviceResult::AutoUpdate {
+                cobalt: true,
+                apps: false,
+            },
+        );
+        let update = drawn_words(&settings.update());
+        assert!(!update.contains("did not allow"), "{update}");
+        assert!(update.contains("Check for updates"), "{update}");
+    }
+
+    #[test]
+    fn leaving_a_network_shows_on_its_row_at_once_and_a_second_tap_asks_nothing() {
+        use kobo_sdk::{AppRunner, Command};
+        let mut runner = AppRunner::new(Settings::default());
+        runner.start();
+        runner.action(action_id(super::WIFI));
+        runner.app_mut().wifi_state = RadioState::On;
+        runner.app_mut().connected_ssid = Some("Library".to_owned());
+        runner.app_mut().networks = vec![network("Library", false, true)];
+        let tap = action_id(&super::network_action("Library"));
+        let commands = runner.action(tap);
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::DisconnectWifi))));
+        let words = drawn_words(&runner.app().wifi());
+        assert!(words.contains("Disconnecting from Library"), "{words}");
+        assert!(!words.contains("Tap to disconnect"), "{words}");
+        let again = runner.action(tap);
+        assert!(!again
+            .iter()
+            .any(|command| matches!(command, Command::Device(_))));
+        // The list still says connected from the last scan; the radio's
+        // own answer is what counts.
+        let mut context = kobo_sdk::Context::default();
+        kobo_sdk::KoboApp::on_device_result(
+            runner.app_mut(),
+            &mut context,
+            DeviceRequest::ReadWifi,
+            wifi_reading(None, Vec::new()),
+        );
+        let words = drawn_words(&runner.app().wifi());
+        assert!(words.contains("Not connected"), "{words}");
+        assert!(!words.contains("Tap to disconnect"), "{words}");
+        assert!(!words.contains("Disconnecting"), "{words}");
+    }
+
+    #[test]
+    fn a_join_says_it_is_joining_and_says_so_when_the_network_never_comes() {
+        use kobo_sdk::{AppRunner, Command};
+        let mut runner = AppRunner::new(Settings::default());
+        runner.start();
+        runner.action(action_id(super::WIFI));
+        runner.app_mut().wifi_state = RadioState::On;
+        runner.app_mut().networks = vec![network("Library", false, false)];
+        let commands = runner.action(action_id(&super::network_action("Library")));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::JoinWifi { ssid, .. }) if ssid == "Library"
+        )));
+        let words = drawn_words(&runner.app().wifi());
+        assert!(words.contains("Joining Library"), "{words}");
+        // Readings that do not name the network keep it joining.
+        let mut context = kobo_sdk::Context::default();
+        let app = runner.app_mut();
+        kobo_sdk::KoboApp::on_device_result(
+            app,
+            &mut context,
+            DeviceRequest::ReadWifi,
+            wifi_reading(None, Vec::new()),
+        );
+        assert!(drawn_words(&app.wifi()).contains("Joining Library"));
+        // Out of patience, it says the join did not work.
+        app.wifi_busy = None;
+        app.join_failed = Some(("Upstairs".to_owned(), true));
+        let words = drawn_words(&app.wifi());
+        assert!(
+            words.contains("Could not join Upstairs. Check the password"),
+            "{words}"
+        );
+        // A reading that names a network takes the complaint away.
+        kobo_sdk::KoboApp::on_device_result(
+            app,
+            &mut context,
+            DeviceRequest::ReadWifi,
+            wifi_reading(Some("Library"), Vec::new()),
+        );
+        assert!(!drawn_words(&app.wifi()).contains("Could not join"));
+    }
+
+    #[test]
+    fn a_join_that_never_shows_on_a_reading_gives_up_after_its_patience() {
+        let mut settings = Settings {
+            view: View::Wifi,
+            wifi_state: RadioState::On,
+            ..Settings::default()
+        };
+        let mut context = kobo_sdk::Context::default();
+        settings.start_join(&mut context, "Upstairs".to_owned(), true);
+        for _ in 0..super::JOIN_PATIENCE_SECONDS / 5 {
+            let task = context
+                .take_commands()
+                .into_iter()
+                .find_map(|command| match command {
+                    kobo_sdk::Command::Spawn { task, .. } => Some(task),
+                    _ => None,
+                })
+                .expect("the join clock is armed");
+            kobo_sdk::KoboApp::on_task(
+                &mut settings,
+                &mut context,
+                task,
+                kobo_sdk::TaskOutcome::Completed(Vec::new()),
+            );
+        }
+        assert!(settings.wifi_busy.is_none());
+        assert_eq!(settings.join_failed, Some(("Upstairs".to_owned(), true)));
+    }
+
+    #[test]
+    fn the_wifi_switch_answers_the_tap_before_the_radio_does() {
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Settings::default());
+        runner.start();
+        runner.action(action_id(super::WIFI));
+        runner.app_mut().wifi_state = RadioState::Off;
+        runner.action(action_id(TOGGLE));
+        let screen = runner.app().wifi();
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Toggle { on: true, summary, .. } if summary == "Turning on…"
+        )));
+    }
+
+    #[test]
+    fn the_bluetooth_switch_says_it_is_turning_on_while_the_radio_comes_up() {
+        use kobo_sdk::{AppRunner, Command};
+        let mut runner = AppRunner::new(Settings::default());
+        runner.start();
+        runner.action(action_id(super::BLUETOOTH));
+        runner.app_mut().bluetooth_state = RadioState::Off;
+        runner.action(action_id(TOGGLE));
+        let words = drawn_words(&runner.app().bluetooth());
+        assert!(words.contains("Turning on"), "{words}");
+        // A second tap while it comes up asks nothing more of the radio.
+        let again = runner.action(action_id(TOGGLE));
+        assert!(!again
+            .iter()
+            .any(|command| matches!(command, Command::Device(_))));
+        let mut context = kobo_sdk::Context::default();
+        kobo_sdk::KoboApp::on_device_result(
+            runner.app_mut(),
+            &mut context,
+            DeviceRequest::SetBluetooth { enabled: true },
+            DeviceResult::Bluetooth {
+                available: true,
+                enabled: true,
+                devices: Vec::new(),
+                restart_on_exit: false,
+            },
+        );
+        assert!(!drawn_words(&runner.app().bluetooth()).contains("Turning on"));
+    }
+
+    #[test]
+    fn a_second_start_in_one_boot_says_bluetooth_starts_once_per_boot() {
+        let off = DeviceResult::Bluetooth {
+            available: true,
+            enabled: false,
+            devices: Vec::new(),
+            restart_on_exit: true,
+        };
+        let mut settings = Settings {
+            view: View::Bluetooth,
+            bluetooth_state: RadioState::Off,
+            restart_on_exit: true,
+            ..Settings::default()
+        };
+        let words = drawn_words(&settings.bluetooth());
+        assert!(
+            words.contains("Restart the reader to turn it on again"),
+            "{words}"
+        );
+        let mut context = kobo_sdk::Context::default();
+        kobo_sdk::KoboApp::on_device_result(
+            &mut settings,
+            &mut context,
+            DeviceRequest::SetBluetooth { enabled: true },
+            off.clone(),
+        );
+        let words = drawn_words(&settings.bluetooth());
+        assert!(
+            words.contains("once each time the reader is turned on"),
+            "{words}"
+        );
+        // The first start of a boot that fails is a different failure.
+        let mut first = Settings {
+            view: View::Bluetooth,
+            bluetooth_state: RadioState::Off,
+            ..Settings::default()
+        };
+        kobo_sdk::KoboApp::on_device_result(
+            &mut first,
+            &mut context,
+            DeviceRequest::SetBluetooth { enabled: true },
+            off,
+        );
+        assert!(drawn_words(&first.bluetooth()).contains("Bluetooth did not start"));
+    }
+
+    #[test]
+    fn a_connected_bluetooth_device_says_a_tap_disconnects_it() {
+        let settings = Settings {
+            bluetooth_state: RadioState::On,
+            devices: vec![bluetooth_device(0)],
+            ..Settings::default()
+        };
+        let words = drawn_words(&settings.bluetooth());
+        assert!(words.contains("Connected · Tap to disconnect"), "{words}");
+    }
+
+    #[test]
+    fn the_battery_page_reads_the_gauge_again_while_it_is_open() {
+        let mut settings = Settings::default();
+        let mut context = kobo_sdk::Context::default();
+        kobo_sdk::KoboApp::on_action(&mut settings, &mut context, action_id(super::BATTERY));
+        let task = context
+            .take_commands()
+            .into_iter()
+            .find_map(|command| match command {
+                kobo_sdk::Command::Spawn { task, .. } => Some(task),
+                _ => None,
+            })
+            .expect("the battery clock is armed");
+        kobo_sdk::KoboApp::on_task(
+            &mut settings,
+            &mut context,
+            task,
+            kobo_sdk::TaskOutcome::Completed(Vec::new()),
+        );
+        assert!(context.take_commands().iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Device(DeviceRequest::ReadBatteryDetail)
+        )));
+    }
+
+    #[test]
+    fn a_refused_reading_does_not_also_say_it_is_still_reading() {
+        let settings = Settings {
+            trouble: Some((
+                Topic::About,
+                "Cobalt did not allow Settings to do that.".to_owned(),
+            )),
+            ..Settings::default()
+        };
+        assert!(!drawn_words(&settings.about()).contains("Reading this reader"));
+        let settings = Settings {
+            trouble: Some((
+                Topic::Battery,
+                "Cobalt did not allow Settings to do that.".to_owned(),
+            )),
+            ..Settings::default()
+        };
+        assert!(!drawn_words(&settings.battery()).contains("Reading the battery"));
+    }
+
+    #[test]
+    fn back_from_wifi_opened_by_the_update_check_returns_to_the_check() {
+        let mut settings = Settings {
+            view: View::Update,
+            update: super::UpdateFlow::Offline,
+            ..Settings::default()
+        };
+        let mut context = kobo_sdk::Context::default();
+        kobo_sdk::KoboApp::on_action(&mut settings, &mut context, action_id(super::JOIN_WIFI));
+        assert_eq!(settings.view, View::Wifi);
+        kobo_sdk::KoboApp::on_action(&mut settings, &mut context, kobo_sdk::ActionId::BACK);
+        assert_eq!(settings.view, View::Update);
+        kobo_sdk::KoboApp::on_action(&mut settings, &mut context, kobo_sdk::ActionId::BACK);
+        kobo_sdk::KoboApp::on_action(&mut settings, &mut context, action_id(super::WIFI));
+        kobo_sdk::KoboApp::on_action(&mut settings, &mut context, kobo_sdk::ActionId::BACK);
+        assert_eq!(settings.view, View::Home);
+    }
+
+    #[test]
+    fn the_home_rows_keep_their_pages_whatever_the_update_row_says() {
+        for metrics in every_size_and_pose() {
+            let context = kobo_sdk::AppRunner::with_metrics(Settings::default(), metrics).context();
+
+            let pages = |update: super::UpdateFlow| {
+                Settings {
+                    auto_update: Some((true, true)),
+                    update_channel: Some(UpdateChannel::Stable),
+                    update,
+                    ..Settings::default()
+                }
+                .home_pages(&context)
+            };
+            let idle = pages(super::UpdateFlow::Idle);
+            assert_eq!(idle, pages(super::UpdateFlow::Offline), "{metrics:?}");
+            assert_eq!(
+                idle,
+                pages(super::UpdateFlow::Failed("x".to_owned())),
+                "{metrics:?}"
+            );
         }
     }
 

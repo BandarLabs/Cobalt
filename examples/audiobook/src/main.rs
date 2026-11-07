@@ -7,9 +7,10 @@ mod pipeline;
 use kobo_sdk::audio::{span, AudioMetadata, AudioPlayer};
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, typographic_cover, AudioEntry, BannerLevel, Context, DeviceRequest, DeviceResult,
-    Failure, Glyph, Heartbeat, KoboApp, LogLevel, PictureHandle, RowLead, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StandardState, StoreResult, TaskId, TaskOutcome,
+    action_id, typographic_cover, AudioEntry, BannerLevel, Context, DeviceError, DeviceRequest,
+    DeviceResult, Failure, Glyph, Heartbeat, KoboApp, LogLevel, PictureHandle, RowLead, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, StandardState, StoreResult, TaskId,
+    TaskOutcome,
 };
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -35,6 +36,11 @@ const LIBRARY_BACK: &str = "library-back";
 const LIBRARY_NEXT: &str = "library-next";
 /// The row at the head of the library that returns to the book playing.
 const NOW_PLAYING: &str = "now-playing";
+/// What the library says when the listing stopped short.
+const TRUNCATED: &str = "Only the first two thousand audiobooks are listed.";
+/// Opens a book that would not play once more, after it has been copied
+/// over again.
+const PLAY_AGAIN: &str = "play-again";
 
 /// The three accounts one audiobook spends, checked before the first spend.
 const SECRETS: &[&str] = &["exa", "openai", "elevenlabs"];
@@ -249,6 +255,10 @@ struct Audiobook {
     part_download: Option<ShelfDownload>,
     /// How many saved parts a resume is reading back.
     restoring: usize,
+    /// Why the book just opened cannot be played at all, when it cannot.
+    /// The player is put away for it: play, skip and volume can do nothing
+    /// for a file that will not decode.
+    unplayable: Option<DeviceError>,
 }
 
 impl Audiobook {
@@ -311,6 +321,7 @@ impl Audiobook {
                     .primary_button(CREATE, "Create")
                     .build()
             }
+            Stage::Player if self.unplayable.is_some() => self.unplayable_screen(),
             Stage::Player => self.player.as_ref().map_or_else(
                 || {
                     ScreenBuilder::new("audiobook-player-missing")
@@ -406,6 +417,55 @@ impl Audiobook {
         } else {
             screen.button(second.0, second.1).build()
         }
+    }
+
+    /// A book that opened and will not play: what is wrong with the file,
+    /// what to do about it, and the way back, in place of a player whose
+    /// every control would do nothing.
+    fn unplayable_screen(&self) -> Screen {
+        let advice = match self.unplayable {
+            Some(DeviceError::InvalidInput) => {
+                "This reader cannot play this kind of file. Audiobooks plays MP3, M4B, M4A, OGG, \
+                 Opus, FLAC and WAV."
+            }
+            Some(DeviceError::NotFound) => {
+                "The file is no longer on this reader. It may have been moved or deleted over USB."
+            }
+            _ => {
+                "The file could not be decoded. It may be damaged or only partly copied. Copy it \
+                 to the reader again over USB, then try again."
+            }
+        };
+        ScreenBuilder::new("audiobook-unplayable")
+            .top_bar(self.playing_title())
+            .owns_back(true)
+            .splash(
+                Some(Glyph::Headphones),
+                "This book cannot be played",
+                advice,
+            )
+            .buttons([(PLAY_AGAIN, "Try again"), (SHELF, "Your audiobooks")])
+            .build()
+    }
+
+    /// Opens the book that would not play once more, as if from its row.
+    /// Returns whether the tap was Try again.
+    fn play_again(&mut self, context: &mut Context, action: kobo_sdk::ActionId) -> bool {
+        if self.stage != Stage::Player || action != action_id(PLAY_AGAIN) {
+            return false;
+        }
+        let again = self.playing.clone().and_then(|id| {
+            self.library
+                .as_ref()?
+                .iter()
+                .position(|book| same_book(&book.id, &id))
+        });
+        self.unplayable = None;
+        if let Some(index) = again {
+            self.play(context, index);
+        }
+        self.show(context);
+        true
     }
 
     /// Which keys are missing and the exact command that installs each.
@@ -525,25 +585,28 @@ impl Audiobook {
     fn library_head(&self, screen: ScreenBuilder) -> ScreenBuilder {
         let mut screen = screen;
         if self.truncated {
-            screen = screen.banner(
-                BannerLevel::Info,
-                "Only the first two thousand audiobooks are listed.",
-            );
+            screen = screen.banner(BannerLevel::Info, TRUNCATED);
         }
         // The book playing has a row of its own on the page that lists it.
         // Above that page it was listed twice, once playing and once as a
         // file not yet opened.
         if self.playing_shown().is_none() {
-            if let Some(status) = self.player_status() {
-                screen = screen.section("Now playing").rows([(
-                    NOW_PLAYING,
-                    self.playing_title(),
-                    status,
-                    RowLead::from(Glyph::Headphones),
-                )]);
-            }
+            screen = self.now_playing(screen);
         }
         screen
+    }
+
+    /// The book playing, as a row of its own under its own heading.
+    fn now_playing(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        match self.player_status() {
+            Some(status) => screen.section("Now playing").rows([(
+                NOW_PLAYING,
+                self.playing_title(),
+                status,
+                RowLead::from(Glyph::Headphones),
+            )]),
+            None => screen,
+        }
     }
 
     /// Where the player is in the book playing, as its row says it.
@@ -726,13 +789,17 @@ impl Audiobook {
             .iter()
             .map(|(title, status)| (title.as_str(), status.as_str()))
             .collect::<Vec<_>>();
-        let placed = self
-            .library_head(
-                ScreenBuilder::new("audiobook-library")
-                    .top_bar("Audiobooks")
-                    .top_bar_glyph(NEW, "Create", Glyph::Plus),
-            )
-            .build();
+        // Measured with the Now playing row whenever a book plays. Whether
+        // a page shows it depends on whether that page lists the book, which
+        // is not known until the pages exist, and a page measured without it
+        // pushed its last row under the page turns and off the panel.
+        let mut placed = ScreenBuilder::new("audiobook-library")
+            .top_bar("Audiobooks")
+            .top_bar_glyph(NEW, "Create", Glyph::Plus);
+        if self.truncated {
+            placed = placed.banner(BannerLevel::Info, TRUNCATED);
+        }
+        let placed = self.now_playing(placed).build();
         let pages =
             context.paginate_rows_under(&measured, false, kobo_sdk::Position::AtTheFoot, &placed);
         self.pages = pages
@@ -944,6 +1011,12 @@ impl Audiobook {
     /// as it did when leaving the player meant stopping the book: a finished
     /// creation is not a draft to come back to.
     fn leave_player(&mut self, context: &mut Context) {
+        // A book that would not play is not playing, and is not listed as
+        // the one Now playing either.
+        if self.unplayable.take().is_some() {
+            self.player = None;
+            self.playing = None;
+        }
         self.note_place(context, true);
         self.clock.stop(context);
         self.reset();
@@ -1540,7 +1613,11 @@ impl KoboApp for Audiobook {
             self.open_library(context);
             return;
         }
+        if self.play_again(context, action) {
+            return;
+        }
         if self.stage == Stage::Player
+            && self.unplayable.is_none()
             && self
                 .player
                 .as_mut()
@@ -1848,6 +1925,20 @@ impl KoboApp for Audiobook {
                 self.show(context);
             }
             return;
+        }
+        // A file that will not decode, cannot be played here or has gone
+        // is not helped by any control on the player, so the player gives
+        // way to a screen that says what to do. An output that is missing
+        // is another matter: the player asks for headphones itself.
+        if let (DeviceRequest::LoadAudio { .. }, DeviceResult::Failed(error)) = (&request, &result)
+        {
+            if matches!(
+                error,
+                DeviceError::Backend | DeviceError::InvalidInput | DeviceError::NotFound
+            ) && self.stage == Stage::Player
+            {
+                self.unplayable = Some(*error);
+            }
         }
         if self
             .player

@@ -4,8 +4,8 @@
   "short_label": "Pub Quiz",
   "summary": "Play offline solo or pass-around trivia rounds.",
   "page_description": "Offline trivia rounds for one reader or a table passing one Kobo between players.",
-  "version": "0.1.20",
-  "release_notes": "Pub Quiz now has an icon of its own, a question mark.",
+  "version": "0.1.21",
+  "release_notes": "A round picked up again after the reader sleeps keeps its category and difficulty, so Play again deals from the same mix.",
   "glyph": "question",
   "capabilities": [
     "network"

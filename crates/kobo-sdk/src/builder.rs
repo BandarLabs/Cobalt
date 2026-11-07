@@ -22,6 +22,7 @@ impl ScreenBuilder {
             nav_bar: None,
             bottom_action: None,
             page_turns: None,
+            turn_extras: (None, None),
             hold: None,
             owns_back: false,
             text_scale: None,
@@ -369,10 +370,12 @@ impl ScreenBuilder {
     /// action names carry straight on: a control inside a band is named and
     /// read exactly like a control anywhere else.
     ///
-    /// Slots past [`MAX_BAND_SLOTS`] are dropped. When the panel cannot give
-    /// every slot a readable width the band stacks itself, so this is always
-    /// safe to reach for -- there is no narrow device on which it produces a
-    /// column four characters wide.
+    /// More than [`MAX_BAND_SLOTS`] slots wrap onto further bands of as
+    /// even a count as they can make: four buttons are two rows of two.
+    /// They used to be dropped past the third without a word. When the
+    /// panel cannot give every slot a readable width the band stacks
+    /// itself, so this is always safe to reach for -- there is no narrow
+    /// device on which it produces a column four characters wide.
     ///
     /// ```ignore
     /// screen.band(BandAlign::Top, [
@@ -392,18 +395,20 @@ impl ScreenBuilder {
         let outer = std::mem::take(&mut self.nodes);
         let mut built = Vec::new();
         let mut done = self;
-        for (width, build) in slots.into_iter().take(MAX_BAND_SLOTS) {
+        for (width, build) in slots {
             done = build(done);
             let nodes = std::mem::take(&mut done.nodes);
             built.push(BandSlot::new(width, nodes));
         }
         done.nodes = outer;
-        if !built.is_empty() {
-            done.nodes.push(Node::Band {
-                id,
-                align,
-                slots: built,
-            });
+        let mut rows_left = built.len().div_ceil(MAX_BAND_SLOTS);
+        let mut band_id = Some(id);
+        while !built.is_empty() {
+            let rest = built.split_off(built.len().div_ceil(rows_left));
+            let slots = std::mem::replace(&mut built, rest);
+            let id = band_id.take().unwrap_or_else(|| done.next_id());
+            done.nodes.push(Node::Band { id, align, slots });
+            rows_left -= 1;
         }
         done
     }
@@ -795,9 +800,9 @@ impl ScreenBuilder {
     /// of thing, so a narrow panel still stacks them by itself rather than
     /// squeezing three words into a third of a screen each.
     ///
-    /// Anything past the third is dropped, which is what a band does anyway. A
-    /// row of four controls is a menu, and the overflow menu is what that is
-    /// for.
+    /// Past three they wrap onto a second line, as a band does. A row of
+    /// four controls is usually a menu, and the overflow menu is what that
+    /// is for, but a fourth is never dropped without a word.
     #[must_use]
     pub fn buttons<I, N, L>(self, actions: I) -> Self
     where
@@ -807,7 +812,6 @@ impl ScreenBuilder {
     {
         let mut actions = actions
             .into_iter()
-            .take(MAX_BAND_SLOTS)
             .map(|(name, label)| (name.as_ref().to_owned(), label.into()));
         match (actions.next(), actions.next()) {
             (None, _) => self,
@@ -1218,7 +1222,14 @@ impl ScreenBuilder {
     pub fn page_turns(mut self, previous: impl AsRef<str>, next: impl AsRef<str>) -> Self {
         let previous = self.register(previous.as_ref());
         let next = self.register(next.as_ref());
-        self.page_turns = Some(kobo_ui::PageTurns::new(previous, next));
+        let mut turns = kobo_ui::PageTurns::new(previous, next);
+        if let Some((page, of)) = self.turn_extras.0 {
+            turns = turns.with_position(page, of);
+        }
+        if let Some(menu) = self.turn_extras.1 {
+            turns = turns.with_menu(menu);
+        }
+        self.page_turns = Some(turns);
         self
     }
 
@@ -1230,9 +1241,12 @@ impl ScreenBuilder {
     /// catalogue cut its shelf into as many as fifty-four pages and said
     /// nothing about which one was showing.
     ///
-    /// Has no effect unless [`Self::page_turns`] was asked for as well.
+    /// Has no effect unless [`Self::page_turns`] is asked for as well, before
+    /// or after this. An inbox that asked for the position first used to lose
+    /// it without a word.
     #[must_use]
     pub fn page_position(mut self, page: u16, of: u16) -> Self {
+        self.turn_extras.0 = Some((page, of));
         self.page_turns = self.page_turns.map(|turns| turns.with_position(page, of));
         self
     }
@@ -1263,6 +1277,7 @@ impl ScreenBuilder {
     #[must_use]
     pub fn reading_menu(mut self, menu: impl AsRef<str>) -> Self {
         let menu = self.register(menu.as_ref());
+        self.turn_extras.1 = Some(menu);
         self.page_turns = self.page_turns.map(|turns| turns.with_menu(menu));
         self
     }
@@ -2541,6 +2556,30 @@ impl ScreenBuilder {
             square: false,
             cells,
         });
+        self
+    }
+
+    /// Shows the control named `name`, in the row of controls just declared,
+    /// as switched on or off.
+    ///
+    /// For a control whose state is the point of it: the bookmark on a page
+    /// that is bookmarked, the heart on a favorite. The cell is drawn as its
+    /// picture alone, so a label that changes with the state is never seen;
+    /// a bookmark or a heart that is on is drawn filled instead. A runtime
+    /// older than protocol 13 draws it as it always did.
+    #[must_use]
+    pub fn control_on(mut self, name: impl AsRef<str>, on: bool) -> Self {
+        let action = action_id(name.as_ref());
+        if let Some(Node::Grid {
+            square: false,
+            cells,
+            ..
+        }) = self.nodes.last_mut()
+        {
+            for cell in cells.iter_mut().filter(|cell| cell.action == action) {
+                cell.selected = on;
+            }
+        }
         self
     }
 

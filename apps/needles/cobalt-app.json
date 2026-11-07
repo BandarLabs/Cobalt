@@ -4,8 +4,8 @@
   "short_label": "Needles",
   "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
   "page_description": "Count rows for each section of a project, browse your Ravelry library, and read patterns you own offline.",
-  "version": "0.1.15",
-  "release_notes": "Needles now has an icon of its own, a ball of yarn.",
+  "version": "0.1.16",
+  "release_notes": "A project started from a pattern now opens on the pattern's first section. The Ravelry tabs and the project list read more plainly.",
   "glyph": "yarn",
   "capabilities": [
     "network",

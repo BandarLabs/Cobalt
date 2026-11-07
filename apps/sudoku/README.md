@@ -59,8 +59,8 @@ This is a guide to technique, not solving time.
 Changes save automatically. If a save fails, the status line says **Not
 saved**, your game stays in memory and **More → Retry saving** tries again.
 Closing the app before a successful retry can lose those edits. A save that
-cannot be read is kept, and the app offers to retry rather than starting a
-blank game.
+cannot be read is kept. **Try again** reads it once more, and **Start over**
+first keeps a copy of it on the reader, then begins a new game.
 
 ## The puzzles
 

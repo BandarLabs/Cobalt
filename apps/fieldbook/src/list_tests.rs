@@ -368,6 +368,7 @@ fn the_tally_reaches_every_species_in_a_large_pack_at_every_text_size() {
             })
             .collect::<Vec<_>>();
         runner.app_mut().packs[0].species = birds;
+        runner.app_mut().sightings.clear();
         runner.app_mut().pack_pick = Some(0);
         runner.app_mut().view = View::Outing;
         verify_list(&mut runner, "tally-", 40);
@@ -428,4 +429,94 @@ fn one_bird_is_counted_as_one_bird_and_more_as_birds() {
     assert_eq!(super::bird_count(1), "1 bird");
     assert_eq!(super::bird_count(0), "0 birds");
     assert_eq!(super::bird_count(14), "14 birds");
+}
+
+#[test]
+fn the_empty_search_and_export_pages_keep_the_tabs_along_the_foot() {
+    let mut runner = AppRunner::with_metrics(Fieldbook::default(), CLARA_BW_METRICS);
+    for tab in ["search", "export"] {
+        tap(&mut runner, tab);
+        let drawn = screen(&runner);
+        let layout = drawn.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+        for other in ["home", "packs", "life"] {
+            assert!(
+                layout.rect_of_action(action_id(other)).is_some(),
+                "{tab} has no {other} tab"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_species_logged_by_name_has_no_bare_banding_code_line() {
+    let named = Species {
+        code: String::new(),
+        common: "kingfisher".into(),
+        scientific: String::new(),
+        photo: None,
+    };
+    assert_eq!(species_references(&named), "");
+    let listed = Species {
+        code: "AMRO".into(),
+        scientific: "Turdus migratorius".into(),
+        ..named
+    };
+    assert_eq!(
+        species_references(&listed),
+        "Turdus migratorius · Banding code AMRO"
+    );
+}
+
+#[test]
+fn back_from_a_species_returns_to_its_list_and_back_from_the_review_to_its_outing() {
+    let mut runner = populated(CLARA_BW_METRICS);
+    runner.action(action_id("life"));
+    runner.action(action_id("life-0"));
+    assert_eq!(runner.app().view, View::Detail);
+    runner.action(ActionId::BACK);
+    assert_eq!(runner.app().view, View::Life);
+    runner.action(action_id("search"));
+    runner.app_mut().query = "Robin".into();
+    runner.action(action_id("found-0"));
+    assert_eq!(runner.app().view, View::Detail);
+    runner.action(ActionId::BACK);
+    assert_eq!(runner.app().view, View::Search);
+    runner.action(action_id("sightings"));
+    runner.action(ActionId::BACK);
+    assert_eq!(runner.app().view, View::Outing);
+    runner.action(ActionId::BACK);
+    assert_eq!(runner.app().view, View::Home);
+}
+
+#[test]
+fn a_checklist_file_written_from_export_says_it_was_written() {
+    let mut runner = populated(CLARA_BW_METRICS);
+    runner.action(action_id("export"));
+    runner.action(action_id("write-export"));
+    assert!(!format!("{:?}", screen(&runner)).contains("Checklist written"));
+    runner.store_result(StoreResult::Saved { key: EXPORT.into() });
+    assert!(format!("{:?}", screen(&runner)).contains("Checklist written"));
+    runner.action(action_id("home"));
+    runner.action(action_id("export"));
+    assert!(!format!("{:?}", screen(&runner)).contains("Checklist written"));
+}
+
+#[test]
+fn a_bird_logged_by_name_stays_in_a_picked_packs_tally() {
+    let mut runner = populated(CLARA_BW_METRICS);
+    runner.app_mut().pack_pick = Some(0);
+    runner.app_mut().query = "Heron".into();
+    runner.action(action_id("log-manual"));
+    let tally = runner.app().outing_species();
+    assert!(tally.iter().any(|species| species.common == "Heron"));
+    // Birds from other outings stay out of a picked pack's tally.
+    runner.app_mut().sightings.push(Sighting {
+        outing: 1,
+        code: String::new(),
+        common: "Old crow".into(),
+        scientific: String::new(),
+        count: 1,
+    });
+    let tally = runner.app().outing_species();
+    assert!(!tally.iter().any(|species| species.common == "Old crow"));
 }

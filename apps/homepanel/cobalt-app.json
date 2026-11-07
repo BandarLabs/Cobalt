@@ -4,8 +4,8 @@
   "short_label": "Home",
   "summary": "Control saved Home Assistant tiles from a low-power panel. Needs an account. Home Assistant must be on HTTPS.",
   "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
-  "version": "0.2.11",
-  "release_notes": "Home now has an icon of its own, a house.",
+  "version": "0.2.12",
+  "release_notes": "Readings from an earlier day now say which day, and when Home Assistant cannot list its devices you can still add one by its ID. Settings no longer repeats the main screen's warnings.",
   "glyph": "house",
   "capabilities": [
     "network"

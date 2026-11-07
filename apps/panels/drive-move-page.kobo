@@ -1,0 +1,27 @@
+# Move page puts four arrows under the page to pan a zoomed page. They have
+# to be on the panel, under the page, for the mode to be any use.
+wait-for Try a sample comic
+tap Try a sample comic
+wait-for CBZ
+tap-at 536,1378
+wait-for Available on this reader
+tap Open
+wait-for-id comic-next
+wait-idle
+tap-at 536,724
+wait-for Fit page
+tap Fit width
+tap-id comic-zoom-in
+wait-for Zoom 125%
+tap Move page
+wait-for Left
+expect Right
+expect Up
+expect Down
+clean
+shot move-page
+tap Down
+wait-idle
+tap Read
+wait-idle
+expect-missing Down

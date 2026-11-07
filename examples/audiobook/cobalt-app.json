@@ -3,7 +3,7 @@
   "display_name": "Audiobooks",
   "short_label": "Audiobooks",
   "summary": "Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,7 +11,7 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "The book playing is listed once, and a book made here is labelled MP3 and has its title alone on its cover.",
+  "release_notes": "A file that will not play says what to do about it, and the library fits its page while a book is playing.",
   "setup": {
     "steps": [
       {

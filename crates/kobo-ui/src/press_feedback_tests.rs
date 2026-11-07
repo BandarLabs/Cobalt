@@ -621,6 +621,26 @@ fn a_section_header_with_nothing_under_it_is_caught() {
 }
 
 #[test]
+fn a_section_header_that_carries_its_own_value_may_close_a_page() {
+    let closing = Screen::new(
+        1,
+        vec![Node::Section {
+            id: NodeId(1),
+            title: "Cobalt".to_owned(),
+            value: Some("0.3.34".to_owned()),
+            link: None,
+        }],
+    );
+    assert!(
+        !closing
+            .validate(&CLARA_BW_METRICS)
+            .iter()
+            .any(|issue| issue.kind == LayoutIssueKind::OrphanedSection),
+        "a name and its value is a whole line, not a header waiting for content"
+    );
+}
+
+#[test]
 fn a_spinner_that_knows_its_own_total_is_caught() {
     let activity = |transferred: Option<(u64, Option<u64>)>| Node::Activity {
         id: NodeId(1),

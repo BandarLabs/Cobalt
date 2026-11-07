@@ -4,8 +4,8 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.16",
-  "release_notes": "Verses now has an icon of its own, a pair of quotation marks.",
+  "version": "0.1.17",
+  "release_notes": "The favourite heart now sits in the poem's panel and is filled when the poem is a favourite. A search with no results says so plainly, and a long poem shows its page count.",
   "glyph": "quote",
   "capabilities": [
     "network"

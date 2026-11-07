@@ -3,8 +3,8 @@
   "display_name": "Readeck",
   "short_label": "Readeck",
   "summary": "Read and search your saved Readeck articles. Needs an account.",
-  "version": "0.1.7",
-  "release_notes": "Readeck now has an icon of its own, a paperclip.",
+  "version": "0.1.8",
+  "release_notes": "Articles kept for offline reading now open without Wi-Fi, and refreshing keeps your list on screen. The inbox shows its page count, the reading controls have text size again, and an address typed without https:// is accepted.",
   "glyph": "paperclip",
   "capabilities": [
     "network",

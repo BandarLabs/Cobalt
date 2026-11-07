@@ -90,6 +90,9 @@ struct Vault {
     tag_filter: String,
     entry: TextEntry,
     results: Vec<(usize, String)>,
+    /// The words the results were found for, said above them and used to
+    /// open a result at the page that holds them.
+    query: String,
     legacy_checked: bool,
     failure_index: usize,
     /// The notes a reader followed links out of, with the page each was on,
@@ -127,6 +130,7 @@ impl Default for Vault {
             tag_filter: String::new(),
             entry: TextEntry::new().opened_by("search"),
             results: Vec::new(),
+            query: String::new(),
             legacy_checked: false,
             failure_index: 0,
             trail: Vec::new(),
@@ -255,6 +259,11 @@ impl Vault {
         let id = self.notes[index].0.id.clone();
         self.note_page = self.positions.get(&id).copied().unwrap_or(0);
         if self.bodies.contains_key(&id) {
+            if self.view == View::Search {
+                if let Some(page) = page::page_with(&self.note_pages(cx), &self.query) {
+                    self.note_page = page;
+                }
+            }
             self.view = View::Note;
         } else {
             self.start_body(cx, &id, Loading::Open);
@@ -364,6 +373,7 @@ impl Vault {
             .into_iter()
             .map(|(model_index, line)| (indexed[model_index].0, line))
             .collect();
+        query.clone_into(&mut self.query);
         self.view = View::Search;
     }
 
@@ -554,8 +564,11 @@ impl Vault {
                         )
                     })
                     .collect();
-                let screen =
-                    self.noticed(ScreenBuilder::new("vault-search-results").top_bar("Search"));
+                let screen = self.noticed(
+                    ScreenBuilder::new("vault-search-results")
+                        .top_bar("Search")
+                        .secondary(format!("Searched for \"{}\"", self.query.trim())),
+                );
                 if rows.is_empty() {
                     screen
                         .text("Nothing in this vault matches.")
@@ -1388,6 +1401,59 @@ mod tests {
         assert_eq!(runner.app().positions.get("note-a"), Some(&3));
         runner.action(action_id("note-0"));
         assert_eq!(runner.app().note_page, 3);
+    }
+
+    #[test]
+    fn a_search_result_opens_its_note_at_the_page_with_the_match() {
+        let mut runner = seeded();
+        let long = "Ordinary words about the garden and the weather.\n\n".repeat(400)
+            + "The gate hinge is rusted.";
+        runner.app_mut().bodies.insert("note-c".to_owned(), long);
+        runner.app_mut().positions.insert("note-c".to_owned(), 0);
+        runner.app_mut().run_search("GATE HINGE");
+        assert_eq!(runner.app().results.len(), 1);
+        let index = runner.app().results[0].0;
+        runner.action(action_id(&format!("note-{index}")));
+        let app = runner.app();
+        assert_eq!(app.view, View::Note);
+        let pages = app.note_pages(&Context::default());
+        assert!(pages.len() > 1, "the note should run to several pages");
+        assert_eq!(app.note_page, pages.len() - 1);
+    }
+
+    #[test]
+    fn a_note_opened_from_anywhere_but_a_search_keeps_its_saved_page() {
+        let mut runner = seeded();
+        runner.app_mut().query = "Home".to_owned();
+        runner.app_mut().positions.insert("note-a".to_owned(), 2);
+        runner.action(action_id("browse"));
+        runner.app_mut().view = View::Recent;
+        runner.action(action_id("note-0"));
+        assert_eq!(runner.app().note_page, 2);
+    }
+
+    #[test]
+    fn a_result_shows_the_words_around_the_match_rather_than_the_whole_paragraph() {
+        let notes = vec![model::Note {
+            path: "long.md".into(),
+            body: format!(
+                "{} the gate hinge took the morning. {}",
+                "Early words ".repeat(20),
+                "Later words ".repeat(20)
+            ),
+        }];
+        let (_, line) = &model::search(&notes, "Gate Hinge")[0];
+        assert!(line.contains("gate hinge"), "{line}");
+        assert!(line.starts_with('…') && line.ends_with('…'), "{line}");
+        assert!(line.chars().count() <= 122, "{line}");
+        let short = vec![model::Note {
+            path: "short.md".into(),
+            body: "  A short line with a hinge.  ".into(),
+        }];
+        assert_eq!(
+            model::search(&short, "hinge")[0].1,
+            "A short line with a hinge."
+        );
     }
 }
 

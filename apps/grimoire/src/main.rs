@@ -165,17 +165,10 @@ fn hp_controls(s: ScreenBuilder) -> ScreenBuilder {
         HP_STEPS.iter().map(|(name, label, _)| (*name, *label)),
     )
 }
-/// The hit points in a monster's stat block, which every SRD monster opens
-/// with as "HP 135 (18d10)".
-fn monster_hp(body: &str) -> Option<i16> {
-    let after = body.split("HP ").nth(1)?;
-    after
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect::<String>()
-        .parse()
-        .ok()
-        .filter(|hp| *hp > 0)
+/// The hit points a monster starts with, which the generated index carries
+/// as a tag so the stat block's wording can change without losing them.
+fn monster_hp(entry: &Entry) -> Option<i16> {
+    tag(entry, "hp")?.parse().ok().filter(|hp| *hp > 0)
 }
 fn ordinal(level: usize) -> String {
     let suffix = match level {
@@ -497,9 +490,16 @@ impl Grimoire {
             usize::from(self.edition != 2014),
             [("edition-2014", "2014"), ("edition-2024", "2024")],
         );
+        // A narrowed list says so, or a reader who searched yesterday takes
+        // the five entries left for everything the reference holds.
+        let s = match self.narrowed() {
+            Some(line) => s.secondary(line),
+            None => s,
+        };
         // A category with nothing to filter on does not offer the word: a
-        // Filters screen with no filters on it is a dead end with a label.
-        if self.filters().is_empty() {
+        // Filters screen with no filters on it is a dead end with a label,
+        // and so is one for an edition that holds none of the category.
+        if self.filters().is_empty() || self.held(self.kind, self.edition) == 0 {
             s.action_bar([("search", "Search"), ("bookmarks", "Bookmarks")])
         } else {
             s.action_bar([
@@ -508,6 +508,21 @@ impl Grimoire {
                 ("bookmarks", "Bookmarks"),
             ])
         }
+    }
+    /// What is narrowing the list, if anything: the search and how many
+    /// filters are set.
+    fn narrowed(&self) -> Option<String> {
+        let filters = self.active_filters();
+        let mut parts = Vec::new();
+        if !self.query.is_empty() {
+            parts.push(format!("Names starting \"{}\"", self.query));
+        }
+        match filters {
+            0 => {}
+            1 => parts.push("1 filter on".to_owned()),
+            n => parts.push(format!("{n} filters on")),
+        }
+        (!parts.is_empty()).then(|| parts.join(" · "))
     }
     fn compendium_pages(&self, context: &Context) -> Vec<Vec<usize>> {
         let entries = self.entries();
@@ -1559,6 +1574,11 @@ impl KoboApp for Grimoire {
                         })
                 }
                 View::Search => View::Compendium,
+                // Bookmarks opens from a category's list and goes back to it.
+                View::Bookmarks => {
+                    self.bookmarks_open = false;
+                    View::Compendium
+                }
                 _ => View::Home,
             };
             self.detail = None;
@@ -1696,7 +1716,7 @@ impl KoboApp for Grimoire {
                     name: entry.name.clone(),
                     initiative: 0,
                     hp: (entry.kind == "monster")
-                        .then(|| monster_hp(&entry.body))
+                        .then(|| monster_hp(entry))
                         .flatten()
                         .map(|hp| (hp, hp)),
                 });
@@ -1729,7 +1749,13 @@ impl KoboApp for Grimoire {
             self.slot_mode = SlotMode::Regain;
         } else if a == action_id("slots-setup") {
             self.slot_mode = SlotMode::SetUp;
-        } else if let Some(i) = self.member.filter(|i| *i < self.party.len()) {
+        } else if let Some(i) = self
+            .member
+            // The member stays chosen after their page closes, so Edit can
+            // come back to them; only their own page may change them, or a
+            // tap on the next name would land on the last one opened.
+            .filter(|i| self.view == View::Member && *i < self.party.len())
+        {
             let m = &mut self.party[i];
             if let Some(step) = hp_step(a) {
                 m.hp = (m.hp + step).clamp(0, m.max_hp);
@@ -2077,6 +2103,36 @@ mod tests {
         runner.action(action_id("slots-setup"));
         runner.action(action_id("slot-0"));
         assert_eq!(runner.app().party[0].slots[0].max, 0, "four wraps to none");
+    }
+
+    #[test]
+    fn each_member_opens_their_own_page_after_another_was_opened_first() {
+        let mut runner = ready();
+        for name in ["Moss", "Fern"] {
+            runner.app_mut().party.push(Member {
+                name: name.into(),
+                ac: 12,
+                max_hp: 20,
+                hp: 20,
+                success: 0,
+                failure: 0,
+                slots: [Slots::default(); 9],
+            });
+        }
+        runner.action(action_id("party"));
+        runner.action(action_id("party-0"));
+        runner.action(action_id("party-back"));
+        assert_eq!(runner.app().view, View::Party);
+        runner.action(action_id("party-1"));
+        assert_eq!(runner.app().view, View::Member);
+        assert_eq!(runner.app().member, Some(1));
+        runner.action(action_id("party-back"));
+        runner.action(action_id("about"));
+        assert_eq!(
+            runner.app().view,
+            View::About,
+            "the last member held the tap"
+        );
     }
 
     #[test]
@@ -2464,6 +2520,62 @@ mod tests {
             .flat_map(|node| node.text_lines.clone())
             .collect::<Vec<_>>()
             .join(" ")
+    }
+
+    #[test]
+    fn a_narrowed_list_says_what_narrows_it_and_an_empty_edition_offers_no_filters() {
+        let mut app = Grimoire {
+            kind: Kind::Monster,
+            view: View::Compendium,
+            ..Grimoire::default()
+        };
+        assert_eq!(app.narrowed(), None);
+        app.query = "gob".into();
+        app.cr = 2;
+        assert_eq!(
+            app.narrowed().as_deref(),
+            Some("Names starting \"gob\" · 1 filter on")
+        );
+        let text = format!("{:?}", app.screen(&Context::default()).nodes);
+        assert!(text.contains("1 filter on"), "{text}");
+        let spells = Grimoire {
+            kind: Kind::Spell,
+            edition: 2024,
+            view: View::Compendium,
+            ..Grimoire::default()
+        };
+        let text = format!("{:?}", spells.screen(&Context::default()).nodes);
+        assert!(!text.contains("Filters"), "{text}");
+    }
+
+    #[test]
+    fn monster_types_are_offered_with_capitals_and_still_filter_the_list() {
+        let mut app = Grimoire {
+            kind: Kind::Monster,
+            ..Grimoire::default()
+        };
+        let values = Filter::Type.values(&app);
+        let beast = values
+            .iter()
+            .position(|value| value == "Beast")
+            .expect("Beast");
+        app.monster_type = beast;
+        assert!(!app.entries().is_empty());
+        assert!(app
+            .entries()
+            .iter()
+            .all(|(_, entry)| tag(entry, "type") == Some("beast")));
+    }
+
+    #[test]
+    fn back_from_bookmarks_returns_to_the_list_it_was_opened_from() {
+        let mut runner = ready();
+        runner.action(action_id("spells"));
+        runner.action(action_id("bookmarks"));
+        assert_eq!(runner.app().view, View::Bookmarks);
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Compendium);
+        assert!(!runner.app().bookmarks_open);
     }
 
     #[test]

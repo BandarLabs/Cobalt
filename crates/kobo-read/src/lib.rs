@@ -499,6 +499,8 @@ pub mod action {
     pub const BACK: &str = "reader-back";
     /// Shows the controls, or puts them away again.
     pub const CONTROLS: &str = "reader-controls";
+    /// Puts away whatever is over the page and goes back to reading.
+    pub const BOOK: &str = "reader-book";
     /// Shows the front light on its own, or puts it away again.
     pub const LIGHT: &str = "reader-light";
     /// One per type size, suffixed with its step: 0 standard, 2 largest.
@@ -516,6 +518,9 @@ pub mod action {
     pub const MARK: &str = "reader-mark-";
     /// One per stored mark, suffixed with its block index.
     pub const GO: &str = "reader-go-";
+    /// One per bookmark, suffixed with its block index. Goes to the page that
+    /// was bookmarked, which is not always where its paragraph starts.
+    pub const PLACE: &str = "reader-place-";
     /// Turns the bar away while reading, or asks for it back.
     pub const FULL_PAGE: &str = "reader-full-page";
     /// Opens the book's own table of contents.
@@ -572,6 +577,9 @@ pub struct Reader {
     /// list laid out all of it twice.
     list_paging: Option<Paging>,
     problem: Option<String>,
+    /// How the line in `problem` is drawn. Reaching the last page is news,
+    /// not trouble, so it is said quietly; a refusal is said as one.
+    problem_level: BannerLevel,
     panel: DisplayMetrics,
     /// Whether the last page is the end of the book or merely where it stopped.
     ///
@@ -621,6 +629,7 @@ impl Reader {
             list_page: 0,
             list_paging: None,
             problem: None,
+            problem_level: BannerLevel::Attention,
             panel: *panel,
             cut: false,
             pending: false,
@@ -1132,6 +1141,34 @@ impl Reader {
         self.bookmark_here().is_some()
     }
 
+    /// The page a bookmark on `block` stands for, counted from zero.
+    ///
+    /// A bookmark is kept on the paragraph at the top of the page, and that
+    /// paragraph often began on the page before. The page that opens with it
+    /// is the one that was bookmarked; at another type size there may be
+    /// none, and then it is the first page it is on.
+    fn bookmark_page(&self, block: Locator) -> Option<usize> {
+        self.pages
+            .iter()
+            .position(|page| page.first().is_some_and(|piece| piece.block == block))
+            .or_else(|| {
+                self.pages
+                    .iter()
+                    .position(|page| page.iter().any(|piece| piece.block == block))
+            })
+    }
+
+    /// Goes to the page a bookmark stands for, and puts the list away.
+    fn go_to_bookmark(&mut self, block: Locator, panel: &DisplayMetrics) {
+        let Some(page) = self.bookmark_page(block) else {
+            self.go_to(block, panel);
+            return;
+        };
+        self.page = page;
+        self.remember_position();
+        self.set_chrome(Chrome::Hidden, panel);
+    }
+
     /// The bookmarked block on this page, if there is one.
     fn bookmark_here(&self) -> Option<Locator> {
         self.pages
@@ -1275,7 +1312,13 @@ impl Reader {
 
     /// Says something went wrong, on the next repaint.
     pub fn report(&mut self, problem: impl Into<String>) {
+        self.tell(BannerLevel::Attention, problem);
+    }
+
+    /// Says something on the next repaint at `level`.
+    fn tell(&mut self, level: BannerLevel, problem: impl Into<String>) {
         self.problem = Some(problem.into());
+        self.problem_level = level;
         let panel = self.panel;
         self.repaginate(&panel);
     }
@@ -1322,7 +1365,10 @@ impl Reader {
                 if self.forward() {
                     Outcome::Save
                 } else {
-                    self.report("This is the end of the book.");
+                    // Not "of the book": the same reader shows articles,
+                    // papers and feed items, and reaching the end of any of
+                    // them is not a problem.
+                    self.tell(BannerLevel::Info, "This is the end.");
                     Outcome::Repaint
                 }
             }
@@ -1330,7 +1376,7 @@ impl Reader {
                 if self.backward() {
                     Outcome::Save
                 } else {
-                    self.report("This is the beginning of the book.");
+                    self.tell(BannerLevel::Info, "This is the first page.");
                     Outcome::Repaint
                 }
             }
@@ -1354,23 +1400,16 @@ impl Reader {
                 self.set_chrome(next, panel);
                 Outcome::Repaint
             }
+            // Back to the book puts every panel away, the type panel too.
+            action::BOOK
+            | action::HIGHLIGHTS
+            | action::CONTENTS
+            | action::LINKS
+            | action::MARKING => {
+                self.set_chrome(list_chrome(name), panel);
+                Outcome::Repaint
+            }
             action::FULL_PAGE => self.turn_full_page_over(panel),
-            action::HIGHLIGHTS => {
-                self.set_chrome(Chrome::Highlights, panel);
-                Outcome::Repaint
-            }
-            action::CONTENTS => {
-                self.set_chrome(Chrome::Contents, panel);
-                Outcome::Repaint
-            }
-            action::LINKS => {
-                self.set_chrome(Chrome::Links, panel);
-                Outcome::Repaint
-            }
-            action::MARKING => {
-                self.set_chrome(Chrome::Marking, panel);
-                Outcome::Repaint
-            }
             action::LIST_BACK => self.turn_list(false, panel),
             action::LIST_NEXT => self.turn_list(true, panel),
             action::LARGER => {
@@ -1406,6 +1445,8 @@ impl Reader {
                 if let Some(block) = target_of(other) {
                     if other.starts_with(action::MARK) {
                         self.toggle_highlight(block, panel);
+                    } else if other.starts_with(action::PLACE) {
+                        self.go_to_bookmark(block, panel);
                     } else if other.starts_with(action::LINK) {
                         self.follow(block, panel);
                     } else {
@@ -1479,6 +1520,7 @@ impl Reader {
             action::FORWARD.into(),
             action::BACK.into(),
             action::CONTROLS.into(),
+            action::BOOK.into(),
             action::LIGHT.into(),
             action::FULL_PAGE.into(),
             action::CLOSE.into(),
@@ -1506,8 +1548,11 @@ impl Reader {
         for (block, _) in self.markable() {
             names.push(format!("{}{block}", action::MARK));
         }
-        for block in self.memory.highlights.iter().chain(&self.memory.bookmarks) {
+        for block in &self.memory.highlights {
             names.push(format!("{}{block}", action::GO));
+        }
+        for block in &self.memory.bookmarks {
+            names.push(format!("{}{block}", action::PLACE));
         }
         // A note leads back to where its passage starts, and that paragraph
         // need not be marked or bookmarked as well, so it is named here in its
@@ -1665,7 +1710,7 @@ impl Reader {
             };
         }
         if let Some(problem) = &self.problem {
-            screen = screen.banner(BannerLevel::Attention, problem.clone());
+            screen = screen.banner(self.problem_level, problem.clone());
         } else if self.pending && self.near_downloaded_end() {
             // The next chunk was asked for and has not landed yet. Said here,
             // at the foot, so a page turn that runs out of downloaded book
@@ -1833,7 +1878,11 @@ impl Reader {
         // Four across at most: a fifth control on this panel would be narrower
         // than a fingertip, and the row wraps rather than shrinking.
         let columns = u8::try_from(row.len().min(4)).unwrap_or(4);
-        panel.controls(columns, row)
+        // The ribbon is drawn filled on a bookmarked page. Its label changes
+        // too, but the cell shows the picture alone.
+        panel
+            .controls(columns, row)
+            .control_on(action::BOOKMARK, self.is_bookmarked())
     }
 
     /// Where this page points, each line a way there.
@@ -1993,15 +2042,21 @@ impl Reader {
         // something a reader wanted to keep, a bookmark is somewhere they
         // meant to come back to. Run together, the list of one buries the
         // other.
+        // Each bookmark says which page it goes to as well as the words
+        // there, so two bookmarks that open on the same heading or the same
+        // title can still be told apart.
         for (block, text) in places {
+            let label = self
+                .bookmark_page(block)
+                .map_or(text.clone(), |page| format!("Page {} · {text}", page + 1));
             entries.push(Entry::new(
                 Some("Bookmarks"),
-                format!("{}{block}", action::GO),
-                &text,
+                format!("{}{block}", action::PLACE),
+                &label,
             ));
         }
         let mut bar = vec![
-            (action::CONTROLS, "Back to the book"),
+            (action::BOOK, "Back to the book"),
             (
                 action::BOOKMARK,
                 if self.is_bookmarked() {
@@ -2056,7 +2111,7 @@ impl Reader {
             intro: Some("Tap a paragraph to mark it, or to take the mark off."),
             entries,
             bar: vec![
-                (action::CONTROLS, "Back to the book"),
+                (action::BOOK, "Back to the book"),
                 (action::HIGHLIGHTS, "Notes"),
             ],
             current: 0,
@@ -2307,11 +2362,24 @@ impl List {
     }
 }
 
-/// The block a `reader-mark-` or `reader-go-` action refers to.
+/// The panel a list action opens, and none for Back to the book.
+fn list_chrome(name: &str) -> Chrome {
+    match name {
+        action::HIGHLIGHTS => Chrome::Highlights,
+        action::CONTENTS => Chrome::Contents,
+        action::LINKS => Chrome::Links,
+        action::MARKING => Chrome::Marking,
+        _ => Chrome::Hidden,
+    }
+}
+
+/// The block a `reader-mark-`, `reader-go-` or `reader-place-` action
+/// refers to.
 #[must_use]
 pub fn target_of(name: &str) -> Option<Locator> {
     name.strip_prefix(action::MARK)
         .or_else(|| name.strip_prefix(action::GO))
+        .or_else(|| name.strip_prefix(action::PLACE))
         .or_else(|| name.strip_prefix(action::LINK))
         .and_then(|rest| rest.parse().ok())
 }
@@ -5269,6 +5337,7 @@ mod tests {
         for block in 0..200u32 {
             candidates.push(format!("{}{block}", action::MARK));
             candidates.push(format!("{}{block}", action::GO));
+            candidates.push(format!("{}{block}", action::PLACE));
         }
         let mut present = Vec::new();
         for name in candidates {
@@ -7039,5 +7108,119 @@ mod tests {
             reader.page().iter().any(|piece| piece.block == 101),
             "the note did not lead to its passage"
         );
+    }
+
+    fn banners(screen: &kobo_ui::Screen) -> Vec<(BannerLevel, String)> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Banner { level, text, .. } => Some((*level, text.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_last_page_says_it_is_the_end_quietly_and_without_calling_it_a_book() {
+        // The same reader shows articles, papers and feed items. Reaching
+        // the end of one is news, not trouble, and it is not a book.
+        let mut reader = reader(20);
+        while reader.forward() {}
+        reader.act(action::FORWARD, &panel());
+        let said = banners(&reader.screen("An article"));
+        assert_eq!(
+            said,
+            vec![(BannerLevel::Info, "This is the end.".to_owned())]
+        );
+        reader.go_to(0, &panel());
+        reader.act(action::BACK, &panel());
+        let said = banners(&reader.screen("An article"));
+        assert_eq!(
+            said,
+            vec![(BannerLevel::Info, "This is the first page.".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_still_said_as_a_warning() {
+        let mut reader = reader(20);
+        reader.report("That is the largest size.");
+        let said = banners(&reader.screen("A book"));
+        assert_eq!(said[0].0, BannerLevel::Attention);
+    }
+
+    #[test]
+    fn each_bookmark_in_the_notes_names_the_page_it_goes_to() {
+        // Two bookmarks under the same heading read alike by their words
+        // alone, so each row says its page as well.
+        let mut reader = reader(200);
+        reader.forward();
+        reader.forward();
+        reader.toggle_bookmark();
+        let third = reader.page_number();
+        reader.forward();
+        reader.forward();
+        reader.toggle_bookmark();
+        let fifth = reader.page_number();
+        reader.act(action::HIGHLIGHTS, &panel());
+        let rows = texts(&reader.screen("A book"));
+        for page in [third, fifth] {
+            assert!(
+                rows.iter()
+                    .any(|row| row.starts_with(&format!("Page {page} · "))),
+                "no row for the bookmark on page {page}: {rows:?}"
+            );
+        }
+        // And the row goes to that page, not to where its paragraph began.
+        let block = *reader.memory().bookmarks.iter().next().unwrap();
+        let go = kobo_sdk::action_id(&format!("{}{block}", action::PLACE));
+        assert_eq!(reader.act_on(go, &panel()), Outcome::Save);
+        assert_eq!(reader.page_number(), third);
+        assert_eq!(reader.chrome(), Chrome::Hidden);
+    }
+
+    #[test]
+    fn back_to_the_book_from_the_notes_or_the_marking_list_puts_every_panel_away() {
+        // It used to open the type panel, which left the page keys dead
+        // until the reader found a second way to close it.
+        for list in [action::HIGHLIGHTS, action::MARKING] {
+            let mut reader = reader(40);
+            reader.act(action::CONTROLS, &panel());
+            reader.act(list, &panel());
+            assert_ne!(reader.chrome(), Chrome::Hidden);
+            let back = kobo_sdk::action_id(action::BOOK);
+            assert_eq!(reader.act_on(back, &panel()), Outcome::Repaint);
+            assert_eq!(reader.chrome(), Chrome::Hidden, "from {list}");
+            assert!(reader.screen("A book").overlay.is_none(), "from {list}");
+        }
+    }
+
+    #[test]
+    fn the_bookmark_control_shows_whether_this_page_is_bookmarked() {
+        // The cell draws only its picture, so the state has to be in the
+        // cell rather than in a label nobody sees.
+        let bookmark_cell = |reader: &Reader| {
+            let screen = reader.screen("A book");
+            let overlay = screen.overlay.expect("the controls are open");
+            overlay
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    kobo_ui::Node::Grid { cells, .. } => cells
+                        .iter()
+                        .find(|cell| cell.action == kobo_sdk::action_id(action::BOOKMARK))
+                        .cloned(),
+                    _ => None,
+                })
+                .expect("a bookmark control")
+        };
+        let mut reader = reader(40);
+        reader.act(action::CONTROLS, &panel());
+        assert!(!bookmark_cell(&reader).selected);
+        reader.act(action::BOOKMARK, &panel());
+        assert!(bookmark_cell(&reader).selected);
+        reader.act(action::BOOKMARK, &panel());
+        assert!(!bookmark_cell(&reader).selected);
     }
 }

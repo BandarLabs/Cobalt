@@ -25,7 +25,22 @@ const LIST_PATH: &str = "/api/bookmarks?limit=50&offset=0&is_archived=false&read
 const LIMIT: usize = 50;
 /// The connect flow, named on each of its screens: the server address, the
 /// API token kept by the runtime, and the first request that checks both.
-const STEPS: [&str; 3] = ["Address", "Token", "Check"];
+/// The middle step is named for the field the runtime draws on it, which
+/// says "Account key", so the step line and the field agree.
+const STEPS: [&str; 3] = ["Address", "Key", "Check"];
+/// What the account key is for Readeck, said under the field because the
+/// reader has no browser to look it up in.
+const TOKEN_GUIDANCE: &str =
+    "Your Readeck API token. Make one on your server under Profile, API tokens.";
+/// What a kept article's value starts with: the exact server and article it
+/// came from, so two articles whose short keys collide never open as each
+/// other.
+const KEPT_HEADER: &str = "readeck-kept-v1";
+/// Said in the reader when the article could not be kept for later.
+const NOT_KEPT: &str =
+    "This article could not be kept on the reader, so it needs Wi-Fi to open again.";
+/// Said over a kept inbox while a refresh is under way.
+const REFRESHING: &str = "Checking Readeck for new articles.";
 /// Where a Readeck server makes API tokens, under the owner's own address.
 const TOKEN_PAGE: &str = "/profile/tokens";
 /// What a check of the store says when the computer has not written a server.
@@ -61,6 +76,7 @@ enum ServerShape {
 fn account(connecting: bool) -> CredentialSetup {
     let account = CredentialSetup::new("readeck", "Readeck API token")
         .with_computer_command("kobo connect readeck")
+        .with_guidance(TOKEN_GUIDANCE)
         .with_key_page(
             TOKEN_PAGE,
             "Opens the API token page on your Readeck server.",
@@ -120,6 +136,9 @@ struct ListRequest {
     task: TaskId,
     offset: usize,
     last_page: bool,
+    /// A refresh of the list already on screen, which the owner may have
+    /// paged through while it ran; it keeps their page.
+    keep_page: bool,
 }
 struct ArticleRequest {
     id: String,
@@ -233,7 +252,9 @@ impl Readeck {
             .zip(&minutes)
             .map(|(b, minutes)| (b.title.as_str(), b.summary.as_str(), minutes.as_str()))
             .collect();
-        if let Some(failure) = &self.failure {
+        let (measure, bannered) =
+            self.inbox_banner(ScreenBuilder::new("readeck-measure").top_bar("Readeck"));
+        if bannered {
             // Under a banner the rows give up their minutes, so they can be
             // measured under the banner as it is drawn, with its mark and its
             // action, rather than as plain words.
@@ -241,13 +262,24 @@ impl Readeck {
                 .iter()
                 .map(|(title, summary, _)| (*title, *summary))
                 .collect();
-            let banner = ScreenBuilder::new("readeck-measure")
-                .top_bar("Readeck")
-                .problem_banner_with(failure, "refresh", Some("sign-in-again"))
-                .build();
-            return context.paginate_rows_under(&rows, true, Position::AtTheFoot, &banner);
+            return context.paginate_rows_under(&rows, true, Position::AtTheFoot, &measure.build());
         }
         context.paginate_rows_with_trailing(&rows, true)
+    }
+    /// The banner over a non-empty inbox, if any, and whether one was drawn.
+    /// A refresh under way says so in place of the last failure, which it
+    /// is about to replace.
+    fn inbox_banner(&self, screen: ScreenBuilder) -> (ScreenBuilder, bool) {
+        if self.list.is_some() {
+            (screen.banner(BannerLevel::Info, REFRESHING), true)
+        } else if let Some(failure) = &self.failure {
+            (
+                screen.problem_banner_with(failure, "refresh", Some("sign-in-again")),
+                true,
+            )
+        } else {
+            (screen, false)
+        }
     }
     fn screen(&self, context: &Context) -> Screen {
         if self.account.is_open() {
@@ -393,17 +425,37 @@ impl Readeck {
                 .build();
         }
         let marked = self.current().is_some_and(|b| b.marked);
-        ScreenBuilder::new("readeck-controls")
+        // Type size and light are steppers rather than two bars of verbs: a
+        // screen has one bottom bar, and the second replaced the first, so
+        // Smaller and Larger text were never on the panel.
+        let scale = self.book.memory().map_or(self.scale, |memory| memory.scale);
+        let light = self.book.memory().and_then(|memory| memory.light);
+        let screen = ScreenBuilder::new("readeck-controls")
             .top_bar("Article controls")
+            .stepper(
+                format!("Type size {}%", scale.percent()),
+                kobo_read::action::SMALLER,
+                Glyph::Minus,
+                kobo_read::action::LARGER,
+                Glyph::Plus,
+            )
+            .stepper_ends(scale.smaller().is_some(), scale.larger().is_some())
+            .stepper(
+                // No level until the owner sets one here: the device's own
+                // is left alone, and a number would be a guess.
+                light.map_or_else(|| "Light".to_owned(), |light| format!("Light {light}%")),
+                kobo_read::action::DIMMER,
+                Glyph::Minus,
+                kobo_read::action::BRIGHTER,
+                Glyph::Plus,
+            )
+            .stepper_ends(light != Some(0), light != Some(100));
+        screen
+            .divider()
             .button("mark-read", "Mark read")
             .button("archive", "Archive")
             .button("favorite", if marked { "Unfavorite" } else { "Favorite" })
             .button("delete", "Delete article")
-            .action_bar([
-                ("reader-smaller", "Smaller text"),
-                ("reader-larger", "Larger text"),
-            ])
-            .action_bar([("reader-dimmer", "Dimmer"), ("reader-brighter", "Brighter")])
             .button("return-article", "Return to article")
             .owns_back(true)
             .build()
@@ -431,7 +483,16 @@ impl Readeck {
                 },
             ],
         );
-        if self.list.is_some() || self.article.is_some() {
+        if self.article.is_some() {
+            return screen
+                .activity("Opening article", None)
+                .owns_back(true)
+                .build();
+        }
+        // A refresh over articles already on screen leaves them there: away
+        // from the server it can take twenty seconds to fail, and a kept
+        // inbox is worth reading in the meantime.
+        if self.list.is_some() && self.bookmarks.is_empty() {
             return screen
                 .activity("Loading articles", None)
                 .owns_back(true)
@@ -463,18 +524,18 @@ impl Readeck {
                     Glyph::News
                 })
             };
-            if let Some(failure) = &self.failure {
-                screen = screen
-                    .problem_banner_with(failure, "refresh", Some("sign-in-again"))
-                    .rows(pages.get(page).into_iter().flatten().map(|index| {
-                        let b = &self.bookmarks[*index];
-                        (
-                            format!("article-{index}"),
-                            b.title.clone(),
-                            b.summary.clone(),
-                            lead(b),
-                        )
-                    }));
+            let (bannered, has_banner) = self.inbox_banner(screen);
+            screen = bannered;
+            if has_banner {
+                screen = screen.rows(pages.get(page).into_iter().flatten().map(|index| {
+                    let b = &self.bookmarks[*index];
+                    (
+                        format!("article-{index}"),
+                        b.title.clone(),
+                        b.summary.clone(),
+                        lead(b),
+                    )
+                }));
             } else {
                 screen =
                     screen.rows_with_trailing(pages.get(page).into_iter().flatten().map(|index| {
@@ -492,12 +553,18 @@ impl Readeck {
                         )
                     }));
             }
+            // The turns first: a position given before them has nothing to
+            // attach to and is dropped.
+            screen = screen.page_turns("previous", "next");
             if self.search.is_none() {
                 screen = screen.page_position(
                     page_number(page),
                     page_number(pages.len().saturating_sub(1)),
                 );
             }
+            return screen
+                .owns_back(self.search.is_some() || self.more_open)
+                .build();
         }
         screen
             .page_turns("previous", "next")
@@ -510,12 +577,16 @@ impl Readeck {
             .search
             .as_ref()
             .map_or_else(|| LIST_PATH.into(), |s| search_path(&s.query, offset));
+        let keep_page = !self.bookmarks.is_empty()
+            && !last_page
+            && offset == self.search.as_ref().map_or(0, |s| s.offset);
         self.list = context
             .spawn_retrying(fetch(format!("{server}{path}"), 512 * 1024))
             .map(|task| ListRequest {
                 task,
                 offset,
                 last_page,
+                keep_page,
             });
         if self.list.is_none() {
             self.problem = Some("The device is busy. Try Refresh again.".into());
@@ -542,12 +613,14 @@ impl Readeck {
         self.prepare_server(true);
     }
     fn prepare_server(&mut self, enter_token: bool) {
-        let server = self.draft.trim().trim_end_matches('/').to_owned();
-        // Validate exactly the origin/base-path shape enforced by runtime storage.
-        if !valid_server(&server) {
-            self.address_error = Some("Enter an HTTPS server without a query, fragment, credentials or relative path segments.".into());
-            return;
-        }
+        let server = match typed_server(&self.draft) {
+            Ok(server) => server,
+            Err(problem) => {
+                self.address_error = Some(problem.into());
+                return;
+            }
+        };
+        self.draft.clone_from(&server);
         self.account = account(true);
         if let Err(problem) = self.account.bind_server(&server) {
             self.address_error = Some(problem);
@@ -753,15 +826,22 @@ impl Readeck {
             self.edit_server(context);
         } else if action == action_id("sign-in-again") {
             self.sign_in_again();
-        } else if self.list.is_some() || self.article.is_some() { /* Ignore repeated taps. */
+        } else if self.article.is_some() { /* Ignore repeated taps. */
         } else if action == action_id("more") {
             self.more_open = true;
         } else if action == action_id("refresh") {
-            self.fetch_list(context, self.search.as_ref().map_or(0, |s| s.offset), false);
+            // A second tap while one is under way would only start it again.
+            if self.list.is_none() {
+                self.fetch_list(context, self.search.as_ref().map_or(0, |s| s.offset), false);
+            }
         } else if action == action_id("previous") {
             if self.page > 0 {
                 self.page -= 1;
-            } else if let Some(s) = self.search.as_ref().filter(|s| s.offset >= LIMIT) {
+            } else if let Some(s) = self
+                .search
+                .as_ref()
+                .filter(|s| s.offset >= LIMIT && self.list.is_none())
+            {
                 self.fetch_list(context, s.offset - LIMIT, true);
             }
         } else if action == action_id("next") {
@@ -770,7 +850,7 @@ impl Readeck {
             } else if let Some(offset) = self
                 .search
                 .as_ref()
-                .filter(|s| s.more)
+                .filter(|s| s.more && self.list.is_none())
                 .and_then(|s| s.offset.checked_add(LIMIT))
                 .filter(|n| u32::try_from(*n).is_ok())
             {
@@ -827,6 +907,8 @@ impl KoboApp for Readeck {
                     self.leave_typing(context);
                 }
             } else if action == action_id("server-address") {
+                // An empty field opens with the scheme in it, so the owner
+                // types only what is theirs.
                 self.address.open_with(&self.draft);
             } else if action == action_id("check-again") {
                 self.server_check = ServerCheck::Unchecked;
@@ -945,7 +1027,7 @@ impl KoboApp for Readeck {
             } else if key == kobo_sdk::cache_key(kept_key(&server, &id)) {
                 if let Some(html) = value
                     .as_deref()
-                    .and_then(|bytes| std::str::from_utf8(bytes).ok())
+                    .and_then(|bytes| decode_kept(&server, &id, bytes))
                 {
                     self.article = None;
                     let html = html.to_owned();
@@ -981,6 +1063,13 @@ impl KoboApp for Readeck {
                 self.problem =
                     Some("The server address could not be saved. Continue to retry.".into());
             }
+        } else if !matches!(result, StoreResult::Saved { .. }) && self.is_kept_key(key) {
+            // The article still reads now; what is lost is reading it again
+            // away from Wi-Fi, which the owner would otherwise find out about
+            // on the train.
+            if let Some(reader) = self.book.reader_mut() {
+                reader.report(NOT_KEPT);
+            }
         } else if !matches!(result, StoreResult::Saved { .. })
             && !key.starts_with(kobo_sdk::CACHE_PREFIX)
         {
@@ -1007,8 +1096,11 @@ impl KoboApp for Readeck {
                             search.offset = request.offset;
                             search.more = count == LIMIT;
                         }
+                        let last = self.pages(context).len().saturating_sub(1);
                         self.page = if request.last_page {
-                            self.pages(context).len().saturating_sub(1)
+                            last
+                        } else if request.keep_page {
+                            self.page.min(last)
                         } else {
                             0
                         };
@@ -1040,7 +1132,10 @@ impl KoboApp for Readeck {
                         self.view = View::Reading;
                         if let Some(server) = self.server.as_deref() {
                             if bytes.len() <= KEEP_LIMIT {
-                                context.store().cache(kept_key(server, &article.id), bytes);
+                                context.store().cache(
+                                    kept_key(server, &article.id),
+                                    encode_kept(server, &article.id, &bytes),
+                                );
                             }
                         }
                     } else {
@@ -1121,6 +1216,13 @@ impl Readeck {
             Some(_) | None => {}
         }
     }
+    /// Whether `key` is where the open article is kept.
+    fn is_kept_key(&self, key: &str) -> bool {
+        self.server
+            .as_deref()
+            .zip(self.open.as_deref())
+            .is_some_and(|(server, id)| key == kobo_sdk::cache_key(kept_key(server, id)))
+    }
     fn open_kept(&mut self, context: &mut Context, id: &str, html: &str) {
         let memory = self.memory.take().unwrap_or_default();
         let origin = format!(
@@ -1143,9 +1245,28 @@ fn inbox_key(server: &str) -> String {
 /// Where an opened article is kept for reading offline. The runtime drops
 /// the oldest kept copies on its own when the cache is full, so the reader
 /// keeps the most recent articles without the app counting them.
+///
+/// The id is hashed rather than spelled out: spelled in hex, a usual 22
+/// character id made a key past the store's 64, so no article was ever kept.
+/// The value names its server and id, so a collision reads as a miss.
 fn kept_key(server: &str, id: &str) -> String {
-    let place = place_key(server, id);
-    format!("a{}", &place[1..])
+    format!("a.{:016x}.{:016x}", fnv(server), fnv(id))
+}
+fn fnv(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+    })
+}
+/// An article as it is kept: its server and id, then the page itself.
+fn encode_kept(server: &str, id: &str, html: &[u8]) -> Vec<u8> {
+    let mut bytes = format!("{KEPT_HEADER}\n{server}\n{id}\n").into_bytes();
+    bytes.extend_from_slice(html);
+    bytes
+}
+/// The page kept for exactly this server and id, if that is what is kept.
+fn decode_kept<'a>(server: &str, id: &str, bytes: &'a [u8]) -> Option<&'a str> {
+    let html = bytes.strip_prefix(format!("{KEPT_HEADER}\n{server}\n{id}\n").as_bytes())?;
+    std::str::from_utf8(html).ok()
 }
 fn fetch(url: String, max_bytes: u32) -> Task {
     Task::Fetch {
@@ -1175,6 +1296,39 @@ fn valid_server(server: &str) -> bool {
         && !server.contains('%')
         && !server.contains('\\')
         && !server.split('/').any(|s| matches!(s, "." | ".."))
+}
+/// The server address the owner typed, as it is saved, or why it cannot be.
+///
+/// An address typed without a scheme is taken as https, which is the only
+/// one Readeck on the reader can use; the field also opens with it typed.
+fn typed_server(typed: &str) -> Result<String, &'static str> {
+    let typed = typed.trim().trim_end_matches('/');
+    if typed.is_empty() || typed == "https:" {
+        return Err("Type the address you open Readeck at.");
+    }
+    // An address typed after a scheme that was already there, or pasted
+    // twice, still means the one server.
+    let mut typed = typed;
+    while let Some(rest) = typed
+        .strip_prefix("https://")
+        .filter(|rest| rest.starts_with("https://") || rest.starts_with("http://"))
+    {
+        typed = rest;
+    }
+    let server = if typed.contains("://") {
+        typed.to_owned()
+    } else {
+        format!("https://{typed}")
+    };
+    if !server.starts_with("https://") {
+        return Err("Readeck needs an address that starts with https://.");
+    }
+    // Exactly the origin and base path the runtime will store a key for.
+    if valid_server(&server) {
+        Ok(server)
+    } else {
+        Err("Check the address. It should look like https://readeck.example.")
+    }
 }
 fn search_path(query: &str, offset: usize) -> String {
     let mut encoded = String::new();
@@ -1268,10 +1422,7 @@ fn apply_to_list(list: &mut Vec<Bookmark>, id: &str, mutation: Mutation) {
 // Server-hashed key plus an exact server inside the value: even a hash collision
 // cannot restore a position from another instance. IDs remain case-sensitive.
 fn place_key(server: &str, id: &str) -> String {
-    let hash = server.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
-        (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
-    });
-    let mut key = format!("p.{hash:016x}.");
+    let mut key = format!("p.{:016x}.", fnv(server));
     for byte in id.bytes() {
         let _ = write!(key, "{byte:02x}");
     }

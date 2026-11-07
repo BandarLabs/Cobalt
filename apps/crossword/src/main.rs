@@ -1,6 +1,7 @@
 //! Offline crossword play with an acknowledged, bounded save record.
 mod game;
 mod puzzles;
+mod recover;
 mod saved;
 use game::{Progress, PUZZLES};
 use kobo_sdk::game::{self as chrome, Menu, Tap};
@@ -38,7 +39,7 @@ struct ClueRow {
     number: u16,
 }
 
-const RULES: &str = "Fill the white squares\n\nRead a clue and fill in its answer. Small corner numbers match the clue list. The shaded row or column is the word you are solving, and its clue is above the grid. Some squares belong to one word only.\n\nTap a square to type in it. Enter one letter to move along the word, or the whole word to fill it from its first square. Tap another square in the word to move. Across or Down, at the foot of the grid and at the top while you type, switches direction.\n\nUndo, at the foot of the grid, takes back your last change, up to 32 steps per puzzle. Clues lists every clue; tap one to answer it.\n\nMore holds New game, which opens the next puzzle you have not started, then Check word, Reveal square, Clear square, Restart puzzle and Puzzles. Checking reports wrong and empty letters without changing them. Reveal and Restart ask first and can be undone.\n\nEach puzzle keeps its own letters, and stays marked Completed once solved, even after a restart.\n\nYour letters are saved as you go. If saving fails, keep the app open and choose Retry saving in More.";
+const RULES: &str = "Fill the white squares\n\nRead a clue and fill in its answer. Small corner numbers match the clue list. The shaded row or column is the word you are solving, and its clue is above the grid. Some squares belong to one word only.\n\nTap a square to type in it. Enter one letter to move along the word, or the whole word to fill it from its first square. Tap another square in the word to move. Across or Down, at the foot of the grid and at the top while you type, switches direction.\n\nUndo, at the foot of the grid, takes back your last change, up to 32 steps per puzzle. Clues lists every clue; tap one to answer it.\n\nMore holds New game, which opens the next puzzle you have not started, then Check word, Reveal square, Clear square, Restart puzzle and Puzzles. Checking reports wrong and empty letters without changing them. Reveal and Restart ask first and can be undone.\n\nEach puzzle keeps its own letters, and stays marked Completed once solved, even after a restart.\n\nYour letters are saved as you go. If saving fails, keep the app open, make room on your reader and tap Retry saving.";
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 enum View {
     #[default]
@@ -58,6 +59,7 @@ struct Crossword {
     keyboard: Keyboard,
     loaded: bool,
     load_error: Option<String>,
+    set_aside: recover::SetAside,
     draft: Draft,
     active: Option<u64>,
     notice: Option<String>,
@@ -76,6 +78,7 @@ impl Default for Crossword {
             keyboard: Keyboard::new(),
             loaded: false,
             load_error: None,
+            set_aside: recover::SetAside::default(),
             draft: Draft::restored(Vec::new(), saved::LIMIT).expect("empty draft"),
             active: None,
             notice: None,
@@ -88,6 +91,12 @@ impl Default for Crossword {
     }
 }
 impl Crossword {
+    /// Empties the answer and puts the keys back on the letters. Clearing
+    /// the text alone left the next answer opening on the symbol page if the
+    /// last one had strayed there.
+    fn reset_keys(&mut self) {
+        self.keyboard = Keyboard::new();
+    }
     fn game(&self) -> &Progress {
         &self.games[self.current]
     }
@@ -116,12 +125,15 @@ impl Crossword {
         // fix pinned to the foot with an empty panel between them.
         if !self.loaded {
             return if let Some(error) = &self.load_error {
-                failure_screen(
+                self.set_aside.screen(
                     || ScreenBuilder::new("crossword").top_bar("Crossword"),
                     &context.metrics(),
-                    "Cannot open progress",
-                    (&format!("{error} Your saved game has been kept."), error),
-                    ("retry-load", "Try again"),
+                    error,
+                    &recover::Wording {
+                        title: "Cannot open progress",
+                        kept: "Your saved game has been kept.",
+                        explain: "Your saved progress stays on the Kobo as a separate copy, and every puzzle starts again empty.",
+                    },
                 )
             } else {
                 b.text("Opening puzzles…").build()
@@ -325,13 +337,15 @@ impl Crossword {
                 },
             )]);
         }
+        // Page turns with the page number between them, as Rules has, so
+        // sixty puzzles read as so many pages rather than an endless list.
         if pages.len() > 1 {
             b = b
+                .page_turns("puzzles-previous", "puzzles-next")
                 .page_position(
                     u16::try_from(page + 1).unwrap_or(1),
                     u16::try_from(pages.len()).unwrap_or(1),
-                )
-                .action_bar([("puzzles-previous", "Previous"), ("puzzles-next", "Next")]);
+                );
         }
         b.build()
     }
@@ -610,7 +624,7 @@ impl Crossword {
             {
                 self.game_mut().position.selected = row.first;
                 self.game_mut().position.down = row.down;
-                self.keyboard.clear();
+                self.reset_keys();
                 self.view = View::Entry;
             }
         }
@@ -621,21 +635,21 @@ impl Crossword {
 
         if is("direction") {
             self.game_mut().position.down = !self.game().position.down;
-            self.keyboard.clear();
+            self.reset_keys();
         } else if let Some(cell) = p
             .word(self.game().position.selected, self.game().position.down)
             .into_iter()
             .find(|c| is(&format!("entry-{c}")))
         {
             self.game_mut().position.selected = cell;
-            self.keyboard.clear();
+            self.reset_keys();
         } else if let Some(pressed) = self.keyboard.press(action) {
             self.notice = None;
             if pressed == Pressed::Submitted {
                 let text = self.keyboard.text().to_owned();
                 match self.game_mut().enter(p, &text) {
                     Ok(()) => {
-                        self.keyboard.clear();
+                        self.reset_keys();
                         self.notice = None;
                         if text.len() > 1 || self.game().solved(p) {
                             self.view = View::Board;
@@ -657,7 +671,7 @@ impl Crossword {
             .find(|i| is(&format!("cell-{i}")))
         {
             self.game_mut().position.selected = cell;
-            self.keyboard.clear();
+            self.reset_keys();
             self.view = View::Entry;
         } else if is("clues") {
             self.clue_page = 0;
@@ -704,7 +718,7 @@ impl Crossword {
                 // throws nothing away and needs no confirmation.
                 if let Some(next) = self.next_puzzle() {
                     self.current = next;
-                    self.keyboard.clear();
+                    self.reset_keys();
                     self.view = View::Board;
                 } else {
                     self.notice = Some(
@@ -764,7 +778,10 @@ impl KoboApp for Crossword {
                     self.loaded = true;
                     self.load_error = None;
                 }
-                Err(error) => self.load_error = Some(error.to_string()),
+                Err(error) => {
+                    self.load_error = Some(error.to_string());
+                    self.set_aside.hold(bytes);
+                }
             },
             StoreResult::Loaded { value: None, .. } => {
                 self.loaded = true;
@@ -774,7 +791,24 @@ impl KoboApp for Crossword {
         }
         self.show(context);
     }
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if self.set_aside.on_keys(context, saved::KEY, result) {
+            self.show(context);
+        }
+    }
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if let Some(kept) = self.set_aside.on_save(key, &result) {
+            // With the unreadable progress copied, the record is forgotten,
+            // so reopening finds the shelf as on the first day rather than
+            // the same failure.
+            if kept {
+                self.loaded = true;
+                self.load_error = None;
+                context.store().forget(saved::KEY);
+            }
+            self.show(context);
+            return;
+        }
         if key != saved::KEY {
             return;
         }
@@ -800,7 +834,11 @@ impl KoboApp for Crossword {
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         let is = |s: &str| action == action_id(s);
         if !self.loaded {
-            if is("retry-load") && self.load_error.take().is_some() {
+            if self.set_aside.action(context, action) {
+                self.show(context);
+            } else if is("retry-load") && !self.set_aside.busy() && self.load_error.take().is_some()
+            {
+                self.set_aside.clear();
                 context.store().load(saved::KEY);
                 self.show(context);
             }
@@ -835,10 +873,12 @@ impl KoboApp for Crossword {
         match tap {
             Some(tap) => self.shared_tap(tap),
             None if action == ActionId::BACK || is("board") => {
-                self.keyboard.clear();
+                self.reset_keys();
                 self.notice = None;
-                if self.view == View::Board || (self.view == View::Rules && self.rules_from_puzzles)
-                {
+                if self.view == View::Rules && self.rules_from_puzzles {
+                    // Back to the shelf page Rules was opened on.
+                    self.view = View::Puzzles;
+                } else if self.view == View::Board {
                     self.open_shelf(context);
                 } else {
                     self.view = View::Board;

@@ -1,0 +1,26 @@
+# sweep: --seed-root scripts/fixtures/logicpack/unreadable-save
+# A save the app cannot read is kept and explained, never silently replaced.
+wait-for Cannot open progress
+expect Try again
+expect-missing 0 of 105 solved
+clean
+shot logicpack-unreadable
+tap Try again
+wait-for Cannot open progress
+# Start over is the way past it: it asks first, keeps a copy of the
+# unreadable record, and the fresh puzzles are what a restart finds.
+expect Start over
+tap Start over
+wait-for Start over?
+expect Your saved puzzles stay on the Kobo as a separate copy
+clean
+shot logicpack-unreadable-start-over
+tap Go back
+wait-for Cannot open progress
+tap Start over
+wait-for Start over?
+tap-id confirm-start-over
+wait-for 0 of 105 solved
+restart
+wait-for 0 of 105 solved
+expect-missing Cannot open progress

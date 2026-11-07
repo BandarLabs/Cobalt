@@ -1,9 +1,22 @@
 # Library and its setlists after a score is pushed from the computer.
-companion musicstand push scripts/fixtures/musicstand/Minuet --sim
+companion musicstand push scripts/fixtures/musicstand/Minuet scripts/fixtures/musicstand/Gavotte --sim
 tap Check for scores
 wait-for Library
+expect Minuet
+expect 2 pages
+expect Gavotte
+expect 1 page
 clean
 shot library
+# Add scores explains the push and leads back to the library.
+tap Add scores
+wait-for Adding scores
+expect kobo musicstand push
+expect Poppler
+clean
+shot about
+tap Library
+wait-for Setlists
 tap Setlists
 wait-for New setlist
 clean
@@ -20,5 +33,89 @@ clean
 shot stand
 tap-at 536,724
 wait-for Staff width
+expect 1 of 2 · top half
+expect The whole page
+expect Not marked
 clean
 shot stand-menu
+# The close mark puts the menu away and leaves the page where it was.
+tap-at 942,489
+wait-idle
+expect-missing Staff width
+# A turn moves half a page at a time, so the line being played stays in
+# sight, then on to the next page.
+tap-id next
+wait-idle
+tap-at 536,460
+wait-for 1 of 2 · bottom half
+tap-at 942,489
+wait-idle
+tap-id next
+wait-idle
+tap-at 536,460
+wait-for 2 of 2 · top half
+tap-at 942,489
+wait-idle
+tap-id previous
+wait-idle
+tap-at 536,460
+wait-for 1 of 2 · bottom half
+# Staff width crops the margins; the switch says so and closes the menu.
+tap Staff width
+wait-idle
+expect-missing Staff width
+tap-at 536,460
+wait-for Margins cropped, staves larger
+clean
+shot stand-zoomed
+# The corner mark is shown in the library beside the score.
+tap Corner mark
+wait-idle
+tap-at 536,460
+wait-for Marked in your library
+tap Library
+wait-for Setlists
+expect page 1 marked
+clean
+shot library-marked
+# The place, the zoom and the mark survive Music Stand being closed.
+restart
+wait-for Library
+expect page 1 marked
+tap Minuet
+wait-for-id next
+wait-idle
+tap-at 536,724
+wait-for 1 of 2 · bottom half
+expect Margins cropped, staves larger
+expect Marked in your library
+# Clearing both switches puts the page and the library back.
+tap Staff width
+wait-idle
+tap-at 536,460
+wait-for The whole page
+tap Corner mark
+wait-idle
+tap-at 536,460
+wait-for Not marked
+tap Library
+wait-for Setlists
+expect-missing marked
+# Back from the stand returns to the library too.
+tap Gavotte
+wait-for-id next
+wait-idle
+tap-id 4294967295
+wait-for Setlists
+# Past the last half of the last page the stand says it is the end, rather
+# than taking the press and showing nothing.
+tap Gavotte
+wait-for-id next
+wait-idle
+tap-id next
+wait-idle
+tap-id next
+wait-idle
+wait-for Last page.
+clean
+shot stand-last-page

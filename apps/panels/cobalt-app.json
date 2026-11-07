@@ -4,8 +4,8 @@
   "short_label": "Panels",
   "summary": "Read comics added from your computer or Komga library.",
   "page_description": "Read CBZ comics on your Kobo with zoom, spreads and right-to-left reading. Add comics over USB or download them from your Komga library.",
-  "version": "0.1.11",
-  "release_notes": "Panels now has an icon of its own, a page cut into comic panels.",
+  "version": "0.1.12",
+  "release_notes": "Move page and a rotated page's controls fit the panel, and reading options are switches. Check for comic says when no volume.cbz is there, the shelf shows a new reading direction at once, and Back from the copy guide returns to your comics.",
   "glyph": "comic-panels",
   "capabilities": [
     "network"

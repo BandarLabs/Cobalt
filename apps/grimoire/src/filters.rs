@@ -36,11 +36,21 @@ impl Filter {
             Self::Type => "monster-type",
         }
     }
-    fn values(self, app: &Grimoire) -> Vec<String> {
+    pub(super) fn values(self, app: &Grimoire) -> Vec<String> {
         match self {
             Self::Class => options(app, "class"),
             Self::School => options(app, "school"),
-            Self::Type => options(app, "type"),
+            // The index keeps a type as the stat block writes it, "beast";
+            // a list of choices reads better with capitals.
+            Self::Type => options(app, "type")
+                .into_iter()
+                .map(|kind| {
+                    let mut letters = kind.chars();
+                    letters.next().map_or_else(String::new, |first| {
+                        first.to_uppercase().chain(letters).collect()
+                    })
+                })
+                .collect(),
             Self::Level => std::iter::once("Any".to_owned())
                 .chain((0..=9).map(|level| {
                     if level == 0 {
@@ -115,6 +125,14 @@ impl Grimoire {
             // search for that. Neither carries an index tag worth filtering on.
             Kind::Rule | Kind::Item => &[],
         }
+    }
+    /// How many of this category's filters are set to something other
+    /// than Any.
+    pub(super) fn active_filters(&self) -> usize {
+        self.filters()
+            .iter()
+            .filter(|filter| filter.selected(self) != 0)
+            .count()
     }
     pub(super) fn clear_filters(&mut self) {
         self.spell_class = 0;

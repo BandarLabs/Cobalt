@@ -4,8 +4,8 @@
   "short_label": "Nonograms",
   "summary": "Solve 78 picture and pattern puzzles, or make your own from photos.",
   "page_description": "Pan larger grids, inspect full clues and keep your marks and undo history when reopening.",
-  "version": "0.1.17",
-  "release_notes": "Nonograms now has an icon of its own, a grid with clues above its columns.",
+  "version": "0.1.18",
+  "release_notes": "A puzzle you have begun now reads In progress, and the play screen names the puzzle. Held sideways, the controls sit beside the board. Help has one set of page turns, and new photos are no longer shown as a warning.",
   "glyph": "clued-grid",
   "capabilities": [],
   "setup": {

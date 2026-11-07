@@ -2,7 +2,7 @@
 
 use kobo_frame_host::{
     decode_digest_map, decode_fit_map, encode_digest_map, encode_fit_map, prepare_for_panel, Fit,
-    Manifest, Panel, Push, DIGEST_MANIFEST, FIT_MANIFEST, MANIFEST, MAX_FRAME_CAPACITY,
+    Manifest, Panel, Photo, Push, DIGEST_MANIFEST, FIT_MANIFEST, MANIFEST, MAX_FRAME_CAPACITY,
 };
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -100,7 +100,8 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
         Target::Device(host) => (read_manifest(host)?, reader_panel(host)?),
         Target::Sim => (read_local_manifest()?, sim_panel()),
     };
-    let mut push = prepare_for_panel(Path::new(input), fit, &existing, delete, panel)?;
+    let (shelf, lost) = on_shelf(&existing, &shelf_sizes(&target, &existing)?);
+    let mut push = prepare_for_panel(Path::new(input), fit, &shelf, delete, panel)?;
     if let Some(album) = album {
         for prepared in &mut push.photos {
             album.clone_into(&mut prepared.photo.album);
@@ -116,7 +117,10 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
     }
     let fits = merged_fits(&target, &push, fit)?;
     let digests = merged_digests(&target, &push)?;
+    print_lost(&lost);
     print_plan(&push);
+    // An empty file left behind for a lost photo is cleared with the rest.
+    push.removed.extend(lost);
     if plan_only {
         println!("Plan only. No photos were transferred or removed.");
         return Ok(());
@@ -127,7 +131,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
             if push.manifest != existing {
                 let script = format!(
                     "set -eu\nroot='{ROOT}'\n{}",
-                    super::frame_recovery::save_script(&existing)
+                    super::frame_recovery::save_script(&shelf)
                 );
                 remote(host, &script)?;
             }
@@ -144,7 +148,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
         Target::Sim => {
             enforce_local_capacity(&push)?;
             if push.manifest != existing {
-                super::frame_recovery::save(&sim_root(), &existing)?;
+                super::frame_recovery::save(&sim_root(), &shelf)?;
             }
             publish_local(&push, &fits, &digests)?;
             let actual = read_local_manifest()?;
@@ -167,6 +171,41 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
     );
     print!("{}", on_the_reader(&push.manifest));
     Ok(())
+}
+
+/// Byte sizes of the listed photos that still have a file on the shelf.
+fn shelf_sizes(target: &Target, manifest: &Manifest) -> Result<BTreeMap<String, usize>, String> {
+    let ids = manifest
+        .photos
+        .iter()
+        .map(|photo| photo.id.as_str())
+        .collect::<Vec<_>>();
+    match target {
+        Target::Device(host) => frame_sizes(host, &ids),
+        Target::Sim => local_present_sizes(&ids),
+    }
+}
+
+/// A listed photo whose file is gone or empty can be neither shown nor kept
+/// for undo. Planning against the photos that are really there lets a push
+/// send such a photo again and lets `rm` drop the entry, so the shelf the
+/// app asks the owner to repair can be repaired.
+fn on_shelf(existing: &Manifest, sizes: &BTreeMap<String, usize>) -> (Manifest, Vec<Photo>) {
+    let (present, lost) = existing
+        .photos
+        .iter()
+        .cloned()
+        .partition(|photo| sizes.get(&photo.id).is_some_and(|size| *size > 0));
+    (Manifest { photos: present }, lost)
+}
+
+fn print_lost(lost: &[Photo]) {
+    for photo in lost {
+        println!(
+            "  Missing on the reader, dropped from the list: {} / {}",
+            photo.album, photo.name
+        );
+    }
 }
 
 /// What the frame now holds, album by album, so a push ends by saying what
@@ -257,18 +296,23 @@ fn remove(arguments: &[String]) -> Result<(), String> {
         Target::Device(host) => read_manifest(host)?,
         Target::Sim => read_local_manifest()?,
     };
-    let mut manifest = existing.clone();
-    let index = manifest
-        .photos
-        .iter()
-        .position(|photo| photo.id == id)
-        .ok_or_else(|| format!("Frame has no photo with id {id:?}"))?;
-    let photo = manifest.photos.remove(index);
+    let (shelf, lost) = on_shelf(&existing, &shelf_sizes(&target, &existing)?);
+    if !existing.photos.iter().any(|photo| photo.id == id) {
+        return Err(format!("Frame has no photo with id {id:?}"));
+    }
+    let mut manifest = shelf.clone();
+    manifest.photos.retain(|photo| photo.id != id);
     let push = Push {
         manifest,
         photos: Vec::new(),
-        removed: vec![photo],
+        removed: existing
+            .photos
+            .iter()
+            .filter(|photo| photo.id == id || lost.contains(photo))
+            .cloned()
+            .collect(),
     };
+    print_lost(&lost);
     let mut fits = match &target {
         Target::Device(host) => read_fit_map(host)?,
         Target::Sim => read_local_fit_map()?,
@@ -285,13 +329,13 @@ fn remove(arguments: &[String]) -> Result<(), String> {
                 &host,
                 &format!(
                     "set -eu\nroot='{ROOT}'\n{}",
-                    super::frame_recovery::save_script(&existing)
+                    super::frame_recovery::save_script(&shelf)
                 ),
             )?;
             transfer(&host, &push, &fits, &digests)?;
         }
         Target::Sim => {
-            super::frame_recovery::save(&sim_root(), &existing)?;
+            super::frame_recovery::save(&sim_root(), &shelf)?;
             publish_local(&push, &fits, &digests)?;
         }
     }
@@ -638,6 +682,16 @@ fn enforce_local_capacity(push: &Push) -> Result<(), String> {
 }
 
 fn local_sizes(ids: &[&str]) -> Result<BTreeMap<String, usize>, String> {
+    let sizes = local_present_sizes(ids)?;
+    match ids.iter().find(|id| !sizes.contains_key(**id)) {
+        Some(id) => Err(format!(
+            "Frame photo {id} is missing from the simulator shelf"
+        )),
+        None => Ok(sizes),
+    }
+}
+
+fn local_present_sizes(ids: &[&str]) -> Result<BTreeMap<String, usize>, String> {
     let root = sim_root();
     let mut sizes = BTreeMap::new();
     for id in ids {
@@ -651,11 +705,7 @@ fn local_sizes(ids: &[&str]) -> Result<BTreeMap<String, usize>, String> {
                     })?,
                 );
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(format!(
-                    "Frame photo {id} is missing from the simulator shelf"
-                ));
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("inspect Frame photo {id}: {error}")),
         }
     }
@@ -871,8 +921,8 @@ fn base64_value(byte: u8) -> Result<u8, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_decode, capacity_bytes, merge_fit_map, on_the_reader, parse_push, parse_remove,
-        parse_target, transfer_script, Target, MANIFEST,
+        base64_decode, capacity_bytes, merge_fit_map, on_shelf, on_the_reader, parse_push,
+        parse_remove, parse_target, transfer_script, Target, MANIFEST,
     };
     use kobo_frame_host::{Fit, Manifest, Photo, PreparedPhoto, Push, FIT_MANIFEST};
     use std::collections::BTreeMap;
@@ -1078,6 +1128,21 @@ mod tests {
             .is_err());
         }
         assert!(super::verify_published(&push, &push.manifest, &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn a_photo_whose_file_is_gone_or_empty_is_left_out_of_the_shelf_a_push_plans_against() {
+        let existing = Manifest {
+            photos: vec![
+                photo("photo-kept"),
+                photo("photo-gone"),
+                photo("photo-empty"),
+            ],
+        };
+        let sizes = BTreeMap::from([("photo-kept".to_owned(), 10), ("photo-empty".to_owned(), 0)]);
+        let (shelf, lost) = on_shelf(&existing, &sizes);
+        assert_eq!(shelf.photos, vec![photo("photo-kept")]);
+        assert_eq!(lost, vec![photo("photo-gone"), photo("photo-empty")]);
     }
 
     #[test]

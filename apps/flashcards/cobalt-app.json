@@ -4,8 +4,8 @@
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
   "page_description": "Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends.",
-  "version": "0.2.17",
-  "release_notes": "Flashcards now has an icon of its own, two cards.",
+  "version": "0.2.18",
+  "release_notes": "Your Card details choice in Review settings is now kept when Flashcards restarts, and the licence pages no longer repeat their title.",
   "glyph": "cards",
   "capabilities": [],
   "setup": {

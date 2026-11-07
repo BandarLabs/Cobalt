@@ -14,6 +14,13 @@ use model::{
 };
 use std::process::ExitCode;
 const HABITS: &str = "habits-v1";
+/// When each backup made here was made, one line of shelf name and date per
+/// backup, so the import list can tell them apart. A backup's shelf name is
+/// a hash of its contents and says nothing an owner can read.
+const BACKUPS: &str = "habit-backups-v1";
+/// How many backup dates are remembered. Older backups are still listed,
+/// without a date.
+const MAX_BACKUP_DATES: usize = 30;
 /// How large a backup this reader will read back in. A year of daily habits is
 /// a few kilobytes, so this is room to spare rather than a limit anybody meets.
 const MAX_BACKUP_BYTES: usize = 64 * 1024;
@@ -84,9 +91,14 @@ struct Habits {
     schedule_page: u16,
     export: Option<Export>,
     import: Option<Import>,
-    import_files: Vec<String>,
+    /// Files offered for import, with their size.
+    import_files: Vec<(String, u32)>,
     import_read: Option<ShelfDownload>,
+    /// Shelf name and date of each backup made on this reader, oldest first.
+    backups: Vec<(String, String)>,
     notice: Option<String>,
+    /// What the last step did, said once and gone with the next tap.
+    done: Option<String>,
     loading: bool,
     save_in_flight: bool,
     queued_save: Option<Vec<u8>>,
@@ -112,7 +124,9 @@ impl Default for Habits {
             import: None,
             import_files: Vec::new(),
             import_read: None,
+            backups: Vec::new(),
             notice: None,
+            done: None,
             loading: false,
             save_in_flight: false,
             queued_save: None,
@@ -234,8 +248,9 @@ impl Habits {
             || self.entry.is_open()
             || self.back_target().is_some()
     }
-    fn go_back(&mut self) {
+    fn go_back(&mut self, cx: &mut Context) {
         if self.export.is_some() {
+            self.record_backup(cx);
             self.export = None;
         } else if self.import.is_some() {
             self.import = None;
@@ -296,6 +311,8 @@ impl Habits {
         }
         if let Some(note) = &self.notice {
             s = s.banner(BannerLevel::Attention, note);
+        } else if let Some(done) = &self.done {
+            s = s.banner(BannerLevel::Info, done);
         }
         match self.page {
             Page::Today => {
@@ -542,6 +559,7 @@ impl Habits {
     }
     fn handle_import(&mut self, cx: &mut Context, a: ActionId) -> bool {
         if a == action_id("import-backup") {
+            self.record_backup(cx);
             self.export = None;
             self.import = Some(Import::Choose);
             self.import_files.clear();
@@ -555,8 +573,8 @@ impl Habits {
             if let Some(index) = (0..self.import_files.len())
                 .find(|index| a == action_id(&format!("import-file-{index}")))
             {
-                let mut read =
-                    ShelfDownload::new(self.import_files[index].clone()).at_most(MAX_BACKUP_BYTES);
+                let mut read = ShelfDownload::new(self.import_files[index].0.clone())
+                    .at_most(MAX_BACKUP_BYTES);
                 read.start(cx);
                 self.import_read = Some(read);
                 self.notice = None;
@@ -574,7 +592,7 @@ impl Habits {
             let Some(Import::Confirm(incoming)) = self.import.take() else {
                 return false;
             };
-            self.notice = Some(if replacing {
+            self.done = Some(if replacing {
                 self.items = incoming;
                 "The backup replaced the habits on this reader.".to_owned()
             } else {
@@ -588,12 +606,43 @@ impl Habits {
         }
         false
     }
+    /// Remembers when a backup that is ready for the computer was made, so
+    /// the import list can name it by its date.
+    fn record_backup(&mut self, cx: &mut Context) {
+        let Some(export) = self.export.as_ref().filter(|export| export.is_ready()) else {
+            return;
+        };
+        let name = export.offer().digest.clone();
+        if self.backups.iter().any(|(kept, _)| *kept == name) {
+            return;
+        }
+        let Some(date) = SystemClock::reader().now().ok().and_then(Snapshot::date) else {
+            return;
+        };
+        self.backups.push((name, date.to_string()));
+        let over = self.backups.len().saturating_sub(MAX_BACKUP_DATES);
+        self.backups.drain(..over);
+        cx.store().save(BACKUPS, encode_backups(&self.backups));
+    }
+    fn backup_title(&self, name: &str) -> String {
+        if !is_backup_name(name) {
+            return name.to_owned();
+        }
+        self.backups
+            .iter()
+            .find(|(kept, _)| kept == name)
+            .and_then(|(_, date)| readable_date(date))
+            .map_or_else(
+                || "Backup made on this reader".to_owned(),
+                |date| format!("Backup of {date}"),
+            )
+    }
     fn import_screen(&self, import: &Import) -> Screen {
         match import {
             Import::Choose => {
                 let mut screen = ScreenBuilder::new("hb-import")
                     .top_bar("Import a backup")
-                    .text("Choose a text backup already on this reader. Replace removes the habits on this reader. Merge keeps them and adds days from the backup when the name matches.");
+                    .text("Choose a backup made on this reader. Replace removes the habits here. Merge keeps them and adds days from the backup when the name matches.");
                 // This screen is returned before the shared banner is reached,
                 // so a backup that could not be read says so here or nowhere.
                 if let Some(note) = &self.notice {
@@ -605,18 +654,18 @@ impl Habits {
                 if self.import_files.is_empty() {
                     screen = screen.splash(
                         Some(Glyph::Settings),
-                        "No files on this reader",
-                        "Copy a habits backup onto the shelf, then try again.",
+                        "No backups yet",
+                        "Choose Export a backup in Settings first. The backup stays on this reader and is listed here.",
                     );
                 } else {
                     let (start, end, page, pages) =
                         Self::page_bounds(self.import_page, self.import_files.len());
                     screen = screen.rows(self.import_files[start..end].iter().enumerate().map(
-                        |(index, name)| {
+                        |(index, (name, size))| {
                             (
                                 format!("import-file-{}", start + index),
-                                name.clone(),
-                                "Text backup".to_owned(),
+                                self.backup_title(name),
+                                format!("Text backup · {}", display_size(*size)),
                                 Glyph::Settings,
                             )
                         },
@@ -712,7 +761,15 @@ impl KoboApp for Habits {
     fn on_start(&mut self, cx: &mut Context) {
         self.loading = true;
         cx.store().load(HABITS);
+        cx.store().load(BACKUPS);
         self.show(cx);
+    }
+    fn on_save(&mut self, cx: &mut Context, key: &str, result: StoreResult) {
+        // The backup dates are a convenience: a refused save of them costs
+        // a date on a row, and must not read as the habits failing to save.
+        if key != BACKUPS {
+            self.on_store(cx, result);
+        }
     }
     fn on_shelf(&mut self, cx: &mut Context, name: &str, result: StoreResult) {
         if let Some(read) = &mut self.import_read {
@@ -763,8 +820,15 @@ impl KoboApp for Habits {
                 StoreResult::Loaded { key, .. } | StoreResult::Saved { key } => key.clone(),
                 _ => String::new(),
             };
-            if key != HABITS && export.on_save(cx, &key, &result) {
+            if key != HABITS && key != BACKUPS && export.on_save(cx, &key, &result) {
+                self.record_backup(cx);
                 self.show(cx);
+                return;
+            }
+        }
+        if let StoreResult::Loaded { key, value } = &result {
+            if key == BACKUPS {
+                self.backups = value.as_deref().map(decode_backups).unwrap_or_default();
                 return;
             }
         }
@@ -773,19 +837,33 @@ impl KoboApp for Habits {
                 // A backup is written as text, and the shelf is shared with
                 // every other application here. Offering somebody's pictures
                 // as habits to import is a row that can only disappoint.
+                // A backup exported here is kept under its content hash.
                 self.import_files = files
                     .iter()
-                    .map(|(name, _)| name.clone())
-                    .filter(|name| {
-                        std::path::Path::new(name.as_str())
-                            .extension()
-                            .is_some_and(|extension| {
-                                extension.eq_ignore_ascii_case("txt")
-                                    || extension.eq_ignore_ascii_case("md")
-                            })
+                    .filter(|(name, _)| {
+                        is_backup_name(name)
+                            || std::path::Path::new(name.as_str()).extension().is_some_and(
+                                |extension| {
+                                    extension.eq_ignore_ascii_case("txt")
+                                        || extension.eq_ignore_ascii_case("md")
+                                },
+                            )
                     })
+                    .cloned()
                     .collect();
-                self.import_files.sort();
+                // Newest dated backup first, then undated ones, then files
+                // by name.
+                let order = |name: &str| {
+                    let dated = self.backups.iter().position(|(kept, _)| kept == name);
+                    (
+                        !is_backup_name(name),
+                        dated.is_none(),
+                        std::cmp::Reverse(dated),
+                        name.to_owned(),
+                    )
+                };
+                self.import_files
+                    .sort_by_cached_key(|(name, _)| order(name.as_str()));
                 self.import_page = 0;
                 self.show(cx);
                 return;
@@ -831,12 +909,13 @@ impl KoboApp for Habits {
         self.show(cx);
     }
     fn on_action(&mut self, cx: &mut Context, a: ActionId) {
+        self.done = None;
         self.normalize_pages();
         if self.handle_skip_menu(cx, a) {
             return;
         }
         if a == ActionId::BACK {
-            self.go_back();
+            self.go_back(cx);
             self.show(cx);
             return;
         }
@@ -934,6 +1013,49 @@ impl KoboApp for Habits {
         self.show(cx);
     }
 }
+/// Whether a shelf name is a backup exported here: the 64 hex digits of its
+/// content hash.
+fn is_backup_name(name: &str) -> bool {
+    name.len() == 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+fn encode_backups(backups: &[(String, String)]) -> Vec<u8> {
+    let mut text = String::new();
+    for (name, date) in backups {
+        text.push_str(name);
+        text.push(' ');
+        text.push_str(date);
+        text.push('\n');
+    }
+    text.into_bytes()
+}
+fn decode_backups(bytes: &[u8]) -> Vec<(String, String)> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .filter(|(name, _)| is_backup_name(name))
+        .map(|(name, date)| (name.to_owned(), date.to_owned()))
+        .collect()
+}
+/// "2026-11-07" as "7 Nov 2026".
+fn readable_date(date: &str) -> Option<String> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let mut parts = date.splitn(3, '-');
+    let year: u16 = parts.next()?.parse().ok()?;
+    let month: usize = parts.next()?.parse().ok()?;
+    let day: u8 = parts.next()?.parse().ok()?;
+    Some(format!(
+        "{day} {} {year}",
+        MONTHS.get(month.checked_sub(1)?)?
+    ))
+}
+fn display_size(bytes: u32) -> String {
+    format!("{} KB", bytes.div_ceil(1000).max(1))
+}
 fn main() -> ExitCode {
     match kobo_sdk::run("habits", Habits::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -968,6 +1090,89 @@ mod tests {
     }
 
     #[test]
+    fn merging_a_backup_says_so_after_the_save_lands_and_the_next_tap_clears_it() {
+        let mut runner = AppRunner::new(Habits {
+            items: vec![Habit::new("tea".into())],
+            loaded: true,
+            import: Some(Import::Confirm(vec![Habit::new("walk".into())])),
+            ..Habits::default()
+        });
+        runner.action(action_id("import-merge"));
+        runner.store_result(StoreResult::Saved { key: HABITS.into() });
+        let today = format!("{:?}", runner.app().screen());
+        assert!(
+            today.contains("The backup was merged with the habits on this reader."),
+            "{today}"
+        );
+        runner.action(action_id("streaks"));
+        assert!(runner.app().done.is_none());
+    }
+
+    #[test]
+    fn the_import_list_names_backups_made_here_by_date_newest_first() {
+        let older = "a".repeat(64);
+        let newer = "b".repeat(64);
+        let undated = "c".repeat(64);
+        let mut runner = AppRunner::new(Habits {
+            loaded: true,
+            page: Page::Settings,
+            backups: decode_backups(
+                encode_backups(&[
+                    (older.clone(), "2026-11-01".into()),
+                    (newer.clone(), "2026-11-07".into()),
+                ])
+                .as_slice(),
+            ),
+            ..Habits::default()
+        });
+        runner.action(action_id("import-backup"));
+        runner.app_mut().on_store(
+            &mut Context::default(),
+            StoreResult::Shelf(vec![
+                (older, 900),
+                ("photo.jpg".into(), 5),
+                (undated, 2400),
+                (newer, 1200),
+            ]),
+        );
+        let titles: Vec<String> = runner
+            .app()
+            .import_files
+            .iter()
+            .map(|(name, _)| runner.app().backup_title(name))
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Backup of 7 Nov 2026",
+                "Backup of 1 Nov 2026",
+                "Backup made on this reader",
+            ]
+        );
+        let list = format!("{:?}", runner.app().screen());
+        assert!(list.contains("Text backup · 2 KB"), "{list}");
+    }
+
+    #[test]
+    fn with_no_backup_yet_the_import_page_says_to_export_one_first() {
+        let mut runner = AppRunner::new(Habits {
+            loaded: true,
+            page: Page::Settings,
+            ..Habits::default()
+        });
+        runner.action(action_id("import-backup"));
+        runner
+            .app_mut()
+            .on_store(&mut Context::default(), StoreResult::Shelf(Vec::new()));
+        let empty = format!("{:?}", runner.app().screen());
+        assert!(
+            empty.contains("Choose Export a backup in Settings first."),
+            "{empty}"
+        );
+        assert!(!empty.contains("shelf"), "{empty}");
+    }
+
+    #[test]
     fn back_returns_each_page_to_its_parent() {
         let mut app = Habits {
             loaded: true,
@@ -976,15 +1181,15 @@ mod tests {
         assert!(!app.owns_back());
         app.page = Page::Manage;
         assert!(app.owns_back());
-        app.go_back();
+        app.go_back(&mut Context::default());
         assert_eq!(app.page, Page::Today);
         app.page = Page::Settings;
         assert_eq!(app.back_target(), Some(Page::Stats));
-        app.go_back();
+        app.go_back(&mut Context::default());
         assert_eq!(app.page, Page::Stats);
         app.entry.open();
         assert!(app.owns_back());
-        app.go_back();
+        app.go_back(&mut Context::default());
         assert!(!app.entry.is_open());
     }
 
@@ -1022,6 +1227,10 @@ mod tests {
             key: HABITS.to_owned(),
             value: None,
         });
+        runner.store_result(StoreResult::Loaded {
+            key: BACKUPS.to_owned(),
+            value: None,
+        });
         runner.action(action_id("import-backup"));
         runner.store_result(StoreResult::Shelf(vec![
             ("habits-backup.txt".to_owned(), 64),
@@ -1029,7 +1238,7 @@ mod tests {
         ]));
         assert_eq!(
             runner.app().import_files,
-            vec!["habits-backup.txt".to_owned()],
+            vec![("habits-backup.txt".to_owned(), 64)],
             "a picture was offered as a habits backup"
         );
         runner.action(action_id("import-file-0"));

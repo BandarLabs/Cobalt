@@ -1,0 +1,24 @@
+# sweep: --bare --seed-root apps/syncthing/fixtures/trouble
+# After a sync that left copies of files changed on both sides, with notes
+# and photos brought in. The runtime's words lead the screen.
+wait-for Three files changed on both sides and were kept as copies.
+expect Some files did not sync
+expect Files not synced
+expect Computers found
+expect Added to Vault
+expect 4 files
+expect Added to Frame
+expect 2 files
+expect Folders
+expect-missing Set up Sync
+clean
+shot syncthing-conflict
+tap Folders
+wait-for Sync folders
+expect These four folders are fixed.
+tap About
+wait-for MPL-2.0
+tap-id 4294967295
+wait-for Sync folders
+tap-id 4294967295
+wait-for Some files did not sync

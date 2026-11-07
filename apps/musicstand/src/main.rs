@@ -201,11 +201,17 @@ impl Stand {
                 }
                 _ => {
                     self.notice = Some((BannerLevel::Info, "End of the setlist.".to_owned()));
+                    return;
                 }
             }
         } else {
+            // The page on the stand stays, so nothing is fetched again: a
+            // fresh load would finish by clearing this notice before anyone
+            // could read it.
             self.notice = Some((BannerLevel::Info, "Last page.".to_owned()));
+            return;
         }
+        self.notice = None;
         self.save(context);
         self.page = None;
         self.page_key = None;
@@ -810,7 +816,14 @@ impl Stand {
                             {
                                 let state = self.state_of(&id);
                                 let (x, y, width, height) = Self::crop_region(score, state);
-                                match picture.crop(x, y, width, height) {
+                                let panel = context.metrics().width;
+                                let cropped = picture.crop(x, y, width, height).and_then(|crop| {
+                                    match zoomed_size(state, crop.width(), crop.height(), panel) {
+                                        Some((wide, tall)) => crop.fit_enlarging(wide, tall),
+                                        None => Ok(crop),
+                                    }
+                                });
+                                match cropped {
                                     Ok(crop) => {
                                         self.page = context.put_picture(
                                             PAGE_HANDLE,
@@ -861,6 +874,22 @@ impl Stand {
             ShelfProgress::Elsewhere => false,
         }
     }
+}
+
+/// The size to draw a Staff width crop at, when it has to grow.
+///
+/// The renderer shrinks a page wider than the panel but never enlarges one,
+/// so on a page scanned no wider than the panel, cropping the margins drew
+/// the staves smaller than the whole page did. The crop is grown until it is
+/// as wide as the panel, by no more than the image crate allows. `None` when
+/// it is already wide enough or Staff width is off.
+fn zoomed_size(state: ScoreState, width: u32, height: u32, panel: i32) -> Option<(u32, u32)> {
+    let panel = u32::try_from(panel).ok()?;
+    if !state.zoomed || width == 0 || width >= panel {
+        return None;
+    }
+    let tall = u64::from(height) * u64::from(panel) / u64::from(width);
+    Some((panel, u32::try_from(tall).ok()?.max(1)))
 }
 
 impl KoboApp for Stand {

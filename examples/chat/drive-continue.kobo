@@ -14,3 +14,19 @@ clean
 shot compose
 tap Back
 expect Continue the answer
+# Continue asks for the rest in the reader's name. With no key installed the
+# request is refused before it leaves, and the refusal names the command.
+tap Continue the answer
+wait-for Continue where you stopped.
+wait-for Try again
+expect kobo secret set openai
+expect-missing Continue the answer
+clean
+shot continue-no-key
+# Looking at the keyboard and backing out changes nothing, so the question
+# that was never answered still offers Try again.
+tap Type
+wait-for Type a message
+tap Back
+wait-for Continue where you stopped.
+expect Try again

@@ -20,3 +20,33 @@ wait-for Password
 expect Step 2 of 3
 clean
 shot sign-in
+# The sign-in form names the computer route too, and Back returns to the
+# choice rather than dropping the address.
+expect Username
+expect Use computer
+tap Back
+wait-for Use public library
+# A public library is saved at once. The sweep has no library at that
+# address, so the catalog says it did not answer and offers Try again.
+tap Use public library
+wait-for Try again
+expect did not answer
+expect-missing No books or sections
+clean
+shot public-unreachable
+tap Libraries
+wait-for https://library.example/opds
+expect Open catalog
+clean
+shot libraries-one
+# Nothing downloaded yet says how to download.
+tap Downloaded books
+wait-for No downloaded books
+clean
+shot downloaded-empty
+tap Back
+wait-for Libraries
+# The Libraries list shows the library as added, so it must still be there
+# after a restart; a library kept only until the app closes is lost silently.
+restart
+wait-for https://library.example/opds

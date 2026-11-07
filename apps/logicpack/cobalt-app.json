@@ -5,8 +5,8 @@
   "summary": "Play four familiar logic games offline.",
   "page_description": "Four hundred and twenty offline puzzles across four logic games, graded from Starter to Hard, with the same controls in every game, separate progress and undo.",
   "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.14",
-  "release_notes": "Logic Pack now has an icon of its own, a puzzle piece.",
+  "version": "0.1.15",
+  "release_notes": "Saved puzzles that cannot be read can be set aside to start over, and a cleared minefield now says Field cleared every time it is shown.",
   "glyph": "puzzle",
   "capabilities": []
 }

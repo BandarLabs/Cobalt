@@ -1,0 +1,130 @@
+# sweep: --bare
+# Keep for offline puts a paper and its figures on the reader. The library
+# counts it, it opens with no network, its place is kept, and Remove from
+# library takes it off again.
+wait-for Preprints
+tap Library
+wait-for No papers kept yet
+tap Back
+wait-idle
+tap Search arXiv
+wait-for Type here
+type xstack
+tap Search
+wait-idle 20000
+wait-for XStack: A Benchmark for ML Repo Migration
+tap XStack: A Benchmark for ML Repo Migration
+wait-idle
+expect Linrong Cai and 3 others
+expect cs.LG
+expect Submitted
+expect Full text
+expect Keep for offline
+expect 1 of 2
+clean
+shot abstract
+tap-id read-next
+wait-for 2 of 2
+clean
+shot abstract-end
+tap-id read-back
+wait-for 1 of 2
+# Full text opens the rendering in the device's reader; Back is the abstract.
+tap Full text
+wait-idle 30000
+wait-for Princeton University
+clean
+shot full-text
+page next
+wait-idle
+tap Back
+wait-idle
+expect Keep for offline
+# Keeping stays on the abstract, which then offers to remove it again.
+tap Keep for offline
+wait-idle 30000
+wait 3000
+wait-for Remove from library
+tap Back
+wait-idle
+expect offline ·
+tap Back
+wait-idle
+tap Library
+wait-for Ready offline: 1 paper
+expect XStack: A Benchmark
+clean
+shot library
+# A kept paper opens with the network gone, figures and all.
+restart
+wait-for Preprints
+scenario offline
+tap Library
+wait-for Ready offline: 1 paper
+tap XStack: A Benchmark
+wait-idle 20000
+# It reopens where it was left, on the abstract's page rather than the title.
+wait-for Abstract
+expect-missing Princeton University
+clean
+shot offline-paper
+page next
+wait-idle
+page next
+wait-idle
+page next
+wait-idle
+tap Back
+wait-idle
+# How far through leads the row.
+wait-for Ready offline: 1 paper
+expect %
+clean
+shot library-progress
+tap XStack: A Benchmark
+wait-idle 20000
+expect-missing Princeton University
+# A tap on the type panel away from its controls puts the panel away and
+# leaves the paper open.
+tap-at 536,724
+wait-idle
+clean
+shot type-panel
+tap-at 900,333
+wait-idle
+clean
+shot type-panel-tapped
+expect-missing Ready offline
+expect Page 5 of 86
+tap Back
+wait-idle
+wait-for Ready offline: 1 paper
+# Remove papers in the library takes a kept paper off the reader.
+scenario normal
+tap Remove papers
+wait-for Tap a paper to remove it from this reader.
+clean
+shot library-removing
+tap Done
+wait-for Ready offline: 1 paper
+tap Back
+wait-idle
+tap Search arXiv
+wait-for Type here
+type xstack
+tap Search
+wait-idle 20000
+wait-for XStack: A Benchmark for ML Repo Migration
+tap XStack: A Benchmark for ML Repo Migration
+wait-idle
+tap Remove from library
+wait-for Keep for offline
+tap Back
+wait-idle
+expect-missing offline ·
+tap Back
+wait-idle
+tap Library
+wait-for No papers kept yet
+clean
+shot library-empty

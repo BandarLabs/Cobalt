@@ -1051,3 +1051,49 @@ fn the_page_keys_skip_half_a_minute() {
         "{requests:?}"
     );
 }
+
+#[test]
+fn a_tap_on_the_connected_device_disconnects_it_when_nothing_waits_to_play() {
+    // It used to do nothing at all, under a row that offered nothing.
+    let mut player = loaded(2);
+    player.view = super::View::Bluetooth;
+    let mut context = crate::Context::default();
+    let words = format!("{:?}", player.bluetooth_screen(&context));
+    assert!(words.contains("Tap to disconnect"), "{words}");
+    assert!(player.press(&mut context, action_id(super::DEVICE_ACTIONS[0])));
+    assert!(sent(&mut context)
+        .iter()
+        .any(|request| matches!(request, DeviceRequest::DisconnectBluetooth { .. })));
+}
+
+#[test]
+fn a_scan_says_it_is_looking_until_its_results_are_read() {
+    let mut player = AudioPlayer::shelf("book.mp3z", "Book");
+    player.view = super::View::Bluetooth;
+    player.bluetooth_enabled = super::Switch::On;
+    player.bluetooth_known = true;
+    let mut context = crate::Context::default();
+    assert!(player.press(&mut context, action_id(super::BLUETOOTH_SCAN)));
+    let words = format!("{:?}", player.bluetooth_screen(&context));
+    assert!(
+        words.contains("Looking for headphones and speakers"),
+        "{words}"
+    );
+    assert!(words.contains("Scanning"), "{words}");
+    // A second tap does not start the scan over.
+    let _ = sent(&mut context);
+    assert!(player.press(&mut context, action_id(super::BLUETOOTH_SCAN)));
+    assert!(sent(&mut context).is_empty());
+    player.on_device_result(
+        &mut context,
+        &DeviceRequest::ReadBluetooth,
+        &DeviceResult::Bluetooth {
+            available: true,
+            enabled: true,
+            devices: vec![headphones(false)],
+            restart_on_exit: false,
+        },
+    );
+    let words = format!("{:?}", player.bluetooth_screen(&context));
+    assert!(!words.contains("Scanning"), "{words}");
+}

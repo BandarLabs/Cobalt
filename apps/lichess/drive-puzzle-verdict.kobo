@@ -1,0 +1,23 @@
+# sweep: --bare --seed-root apps/lichess/fixtures/puzzles
+# A puzzle's verdict belongs to that puzzle: the next one opens without it.
+tap Puzzles
+wait-for 3 puzzles are waiting.
+tap Resume puzzle
+wait-for-id skip-puzzle
+tap-id square-e2
+tap-id square-e3
+expect Not it. Try again.
+tap-id square-e2
+tap-id square-e4
+wait-for Not solved
+expect The first move was R
+expect-missing e2e8
+clean
+shot puzzle-verdict
+tap Next puzzle
+wait-for-id skip-puzzle
+expect White
+expect-missing Not solved
+expect-missing The first move was
+clean
+shot puzzle-next-clean

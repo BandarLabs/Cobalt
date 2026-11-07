@@ -2424,8 +2424,8 @@ impl Gutenbird {
     fn detail_blocks(publication: &Publication) -> Vec<DetailBlock> {
         let mut blocks = Vec::new();
         if let Some(summary) = &publication.summary {
-            let (description, edition) = description_parts(summary);
-            if let Some(edition) = edition {
+            let description = description_parts(summary).0;
+            if let Some(edition) = edition_notice(publication) {
                 blocks.push(DetailBlock::Section("Edition"));
                 blocks.push(DetailBlock::Text(edition.to_owned()));
             }
@@ -4056,13 +4056,9 @@ fn publication_caption(
         );
     }
     if peers.len() > 1 {
-        let notice = publication
-            .summary
-            .as_deref()
-            .and_then(|summary| description_parts(summary).1);
-        let image_label = match notice {
-            Some("This edition had all images removed.") => Some("No images"),
-            Some("This edition has images.") => Some("With images"),
+        let image_label = match edition_notice(publication) {
+            Some(NO_IMAGES) => Some("No images"),
+            Some(WITH_IMAGES) => Some("With images"),
             _ => None,
         };
         if let Some(label) = image_label {
@@ -4162,10 +4158,19 @@ fn has_pictures(edition: &Publication) -> Option<bool> {
         .as_deref()
         .and_then(|summary| description_parts(summary).1)
     {
-        Some("This edition had all images removed.") => return Some(false),
-        Some("This edition has images.") => return Some(true),
+        Some(NO_IMAGES) => return Some(false),
+        Some(WITH_IMAGES) => return Some(true),
         _ => {}
     }
+    download_has_pictures(edition)
+}
+
+const NO_IMAGES: &str = "This edition had all images removed.";
+const WITH_IMAGES: &str = "This edition has images.";
+
+/// Whether the download that would be read keeps its pictures, going by its
+/// address alone.
+fn download_has_pictures(edition: &Publication) -> Option<bool> {
     let href = edition.best_acquisition()?.href.to_ascii_lowercase();
     if href.contains("noimages") {
         Some(false)
@@ -4174,6 +4179,24 @@ fn has_pictures(edition: &Publication) -> Option<bool> {
     } else {
         None
     }
+}
+
+/// The edition notice for the download that would be read.
+///
+/// The catalog writes the notice for the edition it lists first, and the
+/// other edition of the pair rides along as a second download. Once the
+/// owner picks that one, the notice has to follow it: the page said "This
+/// edition has images." over a copy with every image removed.
+fn edition_notice(publication: &Publication) -> Option<&str> {
+    let notice = publication
+        .summary
+        .as_deref()
+        .and_then(|summary| description_parts(summary).1)?;
+    Some(match (notice, download_has_pictures(publication)) {
+        (WITH_IMAGES, Some(false)) => NO_IMAGES,
+        (NO_IMAGES, Some(true)) => WITH_IMAGES,
+        (notice, _) => notice,
+    })
 }
 
 fn language_name(code: &str) -> String {
@@ -4855,8 +4878,15 @@ impl KoboApp for Gutenbird {
             .enumerate()
         {
             if action == action_id(&format!("recent-{index}")) {
-                self.go(View::Search);
-                self.begin_search(context, self.current, term, false);
+                // The switch beside the chips says where the next search
+                // goes, and a recent search is the next search too.
+                self.query.clone_from(&term);
+                if self.search_all {
+                    self.begin_federated_search(context, term);
+                } else {
+                    self.go(View::Search);
+                    self.begin_search(context, self.current, term, false);
+                }
                 self.show(context);
                 return;
             }
@@ -6795,6 +6825,47 @@ Please read this before you distribute or use this work.\n";
             runner.app().task.is_some(),
             "the second catalog was not asked yet"
         );
+    }
+
+    #[test]
+    fn the_edition_notice_follows_the_download_chosen_rather_than_the_one_the_catalog_listed() {
+        let mut book = publication(
+            "Pride and Prejudice",
+            vec![epub_acquisition("https://x/ebooks/1342.epub3.images")],
+        );
+        book.summary = Some(
+            "Title: Pride and Prejudice\n\nEBook No.: 1342\n\nSummary: A novel.\n\n\
+             This edition has images."
+                .to_owned(),
+        );
+        assert_eq!(
+            super::edition_notice(&book),
+            Some("This edition has images.")
+        );
+        book.acquisition = vec![epub_acquisition("https://x/ebooks/1342.epub.noimages")];
+        assert_eq!(
+            super::edition_notice(&book),
+            Some("This edition had all images removed.")
+        );
+        let blocks = format!("{:?}", Gutenbird::detail_blocks(&book));
+        assert!(!blocks.contains("This edition has images."), "{blocks}");
+    }
+
+    #[test]
+    fn a_recent_search_goes_to_every_catalog_when_the_switch_beside_it_says_so() {
+        let mut app = Gutenbird::default();
+        known_search(&mut app.catalogs[0], "https://a.example/search{?query}");
+        known_search(&mut app.catalogs[1], "https://b.example/search{?query}");
+        app.catalogs[0].recent = vec!["austen".to_owned()];
+        app.search_all = true;
+        app.view = View::Search;
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("recent-0"));
+        assert!(
+            runner.app().federating,
+            "the recent search asked only this catalog"
+        );
+        assert_eq!(runner.app().federated_query.as_deref(), Some("austen"));
     }
 
     #[test]

@@ -928,3 +928,87 @@ fn reading_order_is_a_switch_that_fits_beside_a_volume_at_every_text_size() {
         assert!(switch(runner.app(), &runner.context()));
     }
 }
+
+#[test]
+fn check_for_comic_with_no_file_copied_says_so_on_the_guides_last_page() {
+    use kobo_sdk::{Context, KoboApp, StoreError, StoreResult};
+    let mut app = Panels {
+        loaded: true,
+        library: Some(super::Library::restore(None).unwrap()),
+        route: super::Route::ImportHelp,
+        import_help_page: 3,
+        ..Panels::default()
+    };
+    let mut context = Context::default();
+    app.on_action(&mut context, action_id("load-sideload"));
+    assert_eq!(app.route, super::Route::Import);
+    app.on_shelf(
+        &mut context,
+        super::SIDELOAD,
+        StoreResult::Denied(StoreError::Missing),
+    );
+    assert_eq!(app.route, super::Route::ImportHelp);
+    assert_eq!(app.import_help_page, 3, "the guide stays on its last page");
+    let shown = format!("{:?}", app.import_help_screen());
+    assert!(shown.contains(super::sideload::MISSING_VOLUME), "{shown}");
+    assert!(app
+        .import_help_screen()
+        .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+        .issues
+        .is_empty());
+    // Moving on through the guide lets go of the answer.
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    assert!(app.notice.is_none());
+}
+
+#[test]
+fn back_from_the_first_page_of_the_guide_returns_to_the_sent_list_it_was_opened_from() {
+    use kobo_sdk::{Context, KoboApp};
+    let bytes = include_bytes!("../assets/a-small-garden.cbz");
+    let mut app = Panels {
+        loaded: true,
+        library: Some(super::Library::restore(None).unwrap()),
+        sent: vec![sent_comic("A small garden", bytes)],
+        ..Panels::default()
+    };
+    let mut context = Context::default();
+    app.load_sideload(&mut context);
+    assert_eq!(app.route, super::Route::Sent);
+    app.on_action(&mut context, action_id("usb-help"));
+    assert_eq!(app.route, super::Route::ImportHelp);
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    assert_eq!(app.route, super::Route::Sent);
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    assert_eq!(app.route, super::Route::Library);
+}
+
+#[test]
+fn a_reading_direction_changed_in_the_reader_is_on_the_shelf_as_soon_as_the_reader_leaves() {
+    use kobo_sdk::Context;
+    let bytes = include_bytes!("../assets/a-small-garden.cbz");
+    let mut app = Panels {
+        loaded: true,
+        library: Some(super::Library::restore(None).unwrap()),
+        ..Panels::default()
+    };
+    let mut context = Context::default();
+    let kept = super::Kept {
+        key: "garden".into(),
+        title: "A small garden".into(),
+        pages: 4,
+        rtl: false,
+    };
+    assert!(app.open_bytes(&mut context, bytes.to_vec(), kept, None));
+    let summary = |app: &Panels| app.previews.summary(&app.library_entries()[0]);
+    assert!(!summary(&app).contains("right to left"));
+    let view = app.view.as_mut().expect("an open comic");
+    view.act(&mut context, action_id("comic-direction"));
+    app.save_reading_state(&mut context);
+    assert!(app.library_entries()[0].rtl);
+    assert!(summary(&app).contains("right to left"));
+    let view = app.view.as_mut().expect("an open comic");
+    view.act(&mut context, action_id("comic-direction"));
+    app.save_reading_state(&mut context);
+    assert!(!app.library_entries()[0].rtl);
+    assert!(!summary(&app).contains("right to left"));
+}

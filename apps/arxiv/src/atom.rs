@@ -118,6 +118,49 @@ fn tidy(text: &str) -> String {
     out
 }
 
+/// Turns the dashes authors type for TeX into the dashes they meant.
+///
+/// arXiv passes titles and abstracts through as the author typed them, so a
+/// title reads "Agents---a survey" on the panel. Three hyphens become a dash
+/// set between spaces and two become a dash closed up, as in "pages 4--9".
+/// Arrows such as "-->" and runs of any other length are left as typed.
+fn dashes(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < chars.len() {
+        if chars[index] != '-' {
+            out.push(chars[index]);
+            index += 1;
+            continue;
+        }
+        let run = chars[index..].iter().take_while(|&&c| c == '-').count();
+        let before = index.checked_sub(1).and_then(|at| chars.get(at)).copied();
+        let after = chars.get(index + run).copied();
+        let arrow = before == Some('<') || after == Some('>');
+        match run {
+            3 if !arrow => {
+                let trimmed = out.trim_end().len();
+                out.truncate(trimmed);
+                out.push_str(" \u{2013} ");
+                index += run;
+                while chars.get(index).is_some_and(|c| c.is_whitespace()) {
+                    index += 1;
+                }
+            }
+            2 if !arrow => {
+                out.push('\u{2013}');
+                index += run;
+            }
+            _ => {
+                out.extend(std::iter::repeat_n('-', run));
+                index += run;
+            }
+        }
+    }
+    out
+}
+
 /// The identifier out of an arXiv `id` element, which is an address.
 fn identifier(url: &str) -> String {
     url.rsplit_once("/abs/")
@@ -195,8 +238,8 @@ pub fn parse(input: &str) -> Results {
                     // before the first entry. Those describe the query, not a
                     // paper, so only what is inside an entry is taken.
                     Field::Id if in_entry => paper.id = identifier(&text),
-                    Field::Title if in_entry => paper.title = text,
-                    Field::Summary if in_entry => paper.summary = text,
+                    Field::Title if in_entry => paper.title = dashes(&text),
+                    Field::Summary if in_entry => paper.summary = dashes(&text),
                     Field::Name if in_entry && in_author && !text.is_empty() => {
                         paper.authors.push(text);
                     }
@@ -223,7 +266,7 @@ pub fn parse(input: &str) -> Results {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Paper};
+    use super::{dashes, parse, Paper};
 
     const FEED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom"
@@ -338,5 +381,15 @@ mod tests {
         let results = parse(cut);
         assert_eq!(results.papers.len(), 1);
         assert_eq!(results.papers[0].id, "2401.00001v2");
+    }
+
+    /// A title typed for TeX reads as the author meant it, not as hyphens.
+    #[test]
+    fn dashes_typed_for_tex_become_the_dashes_they_stand_for() {
+        assert_eq!(dashes("Agents---a survey"), "Agents \u{2013} a survey");
+        assert_eq!(dashes("Agents --- a survey"), "Agents \u{2013} a survey");
+        assert_eq!(dashes("pages 4--9"), "pages 4\u{2013}9");
+        assert_eq!(dashes("A --> B and A <-- B"), "A --> B and A <-- B");
+        assert_eq!(dashes("well-known ---- rule"), "well-known ---- rule");
     }
 }

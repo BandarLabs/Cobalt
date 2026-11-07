@@ -1,0 +1,92 @@
+# The reading tools on River.epub: a bookmark, a marked paragraph, the notes
+# list that goes back to them, the front light, and the bar kept on screen.
+# Marks and bookmarks must still be there after the app restarts, and a
+# place that could not be saved is said with a way to try again.
+wait-for River
+tap River
+wait-for Marker 1
+tap-id reader-controls
+wait-for Page 1 of
+tap-id reader-bookmark
+wait-for Bookmarked
+shot books-bookmarked
+tap-id reader-marking
+wait-for Tap a paragraph to mark it
+tap Marker 2
+wait-for Marked: Marker 2
+shot books-marking
+tap Back to the book
+wait-idle
+page next
+page next
+tap-id reader-controls
+wait-for Page 3 of
+tap-id reader-highlights
+wait-for Marked passages
+expect Bookmarks
+expect Marker 2
+shot books-notes
+# A mark in the list goes back to its page.
+tap Marker 2
+wait-idle
+tap-id reader-controls
+wait-for Page 1 of
+tap-id 4294967295
+wait-idle
+expect-missing Page 1 of
+# The light panel, from the bar a tap at the top brings up, moves the
+# reader's own front light.
+tap-id reader-light
+wait-for 20%
+tap-id reader-brighter
+wait-for 30%
+expect-state /device#/frontlightPercent 30
+shot books-light
+tap-id reader-dimmer
+wait-for 20%
+expect-state /device#/frontlightPercent 20
+tap-id 4294967295
+wait-idle
+expect-missing 20%
+# Show bar keeps the bar over the page while reading, and turns off again.
+expect-missing Aa
+tap-id reader-controls
+tap-id reader-full-page
+wait-idle
+expect Aa
+expect-missing Page 1 of
+shot books-bar-kept
+tap-id reader-controls
+tap-id reader-full-page
+wait-idle
+expect-missing Aa
+# Marks and bookmarks come back after a restart.
+tap-id 4294967295
+wait-for Continue reading
+restart
+wait-for Continue reading
+tap Continue reading
+wait-for Marker 1
+tap-id reader-controls
+wait-for Bookmarked
+tap-id reader-highlights
+wait-for Marked passages
+expect Marker 2
+expect Bookmarks
+tap Back to the book
+wait-idle
+# With no room to save, closing the book says the place was not saved and
+# offers Retry saving, which works once there is room again.
+scenario storage-full
+page next
+tap-id 4294967295
+wait-for Books could not save your place
+expect Retry saving
+shot books-place-not-saved
+tap Retry saving
+wait-for Books could not save your place
+scenario normal
+tap Retry saving
+wait-idle
+expect-missing could not save your place
+expect Page 2 of

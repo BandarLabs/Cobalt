@@ -1569,6 +1569,12 @@ struct Verses {
     /// the favourite with it and said nothing, so a reader found their poem
     /// unmarked the next time they opened the shelf and had no idea why.
     saving: bool,
+    /// The favourites as storage last held them, while a write of them is
+    /// unanswered, and how many such writes there are. A refused write puts
+    /// them back: the heart and the shelf used to keep the change until the
+    /// next start, when it quietly vanished.
+    before_write: Option<Vec<u8>>,
+    writes: u8,
     /// Whether the panel a tap in the middle of a poem opens is up.
     poem_menu: bool,
 }
@@ -1605,6 +1611,8 @@ impl Default for Verses {
                 .and_then(Snapshot::date)
                 .map(|date| (date.year, date.month, date.day)),
             saving: false,
+            before_write: None,
+            writes: 0,
             poem_menu: false,
         }
     }
@@ -1716,15 +1724,6 @@ impl Verses {
         if self.view == View::Today {
             screen = screen.top_bar_glyph("browse", "Browse", Glyph::Grid);
         }
-        screen = screen.top_bar_glyph(
-            "favorite",
-            if self.saved.favorites.contains(CORPUS[self.poem].id) {
-                "Remove favorite"
-            } else {
-                "Favorite"
-            },
-            Glyph::Heart,
-        );
         let centred = count == 1;
         if centred {
             screen = screen.fill();
@@ -1748,6 +1747,13 @@ impl Verses {
         screen = screen
             .page_turns("poem-previous", "poem-next")
             .reading_menu(POEM_MENU);
+        // A poem that runs on says how far it runs, as a book's page does.
+        if count > 1 {
+            screen = screen.page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(count).unwrap_or(u16::MAX),
+            );
+        }
         self.with_poem_menu(screen, poem.title)
             .build()
             .with_auto_hidden_top_bar(true)
@@ -1762,7 +1768,35 @@ impl Verses {
         if !self.poem_menu {
             return screen;
         }
+        let favorite = self.is_favorite();
+        // A refused favourite is said here, beside the heart it undid. A
+        // fetched poem already carries it on its page.
+        let refused = self
+            .notice
+            .as_deref()
+            .filter(|notice| notice.contains("favourite") && self.current_online().is_none());
         screen.modal(title.to_owned(), |panel| {
+            // The heart sits where its state can be drawn: in a row of
+            // controls it is filled for a favourite. In the bar it looked the
+            // same either way, and only a label nobody sees changed.
+            let panel = panel
+                .controls(
+                    1,
+                    [(
+                        "favorite",
+                        if favorite {
+                            "Remove favorite"
+                        } else {
+                            "Favorite"
+                        },
+                        Glyph::Heart,
+                    )],
+                )
+                .control_on("favorite", favorite);
+            let panel = match refused {
+                Some(notice) => panel.banner(BannerLevel::Attention, notice),
+                None => panel,
+            };
             panel.button("card", "Make a quote card")
         })
     }
@@ -1922,11 +1956,6 @@ impl Verses {
     }
 
     fn online_prefix(&self, context: &Context, poem: &OnlinePoem, page: usize) -> ScreenBuilder {
-        let favorite = self
-            .saved
-            .online_favorites
-            .iter()
-            .any(|saved| saved.title == poem.title && saved.author == poem.author);
         let today = self.view == View::Today;
         let mut screen = ScreenBuilder::new("verses-online").top_bar(if today {
             "Today's poem".to_owned()
@@ -1938,15 +1967,6 @@ impl Verses {
         } else {
             screen.top_bar_glyph("more-by-author", "More by this poet", Glyph::Person)
         };
-        screen = screen.top_bar_glyph(
-            "favorite",
-            if favorite {
-                "Remove favorite"
-            } else {
-                "Favorite"
-            },
-            Glyph::Heart,
-        );
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice);
         }
@@ -1977,6 +1997,12 @@ impl Verses {
         screen = screen
             .page_turns("online-previous", "online-next")
             .reading_menu(POEM_MENU);
+        if count > 1 {
+            screen = screen.page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(count).unwrap_or(u16::MAX),
+            );
+        }
         // A fetched poem makes a card as a bundled one does: today's poem
         // used to lose the card the day it began to come from PoetryDB.
         self.with_poem_menu(screen, &poem.title)
@@ -2696,6 +2722,18 @@ impl Verses {
         self.daily_task = context.spawn(daily_task(day));
     }
 
+    /// Whether the poem on screen is a favourite.
+    fn is_favorite(&self) -> bool {
+        match self.current_online() {
+            Some(poem) => self
+                .saved
+                .online_favorites
+                .iter()
+                .any(|saved| saved.title == poem.title && saved.author == poem.author),
+            None => self.saved.favorites.contains(CORPUS[self.poem].id),
+        }
+    }
+
     fn toggle_favorite(&mut self) {
         if self.view == View::Online || (self.view == View::Today && self.daily_poem().is_some()) {
             let Some(poem) = self.current_online().cloned() else {
@@ -2718,6 +2756,21 @@ impl Verses {
             }
         }
     }
+}
+
+/// The poems a search found, or `None` for an answer that is not a search
+/// answer at all.
+///
+/// The poetry service says it found nothing with a success and a body of
+/// `{"status":404,"reason":"Not found"}` rather than an empty list. Read as a
+/// broken answer, a search for a word no poem has said "Poetry search
+/// couldn't open these results." over "No poems found".
+fn search_results(bytes: &[u8]) -> Option<Vec<OnlinePoem>> {
+    if let Ok(poems) = serde_json::from_slice::<Vec<OnlinePoem>>(bytes) {
+        return Some(poems);
+    }
+    let answer = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    (answer.get("status").and_then(serde_json::Value::as_u64) == Some(404)).then(Vec::new)
 }
 
 impl KoboApp for Verses {
@@ -2754,8 +2807,12 @@ impl KoboApp for Verses {
         // Storage answers every write, and a refusal is the one answer that
         // has to reach the reader: the favourite is not kept.
         match &result {
-            StoreResult::Saved { .. } => {
+            StoreResult::Saved { key } if key == SETTINGS => {
                 self.saving = false;
+                self.writes = self.writes.saturating_sub(1);
+                if self.writes == 0 {
+                    self.before_write = None;
+                }
                 if self
                     .notice
                     .as_deref()
@@ -2766,6 +2823,14 @@ impl KoboApp for Verses {
             }
             StoreResult::Denied(_) => {
                 self.saving = false;
+                self.writes = 0;
+                if let Some(saved) = self
+                    .before_write
+                    .take()
+                    .and_then(|bytes| serde_json::from_slice::<Saved>(&bytes).ok())
+                {
+                    self.saved = saved;
+                }
                 self.notice = Some(
                     "This reader would not keep that favourite. Try marking it again.".to_owned(),
                 );
@@ -2874,8 +2939,16 @@ impl KoboApp for Verses {
             self.notice = None;
             self.view = View::Search;
         } else if action == action_id("favorite") {
+            // What storage last held, to put back if it refuses this write.
+            if self.before_write.is_none() {
+                self.before_write = serde_json::to_vec(&self.saved).ok();
+            }
+            self.writes += 1;
             self.toggle_favorite();
             self.save(context);
+            // The heart is in the poem's panel; it stays open so the heart
+            // can be seen to fill or empty.
+            self.poem_menu = true;
         } else if action == action_id("more-by-author") {
             if let Some(index) = self.online {
                 let author = self.results[index].author.clone();
@@ -2995,7 +3068,7 @@ impl KoboApp for Verses {
         match outcome {
             TaskOutcome::Completed(bytes) => match pending {
                 Some(Pending::Search) => {
-                    if let Ok(results) = serde_json::from_slice::<Vec<OnlinePoem>>(&bytes) {
+                    if let Some(results) = search_results(&bytes) {
                         self.results = results;
                         self.notice = None;
                         self.online = None;
@@ -3556,13 +3629,52 @@ mod tests {
     }
 
     #[test]
-    fn poem_actions_are_icons_in_the_header() {
+    fn the_heart_in_the_poems_panel_is_drawn_filled_only_for_a_favourite() {
         let context = AppRunner::new(Verses::default()).context();
-        let screen = Verses::default().screen(&context);
-        let debug = format!("{screen:?}");
-        assert!(debug.contains("Heart"), "{debug}");
-        assert!(debug.contains("Grid"), "{debug}");
-        assert!(!debug.contains("Save favorite"), "{debug}");
+        let mut app = Verses {
+            poem_menu: true,
+            ..Verses::default()
+        };
+        let heart = |app: &Verses| {
+            let screen = app.screen(&context);
+            let overlay = format!("{:?}", screen.overlay);
+            assert!(overlay.contains("Heart"), "{overlay}");
+            overlay.contains("selected: true")
+        };
+        assert!(!heart(&app), "an ordinary poem shows a filled heart");
+        app.toggle_favorite();
+        assert!(heart(&app), "a favourite shows an empty heart");
+        let bar = format!("{:?}", app.screen(&context).top_bar);
+        assert!(
+            !bar.contains("Heart"),
+            "the bar still carries a heart: {bar}"
+        );
+    }
+
+    #[test]
+    fn a_favourite_the_reader_would_not_keep_is_taken_back() {
+        let mut runner = AppRunner::new(Verses::default());
+        let before = runner.app().is_favorite();
+        runner.action(action_id("favorite"));
+        assert_ne!(runner.app().is_favorite(), before);
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Unwritable));
+        assert_eq!(
+            runner.app().is_favorite(),
+            before,
+            "the refused change stayed"
+        );
+        assert!(runner.app().poem_menu, "the panel with the heart closed");
+        let overlay = format!("{:?}", runner.app().screen(&runner.context()).overlay);
+        assert!(overlay.contains("would not keep"), "{overlay}");
+    }
+
+    #[test]
+    fn a_search_poetrydb_found_nothing_for_is_no_results_rather_than_a_broken_answer() {
+        assert_eq!(
+            search_results(br#"{"status":404,"reason":"Not found"}"#).map(|found| found.len()),
+            Some(0)
+        );
+        assert!(search_results(b"<html>").is_none());
     }
 
     #[test]

@@ -13,6 +13,8 @@ pub mod collections;
 #[cfg(test)]
 mod controls_fit_tests;
 #[cfg(test)]
+mod kept_input_tests;
+#[cfg(test)]
 mod load_result_tests;
 #[cfg(test)]
 mod segmented_tests;
@@ -482,6 +484,9 @@ pub struct ScreenBuilder {
     nav_bar: Option<NavBar>,
     bottom_action: Option<BottomAction>,
     page_turns: Option<kobo_ui::PageTurns>,
+    /// A page position or reading menu asked for before the turns, kept
+    /// until they arrive, so the order of the calls does not matter.
+    turn_extras: (Option<(u16, u16)>, Option<ActionId>),
     hold: Option<ActionId>,
     owns_back: bool,
     text_scale: Option<kobo_ui::TextScale>,

@@ -332,8 +332,21 @@ impl Reader {
     /// # Errors
     /// Returns the same page errors as normal reading.
     pub fn thumbnail(&mut self, index: usize) -> Result<Picture, ComicError> {
+        self.thumbnail_within(index, 160, 240)
+    }
+    /// A page fitted inside `width` by `height`, for a page list that has
+    /// room for more than a stamp.
+    ///
+    /// # Errors
+    /// Returns the page's decode or resize error.
+    pub fn thumbnail_within(
+        &mut self,
+        index: usize,
+        width: u32,
+        height: u32,
+    ) -> Result<Picture, ComicError> {
         self.decoded(index)?
-            .fit(160, 240)
+            .fit(width.max(1), height.max(1))
             .map_err(|error| ComicError::Image(error.to_string()))
     }
     #[must_use]

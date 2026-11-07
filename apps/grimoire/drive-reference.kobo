@@ -1,0 +1,166 @@
+# sweep: --bare
+# The reference itself: every category, paging a long list, filters, search,
+# bookmarks, the edition switch, a monster sent to initiative, and the
+# bookmarks and edition surviving a restart.
+wait-for Grimoire
+tap Spells
+expect Acid Arrow
+expect 1 of 64
+tap-id next
+expect 2 of 64
+tap-id previous
+expect 1 of 64
+# A level and ritual narrow the list; Clear filters lets them all go.
+tap Filters
+tap Level
+expect Show only
+tap Level 1
+expect Level 1
+tap Ritual
+tap Yes
+expect Yes
+tap View results
+expect Alarm
+expect-missing Acid Arrow
+clean
+shot spells-level-ritual
+tap Filters
+tap Clear filters
+tap View results
+expect Acid Arrow
+expect 1 of 64
+# A search narrows by the start of a name, and Back lets go of it first.
+tap Search
+expect Type the start of a name.
+type fire
+tap-id kb.enter
+expect Fire Bolt
+expect Fireball
+expect-missing Acid Arrow
+clean
+shot spells-search
+# A spell opens in the reader.
+tap Fireball
+wait-idle
+expect Level 3 · Evocation · Sorcerer, Wizard
+expect 20-foot-radius sphere
+clean
+shot spell-fireball
+tap-id 4294967295
+wait-idle
+expect Fire Bolt
+tap-id 4294967295
+expect Acid Arrow
+# A search with no match says what to change.
+tap Search
+type zzq
+tap-id kb.enter
+expect No matching reference
+tap-id 4294967295
+expect Acid Arrow
+# The row menu bookmarks a reference, and Bookmarks lists it.
+tap-id entry-menu-1030
+expect Bookmark
+clean
+shot spell-row-menu
+tap Bookmark
+tap Bookmarks
+expect Acid Arrow
+clean
+shot bookmarks-one
+tap Acid Arrow
+wait-idle
+expect A shimmering green arrow
+tap-id 4294967295
+wait-idle
+expect Bookmarks
+expect Acid Arrow
+# Back from Bookmarks returns to the list it was opened from.
+tap Back
+expect Filters
+expect Acid Arrow
+# The 2024 reference has no spells, and says so rather than blaming a filter
+# or offering filters for a list with nothing in it.
+tap 2024
+expect No spells in the 2024 reference
+expect switch edition above
+expect-missing Filters
+clean
+shot spells-2024
+tap-id 4294967295
+tap Monsters
+expect Aboleth
+# The edition and the bookmark are kept across a restart.
+restart
+wait-for Grimoire
+tap Spells
+expect No spells in the 2024 reference
+tap 2014
+expect Acid Arrow
+tap Bookmarks
+expect Acid Arrow
+tap Back
+tap-id entry-menu-1030
+expect Remove bookmark
+tap Remove bookmark
+tap Bookmarks
+expect No bookmarks
+expect Bookmark a reference to keep it here.
+tap Back
+tap-id 4294967295
+# Monsters filter by challenge and type, and one can join the initiative.
+tap Monsters
+tap Filters
+tap Challenge rating
+tap Above 0 through 1
+tap Monster type
+tap-id filters-next
+tap Humanoid
+tap View results
+expect Acolyte
+expect Medium humanoid · CR 1/4
+expect 2 filters on
+clean
+shot monsters-filtered
+tap Search
+type gob
+tap-id kb.enter
+expect Goblin
+expect Names starting "gob" · 2 filters on
+tap-id entry-menu-800
+expect Add to initiative
+tap Add to initiative
+tap-id 4294967295
+tap-id 4294967295
+tap Initiative
+expect Goblin
+expect HP 7/7
+tap-id 4294967295
+# Rules and conditions, and magic items.
+tap Rules & conditions
+expect Blinded
+tap Blinded
+wait-idle
+expect can't see
+tap-id 4294967295
+wait-idle
+tap-id 4294967295
+tap Magic items
+expect Adamantine Armor
+clean
+shot magic-items
+tap-id 4294967295
+# A stat block is written for a reader, not as the source data's fields.
+tap Monsters
+tap Search
+type gob
+tap-id kb.enter
+tap Goblin
+wait-idle
+expect Nimble Escape
+clean
+shot monster-goblin
+expect-missing url: /api
+expect-missing AC type:
+expect 15 (leather armor, shield)
+expect 1/4 (50 XP)

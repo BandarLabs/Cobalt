@@ -1122,8 +1122,11 @@ impl KoboApp for Todo {
                 );
                 self.show(context);
             }
+            // The banner is on screen, so taking it down needs a redraw.
             StoreResult::Saved { key } if key == ITEMS => {
-                self.notice = None;
+                if self.notice.take().is_some() {
+                    self.show(context);
+                }
             }
             // Listed rather than wildcarded, so adding a store answer to the
             // protocol makes every application decide what it means here.
@@ -2044,6 +2047,30 @@ mod tests {
         );
         assert_eq!(todo.notice, None, "the banner outlived the save");
         let _ = &mut context;
+    }
+
+    #[test]
+    fn a_save_that_lands_after_a_refused_one_redraws_the_list_without_the_banner() {
+        let mut todo = started(&[("left", false)]);
+        todo.on_save(
+            &mut Context::default(),
+            ITEMS,
+            StoreResult::Denied(kobo_sdk::StoreError::NoRoom),
+        );
+        let mut context = Context::default();
+        todo.on_save(
+            &mut context,
+            ITEMS,
+            StoreResult::Saved {
+                key: ITEMS.to_owned(),
+            },
+        );
+        let redrawn = context.commands().iter().find_map(|command| match command {
+            kobo_sdk::Command::SetScreen(screen) => Some(format!("{screen:?}")),
+            _ => None,
+        });
+        let redrawn = redrawn.expect("the list was not drawn again");
+        assert!(!redrawn.contains("could not be saved"), "{redrawn}");
     }
 
     #[test]

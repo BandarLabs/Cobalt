@@ -1,0 +1,17 @@
+# Seeded with the Lamplight fixture. A verb offers every thing on the page,
+# not only those among its first few words: opening the crate reveals the
+# note under the room description, and Read should offer it.
+wait-for Lamplight
+tap Lamplight
+wait-for light.
+tap Open
+wait-for Open what?
+tap Wooden crate
+wait-for revealing a folded note.
+expect pool of light.
+tap Read
+wait-for Read what?
+clean
+shot objects-read-what
+tap Folded note
+wait-for A note folded small

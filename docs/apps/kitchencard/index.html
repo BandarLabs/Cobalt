@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/kitchencard.png">
 <meta name="twitter:image:alt" content="Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-377QE3JgW5+frSK2vSWwqom5Xxjq2TJeRIK4reKHkTQ='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-n9I7ZKW4xC2A2ZDh5Q5bwTLSe0Lq9WWMvgMpa7Aen4Y='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.1.14",
+      "softwareVersion": "0.1.15",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -99,8 +99,8 @@
       <h1>Kitchen Card</h1>
       <p class="summary">A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.</p>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.1.14</dd></div>
-        <div><dt>Permissions</dt><dd>network, keep-awake</dd></div>
+        <div><dt>Version</dt><dd>0.1.15</dd></div>
+        <div><dt>Permissions</dt><dd>network, keep-awake, scheduled-wake</dd></div>
         <div><dt>Requires</dt><dd>Cobalt 0.3.34</dd></div>
       </dl>
       <a class="cta" href="#setup-panel">Install on your Kobo</a>
@@ -119,8 +119,8 @@
     </div>
   </section>
   <section class="whats-new">
-    <h2>New in 0.1.14</h2>
-    <p>Kitchen now has an icon of its own, a fork and knife.</p>
+    <h2>New in 0.1.15</h2>
+    <p>Cooking timers now count down and say when time is up, even after the reader sleeps. Start cooking carries on from the step you left, and a refused http address says why.</p>
   </section>
   <section class="panel prerequisites" aria-labelledby="prerequisites-title">
     <p class="eyebrow">App setup</p>

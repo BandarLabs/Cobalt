@@ -1,31 +1,116 @@
 wait 800
 expect Morse
+expect SOS
+expect 27 seconds to send.
 expect one second of light
+expect The bar counts letters only.
 clean
 shot writing
-tap Learning
-wait 300
-tap ?123
-wait 200
-type !
-tap Send
-wait-for Stop
-expect Morse has no code for
-clean
-shot sending
-tap Stop
-wait-for Send again
-clean
-shot resting
-tap Edit
-wait-for one second of light
+# The menu takes the first Back and leaves the message as it was.
 tap-id more
 wait-for Letter reference
 clean
 shot menu
+tap-id 4294967295
+expect-missing Letter reference
+expect 27 seconds to send.
+tap-id more
 tap Letter reference
 wait-for The letters Morse can send
+expect 40
 clean
 shot reference
 tap Back
 wait-for one second of light
+expect SOS
+# The simulated reader starts at 20 percent. The beacon flashes at full and
+# must put 20 back whenever it stops.
+expect-state /device#/frontlightPercent 20
+# Learning on: the letter carries its code underneath, and the bar only
+# counts letters.
+tap Learning
+wait 300
+tap Send
+wait-for Stop
+expect Letter 1 of 3
+expect-missing S ...
+clean
+shot sending-learning
+# Turning the light off mid-message gives the reader their brightness back.
+tap Turn light off
+wait-for Turn light on
+expect-state /device#/frontlightPercent 20
+tap Stop
+wait-for Send again
+expect S • • •   O — — —   S • • •
+expect 27 seconds to send.
+expect Edit
+expect Turn light on
+clean
+shot resting
+tap Turn light on
+wait-for Turn light off
+tap Edit
+wait-for one second of light
+tap Learning
+wait 300
+expect The bar counts letters only.
+# An empty message has nothing to send and says so rather than starting.
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+expect-missing SOS
+expect nothing to send
+clean
+shot empty-message
+# Send with nothing typed stays on the message rather than opening an
+# empty beacon.
+tap Send
+wait-for There is nothing here to send.
+expect-missing Stop
+expect one second of light
+clean
+shot nothing-to-send
+# A single dash runs to the end on its own and puts the light back.
+type t
+expect 3 seconds to send.
+tap Send
+wait-for Letter 1 of 1
+expect-state /device#/frontlightPercent 100
+clean
+shot sending-dash
+wait-for Send again
+expect-state /device#/frontlightPercent 20
+expect 3 seconds to send.
+# Back while sending stops the beacon and returns to the message.
+tap Send again
+wait-for Stop
+tap-id 4294967295
+wait-for one second of light
+expect-state /device#/frontlightPercent 20
+# Leaving the app mid-message stops it rather than flashing over another
+# app's screen.
+tap Send
+wait-for Stop
+lifecycle background
+lifecycle foreground
+wait-for Send again
+expect-missing Stop
+expect-state /device#/frontlightPercent 20
+tap Edit
+wait-for one second of light
+# A character with no code is named while it is in the box, and left out
+# of the send.
+tap ?123
+wait 200
+type !
+expect Morse has no code for !, so it will be left out.
+tap Send
+wait-for Morse has no code for
+clean
+shot sending
+tap Stop
+wait-for Send again
+tap Edit
+wait-for one second of light
+expect t!

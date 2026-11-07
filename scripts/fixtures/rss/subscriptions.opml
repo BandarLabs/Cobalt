@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Simulator subscriptions</title></head>
+  <body>
+    <outline text="NASA Science" type="rss" xmlUrl="https://science.nasa.gov/feed/" htmlUrl="https://science.nasa.gov/"/>
+    <outline text="xkcd" type="rss" xmlUrl="https://xkcd.com/atom.xml" htmlUrl="https://xkcd.com/"/>
+    <outline text="Not a feed" type="link" url="https://example.com/"/>
+  </body>
+</opml>

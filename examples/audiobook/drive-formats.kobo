@@ -1,0 +1,45 @@
+# sweep: --seed-root examples/audiobook/fixtures/formats
+# One book in each format the reader plays. The list runs onto a second
+# page, and every format opens and plays. Coming back to the list with a
+# book playing adds a Now playing row, and the page must still fit.
+wait-for Audiobooks
+wait-for 1 of 2
+expect OPUS
+expect OGG
+expect FLAC
+clean
+shot audiobook-formats
+tap-id library-next
+wait-for 2 of 2
+expect Two Tones
+tap-id library-back
+wait-for 1 of 2
+tap An Opus Book
+wait-for Quieter
+expect Opus Tone
+expect 0:04
+tap-id 4294967295
+wait-for Audiobooks
+tap A Vorbis Book
+wait-for Quieter
+expect Vorbis Tone
+expect 1 of 2
+tap-id 4294967295
+wait-for Audiobooks
+tap Chapters in an MP3
+wait-for Quieter
+expect 1 of 3
+tap-id 4294967295
+wait-for Audiobooks
+clean
+shot audiobook-list-while-playing
+tap Stereo Reading
+wait-for Quieter
+expect Stereo Tone
+tap-id 4294967295
+wait-for Audiobooks
+tap-paged Track Chapters
+wait-for Quieter
+expect 1 of 3
+tap-id 4294967295
+wait-for Audiobooks

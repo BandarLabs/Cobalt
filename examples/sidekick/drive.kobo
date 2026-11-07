@@ -10,12 +10,54 @@ tap-id address.box
 wait-for Next
 clean
 shot sidekick-address-typing
+# Back puts the keyboard away and stays on the pairing screen.
+tap-id 4294967295
+expect-missing Next
+expect Or type the address it shows
+# Something that cannot be an address is refused under the field.
+tap-id address.box
+wait-for Next
+type bad/host
+tap Next
+wait-for Enter the address shown on your computer.
+expect bad/host
+clean
+shot sidekick-address-refused
+# The field reopens on what was typed, so it is corrected, not retyped.
+tap-id address.box
+wait-for Next
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
 type example
 tap Next
 wait-for Now the pairing code
 expect The six characters shown beside the address.
 clean
 shot sidekick-code
+# A short code is asked for again with what was typed kept.
+type abc
+tap Pair
+wait-for Enter all six characters.
+expect abc
+clean
+shot sidekick-code-short
+# Back from the code returns to the address, which gained the default port.
+tap-id 4294967295
+wait-for Or type the address it shows
+expect example:9331
+tap-id address.box
+wait-for Next
+tap Next
+wait-for Now the pairing code
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
 
 # Paired without a network: the splash says so rather than claiming to be
 # watching for questions that are going to the terminal instead.
@@ -25,6 +67,62 @@ tap Pair
 wait-for Not connected
 expect This reader is not on a network.
 expect Change pairing
+expect example:9331
 expect-missing Watching
 clean
 shot sidekick-not-connected
+# The next poll, ten seconds on, says what went wrong this time.
+scenario host-down
+wait 10500
+wait-for Your computer is not answering.
+expect Start kobo sidekick run on it.
+clean
+shot sidekick-not-answering
+scenario network-timeout
+wait 10500
+wait-for Your computer took too long to answer.
+# Change pairing reopens the first step with the old address in the field.
+scenario normal
+tap Change pairing
+wait-for Or type the address it shows
+expect example:9331
+tap-id address.box
+wait-for Next
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type 127.0.0.1:1
+tap Next
+wait-for Now the pairing code
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type xyz789
+tap Pair
+wait-for Paired with
+expect 127.0.0.1:1
+expect-missing example
+# Nothing listens on that port, so the computer is reported as not answering.
+wait-for Your computer is not answering.
+clean
+shot sidekick-repaired
+# The pairing survives a restart: no pairing screen, the same address.
+restart
+wait-for Paired with
+expect 127.0.0.1:1
+expect-missing Pair with your computer
+wait-for Not connected
+clean
+shot sidekick-after-restart

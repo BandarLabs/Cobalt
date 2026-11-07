@@ -3,12 +3,12 @@
   "display_name": "Morse",
   "short_label": "Morse",
   "summary": "Type a message and send it in Morse code with the front light.",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "glyph": "light",
   "capabilities": [
     "frontlight-control",
     "keep-awake"
   ],
-  "release_notes": "The letter being sent is drawn in a smooth bold face rather than blocks, Learning draws its code under it as dots and dashes, and the letter reference is one page of three columns.",
+  "release_notes": "Send with an empty box now keeps you on the message, and a warning about a character Morse cannot send goes once that character is deleted. A sent message is spelled with each letter and its dots and dashes.",
   "page_description": "Type a message and send it in Morse code on the reader's front light, a letter at a time, with the outgoing letter drawn across the whole panel."
 }

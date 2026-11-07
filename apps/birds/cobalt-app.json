@@ -4,8 +4,8 @@
   "short_label": "Birds",
   "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.",
   "page_description": "See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.",
-  "version": "0.1.14",
-  "release_notes": "Birds now has an icon of its own, a feather.",
+  "version": "0.1.15",
+  "release_notes": "When the latest birds cannot be shown, Birds now says plainly what is missing and what to do, instead of showing a technical error.",
   "glyph": "feather",
   "capabilities": [
     "keep-awake"

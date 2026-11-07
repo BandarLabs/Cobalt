@@ -37,8 +37,8 @@ use kobo_bookview::positions::{self, Progress};
 use kobo_bookview::BookView;
 use kobo_sdk::failure::{Problem, Service};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, BannerShape, Context, Failure, Glyph, KoboApp, Position,
-    QuoteRole, RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, BannerShape, Context, Glyph, KoboApp, Position, QuoteRole,
+    RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::collections::BTreeMap;
@@ -320,10 +320,10 @@ struct Hn {
     now: i64,
     task: Option<(TaskId, Awaiting)>,
     problem: Option<String>,
-    /// The last task failure, kept as the SDK read it rather than as a
-    /// sentence, because an empty list wants the whole-screen version of the
-    /// same thing and a list with rows on it wants the banner.
-    trouble: Option<Failure>,
+    /// The last task failure, kept as the error rather than as a sentence,
+    /// because an empty list wants the whole-screen version of the same
+    /// thing and a list with rows on it wants the banner.
+    trouble: Option<TaskError>,
     /// How many placeholder rows this panel holds, once it has been measured.
     skeleton: u8,
     /// What this reader has already opened, and what they put aside.
@@ -357,6 +357,15 @@ struct Hn {
     /// wording, so the banner can carry the fix that error has: Join Wi-Fi
     /// offline, Try again where asking again can help.
     thread_trouble: Option<TaskError>,
+    /// The last network answer said this reader is offline, and nothing has
+    /// come back since to say otherwise. A discussion opened now says so at
+    /// once rather than drawing skeleton rows over a request that is only
+    /// waiting out its retry.
+    offline: bool,
+    /// The story whose article was asked for before the list of saved
+    /// articles had been read. It opens from the device once the list
+    /// arrives, rather than over a network the reader may not have.
+    awaiting_index: Option<String>,
 }
 
 impl Hn {
@@ -420,10 +429,10 @@ impl Hn {
             // A failure with an empty list is the whole screen, not a banner
             // over nothing. `standard_state` centres it and names it the same
             // way every other application does.
-            if let Some(failure) = self.trouble {
+            if let Some(error) = self.trouble {
                 let screen = ScreenBuilder::new("hn")
                     .top_bar(self.list_title())
-                    .failure_state(failure, "retry");
+                    .problem_state(&hacker_news(error), "retry");
                 return self.with_tabs(screen).build();
             }
             // The same shape, for a tab that answered with nothing: the
@@ -643,13 +652,17 @@ impl Hn {
         // has to hold the title is most of the title gone. The labels are
         // still set, because they are what the control is called everywhere
         // that is not the panel.
-        let screen = if self.page > 0 {
-            screen.top_bar_glyph("list-back", "Previous", Glyph::Previous)
+        //
+        // The bar sets its marks from the right edge inwards, so Next goes in
+        // first to sit outermost and Previous lands to its left. Added the
+        // other way round, page two read "> <".
+        let screen = if self.page + 1 < self.pages.len() {
+            screen.top_bar_glyph("list-next", "Next", Glyph::Next)
         } else {
             screen
         };
-        let screen = if self.page + 1 < self.pages.len() {
-            screen.top_bar_glyph("list-next", "Next", Glyph::Next)
+        let screen = if self.page > 0 {
+            screen.top_bar_glyph("list-back", "Previous", Glyph::Previous)
         } else {
             screen
         };
@@ -685,7 +698,11 @@ impl Hn {
         if story.link.is_some() {
             screen = screen.top_bar_glyph("read-article", "Read the article", Glyph::Book);
         }
-        if !self.lanes.is_empty() && self.comments.is_empty() {
+        if !self.lanes.is_empty()
+            && self.comments.is_empty()
+            && self.thread_trouble.is_none()
+            && self.note.is_none()
+        {
             // No bar, which is what the loaded thread has too: nothing under
             // the reader's finger moves when the comments land. The headline
             // is up while they come, where the loaded page will have it.
@@ -782,7 +799,7 @@ impl Hn {
     /// and nothing of it arrived.
     fn discussion_problem(&self) -> Option<Problem> {
         let error = self.thread_trouble.filter(|_| self.comments.is_empty())?;
-        Some(Service::new("Hacker News").explain(error))
+        Some(hacker_news(error))
     }
 
     /// Everything the thread screen draws, as paragraphs carrying their depth.
@@ -820,6 +837,8 @@ impl Hn {
                     "The article is saved on this reader, and the book at the top opens it now.",
                 ),
                 Some(_) => None,
+                // Something was said over a discussion still on its way.
+                None if !self.lanes.is_empty() => Some("The comments are still on their way."),
                 None if story.job => Some("Job postings on Hacker News have no discussion."),
                 None => Some("No comments yet."),
             };
@@ -1120,10 +1139,65 @@ impl Hn {
         let id = story.id.clone();
         self.problem = None;
         self.reading = Some(article_identity(&link));
-        if !self.keeper.open(context, &id) {
+        if !self.keeper.is_loaded() && !self.keeper.failed {
+            self.awaiting_index = Some(id);
+        } else if !self.keeper.open(context, &id) && self.fetching.is_none() {
+            // Not while a fetch of it is already out: that one opens it.
             self.fetch_article(context);
         }
         self.show(context);
+    }
+
+    /// The list of saved articles has been read. An article asked for while
+    /// it was on its way opens now, from the device if it is there.
+    fn index_arrived(&mut self, context: &mut Context) {
+        let Some(id) = self.awaiting_index.take() else {
+            return;
+        };
+        if self.view != View::Thread || self.open_id() != Some(id.as_str()) {
+            return;
+        }
+        if !self.keeper.open(context, &id) && self.fetching.is_none() {
+            self.fetch_article(context);
+        }
+    }
+
+    /// Lets go of an article on its way, because the reader has moved to
+    /// another story or back to the list. Left running, it landed later and
+    /// opened over whatever they were looking at by then.
+    fn abandon_article(&mut self, context: &mut Context) {
+        if let Some(task) = self.fetching.take() {
+            context.cancel(task);
+        }
+        self.keeper.stop_opening();
+        self.awaiting_index = None;
+        self.reading = None;
+    }
+
+    /// What a finished task says about the network, remembered so the next
+    /// discussion can say it is offline without waiting to find out again.
+    fn heard_network(&mut self, context: &mut Context, outcome: &TaskOutcome) {
+        match outcome {
+            TaskOutcome::Failed(TaskError::Offline) => self.offline = true,
+            TaskOutcome::Completed(_) => self.offline = false,
+            TaskOutcome::Failed(_) | TaskOutcome::Cancelled => {}
+        }
+        self.offline_at_once(context);
+    }
+
+    /// Says the open discussion is offline, when it is known to be and none
+    /// of it has arrived. Its request is left running: if the radio comes
+    /// back in time, the comments replace this.
+    fn offline_at_once(&mut self, context: &mut Context) {
+        if self.offline
+            && self.view == View::Thread
+            && self.open.is_some()
+            && self.comments.is_empty()
+            && self.thread_trouble.is_none()
+        {
+            self.thread_trouble = Some(TaskError::Offline);
+            self.repaginate_thread(&*context);
+        }
     }
 
     /// What the keeper of saved articles said, acted on.
@@ -1133,6 +1207,10 @@ impl Hn {
             Heard::Changed => {}
             Heard::Opened(id, kept) => {
                 if self.open_id() == Some(id.as_str()) && self.view != View::Reading {
+                    // The saved copy wins over a fetch of the same article.
+                    if let Some(task) = self.fetching.take() {
+                        context.cancel(task);
+                    }
                     let memory = self.memory();
                     if self.book.open_kept(context, kept, memory) {
                         self.view = View::Reading;
@@ -1243,16 +1321,13 @@ impl Hn {
             TaskOutcome::Failed(error) => {
                 // The article, not the discussion. A site that will not answer
                 // says nothing about the thread, which is still here and is
-                // what this screen is for. The advice is the SDK's own words
-                // for that failure, so a reader is told the same thing here as
-                // everywhere else.
-                self.say_in_thread(
-                    context,
-                    format!(
-                        "{} The discussion is still here.",
-                        Failure::of(error).advice
-                    ),
-                );
+                // what this screen is for.
+                let site = self
+                    .open
+                    .and_then(|index| self.stories.get(index))
+                    .and_then(|story| story.site.as_deref());
+                let said = article_trouble(error, site);
+                self.say_in_thread(context, said);
             }
             TaskOutcome::Cancelled => self.show(context),
         }
@@ -1263,11 +1338,7 @@ impl Hn {
         // The place goes down before the document it points into goes away.
         self.keep_position(context);
         self.book.close(context);
-        self.keeper.stop_opening();
-        if let Some(task) = self.fetching.take() {
-            context.cancel(task);
-        }
-        self.reading = None;
+        self.abandon_article(context);
         self.view = View::Thread;
         self.show(context);
     }
@@ -1425,7 +1496,9 @@ impl Hn {
         self.problem = None;
         self.trouble = None;
         self.thread_trouble = None;
+        self.abandon_article(context);
         self.ask_thread(context);
+        self.offline_at_once(context);
         self.show(context);
     }
 
@@ -1761,6 +1834,7 @@ impl KoboApp for Hn {
         }
         let heard = self.keeper.loaded(context, key, &result);
         if !matches!(heard, Heard::Elsewhere) {
+            self.index_arrived(context);
             self.heard(context, heard);
             return;
         }
@@ -1838,6 +1912,7 @@ impl KoboApp for Hn {
             self.problem = None;
             self.trouble = None;
             self.menu = None;
+            self.abandon_article(context);
             self.repaginate_list(&*context);
             self.show(context);
             return;
@@ -1879,6 +1954,7 @@ impl KoboApp for Hn {
             }
         }
         if action == action_id("stories") {
+            self.abandon_article(context);
             self.view = View::List;
             self.problem = None;
             self.trouble = None;
@@ -1922,7 +1998,12 @@ impl KoboApp for Hn {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        let offline = self.offline;
+        self.heard_network(context, &outcome);
         self.took_task(context, task, outcome);
+        if self.offline && !offline && self.view == View::Thread {
+            self.show(context);
+        }
         // A lane the keeper could not have a moment ago may be free now.
         self.keeper.pump(context);
     }
@@ -1950,7 +2031,14 @@ impl Hn {
         if let Some(at) = self.lanes.iter().position(|(lane, _)| *lane == task) {
             let (_, id) = self.lanes.remove(at);
             match outcome {
-                TaskOutcome::Completed(bytes) => self.took_item(context, &bytes, id),
+                TaskOutcome::Completed(bytes) => {
+                    // The discussion answered, so an offline said in advance
+                    // no longer stands.
+                    if self.thread_trouble == Some(TaskError::Offline) {
+                        self.thread_trouble = None;
+                    }
+                    self.took_item(context, &bytes, id);
+                }
                 TaskOutcome::Failed(error) => {
                     // One comment that will not come is one comment missing,
                     // not a broken thread. Its slot goes so the rest carries
@@ -2024,15 +2112,37 @@ impl Hn {
             TaskOutcome::Failed(error) => {
                 // The SDK owns the wording, so every application says the same
                 // thing about the same failure and a new TaskError variant does
-                // not need an edit here.
-                let failure = Failure::of(error);
-                self.trouble = Some(failure);
-                self.problem = Some(failure.advice.to_owned());
+                // not need an edit here. Said for Hacker News, as the thread
+                // already was: the generic words called Wi-Fi "a network" on
+                // the list and "Wi-Fi" one tap further in.
+                self.trouble = Some(error);
+                self.problem = Some(hacker_news(error).message);
             }
             TaskOutcome::Cancelled => self.problem = Some("Cancelled.".to_owned()),
         }
         self.show(context);
     }
+}
+
+/// Why the article behind a story did not open, said under the discussion.
+///
+/// Offline, the Wi-Fi is already on the banner above, so this says the one
+/// thing that banner cannot: the article was not saved, which is why it
+/// needs the network at all. It used to repeat the banner in other words.
+/// Any other failure is the article's site's, named as such.
+fn article_trouble(error: TaskError, site: Option<&str>) -> String {
+    if error == TaskError::Offline {
+        return "This article is not saved on this reader, so it opens only on Wi-Fi. \
+                The discussion is still here."
+            .to_owned();
+    }
+    let problem = Service::new(site.unwrap_or("The article's site")).explain(error);
+    format!("{} The discussion is still here.", problem.message)
+}
+
+/// A failed fetch, said as a failure to reach Hacker News.
+fn hacker_news(error: TaskError) -> Problem {
+    Service::new("Hacker News").explain(error)
 }
 
 impl Hn {
@@ -2343,15 +2453,16 @@ mod tests {
             .flat_map(|node| node.text_lines.clone())
             .collect();
         assert!(
-            text.iter().any(|line| line.contains("not on a network")),
+            text.iter().any(|line| line.contains("not on Wi-Fi")),
             "the SDK's wording is not on the screen: {text:?}"
         );
     }
 
     #[test]
-    fn every_failure_is_worded_by_the_sdk() {
+    fn every_failure_is_worded_by_the_sdk_for_hacker_news() {
         // The wording lives in one place so a new TaskError variant does not
-        // need an edit in every application that can see it.
+        // need an edit in every application that can see it, and the list
+        // says it the same way the thread does.
         for error in [
             TaskError::Offline,
             TaskError::Unreachable,
@@ -2364,7 +2475,7 @@ mod tests {
             runner.task_outcome(TaskId(1), TaskOutcome::Failed(error));
             assert_eq!(
                 runner.app_mut().problem.clone().unwrap_or_default(),
-                kobo_sdk::Failure::of(error).advice
+                super::hacker_news(error).message
             );
         }
     }
@@ -3469,6 +3580,34 @@ mod tests {
     }
 
     #[test]
+    fn an_article_that_cannot_open_offline_says_it_was_not_saved_rather_than_repeating_the_wifi_banner(
+    ) {
+        let offline = super::article_trouble(TaskError::Offline, Some("8rank.ai"));
+        assert!(offline.contains("not saved on this reader"), "{offline}");
+        assert!(!offline.contains("network"), "{offline}");
+        let down = super::article_trouble(TaskError::Unreachable, Some("8rank.ai"));
+        assert!(down.starts_with("8rank.ai"), "{down}");
+        assert!(down.ends_with("The discussion is still here."), "{down}");
+    }
+
+    #[test]
+    fn the_page_arrows_in_the_bar_read_previous_then_next_from_left_to_right() {
+        let mut runner = loaded();
+        // A middle page, so both arrows are in the bar.
+        runner.app_mut().pages = vec![vec![0], vec![1], vec![2]];
+        runner.app_mut().page = 1;
+        let screen = runner.app().list();
+        let bar = screen.top_bar.expect("a bar");
+        // The bar lists its marks from the right edge inwards.
+        let labels: Vec<&str> = bar
+            .actions
+            .iter()
+            .map(|action| action.label.as_str())
+            .collect();
+        assert_eq!(labels, ["Next", "Previous"]);
+    }
+
+    #[test]
     fn a_long_headline_is_cut_to_the_rows_it_has_and_kept_whole_everywhere_else() {
         let runner = loaded();
         let application = runner.app();
@@ -4147,6 +4286,104 @@ mod tests {
                 fits(empty.list(), "empty tab");
             }
         }
+    }
+
+    /// Every line a screen draws, joined, for asserting on what it says.
+    fn drawn(screen: &kobo_sdk::Screen) -> String {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    #[test]
+    fn offline_a_discussion_says_so_at_once_rather_than_drawing_skeleton_rows() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (index, link) = open_linked(&mut runner, &mut device);
+        assert!(
+            !runner.app().lanes.is_empty(),
+            "the discussion was not asked for"
+        );
+        // The article is not saved, so the book goes to the network, which
+        // says at once that there is none. The discussion is still waiting
+        // out its retry.
+        let commands = runner.action(action_id("read-article"));
+        let page = fetch_for(&commands, &link).expect("an unsaved article is fetched");
+        runner.task_outcome(page, TaskOutcome::Failed(TaskError::Offline));
+        assert!(!runner.app().lanes.is_empty());
+        let thread = drawn(&runner.app().thread());
+        assert!(!thread.contains("Fetching the comments"), "{thread}");
+        assert!(thread.contains("not saved on this reader"), "{thread}");
+        assert!(
+            runner.app().discussion_problem().is_some(),
+            "the discussion did not say it is offline"
+        );
+        // The next discussion opened says so before it asks at all.
+        runner.action(ActionId::BACK);
+        let next = (0..runner.app().stories.len())
+            .find(|other| *other != index)
+            .expect("a second story");
+        runner.action(action_id(&format!("story-{next}")));
+        let thread = drawn(&runner.app().thread());
+        assert!(!thread.contains("Fetching the comments"), "{thread}");
+        assert_eq!(runner.app().thread_trouble, Some(TaskError::Offline));
+        // And the comments replace it if the radio comes back in time.
+        answer_lanes(&mut runner, &fixture(THREAD));
+        assert_eq!(runner.app().thread_trouble, None);
+    }
+
+    #[test]
+    fn an_article_asked_for_before_the_saved_list_is_read_opens_the_saved_copy_once_it_is() {
+        let mut device = Device::default();
+        let mut first = loaded_on(&mut device);
+        let (index, link) = open_linked(&mut first, &mut device);
+        save_open(&mut first, &mut device, &link);
+        let id = first.app().stories[index].id.clone();
+        // Started again with the radio off, and the book tapped before the
+        // device has answered a single store request.
+        let mut runner = AppRunner::new(Hn::default());
+        let mut asked = runner.start();
+        answer_list(&mut runner);
+        let at = runner
+            .app()
+            .stories
+            .iter()
+            .position(|story| story.id == id)
+            .expect("the saved story is on the front page");
+        asked.extend(runner.action(action_id(&format!("story-{at}"))));
+        asked.extend(runner.action(action_id("read-article")));
+        assert!(
+            fetch_for(&asked, &link).is_none(),
+            "a saved article went to the network"
+        );
+        let answered = device.settle(&mut runner, asked);
+        assert!(fetch_for(&answered, &link).is_none());
+        assert_eq!(runner.app().view, View::Reading);
+    }
+
+    #[test]
+    fn an_article_still_on_its_way_does_not_open_over_the_list_it_was_left_for() {
+        let mut device = Device::default();
+        let mut runner = loaded_on(&mut device);
+        let (_, link) = open_linked(&mut runner, &mut device);
+        let commands = runner.action(action_id("read-article"));
+        let page = fetch_for(&commands, &link).expect("an unsaved article is fetched");
+        // Tapped twice: the one request already out answers both.
+        let again = runner.action(action_id("read-article"));
+        assert!(
+            fetch_for(&again, &link).is_none(),
+            "the article was asked for twice"
+        );
+        let back = runner.action(ActionId::BACK);
+        assert!(back
+            .iter()
+            .any(|command| matches!(command, Command::Cancel(task) if *task == page)));
+        runner.task_outcome(page, TaskOutcome::Completed(ARTICLE.into()));
+        assert_eq!(runner.app().view, View::List);
     }
 
     #[test]

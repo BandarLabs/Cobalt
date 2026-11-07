@@ -3,11 +3,11 @@
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
   "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "glyph": "sunrise",
   "capabilities": [
     "network",
     "scheduled-wake"
   ],
-  "release_notes": "Daily Brief now has an icon of its own, a sunrise."
+  "release_notes": "Refreshing over a saved brief now fits the screen and clears the old offline message. The time a brief was fetched now reads the way you would say it."
 }

@@ -281,6 +281,31 @@ fn spoken(seconds: usize) -> String {
     }
 }
 
+/// The line under the message: how long it takes, or that there is nothing
+/// in the box yet. "Nothing to send to send." was the empty case read out
+/// through the same sentence as a real estimate.
+fn estimate(seconds: usize) -> String {
+    match seconds {
+        0 => "Nothing to send yet.".to_owned(),
+        seconds => format!("{} to send.", spoken(seconds)),
+    }
+}
+
+/// The warning for characters in the message that Morse has no code for, or
+/// none when every one of them can be sent.
+fn left_out(dropped: &[char], tense: &str) -> Option<String> {
+    let mut list: Vec<char> = Vec::new();
+    for character in dropped {
+        if !list.contains(character) {
+            list.push(*character);
+        }
+    }
+    (!list.is_empty()).then(|| {
+        let list: String = list.into_iter().collect();
+        format!("Morse has no code for {list}, so it {tense} left out.")
+    })
+}
+
 /// Paints one letter at the size it will be seen, `room` pixels tall, as
 /// grey bytes: the width, the height and the pixels.
 ///
@@ -380,18 +405,20 @@ struct Morse {
     /// Which signal the panel is currently showing, so the picture is rebuilt
     /// on a change of letter rather than on every beat.
     showing: Option<usize>,
-    /// Whether the beacon names each letter's code in the top bar as it sends.
+    /// Whether the beacon draws each letter's code under it as it sends.
     ///
     /// Off by default: somebody who reads Morse is watching the light, and the
     /// code of a letter they already know is clutter on every panel. On, the
-    /// bar carries the letter and its code alongside the count, so a learner
-    /// can hear the light say what the screen spells.
+    /// dots and dashes sit under the letter, so a learner can see the light
+    /// say what the screen spells.
     learn: bool,
     /// Whether the writing screen's overflow menu is open.
     menu_open: bool,
     /// The page of the letter reference the reader is on.
     reference_page: usize,
     tick: Option<TaskId>,
+    /// A problem with the last thing the reader asked for, shown on the
+    /// screen it was raised on and dropped once they move on from it.
     trouble: Option<String>,
 }
 
@@ -430,7 +457,10 @@ const PREVIOUS_PAGE: &str = "previous-page";
 const NEXT_PAGE: &str = "next-page";
 
 impl Morse {
-    /// The letters of the message, spelled out with their codes underneath.
+    /// The message as it went out, each letter followed by its code in the
+    /// dots and dashes of the letter reference. Bare codes in full stops and
+    /// hyphens read as punctuation, and with no letters there was nothing to
+    /// tell where one code ended and the next began.
     fn spelled(&self) -> String {
         self.signals
             .iter()
@@ -438,16 +468,11 @@ impl Morse {
                 if signal.code.is_empty() {
                     "/".to_owned()
                 } else {
-                    signal.code.to_owned()
+                    format!("{} {}", signal.character, marks(signal.code))
                 }
             })
             .collect::<Vec<_>>()
-            .join(" ")
-    }
-
-    /// How long the whole message takes, in words rather than a bare number.
-    fn duration(&self) -> String {
-        spoken(self.beats.len())
+            .join("   ")
     }
 
     /// The message, what it will cost, and the Learning switch, over the
@@ -472,8 +497,15 @@ impl Morse {
         let mut screen = ScreenBuilder::new("morse-writing")
             .top_bar("Morse")
             .top_bar_overflow(MORE, self.menu_open, [(REFERENCE, "Letter reference")]);
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        // Characters with no code are named while they are in the box, and
+        // the warning goes as soon as they are deleted.
+        let (signals, dropped) = encode(self.keyboard.text());
+        if let Some(trouble) = self
+            .trouble
+            .clone()
+            .or_else(|| left_out(&dropped, "will be"))
+        {
+            screen = screen.banner(BannerLevel::Attention, trouble);
         }
         // The estimate belongs here, beside the Send key, rather than on the
         // screen that follows it. Send starts the beacon there and then, so
@@ -482,10 +514,9 @@ impl Morse {
         // the estimate exists to prevent. It is measured from what is in the
         // box rather than from the composed message, because at this point
         // nothing has been composed.
-        let (signals, _) = encode(self.keyboard.text());
         let screen = screen
             .typed(&self.keyboard, "A message to send in light")
-            .secondary(format!("{} to send.", spoken(beats(&signals).len())));
+            .secondary(estimate(beats(&signals).len()));
         // The speed is the same for every message, so it is said once, in
         // the units the light actually keeps. A reader who knows a dash is
         // three seconds can follow the beacon letter by letter; one who does
@@ -500,7 +531,7 @@ impl Morse {
         // switch rather than a lone chip, which read as a tag.
         let said = match (summary, self.learn) {
             (false, _) => "",
-            (true, true) => "The bar names each letter's code.",
+            (true, true) => "Each letter shows its code underneath.",
             (true, false) => "The bar counts letters only.",
         };
         screen
@@ -548,7 +579,7 @@ impl Morse {
         if !self.running {
             screen = screen
                 .text(self.spelled())
-                .secondary(format!("{} to send.", self.duration()));
+                .secondary(estimate(self.beats.len()));
         }
         // A bar cannot hold a switch, so the entry names what the tap does.
         // "Light on" stated the current value, which read as an order as
@@ -679,6 +710,34 @@ impl Morse {
         context.set_screen(screen);
     }
 
+    /// A key on the writing screen's keyboard.
+    fn on_key(&mut self, context: &mut Context, pressed: Pressed) {
+        self.menu_open = false;
+        match pressed {
+            Pressed::Submitted => {
+                let typed = self.keyboard.text().trim().to_owned();
+                self.compose(&typed);
+                if self.beats.is_empty() {
+                    // Nothing would flash, so the reader stays with the box
+                    // they need to type into rather than being sent to a
+                    // beacon with nothing on it.
+                    self.trouble = Some("There is nothing here to send.".to_owned());
+                    self.show(context);
+                    return;
+                }
+                self.view = View::Beacon;
+                self.start(context);
+            }
+            Pressed::Edited => {
+                // The message changed, so a warning about the old one no
+                // longer describes what is in the box.
+                self.trouble = None;
+                self.show(context);
+            }
+            Pressed::Shifted => self.show(context),
+        }
+    }
+
     /// Takes the typed message and works out what it will look like in light.
     fn compose(&mut self, message: &str) {
         let (signals, dropped) = encode(message);
@@ -686,12 +745,7 @@ impl Morse {
         self.beats = beats(&self.signals);
         self.at = 0;
         self.showing = None;
-        self.trouble = if dropped.is_empty() {
-            None
-        } else {
-            let list: String = dropped.iter().collect();
-            Some(format!("Morse has no code for {list}, so it was left out."))
-        };
+        self.trouble = left_out(&dropped, "was");
     }
 
     /// Starts sending, from the beginning.
@@ -772,21 +826,9 @@ impl KoboApp for Morse {
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.view == View::Writing {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    self.menu_open = false;
-                    let typed = self.keyboard.text().trim().to_owned();
-                    self.compose(&typed);
-                    self.view = View::Beacon;
-                    self.start(context);
-                    return;
-                }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    self.menu_open = false;
-                    self.show(context);
-                    return;
-                }
-                None => {}
+            if let Some(pressed) = self.keyboard.press(action) {
+                self.on_key(context, pressed);
+                return;
             }
         }
 
@@ -809,6 +851,7 @@ impl KoboApp for Morse {
                     if self.running {
                         self.finish(context);
                     }
+                    self.trouble = None;
                     self.view = View::Writing;
                 }
                 View::Reference => self.view = View::Writing,
@@ -880,6 +923,9 @@ impl KoboApp for Morse {
             if self.running {
                 self.finish(context);
             }
+            // The beacon's warnings were about the message it sent; the
+            // writing screen names any problem with the text as it stands.
+            self.trouble = None;
             self.view = View::Writing;
             self.show(context);
         }
@@ -943,9 +989,10 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        beats, encode, letter_at, marks, paint, Beat, Morse, AGAIN, CODE, LEARN, MAX_MESSAGE, MORE,
-        NEXT_PAGE, REFERENCE, STOP, TOGGLE_LIGHT,
+        beats, encode, letter_at, marks, paint, Beat, Morse, View, AGAIN, CODE, EDIT, LEARN,
+        MAX_MESSAGE, MORE, NEXT_PAGE, REFERENCE, STOP, TOGGLE_LIGHT,
     };
+    use kobo_sdk::keyboard::Keyboard;
     use kobo_sdk::{action_id, ActionId, AppRunner, Command, DeviceRequest, TaskOutcome};
     use kobo_ui::{tone, Chrome, CLARA_BW_METRICS};
 
@@ -1160,7 +1207,7 @@ mod tests {
         );
         let drawn = format!("{screen:?}");
         assert!(
-            drawn.contains("... --- ..."),
+            drawn.contains(&format!("S {}", marks("..."))),
             "the code is not shown: {drawn}"
         );
         assert!(
@@ -1581,7 +1628,12 @@ mod tests {
                     if pixels_per_inch == 300 && text_scale == kobo_ui::TextScale::Default {
                         let drawn = format!("{screen:?}");
                         assert!(drawn.contains("one second of light"), "{metrics:?}");
-                        assert!(drawn.contains("The bar "), "{metrics:?}");
+                        let summary = if on {
+                            "Each letter shows its code underneath."
+                        } else {
+                            "The bar counts letters only."
+                        };
+                        assert!(drawn.contains(summary), "{metrics:?}");
                     }
                 }
             }
@@ -1647,5 +1699,97 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The last screen a batch of commands set, drawn as text to search.
+    fn last_screen(commands: &[Command]) -> String {
+        commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(format!("{screen:?}")),
+                _ => None,
+            })
+            .expect("a screen")
+    }
+
+    /// The Learning switch's summary says what Learning does now: the code
+    /// is drawn under the letter, not named in the bar.
+    #[test]
+    fn the_learning_summary_says_the_code_is_drawn_under_each_letter() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        let drawn = last_screen(&runner.action(action_id(LEARN)));
+        assert!(
+            drawn.contains("Each letter shows its code underneath.")
+                && !drawn.contains("The bar names"),
+            "{drawn}"
+        );
+    }
+
+    /// An empty box says there is nothing to send once, not "nothing to send
+    /// to send".
+    #[test]
+    fn an_empty_message_says_there_is_nothing_to_send_once() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.app_mut().keyboard = Keyboard::with_text("S");
+        runner.start();
+        let drawn = last_screen(&runner.action(ActionId::from_name("kb.backspace")));
+        assert!(drawn.contains("Nothing to send yet."), "{drawn}");
+        assert!(!drawn.contains("to send to send"), "{drawn}");
+    }
+
+    /// Send with an empty box stays on the writing screen with a warning, and
+    /// the warning goes as soon as a letter is typed.
+    #[test]
+    fn sending_an_empty_message_stays_on_the_message_and_typing_clears_the_warning() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.app_mut().keyboard = Keyboard::with_text("");
+        runner.start();
+        let drawn = last_screen(&runner.action(ActionId::from_name(kobo_ui::keyboard::ENTER)));
+        assert_eq!(runner.app_mut().view, View::Writing);
+        assert!(!runner.app_mut().running);
+        assert!(drawn.contains("There is nothing here to send."), "{drawn}");
+        runner.app_mut().keyboard = Keyboard::with_text("TT");
+        let drawn = last_screen(&runner.action(ActionId::from_name("kb.backspace")));
+        assert!(!drawn.contains("There is nothing here to send."), "{drawn}");
+    }
+
+    /// A character with no code is named while it is in the box, and the
+    /// warning goes when it is deleted, including after a send and Edit.
+    #[test]
+    fn the_warning_about_a_character_with_no_code_goes_when_the_character_does() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.app_mut().keyboard = Keyboard::with_text("T!!");
+        runner.start();
+        let drawn = last_screen(&runner.action(ActionId::from_name("kb.backspace")));
+        assert!(
+            drawn.contains("Morse has no code for !, so it will be left out."),
+            "{drawn}"
+        );
+        let drawn = last_screen(&runner.action(ActionId::from_name(kobo_ui::keyboard::ENTER)));
+        assert!(drawn.contains("so it was left out."), "{drawn}");
+        runner.action(action_id(STOP));
+        runner.action(action_id(EDIT));
+        let drawn = last_screen(&runner.action(ActionId::from_name("kb.backspace")));
+        assert!(!drawn.contains("Morse has no code"), "{drawn}");
+    }
+
+    /// Resting after a send, the message is spelled in the same dots and
+    /// dashes as the letter reference, each code after its letter.
+    #[test]
+    fn the_resting_screen_spells_the_message_in_dots_and_dashes() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(AGAIN));
+        let drawn = last_screen(&runner.action(action_id(STOP)));
+        let spelled = format!(
+            "S {}   O {}   S {}",
+            marks("..."),
+            marks("---"),
+            marks("...")
+        );
+        assert!(drawn.contains(&spelled), "{drawn}");
+        assert!(!drawn.contains("... --- ..."), "{drawn}");
     }
 }

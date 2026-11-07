@@ -25,6 +25,9 @@ use study::Study;
 
 const BUNDLE_NAME: &str = "collection.cobfc";
 const REVIEW_LOG_NAME: &str = "cobalt-review-log.ndjson";
+/// The owner's review settings. Kept in the app's store, not on the shelf
+/// beside the collection, so a new push from the computer never resets them.
+const SETTINGS: &str = "review-settings-v1";
 const JAPANESE_FONT_HANDLE: FontHandle = FontHandle(1);
 const PICTURE_HANDLE: PictureHandle = PictureHandle(1);
 const NOTICE: &str = "Flashcards reviews host-prepared Cobalt bundles offline. The device contains no linked study-engine code, requests no remote-network capability, and uses only Cobalt's required local runtime IPC. Applicable device licences are in Licences & about.";
@@ -1108,8 +1111,60 @@ impl Flashcards {
     }
 }
 
+impl Flashcards {
+    fn set_details(&mut self, context: &mut Context, show: bool) {
+        if self.show_details != show {
+            self.show_details = show;
+            context.store().save(SETTINGS, encode_settings(show));
+        }
+        context.set_screen(self.screen(context));
+    }
+}
+
+fn encode_settings(show_details: bool) -> Vec<u8> {
+    format!(
+        "details={}\n",
+        if show_details { "detailed" } else { "compact" }
+    )
+    .into_bytes()
+}
+
+/// Whether the saved settings ask for card details. Anything unreadable is
+/// the default, compact.
+fn decode_settings(bytes: &[u8]) -> bool {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .any(|line| line.trim() == "details=detailed")
+}
+
 impl KoboApp for Flashcards {
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key != SETTINGS {
+            self.on_store(context, result);
+            return;
+        }
+        if let StoreResult::Loaded {
+            value: Some(value), ..
+        } = result
+        {
+            let show = decode_settings(&value);
+            if show != self.show_details {
+                self.show_details = show;
+                context.set_screen(self.screen(context));
+            }
+        }
+    }
+
+    // A refused settings save costs the choice at the next start, and is not
+    // a review that failed to save.
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key != SETTINGS {
+            self.on_store(context, result);
+        }
+    }
+
     fn on_start(&mut self, context: &mut Context) {
+        context.store().load(SETTINGS);
         context.log(LogLevel::Info, NOTICE);
         self.notice_documents = build_notice_documents(context);
         self.start_download(context);
@@ -1189,11 +1244,9 @@ impl KoboApp for Flashcards {
             self.view = View::NoticeDocument;
             context.set_screen(self.screen(context));
         } else if action == action_id("details-compact") {
-            self.show_details = false;
-            context.set_screen(self.screen(context));
+            self.set_details(context, false);
         } else if action == action_id("details-detailed") {
-            self.show_details = true;
-            context.set_screen(self.screen(context));
+            self.set_details(context, true);
         } else if action == action_id("answer") {
             self.reveal(context);
         } else if let Some(grade) = Grade::ALL
@@ -1871,7 +1924,7 @@ fn styled_page(text: &str, spans: &[CardTextSpan], start: usize, end: usize) -> 
 fn build_notice_documents(context: &Context) -> Vec<NoticeDocument> {
     let mut documents = Vec::new();
     for (title, text) in DEVICE_DISTRIBUTION_DOCUMENTS {
-        let readable = readable_notice(text);
+        let readable = without_heading(&readable_notice(text), title);
         let mut pages = context.paginate(&readable, true);
         if pages.is_empty() {
             pages.push(vec![readable]);
@@ -1885,6 +1938,17 @@ fn build_notice_documents(context: &Context) -> Vec<NoticeDocument> {
         });
     }
     documents
+}
+
+/// The document without a first line that only repeats its title, which
+/// the bar above it already shows.
+fn without_heading(text: &str, title: &str) -> String {
+    match text.split_once('\n') {
+        Some((first, rest)) if first.trim().eq_ignore_ascii_case(title) => {
+            rest.trim_start_matches('\n').to_owned()
+        }
+        _ => text.to_owned(),
+    }
 }
 
 fn readable_notice(text: &str) -> String {
@@ -3209,6 +3273,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_card_details_choice_is_saved_and_read_back_at_the_next_start() {
+        use kobo_sdk::{Command, StoreRequest};
+
+        let mut app = Flashcards::default();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("details-detailed"));
+        let saved = context
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::Save { key, value }) if key == SETTINGS => {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .expect("the choice was not saved");
+
+        let mut restarted = Flashcards::default();
+        let mut context = Context::default();
+        restarted.on_load(
+            &mut context,
+            SETTINGS,
+            StoreResult::Loaded {
+                key: SETTINGS.to_owned(),
+                value: Some(saved),
+            },
+        );
+        assert!(restarted.show_details);
+        assert!(!decode_settings(b"not settings"));
+    }
+
+    #[test]
+    fn a_licence_document_does_not_repeat_its_title_under_the_bar() {
+        let documents = build_notice_documents(&Context::default());
+        let notice = documents
+            .iter()
+            .find(|document| document.title == "Flashcards device notice")
+            .expect("the device notice is listed");
+        let first = notice.pages[0][0].lines().next().unwrap_or_default();
+        assert_ne!(first.trim(), "Flashcards device notice");
+        assert_eq!(
+            without_heading("Kept title\n\nBody", "Other"),
+            "Kept title\n\nBody"
+        );
     }
 
     #[test]

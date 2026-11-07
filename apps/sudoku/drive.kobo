@@ -1,11 +1,17 @@
 # Fresh simulator storage opens the first Easy puzzle.
 wait-for-id game-more
 expect Sudoku · Easy 1
-expect Choose a square
+expect Choose a square · 53 left
 # Undo is first at the foot, and says so when there is nothing to undo.
 tap-id game-undo
 wait-idle
 expect Nothing to undo yet.
+# With no square chosen, Erase and Reveal say what they need.
+tap-id erase
+expect Choose a square to erase.
+tap-id game-more
+tap-id hint
+expect Choose a square to reveal.
 tap-id cell-0
 tap-id pencil
 tap-id digit-2
@@ -19,25 +25,59 @@ tap-id digit-7
 tap-id pencil
 tap-id cell-1
 tap-id digit-6
+expect 52 left
 tap-id cell-3
 wait-idle
 shot sudoku-entries
+# A printed number cannot be changed, erased or revealed.
+tap-id cell-2
+expect 52 left · Given
+tap-id digit-5
+expect 52 left · Given
+tap-id erase
+expect Given numbers cannot change.
+tap-id game-more
+tap-id hint
+expect Given numbers cannot change.
+# Notes cannot go over an answer until it is erased.
+tap-id cell-1
+tap-id pencil
+tap-id digit-4
+expect Erase this answer to add notes.
+tap-id pencil
+tap-id erase
+expect 53 left
+tap-id game-undo
+expect 52 left
 tap-id game-undo
 tap-id game-undo
 tap-id game-undo
 tap-id game-undo
-# Rules are one tap away in the top bar.
+# Rules are one tap away in the top bar and run over more than one page.
 tap-id game-rules
 expect Use 1–9 once
+expect-missing original puzzles at each difficulty
 shot sudoku-help
+tap Next
+expect original puzzles at each difficulty
+expect-missing Use 1–9 once
+clean
+shot sudoku-help-2
+tap Previous
+expect Use 1–9 once
 tap Back
 wait-idle
+expect Sudoku · Easy 1
 # More opens over the board: New game first, mistakes in plain words.
 tap-id game-more
 wait-idle
 expect New game
+expect Restart puzzle
 expect Show mistakes
+expect Reveal square
+expect Use landscape
 expect-missing Check off
+expect-missing Retry saving
 shot sudoku-more
 tap-id checking
 # The first square of Easy 1 is a 1, so a 2 is flagged in words and kept.
@@ -53,11 +93,93 @@ tap-id checking
 tap-id erase
 wait-idle
 expect This square is already empty.
-# With nothing to lose, New game only asks for a difficulty, then moves on.
+# Reveal asks first, Keep playing leaves the square, and a revealed square is right.
+tap-id cell-3
+tap-id game-more
+tap-id hint
+expect Reveal square?
+expect count one hint
+clean
+shot sudoku-reveal-confirm
+tap Keep playing
+expect 53 left
+tap-id game-more
+tap-id hint
+tap-id confirm-hint
+expect 52 left
+tap-id game-more
+tap-id hint
+expect This square is already right.
+# Restart asks first, clears the board, and can be undone.
+tap-id game-more
+tap-id restart
+expect Restart puzzle?
+expect Clear answers, notes and hints. You can undo.
+clean
+shot sudoku-restart-confirm
+tap Keep playing
+expect 52 left
+tap-id game-more
+tap-id restart
+tap-id confirm-restart
+expect 53 left
+tap-id game-undo
+expect 52 left
+# New game warns that it replaces a game in progress, and Keep playing keeps it.
 tap-id game-more
 tap-id game-new
+expect Replaces this game and its history.
+expect Easy
+expect Medium
+expect Hard
+clean
+shot sudoku-new-game-warning
+tap Keep playing
+expect Sudoku · Easy 1
+expect 52 left
+# A failed save is named in the status line and Retry saving joins More.
+scenario storage-full
+tap-id cell-7
+tap-id digit-3
 wait-idle
+expect Not saved · Retry saving in More.
+tap-id game-more
+expect Retry saving
+clean
+shot sudoku-save-refused
+scenario normal
+tap-id retry-save
+wait-idle
+expect-missing Not saved
+tap-id game-more
+expect-missing Retry saving
+tap-id game-more
+# Reopening keeps the board and the undo history.
+restart
+wait-for Sudoku · Easy 1
+expect 51 left
+tap-id game-undo
+expect 52 left
+clean
+shot sudoku-resumed
+# Each difficulty deals its own first puzzle.
+tap-id game-more
+tap-id game-new
+tap-id new-medium
+wait-idle
+expect Sudoku · Medium 1
+clean
+shot sudoku-medium
+tap-id game-more
+tap-id game-new
 expect Choose a difficulty.
+tap-id new-hard
+wait-idle
+expect Sudoku · Hard 1
+clean
+shot sudoku-hard
+tap-id game-more
+tap-id game-new
 tap-id new-easy
 wait-idle
 expect Sudoku · Easy 2

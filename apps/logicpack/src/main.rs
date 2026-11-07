@@ -9,6 +9,7 @@ use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
 mod boards;
 mod collection;
+mod recover;
 mod saved;
 
 const STATE: &str = "logicpack-state-v1";
@@ -141,6 +142,7 @@ struct Game {
     outcome: Outcome,
     loaded: bool,
     load_error: Option<String>,
+    set_aside: recover::SetAside,
     draft: Draft,
     active: Option<u64>,
     games: Vec<saved::Run>,
@@ -185,6 +187,7 @@ impl Game {
             outcome: Outcome::Playing,
             loaded: false,
             load_error: None,
+            set_aside: recover::SetAside::default(),
             draft: Draft::restored(Vec::new(), saved::LIMIT).expect("empty draft"),
             active: None,
             games: Vec::new(),
@@ -645,15 +648,15 @@ impl Game {
             // directly under the reason, not a heading at the top and the fix
             // pinned to the foot with an empty panel between them.
             return if let Some(error) = &self.load_error {
-                failure_screen(
+                self.set_aside.screen(
                     head,
                     &self.metrics,
-                    "Cannot open progress",
-                    (
-                        &format!("{error} Your saved puzzles have been kept."),
-                        error,
-                    ),
-                    ("retry-load", "Try again"),
+                    error,
+                    &recover::Wording {
+                        title: "Cannot open progress",
+                        kept: "Your saved puzzles have been kept.",
+                        explain: "Your saved puzzles stay on the Kobo as a separate copy, and every puzzle starts again unsolved.",
+                    },
                 )
             } else {
                 head().text("Opening puzzles…").build()
@@ -1114,6 +1117,8 @@ impl Game {
         self.first_reveal = flags[1];
         self.outcome = outcome;
         self.notice = match outcome {
+            // A cleared field says so in the same words whenever it is shown.
+            Outcome::Solved if kind == Kind::Mines => "Field cleared.",
             Outcome::Solved => "Solved.",
             Outcome::Lost => "Mine opened. Undo the last move or restart.",
             Outcome::Playing => "Continue your puzzle.",
@@ -1175,8 +1180,8 @@ impl KoboApp for Game {
         match result {
             StoreResult::Loaded {
                 value: Some(bytes), ..
-            } => match saved::decode(&bytes) {
-                Some((games, current)) => {
+            } => {
+                if let Some((games, current)) = saved::decode(&bytes) {
                     self.games = games;
                     self.fresh(Kind::Home);
                     if let Some(index) = current {
@@ -1185,9 +1190,11 @@ impl KoboApp for Game {
                     self.draft = Draft::restored(bytes, saved::LIMIT).expect("validated bytes");
                     self.loaded = true;
                     self.load_error = None;
+                } else {
+                    self.load_error = Some("This saved record could not be read.".into());
+                    self.set_aside.hold(bytes);
                 }
-                None => self.load_error = Some("This saved record could not be read.".into()),
-            },
+            }
             StoreResult::Loaded { value: None, .. } => {
                 self.loaded = true;
                 self.load_error = None;
@@ -1196,8 +1203,26 @@ impl KoboApp for Game {
         }
         context.set_screen(self.screen());
     }
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        self.metrics = context.metrics();
+        if self.set_aside.on_keys(context, STATE, result) {
+            context.set_screen(self.screen());
+        }
+    }
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
         self.metrics = context.metrics();
+        if let Some(kept) = self.set_aside.on_save(key, &result) {
+            // With the unreadable record copied, it is forgotten, so
+            // reopening finds the puzzles as on the first day rather than
+            // the same failure.
+            if kept {
+                self.loaded = true;
+                self.load_error = None;
+                context.store().forget(STATE);
+            }
+            context.set_screen(self.screen());
+            return;
+        }
         if key != STATE {
             return;
         }
@@ -1224,7 +1249,13 @@ impl KoboApp for Game {
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         self.metrics = context.metrics();
         if !self.loaded {
-            if action == action_id("retry-load") && self.load_error.take().is_some() {
+            if self.set_aside.action(context, action) {
+                context.set_screen(self.screen());
+            } else if action == action_id("retry-load")
+                && !self.set_aside.busy()
+                && self.load_error.take().is_some()
+            {
+                self.set_aside.clear();
                 context.store().load(STATE);
                 context.set_screen(self.screen());
             }
@@ -1675,6 +1706,55 @@ mod durable_tests {
     fn back(g: &mut Game) {
         g.on_action(&mut Context::default(), ActionId::BACK);
     }
+    #[test]
+    fn a_cleared_field_reads_field_cleared_when_it_is_shown_again() {
+        let mut g = ready();
+        g.select(Kind::Mines);
+        for at in 0..g.puzzle().cell_count() {
+            if !has_mine(g.mines, at) {
+                g.cells[at] = 1;
+            }
+        }
+        g.first_reveal = false;
+        g.outcome = Outcome::Solved;
+        let bytes = g.encode();
+        g.notice.clear();
+        assert!(g.restore(&bytes));
+        assert_eq!(g.notice, "Field cleared.");
+    }
+
+    #[test]
+    fn start_over_copies_an_unreadable_record_aside_before_forgetting_it() {
+        let mut runner = kobo_sdk::AppRunner::new(Game::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: Some(b"bad".to_vec()),
+        });
+        runner.action(action_id(recover::START_OVER));
+        let commands = runner.action(action_id(recover::CONFIRM));
+        assert!(commands
+            .iter()
+            .any(|c| matches!(c, kobo_sdk::Command::Store(kobo_sdk::StoreRequest::List))));
+        let commands = runner.store_result(StoreResult::Keys(vec![STATE.into()]));
+        let copy = format!("{STATE}-unreadable-1");
+        assert!(commands.iter().any(|c| matches!(
+            c,
+            kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Save { key, value })
+                if *key == copy && value == b"bad"
+        )));
+        assert!(
+            !runner.app().loaded,
+            "nothing is let go before the copy lands"
+        );
+        let commands = runner.store_result(StoreResult::Saved { key: copy });
+        assert!(runner.app().loaded);
+        assert!(commands.iter().any(|c| matches!(
+            c,
+            kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Forget { key }) if key == STATE
+        )));
+    }
+
     fn act(g: &mut Game, name: &str) {
         if ["slither", "hashi", "kakuro", "mines"].contains(&name) {
             g.view = View::Puzzle;

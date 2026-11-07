@@ -271,8 +271,31 @@ fn banner_on(screen: &Screen) -> Option<(BannerLevel, String)> {
     })
 }
 
+/// Answers every piece of the save being written until it is done.
+fn finish_save(parser: &mut Parser, context: &mut Context) {
+    let name = parser.saving.as_ref().expect("a save").name().to_owned();
+    let total = parser
+        .machine
+        .as_ref()
+        .expect("a story")
+        .save_quetzal()
+        .len();
+    let mut written = 0;
+    while parser.saving.is_some() {
+        written = (written + kobo_sdk::MAX_SHELF_CHUNK).min(total);
+        parser.on_store(
+            context,
+            StoreResult::ShelfWritten {
+                name: name.clone(),
+                size: u32::try_from(written).expect("a small save"),
+            },
+        );
+    }
+}
+
 /// A save that finished and a save that could not be written used to be
-/// drawn alike, so the slots screen gave no sign of which had happened.
+/// drawn alike, so the slots screen gave no sign of which had happened. The
+/// slot says it is saved once the write lands, not when it is asked for.
 #[test]
 fn a_saved_slot_reads_as_a_success_a_failed_write_as_an_error_and_an_empty_slot_as_news() {
     let _runner = AppRunner::new(Parser::default());
@@ -283,8 +306,21 @@ fn a_saved_slot_reads_as_a_success_a_failed_write_as_an_error_and_an_empty_slot_
     parser.on_action(&mut context, action_id("slot-3"));
     assert_eq!(
         banner_on(&parser.slots_screen()),
+        None,
+        "saved before the write"
+    );
+    finish_save(&mut parser, &mut context);
+    assert_eq!(
+        banner_on(&parser.slots_screen()),
         Some((BannerLevel::Success, "Saved in slot 3.".to_owned()))
     );
+    let slot = parser
+        .slot_rows()
+        .into_iter()
+        .find(|row| row.0 == "slot-3")
+        .expect("slot 3");
+    assert_eq!(slot.2, slot_subtitle(SlotAction::Save, true));
+    parser.on_action(&mut context, action_id("slot-4"));
     parser.on_store(
         &mut context,
         StoreResult::Denied(kobo_sdk::StoreError::Unwritable),

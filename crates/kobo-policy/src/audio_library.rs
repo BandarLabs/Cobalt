@@ -361,10 +361,18 @@ fn audio_files(directory: &Path) -> Option<Vec<(String, PathBuf)>> {
 /// which is how discs and chapters are named ("01 - The Hobbit.mp3",
 /// "Chapter 12.mp3", "Track03.mp3"), or when their names are the same once
 /// the digits are taken out, which is how converters name them. A folder
-/// of "Dune.m4b" and "Emma.m4b" is neither, and lists as two books. One
-/// file alone is never a folder book: it lists under its own name.
+/// of "Dune.m4b" and "Emma.m4b" is neither, and lists as two books.
+///
+/// One file alone is a folder book only when it is named as a part, by a
+/// leading number or as a track, part, chapter or disc: a set ripped from a
+/// single disc arrives as "01 - Only Part.mp3", and listed under that name
+/// the book was called "01 - Only Part" rather than by its folder. Any other
+/// lone file lists under its own name.
 #[must_use]
 pub fn reads_as_parts(names: &[&str]) -> bool {
+    if let [only] = names {
+        return named_as_a_part(only);
+    }
     if names.len() < 2 || names.len() > MAX_PARTS {
         return false;
     }
@@ -384,6 +392,17 @@ pub fn reads_as_parts(names: &[&str]) -> bool {
     });
     let first = stems.next().unwrap_or_default();
     !first.is_empty() && stems.all(|stem| stem == first)
+}
+
+/// Whether a file's name says it is one numbered part of something.
+fn named_as_a_part(name: &str) -> bool {
+    let title = title_of(name).to_ascii_lowercase();
+    let rest = ["track", "part", "chapter", "disc", "cd"]
+        .iter()
+        .find_map(|word| title.strip_prefix(word))
+        .unwrap_or(&title);
+    rest.trim_start_matches([' ', '_', '-', '.'])
+        .starts_with(|character: char| character.is_ascii_digit())
 }
 
 /// The file name without the suffix that named its format.
@@ -459,6 +478,11 @@ mod tests {
         assert!(reads_as_parts(&["dune_01.mp3", "dune_02.mp3"]));
         assert!(!reads_as_parts(&["Dune.m4b", "Emma.m4b"]));
         assert!(!reads_as_parts(&["Dune.m4b"]));
+        // A lone file named as a part is the folder's book; one named as a
+        // title is its own.
+        assert!(reads_as_parts(&["01 - Only Part.mp3"]));
+        assert!(reads_as_parts(&["Track 1.mp3"]));
+        assert!(!reads_as_parts(&["Dune 1.m4b"]));
         assert!(!reads_as_parts(&[]));
         // One numbered and one not: two books, since nothing says otherwise.
         assert!(!reads_as_parts(&["Dune 1.m4b", "Emma.m4b"]));
@@ -531,6 +555,25 @@ mod tests {
     /// A Mac copying a folder leaves a `._name` sidecar beside every file.
     /// They are not sound, and numbered like the real parts they would have
     /// made every folder a book that cannot be opened.
+    #[test]
+    fn a_folder_with_one_numbered_part_is_a_book_under_the_folder_name() {
+        let root = scratch("one-part");
+        let book = root.join("Audiobooks").join("Short Story");
+        fs::create_dir_all(&book).expect("a book folder");
+        fs::write(book.join("01 - Only Part.mp3"), b"bytes").expect("a part");
+        let roots = vec![root];
+        let listing = list_in(&roots);
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].title, "Short Story");
+        assert_eq!(listing.entries[0].parts, 1);
+        let id = listing.entries[0].id.clone();
+        let Some(Location::Parts { title, paths }) = resolve_in(&roots, &id) else {
+            panic!("the listed folder does not resolve to its part");
+        };
+        assert_eq!(title, "Short Story");
+        assert_eq!(paths.len(), 1);
+    }
+
     #[test]
     fn hidden_sidecars_are_neither_listed_nor_parts() {
         let root = scratch("sidecars");

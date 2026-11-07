@@ -45,14 +45,6 @@ The app never sees it.
 Zotero's indexed full text is plain text, so the original PDF layout, tables,
 figures and formulas are lost.
 
-For structured papers with headings, tables, figures and formulas, a
-self-hosted conversion service exists at
-[andreclerigo/cobalt-zotero-reader](https://github.com/andreclerigo/cobalt-zotero-reader).
-It needs a custom build of Cobalt, because the Store build only sends
-credentials to Zotero. See its
-[setup guide](https://andreclerigo.github.io/cobalt-zotero-reader/setup.html)
-and [self-hosting guide](https://andreclerigo.github.io/cobalt-zotero-reader/self-hosting.html).
-
 ## Permissions
 
 - `network`: reads your Zotero library.

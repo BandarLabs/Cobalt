@@ -1,0 +1,16 @@
+# Checking a server before any account details are saved should say the
+# account is missing, not that the action "isn't available".
+wait-for Your shelf is empty
+tap Browse
+wait-for Connect Komga
+tap Add server address
+wait-for HTTPS address
+type https://komga.invalid
+tap Use address
+wait-for https://komga.invalid
+tap Check connection
+wait-idle
+wait 1500
+clean
+shot komga-check-no-account
+expect-missing This action isn't available.

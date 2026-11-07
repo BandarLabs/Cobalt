@@ -1,0 +1,10 @@
+# sweep: --bare --seed-root apps/birds/fixtures/no-collage
+# A snapshot whose picture never arrived says the collage is missing.
+wait-for The bird collage is missing
+expect The list of birds arrived without its picture.
+expect Refresh
+clean
+shot birds-no-collage
+# The heading has to match the line under it: the snapshot was read, the
+# picture was not.
+expect-missing could not be read

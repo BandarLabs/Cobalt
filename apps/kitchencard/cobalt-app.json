@@ -4,12 +4,13 @@
   "short_label": "Kitchen",
   "summary": "Keep Mealie recipes handy in a counter-friendly cooking view. Needs an account.",
   "page_description": "A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.",
-  "version": "0.1.14",
-  "release_notes": "Kitchen now has an icon of its own, a fork and knife.",
+  "version": "0.1.15",
+  "release_notes": "Cooking timers now count down and say when time is up, even after the reader sleeps. Start cooking carries on from the step you left, and a refused http address says why.",
   "glyph": "cutlery",
   "capabilities": [
     "network",
-    "keep-awake"
+    "keep-awake",
+    "scheduled-wake"
   ],
   "setup": {
     "steps": [

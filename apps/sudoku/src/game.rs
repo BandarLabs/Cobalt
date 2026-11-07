@@ -160,7 +160,10 @@ impl Game {
         let Some(cell) = self.position.selected else {
             return false;
         };
+        // A finished grid stays finished: the digits already refuse to
+        // change it, and a stray Erase reopened it one square short.
         if !self.editable(cell, puzzles)
+            || self.solved(puzzles)
             || (self.position.board[cell] == 0 && self.position.notes[cell] == 0)
         {
             return false;

@@ -1,3 +1,7 @@
-expect Offline
+# No account key: Your games says so and leads with the way to connect one.
+expect Not connected
+expect Connect a Lichess account to play people.
+expect Connect Lichess
 expect Refresh
+expect-missing Challenge player
 shot credential
