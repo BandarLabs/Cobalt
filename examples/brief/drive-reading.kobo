@@ -1,4 +1,6 @@
-# sweep: --bare
+# sweep: --bare skip
+# Runs by hand: every story here is fetched from its own site, and story
+# sites rate-limit shared CI runners, so the sweep cannot rely on them.
 # A refreshed brief keeps its stories for reading offline, keeps going when
 # the app is put in the background, survives a restart, and a refresh with no
 # network leaves the saved brief in place with a way to try again.
