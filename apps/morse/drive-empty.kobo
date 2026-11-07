@@ -1,0 +1,12 @@
+# An empty message has nothing to send, and the estimate says so once.
+wait 800
+expect SOS
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+expect-missing SOS
+expect A message to send in light
+expect nothing to send
+clean
+shot empty-message
+expect-missing to send to send
