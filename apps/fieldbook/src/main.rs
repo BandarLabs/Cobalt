@@ -112,6 +112,10 @@ struct Fieldbook {
     attribution_load: Option<ShelfDownload>,
     photo_load: Option<ShelfDownload>,
     photo: Option<TilePicture>,
+    /// Where Back from a species page goes: the search or life list that opened it.
+    detail_from: View,
+    /// Whether the checklist file was written since Export was opened.
+    exported: bool,
 }
 
 impl Default for Fieldbook {
@@ -146,8 +150,25 @@ impl Default for Fieldbook {
             attribution_load: None,
             photo_load: None,
             photo: None,
+            detail_from: View::Home,
+            exported: false,
         }
     }
+}
+
+/// The scientific name and banding code under a species' heading, leaving
+/// out whichever it lacks. A bird logged by name has neither, and its page
+/// used to show a bare "· Banding code".
+fn species_references(species: &Species) -> String {
+    let code = (!species.code.is_empty()).then(|| format!("Banding code {}", species.code));
+    [
+        Some(species.scientific.clone()).filter(|name| !name.is_empty()),
+        code,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" · ")
 }
 
 /// How many birds were seen, as words: "1 bird", "12 birds".
@@ -454,20 +475,30 @@ impl Fieldbook {
     /// earlier. The order never changes while a bird is being tallied, so a
     /// row is where it was a tap ago.
     fn outing_species(&self) -> Vec<Species> {
-        if let Some(pick) = self.pack_pick {
-            if let Some(pack) = self.packs.get(pick) {
-                return pack.species.clone();
-            }
-        }
         let mut seen: Vec<Species> = Vec::new();
-        for species in self.packs.iter().flat_map(|pack| &pack.species) {
+        let picked = self.pack_pick.and_then(|pick| self.packs.get(pick));
+        if let Some(pack) = picked {
+            seen.clone_from(&pack.species);
+        }
+        let packs = if picked.is_some() {
+            &[][..]
+        } else {
+            &self.packs[..]
+        };
+        for species in packs.iter().flat_map(|pack| &pack.species) {
             if !seen.iter().any(|known| {
                 same_species(&known.code, &known.common, &species.code, &species.common)
             }) {
                 seen.push(species.clone());
             }
         }
-        for sighting in &self.sightings {
+        // A picked pack keeps the birds this outing logged outside it, so a
+        // bird logged by name can be tapped again like any other.
+        for sighting in self
+            .sightings
+            .iter()
+            .filter(|sighting| picked.is_none() || Some(sighting.outing) == self.open_outing)
+        {
             if !seen.iter().any(|known| {
                 same_species(&known.code, &known.common, &sighting.code, &sighting.common)
             }) {
@@ -588,6 +619,7 @@ impl Fieldbook {
 
     fn export(&mut self, context: &mut Context) {
         self.save = SaveState::Saving;
+        self.exported = false;
         context
             .store()
             .save(EXPORT, self.checklist_csv().into_bytes());
@@ -767,6 +799,7 @@ impl Fieldbook {
                     "Nothing to search yet",
                     "Send a field pack from a computer with kobo fieldbook push, then search it here.",
                 )
+                .nav_bar(Some(2), Self::tab_bar())
                 .build();
         }
         if self.search.is_open() {
@@ -1073,9 +1106,9 @@ impl Fieldbook {
                     format!("life-{index}"),
                     context.clamped_row(&sighting.common, 2, true),
                     if sighting.code.is_empty() {
-                        format!("{total} birds")
+                        bird_count(*total)
                     } else {
-                        format!("{} · {total} birds", sighting.code)
+                        format!("{} · {}", sighting.code, bird_count(*total))
                     },
                     Glyph::Check,
                 )
@@ -1119,8 +1152,17 @@ impl Fieldbook {
                     "Nothing to export",
                     "Finished outings become an eBird Checklist Format CSV on this reader, ready for kobo fieldbook export to fetch.",
                 )
+                .nav_bar(Some(4), Self::tab_bar())
                 .build();
         }
+        let s = if self.exported {
+            s.banner(
+                BannerLevel::Success,
+                "Checklist written. Run kobo fieldbook export on your computer to fetch it.",
+            )
+        } else {
+            s
+        };
         s.secondary(format!(
             "{} outing{}, {} sighting{}. The file is written as {} and fetched with kobo fieldbook export.",
             self.outings.len(),
@@ -1143,10 +1185,11 @@ impl Fieldbook {
     fn detail_screen(&self) -> Screen {
         let mut s = self.top("Species");
         if let Some(species) = &self.detail {
-            s = s.heading(species.common.clone()).secondary(format!(
-                "{} · Banding code {}",
-                species.scientific, species.code
-            ));
+            s = s.heading(species.common.clone());
+            let line = species_references(species);
+            if !line.is_empty() {
+                s = s.secondary(line);
+            }
             if let Some(picture) = self.photo {
                 s = s.picture(picture, 45);
                 if let Some(credit) = species
@@ -1252,6 +1295,16 @@ impl Fieldbook {
         self.persist(context);
     }
 
+    /// Back from a page goes to the page that opened it: a species page to
+    /// its search or life list, the review of sightings to its outing.
+    fn back_view(&self) -> View {
+        match self.view {
+            View::Detail => self.detail_from,
+            View::Sightings if self.open_outing.is_some() => View::Outing,
+            _ => View::Home,
+        }
+    }
+
     fn open_life_entry(&mut self, index: usize) {
         if let Some((sighting, _)) = self.life_totals().get(index) {
             self.detail = Some(Species {
@@ -1260,6 +1313,7 @@ impl Fieldbook {
                 scientific: sighting.scientific.clone(),
                 photo: None,
             });
+            self.detail_from = View::Life;
             self.view = View::Detail;
         }
     }
@@ -1447,8 +1501,11 @@ impl KoboApp for Fieldbook {
                 self.start_when_ready(context);
                 return;
             }
-            StoreResult::Saved { .. } => {
+            StoreResult::Saved { key } => {
                 self.save = SaveState::Idle;
+                if key == EXPORT {
+                    self.exported = true;
+                }
             }
             StoreResult::Denied(_) => {
                 self.save = SaveState::Failed;
@@ -1484,7 +1541,9 @@ impl KoboApp for Fieldbook {
             self.show(context);
             return;
         }
-        if action == ActionId::BACK || action == action_id("back") || action == action_id("home") {
+        if action == ActionId::BACK || action == action_id("back") {
+            self.view = self.back_view();
+        } else if action == action_id("home") {
             self.view = View::Home;
         } else if action == action_id("list-next") {
             self.turn_list(context, true);
@@ -1528,6 +1587,7 @@ impl KoboApp for Fieldbook {
         } else if let Some(index) = (0..3).find(|i| action == action_id(&format!("found-{i}"))) {
             if let Some(species) = self.search_results().get(index).cloned() {
                 self.detail = Some(species);
+                self.detail_from = View::Search;
                 self.view = View::Detail;
                 self.begin_photo(context);
             }
@@ -1567,6 +1627,9 @@ impl KoboApp for Fieldbook {
         if self.view != View::Detail {
             self.photo = None;
             self.photo_load = None;
+        }
+        if self.view != View::Export {
+            self.exported = false;
         }
         self.show(context);
     }

@@ -1,0 +1,18 @@
+{
+  "format": "fieldbook-attribution",
+  "version": "1",
+  "photos": [
+    {
+      "id": "f374e0e48f112bb0f4b355076ee09c03bf931bd0d5c94606ed0e637970ead35b",
+      "asset": "photos/f374e0e48f112bb0f4b355076ee09c03bf931bd0d5c94606ed0e637970ead35b.jpg",
+      "sha256": "f374e0e48f112bb0f4b355076ee09c03bf931bd0d5c94606ed0e637970ead35b",
+      "bytes": 92237,
+      "source": "Test fixture",
+      "source_url": "https://example.com/fixtures/birds-on-a-wire",
+      "image_url": "https://example.com/fixtures/birds-on-a-wire.jpg",
+      "creator": "Fixture Maker",
+      "license": "CC0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/1.0/"
+    }
+  ]
+}
