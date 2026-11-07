@@ -1,0 +1,133 @@
+# sweep: --seed-root apps/calibre-web/fixtures/downloaded
+# A library at home with one book already downloaded. The sweep has no
+# library server, so this is a reader away from home: the downloaded book
+# opens and reads to its end without the server, and the catalog says why it
+# cannot be reached instead of claiming the library is empty.
+wait-for Libraries
+expect https://127.0.0.1:47443/opds
+expect Downloaded books
+clean
+shot libraries-kept
+tap Downloaded books
+wait-for A Walk by the River
+expect Available offline
+clean
+shot downloaded
+tap A Walk by the River
+wait-for-id reader-forward
+wait-idle
+expect A Walk by the River
+expect reading marker 1.
+clean
+shot reading-first-page
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+expect-missing reading marker 1.
+# The middle of the page holds the size, the bookmark and the notes.
+tap-id reader-controls
+wait-for Page 3 of
+expect 100%
+clean
+shot reading-controls
+tap-id reader-bookmark
+wait-for Bookmarked
+tap-id reader-highlights
+wait-for Bookmarks
+expect Remove bookmark
+clean
+shot bookmarks
+# Back to the book returns to the page, with the panel put away; the panel
+# opens again on the same page, still bookmarked.
+tap Back to the book
+wait-for-id reader-forward
+wait-idle
+expect-missing Page 3 of
+tap-id reader-controls
+wait-for Page 3 of
+expect Bookmarked
+# A larger size repaginates the same book.
+tap-id reader-size-5
+wait-for 110%
+clean
+shot reading-larger
+tap-id reader-controls
+wait-idle
+# Closing keeps the place; the book reopens where it was left, and so it
+# does after the app is restarted.
+tap Back
+wait-for Downloaded books
+tap A Walk by the River
+wait-for-id reader-forward
+wait-idle
+expect-missing reading marker 1.
+restart
+wait-for Libraries
+tap Downloaded books
+wait-for A Walk by the River
+tap A Walk by the River
+wait-for-id reader-forward
+wait-idle
+expect-missing reading marker 1.
+tap-id reader-controls
+wait-for 110%
+expect Page 3 of
+tap-id reader-controls
+wait-idle
+# Read to the end. The sample is 40 markers; at 110% it is 14 pages.
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+expect End of the sample walk.
+expect This is the end
+clean
+shot reading-end
+# The notes list goes back to the bookmark made earlier, and it comes off.
+tap-id reader-controls
+wait-idle
+tap-id reader-highlights
+wait-for Bookmarks
+expect Bookmark this page
+tap The path follows
+wait-for-id reader-forward
+wait-idle
+tap-id reader-controls
+wait-for Page 3 of
+expect Bookmarked
+tap-id reader-bookmark
+wait-idle
+expect-missing Bookmarked
+tap-id reader-controls
+wait-idle
+tap Back
+wait-for Downloaded books
+tap Back
+wait-for Libraries
+# The catalog itself needs the library, which is not reachable here.
+tap https://127.0.0.1:47443/opds
+wait-for Try again
+expect-missing No books or sections
+clean
+shot library-unreachable

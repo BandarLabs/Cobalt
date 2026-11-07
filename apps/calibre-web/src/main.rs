@@ -8,7 +8,7 @@ use kobo_sdk::failure::Problem;
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, Context, Credential, KoboApp, Position, Screen, ScreenBuilder,
-    StoreResult, Task, TaskId, TaskOutcome,
+    StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 const REGISTRY: &str = "catalog";
@@ -384,7 +384,11 @@ impl Calibre {
                 // button, so the bar carries Check again instead of a second
                 // Add: it is how a library set up from a computer shows up
                 // while this screen is open.
-                s = if self.loaded && self.url.is_empty() {
+                // Settings that could not be read carry their own retry on the
+                // banner, so the bar offers nothing beside it.
+                s = if self.settings.state == settings::State::Blocked {
+                    s
+                } else if self.loaded && self.url.is_empty() {
                     s.top_bar_action("check-again", "Check again")
                 } else {
                     s.top_bar_action("add", "Add")
@@ -729,6 +733,19 @@ impl KoboApp for Calibre {
                     }
                 }
                 TaskOutcome::Failed(error) => {
+                    // A library that is only out of reach for now is still
+                    // the owner's library. It used to be listed until the app
+                    // closed and then lost without a word, because only a
+                    // catalog that answered was saved.
+                    if matches!(
+                        error,
+                        TaskError::Offline
+                            | TaskError::Unreachable
+                            | TaskError::TimedOut
+                            | TaskError::RateLimited(_)
+                    ) {
+                        self.settings.verified(c);
+                    }
                     let problem = catalog::problem(&self.url, error);
                     self.notice.clone_from(&problem.message);
                     self.failure = Some(problem);
@@ -1004,6 +1021,42 @@ mod tests {
             kobo_sdk::Node::Button { action, .. } if *action == action_id("settings-load")
         )));
     }
+    #[test]
+    fn a_public_library_whose_catalog_is_out_of_reach_is_still_saved() {
+        let mut app = Calibre {
+            loaded: true,
+            url: "https://library.test/opds".into(),
+            view: View::Credential,
+            ..Calibre::default()
+        };
+        app.settings.state = settings::State::Ready;
+        let mut c = Context::default();
+        app.on_action(&mut c, action_id("public-library"));
+        let task = app.task.expect("the catalog was not asked for");
+        app.on_task(&mut c, task, TaskOutcome::Failed(TaskError::Unreachable));
+        assert!(
+            app.settings.state == settings::State::Saving,
+            "the library was not saved"
+        );
+        assert!(c.commands().iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == REGISTRY
+        )));
+    }
+
+    #[test]
+    fn unreadable_settings_offer_one_retry_rather_than_two() {
+        let mut app = Calibre {
+            loaded: true,
+            view: View::Libraries,
+            ..Calibre::default()
+        };
+        app.settings.state = settings::State::Blocked;
+        let screen = app.screen(&Context::default());
+        let bar = format!("{:?}", screen.top_bar);
+        assert!(!bar.contains("Check again"), "{bar}");
+    }
+
     #[test]
     fn setup_save_retry_and_unreadable_settings_guard() {
         let mut app = loaded_catalog();
