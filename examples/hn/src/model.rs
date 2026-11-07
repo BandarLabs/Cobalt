@@ -114,6 +114,23 @@ impl Comment {
     }
 }
 
+/// The address an article is fetched from: a plain `http` link asked for
+/// over TLS instead.
+///
+/// The runtime refuses plain `http` outright, and plenty of stories are still
+/// submitted with it. Left alone, saving one fetched nothing and its Saved
+/// mark kept a promise the reader found broken on the train. A site that
+/// serves no TLS at all still fails, and says so.
+#[must_use]
+pub fn over_tls(url: &str) -> String {
+    match url.get(..7) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("http://") => {
+            format!("https://{}", &url[7..])
+        }
+        _ => url.to_owned(),
+    }
+}
+
 /// The host part of a URL, with `www.` dropped, or nothing worth showing.
 ///
 /// Deliberately not a URL parser. The only question being asked is what to
@@ -192,7 +209,11 @@ impl Item {
             comments: self.descendants,
             created: self.time,
             text: (!self.text.is_empty()).then(|| self.text.clone()),
-            link: self.url.clone().filter(|url| !url.is_empty()),
+            link: self
+                .url
+                .as_deref()
+                .filter(|url| !url.is_empty())
+                .map(over_tls),
             site: self.url.as_deref().and_then(host_of),
             job: self.kind == "job",
         })
@@ -515,7 +536,7 @@ impl Marks {
                         comments: comments.parse().unwrap_or_default(),
                         created: created.parse().unwrap_or_default(),
                         text: None,
-                        link: (!link.is_empty()).then(|| link.to_owned()),
+                        link: (!link.is_empty()).then(|| over_tls(link)),
                         site: (!site.is_empty()).then(|| site.to_owned()),
                         job: false,
                     });
@@ -569,6 +590,25 @@ mod tests {
         assert_eq!(story.created, 1_785_189_829);
         assert_eq!(story.site.as_deref(), Some("anthropic.com"));
         assert_eq!(story.text, None, "a link post has no self text");
+    }
+
+    #[test]
+    fn a_story_submitted_with_a_plain_http_link_is_read_and_saved_over_tls() {
+        let mut item = read(STORY);
+        item.url = Some("http://example.blogspot.com/2022/12/x.html".to_owned());
+        let story = item.story().expect("a story is a row");
+        assert_eq!(
+            story.link.as_deref(),
+            Some("https://example.blogspot.com/2022/12/x.html")
+        );
+        assert_eq!(story.site.as_deref(), Some("example.blogspot.com"));
+        // A story saved before this was fixed reads back the same way.
+        let marks = Marks::decode(
+            "hn-marks-v1\nsaved\t1\tA title\tsomeone\t1\t0\t0\thttp://e.org/a\te.org\n",
+        );
+        assert_eq!(marks.saved[0].link.as_deref(), Some("https://e.org/a"));
+        assert_eq!(super::over_tls("HTTP://e.org/"), "https://e.org/");
+        assert_eq!(super::over_tls("https://e.org/"), "https://e.org/");
     }
 
     #[test]
