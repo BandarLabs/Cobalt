@@ -298,3 +298,51 @@ fn an_action_bar_is_set_in_ink_and_marks_none_of_its_verbs() {
         "the label is no darker than a muted one: {darkest}"
     );
 }
+
+#[test]
+fn a_long_destination_name_takes_room_from_short_ones_rather_than_reaching_the_edge() {
+    // At the largest sizes "Kobo reader" filled its quarter of the bar and
+    // was drawn against the panel's right edge.
+    let names = ["Apps", "Books", "Settings", "Kobo reader"];
+    let bar = NavBar::new(
+        NodeId(1),
+        names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| BarAction::new(ActionId(index as u32 + 1), *name))
+            .collect(),
+        Some(0),
+    );
+    let screen = Screen::new(1, Vec::new()).with_nav_bar(bar);
+    for scale in TextScale::STEPS {
+        let metrics = DisplayMetrics {
+            text_scale: scale,
+            ..CLARA_BW_METRICS
+        };
+        let layout = with_text_scale(scale, || screen.layout_for(&metrics));
+        let slots: Vec<_> = layout
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.kind,
+                    LayoutKind::NavDestination(..) | LayoutKind::NavDestinationSelected(..)
+                )
+            })
+            .collect();
+        assert_eq!(slots.len(), names.len());
+        let margin = metrics.space(Space::Small);
+        for slot in &slots {
+            let word = with_text_scale(scale, || {
+                measure_text(&slot.text_lines[0], FontSize::Caption).0
+            });
+            assert!(
+                word + 2 * margin <= slot.rect.width,
+                "{scale:?}: {:?} has no margin in its slot",
+                slot.text_lines[0]
+            );
+        }
+        let last = slots.last().expect("a last slot");
+        assert_eq!(last.rect.x + last.rect.width, metrics.width, "{scale:?}");
+    }
+}

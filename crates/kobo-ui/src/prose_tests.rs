@@ -4602,3 +4602,69 @@ fn a_dialog_spans_the_page_column_so_nothing_behind_it_shows_at_its_sides() {
     assert_eq!(frame.x, words.x);
     assert_eq!(frame.x + frame.width, words.x + words.width);
 }
+
+#[test]
+fn the_back_arrow_under_a_dialogue_answers_it_as_its_own_close_does() {
+    // The arrow stays drawn while a question is up. It did nothing, which
+    // read as a broken arrow; it now answers the question the way its own
+    // Cancel or Close does.
+    for (name, metrics) in PANELS {
+        let screen = details_dialog(ActionId(9)).with_top_bar(TopBar::new(NodeId(8), "Book"));
+        let layout = screen.layout_with(&metrics, &Chrome::with_back(true));
+        let back = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Back)
+            .expect("the bar draws a back arrow");
+        let (x, y) = (
+            back.rect.x + back.rect.width / 2,
+            back.rect.y + back.rect.height / 2,
+        );
+        assert_eq!(layout.hit_test(x, y), Some(ActionId(9)), "{name}");
+        // A dialogue that draws its own cross answers Back, as the cross does.
+        let crossed = details_dialog(ActionId(77)).with_top_bar(TopBar::new(NodeId(8), "Book"));
+        let layout = crossed.layout_with(&metrics, &Chrome::with_back(true));
+        assert_eq!(layout.hit_test(x, y), Some(ActionId::BACK), "{name}");
+    }
+}
+
+#[test]
+fn a_popover_off_the_top_bar_leaves_the_bars_controls_working() {
+    // The reader's type panel hangs off Aa. A tap on the light beside it
+    // used to land on the scrim and be read as Back.
+    let screen = Screen::new(1, Vec::new())
+        .with_top_bar(
+            TopBar::new(NodeId(8), "Book")
+                .action(ActionId(20), "Light")
+                .action(ActionId(21), "Aa"),
+        )
+        .with_overlay(Overlay::popover(
+            NodeId(2),
+            ActionId(21),
+            vec![Node::Text {
+                id: NodeId(3),
+                text: "Type size".into(),
+                links: Vec::new(),
+            }],
+        ));
+    let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+    // The light answers as itself; Aa, which the panel hangs off, puts it
+    // away as a tap on any popover's own control does.
+    for (control, answer) in [(ActionId(20), ActionId(20)), (ActionId(21), ActionId::BACK)] {
+        let control = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::BarAction(control))
+            .expect("the bar draws the control");
+        let (x, y) = (
+            control.rect.x + control.rect.width / 2,
+            control.rect.y + control.rect.height / 2,
+        );
+        assert_eq!(layout.hit_test(x, y), Some(answer));
+    }
+    // A miss anywhere else still puts the popover away.
+    assert_eq!(
+        layout.hit_test(CLARA_BW_METRICS.width / 2, CLARA_BW_METRICS.height - 40),
+        Some(ActionId::BACK)
+    );
+}

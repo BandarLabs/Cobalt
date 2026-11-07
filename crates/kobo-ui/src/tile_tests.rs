@@ -660,3 +660,139 @@ fn a_white_man_on_a_dark_square_is_solid_paper_inside_its_ring() {
         .collect();
     assert!(row.contains(&tone::INK), "the man has no ring");
 }
+
+#[test]
+fn a_tile_name_is_never_broken_inside_a_word() {
+    // "Backgammon" came out as "Backgammo" over "n" at the largest sizes.
+    let screen = Screen::new(
+        1,
+        vec![Node::TileGrid {
+            shape: TileShape::Square,
+            id: NodeId(1),
+            tiles: [
+                "Backgammon",
+                "Kitchen card",
+                "Supercalifragilisticexpialidocious",
+            ]
+            .iter()
+            .enumerate()
+            .map(|(index, name)| Tile::new(ActionId(index as u32 + 1), *name, Glyph::App))
+            .collect(),
+        }],
+    );
+    for scale in TextScale::STEPS {
+        let metrics = DisplayMetrics {
+            text_scale: scale,
+            ..CLARA_BW_METRICS
+        };
+        let layout = with_text_scale(scale, || screen.layout_for(&metrics));
+        for node in layout
+            .nodes
+            .iter()
+            .filter(|node| node.kind == LayoutKind::TileLabel)
+        {
+            let joined = node.text_lines.join(" ");
+            assert!(
+                ["Backgammon", "Kitchen card"].contains(&joined.as_str())
+                    || joined.ends_with('\u{2026}'),
+                "{scale:?}: {:?} splits a word",
+                node.text_lines
+            );
+        }
+    }
+}
+
+#[test]
+fn a_key_as_wide_as_a_button_keeps_a_button_padding_around_its_label() {
+    // Two keys across ran "outdoor temperature · 12.5 °C" from edge to edge.
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 2,
+            square: false,
+            cells: vec![
+                Cell::new(ActionId(1), "outdoor temperature · 12.5 °C"),
+                Cell::new(ActionId(2), "heater · off"),
+            ],
+        }],
+    );
+    let metrics = CLARA_BW_METRICS;
+    let layout = screen.layout_for(&metrics);
+    let pad = metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM);
+    let keys: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Cell(..)))
+        .collect();
+    let labels: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::CellLabel(_)))
+        .collect();
+    assert_eq!(keys.len(), labels.len());
+    for (key, label) in keys.iter().zip(&labels) {
+        assert_eq!(label.rect.x, key.rect.x + pad);
+        assert_eq!(label.rect.width, key.rect.width - 2 * pad);
+    }
+}
+
+#[test]
+fn a_selected_square_on_a_board_of_points_is_ringed() {
+    // Morris squares draw no ground, so the last move and the piece being
+    // slid were marked in the data and invisible on the panel.
+    let cells = (0..49u32)
+        .map(|index| {
+            let cell = Cell::new(ActionId(index + 1), format!("Point {index}"));
+            match index {
+                0 => cell.with_glyph(Glyph::WhiteDisc).with_selected(true),
+                3 => cell.with_glyph(Glyph::BoardPoint).with_selected(true),
+                6 => cell.with_glyph(Glyph::BlackDisc),
+                _ => cell.with_glyph(Glyph::BoardPoint),
+            }
+        })
+        .collect();
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 7,
+            square: true,
+            cells,
+        }],
+    );
+    let layout = screen.layout_for(&CLARA_BW_METRICS);
+    let rings = layout
+        .nodes
+        .iter()
+        .filter(|node| node.kind == LayoutKind::SelectionRing)
+        .count();
+    assert_eq!(rings, 2);
+}
+
+#[test]
+fn a_selected_control_with_a_filled_form_is_filled_rather_than_ringed() {
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 2,
+            square: false,
+            cells: vec![
+                Cell::new(ActionId(1), "Bookmark")
+                    .with_glyph(Glyph::Bookmark)
+                    .with_selected(true),
+                Cell::new(ActionId(2), "Light").with_glyph(Glyph::Light),
+            ],
+        }],
+    );
+    let layout = screen.layout_for(&CLARA_BW_METRICS);
+    assert!(!layout
+        .nodes
+        .iter()
+        .any(|node| node.kind == LayoutKind::SelectionRing));
+    assert!(layout
+        .nodes
+        .iter()
+        .any(|node| node.kind == LayoutKind::HeldGlyph(Glyph::Bookmark)));
+}

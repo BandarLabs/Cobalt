@@ -586,6 +586,24 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
         .collect()
 }
 
+/// A glyph's "on" form: its outline filled as well as stroked.
+///
+/// Only for the marks whose filled form is the convention for a state, a
+/// bookmarked page and a favorite. Filling any other outline would draw a
+/// different picture rather than the same one switched on.
+#[must_use]
+pub fn held(glyph: Glyph) -> Option<Vec<Shape>> {
+    if !matches!(glyph, Glyph::Bookmark | Glyph::Heart) {
+        return None;
+    }
+    let mut filled: Vec<Shape> = tabler::outline(glyph)
+        .iter()
+        .map(|commands| Shape::Fill(Path::from_commands(commands)))
+        .collect();
+    filled.extend(shapes(glyph));
+    Some(filled)
+}
+
 /// The marks drawn here rather than imported: the four puzzles, the comic
 /// and the board games.
 ///

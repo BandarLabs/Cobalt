@@ -2616,6 +2616,13 @@ fn layout_overlay(
     let margin = metrics.screen_margin();
     let padding = metrics.space(Space::Small);
     let gap = metrics.space(Space::Tight);
+    if let OverlayKind::Popover { anchor } = overlay.kind {
+        layout.popover_anchor = Some(anchor);
+    }
+    layout.overlay_exit = Some(match overlay.kind {
+        OverlayKind::Dialog { dismiss } if !overlay.draws_a_cross() => dismiss,
+        _ => ActionId::BACK,
+    });
     // Never the full width. An overlay that reaches both margins is
     // indistinguishable from a new screen, which is the thing it exists not to
     // be: the reader has to be able to see that what they were looking at is
@@ -3037,6 +3044,7 @@ fn clear_dialog_top(
                             | LayoutKind::TileGlyph(_)
                             | LayoutKind::TileGlyphMuted(_)
                             | LayoutKind::InlineGlyph(..)
+                            | LayoutKind::HeldGlyph(_)
                             | LayoutKind::RowLead(_)
                             | LayoutKind::Picture(_)
                             | LayoutKind::FramedPicture(_)
@@ -3415,17 +3423,10 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
         text_lines: Vec::new(),
     });
 
-    let count = visible.len() as i32;
-    let slot = metrics.width / count;
+    let widths = nav_slot_widths(visible, metrics);
+    let mut x: i32 = 0;
     for (index, destination) in visible.iter().enumerate() {
-        let x = slot * index as i32;
-        // The last slot absorbs the division remainder so the bar always spans
-        // the full panel and never leaves a dead strip on the right edge.
-        let width = if index + 1 == visible.len() {
-            metrics.width - x
-        } else {
-            slot
-        };
+        let width = widths[index];
         // A short upright hairline between two verbs, so a row of words
         // reads as separate buttons rather than one caption. Inset top and
         // bottom so it divides the words without dividing the bar. Drawing
@@ -3466,7 +3467,70 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
             },
             text_lines: vec![destination.label.clone()],
         });
+        x = x.saturating_add(width);
     }
+}
+
+/// How wide each slot of the bar at the foot is.
+///
+/// Equal wherever every word fits its share with a margin each side. At the
+/// largest text sizes a long word such as "Kobo reader" filled its quarter
+/// and ran to the panel's edge, so a word that needs more takes it from the
+/// slots whose words are short, and the rest stay equal. The last slot
+/// absorbs the division remainder so the bar spans the panel exactly.
+fn nav_slot_widths(visible: &[BarAction], metrics: &DisplayMetrics) -> Vec<i32> {
+    let count = visible.len().max(1);
+    let total = metrics.width;
+    let margin = metrics.space(Space::Small);
+    let needed: Vec<i32> = visible
+        .iter()
+        .map(|entry| {
+            measure_text(&entry.label, FontSize::Caption)
+                .0
+                .saturating_add(2 * margin)
+        })
+        .collect();
+    let mut fixed = vec![false; count];
+    let mut widths = vec![total / count as i32; count];
+    // Each pass fixes the slots whose word is wider than the share left for
+    // the others; at most one pass per slot.
+    for _ in 0..count {
+        let free = total
+            - (0..count)
+                .filter(|&i| fixed[i])
+                .map(|i| widths[i])
+                .sum::<i32>();
+        let open = (0..count).filter(|&i| !fixed[i]).count() as i32;
+        if open == 0 {
+            break;
+        }
+        let share = free / open;
+        let mut changed = false;
+        for i in 0..count {
+            if !fixed[i] && needed[i] > share {
+                fixed[i] = true;
+                widths[i] = needed[i];
+                changed = true;
+            }
+        }
+        if !changed {
+            for i in 0..count {
+                if !fixed[i] {
+                    widths[i] = share;
+                }
+            }
+            break;
+        }
+    }
+    // Words that cannot all fit get equal slots, as they always had.
+    if widths.iter().sum::<i32>() > total || widths.iter().any(|width| *width <= 0) {
+        widths = vec![total / count as i32; count];
+    }
+    let drawn: i32 = widths.iter().sum();
+    if let Some(last) = widths.last_mut() {
+        *last += total - drawn;
+    }
+    widths
 }
 
 /// A run of characters inside a paragraph that goes somewhere.
@@ -5820,6 +5884,8 @@ pub enum LayoutKind {
     PencilEntry(bool),
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
+    /// A ring around a selected cell that draws no ground of its own.
+    SelectionRing,
     /// The rule around a crossword grid. Its squares draw the lines they share
     /// with the neighbours above and to the left of them; this closes the two
     /// sides nothing else has drawn.
@@ -5867,6 +5933,10 @@ pub enum LayoutKind {
     /// inversion both belong to the thing underneath it. A glyph that was its
     /// own target would invert a square in the middle of a button.
     InlineGlyph(Glyph, bool),
+    /// An inline mark drawn "on": filled rather than outlined. For a row of
+    /// controls whose cell is selected, such as a bookmarked page, where the
+    /// picture alone has to say which state the reader is in.
+    HeldGlyph(Glyph),
     /// A picture, already placed. `rect` is where it goes; the renderer scales
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
@@ -6038,6 +6108,13 @@ pub struct Layout {
     /// was laid out in, and a secondary line is a step smaller without the
     /// room; see [`Typography::Quiet`].
     pub room_given_up: bool,
+    /// What the back arrow in the top bar does while an overlay covers it:
+    /// the overlay's own way out. The arrow is still drawn, and a drawn
+    /// arrow that did nothing under a question with a Cancel read as broken.
+    pub overlay_exit: Option<ActionId>,
+    /// The control a popover hangs off. A tap on it still puts the popover
+    /// away; a tap on the bar's other controls is theirs.
+    pub popover_anchor: Option<ActionId>,
 }
 
 /// Runs `body` in the sizes a layout was made in, with the quiet edition's
@@ -6215,7 +6292,8 @@ impl std::fmt::Display for LayoutIssue {
             ),
             LayoutIssueKind::StateInLabel => write!(
                 formatter,
-                "{node}: state is written into the label;                  use the node's own state field so the renderer decides how it looks"
+                "{node}: state is written into the label; \
+                 use the node's own state field so the renderer decides how it looks"
             ),
             LayoutIssueKind::AmbiguousBack => write!(
                 formatter,
@@ -6223,7 +6301,8 @@ impl std::fmt::Display for LayoutIssue {
             ),
             LayoutIssueKind::MultiplePrimaryActions => write!(
                 formatter,
-                "{node}: more than one primary action;                  if two are equally important then neither is primary"
+                "{node}: more than one primary action; \
+                 if two are equally important then neither is primary"
             ),
             LayoutIssueKind::OrphanedSection => write!(
                 formatter,
@@ -6235,7 +6314,8 @@ impl std::fmt::Display for LayoutIssue {
             ),
             LayoutIssueKind::ToneBudget { used } => write!(
                 formatter,
-                "{node}: {used} of the five inks on one screen;                  the panel does not resolve that many"
+                "{node}: {used} of the five inks on one screen; \
+                 the panel does not resolve that many"
             ),
         }
     }
@@ -6439,8 +6519,37 @@ impl Layout {
                 // as "put it away", which is what Back already means to an
                 // application that owns its own history.
                 LayoutKind::Scrim { dismisses } => {
+                    let on_back = self
+                        .nodes
+                        .iter()
+                        .any(|node| node.kind == LayoutKind::Back && node.rect.contains(x, y));
+                    if on_back {
+                        return self.overlay_exit;
+                    }
+                    // A popover leaves the top bar's other controls working.
+                    // The reader's type panel hangs off Aa in the bar, and a
+                    // tap on the light beside it was taken as a miss and read
+                    // as Back. A tap on Aa itself still puts the panel away.
+                    if dismisses {
+                        let bar = self.nodes.iter().rev().find(|node| {
+                            matches!(
+                                node.kind,
+                                LayoutKind::BarAction(_) | LayoutKind::BarGlyph(..)
+                            ) && node.rect.contains(x, y)
+                        });
+                        if let Some(action) = bar
+                            .and_then(|node| node.kind.acts_on())
+                            .filter(|action| Some(*action) != self.popover_anchor)
+                        {
+                            return Some(action);
+                        }
+                    }
                     return dismisses.then_some(ActionId::BACK);
                 }
+                // A tap inside the panel that missed its controls is not a
+                // miss of the panel. Reported as Back, a tap on a stepper's
+                // track closed the book in an app that reads Back as leave.
+                LayoutKind::Overlay => return None,
                 kind => match kind.acts_on() {
                     Some(action) => action,
                     None => continue,
@@ -9348,6 +9457,27 @@ fn layout_node(
                             ) && *square;
                             let mark = min(cell_height, cell_width) * if piece { 9 } else { 3 }
                                 / if piece { 10 } else { 5 };
+                            // A plain cell has no ground to fill, so a
+                            // selected one is ringed: the last move on a
+                            // Morris board, the piece being slid. Drawn
+                            // first, so the piece sits inside its ring.
+                            if cell.selected
+                                && style == CellStyle::Plain
+                                && vector::held(glyph).is_none()
+                            {
+                                let side = min(cell_height, cell_width);
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x.saturating_add((cell_width - side) / 2),
+                                        y: rect.y.saturating_add((cell_height - side) / 2),
+                                        width: side,
+                                        height: side,
+                                    },
+                                    kind: LayoutKind::SelectionRing,
+                                    text_lines: Vec::new(),
+                                });
+                            }
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: Rect {
@@ -9361,11 +9491,20 @@ fn layout_node(
                                 // filled with paper or the surface tone, and a
                                 // paper glyph on either of those is a mark
                                 // nobody can see: a won line of noughts came
-                                // out as three empty squares.
-                                kind: LayoutKind::InlineGlyph(
-                                    glyph,
-                                    cell.selected && style == CellStyle::CrosswordBlock,
-                                ),
+                                // out as three empty squares. A selected
+                                // control whose mark has a filled form shows
+                                // it, since its cell draws no ground at all.
+                                kind: if cell.selected
+                                    && style == CellStyle::Plain
+                                    && vector::held(glyph).is_some()
+                                {
+                                    LayoutKind::HeldGlyph(glyph)
+                                } else {
+                                    LayoutKind::InlineGlyph(
+                                        glyph,
+                                        cell.selected && style == CellStyle::CrosswordBlock,
+                                    )
+                                },
                                 text_lines: vec![cell.label.clone()],
                             });
                         }
@@ -9420,6 +9559,20 @@ fn layout_node(
                                         .height
                                         .saturating_sub(inset + rect.height / 10)
                                         .max(1),
+                                }
+                            } else if matches!(style, CellStyle::Key | CellStyle::KeyTile(_))
+                                && cell_width >= 2 * metrics.touch_target_default()
+                            {
+                                // A key as wide as a button is set like one,
+                                // with the button's padding each side. Without
+                                // it a long label ran from edge to edge of the
+                                // key. Keyboard keys are narrower than this and
+                                // keep every pixel for their letter.
+                                let pad = metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM);
+                                Rect {
+                                    x: rect.x.saturating_add(pad),
+                                    width: rect.width.saturating_sub(2 * pad).max(1),
+                                    ..rect
                                 }
                             } else {
                                 rect
@@ -9822,7 +9975,16 @@ fn layout_node(
             };
             let title_lines = tiles
                 .iter()
-                .map(|tile| wrap_text(&tile.label, title_width, title_size).len())
+                .map(|tile| {
+                    let width = tile_label_width(
+                        &tile.label,
+                        title_width.saturating_add(label_inset * 2),
+                        label_inset,
+                        title_size,
+                        *shape == TileShape::Card,
+                    );
+                    tile_label_lines(&tile.label, width, title_size, 2).len()
+                })
                 .max()
                 .unwrap_or(1)
                 .clamp(1, 2) as i32;
@@ -9991,16 +10153,13 @@ fn layout_node(
                 // Inset by the same tight step the label sits below the mark,
                 // so a name that fills its tile is ellipsised with a margin
                 // rather than run flush into the cell border.
-                let label_width = max_i32(1, cell - inset * 2);
-                let label = wrap_text(
-                    &clamp_lines(&tile.label, label_width, title_size, title_lines as usize),
-                    label_width,
-                    title_size,
-                );
+                let label_width = tile_label_width(&tile.label, cell, inset, title_size, outlined);
+                let label =
+                    tile_label_lines(&tile.label, label_width, title_size, title_lines as usize);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
-                        x: cell_x + inset,
+                        x: cell_x + (cell - label_width) / 2,
                         y: group_y.saturating_add(mark_height).saturating_add(inset),
                         width: label_width,
                         // Keep the reserved band above, but describe the
@@ -10019,7 +10178,7 @@ fn layout_node(
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
-                            x: cell_x + inset,
+                            x: cell_x + (cell - label_width) / 2,
                             y: group_y
                                 .saturating_add(mark_height)
                                 .saturating_add(inset)
@@ -10035,7 +10194,7 @@ fn layout_node(
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
-                            x: cell_x + inset,
+                            x: cell_x + (cell - label_width) / 2,
                             y: group_y
                                 .saturating_add(mark_height)
                                 .saturating_add(inset)
@@ -15229,7 +15388,7 @@ fn validate_composition(
         });
     }
 
-    if let Some(id) = orphaned_section(layout) {
+    if let Some(id) = orphaned_section(layout, nodes) {
         issues.push(LayoutIssue {
             severity: DiagnosticSeverity::Warning,
             node: Some(id),
@@ -15302,10 +15461,18 @@ fn going_back(node: &Node) -> Option<&str> {
 }
 
 /// A section header drawn with nothing of its own below it.
-fn orphaned_section(layout: &Layout) -> Option<NodeId> {
+fn orphaned_section(layout: &Layout, screen: &[&Node]) -> Option<NodeId> {
+    // A header that carries its own value, such as "Cobalt 0.3.34" closing
+    // a page, is a whole statement and needs nothing under it.
+    let complete = |id: NodeId| {
+        screen.iter().any(|node| {
+            matches!(node, Node::Section { id: own, value: Some(value), .. }
+                if *own == id && !value.is_empty())
+        })
+    };
     let mut nodes = layout.nodes.iter().peekable();
     while let Some(node) = nodes.next() {
-        if !matches!(node.kind, LayoutKind::Section) {
+        if !matches!(node.kind, LayoutKind::Section) || complete(node.id) {
             continue;
         }
         match nodes.peek() {
@@ -15343,17 +15510,20 @@ fn tones_used(layout: &Layout) -> usize {
             | LayoutKind::ActivityBytes
             | LayoutKind::ActivityFailure
             | LayoutKind::FieldNote(false) => muted = true,
-            LayoutKind::Card
-            | LayoutKind::Tile(..)
-            | LayoutKind::Overlay
-            | LayoutKind::SelectionBar => surface = true,
+            LayoutKind::Card | LayoutKind::Overlay | LayoutKind::SelectionBar => surface = true,
             LayoutKind::Toggle(..) => {}
             LayoutKind::Banner(BannerLevel::Attention)
             | LayoutKind::NavDestinationSelected(..)
             | LayoutKind::Chip(_, true)
             | LayoutKind::Button(_, ControlState::Enabled, Emphasis::Primary) => inverted = true,
             // Spacers and the scrim draw nothing at all, so they spend no ink.
-            LayoutKind::Spacer | LayoutKind::Scrim { .. } | LayoutKind::Band => {}
+            // Nor does a tile's own cell: its mark, name and outline are
+            // counted as what they are. Counted as a surface, every launcher
+            // page past the first was warned of a fifth ink it never drew.
+            LayoutKind::Spacer
+            | LayoutKind::Scrim { .. }
+            | LayoutKind::Band
+            | LayoutKind::Tile(..) => {}
             _ => ink = true,
         }
     }
@@ -15390,7 +15560,12 @@ fn collect_nodes<'a>(
             // A slot's contents are a node like any other and must be checked
             // like one. Walking only cards would let an undrawable glyph or a
             // missing picture ride into a band unexamined.
-            Node::Band { slots, .. } => {
+            Node::Band { id, slots, .. } => {
+                // Slots past the cap are not drawn, so a fourth button was
+                // lost without a word. Said here so a check catches it.
+                if slots.len() > MAX_BAND_SLOTS {
+                    issues.push(limit_issue(*id, "band slots", slots.len(), MAX_BAND_SLOTS));
+                }
                 for slot in slots.iter().take(MAX_BAND_SLOTS) {
                     collect_nodes(&slot.nodes, depth + 1, collected, issues);
                 }
@@ -17714,6 +17889,14 @@ fn paint_layout(
             }
             LayoutKind::BackgammonBoard => draw_backgammon_board(surface, node.rect, metrics, clip),
             LayoutKind::MorrisBoard => draw_morris_board(surface, node.rect, metrics, clip),
+            LayoutKind::SelectionRing => stroke_rounded_clipped(
+                surface,
+                node.rect,
+                node.rect.width / 2,
+                palette.emphasis(),
+                metrics.rule_thickness() * 2,
+                clip,
+            ),
             // A key is the field it is printed on, with no rule at all. The
             // gaps between the keys separate them, which is how a keyboard has
             // always been read, and it takes forty-five outlines off the panel.
@@ -18367,6 +18550,10 @@ fn paint_layout(
             }
             LayoutKind::InlineGlyph(glyph, true) => {
                 draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::PAPER);
+            }
+            LayoutKind::HeldGlyph(glyph) => {
+                let shapes = vector::held(glyph).unwrap_or_else(|| vector::shapes(glyph));
+                draw_vector(surface, &shapes, node.rect, clip, tone::INK);
             }
             LayoutKind::TileGlyphMuted(glyph) => {
                 draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::MUTED);
@@ -19365,6 +19552,44 @@ fn draw_step_marks(
         }
         x += mark + gap;
     }
+}
+
+/// How wide a tile's name may be set.
+///
+/// Inset from the cell's edges, so a name is not run into its neighbour's.
+/// A tile with no outline has no edge to keep clear of, though, and a single
+/// word too wide for the inset width, such as "Backgammon" at the largest
+/// text sizes, may use the whole cell rather than be broken.
+fn tile_label_width(label: &str, cell: i32, inset: i32, size: FontSize, outlined: bool) -> i32 {
+    let inner = max_i32(1, cell - inset * 2);
+    if outlined {
+        return inner;
+    }
+    let widest = label
+        .split_whitespace()
+        .map(|word| measure_text(word, size).0)
+        .max()
+        .unwrap_or(0);
+    if widest > inner {
+        max_i32(1, cell)
+    } else {
+        inner
+    }
+}
+
+/// A tile's name in at most `lines` lines, broken only between words.
+///
+/// A name with a word wider than the tile is shortened on one line with an
+/// ellipsis rather than split part way through the word, which read as two
+/// words on the launcher.
+fn tile_label_lines(label: &str, width: i32, size: FontSize, lines: usize) -> Vec<String> {
+    let breaks_a_word = label
+        .split_whitespace()
+        .any(|word| measure_text(word, size).0 > width);
+    if breaks_a_word {
+        return vec![one_line(label, width, size)];
+    }
+    wrap_text(&clamp_lines(label, width, size, lines), width, size)
 }
 
 /// The size a tile's name is drawn at, which has to be the size it was wrapped
