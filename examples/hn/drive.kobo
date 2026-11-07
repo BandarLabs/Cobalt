@@ -77,18 +77,23 @@ shot hn-show
 tap Top
 wait-for 1 of
 tap-id story-0
+wait-for Discussion
+wait-idle 30000
+# The live top story may have no replies to fold or only one page of
+# comments, so these steps act only when the thread has them.
 maybe-tap-id fold-0
 wait-idle
 clean
 shot hn-thread-folded
 maybe-tap-id fold-0
 wait-idle
-tap-id thread-next
-wait-for 2 of
+maybe-tap-id thread-next
+wait-idle
 clean
 shot hn-thread-page-2
-tap-id thread-back
-wait-for 1 of
+maybe-tap-id thread-back
+wait-idle
+wait-for Discussion
 # Tapping Saved in the discussion takes it off the list again.
 expect Saved
 tap Saved
