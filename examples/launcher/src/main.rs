@@ -183,13 +183,11 @@ impl Launcher {
                     opening(&entry.name),
                     entry.label,
                     entry.glyph,
-                    move |tile: Tile| {
-                        if busy {
-                            tile.with_caption("Resume")
-                        } else {
-                            tile
-                        }
-                    },
+                    // Every tile carries a caption line, blank but for the
+                    // one left running. A grid reserves the line for all its
+                    // tiles once any has one, so a caption that came and went
+                    // moved the whole grid each time an app was left open.
+                    move |tile: Tile| tile.with_caption(if busy { "Resume" } else { " " }),
                 )
             }),
         )
@@ -405,6 +403,11 @@ impl KoboApp for Launcher {
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == action_id("home") {
+            // Apps tapped while already on Apps goes to its first page, as
+            // the tab a reader is on does everywhere else.
+            if matches!(self.view, View::Home) {
+                self.page = 0;
+            }
             self.view = View::Home;
             self.show(context);
             return;
@@ -1182,6 +1185,147 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Names of catalog apps long enough to test a tile at large sizes.
+    const LONG_NAMES: [&str; 4] = ["Backgammon", "Flashcards", "Kitchen card", "Nonograms"];
+
+    /// The runtime's answer listing `names` as installed apps.
+    fn installed(names: &[&str]) -> DeviceResult {
+        DeviceResult::Apps {
+            entries: names
+                .iter()
+                .map(|name| AppInfo {
+                    id: name.to_lowercase().replace(' ', "-"),
+                    title: (*name).to_owned(),
+                    label: (*name).to_owned(),
+                    summary: "An app.".to_owned(),
+                    version: "1.0.0".to_owned(),
+                    minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    glyph: Glyph::App,
+                    capabilities: Vec::new(),
+                    installed_version: Some("1.0.0".to_owned()),
+                })
+                .collect(),
+        }
+    }
+
+    /// Each tile name on every page, as the panel draws it at `metrics`,
+    /// with [`LONG_NAMES`] installed.
+    fn drawn_names(metrics: DisplayMetrics) -> Vec<Vec<String>> {
+        let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+        runner.start();
+        let mut screen = painted(runner.device_result(installed(&LONG_NAMES)));
+        let mut names = Vec::new();
+        loop {
+            let layout = kobo_ui::with_text_scale(metrics.text_scale, || {
+                screen.layout_with(&metrics, &Chrome::with_back(false))
+            });
+            names.extend(
+                layout
+                    .nodes
+                    .iter()
+                    .filter(|node| matches!(node.kind, LayoutKind::TileLabel))
+                    .map(|node| node.text_lines.clone()),
+            );
+            match repainted(runner.action(action_id("next"))) {
+                Some(next) if next != screen => screen = next,
+                _ => break,
+            }
+        }
+        names
+    }
+
+    #[test]
+    fn no_tile_name_is_broken_part_way_through_a_word_at_any_text_size() {
+        let labels: Vec<&str> = tiled()
+            .iter()
+            .map(|entry| entry.label)
+            .chain(LONG_NAMES)
+            .collect();
+        for scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            for lines in drawn_names(metrics) {
+                let joined = lines.join(" ");
+                assert!(
+                    labels.contains(&joined.as_str()) || joined.ends_with('\u{2026}'),
+                    "{scale:?}: {lines:?} splits a word"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_page_of_the_grid_raises_a_layout_warning() {
+        // Every page past the first used to be warned of a fifth ink, counted
+        // from tile cells that draw nothing of their own.
+        let mut runner = AppRunner::with_metrics(Launcher::default(), CLARA_BW_METRICS);
+        runner.start();
+        let mut screen = painted(runner.device_result(installed(&LONG_NAMES)));
+        loop {
+            let issues = screen
+                .diagnostics(&CLARA_BW_METRICS, &Chrome::with_back(false))
+                .issues;
+            assert!(issues.is_empty(), "{issues:?}");
+            match repainted(runner.action(action_id("next"))) {
+                Some(next) if next != screen => screen = next,
+                _ => break,
+            }
+        }
+    }
+
+    #[test]
+    fn leaving_an_app_running_moves_no_tile_on_home() {
+        let tiles = |screen: &kobo_sdk::Screen| {
+            screen
+                .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::TileLabel))
+                .map(|node| node.rect)
+                .collect::<Vec<_>>()
+        };
+        let mut runner = AppRunner::new(Launcher::default());
+        let before = tiles(&painted(runner.start()));
+        runner.action(action_id(&opening(ENTRIES[STORE].name)));
+        let after = tiles(&painted(runner.lifecycle(Lifecycle::Background)));
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn tapping_apps_while_on_apps_goes_back_to_its_first_page() {
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Default,
+            ..CLARA_BW_METRICS
+        };
+        let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: (0..12)
+                .map(|index| AppInfo {
+                    id: format!("app-{index}"),
+                    title: format!("App {index}"),
+                    label: format!("App {index}"),
+                    summary: "An app.".to_owned(),
+                    version: "1.0.0".to_owned(),
+                    minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    glyph: Glyph::App,
+                    capabilities: Vec::new(),
+                    installed_version: Some("1.0.0".to_owned()),
+                })
+                .collect(),
+        });
+        runner.action(action_id("next"));
+        assert_eq!(
+            runner.app().page,
+            1,
+            "the grid has a second page to turn to"
+        );
+        runner.action(action_id("home"));
+        assert_eq!(runner.app().page, 0);
     }
 
     #[test]

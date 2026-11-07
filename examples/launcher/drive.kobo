@@ -4,10 +4,15 @@
 wait-for Cobalt
 expect App Store
 expect Terminal
+expect Apps
+expect Books
+expect Settings
+expect Kobo reader
 wait-for 1 of
 shot launcher-home
 tap-id next
 wait-for 2 of
+shot launcher-page-two
 tap-id previous
 wait-for 1 of
 # A Store app's starting screen says what it reaches for in words.
@@ -18,3 +23,36 @@ expect-missing Uses network
 shot launcher-starting-brief
 tap Back
 wait-for Cobalt
+expect-missing Starting
+# The Settings tab starts Settings and says what it changes, with the same
+# way back if it never takes the panel.
+tap-id settings
+wait-for Starting
+expect Changes the device's Wi-Fi and Bluetooth radios.
+shot launcher-starting-settings
+tap Back
+wait-for Cobalt
+# The Apps tab is the grid itself, on the page it was left at.
+tap-id home
+wait-for Cobalt
+maybe-tap-id previous
+wait-for 1 of
+expect App Store
+# Opening an app and coming back: the simulator runs only the launcher, so
+# going behind and returning stands in for the app taking the panel. The
+# list is back at once, and the app left open is marked Resume.
+tap Terminal
+wait-for Starting
+expect Runs commands on this device.
+lifecycle background
+lifecycle foreground
+wait-for Resume
+expect-missing Starting
+expect App Store
+shot launcher-resume
+# Every page turns forward to the last app in the catalogue.
+tap-paged Verses
+wait-for Starting
+tap Back
+wait-for Cobalt
+expect Verses
