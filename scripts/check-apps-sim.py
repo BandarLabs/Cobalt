@@ -168,6 +168,25 @@ def route_directive(route):
     return options
 
 
+def shard_of(apps, shard):
+    """The apps one CI job runs when the sweep is split across several.
+
+    Every route of every app takes most of an hour on one runner, so CI runs
+    the sweep as a few jobs at once. `shard` is "K/N": the Kth of N jobs takes
+    every Nth app starting at the Kth, which spreads the slow games and readers
+    across the jobs instead of handing one job a run of them.
+    """
+    if shard is None:
+        return apps
+    match = re.fullmatch(r'(\d+)/(\d+)', shard)
+    if match is None:
+        raise ValueError(f'--shard must be K/N, not {shard!r}')
+    index, count = int(match.group(1)), int(match.group(2))
+    if not 1 <= index <= count:
+        raise ValueError(f'--shard {shard}: K must be between 1 and N')
+    return apps[index - 1::count]
+
+
 def app_directory(app):
     return next((ROOT / group / app for group in ('apps', 'examples')
                  if (ROOT / group / app).is_dir()), None)
@@ -290,6 +309,8 @@ def main():
                         help='keep simulator state here instead of deleting it after the run')
     parser.add_argument('--route', type=Path,
                         help='drive script to run instead of the app default')
+    parser.add_argument('--shard', metavar='K/N',
+                        help='run only the Kth of N even slices of the apps, for parallel CI jobs')
     parser.add_argument('--all-routes', action='store_true',
                         help='also run every drive-*.kobo, as its "# sweep:" first line asks')
     args = parser.parse_args()
@@ -310,7 +331,10 @@ def main():
     unknown = set(args.apps) - set(catalog) - set(built_ins)
     if unknown:
         parser.error('unknown apps: ' + ', '.join(sorted(unknown)))
-    apps = list(dict.fromkeys(args.apps or catalog))
+    try:
+        apps = shard_of(list(dict.fromkeys(args.apps or catalog)), args.shard)
+    except ValueError as error:
+        parser.error(str(error))
     out = args.out.resolve()
     if out in ROOT.parents:
         parser.error('--out must not contain the repository')

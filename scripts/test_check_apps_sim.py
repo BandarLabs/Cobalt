@@ -14,6 +14,18 @@ SPEC.loader.exec_module(runner)
 
 
 class SimulatorRunnerTests(unittest.TestCase):
+    def test_shards_split_the_apps_evenly_and_together_cover_every_app_once(self):
+        apps = [f'app{n}' for n in range(10)]
+        shards = [runner.shard_of(apps, f'{k}/3') for k in (1, 2, 3)]
+        self.assertEqual(shards[0], ['app0', 'app3', 'app6', 'app9'])
+        self.assertEqual(sorted(sum(shards, [])), sorted(apps))
+        self.assertEqual(runner.shard_of(apps, None), apps)
+
+    def test_a_shard_outside_its_count_or_badly_written_is_refused(self):
+        for shard in ('0/3', '4/3', '2', 'a/b'):
+            with self.assertRaises(ValueError):
+                runner.shard_of(['app'], shard)
+
     def run_fixture(self, startup_failure=False):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
