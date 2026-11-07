@@ -346,7 +346,9 @@ fn the_end_of_the_music_is_news_and_a_damaged_page_or_import_is_an_error() {
         banners(&stand.stand()),
         [(BannerLevel::Info, "Last page.".to_owned())]
     );
-    assert!(stand.page_load.is_some(), "the page is read again");
+    *stand.state_mut("score-a") = ScoreState::default();
+    stand.advance(&mut context);
+    assert!(stand.page_load.is_some(), "the next half is read");
     stand.advance_page(
         &mut context,
         &StoreResult::Denied(kobo_sdk::StoreError::Missing),
@@ -446,4 +448,63 @@ fn the_setlist_adds_from_the_library_under_a_name_the_library_does_not_use() {
     assert!(format!("{:?}", screen(&runner)).contains("Add scores"));
     runner.app_mut().view = View::Picker;
     assert!(format!("{:?}", screen(&runner)).contains("Add from library"));
+}
+
+/// The last page used to be read again after the notice was set, and the
+/// finished read cleared the notice, so neither "Last page." nor "End of the
+/// setlist." was ever on the panel long enough to see.
+#[test]
+fn turning_past_the_end_keeps_the_page_and_says_so_until_the_next_turn() {
+    let mut stand = on_the_stand();
+    *stand.state_mut("score-a") = ScoreState {
+        page: 2,
+        bottom_half: true,
+        ..ScoreState::default()
+    };
+    let mut context = Context::default();
+    stand.advance(&mut context);
+    assert!(
+        stand.page_load.is_none(),
+        "the page on the stand is not read again"
+    );
+    assert!(stand.page.is_some(), "the last page stays on the stand");
+    assert_eq!(
+        banners(&stand.stand()),
+        [(BannerLevel::Info, "Last page.".to_owned())]
+    );
+    stand.previous(&mut context);
+    assert!(banners(&stand.stand()).is_empty());
+
+    stand.setlists.push(Setlist {
+        name: "Gig".to_owned(),
+        entries: vec!["score-a".to_owned()],
+    });
+    stand.open_setlist = Some(0);
+    stand.setlist_position = Some(0);
+    stand.page = Some(TilePicture::new(PAGE_HANDLE, 1654, 2339));
+    stand.page_load = None;
+    *stand.state_mut("score-a") = ScoreState {
+        page: 2,
+        bottom_half: true,
+        ..ScoreState::default()
+    };
+    stand.advance(&mut context);
+    assert!(stand.page_load.is_none());
+    assert_eq!(
+        banners(&stand.stand()),
+        [(BannerLevel::Info, "End of the setlist.".to_owned())]
+    );
+}
+
+/// The renderer never enlarges a picture, so a Staff width crop of a page no
+/// wider than the panel used to draw the staves smaller than the whole page.
+#[test]
+fn staff_width_grows_a_narrow_crop_to_the_panel_and_leaves_a_wide_one_alone() {
+    let zoomed = ScoreState {
+        zoomed: true,
+        ..ScoreState::default()
+    };
+    assert_eq!(zoomed_size(zoomed, 714, 868, 1072), Some((1072, 1303)));
+    assert_eq!(zoomed_size(zoomed, 1102, 1403, 1072), None);
+    assert_eq!(zoomed_size(ScoreState::default(), 1072, 868, 1072), None);
 }
