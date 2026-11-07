@@ -21,3 +21,25 @@ type 475425
 expect 475425
 clean
 shot stacks-user-id-typed
+# The user ID leads to the key, typed hidden and counted.
+tap Continue
+wait-for Step 2 of 3
+expect Account key
+expect Use computer
+clean
+shot stacks-key-step
+tap-id credential.enter
+wait-idle
+type abc
+expect 3 characters entered
+expect-missing abc
+# Saved with the reader offline, the last step says so over the
+# collection list rather than waiting for ever.
+scenario offline
+tap Save
+wait 15000
+wait-for Step 3 of 3
+expect not on Wi-Fi
+expect Try again
+clean
+shot stacks-collections-offline
