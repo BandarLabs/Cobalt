@@ -176,6 +176,20 @@ pub const FINE_TYPE_VERSION: u8 = 18;
 /// existed, and a frame at an earlier protocol that names one is refused.
 pub const APP_MARK_VERSION: u8 = 18;
 
+/// The protocol whose runtime keeps notices: [`Message::Notices`], sent to
+/// the launcher, and [`DeviceRequest::MarkNoticesRead`],
+/// [`DeviceRequest::ClearNotices`] and [`DeviceRequest::OpenNotice`], which
+/// only the launcher may send. Also the bell, [`Glyph::Bell`], it opens them
+/// with.
+///
+/// All on tags of their own, so the version did not move. The runtime sends
+/// the list only to the launcher, which ships with it, and the launcher sends
+/// nothing back, nor draws the bell, until a list has arrived: a launcher
+/// newer than the runtime it finds itself under, which is what an update
+/// applied mid-session leaves behind, never sends a frame that runtime would
+/// refuse.
+pub const NOTICES_VERSION: u8 = 18;
+
 pub const VERSION: u8 = 18;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
@@ -184,7 +198,13 @@ pub const UPDATE_TASK_VERSION: u8 = 14;
 /// Version with persistent selected grid cells, retained for installed apps.
 pub const SELECTED_GRID_VERSION: u8 = 13;
 mod board;
+mod notices;
 mod pencil;
+
+pub use notices::{
+    Notice, NoticeList, NoticeTarget, MAX_NOTICES, MAX_NOTICE_DETAIL_LEN, MAX_NOTICE_HEADING_LEN,
+    MAX_NOTICE_TITLE_LEN,
+};
 
 /// Opt-in simulator callback boundary carried in an ordinary debug log frame.
 /// It does not add a wire tag or authorize any runtime operation.
@@ -960,6 +980,10 @@ pub enum Message {
     DropFont {
         handle: FontHandle,
     },
+    /// The runtime's notices, sent to the launcher when it starts and again
+    /// whenever the list changes. Unsolicited, like [`Self::CoverChanged`].
+    /// Requires [`NOTICES_VERSION`].
+    Notices(NoticeList),
 }
 
 /// The most bytes carried in one direction of a terminal in a single message.
@@ -1501,6 +1525,15 @@ pub enum DeviceRequest {
         kind: kobo_ui::FieldKind,
         save_as: Option<SecretTarget>,
     },
+    /// Mark every notice read: the owner has opened the list. Launcher only;
+    /// requires [`NOTICES_VERSION`].
+    MarkNoticesRead,
+    /// Forget every notice. Launcher only; requires [`NOTICES_VERSION`].
+    ClearNotices,
+    /// Open what one notice names, such as the article that arrived, in the
+    /// application that reads it. Launcher only; requires
+    /// [`NOTICES_VERSION`].
+    OpenNotice { id: u64 },
 }
 
 /// Where the runtime keeps a secret typed into a [`DeviceRequest::TypeText`]
@@ -2507,6 +2540,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             payload.extend_from_slice(bytes);
         }
         Message::DropFont { handle } => push_u32(&mut payload, handle.0),
+        Message::Notices(list) => notices::push_list(&mut payload, list, frame.version)?,
         Message::PrepareSuspend { generation } => push_u64(&mut payload, *generation),
         Message::ScheduledWake { occurrence } => push_u64(&mut payload, *occurrence),
         Message::Resume { generation, reason } => {
@@ -3130,6 +3164,14 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
             Ok((24, length))
         }
         Message::DropFont { .. } => Ok((25, 4)),
+        Message::Notices(_) if version < NOTICES_VERSION => {
+            Err(ProtocolError::UnsupportedVersion(version))
+        }
+        Message::Notices(list) => {
+            let mut encoded = Vec::new();
+            notices::push_list(&mut encoded, list, version)?;
+            Ok((41, encoded.len()))
+        }
     }
 }
 
@@ -3378,6 +3420,19 @@ fn encode_device_request(
             return Err(ProtocolError::InvalidValue("library id"));
         }
         DeviceRequest::ListAudio => output.push(53),
+        DeviceRequest::MarkNoticesRead
+        | DeviceRequest::ClearNotices
+        | DeviceRequest::OpenNotice { .. }
+            if version < NOTICES_VERSION =>
+        {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::MarkNoticesRead => output.push(57),
+        DeviceRequest::ClearNotices => output.push(58),
+        DeviceRequest::OpenNotice { id } => {
+            output.push(59);
+            push_u64(output, *id);
+        }
         DeviceRequest::ReadAudioDetail => output.push(55),
         DeviceRequest::SetAudioSpeed { percent } => {
             output.push(56);
@@ -3822,6 +3877,9 @@ fn decode_device_request(
         56 if version >= AUDIOBOOK_VERSION => Ok(DeviceRequest::SetAudioSpeed {
             percent: reader.u16()?,
         }),
+        57 if version >= NOTICES_VERSION => Ok(DeviceRequest::MarkNoticesRead),
+        58 if version >= NOTICES_VERSION => Ok(DeviceRequest::ClearNotices),
+        59 if version >= NOTICES_VERSION => Ok(DeviceRequest::OpenNotice { id: reader.u64()? }),
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -5844,6 +5902,9 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         25 => Message::DropFont {
             handle: FontHandle(reader.u32()?),
         },
+        41 if version >= NOTICES_VERSION => {
+            Message::Notices(notices::read_list(&mut reader, version)?)
+        }
         tag @ (37..=40) if version >= SUSPEND_VERSION => {
             let generation = reader.u64()?;
             if generation == 0 {

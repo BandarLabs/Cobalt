@@ -4064,6 +4064,7 @@ fn host_applications(
                         | Message::StoreResult(_)
                         | Message::CoverChanged { .. }
                         | Message::PageTurn { .. }
+                        | Message::Notices(_)
                         | Message::ShellEvent(_) => {
                             return Err(format!(
                                 "{} sent a runtime-only message",
