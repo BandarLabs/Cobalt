@@ -1,0 +1,109 @@
+# sweep: after-main
+# The feed the main route followed: its list pages, an article reads to its
+# end and counts as read, search narrows the list, and everything opens again
+# with the network gone and after a restart.
+wait-for Feeds
+expect NASA Science
+tap NASA Science
+wait-for unread of 10 articles
+expect Search articles
+expect 1 of 2
+tap-id list-next
+wait-for 2 of 2
+clean
+shot feed-page-2
+tap-id list-back
+wait-for 1 of 2
+tap-id item-0
+wait-idle 20000
+clean
+shot article
+# Page turns to the end of the article; the reader says when there is no more.
+page next
+wait-idle
+page next
+wait-idle
+page next
+wait-idle
+page next
+wait-idle
+page next
+wait-idle
+page next
+wait-idle
+page next
+wait-idle
+page next
+wait-idle
+wait-for This is the end
+clean
+shot article-end
+tap Back
+wait-idle
+wait-for 9 unread of 10 articles
+clean
+shot feed-after-reading
+# Searching one feed's saved articles, and a search that finds nothing.
+tap Search articles
+wait-for Words in the title, author or article
+type zzqxv
+tap Search
+wait-for No saved articles match this search.
+expect Results for zzqxv
+expect Change search
+clean
+shot feed-search-empty
+tap Back
+wait-for 9 unread of 10 articles
+expect Search articles
+tap Back
+wait-idle
+# Search saved looks through every feed's saved articles at once.
+tap Search saved
+wait-for Words in the title, author or article
+type nasa
+tap Search
+wait-idle 10000
+wait-for Results for nasa
+expect NASA Science
+clean
+shot saved-search
+tap Clear
+wait-for Ready offline
+restart
+wait-for Ready offline
+expect NASA Science
+scenario offline
+tap NASA Science
+wait-for 9 unread of 10 articles
+tap-id item-1
+wait-idle 20000
+clean
+shot article-offline
+tap Back
+wait-idle
+wait-for 8 unread of 10 articles
+# Refreshing with no network keeps the articles and says why.
+tap Refresh
+wait-idle 30000
+wait 5000
+wait-for Wi-Fi
+expect 8 unread of 10 articles
+clean
+shot feed-refresh-offline
+tap Back
+wait-idle
+tap Refresh all
+wait-idle 30000
+wait 5000
+clean
+shot shelf-refresh-offline
+expect NASA Science
+scenario normal
+tap NASA Science
+wait-for unread of 10 articles
+tap Unfollow
+wait-for No feeds yet
+expect-missing Ready offline
+clean
+shot unfollowed

@@ -115,8 +115,53 @@ pub fn results(bytes: &[u8]) -> Result<Vec<Found>, InvalidResponse> {
     // address matches what was asked for, which is a better guess at what
     // somebody meant than the order a crawler happened to find things in.
     found.sort_by(|left, right| right.0.total_cmp(&left.0));
-    found.truncate(MAX_RESULTS);
-    Ok(found.into_iter().map(|(_, entry)| entry).collect())
+    let mut kept: Vec<Found> = Vec::new();
+    for (_, entry) in found {
+        let twin = kept.iter().find(|earlier| {
+            earlier.title == entry.title
+                && earlier.site == entry.site
+                && earlier.summary == entry.summary
+        });
+        match twin {
+            // A site that offers the same articles as RSS and as Atom shows up
+            // twice under one name. Either works the same here, so only the
+            // better-ranked one is offered.
+            Some(earlier) if is_format(&earlier.url) && is_format(&entry.url) => {}
+            // Two different feeds that would read alike are told apart by
+            // where they are.
+            Some(_) => kept.push(Found {
+                summary: clamp(&format!(
+                    "{} \u{00b7} {}",
+                    entry.summary,
+                    path_of(&entry.url)
+                )),
+                ..entry
+            }),
+            None => kept.push(entry),
+        }
+    }
+    kept.truncate(MAX_RESULTS);
+    Ok(kept)
+}
+
+/// Whether a feed address is the whole site in some format rather than one
+/// section of it: /rss.xml, /atom.xml, /feed/, /index.xml and the like.
+fn is_format(url: &str) -> bool {
+    let path = path_of(url).trim_matches('/').to_ascii_lowercase();
+    if path.contains('/') {
+        return false;
+    }
+    let stem = path.split('.').next().unwrap_or_default();
+    matches!(
+        stem,
+        "" | "rss" | "rss2" | "atom" | "feed" | "feeds" | "index"
+    )
+}
+
+/// The part of an address after its host, "/" when there is none.
+fn path_of(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    rest.find('/').map_or("/", |at| &rest[at..])
 }
 
 /// The first of several fields that has anything in it.
@@ -257,6 +302,33 @@ mod tests {
         ] {
             assert!(results(bytes).is_err(), "{bytes:?}");
         }
+    }
+
+    #[test]
+    fn the_same_feed_offered_as_rss_and_as_atom_is_listed_once() {
+        let found = results(
+            br#"[
+            {"url":"https://xkcd.com/rss.xml","title":"xkcd.com","site_url":"https://xkcd.com","item_count":4,"score":24},
+            {"url":"https://xkcd.com/atom.xml","title":"xkcd.com","site_url":"https://xkcd.com","item_count":4,"score":16}
+        ]"#,
+        )
+        .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].url, "https://xkcd.com/rss.xml");
+    }
+
+    #[test]
+    fn two_different_feeds_that_would_read_alike_are_told_apart_by_their_path() {
+        let found = results(
+            br#"[
+            {"url":"https://example.com/feed/","title":"Example","site_url":"https://example.com","item_count":10,"score":24},
+            {"url":"https://example.com/comments/feed/","title":"Example","site_url":"https://example.com","item_count":10,"score":16}
+        ]"#,
+        )
+        .unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].summary, "10 articles");
+        assert_eq!(found[1].summary, "10 articles \u{00b7} /comments/feed/");
     }
 
     #[test]
