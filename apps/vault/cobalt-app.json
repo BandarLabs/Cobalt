@@ -4,8 +4,8 @@
   "short_label": "Vault",
   "summary": "Browse your notes by folder, tag, link, and backlink. Needs your computer.",
   "page_description": "Keep a searchable copy of your note library ready to read on your Kobo.",
-  "version": "0.1.12",
-  "release_notes": "Vault now has an icon of its own, a padlock.",
+  "version": "0.1.13",
+  "release_notes": "Search results now say what you searched for and show the words around each match, and opening a result goes straight to the page that holds them.",
   "glyph": "lock",
   "capabilities": [],
   "setup": {
