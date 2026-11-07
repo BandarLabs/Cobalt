@@ -1,0 +1,9 @@
+# sweep: --bare --seed-root apps/paperterm/fixtures/unreadable
+# A saved pairing that cannot be read is said on the first screen, and
+# setup starts again from there.
+wait-for Terminal sessions
+expect Saved pairing could not be read. You can enter it again.
+clean
+shot unreadable-pairing
+tap Connect a computer
+wait-for Pair once

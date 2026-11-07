@@ -28,6 +28,11 @@ const OFF_AIR: &str = "Connection lost. Reconnecting.";
 /// Said instead of [`OFF_AIR`] until the computer has answered once: nothing
 /// was lost, and the usual reason is that no session is being shared yet.
 const NOT_YET: &str = "Not connected yet. On your computer, run kobo stream terminal. After a first pairing, reopen Cobalt once.";
+/// Said instead of [`NOT_YET`] for a pairing saved on an earlier run. The
+/// computer confirmed it then, so the first-pairing advice to reopen Cobalt
+/// would send the owner round a step they have already taken.
+const NOT_ANSWERING: &str =
+    "Your computer is not answering. On it, run kobo stream terminal and leave it open.";
 /// The computer answered and turned the code away. Never put down to the
 /// network or the address, which are both fine when this is what happened.
 const CODE_REFUSED: &str = "Your computer did not accept this pairing code. Run kobo stream init on it, or choose Pairing to enter the code again.";
@@ -100,6 +105,8 @@ impl Input {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Reached {
     Never,
+    /// Confirmed on an earlier run and saved, but not reached on this one.
+    Saved,
     Before,
 }
 
@@ -230,7 +237,9 @@ impl Paperterm {
             self.view,
             View::Welcome | View::Setup | View::Trust | View::Start | View::Preview
         ) {
-            let next = if action == action_id("trust") {
+            let next = if action == ActionId::BACK {
+                self.back_to()
+            } else if action == action_id("trust") {
                 Some(View::Trust)
             } else if action == action_id("start") {
                 Some(View::Start)
@@ -258,7 +267,19 @@ impl Paperterm {
         false
     }
     fn show(&self, context: &mut Context) {
-        context.set_screen(self.screen());
+        context.set_screen(self.screen().with_own_back(self.back_to().is_some()));
+    }
+    /// Where the top bar's back arrow goes from the help steps, the preview
+    /// and the Pairing menu: the same place their own Back or Return button
+    /// goes. The arrow used to do nothing on these screens.
+    fn back_to(&self) -> Option<View> {
+        match self.view {
+            View::Setup | View::Preview => Some(View::Welcome),
+            View::Trust => Some(View::Setup),
+            View::Start => Some(View::Trust),
+            View::PairingMenu => Some(self.menu_return),
+            _ => None,
+        }
     }
     fn connection_label(&self) -> String {
         let mut label = self.session_label();
@@ -530,6 +551,7 @@ impl Paperterm {
             TaskError::Unauthorized => CODE_REFUSED,
             TaskError::Offline => READER_OFFLINE,
             _ if self.reached == Reached::Before => OFF_AIR,
+            _ if self.reached == Reached::Saved => NOT_ANSWERING,
             _ => NOT_YET,
         }
     }
@@ -571,8 +593,10 @@ impl Paperterm {
     fn pairing_menu(&self) -> Screen {
         let message = if self.pairing_read == PairingRead::Temporary {
             Some("This connection will not be remembered. Reopen Paperterm to retry reading your saved pairing.")
-        } else if self.pairing_to_verify {
+        } else if self.pairing_to_verify && self.pairing_saved.is_some() {
             Some("Waiting for this computer to confirm pairing. Your saved connection has not been changed.")
+        } else if self.pairing_to_verify {
+            Some("Waiting for this computer to confirm pairing. It is saved once confirmed.")
         } else if self.pairing_writing.is_some() {
             Some("Saving pairing…")
         } else if self.pairing_save_failed {
@@ -620,6 +644,11 @@ impl Paperterm {
             return true;
         }
         if self.view == View::PairingMenu {
+            let action = if action == ActionId::BACK {
+                action_id("return-session")
+            } else {
+                action
+            };
             if action == action_id(RETRY_PAIRING)
                 && self.pairing_save_failed
                 && !self.pairing_to_verify
@@ -1126,6 +1155,8 @@ impl KoboApp for Paperterm {
         {
             self.address = address;
             self.code = code;
+            // Only a pairing the computer confirmed is ever saved.
+            self.reached = Reached::Saved;
             self.view = View::Watching;
             self.keyboard_open = false;
             self.hello(context);
@@ -1552,6 +1583,64 @@ mod tests {
         assert_eq!(app.connection_label(), "Not connected");
         let shown = format!("{:?}", app.screen());
         assert!(!shown.contains("Connection lost"), "{shown}");
+    }
+    #[test]
+    fn a_saved_pairing_that_cannot_reach_its_computer_does_not_give_first_pairing_advice() {
+        let mut app = Paperterm::default();
+        let mut context = Context::default();
+        app.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: PAIRING.into(),
+                value: Some(b"laptop:9332\nabc234".to_vec()),
+            },
+        );
+        assert_eq!(app.view, View::Watching);
+        let lease = app.lease_task.expect("a lease request");
+        app.on_task(
+            &mut context,
+            lease,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        assert_eq!(app.failure.as_deref(), Some(NOT_ANSWERING));
+        assert_eq!(app.connection_label(), "Not connected");
+        let shown = format!("{:?}", app.screen());
+        assert!(!shown.contains("reopen Cobalt"), "{shown}");
+    }
+    #[test]
+    fn a_first_pairing_menu_does_not_mention_a_saved_connection() {
+        let mut app = Paperterm {
+            view: View::PairingMenu,
+            address: "laptop:9332".to_owned(),
+            pairing_read: PairingRead::Available,
+            pairing_to_verify: true,
+            ..Paperterm::default()
+        };
+        let shown = format!("{:?}", app.screen());
+        assert!(shown.contains("Waiting for this computer"), "{shown}");
+        assert!(!shown.contains("saved connection"), "{shown}");
+        app.pairing_saved = Some("old:9332\nabc234".to_owned());
+        let shown = format!("{:?}", app.screen());
+        assert!(
+            shown.contains("saved connection has not been changed"),
+            "{shown}"
+        );
+    }
+    #[test]
+    fn the_back_arrow_walks_the_help_steps_and_leaves_the_pairing_menu() {
+        let mut app = Paperterm {
+            view: View::Start,
+            ..Paperterm::default()
+        };
+        let mut context = Context::default();
+        for expected in [View::Trust, View::Setup, View::Welcome] {
+            app.on_action(&mut context, ActionId::BACK);
+            assert_eq!(app.view, expected);
+        }
+        app.view = View::PairingMenu;
+        app.menu_return = View::Ended;
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.view, View::Ended);
     }
     #[test]
     fn a_refused_code_is_named_as_the_code_whatever_has_happened_before() {
