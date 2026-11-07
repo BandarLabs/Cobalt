@@ -810,10 +810,15 @@ impl Books {
             return self.place(context, handle, key, || thumb);
         }
         let key = format!("preview:{}", document.id);
+        // The first line is left blank because the tile's percent read sits
+        // in that corner, and drawn over the opening words it hid the start
+        // of the title. Every preview tile leaves it, read or not, so their
+        // first lines still line up across a shelf.
+        let preview = format!("\n{}", document.preview);
         self.place(context, handle, key, || Thumb {
             width,
             height,
-            grey: document_preview(&document.preview, document.kind.badge(), width, height),
+            grey: document_preview(&preview, document.kind.badge(), width, height),
         })
     }
 
@@ -1101,7 +1106,10 @@ impl Books {
         document: &Document,
         bytes: &[u8],
     ) {
-        if bytes.is_empty() {
+        // An EPUB is a zip. One that is not, a download cut short or a file
+        // renamed by mistake, used to open as its own bytes set as prose.
+        let not_a_book = document.kind == Kind::Epub && !bytes.starts_with(b"PK\x03\x04");
+        if bytes.is_empty() || not_a_book {
             self.book.close(context);
             self.open_title = None;
             self.view = View::Unreadable(index);
@@ -2026,6 +2034,59 @@ mod tests {
         assert!(
             text.contains("Market Street"),
             "the shared reader did not show the HTML: {text}"
+        );
+    }
+
+    /// A file called .epub that is not a zip is a download cut short or a
+    /// file renamed by mistake. It says it could not be opened rather than
+    /// showing its bytes set as prose.
+    #[test]
+    fn an_epub_that_is_not_a_zip_says_it_could_not_be_opened() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        answer_start(&mut runner, None, None, None);
+        let bytes = b"Chapter one\nIt was not a book at all.".to_vec();
+        let size = u32::try_from(bytes.len()).expect("a small file");
+        let _listed = runner.device_result(DeviceResult::Library {
+            entries: vec![entry("0/odd.epub", "odd", 1, size, true)],
+            truncated: false,
+        });
+        let _described = runner.device_result(DeviceResult::LibraryDocument {
+            id: "0/odd.epub".to_owned(),
+            bytes: bytes.clone(),
+        });
+        let _opening = runner.action(action_id("book-0"));
+        let screen = shown(runner.device_result(DeviceResult::LibraryDocument {
+            id: "0/odd.epub".to_owned(),
+            bytes,
+        }));
+        assert_eq!(runner.app().view, View::Unreadable(0));
+        let text = words(&screen);
+        assert!(text.contains("could not be opened"), "{text}");
+        assert!(!text.contains("not a book at all"), "{text}");
+    }
+
+    /// Back to the book, from the marking list, puts the controls away too,
+    /// so the next page key turns the page. It used to come back with the
+    /// Aa panel open over the page.
+    #[test]
+    fn back_to_the_book_from_the_marking_list_leaves_the_page_bare() {
+        let mut runner = AppRunner::with_metrics(Books::seeded(), CLARA_BW_METRICS);
+        runner.start();
+        let _reading = open(&mut runner, Kind::Epub);
+        let _controls = runner.action(action_id(kobo_read::action::CONTROLS));
+        let _marking = runner.action(action_id(kobo_read::action::MARKING));
+        assert_eq!(
+            runner.app().book.reader().map(kobo_read::Reader::chrome),
+            Some(kobo_read::Chrome::Marking)
+        );
+        // The list's own Back to the book, which the shared reader names
+        // apart from the control that opens the Aa panel.
+        let _back = runner.action(action_id(kobo_read::action::BOOK));
+        assert_eq!(
+            runner.app().book.reader().map(kobo_read::Reader::chrome),
+            Some(kobo_read::Chrome::Hidden),
+            "Back to the book opened the controls"
         );
     }
 

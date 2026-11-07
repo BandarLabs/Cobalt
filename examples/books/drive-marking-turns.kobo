@@ -1,0 +1,21 @@
+# Back to the book, from the list of paragraphs to mark, goes back to the
+# book: the controls are put away and the page key turns the page.
+wait-for River
+tap River
+wait-for Marker 1
+tap-id reader-controls
+wait-for Page 1 of
+tap-id reader-marking
+wait-for Tap a paragraph to mark it
+tap Marker 2
+wait-for Marked: Marker 2
+tap Back to the book
+wait-idle
+expect-missing Page 1 of
+page next
+expect-missing reading marker 1.
+shot books-turned-after-marking
+# A tap on the side of the page turns it too.
+tap-id reader-forward
+wait-idle
+expect-missing reading marker 4.
