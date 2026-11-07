@@ -179,17 +179,27 @@ impl Frame {
         if let Some(picture) = self.picture {
             return self.frame_screen(picture);
         }
+        // A shelf where nothing opens is said once, on the splash, with the
+        // way to look again after a push. A banner over it and another under
+        // it used to repeat the same sentence three times.
+        if self.photos_all_unreadable() && !self.loading_selected() {
+            return screen
+                .splash(
+                    Some(Glyph::App),
+                    "No photograph can be opened",
+                    format!(
+                        "{} could not be read. Push the album again from your computer.",
+                        count_of(self.unreadable.len(), "photo", "photos")
+                    ),
+                )
+                .bottom_action(CHECK, "Check for photos")
+                .build();
+        }
         let index = self.settings.position % self.photos.len().max(1) + 1;
         screen =
             screen.section_with_value("Photographs", format!("{index} of {}", self.photos.len()));
         if self.loading_selected() {
             screen = screen.activity("Opening this photograph", None);
-        } else if self.photos_all_unreadable() {
-            screen = screen.splash(
-                Some(Glyph::App),
-                "No photograph can be opened",
-                "Re-push the album from your computer.",
-            );
         } else {
             screen = screen
                 .secondary("This photograph could not be opened.")
@@ -473,7 +483,7 @@ impl Frame {
         self.picture = None;
         self.notice = Some(error);
         if self.photos_all_unreadable() {
-            self.notice = Some("No photo on this shelf can be read. Re-push the album.".to_owned());
+            self.notice = None;
             self.view = View::Home;
             return;
         }
@@ -960,6 +970,12 @@ impl KoboApp for Frame {
         } else if action == action_id(PREVIOUS) {
             self.advance(context, false);
         } else if action == action_id(CHECK) {
+            // After a push of the same files the list can come back unchanged,
+            // so a shelf where nothing opened tries its photos again as well.
+            if self.photos_all_unreadable() {
+                self.unreadable.clear();
+                self.start_current(context);
+            }
             self.reload_shelf(context);
         } else if action == action_id(MENU) {
             self.overlay = self.picture.is_some();
@@ -1638,6 +1654,57 @@ mod tests {
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner
+    }
+
+    fn all_unreadable() -> Frame {
+        Frame {
+            startup: Startup {
+                manifest_loaded: true,
+                state_loaded: true,
+                started: true,
+            },
+            photos: vec![
+                photo("photo-aaaaaaaaaaaaaaaa", 1),
+                photo("photo-bbbbbbbbbbbbbbbb", 2),
+            ],
+            unreadable: ["photo-aaaaaaaaaaaaaaaa", "photo-bbbbbbbbbbbbbbbb"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            panel_width: CLARA_BW_METRICS.width as u32,
+            panel_height: CLARA_BW_METRICS.height as u32,
+            ..Frame::default()
+        }
+    }
+
+    #[test]
+    fn a_shelf_where_nothing_opens_says_so_once_and_offers_to_check_for_photos() {
+        let home = all_unreadable().home(&Context::default());
+        let banners = home
+            .nodes
+            .iter()
+            .filter(|node| matches!(node, kobo_ui::Node::Banner { .. }))
+            .count();
+        assert_eq!(banners, 0);
+        let text = format!("{home:?}");
+        assert_eq!(text.matches("could not be read").count(), 1);
+        assert!(text.contains("2 photos could not be read"));
+        let metrics = CLARA_BW_METRICS;
+        let layout = home.diagnostics(&metrics, &Chrome::measuring(true));
+        assert!(layout.layout.rect_of_action(action_id(CHECK)).is_some());
+    }
+
+    #[test]
+    fn checking_for_photos_on_a_shelf_where_nothing_opened_tries_them_again() {
+        let mut frame = all_unreadable();
+        let mut context = Context::default();
+        frame.on_action(&mut context, action_id(CHECK));
+        assert!(frame.unreadable.is_empty());
+        assert!(frame.photo_load.is_some(), "the photo was not read again");
+        assert!(
+            frame.manifest_load.is_some(),
+            "the shelf was not read again"
+        );
     }
 
     #[test]

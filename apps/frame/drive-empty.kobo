@@ -3,5 +3,24 @@
 expect Frame
 wait-for Your frame is empty
 expect kobo frame
+expect Check for photos
 clean
 shot empty
+# Checking with nothing pushed keeps the same empty page.
+tap Check for photos
+wait-idle
+wait-for Your frame is empty
+# Settings are in the bar even before there is a photo.
+tap Settings
+wait-for Change the photo every
+expect Frame mode
+tap Back
+wait-for Your frame is empty
+# After a push, Check for photos brings the photo up without leaving Frame.
+companion frame push scripts/fixtures/frame/lighthouse.jpg --sim
+tap Check for photos
+wait-for-id next
+wait-idle
+expect-missing Your frame is empty
+clean
+shot empty-then-photo
