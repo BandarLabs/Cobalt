@@ -412,7 +412,20 @@ impl Reader {
         let screen = self.shelf_prefix(notice.as_ref());
         let listed = self.listed();
         if listed.is_empty() {
-            let (heading, detail) = self.tab.nothing_here();
+            // Under a failure on the banner, "No unread articles" is a guess:
+            // the list is empty because nothing arrived, not because nothing
+            // is there.
+            let failed = notice
+                .as_ref()
+                .is_some_and(|(level, _)| *level != BannerLevel::Info);
+            let (heading, detail) = if failed {
+                (
+                    "Nothing on this reader yet",
+                    "Articles show here after a sync that works.",
+                )
+            } else {
+                self.tab.nothing_here()
+            };
             return screen.splash(Some(Glyph::Rss), heading, detail).build();
         }
         let rows = self.shelf_rows(context, &listed);
@@ -486,7 +499,13 @@ impl Reader {
         let pages = context.paginate_rows(&rows, false);
         let page = self.page.min(pages.len().saturating_sub(1));
         let mut screen = ScreenBuilder::new("rss-miniflux").top_bar("Suggested feeds");
-        if let Some((level, notice)) = &self.notice {
+        // The answer to Check again on the connect screen stays there: over
+        // this list it read as news about the feeds.
+        if let Some((level, notice)) = self
+            .notice
+            .as_ref()
+            .filter(|(_, notice)| notice != NO_ACCOUNT_YET)
+        {
             screen = screen.banner(*level, notice.clone());
         }
         screen = screen.rows(pages.get(page).into_iter().flatten().map(|&index| {
@@ -1365,6 +1384,35 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn suggested_feeds_do_not_repeat_the_connect_screens_no_account_answer() {
+        let app = Reader {
+            view: Some(View::Directory),
+            notice: Some((BannerLevel::Attention, NO_ACCOUNT_YET.to_owned())),
+            ..Reader::default()
+        };
+        let context = kobo_sdk::AppRunner::new(Reader::default()).context();
+        let drawn = format!("{:?}", app.directory(&context));
+        assert!(!drawn.contains(NO_ACCOUNT_YET), "{drawn}");
+    }
+
+    #[test]
+    fn an_empty_tab_under_a_failed_sync_does_not_claim_there_is_nothing_unread() {
+        let app = Reader {
+            server: "https://flux.example".into(),
+            credential: "miniflux".into(),
+            notice: Some((
+                BannerLevel::Attention,
+                "Could not sync. It did not answer.".into(),
+            )),
+            ..Reader::default()
+        };
+        let context = kobo_sdk::AppRunner::new(Reader::default()).context();
+        let drawn = format!("{:?}", app.shelf(&context));
+        assert!(!drawn.contains("No unread articles"), "{drawn}");
+        assert!(drawn.contains("Nothing on this reader yet"), "{drawn}");
+    }
+
     #[test]
     fn suggested_feeds_return_to_their_entry_point_without_losing_the_list_page() {
         for origin in [View::Shelf, View::Settings] {
