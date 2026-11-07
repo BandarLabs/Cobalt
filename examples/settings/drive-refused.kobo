@@ -1,0 +1,28 @@
+# A reading the runtime refuses is said where it was asked for, with Read
+# again on its banner, and Read again brings the page back once allowed.
+wait-for Settings
+scenario permission-denied
+tap-paged Battery
+wait-for Cobalt did not allow Settings to do that.
+expect Read again
+expect 72%
+shot settings-battery-refused
+scenario normal
+tap Read again
+wait-idle
+expect-missing Cobalt did not allow Settings to do that.
+expect Discharging
+# The refusal belongs to Battery and is not repeated on other pages.
+tap-id 4294967295
+wait-for Settings
+expect-missing Cobalt did not allow Settings to do that.
+scenario permission-denied
+tap-paged Model and versions
+wait-for Cobalt did not allow Settings to do that.
+expect Read again
+shot settings-about-refused
+scenario normal
+tap Read again
+wait-for Simulated Kobo Clara BW
+expect-missing Cobalt did not allow Settings to do that.
+expect From your computer

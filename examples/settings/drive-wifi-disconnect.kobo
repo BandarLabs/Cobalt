@@ -1,0 +1,14 @@
+# Leaving a network has to show at once on both lines that name it: the
+# switch line and the network's own row.
+wait-for Settings
+tap Wi-Fi
+wait-for Library Guest
+tap Library Guest
+wait-for Connected to Library Guest
+wait-for Tap to disconnect
+tap-paged Tap to disconnect
+wait-for Not connected
+wait-idle
+shot settings-wifi-disconnect
+expect-state /wifi#/connected null
+expect-missing Tap to disconnect

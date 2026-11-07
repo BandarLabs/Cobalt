@@ -1,0 +1,10 @@
+# The radio's first scan after the page opens answers with what it had,
+# which can be nothing, and the list fills on the next scan five seconds
+# later. Until a scan has had the chance to find something the page should
+# still say it is looking, not that there are no networks.
+wait-for Settings
+tap Wi-Fi
+wait-for Not connected
+wait-idle
+shot settings-wifi-first-scan
+expect-missing No networks found.
