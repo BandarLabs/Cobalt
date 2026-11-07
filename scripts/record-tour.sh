@@ -23,6 +23,9 @@
 #
 # - The reader is in Cobalt on the launcher, charging, with Lichess not in the
 #   middle of a game (finish or abort it), so Play the computer starts afresh.
+#   Lichess remembers the last side and clock chosen, so the script picks White
+#   and No clock itself: a saved Black or Random would turn the board round and
+#   every square below would be the wrong one.
 # - The opening moves are fixed: e4, Nf3, Bc4. They stay legal whatever the
 #   computer answers in its first two moves: no black piece can reach f3, e2
 #   or d3 that soon, a black pawn on c4 is simply taken, and the pawns on d2
@@ -44,7 +47,7 @@ OUT=""
 SECONDS_TOTAL=170
 FPS=2
 
-usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -75,6 +78,8 @@ LICHESS="870,325"
 CROSSWORD="536,1015"
 PLAY_COMPUTER="536,454"
 START_GAME="536,759"
+SIDE_WHITE="870,404"
+NO_CLOCK="201,629"
 # Board squares are 122 px from a1 at the bottom left (109,1207).
 E2="597,1085"; E4="597,841"; G1="841,1207"; F3="719,963"; F1="719,1207"; C4="353,841"
 
@@ -83,7 +88,18 @@ tap() { "$KOBO" tap --device "$DEVICE" "$@" | grep -v '^tapped' || true; }
 # The reader would sleep halfway through a take otherwise.
 "$KOBO" session --device "$DEVICE" --hold 10 > /dev/null 2>&1 &
 HOLD=$!
-trap 'kill "$HOLD" 2>/dev/null || true' EXIT INT TERM
+RECORDER=""
+# The hold is let go however the script ends. Interrupting it also stops the
+# recorder and the taps, rather than letting the rest of the tour play out on
+# a reader somebody has just reached for.
+release() { kill "$HOLD" 2>/dev/null || true; }
+interrupted() {
+    [ -z "$RECORDER" ] || kill "$RECORDER" 2>/dev/null || true
+    echo "interrupted; the take in $OUT is incomplete" >&2
+    exit 130
+}
+trap release EXIT
+trap interrupted INT TERM
 
 tap "$APPS_TAB"
 sleep 3
@@ -96,6 +112,8 @@ tap "$NEXT_PAGE"; sleep 2
 tap "$NEXT_PAGE"; sleep 2
 tap "$LICHESS"; sleep 3
 tap "$PLAY_COMPUTER"; sleep 2
+tap "$SIDE_WHITE"; sleep 1
+tap "$NO_CLOCK"; sleep 1
 tap "$START_GAME"; sleep 3
 # A move is two taps: the piece, then where it goes. The pause after each
 # move is the computer's answer, which takes a few seconds on this reader.
