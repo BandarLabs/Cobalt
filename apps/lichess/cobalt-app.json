@@ -3,8 +3,8 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.23",
-  "release_notes": "Lichess now has an icon of its own, a chess knight.",
+  "version": "1.0.24",
+  "release_notes": "Offering the computer a draw no longer leaves the game menu open, a missed puzzle names its move as the board writes it and stays with that puzzle, and Pairing keeps the right time while a search is cancelled.",
   "glyph": "chess-white-knight",
   "capabilities": [
     "network",
@@ -21,7 +21,7 @@
         }
       },
       {
-        "text": "On the reader, open Lichess, tap Account/Games, then Connect Lichess, and type the token."
+        "text": "On the reader, open Lichess, tap Your games, then Connect Lichess, and type the token."
       },
       {
         "text": "Or install the token from a computer. Set up the reader once over USB, if you have not already.",

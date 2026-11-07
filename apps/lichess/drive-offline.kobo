@@ -1,0 +1,68 @@
+# sweep: --bare
+# A reader with no network: puzzles cannot download, and an account key
+# typed on the reader is kept but cannot be checked.
+expect Play the computer
+scenario offline
+tap Puzzles
+wait-for Download 32 puzzles
+expect No puzzles yet. Download a set to solve them offline.
+expect-missing Resume puzzle
+tap Download 32 puzzles
+wait-for This reader is not on a network. Join Wi-Fi and try again.
+expect Download 32 puzzles
+expect-missing Downloading
+clean
+shot puzzles-offline
+tap Back
+wait-for Play the computer
+# Playing the computer needs no network.
+tap-id play-computer
+wait-for Start game
+tap-id computer-side-white
+tap-id start-computer
+wait-for White · Your move
+tap Back
+wait-for Resume your game
+tap-id play
+wait-for Connect Lichess
+tap Connect Lichess
+wait-for Account key
+# The computer route names the command to run there.
+tap Use computer
+wait-for kobo secret set lichess
+expect Check again
+clean
+shot connect-computer
+tap Back
+wait-for Account key
+# Typing the key: it is hidden as a count until Show is tapped.
+tap Enter account key
+wait-for Save
+type lip
+expect 3 characters entered
+expect-missing lip
+clean
+shot connect-typing
+tap Show
+expect lip
+tap Save
+# Saved, the key is checked, and offline the check says why it failed.
+wait-for This reader is not on a network. Join Wi-Fi and try again.
+expect Your games
+expect Challenge player
+expect Refresh
+expect-missing Connect Lichess
+clean
+shot account-offline
+tap Back
+wait-for Resume your game
+tap-id play-online
+wait-for Account error
+tap-id seek-10-0
+wait-idle
+wait-for Account error
+# Once the check has failed, the screen says so rather than still asking
+# the owner to wait for Ready.
+expect-missing Tap a time again when the top line says Ready.
+clean
+shot seek-offline
