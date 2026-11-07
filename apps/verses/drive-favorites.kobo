@@ -1,0 +1,73 @@
+# Favourites: a poem marked from its page is filed at the top of the shelf,
+# survives a restart, and comes off again. A long poem turns its pages.
+wait-for-id poem-menu
+wait-idle 3000
+tap Browse
+wait-for Poems
+expect-missing Favorites
+tap-paged The Tiger
+wait-for Tiger, tiger, burning bright
+expect William Blake · 1794
+# The Tiger is longer than one page at every size; the side turns it on and
+# back, and the source line closes the last page.
+expect-missing From Songs of Innocence
+clean
+shot tiger-first-page
+tap-id poem-next
+wait-idle
+expect Did He who made the lamb make thee?
+expect From Songs of Innocence and of Experience
+clean
+shot tiger-last-page
+tap-id poem-previous
+wait-idle
+expect Could frame thy fearful symmetry?
+# The heart is in the poem's panel, opened from the middle of the page, and
+# fills when the poem is a favourite.
+tap-id poem-menu
+wait-for Make a quote card
+tap Favorite
+wait-idle
+expect Remove favorite
+clean
+shot tiger-favourite
+tap Back
+wait-idle
+tap Back
+wait-for Favorites
+expect The Tiger
+clean
+shot browse-favourites
+# A favourite is written to the reader, so it is still there after a restart.
+restart
+wait-for-id poem-menu
+wait-idle 3000
+tap Browse
+wait-for Favorites
+expect The Tiger
+# Removing it from the poem takes it off the shelf.
+tap The Tiger
+wait-for Tiger, tiger, burning bright
+tap-id poem-menu
+wait-for Make a quote card
+tap Remove favorite
+wait-idle
+expect Favorite
+tap Back
+wait-idle
+tap Back
+wait-for Poems
+expect-missing Favorites
+# A favourite the reader would not write stays as it was: the banner says
+# so, and the heart does not claim a change that was never kept.
+tap-paged The Lamb
+wait-for Little lamb, who made thee?
+scenario storage-full
+tap-id poem-menu
+wait-for Make a quote card
+tap Favorite
+wait-for would not keep that favourite
+expect-missing Remove favorite
+clean
+shot favourite-refused
+scenario normal
