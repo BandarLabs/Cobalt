@@ -97,3 +97,86 @@ shot add-mistyped
 tap Back
 wait-for Followed tags
 expect Ready offline: 2 works
+
+# Following a tag is typed on the reader's keyboard and joins the list.
+tap Followed tags
+tap-id add-tag
+wait-for Follow an AO3 tag
+type opera
+tap Follow
+wait-for Tag followed
+expect Public Domain Fairy Tales
+expect opera
+clean
+shot tag-followed
+
+# Without a network every request says how to fix it rather than hanging.
+scenario offline
+tap opera
+wait-for Newest works in this tag on AO3
+tap The Borrowed Compass
+wait-for Join Wi-Fi
+clean
+shot lookup-offline
+# Back from a failed lookup returns to the tag it was opened from.
+tap Back
+wait-for Newest works in this tag on AO3
+expect The Borrowed Compass
+tap Shelf
+wait-for Followed tags
+tap The Clockwork Garden
+wait-for Download new chapters
+tap Download new chapters
+wait-for Join Wi-Fi
+clean
+shot download-offline
+tap-id more
+tap Check for new chapters
+wait-for Join Wi-Fi
+expect New chapters found
+tap Shelf
+tap Updates
+tap Update all
+wait-for This reader is not on Wi-Fi. Join Wi-Fi, then tap Update all again.
+clean
+shot update-all-offline
+scenario normal
+
+# Removing the downloaded copies keeps the works and their reading places,
+# and the shelf stops claiming anything is ready offline.
+tap Shelf
+tap Manage
+tap Remove downloaded copies
+wait-for Remove 2 downloaded copies?
+tap-id remove-copies
+wait-for Removed 2 copies
+expect 0 on the reader
+clean
+shot manage-removed
+tap Shelf
+wait-for Nothing is ready offline yet
+expect The Clockwork Garden
+expect not downloaded
+clean
+shot shelf-removed
+
+# The shelf, the removal and the new tag survive the app closing.
+restart
+wait-for Fanshelf
+expect Nothing is ready offline yet
+expect A Field Guide to Small Hours
+tap Followed tags
+wait-for opera
+tap Shelf
+
+# Dates read the way a person says them, not as ISO stamps.
+tap The Clockwork Garden
+wait-for Chapters 13
+shot work-dates
+expect-missing 2026-09-01
+tap Shelf
+tap Followed tags
+tap opera
+wait-for Newest works in this tag on AO3
+shot feed-dates
+expect-missing 2026-09-02

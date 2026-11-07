@@ -4,8 +4,8 @@
   "short_label": "Fanshelf",
   "summary": "Save public AO3 works to a shelf made for offline reading.",
   "page_description": "Add AO3 works to a shelf, download them as EPUB and read them offline on your Kobo. Check works in progress for new chapters and follow tags. Fanshelf is unofficial and not affiliated with the Organization for Transformative Works.",
-  "version": "0.3.12",
-  "release_notes": "Fanshelf now has an icon of its own, a heart.",
+  "version": "0.3.13",
+  "release_notes": "You can now remove a work from the shelf and unfollow a tag. Dates read the way you would say them, and a lookup or Update all without Wi-Fi now says so.",
   "glyph": "heart",
   "capabilities": [
     "network"
