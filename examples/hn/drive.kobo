@@ -19,6 +19,9 @@ wait-for Save
 clean
 shot hn-thread
 tap Save
+# The article comes from the story's own site, which can take well over ten
+# seconds on a shared runner; Saved shows once it is stored or has failed.
+wait-idle 60000
 wait-for Saved
 tap Back
 wait-for 1 of
@@ -102,6 +105,9 @@ wait-for 1 of
 tap-id story-1
 wait-for Save
 tap Save
+# The article comes from the story's own site, which can take well over ten
+# seconds on a shared runner; Saved shows once it is stored or has failed.
+wait-idle 60000
 wait-for Saved
 tap Back
 wait-for 1 of
