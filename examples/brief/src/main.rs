@@ -419,6 +419,17 @@ fn site_of(url: &str) -> String {
     host.strip_prefix("www.").unwrap_or(host).to_string()
 }
 
+/// A spoken moment set inside a sentence: "today, 07:31" rather than
+/// "Today, 07:31". Dates such as "3 Nov" are left as they are.
+fn mid_sentence(said: &str) -> String {
+    for word in ["Today", "Yesterday"] {
+        if let Some(rest) = said.strip_prefix(word) {
+            return format!("{}{rest}", word.to_lowercase());
+        }
+    }
+    said.to_owned()
+}
+
 fn clean(text: &str) -> String {
     text.replace(['\t', '\n', '\r'], " ")
 }
@@ -450,6 +461,13 @@ impl Brief {
         if let Some(note) = &self.note {
             screen = screen.text(note.clone());
         }
+        // A refresh over a saved brief reports its progress above the list,
+        // where the pages are measured under it. Set after the last story it
+        // was never measured, and on a full page it pushed the panel past
+        // its foot.
+        if !self.stories.is_empty() && self.fetching != Fetching::Nothing {
+            screen = screen.activity(self.collecting(), Some(self.collected_percent()));
+        }
         // No count of stories or sites and no heading over the list. The line
         // above already names the list and the numbers down the side count the
         // stories; a band of facts and a heading saying the same again cost a
@@ -465,6 +483,31 @@ impl Brief {
     /// keeps the button.
     fn refresh_in_bar(&self) -> bool {
         !self.stories.is_empty() && self.failure.is_none() && self.fetching == Fetching::Nothing
+    }
+
+    /// Whether Refresh or Try again is the button pinned to the foot. While
+    /// a refresh runs there is neither, so the list may use that room.
+    fn refresh_at_foot(&self) -> bool {
+        self.fetching == Fetching::Nothing && !self.refresh_in_bar()
+    }
+
+    /// How far the refresh has got, counted in stories.
+    fn collecting(&self) -> String {
+        let (done, total) = self.collected();
+        format!("Collecting stories, {done} of {total}")
+    }
+
+    fn collected(&self) -> (u64, u64) {
+        let done =
+            u64::try_from(self.building.iter().filter(|slot| slot.is_some()).count()).unwrap_or(0);
+        // A count, not a byte count: `transfer` captions itself in bytes
+        // and would print "3 B of 6 B" for three stories out of six.
+        (done, self.building.len().max(1) as u64)
+    }
+
+    fn collected_percent(&self) -> u8 {
+        let (done, total) = self.collected();
+        u8::try_from(done.saturating_mul(100) / total).unwrap_or(100)
     }
 
     /// How the brief's stories divide into pages.
@@ -485,7 +528,7 @@ impl Brief {
         let highest = u16::try_from(self.stories.len()).unwrap_or(u16::MAX);
         let pages = context.paginate_ranked_rows_under(
             &borrowed,
-            !self.refresh_in_bar(),
+            self.refresh_at_foot(),
             highest,
             kobo_sdk::Position::AtTheFoot,
             &self.brief_prefix(context).build(),
@@ -581,7 +624,7 @@ impl Brief {
             // one control on the screen, off the screen. Over a list of
             // stories Refresh is in the top bar instead, and the foot is left
             // to the headlines.
-            if !self.refresh_in_bar() {
+            if self.refresh_at_foot() {
                 screen = screen.bottom_action_marked(
                     REFRESH,
                     if self.failure.is_some() {
@@ -592,23 +635,15 @@ impl Brief {
                     Glyph::Refresh,
                 );
             }
-        } else {
+        } else if self.stories.is_empty() {
             // A bar against a known total, not a spinner: the count of stories
             // is fixed, so an indeterminate animation would be claiming the end
             // is unknowable when it is six. Every frame of movement is a panel
             // refresh besides, so the bar is redrawn only as each story lands.
-            let done = u64::try_from(self.building.iter().filter(|slot| slot.is_some()).count())
-                .unwrap_or(0);
-            // A count, not a byte count: `transfer` captions itself in bytes
-            // and would print "3 B of 6 B" for three stories out of six.
-            let total = self.building.len().max(1) as u64;
-            let percent = u8::try_from(done.saturating_mul(100) / total).unwrap_or(100);
+            // Over a saved brief the same bar sits above the list instead.
             screen = screen
                 .spacer(Space::Medium)
-                .activity(
-                    format!("Collecting stories, {done} of {total}"),
-                    Some(percent),
-                )
+                .activity(self.collecting(), Some(self.collected_percent()))
                 .text("You can leave this open. It keeps going.");
         }
         screen.build()
@@ -616,11 +651,22 @@ impl Brief {
 
     /// When this brief was fetched and where from, in one line.
     fn as_of(&self) -> String {
-        match (&self.fetched, self.failure.is_some()) {
-            (Some(fetched), true) => {
-                format!("{} · fetched {fetched}", self.source.label())
-            }
-            (Some(fetched), false) => format!("{} · as of {fetched}", self.source.label()),
+        self.as_of_at(now())
+    }
+
+    /// The same line, said against the clock at `at`: "as of today, 07:31",
+    /// "as of yesterday", "as of 3 Nov". A brief saved before the moment was
+    /// kept in seconds falls back to the time it wrote down.
+    fn as_of_at(&self, at: Option<kobo_sdk::clock::Snapshot>) -> String {
+        let said = self
+            .fetched_at
+            .zip(at)
+            .and_then(|(seconds, at)| kobo_sdk::when::spoken(seconds.saturating_mul(1000), at))
+            .map(|said| mid_sentence(&said))
+            .or_else(|| self.fetched.clone());
+        match (said, self.failure.is_some()) {
+            (Some(said), true) => format!("{} · fetched {said}", self.source.label()),
+            (Some(said), false) => format!("{} · as of {said}", self.source.label()),
             (None, _) => format!("{} · not fetched yet", self.source.label()),
         }
     }
@@ -709,7 +755,12 @@ impl Brief {
             credential: None,
             headers: Vec::new(),
         }) {
-            Some(task) => self.fetching = Fetching::Index(task),
+            Some(task) => {
+                // The last failure is about the last attempt. Left up, it
+                // says the reader is offline while this one is under way.
+                self.failure = None;
+                self.fetching = Fetching::Index(task);
+            }
             None => self.note = Some("Too much already in flight.".to_owned()),
         }
     }
@@ -1740,6 +1791,73 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Try again over a saved brief puts the refresh's progress above the
+    /// list, which is what the pages are measured under, and takes down the
+    /// last failure, which was about the attempt before this one.
+    #[test]
+    fn a_refresh_over_a_saved_brief_fits_the_panel_and_clears_the_last_failure() {
+        for text_scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale,
+                ..kobo_ui::CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(Brief::default(), metrics);
+            let mut context = runner.context();
+            let mut brief = ready();
+            brief.fetched_at = Some(1_789_115_400);
+            brief.failure =
+                Some("The reader is offline. The brief below is the one already saved.".into());
+            brief.stories = (0..STORIES)
+                .map(|index| Story {
+                    id: (8863 + index).to_string(),
+                    title: format!("A headline {index} long enough to wrap on a narrow panel"),
+                    site: "example.org".into(),
+                    ..Story::default()
+                })
+                .collect();
+            brief.on_action(&mut context, action_id(REFRESH));
+            assert!(matches!(brief.fetching, Fetching::Index(_)));
+            assert_eq!(brief.failure, None, "the old failure stayed up");
+            let pages = brief.pages(&context).len();
+            for page in 0..pages {
+                brief.page = page;
+                let diagnostics = brief
+                    .screen(&context)
+                    .diagnostics(&metrics, &kobo_ui::Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{text_scale:?} page {page}: {:?}",
+                    diagnostics.issues
+                );
+            }
+            let _ = runner.context();
+        }
+    }
+
+    /// The line above the stories says the moment the way a person would,
+    /// against the reader's clock, rather than as a log line.
+    #[test]
+    fn the_line_above_the_stories_says_when_the_brief_was_fetched_in_words() {
+        // 6 November 2026, 09:30 UTC.
+        let at = |offset: i16| kobo_sdk::clock::Snapshot {
+            unix_millis: 1_793_957_400_000,
+            monotonic_millis: 0,
+            utc_offset_minutes: offset,
+        };
+        let mut brief = ready();
+        brief.fetched = Some("2026-11-06 08:13".into());
+        brief.fetched_at = Some(1_793_952_780);
+        assert_eq!(
+            brief.as_of_at(Some(at(0))),
+            "Top stories · as of today, 08:13"
+        );
+        brief.fetched_at = Some(1_793_952_780 - 86_400);
+        assert_eq!(brief.as_of_at(Some(at(0))), "Top stories · as of yesterday");
+        brief.fetched_at = Some(1_793_952_780 - 3 * 86_400);
+        brief.failure = Some("The reader is offline.".into());
+        assert_eq!(brief.as_of_at(Some(at(0))), "Top stories · fetched 3 Nov");
     }
 
     /// A linked story opened before the keeper got to it is fetched once,

@@ -1,0 +1,65 @@
+# sweep: --bare
+# A refreshed brief keeps its stories for reading offline, keeps going when
+# the app is put in the background, survives a restart, and a refresh with no
+# network leaves the saved brief in place with a way to try again.
+wait-for Nothing yet
+tap Refresh
+# Leaving mid-refresh does not stop it; the brief is there on return.
+lifecycle background
+wait 3000
+lifecycle foreground
+wait-for as of
+wait-idle 60000
+wait-for Ready offline:
+expect Top stories
+expect 1 of
+clean
+shot brief-ready
+tap-id story-0
+wait-idle 30000
+expect-missing Daily brief
+clean
+shot story
+page next
+wait-idle
+page next
+wait-idle
+tap Back
+wait-for Daily brief
+expect 1 of
+tap-id next
+wait-for 2 of
+clean
+shot brief-page-2
+tap-id previous
+wait-for 1 of
+# Stories still arriving over the live network finish before the restart.
+wait-idle 30000
+restart
+wait-for as of
+expect Ready offline:
+# With the network gone a saved story still opens.
+scenario offline
+tap-id story-0
+wait-idle 30000
+expect-missing Daily brief
+expect-missing could not be opened
+clean
+shot story-offline
+tap Back
+wait-for Daily brief
+tap Refresh
+wait-idle 30000
+wait-for The brief below is the one already saved
+expect fetched
+expect Try again
+expect Ready offline:
+clean
+shot refresh-offline
+scenario normal
+# Refreshing over a saved brief draws its progress under the list, and the
+# whole screen must still fit the panel.
+tap Try again
+wait-idle 60000
+wait-for as of
+expect-missing already saved
