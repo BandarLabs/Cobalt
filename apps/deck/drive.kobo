@@ -69,3 +69,30 @@ tap back
 wait-for This reader is not on Wi-Fi.
 clean
 shot back-to-deck
+# Refresh in the bar asks again, and each way the computer can fail is said
+# in its own words.
+scenario host-down
+tap Refresh
+wait-for Your computer is not answering.
+expect Paired with 192.168.1.20:9331.
+clean
+shot host-down
+scenario network-timeout
+tap Refresh
+wait-for Your computer took too long to answer.
+clean
+shot slow
+# A pad pressed while the computer is away says so, and is not left running.
+scenario host-down
+tap Todo
+wait-for Your computer is not answering.
+expect-missing Still running
+# The pairing is kept when the app starts again.
+restart
+wait-for Todo
+expect Pairing
+expect-missing Preview only
+expect-missing Pair with your computer
+wait-for Paired with 192.168.1.20:9331.
+clean
+shot paired-after-restart

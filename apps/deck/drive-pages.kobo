@@ -1,0 +1,31 @@
+# A deck with two pages and a pad that asks first, pushed to the preview.
+wait-for Todo
+companion deck push --sim --home apps/deck/fixtures/two-pages
+# The preview reads the pushed pads when Deck opens again.
+restart
+wait-for Test
+expect Deploy
+expect Build
+expect-missing Todo
+clean
+shot pages-build
+# Each page has a tab, and the bar names the page showing.
+tap Home
+wait-for Lights
+expect-missing Deploy
+clean
+shot pages-home
+tap Build
+wait-for Deploy
+# A pad tapped in the preview says it is a preview instead of running.
+tap Test
+wait-for Preview only. Pair with your computer to use these pads.
+# Said once: the line under the tabs steps aside while the banner says it.
+expect-missing Pair to run commands.
+clean
+shot pages-preview-press
+# A pad that asks first must not ask to run on a computer that is not paired.
+tap Deploy
+wait-idle
+expect-missing Run this on the paired computer?
+expect Preview only. Pair with your computer to use these pads.

@@ -103,6 +103,10 @@ enum Pending {
     Note(String),
 }
 
+/// Said when a pad is tapped in the preview a push leaves on an unpaired
+/// reader.
+const PREVIEW_PRESS: &str = "Preview only. Pair with your computer to use these pads.";
+
 /// Said when the runtime has no room for one more request just now.
 const STILL_TALKING: &str = "Deck is still waiting on your computer. Tap again in a moment.";
 
@@ -287,11 +291,15 @@ impl App {
             .trouble
             .zip(self.notice.as_deref())
             .is_some_and(|(trouble, notice)| notice == trouble.advice());
-        screen = screen.secondary(if banner_says_why {
-            self.pairing()
-        } else {
-            self.connection()
-        });
+        // A tapped preview pad already says it is a preview in the banner,
+        // so the line saying the same thing steps aside.
+        if self.notice.as_deref() != Some(PREVIEW_PRESS) {
+            screen = screen.secondary(if banner_says_why {
+                self.pairing()
+            } else {
+                self.connection()
+            });
+        }
         // A five-column board rather than the pads shortcut: the shortcut
         // backfills every unassigned place with a blank key, and a reader
         // with three commands saw a wall of ruled boxes that do nothing.
@@ -482,7 +490,7 @@ impl App {
     }
     fn press(&mut self, cx: &mut Context, id: &str, confirmed: bool) {
         if self.address == "local" {
-            self.notice = Some("Preview only. Pair with your computer to use these pads.".into());
+            self.notice = Some(PREVIEW_PRESS.into());
             return;
         }
         let task = cx.spawn(Task::Post {
@@ -762,10 +770,13 @@ impl KoboApp for App {
             // A look that was cancelled while the panel was elsewhere would
             // otherwise leave a deck that never updates again.
             View::Grid if self.task.is_none() => self.poll(cx),
-            // `kobo sidekick init` may have paired this reader while Deck
-            // sat on its pairing screen. Nothing is lost by looking.
+            // `kobo sidekick init` may have paired this reader, or `kobo deck
+            // push` left a preview, while Deck sat on its pairing screen. The
+            // pads come with it: without them a preview opened on an empty
+            // grid until Deck was restarted.
             View::Address if self.previous.is_none() && !self.entry.is_open() => {
                 cx.store().load(PAIRED);
+                cx.store().load_cached(CACHE);
             }
             _ => {}
         }
@@ -928,7 +939,12 @@ impl KoboApp for App {
             }
             for key in &page.keys {
                 if a == action_id(&format!("press-{}", key.id)) {
-                    if key.state == "running" {
+                    if self.address == "local" {
+                        // A preview runs nothing, so a pad that asks first
+                        // has nothing to ask about.
+                        let id = key.id.clone();
+                        self.press(cx, &id, false);
+                    } else if key.state == "running" {
                         self.notice = Some("That command is still running.".into());
                     } else if key.state == "failed" || key.state == "ok" {
                         // A key that has already run opens what it said. It
@@ -1386,6 +1402,71 @@ mod tests {
         };
         assert!(summarise("Deploy", &failed).contains("exit 7"));
         assert!(summarise("Deploy", &failed).contains("read the output"));
+    }
+
+    /// A reader that has never been paired, sitting on the pairing steps.
+    fn unpaired() -> AppRunner<App> {
+        let mut runner = AppRunner::new(App::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: PAIRED.into(),
+            value: None,
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: kobo_sdk::cache_key(super::CACHE),
+            value: None,
+        });
+        runner
+    }
+
+    /// The preview `kobo deck push` leaves on an unpaired reader.
+    fn preview() -> AppRunner<App> {
+        let mut runner = unpaired();
+        runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+        runner.store_result(StoreResult::Loaded {
+            key: PAIRED.into(),
+            value: Some(b"local|preview".to_vec()),
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: kobo_sdk::cache_key(super::CACHE),
+            value: Some(LAYOUT.as_bytes().to_vec()),
+        });
+        runner
+    }
+
+    #[test]
+    fn pads_pushed_while_deck_is_on_the_pairing_steps_are_drawn_when_it_comes_back() {
+        let runner = preview();
+        assert_eq!(runner.app().view, View::Grid);
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert!(
+            drawn.contains("Test") && drawn.contains("Deploy"),
+            "{drawn}"
+        );
+    }
+
+    #[test]
+    fn a_pad_that_asks_first_does_not_ask_to_run_in_a_preview() {
+        let mut runner = preview();
+        let commands = runner.action(action_id("press-deploy"));
+        assert_eq!(runner.app().confirming, None);
+        assert!(
+            started(&commands).is_none(),
+            "the preview started something"
+        );
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert!(
+            !drawn.contains("Run this on the paired computer?"),
+            "{drawn}"
+        );
+    }
+
+    #[test]
+    fn a_tapped_preview_pad_says_it_is_a_preview_once() {
+        let mut runner = preview();
+        runner.action(action_id("press-test"));
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert_eq!(drawn.matches("Preview only").count(), 1, "{drawn}");
     }
 
     #[test]
