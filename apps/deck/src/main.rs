@@ -488,11 +488,30 @@ impl App {
             self.pending = Some(Pending::Poll);
         }
     }
+    /// Lets go of whatever the deck was waiting on, so a press or a result
+    /// read is the one request it tracks.
+    ///
+    /// The deck holds one task at a time. Starting another over the top used
+    /// to forget the first without stopping it: a look at a computer that had
+    /// gone away kept trying to connect long after the banner said so, and a
+    /// wait between looks finished into nothing.
+    fn drop_outstanding(&mut self, cx: &mut Context) {
+        if let Some(task) = self.task.take() {
+            cx.cancel(task);
+        }
+        // A finished key whose output was still being read is read again on
+        // the next look, so its line under the deck is not lost.
+        if let Some(Pending::Note(id)) = self.pending.take() {
+            self.watching.get_or_insert(id);
+        }
+    }
+
     fn press(&mut self, cx: &mut Context, id: &str, confirmed: bool) {
         if self.address == "local" {
             self.notice = Some(PREVIEW_PRESS.into());
             return;
         }
+        self.drop_outstanding(cx);
         let task = cx.spawn(Task::Post {
             url: format!("https://{}/deck/press?token={}", self.address, self.code),
             body: format!("{{\"key\":\"{id}\",\"confirmed\":{confirmed}}}"),
@@ -522,6 +541,7 @@ impl App {
         self.pending = Some(Pending::Press(id.to_owned()));
     }
     fn result(&mut self, cx: &mut Context, id: &str) {
+        self.drop_outstanding(cx);
         let task = cx.spawn(Task::Fetch {
             url: format!(
                 "https://{}/deck/result?key={id}&token={}",
@@ -669,8 +689,8 @@ impl App {
             .save(PAIRED, format!("{}|{}", self.address, self.code));
         self.view = View::Grid;
         // Whatever was in flight belongs to the old pairing.
-        self.task = None;
-        self.pending = None;
+        self.drop_outstanding(cx);
+        self.watching = None;
         self.poll(cx);
     }
 
@@ -860,10 +880,10 @@ impl KoboApp for App {
                 self.trouble = Some(trouble);
                 // Still worth looking again, but not immediately: a computer
                 // that is not there answers a request a second just as fast
-                // as it answers none.
-                if matches!(pending, Some(Pending::Poll | Pending::Wait)) {
-                    self.wait(cx);
-                }
+                // as it answers none. After a press or a result read too:
+                // the deck used to stop looking there, and its banner stayed
+                // up after the computer came back until Refresh was tapped.
+                self.wait(cx);
                 if let Some(Pending::Press(id)) = pending {
                     if let Some(key) = self
                         .deck
@@ -1113,6 +1133,67 @@ mod tests {
             runner.app().view,
             View::Grid,
             "the note must not drag the reader off the grid"
+        );
+    }
+
+    #[test]
+    fn a_pad_pressed_between_looks_stops_the_wait_rather_than_leaving_it_running() {
+        let (mut runner, _) = paired();
+        let waiting = in_flight(&runner).expect("the deck is waiting between looks");
+        let commands = runner.action(action_id("press-test"));
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Cancel(task) if *task == waiting)),
+            "the wait was left running under the press"
+        );
+        assert!(matches!(started(&commands), Some(Task::Post { .. })));
+    }
+
+    #[test]
+    fn after_a_press_the_computer_did_not_answer_the_deck_keeps_looking_for_it() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("press-test"));
+        let post = in_flight(&runner).expect("the press went out");
+        let commands = runner.task_outcome(post, TaskOutcome::Failed(TaskError::Unreachable));
+        assert!(runner
+            .app()
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("Your computer is not answering.")));
+        assert_eq!(
+            started(&commands),
+            Some(Task::Sleep {
+                seconds: BETWEEN_LOOKS
+            }),
+            "the deck stopped looking for its computer"
+        );
+        // The next look that lands takes the banner down.
+        let waiting = in_flight(&runner).expect("waiting to look again");
+        runner.task_outcome(waiting, TaskOutcome::Completed(Vec::new()));
+        let poll = in_flight(&runner).expect("looked again");
+        runner.task_outcome(poll, TaskOutcome::Completed(LAYOUT.as_bytes().to_vec()));
+        assert_eq!(runner.app().trouble, None);
+        assert_eq!(runner.app().notice, None);
+    }
+
+    #[test]
+    fn a_new_pairing_lets_go_of_the_request_still_out_to_the_old_computer() {
+        let (mut runner, _) = paired();
+        let waiting = in_flight(&runner).expect("the deck is waiting between looks");
+        runner.task_outcome(waiting, TaskOutcome::Completed(Vec::new()));
+        let old_look = in_flight(&runner).expect("a look at the old computer is out");
+        runner.action(action_id("repair"));
+        runner.action(action_id("enter-address"));
+        runner.app_mut().view = View::Code;
+        let mut context = kobo_sdk::Context::default();
+        runner.app_mut().submitted(&mut context, "abc234");
+        let commands = context.take_commands();
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Cancel(task) if *task == old_look)),
+            "the old computer was still being dialled"
         );
     }
 
