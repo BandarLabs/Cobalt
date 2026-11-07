@@ -134,6 +134,9 @@ struct Chat {
     pages_back: usize,
     /// A copy being prepared for the paired computer, when asked for one.
     export: Option<Export>,
+    /// Whether the saved choice of service has been read back, so replies
+    /// saved without their writer are signed with the right one.
+    chosen_known: bool,
 }
 
 impl Chat {
@@ -243,8 +246,8 @@ impl Chat {
                 [(NEW, "New conversation"), (EXPORT, "Save a copy")],
             );
         }
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        if let Some((level, notice)) = self.notice() {
+            screen = screen.banner(level, notice);
         }
 
         // Nothing scrolls on this panel, so a long transcript is paged
@@ -417,9 +420,6 @@ impl Chat {
         }
     }
 
-    /// Whether the last thing that happened was a question that never got an
-    /// answer, which is the only situation where resending is what the reader
-    /// means by trying again.
     /// How many estimated lines of transcript one page holds right now.
     ///
     /// The failure banner and its way back ride on the newest page and are
@@ -428,19 +428,41 @@ impl Chat {
     /// pushed one another's neighbours off the panel at the larger text
     /// scales, and the way back was exactly what was no longer visible.
     fn page_budget(&self) -> usize {
-        if self.trouble.is_some() {
+        if self.notice().is_some() {
             TRANSCRIPT_LINES.saturating_sub(5)
         } else {
             TRANSCRIPT_LINES
         }
     }
 
+    /// Whether the last thing that happened was a question that never got an
+    /// answer, which is the only situation where resending is what the reader
+    /// means by trying again.
+    ///
+    /// Read off the transcript rather than off the failure: the failure is
+    /// not saved, and a visit to the keyboard or the service list used to
+    /// clear it and take Try again with it, leaving a question with no way
+    /// to send it again.
     fn can_retry(&self) -> bool {
-        self.trouble.is_some()
+        self.task.is_none()
             && self
                 .conversation
                 .last()
                 .is_some_and(|turn| turn.role == Role::You)
+    }
+
+    /// The banner over the transcript: what went wrong, or, for a question
+    /// left unanswered when the failure itself is no longer known, that much.
+    fn notice(&self) -> Option<(BannerLevel, String)> {
+        if let Some(trouble) = &self.trouble {
+            return Some((BannerLevel::Attention, trouble.clone()));
+        }
+        self.can_retry().then(|| {
+            (
+                BannerLevel::Info,
+                "Your last message has not been answered.".to_owned(),
+            )
+        })
     }
 
     fn say(&mut self, context: &mut Context, text: impl AsRef<str>) {
@@ -523,7 +545,6 @@ impl Chat {
             let per_page = kobo_sdk::options_per_page(&context.metrics(), true).max(1);
             self.service_page = u16::try_from(self.chosen_index() / per_page).unwrap_or(0);
             self.view = View::Choosing;
-            self.trouble = None;
         } else if self.view == View::Choosing
             && (action == action_id(SERVICES_BACK) || action == action_id(SERVICES_NEXT))
         {
@@ -603,11 +624,11 @@ fn display_text(turn: &Turn) -> String {
     }
 }
 
-fn draw_turn(screen: ScreenBuilder, turn: &Turn, text: &str, assistant: &str) -> ScreenBuilder {
+fn draw_turn(screen: ScreenBuilder, turn: &Turn, text: &str, unsigned: &str) -> ScreenBuilder {
     match turn.role {
         Role::You => screen.byline(0, "You").quote(0, text),
         Role::Assistant => text.split("\n\n").fold(
-            screen.byline(1, assistant.to_owned()),
+            screen.byline(1, turn.by.map_or(unsigned, |by| by.label()).to_owned()),
             |screen, paragraph| screen.quote(1, paragraph),
         ),
     }
@@ -738,12 +759,19 @@ impl KoboApp for Chat {
                     .and_then(|bytes| std::str::from_utf8(bytes).ok())
                     .map(Provider::from_key)
                     .unwrap_or_default();
+                self.chosen_known = true;
                 if restored != self.provider {
                     self.provider = restored;
                     self.show(context);
                 }
+                self.conversation.sign_unsigned(self.provider);
             } else if key == conversation::STATE {
-                if let Some(restored) = value.as_deref().and_then(Conversation::restore) {
+                if let Some(mut restored) = value.as_deref().and_then(Conversation::restore) {
+                    // Signed now only if the service in use is known; if it
+                    // has not loaded yet, it signs them when it does.
+                    if self.chosen_known {
+                        restored.sign_unsigned(self.provider);
+                    }
                     self.conversation = restored;
                     self.pages_back = 0;
                     self.show(context);
@@ -817,8 +845,9 @@ impl KoboApp for Chat {
         }
 
         if action == action_id(TYPE) {
+            // The failure stays: backing out of the keyboard returns to the
+            // same unanswered question, still saying why.
             self.view = View::Composing;
-            self.trouble = None;
             self.entry.open();
             self.show(context);
             return;
@@ -830,6 +859,11 @@ impl KoboApp for Chat {
 
         if let Some(index) = CHOICES.iter().position(|name| action == action_id(name)) {
             if let Some(&provider) = PROVIDERS.get(index) {
+                // Replies saved before their writer was kept are signed with
+                // the service that wrote them before another takes over.
+                if self.conversation.sign_unsigned(self.provider) {
+                    self.persist(context);
+                }
                 self.provider = provider;
                 context
                     .store()
@@ -892,7 +926,7 @@ impl KoboApp for Chat {
             TaskOutcome::Completed(bytes) => {
                 match conversation::read_completion(&bytes, self.provider) {
                     Ok(reply) => {
-                        self.conversation.push_reply(reply);
+                        self.conversation.push_reply(reply, self.provider);
                         self.pages_back = 0;
                         self.persist(context);
                         self.trouble = None;
@@ -931,7 +965,7 @@ mod tests {
         conversation::Provider,
         conversation::{Role, Turn},
         transcript_pages, Chat, View, CHOICES, CHOSEN, COLUMNS, CONTINUE, CONTINUE_MESSAGE,
-        EARLIER, OPTIONS, SERVICE, TALK, TRANSCRIPT_LINES, TYPE,
+        EARLIER, OPTIONS, RETRY, SERVICE, TALK, TRANSCRIPT_LINES, TYPE,
     };
     use kobo_sdk::keyboard::testing::{asked, cancel_text, type_text};
     use kobo_sdk::{
@@ -1153,6 +1187,69 @@ mod tests {
         assert!(posted(&commands).is_some(), "trying again sent nothing");
     }
 
+    /// Looking at the keyboard or the service list and coming back leaves
+    /// the unanswered question with its Try again, and a restart does too.
+    /// Both used to clear it, and the question could not be sent again.
+    #[test]
+    fn an_unanswered_question_keeps_try_again_through_the_keyboard_the_service_list_and_a_restart()
+    {
+        let (mut chat, _) = started();
+        let commands = type_and_send(&mut chat, "hello");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        chat.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        for (opened, left) in [(TYPE, "back"), (SERVICE, TALK)] {
+            let _opened = act(&mut chat, opened);
+            let mut context = Context::default();
+            let back = if left == "back" {
+                kobo_sdk::ActionId::BACK
+            } else {
+                action_id(left)
+            };
+            chat.on_action(&mut context, back);
+            assert!(chat.can_retry(), "{opened} took Try again away");
+            assert!(chat.trouble.is_some(), "{opened} took away what went wrong");
+        }
+
+        let mut restarted = Chat::default();
+        let mut context = Context::default();
+        restarted.on_start(&mut context);
+        restarted.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: super::conversation::STATE.to_owned(),
+                value: Some(chat.conversation.encode()),
+            },
+        );
+        let screen = last_screen(&context.take_commands());
+        let words = shown(&screen).join(" ");
+        assert!(words.contains("has not been answered"), "{words}");
+        assert!(screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .rect_of_action(action_id(RETRY))
+            .is_some());
+    }
+
+    /// A reply is by-lined with the service that wrote it, whichever is
+    /// chosen afterwards.
+    #[test]
+    fn choosing_another_service_leaves_earlier_replies_by_lined_as_they_were() {
+        let (mut chat, _) = started();
+        let commands = type_and_send(&mut chat, "hello");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        chat.on_task(&mut context, task, reply("Hello there."));
+        let _chosen = act(&mut chat, CHOICES[2]);
+        assert_eq!(chat.provider, Provider::Gemini);
+        let words = shown(&chat.screen()).join(" ");
+        assert!(words.contains("OpenAI"), "{words}");
+        assert!(!words.contains("Google Gemini"), "{words}");
+    }
+
     #[test]
     fn waiting_is_stated_once_and_never_animated() {
         // There are no spinners anywhere in this system: every frame of one
@@ -1239,6 +1336,7 @@ mod tests {
             .map(|index| Turn {
                 role: Role::You,
                 text: format!("message {index} {}", "x".repeat(COLUMNS)),
+                by: None,
             })
             .collect::<Vec<_>>();
         let pages = transcript_pages(&turns, TRANSCRIPT_LINES);
@@ -1316,6 +1414,7 @@ mod tests {
         let turns = vec![Turn {
             role: Role::You,
             text: "y".repeat(COLUMNS * TRANSCRIPT_LINES * 4),
+            by: None,
         }];
         assert_eq!(transcript_pages(&turns, TRANSCRIPT_LINES).len(), 1);
     }
@@ -1911,10 +2010,13 @@ mod large_text_tests {
         for metrics in panels() {
             let mut app = Chat::default();
             app.conversation.push(Role::You, "how do I make bread");
-            app.conversation.push_reply(conversation::Completion {
-                text: "Mix the flour, water, salt and yeast, then knead it. ".repeat(30),
-                cut_short: true,
-            });
+            app.conversation.push_reply(
+                conversation::Completion {
+                    text: "Mix the flour, water, salt and yeast, then knead it. ".repeat(30),
+                    cut_short: true,
+                },
+                Provider::OpenAi,
+            );
             let runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
             let pages = runner.app().measured_pages(&runner.context());
             let latest = runner.app().transcript_page(&pages, 0);

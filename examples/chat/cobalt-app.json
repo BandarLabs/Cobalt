@@ -3,12 +3,12 @@
   "display_name": "Chat",
   "short_label": "Chat",
   "summary": "Ask a question, then read and navigate the answer with touch controls. Needs an account.",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "glyph": "chat",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The app is called Chat, and a saved conversation is named Chat conversation rather than by its file name.",
+  "release_notes": "Each reply keeps the name of the service that wrote it, and a question that was not answered keeps its Try again until it is.",
   "setup": {
     "steps": [
       {
