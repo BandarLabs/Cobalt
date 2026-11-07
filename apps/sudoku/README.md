@@ -9,7 +9,7 @@ offline.
 <td width="50%" valign="top"><img width="300" src="screenshots/completed.png" alt="A completed puzzle"><br>A completed puzzle</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/landscape.png" alt="A Hard puzzle in landscape"><br>A Hard puzzle in landscape</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/landscape.png" alt="An Easy puzzle in landscape"><br>An Easy puzzle in landscape</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/recovery.png" alt="Retry saving in More after a save failed"><br>Retry saving in More after a save failed</td>
 </tr>
 </table>
