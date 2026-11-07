@@ -4,8 +4,9 @@
 //! line. Nobody reads a date like that: they read "today at eight", "yesterday",
 //! "the third of November". [`spoken`] writes a moment that way, against the
 //! reader's own clock, so "today" turns over at the owner's midnight rather
-//! than Greenwich's. [`stamp_millis`] reads the timestamps services send, so an
-//! application holding one can hand it straight over.
+//! than Greenwich's. [`day`] does the same for a date that has no time.
+//! [`stamp_millis`] reads the timestamps services send, so an application
+//! holding one can hand it straight over.
 
 use crate::clock::Snapshot;
 
@@ -45,6 +46,40 @@ pub fn spoken(moment: u64, now: Snapshot) -> Option<String> {
     } else {
         Some(format!("{} {month} {}", date.day, date.year))
     }
+}
+
+/// A calendar `date` with no time of day, as it would be said at `now`.
+///
+/// "Today", "Yesterday", "3 Nov" for any other day this year and
+/// "3 Nov 2025" for any other year, against the reader's own calendar. For
+/// a due date, a birthday or the day a habit was kept, which have no hour,
+/// so there is no need to invent noon on that day to pass to [`spoken`].
+///
+/// `None` for a date that is not on the calendar, or a `now` outside what a
+/// [`Snapshot`] can hold.
+#[must_use]
+pub fn day(date: crate::clock::Date, now: Snapshot) -> Option<String> {
+    let (year, month, day) = (
+        i64::from(date.year),
+        i64::from(date.month),
+        i64::from(date.day),
+    );
+    if !(1..=12).contains(&month) || day < 1 || day > days_in_month(year, month) {
+        return None;
+    }
+    let today = now.date()?;
+    let difference = days_from_civil(
+        i64::from(today.year),
+        i64::from(today.month),
+        i64::from(today.day),
+    ) - days_from_civil(year, month, day);
+    let name = MONTHS.get(usize::from(date.month) - 1)?;
+    Some(match difference {
+        0 => "Today".to_owned(),
+        1 => "Yesterday".to_owned(),
+        _ if date.year == today.year => format!("{} {name}", date.day),
+        _ => format!("{} {name} {}", date.day, date.year),
+    })
 }
 
 /// A timestamp as services write them, in milliseconds since 1970.
@@ -154,7 +189,8 @@ const fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{spoken, stamp_millis};
+    use super::{day, spoken, stamp_millis};
+    use crate::clock::Date;
     use crate::clock::Snapshot;
 
     /// 6 November 2026, 09:30 in London, which is UTC in November.
@@ -170,6 +206,40 @@ mod tests {
 
     fn said(stamp: &str, offset: i16) -> String {
         spoken(stamp_millis(stamp).expect("a stamp"), at(offset)).expect("a moment")
+    }
+
+    fn on(year: u16, month: u8, date: u8) -> Date {
+        Date {
+            year,
+            month,
+            day: date,
+        }
+    }
+
+    #[test]
+    fn a_day_without_a_time_is_said_as_today_yesterday_or_its_date() {
+        assert_eq!(day(on(2026, 11, 6), at(0)).as_deref(), Some("Today"));
+        assert_eq!(day(on(2026, 11, 5), at(0)).as_deref(), Some("Yesterday"));
+        assert_eq!(day(on(2026, 11, 3), at(0)).as_deref(), Some("3 Nov"));
+        assert_eq!(day(on(2026, 11, 9), at(0)).as_deref(), Some("9 Nov"));
+        assert_eq!(day(on(2025, 11, 3), at(0)).as_deref(), Some("3 Nov 2025"));
+    }
+
+    #[test]
+    fn a_day_turns_over_at_the_readers_own_midnight() {
+        // 09:30 in London is still the evening before ten hours west.
+        assert_eq!(day(on(2026, 11, 5), at(-10 * 60)).as_deref(), Some("Today"));
+        assert_eq!(
+            day(on(2026, 11, 4), at(-10 * 60)).as_deref(),
+            Some("Yesterday")
+        );
+    }
+
+    #[test]
+    fn a_day_not_on_the_calendar_is_said_as_nothing() {
+        assert_eq!(day(on(2026, 2, 30), at(0)), None);
+        assert_eq!(day(on(2026, 13, 1), at(0)), None);
+        assert_eq!(day(on(2026, 0, 1), at(0)), None);
     }
 
     #[test]

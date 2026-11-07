@@ -268,6 +268,9 @@ pub struct AudioPlayer {
     devices: Vec<BluetoothDevice>,
     page: usize,
     pending_bluetooth: Option<PendingBluetooth>,
+    /// From Scan until the reading that collects what it found, so the
+    /// screen says it is looking rather than sitting still for seconds.
+    scanning: bool,
     delayed_scan: Option<TaskId>,
     poll: Option<TaskId>,
     autoplay: PlayIntent,
@@ -314,6 +317,7 @@ impl AudioPlayer {
             devices: Vec::new(),
             page: 0,
             pending_bluetooth: None,
+            scanning: false,
             delayed_scan: None,
             poll: None,
             autoplay: PlayIntent::Manual,
@@ -1055,7 +1059,12 @@ impl AudioPlayer {
         }
         let rows = devices
             .iter()
-            .map(|device| (device.name.as_str(), device_state(device)))
+            .map(|device| {
+                (
+                    device.name.as_str(),
+                    device_state(device, self.autoplay == PlayIntent::Autoplay),
+                )
+            })
             .collect::<Vec<_>>();
         let placed = self.bluetooth_header().section("Audio devices").build();
         let pages = context
@@ -1081,7 +1090,9 @@ impl AudioPlayer {
             return screen.build();
         }
         let devices = self.audio_devices().collect::<Vec<_>>();
-        if devices.is_empty() {
+        if devices.is_empty() && self.scanning {
+            screen = screen.text("Looking for headphones and speakers…");
+        } else if devices.is_empty() {
             screen = screen
                 .text("Put headphones or a speaker in pairing mode, then scan for audio devices.");
         } else {
@@ -1094,7 +1105,7 @@ impl AudioPlayer {
                     (
                         DEVICE_ACTIONS[slot],
                         device.name.as_str(),
-                        device_state(device),
+                        device_state(device, self.autoplay == PlayIntent::Autoplay),
                         RowLead::from(if device.connected {
                             Glyph::Check
                         } else {
@@ -1112,7 +1123,14 @@ impl AudioPlayer {
             }
         }
         screen
-            .bottom_action(BLUETOOTH_SCAN, "Scan for headphones and speakers")
+            .bottom_action(
+                BLUETOOTH_SCAN,
+                if self.scanning {
+                    "Scanning…"
+                } else {
+                    "Scan for headphones and speakers"
+                },
+            )
             .build()
     }
 
@@ -1350,7 +1368,10 @@ impl AudioPlayer {
             return true;
         }
         if action == action_id(BLUETOOTH_SCAN) {
-            self.scan(context);
+            // A second tap while one scan runs would only start it over.
+            if !self.scanning {
+                self.scan(context);
+            }
             return true;
         }
         let pages = self.device_pages(context);
@@ -1377,10 +1398,14 @@ impl AudioPlayer {
             return true;
         };
         self.trouble = None;
+        // A connected device starts the book a Play was waiting on, and
+        // otherwise disconnects, as its row says. It used to do nothing.
         if device.connected {
             if self.autoplay == PlayIntent::Autoplay {
                 self.view = View::Player;
                 self.begin_audio(context);
+            } else {
+                context.device().disconnect_bluetooth(device.address);
             }
         } else if device.paired {
             context.device().connect_bluetooth(device.address);
@@ -1438,6 +1463,7 @@ impl AudioPlayer {
     fn scan(&mut self, context: &mut Context) {
         self.page = 0;
         self.trouble = None;
+        self.scanning = true;
         context.device().scan_bluetooth();
     }
 
@@ -1596,6 +1622,13 @@ impl AudioPlayer {
     ) {
         let first_reading = !self.bluetooth_known;
         self.bluetooth_known = true;
+        // The reading after a scan's wait is what it found; a failure ends
+        // the wait too.
+        if (matches!(request, DeviceRequest::ReadBluetooth) && self.delayed_scan.is_none())
+            || matches!(result, DeviceResult::Failed(_) | DeviceResult::Denied(_))
+        {
+            self.scanning = false;
+        }
         match result {
             DeviceResult::Bluetooth {
                 available,
@@ -1644,7 +1677,11 @@ impl AudioPlayer {
                     {
                         context.device().connect_bluetooth(address);
                     }
-                } else if matches!(request, DeviceRequest::ConnectBluetooth { .. }) {
+                } else if matches!(
+                    request,
+                    DeviceRequest::ConnectBluetooth { .. }
+                        | DeviceRequest::DisconnectBluetooth { .. }
+                ) {
                     context.device().read_bluetooth();
                 }
             }
@@ -1783,10 +1820,13 @@ const fn rewind_after(paused: Option<Duration>) -> u32 {
     }
 }
 
-/// What a device row says under the device's name.
-const fn device_state(device: &BluetoothDevice) -> &'static str {
-    if device.connected {
-        "Connected · Ready to listen"
+/// What a device row says under the device's name, which is what a tap on
+/// it does: start the book a Play is waiting on, or leave the device.
+const fn device_state(device: &BluetoothDevice, waiting_to_play: bool) -> &'static str {
+    if device.connected && waiting_to_play {
+        "Connected · Tap to listen"
+    } else if device.connected {
+        "Connected · Tap to disconnect"
     } else if device.paired {
         "Paired · Tap to connect"
     } else {

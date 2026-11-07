@@ -664,6 +664,8 @@ one this SDK will not help you with.
 **Dates are said, not logged.** "Updated 2026-11-06 08:13" is a log line.
 `when::spoken(moment, now)` writes a moment the way the reader would say it,
 against their own clock: "Today, 08:13", "Yesterday", "3 Nov", "3 Nov 2025".
+`when::day(date, now)` does the same for a date with no time, such as a due
+date: "Today", "Yesterday", "3 Nov", "3 Nov 2025".
 `when::stamp_millis` reads the ISO 8601 stamps services send, so a stamp from a
 feed can be handed straight over.
 

@@ -165,16 +165,36 @@ impl BoardViewport {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
             let (left, top) =
                 BoardSurface::gutters(&self.metrics, self.row_clues, self.column_clues);
-            let minimum = self
-                .metrics
-                .touch_target_default()
-                .max(FontSize::Caption.line_height() * 2 + self.metrics.space(Space::Tight) * 2);
-            let mut tenths = self.zoom.tenth_mm();
+            let legible =
+                FontSize::Caption.line_height() * 2 + self.metrics.space(Space::Tight) * 2;
+            let roomy = self.metrics.touch_target_default().max(legible);
+            let gap = self.metrics.rule_thickness().max(1);
+            let whole = |cell: i32| {
+                let span = |count: usize| {
+                    i32::try_from(count)
+                        .unwrap_or(i32::MAX)
+                        .saturating_mul(cell + gap)
+                        - gap
+                };
+                left.saturating_add(span(self.board_columns)) <= self.width
+                    && top.saturating_add(span(self.board_rows)) <= self.height
+            };
+            // The standard size of a board too big for the panel is the
+            // smallest square a finger can still hit. Held at the roomier
+            // size, a 25 by 25 nonogram showed 7 columns by 5 rows and left
+            // a third of the panel empty.
+            // A square holds a mark, never words, and a clue beside it is
+            // one line, so one caption line is all the square must clear.
+            let one_line = FontSize::Caption.line_height() + self.metrics.space(Space::Tight) * 2;
+            let (minimum, mut tenths) = if self.zoom == Zoom::Standard && !whole(roomy) {
+                (self.metrics.touch_target_minimum().max(one_line), 1)
+            } else {
+                (roomy, self.zoom.tenth_mm())
+            };
             while tenths < 300 && self.metrics.tenth_mm(i32::from(tenths)) < minimum {
                 tenths += 1;
             }
             let cell = self.metrics.tenth_mm(i32::from(tenths));
-            let gap = self.metrics.rule_thickness().max(1);
             let columns = usize::try_from(
                 (self.width.saturating_sub(left).saturating_add(gap) / (cell + gap)).clamp(0, 12),
             )
@@ -499,6 +519,42 @@ mod tests {
             Some(("Row 1".into(), "1 · 2 · 3 · 4 · 5".into()))
         );
         assert!(view.inspect_clue("board.row.63", &clues()).is_none());
+    }
+    #[test]
+    fn a_board_too_big_for_the_panel_shows_the_smallest_squares_a_finger_can_hit() {
+        // Held at the roomier size, a 25 by 25 picture showed 7 columns by
+        // 5 rows on a Clara and left a third of the panel empty.
+        let metrics = kobo_ui::CLARA_BW_METRICS;
+        let large = Board::new(
+            25,
+            25,
+            std::iter::repeat_n(Field::editable(Mark::Empty), 625),
+        )
+        .unwrap();
+        let large_clues = BoardClues {
+            rows: vec![vec![5, 5, 5]; 25],
+            columns: vec![vec![25]; 25],
+        };
+        let view = BoardViewport::new(&large, &large_clues, metrics, 976, 760).unwrap();
+        assert_eq!(
+            metrics.tenth_mm(i32::from(view.cell_tenth_mm)),
+            metrics.touch_target_minimum()
+        );
+        assert!(
+            view.visible_columns().len() >= 9,
+            "{:?}",
+            view.visible_columns()
+        );
+        assert!(view.visible_rows().len() >= 7, "{:?}", view.visible_rows());
+        // A board that fits whole keeps the roomier squares.
+        let small =
+            Board::new(5, 5, std::iter::repeat_n(Field::editable(Mark::Empty), 25)).unwrap();
+        let small_clues = BoardClues {
+            rows: vec![vec![1]; 5],
+            columns: vec![vec![1]; 5],
+        };
+        let whole = BoardViewport::new(&small, &small_clues, metrics, 976, 900).unwrap();
+        assert!(metrics.tenth_mm(i32::from(whole.cell_tenth_mm)) >= metrics.touch_target_default());
     }
     #[test]
     fn rotation_and_zoom_reveal_the_selection_and_refused_reflow_is_atomic() {

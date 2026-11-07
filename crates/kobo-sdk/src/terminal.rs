@@ -179,16 +179,19 @@ impl ScreenBuilder {
         ));
         lower.extend(bottom);
         lower.push((BACKSPACE.to_string(), "back".to_string()));
-        lower.push(("term.esc".to_string(), "esc".to_string()));
 
         self.fill()
             .grid(u8::try_from(top.len()).unwrap_or(u8::MAX), false, top)
             .grid(u8::try_from(home.len()).unwrap_or(u8::MAX), false, home)
             .grid(u8::try_from(lower.len()).unwrap_or(u8::MAX), false, lower)
+            // Esc leads the last row rather than ending the third. The
+            // symbols layer has eight keys on that row where the letters have
+            // seven, and with esc there it wrapped onto a row of its own.
             .grid(
-                9,
+                10,
                 false,
                 [
+                    ("term.esc".to_string(), "esc".to_string()),
                     ("term.tab".to_string(), "tab".to_string()),
                     (CONTROL.to_string(), control.to_string()),
                     (
@@ -852,6 +855,34 @@ mod tests {
             tap(&mut keys, "term.left"),
             Some(Typed::Send(b"\x1b[D".to_vec()))
         );
+    }
+
+    #[test]
+    fn both_layers_of_keys_take_the_same_rows_so_neither_hides_the_prompt() {
+        // The symbols layer had eleven keys on its third row and wrapped
+        // onto a fifth, which covered the newest output and the prompt.
+        let metrics = kobo_ui::CLARA_BW_METRICS;
+        let key_rows = |keys: &TerminalKeys| {
+            let screen = crate::ScreenBuilder::new("terminal")
+                .terminal_keys(keys)
+                .build();
+            let mut tops: Vec<i32> = screen
+                .layout_with(&metrics, &kobo_ui::Chrome::measuring(true))
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Cell(..)))
+                .map(|node| node.rect.y)
+                .collect();
+            tops.sort_unstable();
+            tops.dedup();
+            tops
+        };
+        let mut keys = TerminalKeys::new();
+        let letters = key_rows(&keys);
+        tap(&mut keys, "kb.layer");
+        let symbols = key_rows(&keys);
+        assert_eq!(letters.len(), 4);
+        assert_eq!(letters, symbols);
     }
 
     #[test]
