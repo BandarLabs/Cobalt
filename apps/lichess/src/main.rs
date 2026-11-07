@@ -2532,10 +2532,11 @@ impl Lichess {
     }
 
     fn start_computer_game(&mut self, context: &mut Context) {
-        let owner = match &self.account {
-            AccountState::Ready(account) => account.username.clone(),
-            _ => "You".to_owned(),
-        };
+        // A game against the computer never touches the account, so the board
+        // says You rather than the Lichess username: that name is the owner's
+        // to share, and it would otherwise sit under every photograph of a
+        // reader playing offline.
+        let owner = "You".to_owned();
         self.notice = None;
         let color = self.computer_side.resolve();
         let clock_ms = self.computer_clock.milliseconds();
@@ -6324,6 +6325,16 @@ mod tests {
         black.on_action(&mut context, action_id("take-back"));
         assert_eq!(black.game.as_ref().expect("game").state.moves.len(), 1);
         assert!(black.game.as_ref().expect("game").my_turn());
+    }
+
+    #[test]
+    fn a_game_against_the_computer_names_the_owner_you_even_when_signed_in() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        let drawn = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(drawn.contains("\"You\""), "{drawn}");
+        assert!(!drawn.contains("\"Owner\""), "{drawn}");
     }
 
     #[test]
