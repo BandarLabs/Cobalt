@@ -1152,3 +1152,72 @@ fn a_provider_refusal_names_the_provider_and_never_a_server_address() {
     assert!(advice.starts_with("OpenAI"), "{advice}");
     assert!(!advice.contains("address"), "{advice}");
 }
+
+/// With a book playing that the page showing does not list, the page has
+/// room for the Now playing row as well as its own rows. It was measured
+/// without that row, so the last book was pushed under the page turns and
+/// the runtime refused the screen.
+#[test]
+fn every_library_page_fits_while_a_book_plays() {
+    let runner = kobo_sdk::AppRunner::with_metrics(Audiobook::default(), CLARA_BW_METRICS);
+    let mut context = runner.context();
+    let mut app = Audiobook::default();
+    let entries = (0..12)
+        .map(|index| {
+            entry(
+                &format!("0/Audiobooks/{index}.mp3"),
+                &format!("Book {index}"),
+                1,
+                1,
+                16_000,
+            )
+        })
+        .collect::<Vec<_>>();
+    app.listed(&context, &entries, false);
+    app.play(&mut context, 11);
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    app.listed(&context, &entries, false);
+    assert!(app.pages.len() > 1, "the library did not turn pages");
+    for page in 0..app.pages.len() {
+        app.page = page;
+        let screen = app.screen(&context);
+        assert!(
+            screen.validate(&CLARA_BW_METRICS).is_empty(),
+            "page {page}: {:?}",
+            screen.validate(&CLARA_BW_METRICS)
+        );
+    }
+}
+
+/// A file that will not decode says so and what to do, with a way to try
+/// again and a way back, and none of the player's controls, which could do
+/// nothing for it. Back leaves nothing listed as playing.
+#[test]
+fn a_book_that_will_not_decode_says_what_to_do_instead_of_offering_a_player() {
+    let runner = kobo_sdk::AppRunner::with_metrics(Audiobook::default(), CLARA_BW_METRICS);
+    let mut context = runner.context();
+    let mut app = Audiobook::default();
+    let entries = [entry("0/Audiobooks/broken.mp3", "broken", 1, 1, 17)];
+    app.listed(&context, &entries, false);
+    app.play(&mut context, 0);
+    app.on_device_result(
+        &mut context,
+        kobo_sdk::DeviceRequest::LoadAudio {
+            source: kobo_sdk::AudioSource::Library("0/Audiobooks/broken.mp3".to_owned()),
+        },
+        kobo_sdk::DeviceResult::Failed(kobo_sdk::DeviceError::Backend),
+    );
+    let screen = app.screen(&context);
+    let drawn = format!("{screen:?}");
+    assert!(drawn.contains("could not be decoded"), "{drawn}");
+    assert!(!drawn.contains("Forward 30 sec"), "{drawn}");
+    assert!(screen.validate(&CLARA_BW_METRICS).is_empty());
+    app.on_action(&mut context, kobo_sdk::ActionId::BACK);
+    assert_eq!(app.stage, Stage::Library);
+    assert!(
+        app.player.is_none(),
+        "the broken book is still held as playing"
+    );
+    app.listed(&context, &entries, false);
+    assert!(!format!("{:?}", app.screen(&context)).contains("Now playing"));
+}

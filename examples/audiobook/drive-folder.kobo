@@ -1,0 +1,8 @@
+# sweep: --seed-root examples/audiobook/fixtures/formats
+# A folder is one book under the folder's name, as Two Tones is, even when
+# it holds a single part.
+wait-for Audiobooks
+tap-paged Folder With Cover
+wait-for Quieter
+clean
+shot audiobook-one-part-folder
