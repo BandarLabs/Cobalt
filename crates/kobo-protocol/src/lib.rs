@@ -7241,6 +7241,10 @@ const fn earlier_glyph(glyph: Glyph) -> Glyph {
         Glyph::Inbox => Glyph::Rss,
         Glyph::Keyboard => Glyph::Terminal,
         Glyph::Sunrise => Glyph::Clock,
+        // The bell is drawn only by a launcher that knows its runtime keeps
+        // notices, which is protocol 18 at the least; an older frame never
+        // carries it, and this is only the picture it would fall back to.
+        Glyph::Bell => Glyph::Note,
         other => other,
     }
 }
@@ -7354,6 +7358,7 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::LetterCheck => 100,
         Glyph::Keyboard => 101,
         Glyph::Sunrise => 102,
+        Glyph::Bell => 103,
     }
 }
 
@@ -7466,6 +7471,7 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         100 => Glyph::LetterCheck,
         101 => Glyph::Keyboard,
         102 => Glyph::Sunrise,
+        103 => Glyph::Bell,
 
         _ => return None,
     })

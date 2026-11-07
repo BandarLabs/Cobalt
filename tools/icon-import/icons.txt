@@ -95,3 +95,4 @@ Inbox               inbox
 Photo               photo
 Keyboard            keyboard
 Sunrise             sunrise
+Bell                bell

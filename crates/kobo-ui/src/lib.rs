@@ -5413,6 +5413,8 @@ pub enum Glyph {
     Keyboard,
     /// The sun coming up over the horizon: a briefing to read in the morning.
     Sunrise,
+    /// A bell: the runtime's notices, and the list that keeps them.
+    Bell,
 }
 
 impl Glyph {
@@ -5423,7 +5425,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 103] = [
+    pub const ALL: [Self; 104] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5527,6 +5529,7 @@ impl Glyph {
         Self::Photo,
         Self::Keyboard,
         Self::Sunrise,
+        Self::Bell,
     ];
 }
 

@@ -1739,8 +1739,9 @@ fn listed_at(version: u8, glyph: Glyph) -> Glyph {
 }
 
 #[test]
-fn the_application_marks_are_the_thirty_four_glyphs_added_with_protocol_eighteen() {
-    assert_eq!(app_marks().count(), 34);
+fn the_glyphs_added_with_protocol_eighteen_are_the_thirty_four_application_marks_and_the_bell() {
+    assert_eq!(app_marks().count(), 35);
+    assert!(app_marks().any(|glyph| glyph == Glyph::Bell));
 }
 
 #[test]
