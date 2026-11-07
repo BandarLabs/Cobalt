@@ -15,3 +15,114 @@ type homeassistant
 expect https://homeassistant
 clean
 shot homepanel-typed
+# Home Assistant needs HTTPS, so a plain address stays in the field with the
+# reason under it rather than being saved.
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+type ha.local
+tap Test connection
+wait-for Use an https:// Home Assistant URL.
+expect ha.local
+expect-missing Testing connection
+clean
+shot homepanel-wrong-scheme
+# An HTTPS address is saved and tested. With no token on the reader the
+# test says which command brings one, and setup stays.
+tap-id home-url
+wait-for Home Assistant address
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+tap Delete character
+type https://ha.example.net
+tap Test connection
+wait-for No Home Assistant account is on this reader yet
+expect Connect Home Assistant
+expect https://ha.example.net
+clean
+shot homepanel-no-token
+# Use phone shows the profile page where tokens are made, as a code, and
+# Edit address goes back to the field.
+tap Use phone
+wait-for https://ha.example.net/profile/security
+expect long-lived access tokens are made
+clean
+shot homepanel-phone
+tap-id 4294967295
+wait-for Connect Home Assistant
+expect Use phone
+tap Use phone
+wait-for https://ha.example.net/profile/security
+tap Edit address
+wait-for Test connection
+tap-id 4294967295
+wait-for Connect Home Assistant
+# The address was saved, so the next start opens the panel, empty.
+restart
+wait-for No tiles
+expect Add a Home Assistant device.
+expect-missing Connect Home Assistant
+expect-missing Not connected yet.
+clean
+shot homepanel-empty-grid
+# Adding a tile asks Home Assistant for its devices. Without a token that
+# fails in words, and the picker stays open on adding a device by its ID.
+tap Add tile
+wait-for No Home Assistant account is on this reader yet
+expect Add a device by its ID
+clean
+shot homepanel-add-no-token
+tap-id 4294967295
+wait-for No tiles
+# Settings: the saved address, the wall panel switch and the tile count.
+tap Settings
+wait-for Wall panel
+expect https://ha.example.net
+expect Two tiles per row.
+expect 0 of 12
+clean
+shot homepanel-settings-empty
+tap Edit tiles
+wait-for Add a tile first.
+tap-id 4294967295
+wait-for Wall panel
+tap Wall panel
+wait-for One large tile per row, for a reader by the door.
+clean
+shot homepanel-wall-on
+# The switch is kept across a restart.
+restart
+wait-for No tiles
+tap Settings
+wait-for One large tile per row, for a reader by the door.
+tap Wall panel
+wait-for Two tiles per row.
+# Tapping the address opens setup with it in the field; back returns.
+tap https://ha.example.net
+wait-for Connect Home Assistant
+expect https://ha.example.net
+tap-id 4294967295
+wait-for No tiles
