@@ -4,8 +4,8 @@
   "short_label": "Read Later",
   "summary": "Read your Wallabag articles anywhere. Needs an account.",
   "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
-  "version": "0.2.10",
-  "release_notes": "Commands to run on your computer are set on a grey panel in a fixed-width face and break only at spaces. Headings are a step smaller and hints a step larger.",
+  "version": "0.2.11",
+  "release_notes": "Articles to keep now stays as you set it. Articles show their page count and fill each page, and a sync without Wi-Fi offers a Join Wi-Fi button.",
   "glyph": "bookmark",
   "capabilities": [
     "network"
