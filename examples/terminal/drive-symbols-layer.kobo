@@ -1,0 +1,9 @@
+# A command with digits in it leaves the symbol keys up. The newest output
+# and the prompt must stay in sight on that layer too, without switching
+# back to the letters first.
+wait-for Terminal
+type seq 1 40
+tap-id kb.enter
+wait-for 40
+expect ?
+shot terminal-symbols-output
