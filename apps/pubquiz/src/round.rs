@@ -31,6 +31,10 @@ pub(crate) struct Saved {
     pub scores: [u8; 4],
     pub answers: [Option<usize>; 4],
     pub questions: Vec<Question>,
+    /// The category and difficulty the round was dealt from, so Play again
+    /// after a restart deals from the same mix. `None` is Any.
+    pub category: Option<String>,
+    pub difficulty: Option<Difficulty>,
 }
 
 fn stage(view: View) -> Option<&'static str> {
@@ -65,11 +69,15 @@ pub(crate) fn encode(quiz: &Quiz) -> Option<String> {
         .map(|answer| answer.map_or_else(|| "-".to_owned(), |index| index.to_string()))
         .join(",");
     let mut record = format!(
-        "{VERSION}\n{stage}\t{}\t{}\t{}\t{}\t{scores}\t{answers}",
+        "{VERSION}\n{stage}\t{}\t{}\t{}\t{}\t{scores}\t{answers}\t{}\t{}",
         u8::from(quiz.party),
         quiz.players,
         quiz.question,
-        quiz.player
+        quiz.player,
+        quiz.setup_category
+            .as_deref()
+            .map_or_else(String::new, field),
+        quiz.setup_difficulty.map_or("any", Difficulty::key),
     );
     for question in &quiz.round_questions {
         record.push('\n');
@@ -93,12 +101,7 @@ fn question(line: &str) -> Option<Question> {
     let [category, difficulty, text, a, b, c, d, correct] = fields.as_slice() else {
         return None;
     };
-    let difficulty = match *difficulty {
-        "easy" => Difficulty::Easy,
-        "medium" => Difficulty::Medium,
-        "hard" => Difficulty::Hard,
-        _ => return None,
-    };
+    let difficulty = difficulty_of(difficulty)?;
     let correct: usize = correct.parse().ok().filter(|index| *index < 4)?;
     let answers = [a, b, c, d].map(|answer| (*answer).to_owned());
     if category.is_empty() || text.is_empty() || answers.iter().any(String::is_empty) {
@@ -126,8 +129,20 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Saved> {
         return None;
     }
     let header: Vec<&str> = lines.next()?.split('\t').collect();
-    let [stage, party, players, question, player, scores, answers] = header.as_slice() else {
+    // A record written before the mix was kept has no category or
+    // difficulty, and resumes with Any for both.
+    let (fields, mix) = header.split_at(header.len().min(7));
+    let [stage, party, players, question, player, scores, answers] = fields else {
         return None;
+    };
+    let (category, difficulty) = match mix {
+        [] => (None, None),
+        [category, "any"] => ((!category.is_empty()).then(|| (*category).to_owned()), None),
+        [category, difficulty] => (
+            (!category.is_empty()).then(|| (*category).to_owned()),
+            Some(difficulty_of(difficulty)?),
+        ),
+        _ => return None,
     };
     let view = match *stage {
         "question" => View::Question,
@@ -184,7 +199,18 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<Saved> {
         scores,
         answers,
         questions,
+        category,
+        difficulty,
     })
+}
+
+fn difficulty_of(key: &str) -> Option<Difficulty> {
+    match key {
+        "easy" => Some(Difficulty::Easy),
+        "medium" => Some(Difficulty::Medium),
+        "hard" => Some(Difficulty::Hard),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -365,6 +391,31 @@ mod tests {
             );
         }
         assert_eq!(decode(&[0xff, 0xfe]), None);
+    }
+
+    #[test]
+    fn a_round_resumed_after_a_restart_keeps_the_category_and_difficulty_it_was_dealt_from() {
+        let mut quiz = Quiz {
+            setup_category: Some("Science".to_owned()),
+            setup_difficulty: Some(Difficulty::Easy),
+            ..Quiz::default()
+        };
+        quiz.begin(false);
+        let record = encode(&quiz).unwrap();
+
+        let woken = restarted(Some(record.clone().into_bytes()));
+        assert_eq!(woken.app().setup_category.as_deref(), Some("Science"));
+        assert_eq!(woken.app().setup_difficulty, Some(Difficulty::Easy));
+
+        // A record from before the mix was kept still resumes, with Any.
+        let older = record.replacen("\tScience\teasy", "", 1);
+        assert_ne!(older, record);
+        let saved = decode(older.as_bytes()).expect("an older record resumes");
+        assert_eq!((saved.category, saved.difficulty), (None, None));
+        assert_eq!(
+            decode(record.replacen("\teasy", "\tfiendish", 1).as_bytes()),
+            None
+        );
     }
 
     #[test]

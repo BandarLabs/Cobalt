@@ -485,6 +485,8 @@ impl Quiz {
         self.scores = saved.scores;
         self.answers = saved.answers;
         self.round_questions = saved.questions;
+        self.setup_category = saved.category;
+        self.setup_difficulty = saved.difficulty;
         self.confirm = None;
         self.menu.close();
         self.note = None;
