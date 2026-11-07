@@ -1,5 +1,5 @@
 use super::*;
-use kobo_sdk::{AppRunner, Command, StoreError, StoreRequest};
+use kobo_sdk::{AppRunner, Command, Glyph, StoreError, StoreRequest};
 use kobo_ui::{Chrome, DisplayMetrics, LayoutKind, TextScale, CLARA_BW_METRICS};
 fn load(value: Option<Vec<u8>>) -> StoreResult {
     StoreResult::Loaded {
@@ -418,7 +418,7 @@ fn all_routes_fit_at_supported_text_sizes_and_both_orientations() {
                     r.app_mut().menu.read(action_id(chrome::MORE));
                 }
                 let screen = r.app().screen(&r.context());
-                let frame = Chrome::with_back(true);
+                let frame = Chrome::measuring(true);
                 let issues = screen.diagnostics(&metrics, &frame).issues;
                 assert!(
                     issues.is_empty(),
@@ -459,7 +459,7 @@ fn all_routes_fit_at_supported_text_sizes_and_both_orientations() {
     let layout = r
         .app()
         .screen(&r.context())
-        .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
     let rect = |c| layout.rect_of_action(action_id(&cell_name(c))).unwrap();
     assert_eq!(rect(1).x - rect(0).x, rect(3).x - rect(2).x);
     assert!(layout
@@ -481,12 +481,13 @@ fn long_game_titles_notes_completion_failures_and_every_help_page_fit() {
             let assert_screen = |r: &AppRunner<Sudoku>| {
                 let screen = r.app().screen(&r.context());
                 let errors = screen
-                    .diagnostics(&metrics, &Chrome::with_back(true))
+                    .diagnostics(&metrics, &Chrome::measuring(true))
                     .issues;
                 assert!(
                     errors.is_empty(),
-                    "{width}x{height} {scale:?} {:?}: {errors:?}",
-                    r.app().view
+                    "{width}x{height} {scale:?} {:?} {}: {errors:?}",
+                    r.app().view,
+                    r.app().status()
                 );
             };
             // The last puzzle of each difficulty carries the longest title.
@@ -841,7 +842,7 @@ fn an_unreadable_game_is_a_splash_with_try_again_directly_under_the_reason() {
             "{scale:?}: {:?}",
             screen.nodes
         );
-        let frame = Chrome::with_back(true);
+        let frame = Chrome::measuring(true);
         let issues = screen.diagnostics(&metrics, &frame).issues;
         assert!(issues.is_empty(), "{scale:?}: {issues:?}");
         let layout = screen.layout_with(&metrics, &frame);
@@ -872,7 +873,7 @@ fn the_three_difficulties_sit_side_by_side_and_fit_every_size() {
             let (mut r, metrics) = on_panel(width, height, 300, scale);
             r.app_mut().view = View::New;
             let screen = shown(&r);
-            let frame = Chrome::with_back(true);
+            let frame = Chrome::measuring(true);
             let issues = screen.diagnostics(&metrics, &frame).issues;
             assert!(issues.is_empty(), "{width}x{height} {scale:?}: {issues:?}");
             let layout = screen.layout_with(&metrics, &frame);
@@ -899,4 +900,93 @@ fn the_three_difficulties_sit_side_by_side_and_fit_every_size() {
             }
         }
     }
+}
+
+/// The digits and Notes already refused to change a finished grid, but Erase
+/// emptied a square and left the puzzle one short of complete.
+#[test]
+fn erase_leaves_a_completed_puzzle_complete() {
+    let mut r = ready();
+    let puzzles = r.app().puzzles.clone();
+    let solution = puzzles[r.app().game.puzzle].solution;
+    r.app_mut().game.position.board = solution;
+    let c = blank(&r.app().game, &puzzles);
+    tap(&mut r, &cell_name(c));
+    tap(&mut r, "erase");
+    assert_eq!(r.app().game.position.board[c], solution[c]);
+    assert!(r.app().game.solved(&puzzles));
+    assert!(r.app().status().starts_with("Puzzle complete"));
+}
+
+/// Whether any text on the screen, a button or splash included, holds this.
+fn says(r: &AppRunner<Sudoku>, words: &str) -> bool {
+    format!("{:?}", shown(r).nodes).contains(words)
+}
+
+fn store_saves(commands: &[Command]) -> Vec<(String, Vec<u8>)> {
+    commands
+        .iter()
+        .filter_map(|c| match c {
+            Command::Store(StoreRequest::Save { key, value }) => Some((key.clone(), value.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Try again reads the same bytes and fails the same way, so it alone was a
+/// dead end. Start over keeps those bytes under a key of their own, taking a
+/// number no earlier copy holds, and only then writes a fresh game.
+#[test]
+fn start_over_copies_an_unreadable_game_aside_before_writing_a_new_one() {
+    let unreadable = b"not a saved game".to_vec();
+    let mut r = AppRunner::new(Sudoku::default());
+    r.start();
+    r.store_result(load(Some(unreadable.clone())));
+    assert!(says(&r, "Start over"));
+    tap(&mut r, recover::START_OVER);
+    assert!(says(&r, "Start over?"));
+    // Back, or Go back, leaves the failure as it was.
+    tap(&mut r, recover::CANCEL);
+    assert!(!says(&r, "Start over?"));
+    tap(&mut r, recover::START_OVER);
+    let commands = tap(&mut r, recover::CONFIRM);
+    assert!(commands
+        .iter()
+        .any(|c| matches!(c, Command::Store(StoreRequest::List))));
+    assert!(store_saves(&commands).is_empty());
+    let commands = r.store_result(StoreResult::Keys(vec![
+        saved::KEY.into(),
+        "game-unreadable-1".into(),
+    ]));
+    assert_eq!(
+        store_saves(&commands),
+        [("game-unreadable-2".to_owned(), unreadable.clone())]
+    );
+    assert!(!r.app().loaded);
+    let commands = r.store_result(StoreResult::Saved {
+        key: "game-unreadable-2".into(),
+    });
+    assert!(r.app().loaded);
+    let saves = store_saves(&commands);
+    assert_eq!(saves.len(), 1);
+    assert_eq!(saves[0].0, saved::KEY);
+    assert!(saved::decode(&saves[0].1, &r.app().puzzles).is_ok());
+}
+
+/// A copy that could not be written leaves the unreadable game where it was
+/// and says so, with both ways out still offered.
+#[test]
+fn a_failed_copy_replaces_nothing_and_says_so() {
+    let mut r = AppRunner::new(Sudoku::default());
+    r.start();
+    r.store_result(load(Some(b"not a saved game".to_vec())));
+    tap(&mut r, recover::START_OVER);
+    tap(&mut r, recover::CONFIRM);
+    r.store_result(StoreResult::Keys(vec![saved::KEY.into()]));
+    let commands = r.store_result(StoreResult::Denied(StoreError::NoRoom));
+    assert!(store_saves(&commands).is_empty());
+    assert!(!r.app().loaded);
+    assert!(says(&r, "nothing was replaced"));
+    assert!(says(&r, "Try again"));
+    assert!(says(&r, "Start over"));
 }
