@@ -20,7 +20,7 @@ wait-for Sleeve
 expect Row 0
 tap Projects
 expect Row counter
-expect Sleeve - row 0
+expect Sleeve · row 0
 clean
 shot projects
 tap-id project-0
@@ -42,7 +42,7 @@ clean
 shot project-imported
 tap Projects
 expect Winter socks
-expect Leg - row 0
+expect Leg · row 0
 # The second sleeve: the section starts again at row 0, and Undo puts the
 # old count back.
 tap-id project-1
@@ -76,4 +76,43 @@ clean
 shot project-landscape
 tap More
 tap Use portrait
+wait-for Row 2
+# Undo at row 0 and starting a section that is already at row 0 each say
+# why nothing changed, rather than taking the tap silently.
+tap Change section
+wait-for Which section are you knitting?
+tap Heel
+wait-for Heel
+expect Row 0
+tap Undo
+wait-for Already at row 0; nothing was undone.
+tap Start section again
+wait-for This section is already at row 0.
+clean
+shot project-nothing-to-undo
+tap Change section
+wait-for Which section are you knitting?
+tap Leg
+wait-for row 2 of 8
+# The count, the section and the repeat length survive Needles closing.
+restart
+wait-for Winter socks
+expect Leg
+expect Row 2
+expect row 2 of 8
+# So does the choice to hold the counter sideways.
+tap More
+tap Use landscape
+wait 1500
+restart
+wait-for Row 2
+tap More
+wait-for Use portrait
+clean
+shot project-landscape-kept
+tap Use portrait
+wait-for Row 2
+tap More
+wait-for Use landscape
+tap-id 4294967295
 wait-for Row 2
