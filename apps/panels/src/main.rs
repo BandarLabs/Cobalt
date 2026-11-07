@@ -98,6 +98,12 @@ struct Panels {
     loaded: bool,
     library_page: usize,
     import_help_page: usize,
+    /// Whether the copy guide was opened from the list of sent comics, so
+    /// Back from its first page goes back to that list.
+    help_from_sent: bool,
+    /// Whether the file being read was asked for from the guide's last page,
+    /// so a missing file is said there rather than starting the guide again.
+    checking_from_guide: bool,
     transfer: Option<transfer::Download>,
     pending: Option<Pending>,
     upload: Option<(ShelfUpload, Saving)>,
@@ -154,6 +160,8 @@ impl Default for Panels {
             loaded: false,
             library_page: 0,
             import_help_page: 0,
+            help_from_sent: false,
+            checking_from_guide: false,
             transfer: None,
             pending: None,
             upload: None,
@@ -642,6 +650,18 @@ impl Panels {
     }
 
     fn save_reading_state(&mut self, context: &mut Context) {
+        // The shelf says which way each comic reads, and the reader can
+        // change it from Reading options. Kept in step here, the shelf says
+        // the new direction as soon as the reader is back on it, not only
+        // after the comic has been opened again.
+        if let (Some(opened), Some(view)) = (&mut self.opened, &self.view) {
+            let rtl = view.reader().memory().right_to_left;
+            if opened.rtl != rtl {
+                opened.rtl = rtl;
+                let kept = opened.clone();
+                self.remember(context, kept);
+            }
+        }
         if let (Some(opened), Some(view)) = (&self.opened, &self.view) {
             match view.memory() {
                 Ok(bytes) => {
@@ -1064,11 +1084,16 @@ impl KoboApp for Panels {
     )]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.route == Route::ImportHelp {
+            self.notice = None;
             if action == action_id("import-help-next") {
                 self.import_help_page = (self.import_help_page + 1).min(3);
             } else if action == ActionId::BACK {
                 if self.import_help_page == 0 {
-                    self.route = Route::Library;
+                    self.route = if self.help_from_sent {
+                        Route::Sent
+                    } else {
+                        Route::Library
+                    };
                 } else {
                     self.import_help_page -= 1;
                 }
@@ -1085,6 +1110,7 @@ impl KoboApp for Panels {
                 self.route = Route::Library;
             } else if action == action_id("usb-help") {
                 self.import_help_page = 0;
+                self.help_from_sent = true;
                 self.route = Route::ImportHelp;
             } else if action == action_id("sample-comic") {
                 self.load_sample();
