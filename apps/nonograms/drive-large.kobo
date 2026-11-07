@@ -1,0 +1,37 @@
+# A 25 by 25 picture is played through a window that moves and resizes.
+expect Picture puzzles
+tap-paged Castle
+wait-for-id more
+expect 0/625
+expect Left
+expect Right
+expect Up
+expect Down
+clean
+shot nonograms-large-board
+tap-id board.cell.0
+expect 1/625
+tap Right
+wait-idle
+clean
+shot nonograms-large-right
+tap Down
+wait-idle
+tap Left
+tap Up
+wait-idle
+expect Row 1, column 1, filled
+# Larger squares show fewer of them; smaller ones show more.
+tap +
+wait-idle
+clean
+shot nonograms-large-bigger
+tap −
+wait-idle
+expect Row 1, column 1, filled
+# A clue on a large board opens whole too.
+tap-id board.row.0
+expect Row 1
+tap-id resume
+tap-id 4294967295
+expect Picture puzzles

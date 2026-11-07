@@ -8,6 +8,8 @@ fn ready(index: usize) -> AppRunner<Game> {
         key: SOLVED.into(),
         value: None,
     });
+    // The list of saved boards the shelf reads at start.
+    runner.store_result(StoreResult::Keys(Vec::new()));
     runner.action(action_id(&format!("puzzle-{index}")));
     let key = runner.app().progress_key().unwrap();
     runner.store_result(StoreResult::Loaded { key, value: None });
@@ -328,6 +330,7 @@ fn completion_waits_for_the_solved_index_and_retries_its_failure() {
         key: SOLVED.into(),
         value: None,
     });
+    r.store_result(StoreResult::Keys(Vec::new()));
     let commands = r.action(action_id("board.cell.24"));
     assert_eq!(r.app().route, Route::Reveal);
     assert_eq!(
@@ -359,6 +362,7 @@ fn new_collection_does_not_reuse_or_rewrite_an_earlier_save() {
         key: SOLVED.into(),
         value: None,
     });
+    r.store_result(StoreResult::Keys(Vec::new()));
     assert_eq!(r.app().pack, Pack::Pictures);
     assert_eq!(r.app().visible_puzzles(), (60..78).collect::<Vec<_>>());
     r.action(action_id("tab-patterns"));
@@ -536,4 +540,41 @@ fn options_hold_only_what_the_board_does_not_and_back_returns_to_it() {
     );
     r.action(ActionId::BACK);
     assert_eq!(r.app().route, Route::Play);
+}
+#[test]
+fn held_sideways_the_controls_stand_beside_the_board_with_each_word_on_one_line() {
+    for (width, height, ppi) in [(1448, 1072, 300), (1024, 758, 212)] {
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                width,
+                height,
+                pixels_per_inch: ppi,
+                text_scale,
+            };
+            let context = AppRunner::with_metrics(Game::default(), metrics).context();
+            for index in [0, 48] {
+                let mut game = Game::default();
+                game.select(&mut Context::default(), index);
+                let chrome = Chrome::measuring(true);
+                let layout = game
+                    .play(&context)
+                    .with_own_back(true)
+                    .layout_with(&metrics, &chrome);
+                let board = layout
+                    .rect_of_action(action_id("board.cell.0"))
+                    .expect("a square");
+                let more = layout.rect_of_action(action_id("more")).expect("More");
+                assert!(more.x > board.x + board.width, "{metrics:?} index={index}");
+                for node in &layout.nodes {
+                    if matches!(node.kind, LayoutKind::Button(..)) {
+                        assert!(
+                            node.text_lines.len() <= 1,
+                            "{metrics:?} index={index}: {:?}",
+                            node.text_lines
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
