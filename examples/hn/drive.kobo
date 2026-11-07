@@ -26,3 +26,160 @@ expect-missing Nothing saved yet.
 expect eady offline
 clean
 shot hn-saved-offline
+# A saved story survives the app closing: the list and its offline copy are
+# on the reader, not in memory.
+restart
+wait-for 1 of
+tap Saved
+wait-for eady offline
+expect Offline ·
+clean
+shot hn-saved-after-restart
+# With the radio off the saved article still opens, from the book glyph in
+# the discussion, and the discussion says why its comments are missing.
+scenario offline
+tap-id story-0
+wait-for Discussion
+tap-id read-article
+wait-idle
+shot hn-article-offline
+# The reading menu sits in the middle of the page and says where you are.
+tap-id reader-controls
+wait-for Page
+expect Front light
+clean
+shot hn-article-menu
+# Back first puts the open panel away and keeps the article open.
+tap-id 4294967295
+wait-idle
+expect-missing Front light
+# Read it to the end. Live articles vary in length, so turn well past it.
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+page next
+wait-for This is the end
+clean
+shot hn-article-end
+tap-id 4294967295
+wait-idle
+wait-for The article is saved on this reader
+expect Join Wi-Fi
+clean
+shot hn-thread-offline-saved
+tap Back
+wait-for eady offline
+# A live tab with no network says so as the whole screen, with Try again.
+tap New
+wait 9000
+wait-for You're offline
+expect Try again
+clean
+shot hn-new-offline
+scenario normal
+tap Try again
+wait-for 1 of
+# Page turns on a list go forward and back, and the bar says which page.
+tap-id list-next
+wait-for 2 of
+clean
+shot hn-new-page-2
+tap-id list-back
+wait-for 1 of
+# Ask HN stories have no link, so the discussion offers no article.
+tap Ask
+wait-for 1 of
+tap-id story-0
+wait-for Discussion
+expect-missing Read the article
+expect Save
+clean
+shot hn-ask-thread
+tap Back
+wait-for 1 of
+tap Show
+wait-for 1 of
+clean
+shot hn-show
+# A discussion folds a comment with its replies and opens it again, and its
+# own pages turn.
+tap Top
+wait-for 1 of
+tap-id story-0
+wait-for-id fold-0
+tap-id fold-0
+wait-idle
+clean
+shot hn-thread-folded
+tap-id fold-0
+wait-idle
+tap-id thread-next
+wait-for 2 of
+clean
+shot hn-thread-page-2
+tap-id thread-back
+wait-for 1 of
+# Tapping Saved in the discussion takes it off the list again.
+expect Saved
+tap Saved
+wait-for Save
+tap Back
+wait-for 1 of
+tap Saved
+wait-for Nothing saved yet
+clean
+shot hn-saved-emptied
+# Taking a story off from its row menu, the other way to remove one.
+tap Top
+wait-for 1 of
+tap-id story-1
+wait-for Save
+tap Save
+wait-for Saved
+tap Back
+wait-for 1 of
+tap Saved
+wait-for-id saved-menu-0
+tap-id saved-menu-0
+wait-for Take off this list
+clean
+shot hn-saved-row-menu
+tap Take off this list
+wait-for Nothing saved yet
+clean

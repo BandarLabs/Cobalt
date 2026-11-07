@@ -37,8 +37,8 @@ use kobo_bookview::positions::{self, Progress};
 use kobo_bookview::BookView;
 use kobo_sdk::failure::{Problem, Service};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, BannerShape, Context, Failure, Glyph, KoboApp, Position,
-    QuoteRole, RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, BannerShape, Context, Glyph, KoboApp, Position, QuoteRole,
+    RowLead, Screen, ScreenBuilder, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use model::{Comment, Story};
 use std::collections::BTreeMap;
@@ -320,10 +320,10 @@ struct Hn {
     now: i64,
     task: Option<(TaskId, Awaiting)>,
     problem: Option<String>,
-    /// The last task failure, kept as the SDK read it rather than as a
-    /// sentence, because an empty list wants the whole-screen version of the
-    /// same thing and a list with rows on it wants the banner.
-    trouble: Option<Failure>,
+    /// The last task failure, kept as the error rather than as a sentence,
+    /// because an empty list wants the whole-screen version of the same
+    /// thing and a list with rows on it wants the banner.
+    trouble: Option<TaskError>,
     /// How many placeholder rows this panel holds, once it has been measured.
     skeleton: u8,
     /// What this reader has already opened, and what they put aside.
@@ -420,10 +420,10 @@ impl Hn {
             // A failure with an empty list is the whole screen, not a banner
             // over nothing. `standard_state` centres it and names it the same
             // way every other application does.
-            if let Some(failure) = self.trouble {
+            if let Some(error) = self.trouble {
                 let screen = ScreenBuilder::new("hn")
                     .top_bar(self.list_title())
-                    .failure_state(failure, "retry");
+                    .problem_state(&hacker_news(error), "retry");
                 return self.with_tabs(screen).build();
             }
             // The same shape, for a tab that answered with nothing: the
@@ -643,13 +643,17 @@ impl Hn {
         // has to hold the title is most of the title gone. The labels are
         // still set, because they are what the control is called everywhere
         // that is not the panel.
-        let screen = if self.page > 0 {
-            screen.top_bar_glyph("list-back", "Previous", Glyph::Previous)
+        //
+        // The bar sets its marks from the right edge inwards, so Next goes in
+        // first to sit outermost and Previous lands to its left. Added the
+        // other way round, page two read "> <".
+        let screen = if self.page + 1 < self.pages.len() {
+            screen.top_bar_glyph("list-next", "Next", Glyph::Next)
         } else {
             screen
         };
-        let screen = if self.page + 1 < self.pages.len() {
-            screen.top_bar_glyph("list-next", "Next", Glyph::Next)
+        let screen = if self.page > 0 {
+            screen.top_bar_glyph("list-back", "Previous", Glyph::Previous)
         } else {
             screen
         };
@@ -782,7 +786,7 @@ impl Hn {
     /// and nothing of it arrived.
     fn discussion_problem(&self) -> Option<Problem> {
         let error = self.thread_trouble.filter(|_| self.comments.is_empty())?;
-        Some(Service::new("Hacker News").explain(error))
+        Some(hacker_news(error))
     }
 
     /// Everything the thread screen draws, as paragraphs carrying their depth.
@@ -1243,16 +1247,13 @@ impl Hn {
             TaskOutcome::Failed(error) => {
                 // The article, not the discussion. A site that will not answer
                 // says nothing about the thread, which is still here and is
-                // what this screen is for. The advice is the SDK's own words
-                // for that failure, so a reader is told the same thing here as
-                // everywhere else.
-                self.say_in_thread(
-                    context,
-                    format!(
-                        "{} The discussion is still here.",
-                        Failure::of(error).advice
-                    ),
-                );
+                // what this screen is for.
+                let site = self
+                    .open
+                    .and_then(|index| self.stories.get(index))
+                    .and_then(|story| story.site.as_deref());
+                let said = article_trouble(error, site);
+                self.say_in_thread(context, said);
             }
             TaskOutcome::Cancelled => self.show(context),
         }
@@ -2024,15 +2025,37 @@ impl Hn {
             TaskOutcome::Failed(error) => {
                 // The SDK owns the wording, so every application says the same
                 // thing about the same failure and a new TaskError variant does
-                // not need an edit here.
-                let failure = Failure::of(error);
-                self.trouble = Some(failure);
-                self.problem = Some(failure.advice.to_owned());
+                // not need an edit here. Said for Hacker News, as the thread
+                // already was: the generic words called Wi-Fi "a network" on
+                // the list and "Wi-Fi" one tap further in.
+                self.trouble = Some(error);
+                self.problem = Some(hacker_news(error).message);
             }
             TaskOutcome::Cancelled => self.problem = Some("Cancelled.".to_owned()),
         }
         self.show(context);
     }
+}
+
+/// Why the article behind a story did not open, said under the discussion.
+///
+/// Offline, the Wi-Fi is already on the banner above, so this says the one
+/// thing that banner cannot: the article was not saved, which is why it
+/// needs the network at all. It used to repeat the banner in other words.
+/// Any other failure is the article's site's, named as such.
+fn article_trouble(error: TaskError, site: Option<&str>) -> String {
+    if error == TaskError::Offline {
+        return "This article is not saved on this reader, so it opens only on Wi-Fi. \
+                The discussion is still here."
+            .to_owned();
+    }
+    let problem = Service::new(site.unwrap_or("The article's site")).explain(error);
+    format!("{} The discussion is still here.", problem.message)
+}
+
+/// A failed fetch, said as a failure to reach Hacker News.
+fn hacker_news(error: TaskError) -> Problem {
+    Service::new("Hacker News").explain(error)
 }
 
 impl Hn {
@@ -2343,15 +2366,16 @@ mod tests {
             .flat_map(|node| node.text_lines.clone())
             .collect();
         assert!(
-            text.iter().any(|line| line.contains("not on a network")),
+            text.iter().any(|line| line.contains("not on Wi-Fi")),
             "the SDK's wording is not on the screen: {text:?}"
         );
     }
 
     #[test]
-    fn every_failure_is_worded_by_the_sdk() {
+    fn every_failure_is_worded_by_the_sdk_for_hacker_news() {
         // The wording lives in one place so a new TaskError variant does not
-        // need an edit in every application that can see it.
+        // need an edit in every application that can see it, and the list
+        // says it the same way the thread does.
         for error in [
             TaskError::Offline,
             TaskError::Unreachable,
@@ -2364,7 +2388,7 @@ mod tests {
             runner.task_outcome(TaskId(1), TaskOutcome::Failed(error));
             assert_eq!(
                 runner.app_mut().problem.clone().unwrap_or_default(),
-                kobo_sdk::Failure::of(error).advice
+                super::hacker_news(error).message
             );
         }
     }
@@ -3466,6 +3490,34 @@ mod tests {
         let screen = runner.app().thread();
         let bar = format!("{:?}", screen.top_bar);
         assert!(!bar.contains("read-article"), "{bar}");
+    }
+
+    #[test]
+    fn an_article_that_cannot_open_offline_says_it_was_not_saved_rather_than_repeating_the_wifi_banner(
+    ) {
+        let offline = super::article_trouble(TaskError::Offline, Some("8rank.ai"));
+        assert!(offline.contains("not saved on this reader"), "{offline}");
+        assert!(!offline.contains("network"), "{offline}");
+        let down = super::article_trouble(TaskError::Unreachable, Some("8rank.ai"));
+        assert!(down.starts_with("8rank.ai"), "{down}");
+        assert!(down.ends_with("The discussion is still here."), "{down}");
+    }
+
+    #[test]
+    fn the_page_arrows_in_the_bar_read_previous_then_next_from_left_to_right() {
+        let mut runner = loaded();
+        // A middle page, so both arrows are in the bar.
+        runner.app_mut().pages = vec![vec![0], vec![1], vec![2]];
+        runner.app_mut().page = 1;
+        let screen = runner.app().list();
+        let bar = screen.top_bar.expect("a bar");
+        // The bar lists its marks from the right edge inwards.
+        let labels: Vec<&str> = bar
+            .actions
+            .iter()
+            .map(|action| action.label.as_str())
+            .collect();
+        assert_eq!(labels, ["Next", "Previous"]);
     }
 
     #[test]
