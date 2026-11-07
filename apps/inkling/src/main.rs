@@ -1462,7 +1462,13 @@ impl KoboApp for Game {
                 }
             }
             View::Archive => {
-                if a == action_id("close-archive") || a == ActionId::BACK {
+                if (a == action_id("close-archive") || a == ActionId::BACK) && self.archive_page > 0
+                {
+                    // Back retraces the pages Earlier puzzles turned, as it
+                    // does everywhere else, before it leaves the archive.
+                    self.archive_page -= 1;
+                    changed = true;
+                } else if a == action_id("close-archive") || a == ActionId::BACK {
                     self.view = View::Board;
                     changed = true;
                 } else if a == action_id("earlier") {
@@ -1695,6 +1701,25 @@ mod tests {
         assert_eq!((game.played, game.wins), (1, 0));
         assert_eq!(game.dist, [0; 6]);
     }
+    #[test]
+    fn back_on_an_earlier_archive_page_returns_to_the_page_before_it() {
+        let mut game = Game {
+            view: View::Archive,
+            load: LoadState::Ready,
+            ..Game::for_day("2026-09-01")
+        };
+        let mut context = Context::default();
+        game.on_action(&mut context, action_id("earlier"));
+        game.on_action(&mut context, action_id("earlier"));
+        assert_eq!(game.archive_page, 2);
+        game.on_action(&mut context, ActionId::BACK);
+        assert_eq!((game.view, game.archive_page), (View::Archive, 1));
+        game.on_action(&mut context, action_id("close-archive"));
+        assert_eq!((game.view, game.archive_page), (View::Archive, 0));
+        game.on_action(&mut context, ActionId::BACK);
+        assert_eq!(game.view, View::Board);
+    }
+
     #[test]
     fn archive_games_never_touch_statistics() {
         let mut game = Game::for_day("2026-09-01");

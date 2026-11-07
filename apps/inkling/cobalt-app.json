@@ -4,8 +4,8 @@
   "short_label": "Inkling",
   "summary": "Solve a fresh five-letter puzzle each day.",
   "page_description": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
-  "version": "0.2.8",
-  "release_notes": "Inkling now has an icon of its own, a letter with a tick.",
+  "version": "0.2.9",
+  "release_notes": "Back on an earlier page of the archive now returns to the page before it instead of leaving the archive.",
   "minimum_cobalt_version": "0.3.34",
   "glyph": "letter-check",
   "capabilities": []
