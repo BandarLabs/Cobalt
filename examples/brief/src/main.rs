@@ -44,7 +44,7 @@ use kobo_bookview::BookView;
 use kobo_json::Value;
 use kobo_sdk::{
     action_id, ActionId, Context, Failure, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder, Space,
-    StoreResult, Task, TaskId, TaskOutcome,
+    StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 use std::time::Duration;
@@ -261,6 +261,10 @@ struct Brief {
     note: Option<String>,
     /// The refresh being finished is finishing because it failed.
     failed_now: bool,
+    /// The story tapped before the list of saved stories had been read. It
+    /// is opened from the device once the list arrives, rather than fetched
+    /// over a network the reader may not have.
+    awaiting_index: Option<String>,
 }
 
 impl Default for Brief {
@@ -285,6 +289,7 @@ impl Default for Brief {
             loaded: false,
             note: None,
             failed_now: false,
+            awaiting_index: None,
         }
     }
 }
@@ -361,7 +366,7 @@ fn decode(bytes: &[u8]) -> Saved {
             Some(Story {
                 title: title.to_owned(),
                 site: fields.next().unwrap_or_default().to_owned(),
-                url: fields.next().unwrap_or_default().to_owned(),
+                url: over_tls(fields.next().unwrap_or_default()),
                 text: fields.next().unwrap_or_default().to_owned(),
                 id: fields
                     .next()
@@ -432,6 +437,75 @@ fn mid_sentence(said: &str) -> String {
 
 fn clean(text: &str) -> String {
     text.replace(['\t', '\n', '\r'], " ")
+}
+
+/// The address a story is fetched from: a plain `http` link asked for over
+/// TLS instead.
+///
+/// The runtime refuses plain `http` outright, and plenty of stories are still
+/// submitted with it. Left alone, such a story could never be kept or opened,
+/// yet it sat in the brief looking like every other headline. A site that
+/// serves no TLS at all still fails, and its headline says it is not saved.
+fn over_tls(url: &str) -> String {
+    match url.get(..7) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("http://") => {
+            format!("https://{}", &url[7..])
+        }
+        _ => url.to_owned(),
+    }
+}
+
+/// Whether the site refused a story for good, as opposed to a network that
+/// may come back or a site that may answer later.
+const fn refused_for_good(error: TaskError) -> bool {
+    match error {
+        TaskError::NotFound
+        | TaskError::TooLarge
+        | TaskError::Unauthorized
+        | TaskError::Denied
+        | TaskError::NoCredential => true,
+        TaskError::Offline
+        | TaskError::Unreachable
+        | TaskError::TimedOut
+        | TaskError::RateLimited(_) => false,
+    }
+}
+
+/// The same question about a reason the keeper of stories gave, which comes
+/// as the SDK's sentence for the error rather than the error itself.
+fn refusal_for_good(advice: &str) -> bool {
+    [
+        TaskError::NotFound,
+        TaskError::TooLarge,
+        TaskError::Unauthorized,
+        TaskError::Denied,
+        TaskError::NoCredential,
+    ]
+    .into_iter()
+    .any(|error| Failure::of(error).advice == advice)
+}
+
+/// Why a story did not open, as one sentence about the story.
+///
+/// The SDK's advice is written for any item in any list. Set after "This
+/// story could not be opened." it read as two errors stacked, and told the
+/// reader to refresh a list that was not the problem.
+const fn could_not_open(error: TaskError) -> &'static str {
+    match error {
+        TaskError::Offline => {
+            "This story was not saved before the reader went offline. It opens once the reader is on Wi-Fi."
+        }
+        TaskError::Unreachable | TaskError::TimedOut | TaskError::RateLimited(_) => {
+            "The story's site did not answer. Try it again in a while."
+        }
+        TaskError::NotFound
+        | TaskError::TooLarge
+        | TaskError::Unauthorized
+        | TaskError::Denied
+        | TaskError::NoCredential => {
+            "The story's site would not give it to this reader, so it has been taken off the brief."
+        }
+    }
 }
 
 impl Brief {
@@ -519,7 +593,7 @@ impl Brief {
         let rows: Vec<(String, String)> = self
             .stories
             .iter()
-            .map(|story| (story.title.clone(), story.site.clone()))
+            .map(|story| (story.title.clone(), self.row_detail(story)))
             .collect();
         let borrowed: Vec<(&str, &str)> = rows
             .iter()
@@ -555,7 +629,9 @@ impl Brief {
             });
         }
         if self.reading.is_some()
-            && (self.keeper.is_opening() || matches!(self.fetching, Fetching::Article(_)))
+            && (self.keeper.is_opening()
+                || self.awaiting_index.is_some()
+                || matches!(self.fetching, Fetching::Article(_)))
         {
             let title = self
                 .reading
@@ -565,7 +641,7 @@ impl Brief {
                 .top_bar(title)
                 .owns_back(true)
                 .activity(
-                    if self.keeper.is_opening() {
+                    if self.keeper.is_opening() || self.awaiting_index.is_some() {
                         "Opening the saved story"
                     } else {
                         "Fetching the story"
@@ -605,7 +681,7 @@ impl Brief {
                 (
                     format!("story-{index}"),
                     self.stories[index].title.clone(),
-                    self.stories[index].site.clone(),
+                    self.row_detail(&self.stories[index]),
                     u16::try_from(index + 1).unwrap_or(u16::MAX),
                 )
             }));
@@ -705,6 +781,52 @@ impl Brief {
         } else {
             line
         }
+    }
+
+    /// The line under a headline: where the story is from, and whether it
+    /// will open without the network.
+    ///
+    /// Said only once the keeper has finished, and only for a linked story
+    /// it could not keep. "Ready offline: 10 stories" over twelve headlines
+    /// otherwise left the reader to find the two that would not open on the
+    /// train by tapping them.
+    fn row_detail(&self, story: &Story) -> String {
+        let unsaved = self.keeper.is_loaded()
+            && !self.keeper.is_busy()
+            && !story.url.is_empty()
+            && !story.id.is_empty()
+            && !self.keeper.is_kept(&story.id);
+        if unsaved {
+            format!("Not saved offline · {}", story.site)
+        } else {
+            story.site.clone()
+        }
+    }
+
+    /// Takes a story off the brief because its site refused it for good.
+    ///
+    /// A brief that is ready offline offers only what will open. A story
+    /// whose page answers "not found" or "too large" to the keeper answers
+    /// the same to a tap, so leaving its headline up promised a story the
+    /// reader could never have.
+    fn drop_story(&mut self, context: &mut Context, id: &str) {
+        if id.is_empty() {
+            return;
+        }
+        let Some(at) = self.stories.iter().position(|story| story.id == id) else {
+            return;
+        };
+        if self.view == View::Reading && self.reading == Some(at) {
+            // Open on the panel, so it plainly did arrive. Left alone.
+            return;
+        }
+        self.stories.remove(at);
+        self.reading = match self.reading {
+            Some(reading) if reading == at => None,
+            Some(reading) if reading > at => Some(reading - 1),
+            other => other,
+        };
+        self.keep(context);
     }
 
     /// Whether the brief on hand is old enough that opening the application
@@ -875,6 +997,11 @@ impl Brief {
     fn arrived(&mut self, context: &mut Context) {
         if !self.stories.is_empty() {
             Self::schedule_morning(context);
+            // The list of saved stories may have been read first. Either
+            // order puts away whatever this brief still lacks.
+            if self.keeper.is_loaded() && self.fetching == Fetching::Nothing {
+                self.keep_stories(context);
+            }
         }
         self.refresh_if_stale(context);
         self.show(context);
@@ -885,6 +1012,11 @@ impl Brief {
         match heard {
             Heard::Elsewhere | Heard::Quiet => return,
             Heard::Changed | Heard::Failed(..) => {
+                if let Heard::Failed(id, advice) = &heard {
+                    if refusal_for_good(advice) {
+                        self.drop_story(context, id);
+                    }
+                }
                 // One repaint when the last story is put away, not one per
                 // story: twelve full refreshes of a panel somebody is reading
                 // a headline on is twelve flashes for one changed line.
@@ -1020,10 +1152,26 @@ impl Brief {
             {
                 self.view = View::Reading;
             }
+        } else if !story.id.is_empty() && !self.keeper.is_loaded() && !self.keeper.failed {
+            self.awaiting_index = Some(story.id.clone());
         } else if !self.keeper.open(context, &story.id) {
             self.fetch_article(context);
         }
         self.show(context);
+    }
+
+    /// The list of saved stories has been read. A story tapped while it was
+    /// on its way opens now, from the device if it is there.
+    fn index_arrived(&mut self, context: &mut Context) {
+        let Some(id) = self.awaiting_index.take() else {
+            return;
+        };
+        if self.view == View::Reading || self.reading_id() != Some(id.as_str()) {
+            return;
+        }
+        if !self.keeper.open(context, &id) {
+            self.fetch_article(context);
+        }
     }
 
     fn close_story(&mut self, context: &mut Context) {
@@ -1031,6 +1179,7 @@ impl Brief {
         self.keep_position(context);
         self.book.close(context);
         self.keeper.stop_opening();
+        self.awaiting_index = None;
         if let Fetching::Article(task) = self.fetching {
             context.cancel(task);
             self.fetching = Fetching::Nothing;
@@ -1111,7 +1260,7 @@ fn parse_story(body: &[u8]) -> Option<Story> {
             .unwrap_or_default(),
         title: clean(title),
         site: clean(&site),
-        url: clean(url),
+        url: over_tls(&clean(url)),
         // A question or a show-and-tell has no address of its own; what the
         // poster wrote is the whole of it.
         text: value
@@ -1146,6 +1295,7 @@ impl KoboApp for Brief {
             if !self.stories.is_empty() && self.fetching == Fetching::Nothing {
                 self.keep_stories(context);
             }
+            self.index_arrived(context);
             self.heard(context, heard);
             return;
         }
@@ -1362,8 +1512,15 @@ impl Brief {
                 // refresh, because there is nothing to skip to.
                 if matches!(stage, Fetching::Article(_)) {
                     self.fetching = Fetching::Nothing;
-                    self.note = Some(format!("This story could not be opened. {why}"));
+                    self.note = Some(could_not_open(error).to_owned());
+                    let refused = self
+                        .reading_id()
+                        .filter(|_| refused_for_good(error))
+                        .map(str::to_owned);
                     self.reading = None;
+                    if let Some(id) = refused {
+                        self.drop_story(context, &id);
+                    }
                 } else if matches!(stage, Fetching::Story(_, _)) {
                     self.note = Some(why.to_owned());
                     self.advance(context);
@@ -1866,6 +2023,16 @@ mod tests {
     fn a_linked_story_opened_before_it_was_kept_is_kept_as_it_opens() {
         let mut context = Context::default();
         let mut brief = ready();
+        // Read, and empty: nothing of this story is on the device yet.
+        brief.on_load(
+            &mut context,
+            kobo_bookview::offline::INDEX_KEY,
+            StoreResult::Loaded {
+                key: kobo_bookview::offline::INDEX_KEY.into(),
+                value: None,
+            },
+        );
+        let _ignored = context.take_commands();
         brief.stories = vec![Story {
             id: "8863".into(),
             title: "A morning by the river".into(),
@@ -2225,6 +2392,179 @@ mod tests {
         );
         assert_eq!(brief.fetching, Fetching::Nothing);
         assert!(brief.stories.is_empty());
+    }
+
+    /// A brief of two linked stories refreshed on `device`, with every store
+    /// request answered, stopped where the first story's page has been asked
+    /// for to keep.
+    fn two_stories_refreshing(device: &mut Device) -> (AppRunner<Brief>, Vec<Command>) {
+        let mut runner = AppRunner::new(Brief::default());
+        let commands = runner.start();
+        device.settle(&mut runner, commands);
+        let commands = runner.action(action_id(REFRESH));
+        let index = fetch_for(&commands, &Source::Top.index()).expect("the index was asked for");
+        let commands = runner.task_outcome(index, TaskOutcome::Completed(b"[8863,8864]".to_vec()));
+        let first = fetch_for(&commands, &format!("{}/v0/item/8863.json", super::origin()))
+            .expect("the first story was asked for");
+        let commands = runner.task_outcome(
+            first,
+            TaskOutcome::Completed(
+                br#"{"id":8863,"title":"Gone","url":"https://example.org/gone"}"#.to_vec(),
+            ),
+        );
+        let second = fetch_for(&commands, &format!("{}/v0/item/8864.json", super::origin()))
+            .expect("the second story was asked for");
+        let commands = runner.task_outcome(
+            second,
+            TaskOutcome::Completed(
+                br#"{"id":8864,"title":"A morning by the river","url":"https://example.org/river"}"#
+                    .to_vec(),
+            ),
+        );
+        let commands = device.settle(&mut runner, commands);
+        (runner, commands)
+    }
+
+    #[test]
+    fn a_story_submitted_with_a_plain_http_link_is_fetched_over_tls() {
+        let story = parse_story(
+            br#"{"id":8863,"title":"The $8 Linux Computer","url":"http://example.blogspot.com/2022/12/x.html"}"#,
+        )
+        .expect("the story was dropped");
+        assert_eq!(story.url, "https://example.blogspot.com/2022/12/x.html");
+        assert_eq!(story.site, "example.blogspot.com");
+        // A brief saved before this was fixed reads back the same way.
+        let saved = decode(b"brief-v2\ttop\t\t\nA title\te.org\thttp://e.org/a\t\t8863\n");
+        assert_eq!(saved.stories[0].url, "https://e.org/a");
+        assert_eq!(super::over_tls("HTTP://e.org/"), "https://e.org/");
+        assert_eq!(super::over_tls("https://e.org/"), "https://e.org/");
+    }
+
+    #[test]
+    fn a_story_whose_site_refuses_it_is_taken_off_the_brief_rather_than_offered() {
+        let mut device = Device::default();
+        let (mut runner, commands) = two_stories_refreshing(&mut device);
+        let gone = fetch_for(&commands, "https://example.org/gone")
+            .expect("the first story's page was fetched to keep");
+        let commands =
+            runner.task_outcome(gone, TaskOutcome::Failed(kobo_sdk::TaskError::NotFound));
+        let commands = device.settle(&mut runner, commands);
+        let river = fetch_for(&commands, "https://example.org/river")
+            .expect("the second story's page was fetched to keep");
+        let commands = runner.task_outcome(
+            river,
+            TaskOutcome::Completed(b"<article><p>The first light.</p></article>".to_vec()),
+        );
+        device.settle(&mut runner, commands);
+        let titles: Vec<_> = runner
+            .app()
+            .stories
+            .iter()
+            .map(|story| story.title.as_str())
+            .collect();
+        assert_eq!(titles, vec!["A morning by the river"]);
+        // Written down without it, so a restart does not bring it back.
+        let saved = decode(&device.values[STORED]);
+        assert_eq!(saved.stories.len(), 1);
+        // The first headline now is one that opens with the radio off.
+        let commands = runner.action(action_id("story-0"));
+        let commands = device.settle(&mut runner, commands);
+        assert!(fetch_for(&commands, "https://example.org/river").is_none());
+        assert_eq!(runner.app().view, View::Reading);
+    }
+
+    #[test]
+    fn a_story_that_could_not_be_saved_for_a_while_says_so_under_its_headline() {
+        let mut device = Device::default();
+        let (mut runner, commands) = two_stories_refreshing(&mut device);
+        let gone = fetch_for(&commands, "https://example.org/gone").expect("fetched to keep");
+        let commands =
+            runner.task_outcome(gone, TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable));
+        let commands = device.settle(&mut runner, commands);
+        let river = fetch_for(&commands, "https://example.org/river").expect("fetched to keep");
+        let commands = runner.task_outcome(
+            river,
+            TaskOutcome::Completed(b"<article><p>The first light.</p></article>".to_vec()),
+        );
+        device.settle(&mut runner, commands);
+        let app = runner.app();
+        assert_eq!(
+            app.stories.len(),
+            2,
+            "a site that may answer later lost its story"
+        );
+        assert_eq!(
+            app.row_detail(&app.stories[0]),
+            "Not saved offline · example.org"
+        );
+        assert_eq!(app.row_detail(&app.stories[1]), "example.org");
+    }
+
+    #[test]
+    fn a_story_that_will_not_open_says_why_in_one_sentence_about_the_story() {
+        let mut context = Context::default();
+        let mut brief = ready();
+        brief.stories = vec![Story {
+            id: "8863".into(),
+            title: "A morning by the river".into(),
+            site: "example.org".into(),
+            url: "https://example.org/river".into(),
+            text: String::new(),
+        }];
+        brief.keeper.failed = true;
+        brief.on_action(&mut context, action_id("story-0"));
+        let task = spawned(&context.take_commands());
+        brief.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Offline),
+        );
+        let note = brief.note.clone().expect("nothing was said");
+        assert_eq!(note, super::could_not_open(kobo_sdk::TaskError::Offline));
+        assert!(!note.contains("Refresh the list"), "{note}");
+        assert_eq!(brief.stories.len(), 1, "an offline reader lost a story");
+    }
+
+    #[test]
+    fn a_story_tapped_before_the_saved_list_is_read_opens_from_the_device_once_it_is() {
+        let mut context = Context::default();
+        let mut brief = ready();
+        brief.stories = vec![Story {
+            id: "8863".into(),
+            title: "A morning by the river".into(),
+            site: "example.org".into(),
+            url: "https://example.org/river".into(),
+            text: String::new(),
+        }];
+        brief.on_action(&mut context, action_id("story-0"));
+        assert!(
+            !context
+                .take_commands()
+                .iter()
+                .any(|command| matches!(command, Command::Spawn { .. })),
+            "a story that may be on the device went to the network"
+        );
+        let drawn = format!("{:?}", brief.screen(&Context::default()));
+        assert!(drawn.contains("Opening the saved story"), "{drawn}");
+        brief.on_load(
+            &mut context,
+            kobo_bookview::offline::INDEX_KEY,
+            StoreResult::Loaded {
+                key: kobo_bookview::offline::INDEX_KEY.into(),
+                value: Some(b"kept-index-v1\n8863\t10\n".to_vec()),
+            },
+        );
+        let commands = context.take_commands();
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Store(StoreRequest::ShelfRead { .. }))),
+            "the saved copy was not read"
+        );
+        assert!(!commands
+            .iter()
+            .any(|command| matches!(command, Command::Spawn { .. })));
+        assert!(brief.keeper.is_opening());
     }
 
     #[test]

@@ -24,7 +24,9 @@ page next
 wait-idle
 page next
 wait-idle
-tap Back
+# Back by its action rather than its word: the reading bar is hidden, and a
+# live story with "back" anywhere on the page took the tap instead.
+tap-id 4294967295
 wait-for Daily brief
 expect 1 of
 tap-id next
@@ -43,10 +45,10 @@ scenario offline
 tap-id story-0
 wait-idle 30000
 expect-missing Daily brief
-expect-missing could not be opened
+expect-missing was not saved before
 clean
 shot story-offline
-tap Back
+tap-id 4294967295
 wait-for Daily brief
 tap Refresh
 wait-idle 30000
