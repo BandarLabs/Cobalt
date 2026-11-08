@@ -148,7 +148,13 @@ fn run_mode(sample: bool) -> Result<(), String> {
             if let Ok(mut stream) = tls.accept(stream) {
                 if let Ok(request) = read_request(&mut stream) {
                     if let (Some(peer), "/articles/sync") = (peer, request.path()) {
-                        articles_route(&pairing, peer, &request, &mut stream);
+                        articles_route_with(
+                            &pairing,
+                            peer,
+                            &request,
+                            &mut stream,
+                            articles_answer(sample),
+                        );
                         return;
                     }
                     reader_route_inner(&board, deck.as_ref(), &pairing, &request, &mut stream);
@@ -399,15 +405,18 @@ fn reader_route_inner(
     }
 }
 
-/// `POST /articles/sync` from Books: send what is waiting here to the
-/// reader that asked, behind the same code as everything else.
-fn articles_route(
-    pairing: &str,
-    peer: std::net::IpAddr,
-    request: &Request,
-    stream: &mut (impl Read + Write),
-) {
-    articles_route_with(pairing, peer, request, stream, crate::articles::sync_for);
+/// What answers `POST /articles/sync` from Books: sending what is waiting
+/// here to the reader that asked, behind the same code as everything else.
+///
+/// Not in the sample, which promises to run nothing. Books asks on its own
+/// each time it opens, so a sample that synced would empty the owner's
+/// queue without anyone choosing Sync.
+fn articles_answer(sample: bool) -> fn(std::net::IpAddr) -> String {
+    if sample {
+        |_| crate::articles::not_in_the_sample()
+    } else {
+        crate::articles::sync_for
+    }
 }
 
 fn articles_route_with(
@@ -530,7 +539,9 @@ fn ask_json(ask: &Ask) -> kobo_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{articles_route_with, hook_route, reader_route, reader_route_with_deck};
+    use super::{
+        articles_answer, articles_route_with, hook_route, reader_route, reader_route_with_deck,
+    };
     use crate::board::{Board, Decision};
     use crate::deck::Deck;
     use crate::http::Request;
@@ -585,6 +596,22 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn the_sample_answers_sync_without_running_the_companion() {
+        // A companion that ran would empty the owner's queue; the sample's
+        // answer is a sentence, made here, with nothing started.
+        let answer = articles_answer(true)("192.168.1.40".parse().expect("an address"));
+        let value = kobo_json::parse(&answer).expect("json");
+        assert_eq!(
+            value.get("delivered").and_then(kobo_json::Value::as_i64),
+            Some(0)
+        );
+        assert!(value
+            .get("problem")
+            .and_then(kobo_json::Value::as_str)
+            .is_some_and(|problem| problem.contains("sample")));
     }
 
     #[test]
