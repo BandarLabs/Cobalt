@@ -1525,8 +1525,10 @@ pub fn write_publication(book: &Publication) -> Result<Vec<u8>, zip::Fault> {
     }
 
     let mut cover_id = None;
+    let mut taken = std::collections::BTreeSet::new();
     for (index, resource) in book.resources.iter().enumerate() {
-        if !is_resource_name(&resource.name) {
+        // Two names the reader would look up as one are refused as well.
+        if !is_resource_name(&resource.name) || !taken.insert(resource.name.to_ascii_lowercase()) {
             return Err(zip::Fault::Damaged);
         }
         let id = format!("r{}", index + 1);
@@ -1649,12 +1651,22 @@ fn navigation_xhtml(title: &str, language: &str, entries: &str) -> String {
 
 /// Whether a resource name stays inside the package and clear of the
 /// book's own files.
+///
+/// Compared without case and with backslashes as separators, because that
+/// is how the reader looks members up: `CONTENT.OPF` would otherwise be
+/// written beside the package and then found in its place.
 fn is_resource_name(name: &str) -> bool {
-    let reserved =
-        matches!(name, "content.opf" | "toc.ncx" | "nav.xhtml" | "style.css") || is_page_name(name);
+    let name = name.to_ascii_lowercase();
+    let reserved = matches!(
+        name.as_str(),
+        "content.opf" | "toc.ncx" | "nav.xhtml" | "style.css"
+    ) || is_page_name(&name);
     let escapes = name.is_empty()
+        || name.contains('\\')
         || name.starts_with('/')
-        || name.split('/').any(|part| part == ".." || part.is_empty());
+        || name
+            .split('/')
+            .any(|part| part == ".." || part == "." || part.is_empty());
     !reserved && !escapes
 }
 
@@ -2716,11 +2728,21 @@ mod tests {
             "images//x.png",
             "p1.xhtml",
             "nav.xhtml",
+            "CONTENT.OPF",
+            "P1.XHTML",
+            "Nav.Xhtml",
+            "images\\..\\..\\x.png",
+            "./x.png",
         ] {
             let mut book = publication();
             book.resources[0].name = name.to_owned();
             assert_eq!(write_publication(&book), Err(zip::Fault::Damaged), "{name}");
         }
+        let mut book = publication();
+        let mut twin = book.resources[0].clone();
+        twin.name = "IMAGES/1.PNG".to_owned();
+        book.resources.push(twin);
+        assert_eq!(write_publication(&book), Err(zip::Fault::Damaged));
     }
 
     /// Prose arrives as plain text, so blank lines are the only paragraph
