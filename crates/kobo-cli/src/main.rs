@@ -8540,8 +8540,9 @@ Send things to your apps. These go to the reader kobo setup saved; add
   sidekick init | setup | run | status | stop | sample | test  The Sidekick helper
   stream init | stream -- COMMAND  Pair Paperterm, then serve it a terminal
 
-Make a book on this computer:
-  clip PAGE.html --url URL | clip URL [--out FILE.epub] [--colour]  Save a web article as an EPUB
+Send a web article to the reader:
+  clip URL | clip PAGE.html --url URL [--out FILE.epub] [--colour]  Send it, or save it with --out
+  clip sync              Send the articles waiting for the reader
 
 Credentials an app asks for by name:
   connect APP            Connect an account app: asks for the server and
