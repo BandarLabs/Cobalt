@@ -1497,7 +1497,10 @@ fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[
 /// can never reach a real reader.
 fn run_companion(arguments: &str) -> Result<(), String> {
     let arguments = arguments.split_whitespace().collect::<Vec<_>>();
-    if !arguments.contains(&"--sim") {
+    // A clip kept for later goes to no reader at all, only to this
+    // computer's queue, which is what a route about Sync needs to fill.
+    let reaches_no_reader = arguments.first() == Some(&"clip") && arguments.contains(&"--later");
+    if !arguments.contains(&"--sim") && !reaches_no_reader {
         return Err("companion runs only commands that name --sim".to_owned());
     }
     let program = std::env::current_exe().map_err(|error| format!("find kobo: {error}"))?;

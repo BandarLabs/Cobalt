@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 const USAGE: &str = "\
-usage: kobo clip PAGE.html --url URL [--out FILE.epub] [--colour] [--no-pictures]
-       kobo clip URL [--out FILE.epub] [--colour] [--no-pictures]
+usage: kobo clip PAGE.html --url URL [--out FILE.epub | --later] [--colour] [--no-pictures]
+       kobo clip URL [--out FILE.epub | --later] [--colour] [--no-pictures]
        kobo clip sync [--sim | --device IP | --reader NAME]
 
 Saves a web article as an EPUB, as a browser's reader mode shows it: the
@@ -27,14 +27,22 @@ Pictures are fetched, fitted to the reader's screen and turned grey;
 the file or a folder for it; by default the book is named after the article
 and saved in the current folder.
 
-sync sends the articles waiting on this computer to the reader's Articles
-shelf, oldest first.";
+--later keeps the book on this computer for the reader instead, and sync
+sends what is waiting to the reader's Articles shelf, oldest first. Sync on
+the reader's Articles shelf does the same.";
 
 struct Request {
     source: Source,
     out: Option<PathBuf>,
+    /// Keep it for the reader rather than saving it to a folder.
+    later: bool,
     options: kobo_article::Options,
 }
+
+/// The largest book that goes to the reader: the most Books can open, so
+/// pictures past it are left out with a note rather than the article
+/// arriving as a book that will not open there.
+const READER_BOOK_BYTES: usize = kobo_protocol::MAX_LIBRARY_DOCUMENT_BYTES;
 
 enum Source {
     File { path: PathBuf, url: String },
@@ -51,7 +59,10 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     {
         return sync(rest);
     }
-    let request = parse(arguments)?;
+    let mut request = parse(arguments)?;
+    if request.later {
+        request.options.max_book_bytes = READER_BOOK_BYTES;
+    }
     // A wrong --out is said before anything is fetched.
     let target = destination(request.out.as_deref())?;
     let fetch = kobo_article::Web;
@@ -69,6 +80,25 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         }
     }
     .map_err(|refusal| refusal.to_string())?;
+    if request.later {
+        delivery::enqueue(
+            &delivery::queue_folder(),
+            &delivery::Article {
+                title: clipping.title.clone(),
+                site: clipping.site.clone(),
+                file_name: clipping.file_name.clone(),
+                epub: clipping.epub.clone(),
+            },
+        )?;
+        println!(
+            "Waiting on this computer: {}. It goes to your Kobo with kobo clip sync, or Sync on the reader's Articles shelf.",
+            clipping.title
+        );
+        for note in &clipping.notes {
+            println!("{note}");
+        }
+        return Ok(());
+    }
     let path = publish(&target, &clipping.file_name, &clipping.epub)?;
     let pictures = match clipping.pictures {
         1 => "1 picture".to_owned(),
@@ -147,6 +177,7 @@ fn parse(arguments: &[String]) -> Result<Request, String> {
     let mut source = None;
     let mut url = None;
     let mut out = None;
+    let mut later = false;
     let mut options = kobo_article::Options::default();
     let mut rest = arguments.iter();
     while let Some(word) = rest.next() {
@@ -157,6 +188,7 @@ fn parse(arguments: &[String]) -> Result<Request, String> {
                     rest.next().ok_or("--out takes a file or folder")?,
                 ));
             }
+            "--later" => later = true,
             "--colour" | "--color" => options.colour = true,
             "--no-pictures" => options.pictures = false,
             flag if flag.starts_with("--") => {
@@ -167,6 +199,12 @@ fn parse(arguments: &[String]) -> Result<Request, String> {
         }
     }
     let source = source.ok_or_else(|| USAGE.to_owned())?;
+    if later && out.is_some() {
+        return Err(
+            "--later keeps the book for the reader and --out saves it to a folder; choose one"
+                .to_owned(),
+        );
+    }
     let source = if kobo_article::address::is_web_address(&source) {
         if url.is_some() {
             return Err(
@@ -195,6 +233,7 @@ fn parse(arguments: &[String]) -> Result<Request, String> {
     Ok(Request {
         source,
         out,
+        later,
         options,
     })
 }
@@ -394,6 +433,13 @@ mod tests {
         assert!(!request.options.pictures);
         assert!(matches!(request.source, Source::Address(_)));
         assert!(parse(&words("https://example.org/a --url https://example.org/b")).is_err());
+    }
+
+    #[test]
+    fn later_keeps_the_book_for_the_reader_and_cannot_also_save_it() {
+        let request = parse(&words("https://example.org/a --later")).expect("later");
+        assert!(request.later);
+        assert!(parse(&words("https://example.org/a --later --out a.epub")).is_err());
     }
 
     #[test]
