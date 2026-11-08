@@ -164,7 +164,9 @@ const SYSTEM_APPS: &[BuiltinApp] = &[
         summary: "The documents already on this device.",
         version: env!("CARGO_PKG_VERSION"),
         glyph: Glyph::Book,
-        capabilities: &["library"],
+        // The network is for Sync on the Articles shelf, which asks the
+        // computer paired with this reader for articles waiting there.
+        capabilities: &["library", "network"],
     },
     BuiltinApp {
         id: "settings",

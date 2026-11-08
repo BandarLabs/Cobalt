@@ -4006,6 +4006,11 @@ fn simulated_app_request(
         ));
     }
 
+    // Deleting an article is the one library write, and Books the one
+    // application the runtime lets make it.
+    if matches!(request, DeviceRequest::RemoveArticle { .. }) && caller != "books" {
+        return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+    }
     let authorized = match request {
         DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
         DeviceRequest::ReadAppCatalog

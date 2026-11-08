@@ -527,6 +527,58 @@ pub fn resolve_in(roots: &[PathBuf], id: &str) -> Option<PathBuf> {
     (Kind::from_name(name).is_some() || is_unnamed_epub(&real, name)).then_some(real)
 }
 
+/// The folder on the card a computer delivers clipped articles into.
+///
+/// Visible, at the top of the card, because that is where the stock reader
+/// and Books both find books, and where an owner looking over USB expects
+/// them.
+pub const ARTICLES_FOLDER: &str = "Articles";
+
+/// Why an article could not be deleted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Removal {
+    /// The identifier names nothing deletable: no such file, or a file
+    /// outside the articles folder.
+    NotAnArticle,
+    /// The file is there and the card would not let it go.
+    Refused,
+}
+
+/// Deletes one delivered article, the only write the library allows.
+///
+/// Only an EPUB directly inside [`ARTICLES_FOLDER`] on the first root, the
+/// card, and never through a link: the folder holds only what a computer
+/// delivered, so nothing the owner copied on can be reached by a mistake in
+/// Books or by an identifier somebody edited.
+///
+/// # Errors
+///
+/// [`Removal::NotAnArticle`] for anything else, [`Removal::Refused`] when
+/// the file system will not remove it.
+pub fn remove_article(roots: &[PathBuf], id: &str) -> Result<(), Removal> {
+    let card = roots.first().ok_or(Removal::NotAnArticle)?;
+    let name = id
+        .strip_prefix("0/")
+        .and_then(|relative| relative.strip_prefix(ARTICLES_FOLDER))
+        .and_then(|rest| rest.strip_prefix('/'))
+        .ok_or(Removal::NotAnArticle)?;
+    if name.is_empty()
+        || name.contains('/')
+        || name.starts_with('.')
+        || Kind::from_name(name) != Some(Kind::Epub)
+    {
+        return Err(Removal::NotAnArticle);
+    }
+    let folder = card.join(ARTICLES_FOLDER);
+    let path = folder.join(name);
+    let metadata = fs::symlink_metadata(&path).map_err(|_| Removal::NotAnArticle)?;
+    let folder_metadata = fs::symlink_metadata(&folder).map_err(|_| Removal::NotAnArticle)?;
+    if !metadata.file_type().is_file() || !folder_metadata.file_type().is_dir() {
+        return Err(Removal::NotAnArticle);
+    }
+    fs::remove_file(&path).map_err(|_| Removal::Refused)
+}
+
 /// Whether the walk leaves a directory alone: every hidden one, and the
 /// visible names in [`SKIPPED`].
 pub(crate) fn skipped_directory(name: &str) -> bool {
@@ -632,6 +684,12 @@ mod nickel {
             let Some(kind) = kind_of(&mime, path) else {
                 continue;
             };
+            // A sideloaded file the stock reader still remembers but that is
+            // gone from the card, such as an article deleted in Books, is not
+            // a title waiting to be downloaded: nothing could download it.
+            if named.is_some() && path.is_none() && kind != Kind::Kepub {
+                continue;
+            }
             let id = if let Some(path) = path.and_then(Path::to_str) {
                 format!("n/{path}")
             } else {
@@ -1143,6 +1201,85 @@ mod tests {
         assert_eq!(found, [("Piranesi", true), ("Pride and Prejudice", true)]);
         let piranesi = &listing.entries[0].id;
         assert!(super::read_with_stock_in(&roots, piranesi).is_some());
+    }
+
+    #[test]
+    fn only_an_epub_directly_in_the_articles_folder_can_be_deleted() {
+        let card = scratch("articles");
+        let articles = card.join("Articles");
+        fs::create_dir_all(articles.join("Kept")).expect("the articles folder");
+        fs::write(articles.join("River.epub"), b"article").expect("an article");
+        fs::write(articles.join("notes.txt"), b"notes").expect("a note");
+        fs::write(articles.join("Kept").join("Deep.epub"), b"deeper").expect("a nested book");
+        fs::write(card.join("Bleak House.epub"), b"a book").expect("a book");
+        let roots = [card.clone()];
+        for id in [
+            "0/Bleak House.epub",
+            "0/Articles/notes.txt",
+            "0/Articles/Kept/Deep.epub",
+            "0/Articles/../Bleak House.epub",
+            "1/Articles/River.epub",
+            "0/Articles/Missing.epub",
+            "0/Articles/",
+        ] {
+            assert_eq!(
+                super::remove_article(&roots, id),
+                Err(super::Removal::NotAnArticle),
+                "{id}"
+            );
+        }
+        assert!(card.join("Bleak House.epub").exists());
+        assert!(articles.join("Kept").join("Deep.epub").exists());
+        assert_eq!(
+            super::remove_article(&roots, "0/Articles/River.epub"),
+            Ok(())
+        );
+        assert!(!articles.join("River.epub").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_article_that_is_a_link_to_a_book_elsewhere_is_not_followed() {
+        let card = scratch("articles-link");
+        fs::create_dir_all(card.join("Articles")).expect("the articles folder");
+        fs::write(card.join("Bleak House.epub"), b"a book").expect("a book");
+        std::os::unix::fs::symlink(
+            card.join("Bleak House.epub"),
+            card.join("Articles").join("Bleak House.epub"),
+        )
+        .expect("a link");
+        assert_eq!(
+            super::remove_article(&[card.clone()], "0/Articles/Bleak House.epub"),
+            Err(super::Removal::NotAnArticle)
+        );
+        assert!(card.join("Bleak House.epub").exists());
+    }
+
+    #[test]
+    fn a_sideloaded_book_gone_from_the_card_is_not_listed_as_waiting_to_download() {
+        let card = scratch("gone-card");
+        let database = card.join("KoboReader.sqlite");
+        let connection = rusqlite::Connection::open(&database).expect("a scratch library");
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE content (ContentID TEXT, Title TEXT, MimeType TEXT,
+                    IsDownloaded TEXT, ___FileSize INTEGER, ContentType TEXT);
+                 INSERT INTO content VALUES
+                    ('file://{}/Articles/River.epub', 'River', 'application/epub+zip',
+                     'true', 9, '6'),
+                    ('7a866127', 'Cloud Atlas', 'application/x-kobo-epub+zip', 'false', 0, '6');",
+                card.display()
+            ))
+            .expect("the rows");
+        drop(connection);
+        let mut listing = super::Listing::default();
+        super::nickel::merge_from(&mut listing, &database, &[card], None);
+        let titles: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Cloud Atlas"]);
     }
 
     #[test]

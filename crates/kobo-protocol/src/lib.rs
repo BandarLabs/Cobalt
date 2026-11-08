@@ -190,6 +190,15 @@ pub const APP_MARK_VERSION: u8 = 18;
 /// refuse.
 pub const NOTICES_VERSION: u8 = 18;
 
+/// The protocol whose runtime deletes a delivered article for Books,
+/// [`DeviceRequest::RemoveArticle`].
+///
+/// On a tag of its own, as the notices are, so the version did not move.
+/// Books ships with the runtime, so the two only disagree between an update
+/// applied mid-session and the next start, and Books sends this only from a
+/// confirmation the owner tapped, so that window is one tap wide.
+pub const ARTICLES_VERSION: u8 = 18;
+
 pub const VERSION: u8 = 18;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
@@ -1541,6 +1550,13 @@ pub enum DeviceRequest {
     /// application that reads it. Launcher only; requires
     /// [`NOTICES_VERSION`].
     OpenNotice { id: u64 },
+    /// Delete one delivered article, by the identifier a listing gave it.
+    ///
+    /// The one write the library allows, and only of a file in the card's
+    /// `Articles` folder, which holds nothing but what a computer delivered
+    /// there. A book the owner copied on is never in reach. Books only;
+    /// requires [`ARTICLES_VERSION`].
+    RemoveArticle { id: String },
 }
 
 /// Where the runtime keeps a secret typed into a [`DeviceRequest::TypeText`]
@@ -3430,7 +3446,14 @@ fn encode_device_request(
             output.push(49);
             push_string(output, id)?;
         }
-        DeviceRequest::ReadLibrary { .. } => {
+        DeviceRequest::RemoveArticle { .. } if version < ARTICLES_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::RemoveArticle { id } if valid_library_id(id) => {
+            output.push(60);
+            push_string(output, id)?;
+        }
+        DeviceRequest::ReadLibrary { .. } | DeviceRequest::RemoveArticle { .. } => {
             return Err(ProtocolError::InvalidValue("library id"));
         }
         DeviceRequest::ListAudio => output.push(53),
@@ -3894,6 +3917,13 @@ fn decode_device_request(
         57 if version >= NOTICES_VERSION => Ok(DeviceRequest::MarkNoticesRead),
         58 if version >= NOTICES_VERSION => Ok(DeviceRequest::ClearNotices),
         59 if version >= NOTICES_VERSION => Ok(DeviceRequest::OpenNotice { id: reader.u64()? }),
+        60 if version >= ARTICLES_VERSION => {
+            let id = reader.string()?;
+            if !valid_library_id(&id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            Ok(DeviceRequest::RemoveArticle { id })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }

@@ -421,6 +421,21 @@ impl DeviceServices {
             | DeviceRequest::SetUpdateChannel { .. }) => self.handle_update_preferences(&request),
             DeviceRequest::ListLibrary => self.list_library(),
             DeviceRequest::ReadLibrary { id } => self.read_library(&id),
+            DeviceRequest::RemoveArticle { id } => self.remove_article(&id),
+        }
+    }
+
+    /// Who may ask is decided by the host, by identity: only Books.
+    fn remove_article(&self, id: &str) -> DeviceResult {
+        if let Some(reason) = self.refusal(Capability::Library) {
+            return DeviceResult::Denied(reason);
+        }
+        match crate::library::remove_article(&self.library_roots(), id) {
+            Ok(()) => DeviceResult::Done,
+            Err(crate::library::Removal::NotAnArticle) => {
+                DeviceResult::Failed(DeviceError::NotFound)
+            }
+            Err(crate::library::Removal::Refused) => DeviceResult::Failed(DeviceError::Backend),
         }
     }
 
@@ -940,7 +955,9 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         // A secret typed into a field is held to the same per-name review as
         // one set directly, by the host, before the field is drawn.
         | DeviceRequest::TypeText { .. } => return None,
-        DeviceRequest::ListLibrary | DeviceRequest::ReadLibrary { .. } => Capability::Library,
+        DeviceRequest::ListLibrary
+        | DeviceRequest::ReadLibrary { .. }
+        | DeviceRequest::RemoveArticle { .. } => Capability::Library,
     })
 }
 
