@@ -258,6 +258,8 @@ impl Driver {
             "companion" => run_companion(rest),
             "page" => self.post_and_settle("/input", &format!("page {rest}")),
             "scenario" => self.post("/scenario", rest),
+            // An article arriving, through the same inbox a companion writes.
+            "notice" => self.post_and_settle("/notice", rest),
             "tasks" if rest == "cancel" => self.post_and_settle("/tasks", rest),
             "session" if rest == "disconnect" => self.post("/session", rest),
             "input" => self.post_and_settle("/input", rest),

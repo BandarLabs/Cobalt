@@ -5,6 +5,13 @@ use std::{io, time::Instant};
 
 /// The panel's visible state, including a deliberately labelled approximation
 /// of residue left by non-cleaning updates.
+/// How the next frame is planned. See [`PanelPreview::clean_next`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NextFrame {
+    Planned,
+    Cleaning,
+}
+
 #[derive(Debug)]
 pub(super) struct PanelPreview {
     pub planner: FramePlanner,
@@ -19,6 +26,9 @@ pub(super) struct PanelPreview {
     desired: Option<Surface>,
     pending: Option<Pending>,
     held: bool,
+    /// How the next frame is planned: cleaning what it repaints, as the
+    /// device's does when the runtime takes its notice card away, or not.
+    next: NextFrame,
     /// Synthetic model: a pending frame finishes only when the fixture clock advances.
     delay_ms: u64,
     fixture_ms: u64,
@@ -49,6 +59,7 @@ impl PanelPreview {
             desired: None,
             pending: None,
             held: false,
+            next: NextFrame::Planned,
             delay_ms: 0,
             fixture_ms: 0,
             due_ms: None,
@@ -61,6 +72,11 @@ impl PanelPreview {
             submitted_at: None,
             finished_at: None,
         }
+    }
+
+    /// Asks the next frame to clean every region it repaints.
+    pub fn clean_next(&mut self) {
+        self.next = NextFrame::Cleaning;
     }
 
     pub fn update(&mut self, surface: &Surface) {
@@ -76,10 +92,16 @@ impl PanelPreview {
     }
 
     fn submit_latest(&mut self) {
+        let clean = std::mem::replace(&mut self.next, NextFrame::Planned) == NextFrame::Cleaning;
         let Some(surface) = &self.desired else {
             return;
         };
-        let Some(transition) = self.planner.plan(surface) else {
+        let planned = if clean {
+            self.planner.plan_clean(surface)
+        } else {
+            self.planner.plan(surface)
+        };
+        let Some(transition) = planned else {
             self.last = None;
             return;
         };

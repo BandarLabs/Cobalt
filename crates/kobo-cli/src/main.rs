@@ -7709,6 +7709,7 @@ const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR]
                            steps: tap LABEL | tap-id ACTION | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
                            \u{20}       expect-missing TEXT | wait-for TEXT | wait-for-id ACTION | clean | dump\n\
                            \u{20}       lifecycle foreground|background | scenario NAME | wait MS | wait-idle [MS]\n\
+                           \u{20}       notice TITLE (an article arriving, as a companion announces one)\n\
                            expect-state ENDPOINT#JSON_POINTER JSON_VALUE checks typed state.\n\
                            tap-id and wait-for-id accept numeric IDs or stable action names.\n\
                            Transition steps also check for serious layout diagnostics.\n\
