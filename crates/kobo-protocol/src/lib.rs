@@ -177,7 +177,7 @@ pub const FINE_TYPE_VERSION: u8 = 18;
 pub const APP_MARK_VERSION: u8 = 18;
 
 /// The protocol whose runtime keeps notices: [`Message::Notices`], sent to
-/// the launcher, and [`DeviceRequest::MarkNoticesRead`],
+/// the launcher, [`Message::OpenDocument`], sent to Books, and [`DeviceRequest::MarkNoticesRead`],
 /// [`DeviceRequest::ClearNotices`] and [`DeviceRequest::OpenNotice`], which
 /// only the launcher may send. Also the bell, [`Glyph::Bell`], it opens them
 /// with.
@@ -984,6 +984,13 @@ pub enum Message {
     /// whenever the list changes. Unsolicited, like [`Self::CoverChanged`].
     /// Requires [`NOTICES_VERSION`].
     Notices(NoticeList),
+    /// The runtime asking the application it just brought forward to open
+    /// one library document, by the identifier a library listing uses: the
+    /// article a notice announced. Unsolicited, and sent only to Books, which
+    /// ships with the runtime. Requires [`NOTICES_VERSION`].
+    OpenDocument {
+        id: String,
+    },
 }
 
 /// The most bytes carried in one direction of a terminal in a single message.
@@ -2541,6 +2548,7 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
         }
         Message::DropFont { handle } => push_u32(&mut payload, handle.0),
         Message::Notices(list) => notices::push_list(&mut payload, list, frame.version)?,
+        Message::OpenDocument { id } => push_string(&mut payload, id)?,
         Message::PrepareSuspend { generation } => push_u64(&mut payload, *generation),
         Message::ScheduledWake { occurrence } => push_u64(&mut payload, *occurrence),
         Message::Resume { generation, reason } => {
@@ -3164,8 +3172,14 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
             Ok((24, length))
         }
         Message::DropFont { .. } => Ok((25, 4)),
-        Message::Notices(_) if version < NOTICES_VERSION => {
+        Message::Notices(_) | Message::OpenDocument { .. } if version < NOTICES_VERSION => {
             Err(ProtocolError::UnsupportedVersion(version))
+        }
+        Message::OpenDocument { id } => {
+            if !valid_library_id(id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            Ok((42, encoded_string_len(id)?))
         }
         Message::Notices(list) => {
             let mut encoded = Vec::new();
@@ -5904,6 +5918,13 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         },
         41 if version >= NOTICES_VERSION => {
             Message::Notices(notices::read_list(&mut reader, version)?)
+        }
+        42 if version >= NOTICES_VERSION => {
+            let id = reader.string()?;
+            if !valid_library_id(&id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            Message::OpenDocument { id }
         }
         tag @ (37..=40) if version >= SUSPEND_VERSION => {
             let generation = reader.u64()?;

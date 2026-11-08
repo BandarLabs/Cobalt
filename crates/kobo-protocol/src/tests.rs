@@ -1850,9 +1850,27 @@ fn the_notice_list_reaches_the_launcher_exactly_as_the_runtime_holds_it() {
 }
 
 #[test]
+fn books_is_asked_to_open_the_article_by_its_library_identifier() {
+    let frame = Frame {
+        version: VERSION,
+        request_id: 0,
+        message: Message::OpenDocument {
+            id: "0/Articles/River.epub".to_owned(),
+        },
+    };
+    assert_eq!(
+        decode(&encode(&frame).expect("encode")).expect("decode"),
+        frame
+    );
+}
+
+#[test]
 fn notices_cannot_be_sent_or_asked_for_at_a_protocol_from_before_them() {
     let older = crate::QUIET_TYPE_VERSION;
     for message in [
+        Message::OpenDocument {
+            id: "0/Articles/River.epub".to_owned(),
+        },
         Message::Notices(kept_notices(false)),
         Message::DeviceRequest(DeviceRequest::MarkNoticesRead),
         Message::DeviceRequest(DeviceRequest::ClearNotices),
