@@ -1488,6 +1488,42 @@ barrier and panel fence. Native kernel suspend, RTC wake and automatic cover
 sleep remain disabled pending hardware validation; simulator scenarios do not
 establish those hardware capabilities.
 
+### Notices
+
+The runtime can tell the owner something happened wherever they are: a card
+under the status band for about four seconds ("Article arrived" over the
+title), then a Notifications list behind the bell in the launcher's bar. An
+application does not draw or measure for the card; it is runtime chrome, and
+every tap outside it reaches the screen underneath as usual. It is never put
+over a reading page (a screen marked `reading`, or one that hides its bar),
+and it waits while a keyboard or a dialogue is up. Several arrivals become one
+card ("3 articles arrived"), and arrivals during sleep say so.
+
+Anything trusted on the reader raises one by writing a small JSON file into
+`/mnt/onboard/.adds/cobalt/state/notices/inbox/` (in the simulator,
+`$TMPDIR/cobalt-sim-state/.notices/inbox/`, or `.state/.notices/inbox/` under
+`KOBO_SIM_DATA`). Write it under another name and rename it to
+`*.json`, so it is never read half-written:
+
+```json
+{"kind": "article", "title": "How the river found its way",
+ "source": "example.com", "app": "books", "path": "Articles/river.epub"}
+```
+
+`title` is required. `kind` is `article` unless it says otherwise, and any
+other kind must carry its own `heading`. `path` is relative to the card and is
+what a tap opens, in `app`; `time`, in seconds or milliseconds since 1970,
+defaults to arrival. Records over 4 KiB, without a title, or with a path that
+leaves the card are discarded. The list keeps the newest hundred across
+restarts. Titles never reach the log.
+
+Only the launcher hears the list (`KoboApp::on_notices`) and only it may act
+on it (`context.notices()`: `mark_read`, `clear`, `open`); only Books is asked
+to open a document (`KoboApp::on_open_document`). These are additive messages
+in protocol 18 ([`kobo_protocol::NOTICES_VERSION`]), and the launcher asks for
+nothing until a list has arrived, so it never sends a runtime a frame that
+runtime would refuse.
+
 ---
 
 ## 10. Hardware
@@ -1879,6 +1915,7 @@ A script is one step per line; `#` is a comment.
 | `scenario NAME` | switches to a deterministic failure scenario |
 | `wifi FAULT` | makes the simulated radio fail: `absent`, `hung`, `unresponsive`, `wrong-password`, or `none` |
 | `lifecycle background` / `foreground` | delivers a real lifecycle message |
+| `notice TITLE` | an article arriving, through the notices inbox a companion writes to |
 | `wait MS` | waits |
 
 A failing step reports the line, the step and the reason, and takes a

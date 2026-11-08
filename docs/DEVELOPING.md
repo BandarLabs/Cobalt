@@ -52,7 +52,7 @@ A script is one step per line: `tap LABEL`, `tap-id ACTION`, `tap-at X,Y`,
 `wait-for-id ACTION`, `clean`, `shot NAME`, `dump`, `scenario NAME`,
 `lifecycle foreground|background`, `wait MS`, `wait-idle [MS]`, and
 `expect-state ENDPOINT#JSON_POINTER JSON_VALUE` to check the app's typed
-state. A failing step
+state, and `notice TITLE` to raise a runtime notice the way a companion does. A failing step
 reports the line and the reason and screenshots the panel first. Add `--ideal`
 to take screenshots without the panel's e-ink residue, which is what you want
 when a person or a model is going to read them.
