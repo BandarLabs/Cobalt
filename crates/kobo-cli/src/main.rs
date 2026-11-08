@@ -18,6 +18,7 @@ mod birds;
 mod bootstrap;
 mod clip;
 mod clip_delivery;
+mod clip_host;
 mod connect;
 mod console;
 mod deck;
