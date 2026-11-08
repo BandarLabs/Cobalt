@@ -30,6 +30,11 @@ const DEVICE_ARTICLES: &str = "/mnt/onboard/Articles";
 /// over the reader's Wi-Fi.
 const COPY_PATIENCE: Duration = Duration::from_secs(120);
 
+/// The least time worth starting a copy with. Less than this and the copy
+/// would most likely be cut off, leaving the article for the next sync
+/// anyway.
+const LEAST_COPY: Duration = Duration::from_secs(10);
+
 /// A delivery that started this long ago and never finished was a process
 /// that died, and its claim on the queue is let go.
 const STALE_CLAIM: Duration = Duration::from_secs(15 * 60);
@@ -77,7 +82,10 @@ pub enum Missed {
 /// Returns the name it was saved under on the reader, which is the title's
 /// file name or the first numbered one free, so an article never replaces
 /// another with the same title.
-pub fn deliver(reader: &Reader, article: &Article) -> Result<String, Missed> {
+///
+/// The copy is given at most `patience`, so a sync with a deadline ends by
+/// it rather than one copy past it.
+pub fn deliver(reader: &Reader, article: &Article, patience: Duration) -> Result<String, Missed> {
     match reader {
         Reader::Simulator => deliver_to_folders(
             &kobo_sim::simulated_library_root(),
@@ -85,7 +93,7 @@ pub fn deliver(reader: &Reader, article: &Article) -> Result<String, Missed> {
             article,
         )
         .map_err(Missed::Refused),
-        Reader::Device(host) => deliver_to_device(host, article),
+        Reader::Device(host) => deliver_to_device(host, article, patience.min(COPY_PATIENCE)),
     }
 }
 
@@ -127,13 +135,10 @@ pub(crate) fn deliver_to_folders(
     Ok(name)
 }
 
-fn deliver_to_device(host: &str, article: &Article) -> Result<String, Missed> {
-    let output = super::run_remote_shell(
-        &format!("root@{host}"),
-        &device_script(article),
-        COPY_PATIENCE,
-    )
-    .map_err(Missed::Away)?;
+fn deliver_to_device(host: &str, article: &Article, patience: Duration) -> Result<String, Missed> {
+    let output =
+        super::run_remote_shell(&format!("root@{host}"), &device_script(article), patience)
+            .map_err(Missed::Away)?;
     let said = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
         if let Some(name) = said.lines().find_map(|line| line.strip_prefix("saved=")) {
@@ -382,20 +387,15 @@ pub struct Report {
 impl Report {
     /// The one line `kobo clip sync --json` prints, which the Sidekick helper
     /// hands to Books as it is.
+    ///
+    /// Counts and one sentence, never the titles, so the line stays a few
+    /// hundred bytes however many articles went: Books reads at most 16 KiB
+    /// of an answer, and would take a long list for a failed request.
     pub fn to_json(&self) -> String {
         let mut reply = kobo_json::ObjectBuilder::new()
             .set(
                 "delivered",
                 u32::try_from(self.delivered.len()).unwrap_or(u32::MAX),
-            )
-            .set(
-                "titles",
-                kobo_json::Value::Array(
-                    self.delivered
-                        .iter()
-                        .map(|title| kobo_json::Value::String(title.clone()))
-                        .collect(),
-                ),
             )
             .set("waiting", u32::try_from(self.waiting).unwrap_or(u32::MAX));
         if let Some(problem) = &self.problem {
@@ -406,19 +406,22 @@ impl Report {
 }
 
 /// Sends everything waiting to `reader`, oldest first, until `patience`
-/// runs out or the reader stops answering.
+/// runs out or the reader stops answering. Each copy gets only the time
+/// left, so the sync, and its claim on the queue, end within `patience`.
 ///
 /// Only one sync works the queue at a time, so a clip arriving while Sync on
 /// the reader is under way cannot send the same article twice. A second one
 /// reports what is waiting and leaves it to the first.
 pub fn sync(queue: &Path, reader: &Reader, patience: Duration) -> Report {
-    sync_with(queue, patience, |article| deliver(reader, article))
+    sync_with(queue, patience, |article, left| {
+        deliver(reader, article, left)
+    })
 }
 
 pub(crate) fn sync_with(
     queue: &Path,
     patience: Duration,
-    mut send: impl FnMut(&Article) -> Result<String, Missed>,
+    mut send: impl FnMut(&Article, Duration) -> Result<String, Missed>,
 ) -> Report {
     let Some(_claim) = Claim::take(queue) else {
         return Report {
@@ -433,7 +436,8 @@ pub(crate) fn sync_with(
     let queued = waiting(queue);
     let mut left = queued.len();
     for entry in &queued {
-        if started.elapsed() >= patience {
+        let time_left = patience.saturating_sub(started.elapsed());
+        if time_left < LEAST_COPY {
             break;
         }
         let Some(article) = load(queue, entry) else {
@@ -442,7 +446,7 @@ pub(crate) fn sync_with(
             left -= 1;
             continue;
         };
-        match send(&article) {
+        match send(&article, time_left) {
             Ok(_) => {
                 forget(queue, entry);
                 left -= 1;
@@ -493,23 +497,23 @@ pub fn send_now(
     article: &Article,
     reader: Result<Reader, String>,
 ) -> Result<Landing, String> {
-    send_with(queue, article, reader, |reader, article| {
-        deliver(reader, article)
-    })
+    send_with(queue, article, reader, deliver)
 }
 
 pub(crate) fn send_with(
     queue: &Path,
     article: &Article,
     reader: Result<Reader, String>,
-    mut send: impl FnMut(&Reader, &Article) -> Result<String, Missed>,
+    mut send: impl FnMut(&Reader, &Article, Duration) -> Result<String, Missed>,
 ) -> Result<Landing, String> {
     let kept = enqueue(queue, article)?;
     let reader = match reader {
         Ok(reader) => reader,
         Err(why) => return Ok(Landing::Waiting { why }),
     };
-    let report = sync_with(queue, SEND_PATIENCE, |article| send(&reader, article));
+    let report = sync_with(queue, SEND_PATIENCE, |article, left| {
+        send(&reader, article, left)
+    });
     if waiting(queue).iter().any(|entry| entry.id == kept.id) {
         return Ok(Landing::Waiting {
             why: report.problem.unwrap_or_else(|| AWAY.to_owned()),
@@ -692,7 +696,7 @@ mod tests {
             enqueue(&queue, &article(title)).expect("queued");
         }
         let mut tried = Vec::new();
-        let report = sync_with(&queue, Duration::from_secs(60), |article| {
+        let report = sync_with(&queue, Duration::from_secs(60), |article, _| {
             tried.push(article.title.clone());
             if article.title == "Two" {
                 Err(Missed::Away("The reader is asleep.".to_owned()))
@@ -720,7 +724,7 @@ mod tests {
         for title in ["Huge", "Small"] {
             enqueue(&queue, &article(title)).expect("queued");
         }
-        let report = sync_with(&queue, Duration::from_secs(60), |article| {
+        let report = sync_with(&queue, Duration::from_secs(60), |article, _| {
             if article.title == "Huge" {
                 Err(Missed::Refused("The card is full.".to_owned()))
             } else {
@@ -737,13 +741,13 @@ mod tests {
         let queue = scratch("claim");
         enqueue(&queue, &article("Only")).expect("queued");
         let held = Claim::take(&queue).expect("the first claim");
-        let report = sync_with(&queue, Duration::from_secs(60), |_| {
+        let report = sync_with(&queue, Duration::from_secs(60), |_, _| {
             panic!("a second sync sent an article while the first held the queue")
         });
         assert_eq!(report.waiting, 1);
         assert!(report.problem.is_some());
         drop(held);
-        let report = sync_with(&queue, Duration::from_secs(60), |article| {
+        let report = sync_with(&queue, Duration::from_secs(60), |article, _| {
             Ok(article.file_name.clone())
         });
         assert_eq!(report.delivered, ["Only"]);
@@ -778,6 +782,47 @@ mod tests {
     }
 
     #[test]
+    fn the_report_stays_small_however_many_articles_went() {
+        let report = Report {
+            delivered: (0..2_000)
+                .map(|n| format!("{n} {}", "word ".repeat(18)))
+                .collect(),
+            ..Report::default()
+        };
+        let json = report.to_json();
+        assert!(json.len() < 256, "{} bytes", json.len());
+        let parsed = kobo_json::parse(&json).expect("valid");
+        assert_eq!(
+            parsed.get("delivered").and_then(kobo_json::Value::as_i64),
+            Some(2_000)
+        );
+        assert!(parsed.get("titles").is_none());
+    }
+
+    #[test]
+    fn each_copy_gets_only_the_time_left_and_none_starts_with_too_little() {
+        let queue = scratch("deadline");
+        for title in ["One", "Two"] {
+            enqueue(&queue, &article(title)).expect("queued");
+        }
+        let mut given = Vec::new();
+        let report = sync_with(&queue, Duration::from_secs(30), |article, left| {
+            given.push(left);
+            Ok(article.file_name.clone())
+        });
+        assert_eq!(report.delivered, ["One", "Two"]);
+        assert!(given.iter().all(|left| *left <= Duration::from_secs(30)));
+        assert!(given.windows(2).all(|pair| pair[1] <= pair[0]));
+
+        enqueue(&queue, &article("Late")).expect("queued");
+        let report = sync_with(&queue, LEAST_COPY - Duration::from_secs(1), |_, _| {
+            panic!("a copy started with less time than one takes")
+        });
+        assert_eq!(report.waiting, 1);
+        let _ = fs::remove_dir_all(&queue);
+    }
+
+    #[test]
     fn a_clip_lands_with_what_was_waiting_and_the_queue_is_left_empty() {
         let queue = scratch("send-landed");
         enqueue(&queue, &article("Earlier")).expect("queued");
@@ -786,7 +831,7 @@ mod tests {
             &queue,
             &article("Now"),
             Ok(Reader::Device("192.168.1.9".to_owned())),
-            |_, article| {
+            |_, article, _| {
                 sent.push(article.title.clone());
                 Ok(article.file_name.clone())
             },
@@ -811,7 +856,7 @@ mod tests {
             &queue,
             &article("Now"),
             Ok(Reader::Device("192.168.1.9".to_owned())),
-            |_, _| Err(Missed::Away("ssh: connect to host: timed out".to_owned())),
+            |_, _, _| Err(Missed::Away("ssh: connect to host: timed out".to_owned())),
         )
         .expect("kept");
         assert_eq!(
@@ -831,7 +876,7 @@ mod tests {
             &queue,
             &article("Now"),
             Err("No reader is saved.".to_owned()),
-            |_, _| panic!("nothing should be sent without a reader"),
+            |_, _, _| panic!("nothing should be sent without a reader"),
         )
         .expect("kept");
         assert_eq!(

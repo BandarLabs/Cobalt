@@ -19,8 +19,9 @@ use std::time::{Duration, Instant};
 /// Where `kobo sidekick run` says the companion is.
 const COMPANION_VARIABLE: &str = "KOBO_COMPANION";
 
-/// How long the companion may take. It stops starting new copies at a
-/// hundred seconds, and the runtime gives Books' request three minutes.
+/// How long the companion may take. It gives every copy only what is left
+/// of its own hundred seconds, so it has finished, and let go of the
+/// queue, well before this; the runtime gives Books' request three minutes.
 const SYNC_PATIENCE: Duration = Duration::from_secs(150);
 
 /// The most the companion's answer is allowed to be.
@@ -101,6 +102,12 @@ fn last_object(text: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The answer while Sidekick runs as a sample, which runs nothing.
+#[must_use]
+pub fn not_in_the_sample() -> String {
+    problem("Sidekick is running as a sample, which sends no articles. Start kobo sidekick run to use Sync.")
+}
+
 fn problem(reason: &str) -> String {
     kobo_json::ObjectBuilder::new()
         .set("delivered", 0_u32)
@@ -143,10 +150,10 @@ mod tests {
     #[test]
     fn only_the_companions_closing_report_reaches_books() {
         let printed = "Using your saved reader \"study\".\n\
-                       {\"delivered\":1,\"titles\":[\"Tides\"],\"waiting\":0}\n";
+                       {\"delivered\":1,\"waiting\":0}\n";
         assert_eq!(
             last_object(printed).as_deref(),
-            Some("{\"delivered\":1,\"titles\":[\"Tides\"],\"waiting\":0}")
+            Some("{\"delivered\":1,\"waiting\":0}")
         );
         assert_eq!(last_object("error: no reader is saved\n"), None);
     }
