@@ -184,6 +184,28 @@ impl FramePlanner {
         self.transition(regions, dirty, false, cleaning)
     }
 
+    /// Plans the next update as [`Self::plan`] does, cleaning every region
+    /// it repaints.
+    ///
+    /// For taking away something that lay over the page, such as the
+    /// runtime's notice card. A partial waveform over a rectangle that was a
+    /// card a moment ago leaves its outline on the panel; the full waveform
+    /// on just that rectangle costs one short flash where the card was and
+    /// leaves nothing behind.
+    #[must_use]
+    pub fn plan_clean(&self, surface: &Surface) -> Option<FrameTransition> {
+        let mut transition = self.plan(surface)?;
+        for update in &mut transition.regions {
+            if update.waveform != PanelWaveform::Colour {
+                update.waveform = PanelWaveform::Gc16;
+            }
+        }
+        if transition.waveform != PanelWaveform::Colour {
+            transition.waveform = PanelWaveform::Gc16;
+        }
+        Some(transition)
+    }
+
     /// Plans an update for a region whose pixels and waveform are already
     /// known by the caller.
     ///
@@ -673,6 +695,36 @@ mod tests {
         assert!(!next.full, "the second screen must not flash the panel");
         assert!(planner.fits(&launcher));
         assert!(!planner.fits(&Surface::new(32, 64)));
+    }
+
+    #[test]
+    fn taking_a_card_away_cleans_only_where_it_was() {
+        let (mut planner, page) = started(64, 64);
+        let mut covered = page.clone();
+        for y in 4..20 {
+            for x in 8..56 {
+                covered.pixels[y * 64 + x] = if y == 4 { tone::INK } else { 170 };
+            }
+        }
+        let shown = planner.plan(&covered).expect("the card is a change");
+        assert!(!shown.full);
+        assert!(shown
+            .regions
+            .iter()
+            .all(|update| update.waveform != PanelWaveform::Gc16));
+        assert!(planner.commit(&covered, &shown));
+        let gone = planner
+            .plan_clean(&page)
+            .expect("the card going is a change");
+        assert!(!gone.full, "only the card's rectangle flashes");
+        assert!(gone
+            .regions
+            .iter()
+            .all(|update| update.waveform == PanelWaveform::Gc16
+                && update.region.y <= 4
+                && update.region.y + update.region.height >= 20));
+        assert!(planner.commit(&page, &gone));
+        assert!(planner.plan_clean(&page).is_none(), "nothing left to clean");
     }
 
     #[test]
