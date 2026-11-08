@@ -1519,7 +1519,14 @@ restarts. Titles never reach the log.
 
 Only the launcher hears the list (`KoboApp::on_notices`) and only it may act
 on it (`context.notices()`: `mark_read`, `clear`, `open`); only Books is asked
-to open a document (`KoboApp::on_open_document`). These are additive messages
+to open a document (`KoboApp::on_open_document`).
+
+A computer delivers web articles into the card's `Articles` folder and
+announces each with a notice (`kobo clip`, in docs/companion-cli.md). Books
+lists them on a shelf of their own and is the one application that may
+delete one: `context.device().remove_article(id)` removes an EPUB directly
+in that folder and nothing else, and is refused for any other caller. It is
+an additive request in protocol 18 ([`kobo_protocol::ARTICLES_VERSION`]). These are additive messages
 in protocol 18 ([`kobo_protocol::NOTICES_VERSION`]), and the launcher asks for
 nothing until a list has arrived, so it never sends a runtime a frame that
 runtime would refuse.
@@ -1593,7 +1600,7 @@ clamps even that:
 | `sleep-screen` | Draw the sleep screen |
 | `notifications` | Post notifications |
 | `shared-files` | Use a user-visible folder |
-| `library` | List and read the books already on the device, read-only |
+| `library` | List and read the books already on the device, read-only (Books alone may delete a delivered article) |
 | `cover-sensor` | Watch the hall sensor a sleep cover closes against |
 | `shell` | Run a terminal, hosted by the runtime |
 
