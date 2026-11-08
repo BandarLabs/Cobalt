@@ -415,6 +415,34 @@ fn a_book_over_its_size_limit_leaves_pictures_out_and_says_so() {
 }
 
 #[test]
+fn the_lead_picture_counts_against_the_same_picture_budget_as_the_body() {
+    // Both body pictures fail, so the page's preview picture is tried next,
+    // but only while the clip's count and time allow it.
+    let html = fixture("synthetic-magazine.html")
+        .replace("lighthouse/tower-", "lighthouse/missing-tower-")
+        .replace("lighthouse/logbook-", "lighthouse/missing-logbook-");
+    let page = "https://www.longform.example.com/features/last-lighthouse-keepers";
+    let asked = |options: &Options| {
+        let pictures = Pictures::default();
+        clip(&html, page, &pictures, options).expect("a book");
+        pictures.asked.take()
+    };
+    let lead = "https://static.longform.example.com/2026/lighthouse/hero-1600.jpg";
+    assert_eq!(asked(&options()).last().map(String::as_str), Some(lead));
+    assert_eq!(asked(&options()).len(), 3);
+    let two = Options {
+        max_pictures: 2,
+        ..options()
+    };
+    assert_eq!(asked(&two).len(), 2, "the lead would be a third picture");
+    let no_time = Options {
+        pictures_deadline: std::time::Duration::ZERO,
+        ..options()
+    };
+    assert!(asked(&no_time).is_empty());
+}
+
+#[test]
 fn a_page_whose_text_alone_is_too_large_is_refused_with_its_size() {
     let refusal = clip(
         &fixture("synthetic-news.html"),

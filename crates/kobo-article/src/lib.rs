@@ -374,6 +374,7 @@ fn lead_picture(
     page: &str,
     fetch: &dyn Fetch,
     options: &Options,
+    allowance: &mut Allowance,
 ) -> Option<picture::Prepared> {
     let lead = article.lead_image.as_deref()?;
     let lower = lead.to_ascii_lowercase();
@@ -390,6 +391,7 @@ fn lead_picture(
         page,
         fetch,
         options,
+        allowance,
         &mut quiet,
     )
     .pop()
@@ -501,6 +503,26 @@ fn check_page(html: &str, page: &str) -> Result<(), Refusal> {
     Ok(())
 }
 
+/// The body's pictures, then the lead picture when the body kept none, all
+/// within one allowance.
+fn all_pictures(
+    article: &extract::Article,
+    body: &body::Body,
+    page: &str,
+    fetch: &dyn Fetch,
+    options: &Options,
+    notes: &mut Vec<String>,
+) -> (Vec<Option<picture::Prepared>>, Option<picture::Prepared>) {
+    let mut allowance = Allowance::new(options);
+    let prepared = fetch_pictures(&body.pictures, page, fetch, options, &mut allowance, notes);
+    let lead = if prepared.iter().any(Option::is_some) {
+        None
+    } else {
+        lead_picture(article, page, fetch, options, &mut allowance)
+    };
+    (prepared, lead)
+}
+
 /// Makes a book of the article in `html`, which came from `page`.
 ///
 /// # Errors
@@ -522,12 +544,7 @@ pub fn clip(
     let mut body = rebuilt_body(&article, page, &title)?;
 
     let mut notes = Vec::new();
-    let mut prepared = fetch_pictures(&body.pictures, page, fetch, options, &mut notes);
-    let mut lead = if prepared.iter().any(Option::is_some) {
-        None
-    } else {
-        lead_picture(&article, page, fetch, options)
-    };
+    let (mut prepared, mut lead) = all_pictures(&article, &body, page, fetch, options, &mut notes);
 
     let language = article.language.clone().unwrap_or_else(|| "en".to_owned());
     let site = article.site.clone().or_else(|| address::host_of(page));
@@ -632,33 +649,52 @@ fn has_words(nodes: &[body::Node]) -> bool {
 /// Fetches and prepares pictures in page order, within the count, size and
 /// time allowed. Each answer is the prepared picture, or nothing when it was
 /// not used.
+/// What is left of one clip's picture budget: how many more may be fetched
+/// and when fetching must stop. Shared by every pass, so the lead picture
+/// tried after the body's cannot be a forty-first, or start after the time
+/// has run out.
+struct Allowance {
+    pictures: usize,
+    until: Instant,
+}
+
+impl Allowance {
+    fn new(options: &Options) -> Self {
+        Self {
+            pictures: options.max_pictures,
+            until: Instant::now() + options.pictures_deadline,
+        }
+    }
+}
+
 fn fetch_pictures(
     pictures: &[body::Picture],
     page: &str,
     fetch: &dyn Fetch,
     options: &Options,
+    allowance: &mut Allowance,
     notes: &mut Vec<String>,
 ) -> Vec<Option<picture::Prepared>> {
     if !options.pictures {
         return vec![None; pictures.len()];
     }
-    let started = Instant::now();
     let mut failed = 0;
     let mut beyond_count = 0;
     let mut beyond_time = 0;
     let mut out = Vec::with_capacity(pictures.len());
-    for (index, wanted) in pictures.iter().enumerate() {
-        if index >= options.max_pictures {
+    for wanted in pictures {
+        if allowance.pictures == 0 {
             beyond_count += 1;
             out.push(None);
             continue;
         }
-        let left = options.pictures_deadline.saturating_sub(started.elapsed());
+        let left = allowance.until.saturating_duration_since(Instant::now());
         if left.is_zero() {
             beyond_time += 1;
             out.push(None);
             continue;
         }
+        allowance.pictures -= 1;
         let answer = fetch.fetch(&Request {
             address: &wanted.address,
             referer: Some(page),
