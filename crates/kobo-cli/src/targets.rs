@@ -405,6 +405,7 @@ const ACTS_ON_A_READER: &[ReaderCommand] = &[
     ReaderCommand::sends("birds", &["listen", "push"]),
     ReaderCommand::sends("feeds", &["push"]),
     ReaderCommand::sends("deck", &["push"]),
+    ReaderCommand::sends("clip", &["sync"]),
     ReaderCommand::sends("secret", &["set", "list", "remove"]),
     ReaderCommand::sends("trust", &["set", "list", "remove"]),
     ReaderCommand::sends("sync", &["setup"]),

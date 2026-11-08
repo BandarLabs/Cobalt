@@ -4,6 +4,7 @@
 //! an EPUB the reader opens like any other book. Nothing is sent to a reader
 //! yet; the book is a file the owner can send or copy.
 
+use super::clip_delivery as delivery;
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -12,6 +13,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 const USAGE: &str = "\
 usage: kobo clip PAGE.html --url URL [--out FILE.epub] [--colour] [--no-pictures]
        kobo clip URL [--out FILE.epub] [--colour] [--no-pictures]
+       kobo clip sync [--sim | --device IP | --reader NAME]
 
 Saves a web article as an EPUB, as a browser's reader mode shows it: the
 text, headings, lists, tables, code, and figures with their captions, with
@@ -23,7 +25,10 @@ Give a saved page with the address it came from, or an address to fetch.
 Pictures are fetched, fitted to the reader's screen and turned grey;
 --colour keeps their colour, and --no-pictures leaves them out. --out names
 the file or a folder for it; by default the book is named after the article
-and saved in the current folder.";
+and saved in the current folder.
+
+sync sends the articles waiting on this computer to the reader's Articles
+shelf, oldest first.";
 
 struct Request {
     source: Source,
@@ -39,6 +44,12 @@ enum Source {
 pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
         return super::print_command_help(USAGE);
+    }
+    if let Some(("sync", rest)) = arguments
+        .split_first()
+        .map(|(verb, rest)| (verb.as_str(), rest))
+    {
+        return sync(rest);
     }
     let request = parse(arguments)?;
     // A wrong --out is said before anything is fetched.
@@ -70,6 +81,64 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     );
     for note in &clipping.notes {
         println!("{note}");
+    }
+    Ok(())
+}
+
+/// How long one sync keeps sending. Sync on the reader waits for the answer,
+/// and the runtime gives a request three minutes.
+const SYNC_PATIENCE: std::time::Duration = std::time::Duration::from_secs(100);
+
+/// `kobo clip sync`: sends what is waiting to a reader.
+///
+/// `--json` prints one line instead of sentences. It is how the Sidekick
+/// helper runs this for Sync on the reader, and hands the line to Books.
+fn sync(arguments: &[String]) -> Result<(), String> {
+    let (target, rest) = super::targets::TargetArgs::parse(arguments)?;
+    let json = match rest.as_slice() {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        _ => return Err(USAGE.to_owned()),
+    };
+    let reader = match target.resolve()? {
+        super::targets::Target::Simulator => delivery::Reader::Simulator,
+        super::targets::Target::Address(host) => {
+            if !super::valid_device_host(&host) {
+                return Err(format!("{host:?} is not an address this can reach"));
+            }
+            delivery::Reader::Device(host)
+        }
+        super::targets::Target::Nickname(name) => {
+            delivery::Reader::Device(super::targets::resolve_nickname(&name)?)
+        }
+    };
+    let report = delivery::sync(&delivery::queue_folder(), &reader, SYNC_PATIENCE);
+    if json {
+        println!("{}", report.to_json());
+        return Ok(());
+    }
+    if report.delivered.is_empty() && report.waiting == 0 {
+        println!("Nothing is waiting to go to your Kobo.");
+        return Ok(());
+    }
+    if !report.delivered.is_empty() {
+        println!(
+            "Landed on your Kobo: {}.",
+            delivery::articles_word(report.delivered.len())
+        );
+        for title in &report.delivered {
+            println!("  {title}");
+        }
+    }
+    if report.waiting > 0 {
+        let reason = report.problem.as_deref().unwrap_or("");
+        return Err(format!(
+            "{} still waiting for {}. {reason}",
+            delivery::articles_word(report.waiting),
+            reader.label()
+        )
+        .trim_end()
+        .to_owned());
     }
     Ok(())
 }

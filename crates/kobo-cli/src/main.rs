@@ -17,6 +17,7 @@ mod beta_store_smoke;
 mod birds;
 mod bootstrap;
 mod clip;
+mod clip_delivery;
 mod connect;
 mod console;
 mod deck;
