@@ -28,9 +28,9 @@ over Wi-Fi, and your Kobo's own reader stays as it was.
 
 <p align="center">
   <a href="docs/cobalt-tour.mp4">
-    <img src="docs/tour.gif" height="600" alt="A Kobo Clara BW running several Cobalt apps, then installing, playing, removing and reinstalling Sudoku from the App Store over Wi-Fi">
+    <img src="docs/tour.gif" height="600" alt="A Kobo Clara BW paging through the Cobalt launcher, playing the opening of a chess game against the computer in Lichess, then opening a crossword">
   </a><br>
-  <sub>Recorded on a Kobo Clara BW at 3× speed.</sub>
+  <sub>Recorded on a Kobo Clara BW running Cobalt 0.3.35, with only the waits shortened.</sub>
 </p>
 
 > [!IMPORTANT]
