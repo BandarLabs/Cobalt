@@ -63,15 +63,31 @@ pub struct Request<'a> {
     pub timeout: Duration,
 }
 
+/// What a fetch answered.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Answer {
+    pub body: Vec<u8>,
+    /// Where the body was served from once redirects were followed, which
+    /// is what a page's own relative addresses are resolved against.
+    pub address: String,
+}
+
 /// Fetches what a page refers to. [`Web`] is the real one; tests answer from
 /// a table.
 pub trait Fetch {
-    /// The body of the answer.
+    /// The answer, with the address it finally came from.
     ///
     /// # Errors
     ///
     /// A plain sentence saying what went wrong.
-    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, String>;
+    fn fetch(&self, request: &Request<'_>) -> Result<Answer, String>;
+}
+
+/// A fetched page: its text, and the address it was served from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WebPage {
+    pub html: String,
+    pub address: String,
 }
 
 /// How a clip is made.
@@ -291,18 +307,20 @@ fn windows_1252(byte: u8) -> char {
     }
 }
 
-/// Fetches a page.
+/// Fetches a page, answering where it was finally served from: a link that
+/// redirects to the article names the article's pictures relative to the
+/// article, not to the link.
 ///
 /// # Errors
 ///
 /// [`Refusal::BadAddress`] for an address that is not a web address,
 /// [`Refusal::Unreachable`] when it cannot be fetched, and the refusals of
 /// [`page_text`].
-pub fn fetch_page(address: &str, fetch: &dyn Fetch) -> Result<String, Refusal> {
+pub fn fetch_page(address: &str, fetch: &dyn Fetch) -> Result<WebPage, Refusal> {
     if !address::is_web_address(address) {
         return Err(Refusal::BadAddress(address.to_owned()));
     }
-    let bytes = fetch
+    let answer = fetch
         .fetch(&Request {
             address,
             referer: None,
@@ -311,7 +329,25 @@ pub fn fetch_page(address: &str, fetch: &dyn Fetch) -> Result<String, Refusal> {
             timeout: Duration::from_secs(60),
         })
         .map_err(Refusal::Unreachable)?;
-    page_text(&bytes)
+    Ok(WebPage {
+        html: page_text(&answer.body)?,
+        address: answer.address,
+    })
+}
+
+/// Fetches the page at `address` and makes a book of its article, resolving
+/// the page's addresses against where it was finally served from.
+///
+/// # Errors
+///
+/// The refusals of [`fetch_page`] and [`clip`].
+pub fn clip_address(
+    address: &str,
+    fetch: &dyn Fetch,
+    options: &Options,
+) -> Result<Clipping, Refusal> {
+    let page = fetch_page(address, fetch)?;
+    clip(&page.html, &page.address, fetch, options)
 }
 
 /// Words in a picture address that mark a site's logo or a stand-in image,
@@ -702,17 +738,18 @@ fn fetch_pictures(
             max_bytes: options.max_picture_bytes,
             timeout: options.picture_timeout.min(left),
         });
-        let ready =
-            match answer.map(|bytes| picture::prepare(&bytes, options.panel, options.colour)) {
-                Ok(Ok(ready)) => Some(ready),
-                // An icon or a tracking pixel is meant to be left out, and is not
-                // worth a note.
-                Ok(Err(picture::Unusable::TooSmall)) => None,
-                Ok(Err(_)) | Err(_) => {
-                    failed += 1;
-                    None
-                }
-            };
+        let ready = match answer
+            .map(|answer| picture::prepare(&answer.body, options.panel, options.colour))
+        {
+            Ok(Ok(ready)) => Some(ready),
+            // An icon or a tracking pixel is meant to be left out, and is not
+            // worth a note.
+            Ok(Err(picture::Unusable::TooSmall)) => None,
+            Ok(Err(_)) | Err(_) => {
+                failed += 1;
+                None
+            }
+        };
         out.push(ready);
     }
     if failed > 0 {

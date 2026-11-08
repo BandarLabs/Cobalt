@@ -7,7 +7,7 @@ use std::thread;
 
 use kobo_protocol::TaskError;
 
-use crate::{address, Fetch, Kind, Request};
+use crate::{address, Answer, Fetch, Kind, Request};
 
 /// Fetches over HTTPS with the transport the reader itself uses, so a clip
 /// made on the owner's computer meets the same TLS roots and ceilings.
@@ -38,7 +38,7 @@ fn request_target(requested: &str) -> String {
 }
 
 impl Fetch for Web {
-    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, String> {
+    fn fetch(&self, request: &Request<'_>) -> Result<Answer, String> {
         let target = request_target(request.address);
         let accept = match request.kind {
             Kind::Page => "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
@@ -67,7 +67,7 @@ impl Fetch for Web {
                 }
             })
         };
-        let result = kobo_net::fetch_from_controlled(
+        let result = kobo_net::fetch_from_controlled_at(
             &target,
             0,
             limit,
@@ -80,7 +80,10 @@ impl Fetch for Web {
         drop(done);
         let _ = timer.join();
         match result {
-            Ok(bytes) => Ok(bytes),
+            Ok(fetched) => Ok(Answer {
+                body: fetched.body,
+                address: fetched.address,
+            }),
             Err(_) if timed_out => Err(said(TaskError::TimedOut)),
             Err(error) => Err(said(error)),
         }

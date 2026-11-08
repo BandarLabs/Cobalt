@@ -14,14 +14,16 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::path::Path;
 
-use kobo_article::{clip, Clipping, Fetch, Kind, Options, Request};
+use kobo_article::{clip, Answer, Clipping, Fetch, Kind, Options, Request};
 use kobo_doc::zip::Archive;
 
 /// Answers every picture request with a picture, except addresses saying
-/// `missing`, and records what was asked for.
+/// `missing`, and records what was asked for. A page, when one is set, is
+/// answered as served from its own address, as after a redirect.
 #[derive(Default)]
 struct Pictures {
     asked: RefCell<Vec<String>>,
+    page: Option<(String, String)>,
 }
 
 fn encoded(image: &image::DynamicImage, format: image::ImageFormat) -> Vec<u8> {
@@ -50,7 +52,22 @@ fn diagram() -> Vec<u8> {
 }
 
 impl Fetch for Pictures {
-    fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, String> {
+    fn fetch(&self, request: &Request<'_>) -> Result<Answer, String> {
+        if let (Kind::Page, Some((html, served_from))) = (request.kind, &self.page) {
+            return Ok(Answer {
+                body: html.clone().into_bytes(),
+                address: served_from.clone(),
+            });
+        }
+        self.picture(request).map(|body| Answer {
+            body,
+            address: request.address.to_owned(),
+        })
+    }
+}
+
+impl Pictures {
+    fn picture(&self, request: &Request<'_>) -> Result<Vec<u8>, String> {
         assert_eq!(request.kind, Kind::Picture, "only pictures are fetched");
         self.asked.borrow_mut().push(request.address.to_owned());
         if request.address.contains("missing") {
@@ -440,6 +457,35 @@ fn the_lead_picture_counts_against_the_same_picture_budget_as_the_body() {
         ..options()
     };
     assert!(asked(&no_time).is_empty());
+}
+
+#[test]
+fn a_fetched_page_that_redirected_resolves_its_pictures_against_where_it_landed() {
+    let pictures = Pictures {
+        page: Some((
+            fixture("synthetic-blog.html").replace(
+                "/images/logger-wiring-diagram.png",
+                "logger-wiring-diagram.png",
+            ),
+            "https://slipway.example.net/posts/tide-logger/".to_owned(),
+        )),
+        ..Pictures::default()
+    };
+    let clipping =
+        kobo_article::clip_address("https://slipway.example.net/go", &pictures, &options())
+            .expect("a book");
+    assert_eq!(clipping.pictures, 1);
+    // The diagram is named relative to the page, so it is found beside the
+    // page the link landed on, not beside the link.
+    assert_eq!(
+        pictures.asked.take(),
+        ["https://slipway.example.net/posts/tide-logger/logger-wiring-diagram.png"]
+    );
+    let archive = Archive::open(&clipping.epub).expect("a zip");
+    let title = String::from_utf8(archive.read("oebps/p1.xhtml").expect("a page")).expect("UTF-8");
+    assert!(
+        title.contains("Saved from <a href=\"https://slipway.example.net/posts/tide-logger/\">")
+    );
 }
 
 #[test]

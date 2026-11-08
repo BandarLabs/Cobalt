@@ -44,21 +44,20 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     // A wrong --out is said before anything is fetched.
     let target = destination(request.out.as_deref())?;
     let fetch = kobo_article::Web;
-    let (html, page) = match &request.source {
+    let clipping = match &request.source {
         Source::File { path, url } => {
             let bytes = read_page(path)?;
             let html = kobo_article::page_text(&bytes).map_err(|refusal| refusal.to_string())?;
-            (html, url.clone())
+            kobo_article::clip(&html, url, &fetch, &request.options)
         }
         Source::Address(address) => {
             eprintln!("Fetching {address}");
-            let html =
-                kobo_article::fetch_page(address, &fetch).map_err(|refusal| refusal.to_string())?;
-            (html, address.clone())
+            // Read against wherever the address redirected to, so the page's
+            // pictures and links resolve as they did in the browser.
+            kobo_article::clip_address(address, &fetch, &request.options)
         }
-    };
-    let clipping = kobo_article::clip(&html, &page, &fetch, &request.options)
-        .map_err(|refusal| refusal.to_string())?;
+    }
+    .map_err(|refusal| refusal.to_string())?;
     let path = publish(&target, &clipping.file_name, &clipping.epub)?;
     let pictures = match clipping.pictures {
         1 => "1 picture".to_owned(),
