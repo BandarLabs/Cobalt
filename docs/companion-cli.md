@@ -62,6 +62,26 @@ replaces the one there; `--replace` answers yes in a script.
 computer without sending it, and `kobo send --retry` repeats the last send
 that failed.
 
+## Saving a web article
+
+`kobo clip URL` fetches a web page and saves its article as an EPUB, as a
+browser's reader mode shows it: the text, headings, lists, quotes, code,
+tables, and figures with their captions, without the menus, advertisements,
+share buttons, cookie notices and lists of other stories. The first page
+names the site, the author and the date, and gives the page's address.
+
+For a page you saved from the browser, such as one you had to sign in to
+read, give the file and the address it came from:
+`kobo clip page.html --url https://...`.
+
+Pictures are fitted to the reader's screen and turned grey. `--colour`
+keeps their colour and `--no-pictures` leaves them out. The book is named
+after the article and saved in the current folder, or where `--out` says.
+At most 40 pictures are fetched and a book is kept under 20 MB; pictures past
+either limit are left out, and the command says how many. A page with no
+article on it is refused with the reason. Copy the book to the reader over
+USB as you would any other.
+
 ## Companion commands by app
 
 Apps that need files, accounts or a paired computer have a `kobo` command.
