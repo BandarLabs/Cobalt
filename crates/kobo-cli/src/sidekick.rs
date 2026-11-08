@@ -132,7 +132,9 @@ fn init(arguments: &[String]) -> Result<(), String> {
     let restart = match &destination {
         Destination::Simulator => {
             pairing.write_simulator()?;
-            println!("Paired Sidekick, Deck and Paperterm in the simulator with this computer.");
+            println!(
+                "Paired Sidekick, Deck, Books and Paperterm in the simulator with this computer."
+            );
             false
         }
         Destination::Reader(host) => {
@@ -144,7 +146,7 @@ fn init(arguments: &[String]) -> Result<(), String> {
                 )
             })?;
             println!(
-                "Paired Sidekick, Deck and Paperterm on {host} with this computer at {computer}.\n\
+                "Paired Sidekick, Deck, Books and Paperterm on {host} with this computer at {computer}.\n\
                  There is nothing to type on the reader."
             );
             changed
@@ -251,6 +253,16 @@ impl AppPairing {
         }
     }
 
+    /// Books asks the same helper for articles waiting on this computer
+    /// when Sync is tapped on its Articles shelf.
+    fn books(address: &str, code: &str) -> Self {
+        Self {
+            app: "books",
+            key: "computer",
+            value: format!("{address}|{code}"),
+        }
+    }
+
     pub(crate) fn paperterm(address: &str, code: &str) -> Self {
         Self {
             app: "paperterm",
@@ -291,6 +303,7 @@ impl Pairing {
             apps: vec![
                 AppPairing::sidekick(&sidekick_address, &sidekick_code),
                 AppPairing::deck(&sidekick_address, &sidekick_code),
+                AppPairing::books(&sidekick_address, &sidekick_code),
                 AppPairing::paperterm(&paperterm_address, &paperterm_code),
             ],
             roots: vec![("sidekick", sidekick_root), ("stream", stream_root)],
@@ -316,6 +329,7 @@ impl Pairing {
         let local = [
             AppPairing::sidekick(&host_port("127.0.0.1", READER_PORT), &self.sidekick_code),
             AppPairing::deck(&host_port("127.0.0.1", READER_PORT), &self.sidekick_code),
+            AppPairing::books(&host_port("127.0.0.1", READER_PORT), &self.sidekick_code),
             AppPairing::paperterm(
                 &host_port("127.0.0.1", kobo_stream::DEFAULT_PORT),
                 &self.paperterm_code,
@@ -467,6 +481,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
     if foreground {
         let status = Command::new(&helper)
             .arg("run")
+            .env(COMPANION_VARIABLE, companion())
             .status()
             .map_err(|error| format!("run {}: {error}", helper.display()))?;
         return if status.success() {
@@ -477,6 +492,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
     }
     let child = Command::new(&helper)
         .arg("run")
+        .env(COMPANION_VARIABLE, companion())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -720,6 +736,15 @@ fn listening() -> bool {
     .is_ok()
 }
 
+/// Where the helper finds this companion, to run `kobo clip sync` when Sync
+/// is tapped on the reader. The helper looks beside itself and on PATH
+/// without it.
+const COMPANION_VARIABLE: &str = "KOBO_COMPANION";
+
+fn companion() -> PathBuf {
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("kobo"))
+}
+
 /// The helper beside this binary first, then whatever is on PATH.
 ///
 /// Beside first because that is where a release puts them together, and an
@@ -835,6 +860,9 @@ mod tests {
         let paperterm = super::AppPairing::paperterm("192.168.1.10:9332", "xyz789");
         assert_eq!((paperterm.app, paperterm.key), ("paperterm", "pairing"));
         assert_eq!(paperterm.value, "192.168.1.10:9332\nxyz789");
+        let books = super::AppPairing::books("192.168.1.10:9331", "abc234");
+        assert_eq!((books.app, books.key), ("books", "computer"));
+        assert_eq!(books.value, "192.168.1.10:9331|abc234");
         assert_eq!(super::host_port("fe80::1", 9331), "[fe80::1]:9331");
     }
 

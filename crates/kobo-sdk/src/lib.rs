@@ -1357,6 +1357,24 @@ impl Context {
         position: Position,
         placed: &Screen,
     ) -> Vec<Vec<usize>> {
+        let rows: Vec<_> = rows
+            .iter()
+            .map(|&(section, title, summary)| (section, title, summary, ""))
+            .collect();
+        self.paginate_rows_in_sections_with_trailing_under(&rows, nav_bar, position, placed)
+    }
+
+    /// The same, for sectioned rows drawn with
+    /// [`ScreenBuilder::rows_with_trailing`],
+    /// measured with the value each one carries at its trailing edge.
+    #[must_use]
+    pub fn paginate_rows_in_sections_with_trailing_under(
+        &self,
+        rows: &[(Option<&str>, &str, &str, &str)],
+        nav_bar: bool,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
             let used = placed
                 .layout_with(&self.metrics, &Chrome::measuring(true))
@@ -1366,7 +1384,7 @@ impl Context {
                 .height
                 .saturating_sub(used.saturating_add(area.gap))
                 .max(0);
-            kobo_ui::paginate_rows_in_sections(rows, &self.metrics, area)
+            kobo_ui::paginate_rows_in_sections_with_trailing(rows, &self.metrics, area)
         })
     }
 
@@ -2601,6 +2619,15 @@ impl Device<'_> {
     /// Reads one listed document by the identifier the listing returned.
     pub fn read_library(&mut self, id: impl Into<String>) {
         self.request(DeviceRequest::ReadLibrary { id: id.into() });
+    }
+
+    /// Deletes one delivered article, by the identifier a listing returned.
+    ///
+    /// Only Books may ask, and only for a file in the card's `Articles`
+    /// folder; anything else is answered `Failed(NotFound)`. Ask the owner
+    /// first: there is no undo.
+    pub fn remove_article(&mut self, id: impl Into<String>) {
+        self.request(DeviceRequest::RemoveArticle { id: id.into() });
     }
 
     /// Asks where the magnet is now.

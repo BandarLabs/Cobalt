@@ -101,23 +101,35 @@ fn frame() -> ScreenBuilder {
         .bottom_action(CLEAR, "Clear all")
 }
 
+/// What a row carries at its trailing edge: "New" until it has been seen.
+fn new_label(new: bool) -> &'static str {
+    if new {
+        "New"
+    } else {
+        ""
+    }
+}
+
 /// The pages of the list, as row indices.
 pub fn pages(context: &Context, list: &NoticeList, fresh: &[u64]) -> Vec<Vec<usize>> {
     let lines = lines(list, fresh, now());
-    let measured: Vec<(Option<&str>, &str, &str)> = lines
+    // Measured with the "New" each row is drawn with, which narrows its
+    // headline and detail.
+    let measured: Vec<(Option<&str>, &str, &str, &str)> = lines
         .iter()
         .map(|line| {
             (
                 line.section.as_deref(),
                 line.title.as_str(),
                 line.summary.as_str(),
+                new_label(line.new),
             )
         })
         .collect();
     if measured.is_empty() {
         return vec![Vec::new()];
     }
-    let pages = context.paginate_rows_in_sections_under(
+    let pages = context.paginate_rows_in_sections_with_trailing_under(
         &measured,
         false,
         kobo_sdk::Position::AtTheFoot,
@@ -175,7 +187,7 @@ pub fn screen(
                 line.title.clone(),
                 line.summary.clone(),
                 line.glyph,
-                if line.new { "New" } else { "" },
+                new_label(line.new),
             )
         }));
         remaining = &remaining[count..];

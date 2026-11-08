@@ -172,6 +172,9 @@ fn every_device_request_round_trips() {
         DeviceRequest::MarkNoticesRead,
         DeviceRequest::ClearNotices,
         DeviceRequest::OpenNotice { id: 7 },
+        DeviceRequest::RemoveArticle {
+            id: "0/Articles/River.epub".to_owned(),
+        },
     ];
     for request in requests {
         let frame = Frame {
@@ -1875,6 +1878,9 @@ fn notices_cannot_be_sent_or_asked_for_at_a_protocol_from_before_them() {
         Message::DeviceRequest(DeviceRequest::MarkNoticesRead),
         Message::DeviceRequest(DeviceRequest::ClearNotices),
         Message::DeviceRequest(DeviceRequest::OpenNotice { id: 1 }),
+        Message::DeviceRequest(DeviceRequest::RemoveArticle {
+            id: "0/Articles/River.epub".to_owned(),
+        }),
     ] {
         let frame = Frame {
             version: older,
@@ -1882,6 +1888,22 @@ fn notices_cannot_be_sent_or_asked_for_at_a_protocol_from_before_them() {
             message,
         };
         assert!(encode(&frame).is_err(), "{frame:?} encoded at {older}");
+    }
+}
+
+#[test]
+fn an_article_removal_naming_no_library_document_is_refused_at_the_encoder() {
+    for id in [
+        "",
+        "/mnt/onboard/Articles/River.epub",
+        "0/Articles/\nRiver.epub",
+    ] {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 0,
+            message: Message::DeviceRequest(DeviceRequest::RemoveArticle { id: id.to_owned() }),
+        };
+        assert!(encode(&frame).is_err(), "{id:?} was encoded");
     }
 }
 

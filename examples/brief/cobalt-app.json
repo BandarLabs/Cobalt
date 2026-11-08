@@ -3,11 +3,11 @@
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
   "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "glyph": "sunrise",
   "capabilities": [
     "network",
     "scheduled-wake"
   ],
-  "release_notes": "Refreshing over a saved brief now fits the screen and clears the old offline message. The time a brief was fetched now reads the way you would say it."
+  "release_notes": "A saved brief now has a check that it comes back with its source and the time it was fetched after a restart. Nothing changes on screen."
 }

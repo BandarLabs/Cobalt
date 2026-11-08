@@ -62,25 +62,72 @@ replaces the one there; `--replace` answers yes in a script.
 computer without sending it, and `kobo send --retry` repeats the last send
 that failed.
 
-## Saving a web article
+## Sending a web article
 
-`kobo clip URL` fetches a web page and saves its article as an EPUB, as a
-browser's reader mode shows it: the text, headings, lists, quotes, code,
-tables, and figures with their captions, without the menus, advertisements,
-share buttons, cookie notices and lists of other stories. The first page
-names the site, the author and the date, and gives the page's address.
+`kobo clip URL` fetches a web page, makes its article into an EPUB, as a
+browser's reader mode shows it, and sends it to your Kobo: the text,
+headings, lists, quotes, code, tables, and figures with their captions,
+without the menus, advertisements, share buttons, cookie notices and lists
+of other stories. The first page names the site, the author and the date,
+and gives the page's address.
 
 For a page you saved from the browser, such as one you had to sign in to
 read, give the file and the address it came from:
 `kobo clip page.html --url https://...`.
 
 Pictures are fitted to the reader's screen and turned grey. `--colour`
-keeps their colour and `--no-pictures` leaves them out. The book is named
-after the article and saved in the current folder, or where `--out` says.
-At most 40 pictures are fetched and a book is kept under 20 MB; pictures past
-either limit are left out, and the command says how many. A page with no
-article on it is refused with the reason. Copy the book to the reader over
-USB as you would any other.
+keeps their colour and `--no-pictures` leaves them out. At most 40 pictures
+are fetched and a book that goes to the reader is kept under the 4 MB Books
+opens; pictures past either limit are left out, and the command says how
+many. A page with no article on it is refused with the reason.
+
+The article goes to the reader `kobo setup` saved, or to `--reader NAME`,
+`--device IP` or `--sim`, over the connection `kobo send` uses, into the
+card's `Articles` folder, and the reader shows a notice for it. The command
+says `Landed on your Kobo`. A reader that is asleep or away keeps nobody
+waiting: the article stays on this computer, in
+`~/.config/kobo/clip/queue`, and goes with `kobo clip sync`, with Sync on the
+reader, or with the next clip that finds the reader awake. `--later` keeps it
+without trying now. `--out FILE.epub` or `--out FOLDER` saves the book on
+this computer instead and sends nothing.
+
+In Books, articles have a shelf of their own, unread first, with the site
+and the day each arrived. An article read to its end counts as read, and
+each one's menu marks it, archives it or deletes it.
+
+Sync on that shelf asks this computer for anything waiting. It reaches the
+Sidekick helper over the pairing `kobo sidekick init` writes onto the
+reader, so run that once and keep `kobo sidekick run` going; the helper then
+sends the waiting articles back to the address the reader asked from. Books
+also asks, without a word unless something arrives, each time it opens.
+
+### From the browser
+
+`kobo clip install --browser chrome` (or `edge`, `brave`, `chromium`,
+`firefox`, `safari`, or `--all` for every one found here) adds Send page to
+Kobo, Send link to Kobo and Send selection to Kobo to the browser's
+right-click menu. The extension sends the page as you see it, so a page you
+signed in to read clips as it reads, and a notification says Sending to
+your Kobo, then Landed on your Kobo or Waiting for your Kobo.
+
+Install writes the small manifest each browser reads to find `kobo` (in your
+own profile folders, or under `HKEY_CURRENT_USER` on Windows) and copies the
+extension to `~/.config/kobo/clip/extension`, then says the one step left:
+
+- Chrome, Edge, Brave and Chromium: open the browser's extensions page, turn
+  on Developer mode, choose Load unpacked and pick that folder.
+- Firefox: open `about:debugging#/runtime/this-firefox`, choose Load
+  Temporary Add-on and pick `manifest.json` in that folder. Firefox forgets
+  it when it restarts, so load it again after a restart.
+- Safari: there is no extension, which would need a signed Mac app. Install
+  adds a Send to Kobo Quick Action instead: right-click a link and choose
+  Services, then Send to Kobo. It fetches the page itself, so it cannot read
+  pages you are signed in to, and says how it went in a notification.
+
+`kobo clip uninstall` takes all of it away again, or `--browser NAME` for
+one. Articles still waiting stay in the queue. The extension has no network
+access of its own and keeps no record of what it sent; see
+`extensions/clip/README.md`.
 
 ## Companion commands by app
 

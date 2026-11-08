@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shlex
 import signal
+import socket
 import sqlite3
 import contextlib
 import shutil
@@ -146,7 +147,8 @@ def route_directive(route):
     """
     first = route.read_text().splitlines()[:1]
     match = re.match(r'#\s*sweep:\s*(.*)$', first[0]) if first else None
-    options = dict(bare=False, seed_root=None, after_main=False, skip=False)
+    options = dict(bare=False, seed_root=None, after_main=False, skip=False,
+                   articles=False, paired=False, computer=False)
     if match is None:
         return options
     words = shlex.split(match.group(1))
@@ -162,10 +164,72 @@ def route_directive(route):
             options['after_main'] = True
         elif word == 'skip':
             options['skip'] = True
+        # Books' Articles shelf: articles on the card, a pairing with a
+        # computer that is not there, or a Sidekick helper that is.
+        elif word in ('articles', 'paired', 'computer'):
+            options[word] = True
         else:
             raise ValueError(f'{route}: unknown sweep directive {word!r}')
         index += 1
     return options
+
+
+ARTICLE_PAGES = (
+    ('crates/kobo-article/fixtures/synthetic-blog.html', 'https://blog.example.org/rivers'),
+    ('crates/kobo-article/fixtures/synthetic-news.html', 'https://news.example.org/harbour'),
+    ('crates/kobo-article/fixtures/synthetic-magazine.html', 'https://magazine.example.org/tides'),
+)
+
+
+def free_port():
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        return probe.getsockname()[1]
+
+
+def seed_articles(state, kobo, env, log):
+    """Articles on the simulated card, made the way an owner makes them."""
+    folder = Path(state) / 'cobalt-sim-data' / 'library' / 'Articles'
+    folder.mkdir(parents=True, exist_ok=True)
+    for page, url in ARTICLE_PAGES:
+        subprocess.run([str(kobo), 'clip', str(ROOT / page), '--url', url, '--no-pictures',
+                        '--out', str(folder)], cwd=ROOT, env=env, stdout=log, stderr=log,
+                       timeout=60, check=True)
+        # A second apart, so the shelf's newest-first order is the same on
+        # every run: the last page clipped is the first row.
+        time.sleep(1.1)
+
+
+def pair_books(state, address):
+    folder = Path(state) / 'cobalt-sim-state' / 'books'
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / 'computer').write_text(f'{address}|abc234')
+
+
+def start_computer(state, kobo, env, log):
+    """A Sidekick helper on ports of its own, paired with Books, whose
+    companion keeps its queue inside this run's state."""
+    home = Path(state) / 'sidekick-config'
+    helper = kobo.with_name('kobo-sidekickd')
+    env.update(KOBO_SIDEKICK_CONFIG_DIR=str(home), KOBO_SIM_TRUST_DIR=str(home / 'trust'),
+               KOBO_CONFIG_DIR=str(Path(state) / 'companion-config'),
+               KOBO_SIDEKICK_HOOK_PORT=str(free_port()),
+               KOBO_SIDEKICK_READER_PORT=str(free_port()), KOBO_COMPANION=str(kobo))
+    subprocess.run([str(helper), 'init', '--host', '127.0.0.1'], env=env, stdout=log,
+                   stderr=log, timeout=60, check=True)
+    code = (home / 'sidekick' / 'pairing').read_text().strip()
+    process = subprocess.Popen([str(helper), 'run'], env=env, stdout=log, stderr=log,
+                               start_new_session=True)
+    port = int(env['KOBO_SIDEKICK_READER_PORT'])
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        with contextlib.suppress(OSError), socket.create_connection(('127.0.0.1', port), 0.2):
+            break
+        time.sleep(0.1)
+    folder = Path(state) / 'cobalt-sim-state' / 'books'
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / 'computer').write_text(f'127.0.0.1:{port}|{code}')
+    return process
 
 
 def shard_of(apps, shard):
@@ -216,12 +280,12 @@ def run_routes(app, kobo, out, environment, timeout):
             continue
         results.append(run_app(app, kobo, out, environment, timeout, bare=options['bare'],
                                route_override=route, seed_root=options['seed_root'],
-                               label=label))
+                               label=label, books=options))
     return results
 
 
 def run_app(app, kobo, out, environment, timeout, bare=False, route_override=None,
-            seed_root=None, state_dir=None, label=None):
+            seed_root=None, state_dir=None, label=None, books=None):
     label = label or app
     directory = app_directory(app)
     result = dict(app=label, launched=False, status='fail')
@@ -232,6 +296,8 @@ def run_app(app, kobo, out, environment, timeout, bare=False, route_override=Non
     result['route'] = (str(route.relative_to(ROOT)) if route and route.is_relative_to(ROOT)
                        else str(route) if route else None)
     process = None
+    computer = None
+    books = books or {}
     log_path = out / (label.replace(':', '-') + '.log')
     # Short paths are required by Unix sockets, independently of --out length.
     if state_dir is not None:
@@ -263,6 +329,12 @@ def run_app(app, kobo, out, environment, timeout, bare=False, route_override=Non
         try:
             if not bare:
                 seed(app, state, kobo, env, log)
+            if books.get('articles'):
+                seed_articles(state, kobo, env, log)
+            if books.get('paired'):
+                pair_books(state, f'127.0.0.1:{free_port()}')
+            if books.get('computer'):
+                computer = start_computer(state, kobo, env, log)
             process = subprocess.Popen([str(kobo), 'dev', '127.0.0.1:0'], cwd=directory,
                                        env=env, stdout=log, stderr=log, start_new_session=True)
             deadline = time.monotonic() + timeout
@@ -291,6 +363,7 @@ def run_app(app, kobo, out, environment, timeout, bare=False, route_override=Non
             result['error'] = str(error)
         finally:
             stop_group(process)
+            stop_group(computer)
     return result
 
 
@@ -345,7 +418,10 @@ def main():
     env = dict(os.environ)
     target = Path(env.get('CARGO_TARGET_DIR', str(ROOT / 'target'))).resolve()
     env['CARGO_TARGET_DIR'] = str(target)
-    subprocess.run(['cargo', 'build', '--locked', '-p', 'kobo-cli'], cwd=ROOT, env=env, check=True)
+    # The helper answers Sync on Books' Articles shelf in the routes that
+    # bring a computer along.
+    subprocess.run(['cargo', 'build', '--locked', '-p', 'kobo-cli', '-p', 'kobo-sidekickd'],
+                   cwd=ROOT, env=env, check=True)
     kobo = target / 'debug/kobo'
     report = {
         'source_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),

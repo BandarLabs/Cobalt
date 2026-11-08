@@ -1993,6 +1993,33 @@ mod tests {
         }
     }
 
+    /// What a restart reads back is the list it came from, when it came,
+    /// and its stories, for every source. The simulator route that once
+    /// checked this by restarting had to wait for every story to be saved
+    /// from its own site first, which a slow site could hold up for minutes.
+    #[test]
+    fn a_saved_brief_reads_back_with_its_source_and_its_time_after_a_restart() {
+        for source in [Source::Top, Source::Best, Source::Ask, Source::Show] {
+            let stories = vec![Story {
+                id: "8863".into(),
+                title: "A headline, with a comma".into(),
+                site: "example.org".into(),
+                url: "https://example.org/a".into(),
+                text: String::new(),
+            }];
+            let saved = decode(&encode(
+                source,
+                Some("09:28"),
+                Some(1_789_115_400),
+                &stories,
+            ));
+            assert_eq!(saved.source, source);
+            assert_eq!(saved.fetched.as_deref(), Some("09:28"));
+            assert_eq!(saved.fetched_at, Some(1_789_115_400));
+            assert_eq!(saved.stories, stories);
+        }
+    }
+
     /// The line above the stories says the moment the way a person would,
     /// against the reader's clock, rather than as a log line.
     #[test]

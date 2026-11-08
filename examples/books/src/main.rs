@@ -17,6 +17,10 @@
 //! library is three shelves under it: what opens here, what was opened
 //! lately, and what opens in the Kobo reader.
 //!
+//! Web articles sent from the owner's computer have a shelf of their own,
+//! Articles, kept apart from the books because they are read once and
+//! thrown away. See [`articles`].
+//!
 //! ## Why it reads the books
 //!
 //! The runtime lists files; it does not open them. The covers, the real
@@ -24,16 +28,19 @@
 //! books, so Books reads each one once, a few at a time while the shelf is on
 //! the panel, and keeps what it learned. See [`covers`].
 
+mod articles;
 mod covers;
 
+use articles::{Kept, Said};
 use covers::{Cover, Described, Recent, Thumb};
 use kobo_bookview::positions::{Progress, KEY as READING};
 use kobo_bookview::{BookView, Step};
 use kobo_read::Outcome;
+use kobo_sdk::clock::Clock as _;
 use kobo_sdk::{
     action_id, document_preview, typographic_cover, ActionId, BandAlign, BannerLevel, Context,
-    DeviceRequest, DeviceResult, Glyph, KoboApp, LibraryEntry, PictureHandle, Screen,
-    ScreenBuilder, SlotWidth, Space, StoreResult, TaskId, TaskOutcome, Tile, TilePicture,
+    DeviceRequest, DeviceResult, Glyph, KoboApp, LibraryEntry, PictureHandle, Position, Screen,
+    ScreenBuilder, SlotWidth, Space, StoreResult, Task, TaskId, TaskOutcome, Tile, TilePicture,
     TileShape, MAX_STORE_VALUE,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -52,6 +59,20 @@ const BACK: &str = "back";
 const RELIST: &str = "relist";
 const RETRY_SAVE: &str = "retry-save";
 const CONTINUE: &str = "continue";
+const SYNC: &str = "sync";
+const ARCHIVED: &str = "archived";
+const MARK_READ: &str = "article-read";
+const MARK_UNREAD: &str = "article-unread";
+const ARCHIVE: &str = "article-archive";
+const RESTORE: &str = "article-restore";
+const DELETE: &str = "article-delete";
+const CONFIRM_DELETE: &str = "confirm-delete";
+const KEEP_ARTICLE: &str = "keep-article";
+
+/// How long after one check Books leaves the computer alone when it comes
+/// back to the panel. Opening Books asks; flicking in and out of it should
+/// not ask every time.
+const QUIET_CHECK_EVERY_MS: u64 = 5 * 60 * 1000;
 
 /// Where to send an owner for anything Books cannot open itself.
 const IN_KOBO_READER: &str = "To get there, tap Kobo reader at the foot of the Cobalt home screen.";
@@ -239,31 +260,50 @@ enum Record {
 /// One of the piles under the book being read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Shelf {
-    /// Everything that opens here, recently opened first.
+    /// Everything that opens here, recently opened first, but articles.
     Library,
+    /// Web articles sent from the owner's computer, unread first.
+    Articles,
     /// What was opened lately, newest first.
     Recent,
     /// Kobo Store books, PDFs and titles not yet downloaded.
     KoboReader,
+    /// Articles put away, reached from the Articles shelf rather than home.
+    Archive,
 }
 
 impl Shelf {
-    const ALL: [Self; 3] = [Self::Library, Self::Recent, Self::KoboReader];
+    /// The piles on the home screen, in the order they stand.
+    const ALL: [Self; 4] = [
+        Self::Library,
+        Self::Articles,
+        Self::Recent,
+        Self::KoboReader,
+    ];
 
     const fn name(self) -> &'static str {
         match self {
             Self::Library => "shelf-library",
+            Self::Articles => "shelf-articles",
             Self::Recent => "shelf-recent",
             Self::KoboReader => "shelf-kobo-reader",
+            Self::Archive => ARCHIVED,
         }
     }
 
     const fn title(self) -> &'static str {
         match self {
             Self::Library => "Library",
+            Self::Articles => "Articles",
             Self::Recent => "Recent",
             Self::KoboReader => "Kobo reader",
+            Self::Archive => "Archived articles",
         }
+    }
+
+    /// Whether the shelf is a list of articles rather than a grid of covers.
+    const fn lists_articles(self) -> bool {
+        matches!(self, Self::Articles | Self::Archive)
     }
 }
 
@@ -274,6 +314,8 @@ enum View {
     Opening(usize),
     Reading,
     Unreadable(usize),
+    /// Asking before an article is deleted, which cannot be undone.
+    ConfirmDelete,
 }
 
 struct Books {
@@ -326,6 +368,8 @@ struct Books {
     /// until a listing that names it arrives. An article announced a moment
     /// ago is newer than any listing already held.
     asked_to_open: Option<String>,
+    /// The Articles shelf: what is known about each article, and Sync.
+    articles: articles::State,
 }
 
 impl Default for Books {
@@ -366,6 +410,7 @@ impl Books {
             loading: BTreeMap::new(),
             on_panel: BTreeSet::new(),
             placed: BTreeMap::new(),
+            articles: articles::State::default(),
         }
     }
 
@@ -405,6 +450,7 @@ impl Books {
             },
             View::Reading => self.reading(),
             View::Unreadable(index) => self.unreadable(index),
+            View::ConfirmDelete => self.confirm_delete(),
         };
         context.set_screen(screen);
         self.read_next(context);
@@ -424,7 +470,9 @@ impl Books {
                     .build(),
             );
         }
-        if self.documents.is_empty() {
+        // A paired reader keeps its Articles shelf, and Sync on it, even
+        // before anything else is on the card.
+        if self.documents.is_empty() && self.articles.computer.is_none() {
             return Some(
                 screen
                     .splash(
@@ -455,12 +503,24 @@ impl Books {
             .enumerate()
             .filter_map(|(place, shelf)| {
                 let members = self.members(shelf);
-                if members.is_empty() {
+                let kept = shelf == Shelf::Articles
+                    && (self.articles.computer.is_some()
+                        || !self.members(Shelf::Archive).is_empty());
+                if members.is_empty() && !kept {
                     return None;
                 }
                 let handle = PILE_HANDLE + u32::try_from(place).unwrap_or(0);
-                let picture = self.pile(context, handle, &members);
-                Some((shelf, members.len(), picture))
+                let picture = if members.is_empty() {
+                    None
+                } else {
+                    self.pile(context, handle, &members)
+                };
+                let count = if shelf == Shelf::Articles {
+                    articles_word(&members, |index| self.is_unread(index))
+                } else {
+                    books_word(members.len())
+                };
+                Some((shelf, count, picture))
             })
             .collect();
         screen = screen.section("Your books").tile_grid(
@@ -469,9 +529,13 @@ impl Books {
                 (
                     shelf.name(),
                     shelf.title(),
-                    Glyph::Book,
+                    if shelf == Shelf::Articles {
+                        Glyph::News
+                    } else {
+                        Glyph::Book
+                    },
                     move |tile: Tile| {
-                        let tile = tile.with_subtitle(books_word(count));
+                        let tile = tile.with_subtitle(count);
                         match picture {
                             Some(picture) => tile.with_picture(picture),
                             None => tile,
@@ -559,6 +623,9 @@ impl Books {
 
     /// One pile's books, as a grid of covers a page at a time.
     fn shelf(&mut self, context: &mut Context, pile: Shelf) -> Screen {
+        if pile.lists_articles() {
+            return self.article_shelf(context, pile);
+        }
         let screen = ScreenBuilder::new("books-shelf")
             .top_bar(pile.title())
             .owns_back(true);
@@ -662,20 +729,372 @@ impl Books {
         match pile {
             Shelf::Recent => opened,
             Shelf::Library => {
-                let mut members: Vec<usize> = opened
-                    .into_iter()
-                    .filter(|&index| self.documents[index].belongs_here())
-                    .collect();
-                for (index, document) in self.documents.iter().enumerate() {
-                    if document.belongs_here() && !members.contains(&index) {
+                let shelved = |index: usize| {
+                    let document = &self.documents[index];
+                    document.belongs_here() && !articles::is_article(&document.id)
+                };
+                let mut members: Vec<usize> =
+                    opened.into_iter().filter(|&index| shelved(index)).collect();
+                for index in 0..self.documents.len() {
+                    if shelved(index) && !members.contains(&index) {
                         members.push(index);
                     }
                 }
                 members
             }
+            Shelf::Articles | Shelf::Archive => {
+                let archived = pile == Shelf::Archive;
+                let mut members: Vec<usize> = (0..self.documents.len())
+                    .filter(|&index| {
+                        let document = &self.documents[index];
+                        articles::is_article(&document.id)
+                            && self.kept(&document.id).archived == archived
+                    })
+                    .collect();
+                members.sort_by_cached_key(|&index| {
+                    let document = &self.documents[index];
+                    articles::order(&self.kept(&document.id), &document.title)
+                });
+                members
+            }
             Shelf::KoboReader => (0..self.documents.len())
                 .filter(|&index| !self.documents[index].belongs_here())
                 .collect(),
+        }
+    }
+
+    /// What Books knows about one article, or nothing yet.
+    fn kept(&self, id: &str) -> Kept {
+        self.articles.kept.get(id).cloned().unwrap_or_default()
+    }
+
+    fn is_unread(&self, index: usize) -> bool {
+        self.documents
+            .get(index)
+            .is_some_and(|document| !self.kept(&document.id).read)
+    }
+
+    /// The Articles shelf, or the archive under it, as a list: a title, the
+    /// site and when it arrived, and a menu on each row.
+    ///
+    /// A list rather than covers, because an article's cover is usually
+    /// lettered from its title, and the title, the site and the day are what
+    /// tell one from the next.
+    fn article_shelf(&mut self, context: &mut Context, pile: Shelf) -> Screen {
+        let members = self.members(pile);
+        let screen = self.article_prefix(pile);
+        if members.is_empty() {
+            let (heading, words) = if pile == Shelf::Archive {
+                (
+                    "No archived articles",
+                    "Articles you archive are kept here, out of the way.",
+                )
+            } else {
+                (
+                    "No articles yet",
+                    "Web pages you send from your computer arrive here. Sync asks it for any that are waiting.",
+                )
+            };
+            return screen.splash(Some(Glyph::News), heading, words).build();
+        }
+        let now = kobo_sdk::clock::SystemClock::reader().now().ok();
+        let rows: Vec<(String, String)> = members
+            .iter()
+            .map(|&index| {
+                let document = &self.documents[index];
+                let kept = self.kept(&document.id);
+                let when = kept
+                    .saved
+                    .zip(now)
+                    .and_then(|(saved, now)| kobo_sdk::when::spoken(saved, now));
+                let about = match (kept.site.as_deref(), when) {
+                    (Some(site), Some(when)) => format!("{} · {when}", drawable(site)),
+                    (Some(site), None) => drawable(site),
+                    (None, Some(when)) => when,
+                    (None, None) => String::new(),
+                };
+                (
+                    context.clamped_row_with_menu(&document.title, 2, false),
+                    context.one_line_row_with_menu(&about, false),
+                )
+            })
+            .collect();
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(title, about)| (title.as_str(), about.as_str()))
+            .collect();
+        let pages = context.paginate_rows_with_menu_under(
+            &borrowed,
+            false,
+            Position::AtTheFoot,
+            &self.article_prefix(pile).build(),
+        );
+        let pages = if pages.is_empty() {
+            vec![Vec::new()]
+        } else {
+            pages
+        };
+        self.page = self.page.min(pages.len() - 1);
+        let shown = pages[self.page].clone();
+        // Rows are named by their place on the shelf, which is what a test
+        // or a route can see; what they act on is settled by id.
+        let mut screen = screen.rows_with_menu(shown.iter().map(|&row| {
+            let index = members[row];
+            (
+                format!("article-{row}"),
+                rows[row].0.clone(),
+                rows[row].1.clone(),
+                if self.is_unread(index) {
+                    Glyph::News
+                } else {
+                    Glyph::Check
+                },
+                format!("article-menu-{row}"),
+            )
+        }));
+        // Only while its row is on the panel: a menu hung off a row on
+        // another page would point at nothing.
+        let open = shown.iter().copied().find(|&row| {
+            self.articles.menu_open.as_deref() == Some(self.documents[members[row]].id.as_str())
+        });
+        if let Some(row) = open {
+            let open = members[row];
+            let mut items = vec![if self.is_unread(open) {
+                (MARK_READ, "Mark read", Glyph::Check)
+            } else {
+                (MARK_UNREAD, "Mark unread", Glyph::News)
+            }];
+            items.push(if pile == Shelf::Archive {
+                (RESTORE, "Move back to Articles", Glyph::Folder)
+            } else {
+                (ARCHIVE, "Archive", Glyph::Folder)
+            });
+            items.push((DELETE, "Delete", Glyph::Trash));
+            screen = screen.row_overflow(format!("article-menu-{row}"), true, items);
+        }
+        if pages.len() > 1 {
+            screen = screen.page_turns(PREVIOUS, NEXT).page_position(
+                u16::try_from(self.page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+        }
+        screen.build()
+    }
+
+    /// The bar and the line under it, which the list is measured beneath.
+    fn article_prefix(&self, pile: Shelf) -> ScreenBuilder {
+        let mut screen = ScreenBuilder::new("books-articles")
+            .top_bar(pile.title())
+            .owns_back(true);
+        if pile == Shelf::Articles {
+            screen = screen.top_bar_action(SYNC, "Sync");
+            if !self.members(Shelf::Archive).is_empty() {
+                screen = screen.top_bar_action(ARCHIVED, "Archived");
+            }
+        }
+        if self.articles.delete_failed {
+            screen = screen.banner(
+                BannerLevel::Error,
+                "That article could not be deleted. Try again.",
+            );
+        } else if let Some(said) = self
+            .articles
+            .said
+            .as_ref()
+            .filter(|_| pile == Shelf::Articles)
+        {
+            let (words, trouble) = said.text();
+            screen = screen.banner(
+                if trouble {
+                    BannerLevel::Error
+                } else {
+                    BannerLevel::Info
+                },
+                words,
+            );
+        }
+        screen
+    }
+
+    fn confirm_delete(&self) -> Screen {
+        let title = self
+            .articles
+            .confirming
+            .as_deref()
+            .and_then(|id| self.documents.iter().find(|document| document.id == id))
+            .map_or("This article", |document| document.title.as_str());
+        ScreenBuilder::new("books-delete")
+            .top_bar("Articles")
+            .owns_back(true)
+            .confirm(
+                "Delete this article?",
+                format!("{title} is removed from this reader."),
+                (CONFIRM_DELETE, "Delete article"),
+                (KEEP_ARTICLE, "Keep article"),
+            )
+            .build()
+    }
+
+    /// Asks the paired computer for articles waiting there.
+    ///
+    /// `quiet` is the check Books makes as it opens: nothing is said unless
+    /// articles arrive, because a computer that is off is the usual case and
+    /// not news.
+    fn sync(&mut self, context: &mut Context, quiet: bool) {
+        if self.articles.syncing.is_some() {
+            if !quiet {
+                // The owner asked while a quiet check was out; its answer
+                // is now theirs.
+                self.articles.syncing = self.articles.syncing.map(|(task, _)| (task, false));
+                self.articles.said = Some(Said::Checking);
+            }
+            return;
+        }
+        let Some((address, code)) = self.articles.computer.clone() else {
+            if !quiet {
+                self.articles.said = Some(Said::NotPaired);
+            }
+            return;
+        };
+        let body = kobo_json::ObjectBuilder::new()
+            .set("token", code.as_str())
+            .build()
+            .to_json();
+        let task = context.spawn(Task::Post {
+            url: format!("https://{address}/articles/sync"),
+            body,
+            content_type: "application/json".to_owned(),
+            credential: None,
+            headers: Vec::new(),
+            max_bytes: 16 * 1024,
+        });
+        let Some(task) = task else {
+            if !quiet {
+                self.articles.said = Some(Said::NotAnswering);
+            }
+            return;
+        };
+        self.articles.syncing = Some((task, quiet));
+        self.articles.checked_at = now_millis();
+        if !quiet {
+            self.articles.said = Some(Said::Checking);
+        }
+    }
+
+    /// The computer's answer. Articles it sent are already on the card, so
+    /// the card is listed again for them to appear.
+    fn synced(&mut self, context: &mut Context, quiet: bool, outcome: TaskOutcome) {
+        let said = match outcome {
+            TaskOutcome::Completed(bytes) => {
+                articles::reply(&bytes).map_or(Said::Outdated, |reply| articles::outcome(&reply))
+            }
+            TaskOutcome::Failed(error) => articles::failure(error),
+            TaskOutcome::Cancelled => return,
+        };
+        if matches!(said, Said::Arrived(_)) {
+            context.device().list_library();
+        }
+        // The runtime's own notice says that articles arrived, so a quiet
+        // check adds nothing to it.
+        if !quiet {
+            self.articles.said = Some(said);
+        }
+        if matches!(self.view, View::Home | View::Shelf(_)) {
+            self.show(context);
+        }
+    }
+
+    /// Changes one article's marks and keeps them.
+    fn mark(&mut self, context: &mut Context, index: usize, change: impl FnOnce(&mut Kept)) {
+        let Some(document) = self.documents.get(index) else {
+            return;
+        };
+        if !articles::is_article(&document.id) {
+            return;
+        }
+        let bytes = document.bytes;
+        let kept = self
+            .articles
+            .kept
+            .entry(document.id.clone())
+            .or_insert_with(|| Kept {
+                bytes,
+                ..Kept::default()
+            });
+        change(kept);
+        self.save_articles(context);
+    }
+
+    fn save_articles(&mut self, context: &mut Context) {
+        // A record too large to keep stays marked as changed, so the next
+        // save tries again, rather than being dropped.
+        let Some(parts) = articles::encode(&self.articles.kept, MAX_STORE_VALUE) else {
+            self.articles.changed = true;
+            return;
+        };
+        let count = parts.len();
+        for (index, part) in parts.into_iter().enumerate() {
+            context.store().save(articles::part_key(index), part);
+        }
+        // Parts a larger record used before are emptied, which is also where
+        // reading stops.
+        for index in count..self.articles.parts_stored {
+            context.store().save(articles::part_key(index), Vec::new());
+        }
+        self.articles.parts_stored = count;
+        self.articles.changed = false;
+    }
+
+    /// Takes a listing's articles into the record: new ones are added to be
+    /// read for their site and date, and ones gone from the card are let go,
+    /// unless the listing stopped short and cannot say what is gone.
+    fn take_articles(&mut self, truncated: bool) {
+        if !self.articles.loaded {
+            return;
+        }
+        let listed: BTreeMap<&str, u32> = self
+            .documents
+            .iter()
+            .filter(|document| articles::is_article(&document.id))
+            .map(|document| (document.id.as_str(), document.bytes))
+            .collect();
+        let before = self.articles.kept.len();
+        if !truncated {
+            self.articles
+                .kept
+                .retain(|id, _| listed.contains_key(id.as_str()));
+        }
+        let mut changed = self.articles.kept.len() != before;
+        for (id, bytes) in listed {
+            let kept = self.articles.kept.entry(id.to_owned()).or_default();
+            if kept.bytes != bytes {
+                // Replaced since it was read, or new: read it again.
+                kept.bytes = bytes;
+                kept.described = false;
+                changed = true;
+            }
+        }
+        if changed {
+            self.articles.changed = true;
+        }
+    }
+
+    /// Queues every article not yet read for its site and date, wherever it
+    /// is, because the shelf is sorted by them.
+    fn want_articles(&mut self) {
+        if !self.articles.loaded || self.record == Record::Unread {
+            return;
+        }
+        let wanted: Vec<Document> = self
+            .documents
+            .iter()
+            .filter(|document| {
+                articles::is_article(&document.id) && !self.kept(&document.id).described
+            })
+            .cloned()
+            .collect();
+        for document in &wanted {
+            self.queue(document);
         }
     }
 
@@ -968,7 +1387,9 @@ impl Books {
             return;
         }
         while let Some(id) = self.wanted.pop_front() {
-            let still_wanted = self.on_panel.contains(&id)
+            // Articles are read wherever they are, because the shelf is
+            // sorted by the date inside each one.
+            let still_wanted = (self.on_panel.contains(&id) || articles::is_article(&id))
                 && self
                     .documents
                     .iter()
@@ -982,6 +1403,9 @@ impl Books {
         if self.record == Record::Changed {
             self.save_described(context);
         }
+        if self.articles.changed {
+            self.save_articles(context);
+        }
     }
 
     /// Reads a book's package for its name, author and cover, and keeps them.
@@ -992,6 +1416,17 @@ impl Books {
         let size = self.documents[index].bytes;
         let listed = self.documents[index].listed.clone();
         let description = kobo_doc::epub::describe(bytes).unwrap_or_default();
+        if articles::is_article(id) {
+            let kept = self.articles.kept.entry(id.to_owned()).or_default();
+            kept.bytes = size;
+            kept.site = description.publisher.as_deref().map(drawable);
+            kept.saved = description
+                .modified
+                .as_deref()
+                .and_then(kobo_sdk::when::stamp_millis);
+            kept.described = true;
+            self.articles.changed = true;
+        }
         let (width, height) = tile_pixels(context);
         let thumb = description
             .cover
@@ -1072,6 +1507,14 @@ impl Books {
                 u32::try_from(reader.page_count()).unwrap_or(u32::MAX),
             )
         });
+        if articles::is_article(&id) && pages > 0 && page >= pages {
+            // Read to the end: finished, so it moves down among the read.
+            if let Some(index) = self.documents.iter().position(|document| document.id == id) {
+                if self.is_unread(index) {
+                    self.mark(context, index, |kept| kept.read = true);
+                }
+            }
+        }
         self.recent.retain(|recent| recent.id != id);
         self.recent.insert(0, Recent { id, page, pages });
         self.recent.truncate(RECENT_LIMIT);
@@ -1193,11 +1636,159 @@ impl Books {
         false
     }
 
+    /// The Articles shelf's taps. Returns whether the action was one.
+    fn article_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        let shelf_of = |books: &Self, id: Option<&str>| {
+            let archived = id.is_some_and(|id| books.kept(id).archived);
+            View::Shelf(if archived {
+                Shelf::Archive
+            } else {
+                Shelf::Articles
+            })
+        };
+        if action == action_id(SYNC) {
+            self.articles.delete_failed = false;
+            self.sync(context, false);
+            self.show(context);
+            return true;
+        }
+        if action == action_id(ARCHIVED) {
+            self.page = 0;
+            self.articles.menu_open = None;
+            self.articles.delete_failed = false;
+            self.view = View::Shelf(Shelf::Archive);
+            self.show(context);
+            return true;
+        }
+        if self.view == View::ConfirmDelete {
+            let id = self.articles.confirming.clone();
+            if action == action_id(CONFIRM_DELETE) {
+                if let Some(id) = &id {
+                    self.articles.deleting = Some(id.clone());
+                    context.device().remove_article(id.clone());
+                }
+            } else if action != action_id(KEEP_ARTICLE) && action != ActionId::BACK {
+                return false;
+            }
+            self.view = shelf_of(self, id.as_deref());
+            self.articles.confirming = None;
+            self.show(context);
+            return true;
+        }
+        let View::Shelf(pile) = self.view else {
+            return false;
+        };
+        if !pile.lists_articles() {
+            return false;
+        }
+        if action == ActionId::BACK || action == action_id(BACK) {
+            if self.articles.menu_open.take().is_none() {
+                self.view = if pile == Shelf::Archive {
+                    View::Shelf(Shelf::Articles)
+                } else {
+                    View::Home
+                };
+                self.page = 0;
+                self.articles.delete_failed = false;
+            }
+            self.show(context);
+            return true;
+        }
+        if self.menu_action(context, action) {
+            return true;
+        }
+        let members = self.members(pile);
+        let row_named = |name: &str| {
+            (0..members.len()).find(|row| action == action_id(&format!("{name}-{row}")))
+        };
+        if let Some(row) = row_named("article-menu") {
+            let id = self.documents[members[row]].id.clone();
+            self.articles.menu_open = if self.articles.menu_open.as_deref() == Some(id.as_str()) {
+                None
+            } else {
+                Some(id)
+            };
+            self.show(context);
+            return true;
+        }
+        if let Some(row) = row_named("article") {
+            self.articles.menu_open = None;
+            self.open_document(context, members[row]);
+            return true;
+        }
+        false
+    }
+
+    /// A choice from the menu open on one article's row.
+    fn menu_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        let Some(open) = self.articles.menu_open.clone() else {
+            return false;
+        };
+        let change: Option<fn(&mut Kept)> = match action {
+            action if action == action_id(MARK_READ) => Some(|kept| kept.read = true),
+            action if action == action_id(MARK_UNREAD) => Some(|kept| kept.read = false),
+            action if action == action_id(ARCHIVE) => Some(|kept| kept.archived = true),
+            action if action == action_id(RESTORE) => Some(|kept| kept.archived = false),
+            _ => None,
+        };
+        if let Some(change) = change {
+            self.articles.menu_open = None;
+            if let Some(index) = self
+                .documents
+                .iter()
+                .position(|document| document.id == open)
+            {
+                self.mark(context, index, change);
+            }
+            self.show(context);
+            return true;
+        }
+        if action == action_id(DELETE) {
+            self.articles.menu_open = None;
+            self.articles.confirming = Some(open);
+            self.view = View::ConfirmDelete;
+            self.show(context);
+            return true;
+        }
+        false
+    }
+
+    /// The runtime's answer to a delete. The article leaves the shelf only
+    /// once the file is gone, so a refusal never hides one that is still
+    /// there.
+    fn removed(&mut self, context: &mut Context, id: &str, result: &DeviceResult) {
+        if self.articles.deleting.as_deref() == Some(id) {
+            self.articles.deleting = None;
+        }
+        if matches!(result, DeviceResult::Done) {
+            self.documents.retain(|document| document.id != id);
+            self.recent.retain(|recent| recent.id != id);
+            self.articles.kept.remove(id);
+            self.save_articles(context);
+            context
+                .store()
+                .save(RECENT, covers::encode_recent(&self.recent));
+            self.articles.delete_failed = false;
+        } else {
+            self.articles.delete_failed = true;
+        }
+        if matches!(self.view, View::Home | View::Shelf(_)) {
+            self.show(context);
+        }
+    }
+
     fn on_listing(&mut self, context: &mut Context, entries: Vec<LibraryEntry>, truncated: bool) {
         self.library_failed = false;
         self.truncated = truncated;
         self.take_documents(entries.into_iter().filter_map(from_entry).collect());
+        self.take_articles(truncated);
+        self.want_articles();
+        self.articles.menu_open = None;
         if let Some(id) = self.asked_to_open.take() {
+            // An article opened from its notice closes onto its own shelf.
+            if articles::is_article(&id) {
+                self.view = View::Shelf(Shelf::Articles);
+            }
             // Gone since it was announced: the shelf is the honest answer.
             if let Some(index) = self.documents.iter().position(|document| document.id == id) {
                 self.open_document(context, index);
@@ -1239,6 +1830,11 @@ impl Books {
                 .map_or((0, String::new()), |document| {
                     (document.bytes, document.listed.clone())
                 });
+            if let Some(kept) = self.articles.kept.get_mut(&id) {
+                // Not asked about again on every listing either.
+                kept.described = true;
+                self.articles.changed = true;
+            }
             self.described.insert(
                 id,
                 Described {
@@ -1301,6 +1897,8 @@ impl KoboApp for Books {
         context.store().load(READING);
         context.store().load(DESCRIBED);
         context.store().load(RECENT);
+        context.store().load(articles::RECORD);
+        context.store().load(articles::PAIRING);
         if self.documents.is_empty() {
             context.device().list_library();
         }
@@ -1338,6 +1936,49 @@ impl KoboApp for Books {
                     self.show(context);
                 }
             }
+            key if articles::part_of(key).is_some() => {
+                let index = articles::part_of(key).unwrap_or_default();
+                if index != self.articles.parts_stored || self.articles.loaded {
+                    return;
+                }
+                if let StoreResult::Loaded {
+                    value: Some(bytes), ..
+                } = result
+                {
+                    if !bytes.is_empty() {
+                        self.articles.kept.extend(articles::decode(&bytes));
+                        self.articles.parts_stored = index + 1;
+                        // Parts are read one after another, and the first
+                        // empty or missing one is the end.
+                        if index + 1 < articles::PARTS {
+                            context.store().load(articles::part_key(index + 1));
+                            return;
+                        }
+                    }
+                }
+                self.articles.loaded = true;
+                self.take_articles(self.truncated);
+                self.want_articles();
+                if matches!(self.view, View::Home | View::Shelf(_)) {
+                    self.show(context);
+                }
+            }
+            articles::PAIRING => {
+                if let StoreResult::Loaded {
+                    value: Some(bytes), ..
+                } = result
+                {
+                    self.articles.computer = articles::pairing(&bytes);
+                }
+                // Opening Books asks the computer, without a word unless
+                // something arrives.
+                if self.articles.checked_at.is_none() {
+                    self.sync(context, true);
+                }
+                if matches!(self.view, View::Home | View::Shelf(_)) {
+                    self.show(context);
+                }
+            }
             _ => self.on_cover(context, key, result),
         }
     }
@@ -1368,6 +2009,16 @@ impl KoboApp for Books {
         if matches!(self.view, View::Home | View::Shelf(_)) {
             context.device().list_library();
         }
+        // The pairing may have been written while Books was away, and the
+        // computer may have something by now.
+        context.store().load(articles::PAIRING);
+        let due = match (self.articles.checked_at, now_millis()) {
+            (Some(then), Some(now)) => now.saturating_sub(then) >= QUIET_CHECK_EVERY_MS,
+            _ => true,
+        };
+        if due {
+            self.articles.checked_at = None;
+        }
     }
 
     /// Keeps the place before the panel goes elsewhere, because an
@@ -1377,6 +2028,9 @@ impl KoboApp for Books {
         self.note_reading(context);
         if self.record == Record::Changed {
             self.save_described(context);
+        }
+        if self.articles.changed {
+            self.save_articles(context);
         }
     }
 
@@ -1391,10 +2045,16 @@ impl KoboApp for Books {
         if self.record == Record::Changed {
             self.save_described(context);
         }
+        if self.articles.changed {
+            self.save_articles(context);
+        }
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.read_action(context, action) {
+            return;
+        }
+        if self.article_action(context, action) {
             return;
         }
         if action == action_id(RELIST) {
@@ -1451,6 +2111,13 @@ impl KoboApp for Books {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
+        if let Some((syncing, quiet)) = self.articles.syncing {
+            if syncing == task {
+                self.articles.syncing = None;
+                self.synced(context, quiet, outcome);
+                return;
+            }
+        }
         match self.book.woke(context, task, &outcome) {
             Step::Repaint => self.show(context),
             Step::Quiet | Step::Elsewhere => {}
@@ -1486,6 +2153,10 @@ impl KoboApp for Books {
             }
             return;
         }
+        if let DeviceRequest::RemoveArticle { id } = request {
+            self.removed(context, &id, &result);
+            return;
+        }
         if let DeviceRequest::ReadLibrary { .. } = request {
             match result {
                 DeviceResult::LibraryDocument { id, bytes } => {
@@ -1517,6 +2188,25 @@ fn books_word(count: usize) -> String {
     } else {
         format!("{count} books")
     }
+}
+
+/// What the Articles pile says under its name: how many are unread, or how
+/// many there are once all are read.
+fn articles_word(members: &[usize], unread: impl Fn(usize) -> bool) -> String {
+    let waiting = members.iter().filter(|&&index| unread(index)).count();
+    match (members.len(), waiting) {
+        (0, _) => "No articles".to_owned(),
+        (_, 0) if members.len() == 1 => "1 article".to_owned(),
+        (count, 0) => format!("{count} articles"),
+        (_, waiting) => format!("{waiting} unread"),
+    }
+}
+
+fn now_millis() -> Option<u64> {
+    kobo_sdk::clock::SystemClock::reader()
+        .now()
+        .ok()
+        .map(|now| now.unix_millis)
 }
 
 fn megabytes(bytes: u32) -> String {
@@ -1603,12 +2293,13 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        covers, fixtures, Books, Document, Kind, View, CONTINUE, DESCRIBED, READING, RECENT,
-        SHELF_PAGE,
+        articles, covers, fixtures, Books, Document, Kind, Shelf, View, CONTINUE, DESCRIBED,
+        READING, RECENT, SHELF_PAGE,
     };
     use kobo_sdk::prelude::*;
     use kobo_sdk::{
-        document_preview, DeviceResult, LibraryEntry, StoreRequest, StoreResult, CLARA_BW_METRICS,
+        document_preview, DeviceResult, LibraryEntry, StoreRequest, StoreResult, TaskId,
+        TaskOutcome, CLARA_BW_METRICS,
     };
     use kobo_ui::{Chrome, LayoutKind, Tile, TileShape};
 
@@ -1688,8 +2379,8 @@ mod tests {
         }
     }
 
-    /// Answers the three records Books asks for as it starts, in the order
-    /// it asks: the store answers in order, whatever key a result names.
+    /// Answers the records Books asks for as it starts, in the order it
+    /// asks: the store answers in order, whatever key a result names.
     fn answer_start(
         runner: &mut AppRunner<Books>,
         reading: Option<Vec<u8>>,
@@ -1697,7 +2388,13 @@ mod tests {
         recent: Option<Vec<u8>>,
     ) -> Vec<Command> {
         let mut commands = Vec::new();
-        for (key, value) in [(READING, reading), (DESCRIBED, described), (RECENT, recent)] {
+        for (key, value) in [
+            (READING, reading),
+            (DESCRIBED, described),
+            (RECENT, recent),
+            (articles::RECORD, None),
+            (articles::PAIRING, None),
+        ] {
             commands.extend(runner.store_result(StoreResult::Loaded {
                 key: key.into(),
                 value,
@@ -2423,6 +3120,398 @@ mod tests {
         assert!(!shelf
             .iter()
             .any(|command| matches!(command, Command::Device(DeviceRequest::ReadLibrary { id }) if id.contains("gone"))));
-        assert_eq!(runner.app().view, View::Home);
+        assert_eq!(runner.app().view, View::Shelf(Shelf::Articles));
+    }
+
+    fn article(name: &str, title: &str) -> Document {
+        Document {
+            id: format!("0/Articles/{name}.epub"),
+            title: title.to_owned(),
+            listed: title.to_owned(),
+            author: None,
+            kind: Kind::Epub,
+            preview: title.to_owned(),
+            on_card: true,
+            bytes: 100,
+            body: Some(format!("{title}. The river found its way to the sea.")),
+        }
+    }
+
+    fn kept(saved: u64, read: bool, archived: bool) -> articles::Kept {
+        articles::Kept {
+            bytes: 100,
+            site: Some("example.org".to_owned()),
+            saved: Some(saved),
+            described: true,
+            read,
+            archived,
+        }
+    }
+
+    /// Books with three articles and one book, every record already read.
+    fn with_articles() -> Books {
+        let mut books = Books::empty();
+        let mut documents = vec![
+            article("old", "An old unread one"),
+            article("new", "A new unread one"),
+            article("read", "One already read"),
+        ];
+        documents.extend(fixtures().into_iter().take(1));
+        books.take_documents(documents);
+        books.articles.loaded = true;
+        books.record = super::Record::Kept;
+        for (name, kept) in [
+            ("old", kept(1_000, false, false)),
+            ("new", kept(9_000, false, false)),
+            ("read", kept(20_000, true, false)),
+        ] {
+            books
+                .articles
+                .kept
+                .insert(format!("0/Articles/{name}.epub"), kept);
+        }
+        books
+    }
+
+    fn index_of(books: &Books, title: &str) -> usize {
+        books
+            .documents
+            .iter()
+            .position(|document| document.title == title)
+            .expect("a document with that title")
+    }
+
+    /// An article's place on a shelf, which is what its row is named by.
+    fn row_of(books: &Books, shelf: Shelf, title: &str) -> usize {
+        titles_on(books, shelf)
+            .iter()
+            .position(|shown| shown == title)
+            .expect("the article is on that shelf")
+    }
+
+    fn titles_on(books: &Books, shelf: Shelf) -> Vec<String> {
+        books
+            .members(shelf)
+            .into_iter()
+            .map(|index| books.documents[index].title.clone())
+            .collect()
+    }
+
+    #[test]
+    fn articles_have_a_shelf_of_their_own_with_unread_first_and_the_newest_first() {
+        let books = with_articles();
+        assert_eq!(
+            titles_on(&books, Shelf::Articles),
+            ["A new unread one", "An old unread one", "One already read"]
+        );
+        assert_eq!(titles_on(&books, Shelf::Library), ["The Open Sea"]);
+    }
+
+    #[test]
+    fn the_articles_shelf_lists_each_with_its_site_and_offers_sync() {
+        let mut books = with_articles();
+        books.view = View::Shelf(Shelf::Articles);
+        let mut runner = AppRunner::new(books);
+        let screen = shown(runner.start());
+        let said = words(&screen);
+        assert!(said.contains("A new unread one"), "{said}");
+        assert!(said.contains("example.org"), "{said}");
+        assert!(said.contains("Sync"), "{said}");
+        assert!(
+            !said.contains("The Open Sea"),
+            "a book is not an article: {said}"
+        );
+    }
+
+    #[test]
+    fn a_record_kept_in_parts_is_read_part_by_part_and_a_smaller_one_empties_the_rest() {
+        let mut books = Books::empty();
+        books.take_documents(vec![
+            article("old", "An old unread one"),
+            article("read", "One already read"),
+        ]);
+        books.record = super::Record::Kept;
+        let mut runner = AppRunner::new(books);
+        runner.start();
+        let part = |name: &str, read: bool| {
+            let one = std::collections::BTreeMap::from([(
+                format!("0/Articles/{name}.epub"),
+                kept(1_000, read, false),
+            )]);
+            articles::encode(&one, kobo_sdk::MAX_STORE_VALUE)
+                .expect("fits")
+                .remove(0)
+        };
+        let mut answer = |key: String, value: Option<Vec<u8>>| {
+            runner.store_result(StoreResult::Loaded { key, value })
+        };
+        let asked = |commands: &[Command], wanted: &str| {
+            commands.iter().any(|command| {
+                matches!(command, Command::Store(StoreRequest::Load { key }) if key == wanted)
+            })
+        };
+        // Replies come back in the order Books asked: its start-up records
+        // first, then each part it asks for on reading the one before.
+        for key in [READING, DESCRIBED, RECENT] {
+            answer(key.to_owned(), None);
+        }
+        let commands = answer(articles::part_key(0), Some(part("old", false)));
+        assert!(
+            asked(&commands, &articles::part_key(1)),
+            "the next part is read"
+        );
+        answer(articles::PAIRING.to_owned(), None);
+        let commands = answer(articles::part_key(1), Some(part("read", true)));
+        assert!(asked(&commands, &articles::part_key(2)));
+        answer(articles::part_key(2), None);
+        let app = runner.app();
+        assert!(app.articles.loaded);
+        assert_eq!(app.articles.parts_stored, 2);
+        assert!(app.articles.kept["0/Articles/read.epub"].read);
+        assert!(!app.articles.kept["0/Articles/old.epub"].read);
+
+        let index = index_of(runner.app(), "An old unread one");
+        runner.action(action_id(&format!("book-{index}")));
+        let commands = runner.action(ActionId::BACK);
+        assert!(saved(&commands, articles::RECORD).is_some());
+        assert_eq!(
+            saved(&commands, &articles::part_key(1)),
+            Some(Vec::new()),
+            "the second part, no longer needed, is emptied"
+        );
+    }
+
+    #[test]
+    fn an_article_read_to_its_end_moves_down_among_the_read() {
+        let mut runner = AppRunner::new(with_articles());
+        runner.start();
+        let index = index_of(runner.app(), "A new unread one");
+        runner.action(action_id(&format!("book-{index}")));
+        assert_eq!(runner.app().view, View::Reading);
+        runner.action(ActionId::BACK);
+        assert!(runner.app().articles.kept["0/Articles/new.epub"].read);
+        assert_eq!(
+            titles_on(runner.app(), Shelf::Articles),
+            ["An old unread one", "One already read", "A new unread one"]
+        );
+    }
+
+    #[test]
+    fn an_archived_article_leaves_the_shelf_for_the_archive_and_can_come_back() {
+        let mut books = with_articles();
+        books.view = View::Shelf(Shelf::Articles);
+        let mut runner = AppRunner::new(books);
+        runner.start();
+        let row = row_of(runner.app(), Shelf::Articles, "An old unread one");
+        let menu = shown(runner.action(action_id(&format!("article-menu-{row}"))));
+        assert!(words(&menu).contains("Archive"));
+        let commands = runner.action(action_id("article-archive"));
+        assert!(
+            saved(&commands, articles::RECORD).is_some(),
+            "the archive is kept"
+        );
+        assert_eq!(
+            titles_on(runner.app(), Shelf::Articles),
+            ["A new unread one", "One already read"]
+        );
+        let archive = shown(runner.action(action_id("archived")));
+        assert!(words(&archive).contains("An old unread one"));
+        runner.action(action_id("article-menu-0"));
+        runner.action(action_id("article-restore"));
+        assert_eq!(
+            titles_on(runner.app(), Shelf::Archive),
+            Vec::<String>::new()
+        );
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Shelf(Shelf::Articles));
+    }
+
+    #[test]
+    fn delete_asks_first_and_the_article_goes_only_once_the_reader_let_it_go() {
+        let mut books = with_articles();
+        books.view = View::Shelf(Shelf::Articles);
+        let mut runner = AppRunner::new(books);
+        runner.start();
+        let row = row_of(runner.app(), Shelf::Articles, "One already read");
+        runner.action(action_id(&format!("article-menu-{row}")));
+        let asked = shown(runner.action(action_id("article-delete")));
+        assert!(words(&asked).contains("Delete this article?"));
+        assert!(
+            words(&asked).contains("One already read"),
+            "it names what goes"
+        );
+        let kept = runner.action(action_id("keep-article"));
+        assert!(!kept.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::RemoveArticle { .. })
+        )));
+        runner.action(action_id(&format!("article-menu-{row}")));
+        runner.action(action_id("article-delete"));
+        let confirmed = runner.action(action_id("confirm-delete"));
+        assert!(confirmed.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::RemoveArticle { id }) if id == "0/Articles/read.epub"
+        )));
+        assert!(titles_on(runner.app(), Shelf::Articles).contains(&"One already read".to_owned()));
+        runner.device_result(DeviceResult::Done);
+        assert!(!titles_on(runner.app(), Shelf::Articles).contains(&"One already read".to_owned()));
+        assert!(!runner
+            .app()
+            .articles
+            .kept
+            .contains_key("0/Articles/read.epub"));
+    }
+
+    #[test]
+    fn a_listing_that_arrives_while_delete_is_asking_never_changes_what_is_deleted() {
+        let mut books = with_articles();
+        books.view = View::Shelf(Shelf::Articles);
+        let mut runner = AppRunner::new(books);
+        runner.start();
+        let row = row_of(runner.app(), Shelf::Articles, "One already read");
+        runner.action(action_id(&format!("article-menu-{row}")));
+        runner.action(action_id("article-delete"));
+        // A Sync lands another article meanwhile, and every place moves.
+        let mut documents = vec![article("arrived", "Arrived just now")];
+        documents.extend(runner.app().documents.clone());
+        runner.app_mut().documents = documents;
+        let confirmed = runner.action(action_id("confirm-delete"));
+        assert!(confirmed.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::RemoveArticle { id }) if id == "0/Articles/read.epub"
+        )));
+    }
+
+    #[test]
+    fn a_delete_the_reader_refused_keeps_the_article_and_says_so() {
+        let mut books = with_articles();
+        books.view = View::Shelf(Shelf::Articles);
+        let mut runner = AppRunner::new(books);
+        runner.start();
+        let row = row_of(runner.app(), Shelf::Articles, "One already read");
+        runner.action(action_id(&format!("article-menu-{row}")));
+        runner.action(action_id("article-delete"));
+        runner.action(action_id("confirm-delete"));
+        let said =
+            shown(runner.device_result(DeviceResult::Failed(kobo_sdk::DeviceError::Backend)));
+        assert!(words(&said).contains("could not be deleted"));
+        assert!(titles_on(runner.app(), Shelf::Articles).contains(&"One already read".to_owned()));
+    }
+
+    fn post_of(commands: &[Command]) -> Option<(TaskId, String, String)> {
+        commands.iter().find_map(|command| match command {
+            Command::Spawn {
+                task,
+                work: kobo_sdk::Task::Post { url, body, .. },
+            } => Some((*task, url.clone(), body.clone())),
+            _ => None,
+        })
+    }
+
+    fn paired_runner() -> (AppRunner<Books>, Vec<Command>) {
+        let mut runner = AppRunner::new(with_articles());
+        runner.start();
+        let mut commands = Vec::new();
+        for (key, value) in [
+            (READING, None),
+            (DESCRIBED, None),
+            (RECENT, None),
+            (articles::RECORD, None),
+            (
+                articles::PAIRING,
+                Some(b"192.168.1.10:9331|abc234".to_vec()),
+            ),
+        ] {
+            commands.extend(runner.store_result(StoreResult::Loaded {
+                key: key.into(),
+                value,
+            }));
+        }
+        (runner, commands)
+    }
+
+    #[test]
+    fn opening_books_asks_the_paired_computer_quietly() {
+        let (mut runner, commands) = paired_runner();
+        let (task, url, body) = post_of(&commands).expect("the computer is asked");
+        assert_eq!(url, "https://192.168.1.10:9331/articles/sync");
+        assert!(body.contains("abc234"));
+        let shelf = shown(runner.action(action_id("shelf-articles")));
+        assert!(
+            !words(&shelf).contains("Checking"),
+            "a quiet check says nothing"
+        );
+        runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable));
+        assert_eq!(
+            runner.app().articles.said,
+            None,
+            "a computer that is off is not news on opening"
+        );
+    }
+
+    #[test]
+    fn sync_says_it_is_checking_then_how_many_arrived_and_lists_the_card_again() {
+        let (mut runner, commands) = paired_runner();
+        let (quiet, _, _) = post_of(&commands).expect("the quiet check");
+        runner.task_outcome(
+            quiet,
+            TaskOutcome::Completed(br#"{"delivered":0,"waiting":0}"#.to_vec()),
+        );
+        runner.action(action_id("shelf-articles"));
+        let asked = runner.action(action_id("sync"));
+        assert!(words(&shown(asked.clone())).contains("Checking your computer"));
+        let (task, _, _) = post_of(&asked).expect("the computer is asked again");
+        let answered = runner.task_outcome(
+            task,
+            TaskOutcome::Completed(br#"{"delivered":2,"titles":["A","B"],"waiting":0}"#.to_vec()),
+        );
+        assert!(words(&shown(answered.clone())).contains("2 articles arrived"));
+        assert!(answered
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::ListLibrary))));
+    }
+
+    #[test]
+    fn sync_with_nothing_waiting_or_no_computer_says_so_plainly() {
+        let (mut runner, commands) = paired_runner();
+        let (quiet, _, _) = post_of(&commands).expect("the quiet check");
+        runner.task_outcome(
+            quiet,
+            TaskOutcome::Completed(br#"{"delivered":0,"waiting":0}"#.to_vec()),
+        );
+        runner.action(action_id("shelf-articles"));
+        let (task, _, _) = post_of(&runner.action(action_id("sync"))).expect("asked");
+        let said = shown(runner.task_outcome(
+            task,
+            TaskOutcome::Completed(br#"{"delivered":0,"waiting":0}"#.to_vec()),
+        ));
+        assert!(words(&said).contains("Nothing new"));
+        let (task, _, _) = post_of(&runner.action(action_id("sync"))).expect("asked");
+        let said =
+            shown(runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable)));
+        assert!(words(&said).contains("Your computer is not answering"));
+    }
+
+    #[test]
+    fn sync_on_a_reader_that_was_never_paired_says_how_to_pair_it() {
+        let mut books = with_articles();
+        books.view = View::Shelf(Shelf::Articles);
+        let mut runner = AppRunner::new(books);
+        runner.start();
+        let commands = runner.action(action_id("sync"));
+        assert!(post_of(&commands).is_none());
+        assert!(words(&shown(commands)).contains("kobo sidekick init"));
+    }
+
+    #[test]
+    fn an_empty_articles_shelf_says_where_articles_come_from() {
+        let mut books = Books::empty();
+        books.articles.computer = Some(("192.168.1.10:9331".to_owned(), "abc234".to_owned()));
+        books.articles.loaded = true;
+        books.view = View::Shelf(Shelf::Articles);
+        let mut runner = AppRunner::new(books);
+        let said = words(&shown(runner.start()));
+        assert!(said.contains("No articles yet"), "{said}");
+        assert!(said.contains("Sync"), "{said}");
     }
 }
