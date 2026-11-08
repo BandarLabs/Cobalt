@@ -19,6 +19,7 @@ mod bootstrap;
 mod clip;
 mod clip_delivery;
 mod clip_host;
+mod clip_install;
 mod connect;
 mod console;
 mod deck;
@@ -8543,7 +8544,7 @@ Send things to your apps. These go to the reader kobo setup saved; add
 
 Send a web article to the reader:
   clip URL | clip PAGE.html --url URL [--out FILE.epub] [--colour]  Send it, or save it with --out
-  clip sync              Send the articles waiting for the reader
+  clip sync | install --browser NAME | uninstall  Send what waits; add Send to Kobo to a browser
 
 Credentials an app asks for by name:
   connect APP            Connect an account app: asks for the server and

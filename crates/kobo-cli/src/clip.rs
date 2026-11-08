@@ -4,8 +4,8 @@
 //! an EPUB the reader opens like any other book. It goes to the reader's
 //! Articles shelf over the connection `kobo send` uses, or waits on this
 //! computer while the reader is asleep; `--out` saves it to a folder
-//! instead. The browser extension reaches the same code through
-//! `native-host`.
+//! instead. The browser extension and the Safari service reach the same code
+//! through `native-host` and `install`.
 
 use super::clip_delivery as delivery;
 use std::fs;
@@ -19,6 +19,8 @@ usage: kobo clip URL [--sim | --device IP | --reader NAME] [--colour] [--no-pict
        kobo clip URL --out FILE.epub|FOLDER
        kobo clip URL --later
        kobo clip sync [--sim | --device IP | --reader NAME]
+       kobo clip install --browser chrome|edge|brave|chromium|firefox|safari | --all
+       kobo clip uninstall [--browser NAME | --all]
 
 Makes a web article into an EPUB, as a browser's reader mode shows it: the
 text, headings, lists, tables, code, and figures with their captions, with
@@ -32,7 +34,10 @@ target is named. A reader that is asleep or away gets it later: it waits on
 this computer until kobo clip sync, Sync on the reader's Articles shelf, or
 the next clip that finds the reader awake. --later keeps it waiting without
 trying now. --out saves it to a file or folder on this computer instead and
-sends nothing.";
+sends nothing.
+
+install adds Send to Kobo to a browser's right-click menu, and uninstall
+takes it away again.";
 
 struct Request {
     source: Source,
@@ -70,6 +75,8 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     {
         Some(("sync", rest)) => return sync(rest),
         Some(("native-host", _)) => return super::clip_host::run(),
+        Some(("install", rest)) => return super::clip_install::install(rest),
+        Some(("uninstall", rest)) => return super::clip_install::uninstall(rest),
         _ => {}
     }
     let notify = arguments.iter().any(|word| word == "--notify");
