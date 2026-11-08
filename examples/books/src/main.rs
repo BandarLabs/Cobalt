@@ -1026,10 +1026,22 @@ impl Books {
     }
 
     fn save_articles(&mut self, context: &mut Context) {
-        let bytes = articles::encode(&self.articles.kept);
-        if bytes.len() <= MAX_STORE_VALUE {
-            context.store().save(articles::RECORD, bytes);
+        // A record too large to keep stays marked as changed, so the next
+        // save tries again, rather than being dropped.
+        let Some(parts) = articles::encode(&self.articles.kept, MAX_STORE_VALUE) else {
+            self.articles.changed = true;
+            return;
+        };
+        let count = parts.len();
+        for (index, part) in parts.into_iter().enumerate() {
+            context.store().save(articles::part_key(index), part);
         }
+        // Parts a larger record used before are emptied, which is also where
+        // reading stops.
+        for index in count..self.articles.parts_stored {
+            context.store().save(articles::part_key(index), Vec::new());
+        }
+        self.articles.parts_stored = count;
         self.articles.changed = false;
     }
 
@@ -1924,12 +1936,25 @@ impl KoboApp for Books {
                     self.show(context);
                 }
             }
-            articles::RECORD => {
+            key if articles::part_of(key).is_some() => {
+                let index = articles::part_of(key).unwrap_or_default();
+                if index != self.articles.parts_stored || self.articles.loaded {
+                    return;
+                }
                 if let StoreResult::Loaded {
                     value: Some(bytes), ..
                 } = result
                 {
-                    self.articles.kept = articles::decode(&bytes);
+                    if !bytes.is_empty() {
+                        self.articles.kept.extend(articles::decode(&bytes));
+                        self.articles.parts_stored = index + 1;
+                        // Parts are read one after another, and the first
+                        // empty or missing one is the end.
+                        if index + 1 < articles::PARTS {
+                            context.store().load(articles::part_key(index + 1));
+                            return;
+                        }
+                    }
                 }
                 self.articles.loaded = true;
                 self.take_articles(self.truncated);
@@ -3195,6 +3220,64 @@ mod tests {
         assert!(
             !said.contains("The Open Sea"),
             "a book is not an article: {said}"
+        );
+    }
+
+    #[test]
+    fn a_record_kept_in_parts_is_read_part_by_part_and_a_smaller_one_empties_the_rest() {
+        let mut books = Books::empty();
+        books.take_documents(vec![
+            article("old", "An old unread one"),
+            article("read", "One already read"),
+        ]);
+        books.record = super::Record::Kept;
+        let mut runner = AppRunner::new(books);
+        runner.start();
+        let part = |name: &str, read: bool| {
+            let one = std::collections::BTreeMap::from([(
+                format!("0/Articles/{name}.epub"),
+                kept(1_000, read, false),
+            )]);
+            articles::encode(&one, kobo_sdk::MAX_STORE_VALUE)
+                .expect("fits")
+                .remove(0)
+        };
+        let mut answer = |key: String, value: Option<Vec<u8>>| {
+            runner.store_result(StoreResult::Loaded { key, value })
+        };
+        let asked = |commands: &[Command], wanted: &str| {
+            commands.iter().any(|command| {
+                matches!(command, Command::Store(StoreRequest::Load { key }) if key == wanted)
+            })
+        };
+        // Replies come back in the order Books asked: its start-up records
+        // first, then each part it asks for on reading the one before.
+        for key in [READING, DESCRIBED, RECENT] {
+            answer(key.to_owned(), None);
+        }
+        let commands = answer(articles::part_key(0), Some(part("old", false)));
+        assert!(
+            asked(&commands, &articles::part_key(1)),
+            "the next part is read"
+        );
+        answer(articles::PAIRING.to_owned(), None);
+        let commands = answer(articles::part_key(1), Some(part("read", true)));
+        assert!(asked(&commands, &articles::part_key(2)));
+        answer(articles::part_key(2), None);
+        let app = runner.app();
+        assert!(app.articles.loaded);
+        assert_eq!(app.articles.parts_stored, 2);
+        assert!(app.articles.kept["0/Articles/read.epub"].read);
+        assert!(!app.articles.kept["0/Articles/old.epub"].read);
+
+        let index = index_of(runner.app(), "An old unread one");
+        runner.action(action_id(&format!("book-{index}")));
+        let commands = runner.action(ActionId::BACK);
+        assert!(saved(&commands, articles::RECORD).is_some());
+        assert_eq!(
+            saved(&commands, &articles::part_key(1)),
+            Some(Vec::new()),
+            "the second part, no longer needed, is emptied"
         );
     }
 

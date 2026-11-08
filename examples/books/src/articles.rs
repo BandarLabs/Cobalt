@@ -19,8 +19,39 @@ use std::fmt::Write as _;
 /// The identifier prefix of a file in the card's `Articles` folder.
 pub const FOLDER: &str = "0/Articles/";
 
-/// Store key for what Books knows about each article.
+/// Store key for what Books knows about each article, and the first of
+/// its parts.
 pub const RECORD: &str = "articles-v1";
+
+/// How many store values the record may take. One value holds at most
+/// 256 KiB and a line is at most about 770 bytes, a 256-byte id and a site
+/// of at most [`MOST_SITE`] characters, so eight hold a 2,000-book library
+/// that is all articles.
+pub const PARTS: usize = 8;
+
+/// The longest site name kept, in characters. A site is a name for a
+/// shelf row, and a longer one would only be cut off there.
+const MOST_SITE: usize = 120;
+
+/// The store key of part `index` of the record.
+#[must_use]
+pub fn part_key(index: usize) -> String {
+    if index == 0 {
+        RECORD.to_owned()
+    } else {
+        format!("{RECORD}.{index}")
+    }
+}
+
+/// Which part of the record `key` is, if it is one.
+#[must_use]
+pub fn part_of(key: &str) -> Option<usize> {
+    if key == RECORD {
+        return Some(0);
+    }
+    let index: usize = key.strip_prefix(RECORD)?.strip_prefix('.')?.parse().ok()?;
+    (1..PARTS).contains(&index).then_some(index)
+}
 /// Store key the computer writes the pairing under: `address|code`.
 pub const PAIRING: &str = "computer";
 
@@ -45,6 +76,8 @@ pub struct State {
     pub loaded: bool,
     /// Whether it holds something the store does not have yet.
     pub changed: bool,
+    /// How many store values the record was last read from or kept in.
+    pub parts_stored: usize,
     /// The computer Sync asks: its address and pairing code.
     pub computer: Option<(String, String)>,
     /// The request Sync has out, and whether it is the quiet one.
@@ -81,18 +114,31 @@ pub struct Kept {
     pub archived: bool,
 }
 
-/// The record as one store value, a line an article.
+/// The record as store values of at most `most` bytes each, a line an
+/// article, never splitting a line. `None` when it needs more than
+/// [`PARTS`] of them.
 #[must_use]
-pub fn encode(articles: &BTreeMap<String, Kept>) -> Vec<u8> {
-    let mut out = String::new();
+pub fn encode(articles: &BTreeMap<String, Kept>, most: usize) -> Option<Vec<Vec<u8>>> {
+    let mut parts = vec![Vec::new()];
+    let mut line = String::new();
     for (id, kept) in articles {
-        let site = kept
+        line.clear();
+        let site: String = kept
             .site
             .as_deref()
             .unwrap_or_default()
-            .replace(['\t', '\n', '\r'], " ");
+            .chars()
+            .take(MOST_SITE)
+            .map(|c| {
+                if matches!(c, '\t' | '\n' | '\r') {
+                    ' '
+                } else {
+                    c
+                }
+            })
+            .collect();
         let _ = writeln!(
-            out,
+            line,
             "{id}\t{}\t{site}\t{}\t{}{}{}",
             kept.bytes,
             kept.saved
@@ -102,8 +148,15 @@ pub fn encode(articles: &BTreeMap<String, Kept>) -> Vec<u8> {
             if kept.read { "r" } else { "" },
             if kept.archived { "a" } else { "" },
         );
+        let full = parts
+            .last()
+            .is_some_and(|part| part.len() + line.len() > most);
+        if full {
+            parts.push(Vec::new());
+        }
+        parts.last_mut()?.extend_from_slice(line.as_bytes());
     }
-    out.into_bytes()
+    (parts.len() <= PARTS).then_some(parts)
 }
 
 /// The record read back. A line that does not parse is dropped, which costs
@@ -214,6 +267,8 @@ pub enum Said {
     Refused,
     /// The computer's helper is older than Sync.
     Outdated,
+    /// The computer answered, but its kobo command could not run the sync.
+    ComputerTrouble,
     NotPaired,
 }
 
@@ -242,6 +297,10 @@ impl Said {
                 true,
             ),
             Self::Offline => ("This reader is not on Wi-Fi.".to_owned(), true),
+            Self::ComputerTrouble => (
+                "Your computer could not send articles just now. Run kobo clip sync on it to see why.".to_owned(),
+                true,
+            ),
             Self::Refused => (
                 "Your computer did not accept this reader. Run kobo sidekick init on it again.".to_owned(),
                 true,
@@ -265,6 +324,11 @@ pub fn outcome(reply: &Reply) -> Said {
         Said::Arrived(reply.delivered)
     } else if reply.waiting > 0 {
         Said::Waiting(reply.waiting)
+    } else if reply.problem.is_some() {
+        // Nothing arrived and nothing is waiting, yet something went wrong:
+        // the computer could not run its side, so "Nothing new" would be a
+        // guess.
+        Said::ComputerTrouble
     } else {
         Said::NothingNew
     }
@@ -318,7 +382,9 @@ mod tests {
                 ..Kept::default()
             },
         );
-        let back = decode(&encode(&articles));
+        let parts = encode(&articles, 1 << 20).expect("fits");
+        assert_eq!(parts.len(), 1);
+        let back = decode(&parts[0]);
         assert_eq!(
             back["0/Articles/River.epub"].site.as_deref(),
             Some("Field Notes")
@@ -380,6 +446,10 @@ mod tests {
             read(r#"{"delivered":0,"waiting":3,"problem":"asleep"}"#),
             Some(Said::Waiting(3))
         );
+        assert_eq!(
+            read(r#"{"delivered":0,"waiting":0,"problem":"no kobo command"}"#),
+            Some(Said::ComputerTrouble)
+        );
         assert_eq!(read("<html>"), None);
         assert_eq!(Said::Arrived(2).text().0, "2 articles arrived");
         assert_eq!(Said::Arrived(1).text().0, "1 article arrived");
@@ -388,6 +458,51 @@ mod tests {
             .text()
             .0
             .starts_with("Your computer is not answering"));
+    }
+
+    #[test]
+    fn a_shelf_too_large_for_one_store_value_is_kept_in_parts_and_read_back_whole() {
+        let articles: BTreeMap<String, Kept> = (0..2_000)
+            .map(|n| {
+                (
+                    format!("0/Articles/{}{n}.epub", "a".repeat(230)),
+                    Kept {
+                        bytes: 4_000_000,
+                        site: Some("\u{00e9}".repeat(400)),
+                        saved: Some(1_762_600_000_000),
+                        described: true,
+                        read: n % 2 == 0,
+                        archived: n % 3 == 0,
+                    },
+                )
+            })
+            .collect();
+        let parts = encode(&articles, kobo_sdk::MAX_STORE_VALUE).expect("a whole library fits");
+        assert!(parts.len() > 1 && parts.len() <= PARTS, "{}", parts.len());
+        assert!(parts
+            .iter()
+            .all(|part| part.len() <= kobo_sdk::MAX_STORE_VALUE));
+        let back: BTreeMap<String, Kept> = parts.iter().flat_map(|part| decode(part)).collect();
+        assert_eq!(back.len(), articles.len());
+        assert_eq!(back.values().filter(|kept| kept.read).count(), 1_000);
+        let site = back
+            .values()
+            .next()
+            .and_then(|kept| kept.site.clone())
+            .expect("site");
+        assert_eq!(site.chars().count(), MOST_SITE);
+        assert_eq!(encode(&articles, 4096), None);
+    }
+
+    #[test]
+    fn every_part_of_the_record_has_its_own_key_and_nothing_else_is_one() {
+        assert_eq!(part_key(0), RECORD);
+        assert_eq!(part_of(&part_key(0)), Some(0));
+        assert_eq!(part_of(&part_key(PARTS - 1)), Some(PARTS - 1));
+        assert_eq!(part_of(&format!("{RECORD}.{PARTS}")), None);
+        assert_eq!(part_of(&format!("{RECORD}.0")), None);
+        assert_eq!(part_of("articles-v10"), None);
+        assert_eq!(part_of(PAIRING), None);
     }
 
     #[test]
