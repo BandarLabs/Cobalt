@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 mod activity;
 mod app_store;
@@ -921,6 +922,9 @@ impl AppServer {
     ///
     /// Returns an error when the listener itself stops accepting.
     pub fn try_serve_one(&self, session: &AppSession) -> io::Result<bool> {
+        if let Err(error) = session.tend_notices() {
+            report_dropped_request(&error);
+        }
         match self.http.accept() {
             Ok((stream, _)) => {
                 stream.set_nonblocking(false)?;
@@ -1176,6 +1180,27 @@ struct AppState {
     /// The same field the device draws, from the same module, so a script
     /// that types here taps the keys a reader would.
     typing: Option<(u32, kobod::text_entry::Field)>,
+    /// The runtime's notices, the same module and the same rules the device
+    /// uses, over the simulator's own inbox. Opened on first use, so a
+    /// session that never sees one never touches the folder.
+    notices: Option<kobod::notices::Notices>,
+    /// The card up now: when it goes, what a tap on it opens, and what it says.
+    notice: Option<(Instant, kobod::notices::Opens, kobo_ui::NoticeCard)>,
+    notice_chores: NoticeChores,
+}
+
+/// The bookkeeping behind the simulator's notices, kept together so the
+/// session state reads as what it is rather than as a row of flags.
+#[derive(Debug, Default)]
+struct NoticeChores {
+    /// When the inbox was last read.
+    read_at: Option<Instant>,
+    /// Whether the launcher has been sent the list since it connected.
+    told: bool,
+    /// Whether the reader has slept since the last card.
+    slept: bool,
+    /// Lists to send once the answer that changed them has gone.
+    to_tell: Vec<Message>,
 }
 
 impl Default for AppState {
@@ -1236,6 +1261,9 @@ impl AppState {
             terminal_open: false,
             page_keys: profile_facts().page_keys,
             typing: None,
+            notices: None,
+            notice: None,
+            notice_chores: NoticeChores::default(),
         }
     }
 }
@@ -1589,12 +1617,18 @@ impl AppState {
             // simulator, so every capture showing them was wrong.
             false,
         );
-        self.chrome = kobo_ui::Chrome::for_screen(
-            &self.base_screen(),
-            self.app_name == "launcher",
-            Some(status),
-        )
-        .with_appearance(profile_appearance());
+        let base = self.base_screen();
+        let notice = self
+            .notice
+            .as_ref()
+            .map(|(_, _, card)| card.clone())
+            .filter(|_| {
+                kobod::notices::room_on(Some(&base), self.typing.is_some())
+                    == kobod::notices::Room::Show
+            });
+        self.chrome = kobo_ui::Chrome::for_screen(&base, self.app_name == "launcher", Some(status))
+            .with_appearance(profile_appearance())
+            .with_notice(notice);
     }
 
     /// What the shell draws its chrome around: the open text field, if the
@@ -1627,6 +1661,157 @@ impl AppState {
         self.compose_chrome();
         self.paints = self.paints.saturating_add(1);
         self.commit_frame();
+    }
+
+    /// Reads the inbox, puts up or takes down the card, and returns what the
+    /// application has to be told: the list, to the launcher, when it changed.
+    ///
+    /// The device's rules exactly, on the simulator's clock: the inbox is read
+    /// four times a second rather than every two, so a route that raises a
+    /// notice sees it at once, and the card stays its full four seconds.
+    fn tend_notices(&mut self, now: Instant) -> Vec<Message> {
+        let mut told = std::mem::take(&mut self.notice_chores.to_tell);
+        if self.power_state != kobod::power::State::Awake {
+            self.notice_chores.slept = true;
+        }
+        let library = simulated_library_root();
+        let launcher = self.app_name == "launcher";
+        let notices = self
+            .notices
+            .get_or_insert_with(|| kobod::notices::Notices::open(&simulated_notices_folder()));
+        if self
+            .notice_chores
+            .read_at
+            .is_none_or(|at| now.saturating_duration_since(at) >= NOTICE_POLL)
+        {
+            self.notice_chores.read_at = Some(now);
+            let (arrived, discarded) = notices.collect(kobod::notices::now_millis());
+            if arrived + discarded > 0 {
+                self.logs
+                    .push(format!("notices: {arrived} arrived, {discarded} discarded"));
+            }
+            if arrived > 0 && launcher && self.notice_chores.told {
+                told.push(Message::Notices(notices.list(
+                    &library,
+                    false,
+                    kobod::notices::builtin_mark,
+                )));
+            }
+        }
+        if launcher && !self.notice_chores.told && self.paints > 0 {
+            self.notice_chores.told = true;
+            told.push(Message::Notices(notices.list(
+                &library,
+                false,
+                kobod::notices::builtin_mark,
+            )));
+        }
+        let room = if self.power_state == kobod::power::State::Awake
+            && self.lifecycle == Lifecycle::Foreground
+        {
+            kobod::notices::room_on(Some(&self.drawn_screen), self.typing.is_some())
+        } else {
+            kobod::notices::Room::Hold
+        };
+        let expired = self
+            .notice
+            .as_ref()
+            .is_some_and(|(until, _, _)| now >= *until);
+        if self.notice.is_some() && (expired || room != kobod::notices::Room::Show) {
+            self.notice = None;
+            notices.card_gone();
+            self.record("notice: gone".into());
+            self.panel.clean_next();
+            self.repaint_field();
+        } else if notices.waiting() {
+            match room {
+                kobod::notices::Room::Quiet => notices.keep_quiet(),
+                kobod::notices::Room::Hold => {}
+                kobod::notices::Room::Show => {
+                    if let Some(shown) =
+                        notices.announce(self.notice_chores.slept, kobod::notices::builtin_mark)
+                    {
+                        self.notice_chores.slept = false;
+                        self.notice = Some((
+                            now + Duration::from_millis(kobod::notices::SHOWN_FOR_MS),
+                            shown.opens,
+                            shown.card,
+                        ));
+                        self.record("notice: shown".into());
+                        self.repaint_field();
+                    }
+                }
+            }
+        }
+        told
+    }
+
+    /// Answers one of the launcher's notice requests, as the device does.
+    fn notice_request(
+        &mut self,
+        request: &kobo_protocol::DeviceRequest,
+    ) -> kobo_protocol::DeviceResult {
+        use kobo_protocol::{DeviceError, DeviceRequest, DeviceResult};
+        let library = simulated_library_root();
+        let notices = self
+            .notices
+            .get_or_insert_with(|| kobod::notices::Notices::open(&simulated_notices_folder()));
+        let (result, changed) = match request {
+            DeviceRequest::MarkNoticesRead => (DeviceResult::Done, notices.mark_read()),
+            DeviceRequest::ClearNotices => {
+                notices.clear();
+                (DeviceResult::Done, true)
+            }
+            DeviceRequest::OpenNotice { id } => match notices.target(*id, &library) {
+                Some((app, document)) => {
+                    let note = format!("notice: open {document} in {app}");
+                    self.record(note);
+                    return DeviceResult::Done;
+                }
+                None => (DeviceResult::Failed(DeviceError::NotFound), false),
+            },
+            _ => (DeviceResult::Failed(DeviceError::InvalidInput), false),
+        };
+        if changed {
+            let list = notices.list(&library, false, kobod::notices::builtin_mark);
+            self.notice_chores.to_tell.push(Message::Notices(list));
+        }
+        result
+    }
+
+    /// Answers a tap on the card. The simulator hosts one application, so an
+    /// article's opening is noted rather than performed; the list opens in
+    /// the launcher as it does on the device.
+    fn notice_tapped(&mut self) -> Vec<Message> {
+        let Some((_, opens, _)) = self.notice.take() else {
+            return Vec::new();
+        };
+        if let Some(notices) = self.notices.as_mut() {
+            notices.card_gone();
+        }
+        self.panel.clean_next();
+        self.repaint_field();
+        let library = simulated_library_root();
+        let Some(notices) = self.notices.as_ref() else {
+            return Vec::new();
+        };
+        if let kobod::notices::Opens::One(id) = opens {
+            if let Some((app, document)) = notices.target(id, &library) {
+                self.record(format!("notice: open {document} in {app}"));
+                return Vec::new();
+            }
+        }
+        let told = if self.app_name == "launcher" {
+            vec![Message::Notices(notices.list(
+                &library,
+                true,
+                kobod::notices::builtin_mark,
+            ))]
+        } else {
+            Vec::new()
+        };
+        self.record("notice: open the list".into());
+        told
     }
 
     /// Notes a page press on a reader that has no page-turn buttons.
@@ -1885,7 +2070,7 @@ impl AppSession {
             messages
         };
         for message in messages {
-            if self.type_into(&message)? || !self.route_input(&message)? {
+            if self.taken_by_the_runtime(&message)? {
                 continue;
             }
             write_shared(
@@ -2052,6 +2237,97 @@ impl AppSession {
             )?;
         }
         Ok(())
+    }
+
+    /// Reads the notices inbox and moves the card on, telling the
+    /// application anything it has to hear. Cheap when nothing changed, so
+    /// the server calls it between requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the application cannot be written to.
+    pub fn tend_notices(&self) -> io::Result<()> {
+        let told = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .tend_notices(Instant::now());
+        self.tell(told)
+    }
+
+    /// Whether the runtime answers `message` itself rather than passing it
+    /// on: a tap on its notice card, a key on its keyboard, or its way back.
+    fn taken_by_the_runtime(&self, message: &Message) -> io::Result<bool> {
+        Ok(self.notice_tapped(message)?
+            || self.type_into(message)?
+            || !self.route_input(message)?)
+    }
+
+    /// Answers a tap on the runtime's notice card, which never reaches the
+    /// application. True when `message` was that tap.
+    fn notice_tapped(&self, message: &Message) -> io::Result<bool> {
+        if !matches!(message, Message::Action { action } if *action == ActionId::NOTICE) {
+            return Ok(false);
+        }
+        let told = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .notice_tapped();
+        self.tell(told)?;
+        Ok(true)
+    }
+
+    fn tell(&self, messages: Vec<Message>) -> io::Result<()> {
+        if !self.writer.connected() {
+            return Ok(());
+        }
+        for message in messages {
+            write_shared(
+                &self.writer,
+                &Frame {
+                    version: kobo_protocol::VERSION,
+                    request_id: 0,
+                    message,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Drops a notice into the inbox the way a companion does, and reads the
+    /// inbox at once, so a route that raises one can expect it on the next
+    /// step.
+    fn raise_notice(&self, title: &str) -> io::Result<()> {
+        let title = title.trim();
+        if title.is_empty() || title.len() > kobo_protocol::MAX_NOTICE_TITLE_LEN {
+            return Err(io::Error::other("a notice needs a title of 1 to 256 bytes"));
+        }
+        let inbox = simulated_notices_folder().join(kobod::notices::INBOX);
+        fs::create_dir_all(&inbox)?;
+        let record = kobo_json::ObjectBuilder::new()
+            .set("kind", "article")
+            .set("title", title)
+            .set("source", "example.com")
+            .set("app", "books")
+            .build()
+            .to_json();
+        let name = format!("{}.json", kobod::notices::now_millis());
+        let mut unique = inbox.join(&name);
+        let mut count = 0;
+        while unique.exists() {
+            count += 1;
+            unique = inbox.join(format!("{count}-{name}"));
+        }
+        let part = unique.with_extension("part");
+        fs::write(&part, record)?;
+        fs::rename(&part, &unique)?;
+        self.state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .notice_chores
+            .read_at = None;
+        self.tend_notices()
     }
 
     fn send_lifecycle(&self, lifecycle: Lifecycle) -> io::Result<()> {
@@ -2499,6 +2775,17 @@ impl AppSession {
                     .map_err(io::Error::other)
                     .and_then(|source| self.replay_input(&format!("tap {source}")));
                 match response {
+                    Ok(()) => write_response(&mut stream, 204, "text/plain; charset=utf-8", b""),
+                    Err(error) => {
+                        write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
+                    }
+                }
+            }
+            ("POST", "/notice") => {
+                let raised = std::str::from_utf8(&request.body)
+                    .map_err(io::Error::other)
+                    .and_then(|title| self.raise_notice(title));
+                match raised {
                     Ok(()) => write_response(&mut stream, 204, "text/plain; charset=utf-8", b""),
                     Err(error) => {
                         write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
@@ -3702,6 +3989,22 @@ fn simulated_app_request(
     if let Some(result) = simulated_credential_request(state, caller, scenario, request)? {
         return Ok(Some(result));
     }
+    if matches!(
+        request,
+        DeviceRequest::MarkNoticesRead
+            | DeviceRequest::ClearNotices
+            | DeviceRequest::OpenNotice { .. }
+    ) {
+        if caller != "launcher" {
+            return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+        }
+        return Ok(Some(
+            state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?
+                .notice_request(request),
+        ));
+    }
 
     let authorized = match request {
         DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
@@ -4050,6 +4353,16 @@ fn simulated_folder(temporary: &str, chosen: &str) -> std::path::PathBuf {
         None => std::env::temp_dir().join(temporary),
     }
 }
+
+/// Where the simulator's notices arrive and are kept: the device's
+/// `state/notices`, in a folder no application id can name.
+#[must_use]
+pub fn simulated_notices_folder() -> std::path::PathBuf {
+    simulated_folder("cobalt-sim-state", ".state").join(".notices")
+}
+
+/// How often the simulator reads its notices inbox.
+const NOTICE_POLL: Duration = Duration::from_millis(250);
 
 /// The folder the simulator's library reads documents from.
 ///

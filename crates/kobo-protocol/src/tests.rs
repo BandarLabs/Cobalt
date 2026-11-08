@@ -169,6 +169,9 @@ fn every_device_request_round_trips() {
         DeviceRequest::ReadLibrary {
             id: "0/Bleak-House.epub".to_owned(),
         },
+        DeviceRequest::MarkNoticesRead,
+        DeviceRequest::ClearNotices,
+        DeviceRequest::OpenNotice { id: 7 },
     ];
     for request in requests {
         let frame = Frame {
@@ -1739,8 +1742,9 @@ fn listed_at(version: u8, glyph: Glyph) -> Glyph {
 }
 
 #[test]
-fn the_application_marks_are_the_thirty_four_glyphs_added_with_protocol_eighteen() {
-    assert_eq!(app_marks().count(), 34);
+fn the_glyphs_added_with_protocol_eighteen_are_the_thirty_four_application_marks_and_the_bell() {
+    assert_eq!(app_marks().count(), 35);
+    assert!(app_marks().any(|glyph| glyph == Glyph::Bell));
 }
 
 #[test]
@@ -1802,4 +1806,95 @@ fn a_frame_below_protocol_eighteen_that_names_an_application_mark_is_refused() {
         glyph_at(encode_glyph(Glyph::Dice), APP_MARK_VERSION),
         Some(Glyph::Dice)
     );
+}
+
+fn kept_notices(open: bool) -> crate::NoticeList {
+    crate::NoticeList {
+        entries: vec![
+            crate::Notice {
+                id: 2,
+                heading: "Article arrived".to_owned(),
+                title: "How the river found its way".to_owned(),
+                detail: "example.com".to_owned(),
+                glyph: kobo_ui::Glyph::Book,
+                at: 1_762_600_000_000,
+                unread: true,
+                target: crate::NoticeTarget::Ready,
+            },
+            crate::Notice {
+                id: 1,
+                heading: "Article arrived".to_owned(),
+                title: "A walk in the hills".to_owned(),
+                detail: String::new(),
+                glyph: kobo_ui::Glyph::Book,
+                at: 1_762_500_000_000,
+                unread: false,
+                target: crate::NoticeTarget::Gone,
+            },
+        ],
+        open,
+    }
+}
+
+#[test]
+fn the_notice_list_reaches_the_launcher_exactly_as_the_runtime_holds_it() {
+    for open in [false, true] {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 0,
+            message: Message::Notices(kept_notices(open)),
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+}
+
+#[test]
+fn books_is_asked_to_open_the_article_by_its_library_identifier() {
+    let frame = Frame {
+        version: VERSION,
+        request_id: 0,
+        message: Message::OpenDocument {
+            id: "0/Articles/River.epub".to_owned(),
+        },
+    };
+    assert_eq!(
+        decode(&encode(&frame).expect("encode")).expect("decode"),
+        frame
+    );
+}
+
+#[test]
+fn notices_cannot_be_sent_or_asked_for_at_a_protocol_from_before_them() {
+    let older = crate::QUIET_TYPE_VERSION;
+    for message in [
+        Message::OpenDocument {
+            id: "0/Articles/River.epub".to_owned(),
+        },
+        Message::Notices(kept_notices(false)),
+        Message::DeviceRequest(DeviceRequest::MarkNoticesRead),
+        Message::DeviceRequest(DeviceRequest::ClearNotices),
+        Message::DeviceRequest(DeviceRequest::OpenNotice { id: 1 }),
+    ] {
+        let frame = Frame {
+            version: older,
+            request_id: 0,
+            message,
+        };
+        assert!(encode(&frame).is_err(), "{frame:?} encoded at {older}");
+    }
+}
+
+#[test]
+fn a_notice_without_a_title_or_with_a_runaway_one_is_refused_at_both_ends() {
+    for title in [String::new(), "x".repeat(crate::MAX_NOTICE_TITLE_LEN + 1)] {
+        let mut list = kept_notices(false);
+        list.entries[0].title = title;
+        let frame = Frame {
+            version: VERSION,
+            request_id: 0,
+            message: Message::Notices(list),
+        };
+        assert!(encode(&frame).is_err());
+    }
 }

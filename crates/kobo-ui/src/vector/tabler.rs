@@ -114,6 +114,7 @@ pub(super) fn outline(glyph: Glyph) -> &'static [&'static [Cmd]] {
         Glyph::Photo => PHOTO,
         Glyph::Keyboard => KEYBOARD,
         Glyph::Sunrise => SUNRISE,
+        Glyph::Bell => BELL,
         // Board pieces, the keyboard keys and the puzzle grids are drawn in
         // `vector::shapes` rather than imported, for the reasons on `HAND_DRAWN`.
         Glyph::BlackDisc
@@ -2178,5 +2179,28 @@ static SUNRISE: &[&[Cmd]] = &[
         Cmd::Line(625, 250),
         Cmd::Move(375, 250),
         Cmd::Line(500, 125),
+    ],
+];
+
+/// `bell` from Tabler Icons.
+static BELL: &[&[Cmd]] = &[
+    &[
+        Cmd::Move(417, 208),
+        Cmd::Cubic(417, 162, 454, 125, 500, 125),
+        Cmd::Cubic(546, 125, 583, 162, 583, 208),
+        Cmd::Cubic(681, 254, 745, 351, 750, 458),
+        Cmd::Line(750, 583),
+        Cmd::Cubic(756, 636, 787, 682, 833, 708),
+        Cmd::Line(167, 708),
+        Cmd::Cubic(213, 682, 244, 636, 250, 583),
+        Cmd::Line(250, 458),
+        Cmd::Cubic(255, 351, 319, 254, 417, 208),
+    ],
+    &[
+        Cmd::Move(375, 708),
+        Cmd::Line(375, 750),
+        Cmd::Cubic(375, 819, 431, 875, 500, 875),
+        Cmd::Cubic(569, 875, 625, 819, 625, 750),
+        Cmd::Line(625, 708),
     ],
 ];

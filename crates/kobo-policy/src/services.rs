@@ -409,7 +409,12 @@ impl DeviceServices {
             | DeviceRequest::ReadAppLink
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
-            | DeviceRequest::DisconnectAppLink => DeviceResult::Denied(DenyReason::Unsupported),
+            | DeviceRequest::DisconnectAppLink
+            // The notices belong to the runtime's session, which answers for
+            // them before a request reaches here.
+            | DeviceRequest::MarkNoticesRead
+            | DeviceRequest::ClearNotices
+            | DeviceRequest::OpenNotice { .. } => DeviceResult::Denied(DenyReason::Unsupported),
             request @ (DeviceRequest::ReadAutoUpdate
             | DeviceRequest::SetAutoUpdate { .. }
             | DeviceRequest::ReadUpdateChannel
@@ -916,6 +921,11 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         // prove a build ran. It touches no radio and costs no power, and the
         // values are already on the session's own banner, so it is free.
         | DeviceRequest::ReadIdentity
+        // Notices are news the runtime already holds and shows; the launcher
+        // is the only caller the runtime accepts, by identity.
+        | DeviceRequest::MarkNoticesRead
+        | DeviceRequest::ClearNotices
+        | DeviceRequest::OpenNotice { .. }
         // Reading and choosing the standing preference touch a settings file,
         // not a radio or the panel, so no capability governs them; who may
         // ask is decided by the runtime, exactly as for the store requests.

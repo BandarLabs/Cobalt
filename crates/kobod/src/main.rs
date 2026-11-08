@@ -1062,6 +1062,8 @@ fn serve_application(
             | Message::ScheduledWake { .. }
             | Message::CoverChanged { .. }
             | Message::PageTurn { .. }
+            | Message::Notices(_)
+            | Message::OpenDocument { .. }
             | Message::ShellEvent(_) => {
                 return Err("application sent a daemon-only message".into());
             }

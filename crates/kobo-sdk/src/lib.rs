@@ -34,6 +34,8 @@ pub use kobo_protocol::{
     MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
     MAX_TASK_BYTES, MAX_URL_LEN,
 };
+/// The runtime's notices, as the launcher shows them.
+pub use kobo_protocol::{Notice, NoticeList, NoticeTarget, MAX_NOTICES, NOTICES_VERSION};
 pub use kobo_protocol::{SecretTarget, TextOutcome, TEXT_ENTRY_VERSION};
 /// The three marks a word game prints on a tile and on its key.
 pub use kobo_ui::CellTone;
@@ -1708,6 +1710,13 @@ impl Context {
         Applications { context: self }
     }
 
+    /// The runtime's notices. Only the launcher may use these, and only once
+    /// [`KoboApp::on_notices`] has delivered a list, which is the runtime
+    /// saying it keeps them; any other application is refused.
+    pub fn notices(&mut self) -> Notices<'_> {
+        Notices { context: self }
+    }
+
     /// Runtime-owned credentials that this application is allowed to use.
     ///
     /// A submitted value is written by the runtime and cannot be read back by
@@ -1762,6 +1771,38 @@ impl Context {
 #[derive(Debug)]
 pub struct Applications<'a> {
     context: &'a mut Context,
+}
+
+/// What the launcher can do to the runtime's notices. Each is answered
+/// through [`KoboApp::on_device_result`], and a changed list arrives through
+/// [`KoboApp::on_notices`].
+#[derive(Debug)]
+pub struct Notices<'a> {
+    context: &'a mut Context,
+}
+
+impl Notices<'_> {
+    /// The owner has seen the list: nothing in it is new any more.
+    pub fn mark_read(&mut self) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::MarkNoticesRead));
+    }
+
+    /// Forget every notice.
+    pub fn clear(&mut self) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::ClearNotices));
+    }
+
+    /// Open what notice `id` names, in the application that reads it. The
+    /// runtime hands the panel over, so this is the last thing a screen does.
+    pub fn open(&mut self, id: u64) {
+        self.context
+            .commands
+            .push(Command::Device(DeviceRequest::OpenNotice { id }));
+    }
 }
 
 /// Installation of app-scoped runtime credentials.
@@ -2990,6 +3031,15 @@ pub trait KoboApp {
     /// fallback for an application that ignores its buttons.
     fn on_page_turn(&mut self, _context: &mut Context, _forward: bool) {}
 
+    /// Receives the runtime's notices, newest first: when the application
+    /// starts and whenever they change. Sent only to the launcher.
+    fn on_notices(&mut self, _context: &mut Context, _notices: NoticeList) {}
+
+    /// The runtime asks this application to open one library document, by
+    /// the identifier [`Device::list_library`] gives it: the owner tapped a
+    /// notice announcing it. Sent only to Books.
+    fn on_open_document(&mut self, _context: &mut Context, _id: String) {}
+
     /// Receives the outcome of exactly one earlier [`Context::spawn`].
     ///
     /// Like device results, a task always reports back, including when it fails
@@ -3257,6 +3307,16 @@ impl<A: KoboApp> AppRunner<A> {
     /// reader pressed a button.
     pub fn page_turn(&mut self, forward: bool) -> Vec<Command> {
         self.dispatch(|app, context| app.on_page_turn(context, forward))
+    }
+
+    /// Delivers the runtime's notices. Unsolicited, like [`Self::cover_changed`].
+    pub fn notices(&mut self, notices: NoticeList) -> Vec<Command> {
+        self.dispatch(|app, context| app.on_notices(context, notices))
+    }
+
+    /// Delivers the runtime's request to open one library document.
+    pub fn open_document(&mut self, id: String) -> Vec<Command> {
+        self.dispatch(|app, context| app.on_open_document(context, id))
     }
 
     /// Delivers one device answer, matched to the request that produced it.
@@ -3585,6 +3645,10 @@ pub enum ClientEvent {
     CoverChanged(bool),
     /// A physical page-turn key was pressed. Unsolicited; `true` is forward.
     PageTurn(bool),
+    /// The runtime's notices. Unsolicited, and only ever to the launcher.
+    Notices(NoticeList),
+    /// Open this library document. Unsolicited, and only ever to Books.
+    OpenDocument(String),
     Exit,
 }
 
@@ -3837,6 +3901,8 @@ impl Client {
                 Ok(ClientEvent::CoverChanged(magnet_present))
             }
             Message::PageTurn { forward } => Ok(ClientEvent::PageTurn(forward)),
+            Message::Notices(list) => Ok(ClientEvent::Notices(list)),
+            Message::OpenDocument { id } => Ok(ClientEvent::OpenDocument(id)),
             Message::Exit => Ok(ClientEvent::Exit),
             _ => Err(ClientError::UnexpectedMessage),
         }
@@ -5524,6 +5590,12 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
                 ClientEvent::PageTurn(forward) => {
                     client.send_commands(runner.page_turn(forward))?;
                 }
+                ClientEvent::Notices(list) => {
+                    client.send_commands(runner.notices(list))?;
+                }
+                ClientEvent::OpenDocument(id) => {
+                    client.send_commands(runner.open_document(id))?;
+                }
                 ClientEvent::Action(_) | ClientEvent::TextHold { .. } | ClientEvent::Exit => break,
             }
         }
@@ -5547,6 +5619,8 @@ pub fn run_on<A: KoboApp>(name: &str, app: A, socket: &Path) -> Result<(), Clien
             ClientEvent::Shell(event) => runner.shell_event(event),
             ClientEvent::CoverChanged(present) => runner.cover_changed(present),
             ClientEvent::PageTurn(forward) => runner.page_turn(forward),
+            ClientEvent::Notices(list) => runner.notices(list),
+            ClientEvent::OpenDocument(id) => runner.open_document(id),
             ClientEvent::Exit => {
                 // The runtime is taking the screen back. Give the application
                 // its exit callback, then go, rather than arguing about it.

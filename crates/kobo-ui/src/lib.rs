@@ -12,6 +12,8 @@
 //! A small retained UI tree and grayscale rasterizer for the Kobo display.
 
 mod board;
+mod notice;
+pub use notice::notice_rect;
 pub mod keyboard;
 mod pencil;
 pub use board::{BoardCell, BoardClue, BoardMark, BoardSurface};
@@ -150,6 +152,8 @@ mod link_target_tests;
 #[cfg(test)]
 mod quiet_tests;
 
+#[cfg(test)]
+mod notice_tests;
 #[cfg(test)]
 mod responsive_profile_tests;
 
@@ -980,10 +984,17 @@ impl ActionId {
     /// `NickelMenu` ships a workaround for it.
     pub const BACK: Self = Self(u32::MAX);
 
+    /// The reserved identifier for a tap on the runtime's notice card.
+    ///
+    /// The runtime answers it itself and never forwards it: the card is the
+    /// runtime's, drawn over whatever the application drew, and what it
+    /// opens is the runtime's to decide. See [`Chrome::notice`].
+    pub const NOTICE: Self = Self(u32::MAX - 1);
+
     /// Whether this identifier belongs to the runtime rather than an app.
     #[must_use]
     pub const fn is_reserved(self) -> bool {
-        self.0 == Self::BACK.0
+        self.0 == Self::BACK.0 || self.0 == Self::NOTICE.0
     }
 }
 
@@ -1008,6 +1019,24 @@ pub struct Chrome {
     /// screen it is drawn on. Grey by default: a caller that does not know, or
     /// is only measuring, gets the frame the grey design has always produced.
     pub appearance: Appearance,
+    /// A notice the runtime is showing over this screen for a few seconds.
+    ///
+    /// Laid out last, so it is drawn over everything and hit-tested first,
+    /// as [`ActionId::NOTICE`]. It takes nothing else: every tap outside it
+    /// reaches the screen underneath exactly as it would have, so an
+    /// application never measures for it and never has to know it is there.
+    pub notice: Option<NoticeCard>,
+}
+
+/// What the runtime's notice card says. See [`Chrome::notice`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NoticeCard {
+    /// The mark of the application the notice belongs to.
+    pub glyph: Glyph,
+    /// What happened: "Article arrived", "3 articles arrived".
+    pub heading: String,
+    /// What it happened to, on one line. Ellipsised to fit; may be empty.
+    pub line: String,
 }
 
 impl Chrome {
@@ -1018,6 +1047,7 @@ impl Chrome {
             back: !at_home || screen.owns_back,
             status: if screen.reading { None } else { status },
             appearance: Appearance::Grey,
+            notice: None,
         }
     }
 
@@ -1027,7 +1057,15 @@ impl Chrome {
             back,
             status: None,
             appearance: Appearance::Grey,
+            notice: None,
         }
+    }
+
+    /// The same, with the runtime's notice card over it.
+    #[must_use]
+    pub fn with_notice(mut self, notice: Option<NoticeCard>) -> Self {
+        self.notice = notice;
+        self
     }
 
     #[must_use]
@@ -1059,6 +1097,7 @@ impl Chrome {
     pub fn measuring(back: bool) -> Self {
         Self {
             back,
+            notice: None,
             // The busiest strip, so nothing measured against this comes out
             // narrower than the panel it will be drawn on.
             status: Some(Status::standard(
@@ -2591,6 +2630,11 @@ impl Screen {
             layout.page_turns = PagingState::SuppressedByOverlay;
             layout.hold = None;
             layout.context_actions.clear();
+        }
+        // Over even an overlay, though the runtime holds a card back while
+        // one is up; and deliberately not a scrim, so it covers only itself.
+        if let Some(card) = &chrome.notice {
+            notice::layout(card, metrics, band, &mut layout);
         }
         layout
     }
@@ -5413,6 +5457,8 @@ pub enum Glyph {
     Keyboard,
     /// The sun coming up over the horizon: a briefing to read in the morning.
     Sunrise,
+    /// A bell: the runtime's notices, and the list that keeps them.
+    Bell,
 }
 
 impl Glyph {
@@ -5423,7 +5469,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 103] = [
+    pub const ALL: [Self; 104] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -5527,6 +5573,7 @@ impl Glyph {
         Self::Photo,
         Self::Keyboard,
         Self::Sunrise,
+        Self::Bell,
     ];
 }
 
@@ -5676,6 +5723,14 @@ pub enum LayoutKind {
     QuoteFold(ActionId, bool),
     /// The card an overlay is drawn on.
     Overlay,
+    /// The runtime's notice card, which acts as [`ActionId::NOTICE`].
+    Notice,
+    /// The mark leading a notice card.
+    NoticeMark(Glyph),
+    /// What happened, at the head of a notice card.
+    NoticeHeading,
+    /// What it happened to, under the heading.
+    NoticeLine,
     /// The title inside an overlay.
     OverlayTitle,
     /// The cross that shuts a modal. Answers with [`ActionId::BACK`], which is
@@ -6064,6 +6119,7 @@ impl LayoutKind {
             | Self::SelectionAction(action)
             | Self::OptionRow(action, _) => Some(action),
             Self::Back | Self::OverlayClose => Some(ActionId::BACK),
+            Self::Notice => Some(ActionId::NOTICE),
             _ => None,
         }
     }
@@ -16480,6 +16536,8 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
             }
         }
         LayoutKind::OverlayTitle => FontSize::Title,
+        LayoutKind::NoticeHeading => notice::HEADING,
+        LayoutKind::NoticeLine => notice::LINE,
         LayoutKind::Secondary => FontSize::Note,
         LayoutKind::BoardClue
         | LayoutKind::Section
@@ -17352,31 +17410,38 @@ fn paint_layout(
             // round every menu and question. The shadow is drawn inside the
             // overlay's own rectangle, so the refresh that clears the overlay
             // clears it too and the panel keeps no grey residue.
-            LayoutKind::Overlay => {
-                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
-                let lift = max(2, metrics.rule_thickness() * 3);
-                let sheet = Rect {
-                    width: node.rect.width - lift,
-                    height: node.rect.height - lift,
-                    ..node.rect
-                };
-                let shadow = Rect {
-                    x: node.rect.x + lift,
-                    y: node.rect.y + lift,
-                    ..sheet
-                };
-                fill_clipped(surface, node.rect, tone::PAPER, clip);
-                fill_rounded_clipped(surface, shadow, radius, tone::RULE, clip);
-                fill_rounded_clipped(surface, sheet, radius, tone::PAPER, clip);
-                stroke_rounded_clipped(
+            // The notice is the same sheet as a dialogue, so it reads as the
+            // runtime speaking rather than as part of the page.
+            LayoutKind::Overlay | LayoutKind::Notice => {
+                draw_sheet(surface, node.rect, metrics, clip);
+            }
+            LayoutKind::NoticeMark(glyph) => {
+                draw_vector(
                     surface,
-                    sheet,
-                    radius,
-                    tone::INK,
-                    metrics.rule_thickness(),
+                    &vector::shapes(glyph),
+                    bar_mark(node.rect),
                     clip,
+                    tone::INK,
                 );
             }
+            LayoutKind::NoticeHeading => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                notice::HEADING,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::NoticeLine => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                notice::LINE,
+                tone::INK,
+                clip,
+            ),
             // A plus or a minus at the trailing edge of the byline, and, when
             // shut, how much is behind it. Two strokes and one stroke: nothing
             // here needs a font, and a glyph at this size would be softer than
@@ -19774,6 +19839,34 @@ fn draw_back_arrow(surface: &mut Surface, rect: Rect, clip: Rect) {
 }
 
 /// The square a mark occupies inside a bar control's touch target.
+/// A sheet of paper lying over the page: a ruled, rounded card with a grey
+/// lift along two edges, inside `rect`.
+fn draw_sheet(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
+    let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+    let lift = max(2, metrics.rule_thickness() * 3);
+    let sheet = Rect {
+        width: rect.width - lift,
+        height: rect.height - lift,
+        ..rect
+    };
+    let shadow = Rect {
+        x: rect.x + lift,
+        y: rect.y + lift,
+        ..sheet
+    };
+    fill_clipped(surface, rect, tone::PAPER, clip);
+    fill_rounded_clipped(surface, shadow, radius, tone::RULE, clip);
+    fill_rounded_clipped(surface, sheet, radius, tone::PAPER, clip);
+    stroke_rounded_clipped(
+        surface,
+        sheet,
+        radius,
+        tone::INK,
+        metrics.rule_thickness(),
+        clip,
+    );
+}
+
 fn bar_mark(rect: Rect) -> Rect {
     let side = min(rect.width, rect.height) * 3 / 5;
     Rect {

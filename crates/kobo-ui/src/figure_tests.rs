@@ -61,6 +61,7 @@ fn the_box_the_clock_claims_does_not_change_as_it_counts() {
     let clock_rect = |time: &str| {
         let chrome = Chrome {
             back: false,
+            notice: None,
             appearance: Appearance::Grey,
             status: Some(Status::standard(
                 time,
