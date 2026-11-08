@@ -26,6 +26,16 @@ class SimulatorRunnerTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 runner.shard_of(['app'], shard)
 
+    def test_a_route_asks_for_articles_a_pairing_or_a_computer_on_its_first_line(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            route = Path(temporary) / 'drive-articles.kobo'
+            route.write_text('# sweep: --bare paired articles\nexpect Books\n')
+            options = runner.route_directive(route)
+            self.assertTrue(options['bare'] and options['paired'] and options['articles'])
+            self.assertFalse(options['computer'])
+            route.write_text('# sweep: computer\n')
+            self.assertTrue(runner.route_directive(route)['computer'])
+
     def run_fixture(self, startup_failure=False):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
