@@ -553,19 +553,61 @@ function packageIdentity(name, version, source = "") {
   return JSON.stringify([name, version, source]);
 }
 
+// Cargo names a dependency by name alone while one version of it is
+// locked, and adds the version the moment a second one arrives. Adding an
+// unrelated crate that brings a second version of, say, foldhash rewrites
+// every block that depends on the first one without changing what any of
+// them resolves to. Each reference is therefore spelled out in full, against
+// the lockfile it came from, before blocks are compared: a package whose
+// dependencies resolve to the same packages is the same package.
+function qualifiedDependencies(packageBlock, resolve) {
+  return packageBlock.replace(/^dependencies = \[\n([\s\S]*?)^\]$/m, (_, list) => {
+    const references = list
+      .split("\n")
+      .map(line => /^\s*"([^"]+)"/.exec(line)?.[1])
+      .filter(Boolean)
+      .map(resolve)
+      .sort();
+    return `dependencies = [\n${references.map(reference => ` "${reference}",\n`).join("")}]`;
+  });
+}
+
 function lockPackagesByIdentity(source) {
   const parts = lockfileParts(source);
   if (!parts) throw new Error("Cargo.lock has no package blocks");
+  const parsedBlocks = parts.packages.map(packageBlock => ({
+    parsed: lockPackage(packageBlock),
+    lockedVersion: /^version = "([^"]+)"$/m.exec(packageBlock)?.[1]
+  }));
+  const byName = new Map();
+  for (const entry of parsedBlocks) {
+    const named = byName.get(entry.parsed.name) || [];
+    named.push(entry);
+    byName.set(entry.parsed.name, named);
+  }
+  const resolve = reference => {
+    const [name, version, ...rest] = reference.split(" ");
+    const wantedSource = rest.join(" ").replace(/^\(|\)$/g, "");
+    const candidates = (byName.get(name) || []).filter(
+      entry =>
+        (version === undefined || entry.lockedVersion === version) &&
+        (wantedSource === "" || entry.parsed.source === wantedSource)
+    );
+    if (candidates.length !== 1) return reference;
+    const [{ parsed }] = candidates;
+    return parsed.source
+      ? `${parsed.name} ${parsed.version} (${parsed.source})`
+      : `${parsed.name} ${parsed.version}`;
+  };
   const packages = new Map();
-  for (const packageBlock of parts.packages) {
-    const parsed = lockPackage(packageBlock);
+  for (const { parsed } of parsedBlocks) {
     const identity = packageIdentity(parsed.name, parsed.version, parsed.source);
     const value = packages.get(identity) || {
       name: parsed.name,
       blocks: []
     };
     const blocks = value.blocks;
-    blocks.push(parsed.canonical);
+    blocks.push(qualifiedDependencies(parsed.canonical, resolve));
     packages.set(identity, value);
   }
   for (const value of packages.values()) value.blocks.sort();

@@ -17,11 +17,11 @@ cargo metadata --format-version 1 --all-features
 | Selected licence | Crates |
 | --- | --- |
 | Apache-2.0 | dependencies that offer Apache-2.0 as an alternative, including `image`, `http`, `rustls`, `libc`, `png`, `flate2`, `ttf-parser`, and their transitive dependencies |
-| MIT | `bytes`, `byteorder-lite`, `extended`, `memchr`, `pulldown-cmark`, `pulldown-cmark-escape`, `qrcodegen`, `simd-adler32`, `vt100`, `zip` |
+| MIT | `bytes`, `byteorder-lite`, `derive_more`, `dom_query`, `dom_smoothie`, `extended`, `gjson`, `html-escape`, `memchr`, `new_debug_unreachable`, `nom`, `phf`, `phf_shared`, `precomputed-hash`, `pulldown-cmark`, `pulldown-cmark-escape`, `qrcodegen`, `simd-adler32`, `vt100`, `zip` |
 | Apache-2.0 and ISC | `ring` |
 | ISC | `rustls-webpki`, `untrusted` |
 | BSD-3-Clause | `rusty-opus`, `subtle` |
-| MPL-2.0 | `symphonia` and its `symphonia-*` crates |
+| MPL-2.0 | `symphonia` and its `symphonia-*` crates; `cssparser`, `selectors`, `dtoa-short` |
 | CDLA-Permissive-2.0 | `webpki-roots` |
 | GPL-3.0-or-later | `shakmaty` |
 | Zlib | `foldhash` |
@@ -71,6 +71,19 @@ CBR is deferred; no RAR decoder is linked or invoked.
 See [the shared comic decision](docs/quality/comic-reader-decision.md) for
 resource limits, remaining release checks and the dependency assessment.
 
+## Web article dependencies
+
+`kobo clip`, on the owner's computer, finds the article in a web page with
+`dom_smoothie` 0.19.0 (MIT), a reader-mode extractor, and the HTML parser and
+selector engine it is built on: `dom_query` 0.29.0 (MIT), `html5ever` and its
+`markup5ever`, `tendril`, `string_cache` and `web_atoms` crates (MIT or
+Apache-2.0), and `selectors`, `cssparser` and `dtoa-short` (MPL-2.0). The
+MPL-2.0 crates are used unmodified and their source is public, as with
+`symphonia` above. Only the `kobo-article` crate depends on them, and only
+`kobo-cli` depends on that, so no reader or app build links any of them;
+`cargo tree -i dom_smoothie --workspace` shows the one path. Their notices
+are in `licenses/LICENSE-Rust-dependencies.txt`.
+
 ## Bundled content
 
 | Application | Content | Terms |
@@ -86,6 +99,9 @@ application or distributed to readers.
 
 | Application | Fixture | Terms | Notice |
 | --- | --- | --- | --- |
+| `kobo-article` | "Common kingfisher" from English Wikipedia, revision 1379243991, saved as HTML (`crates/kobo-article/fixtures/wikipedia-common-kingfisher.html`) | Creative Commons Attribution-ShareAlike 4.0; authors are the page's contributors | Source, revision and attribution in `crates/kobo-article/fixtures/SOURCES.md` |
+| `kobo-article` | A NASA Science story and a NIST news release, saved as HTML | Public domain in the United States, as works of the US government | `crates/kobo-article/fixtures/SOURCES.md` |
+| `kobo-article` | "The Yellow Wallpaper", Project Gutenberg eBook 1952, saved as HTML | Public domain in the United States; the file keeps its Project Gutenberg licence | `crates/kobo-article/fixtures/SOURCES.md` |
 | `parser` | Compiled Lamplight story (`apps/parser/fixtures/lamplight.z3`), Z-machine version 3 release 1 serial 260919, from the original source in `apps/parser/fixtures/lamplight.inf` built with Inform 6 and the PunyInform library | MIT | `licenses/LICENSE-PunyInform.txt`; provenance in `licenses/SOURCE-Parser-Lamplight.md` |
 
 ## Icons

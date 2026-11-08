@@ -1061,6 +1061,33 @@ test("an app-local lock change affects that app and its true dependents only", (
   );
 });
 
+test("a dependency named more exactly once a second version arrives is not a change", () => {
+  const registry = 'source = "registry+https://example.test/index"';
+  const previous = [
+    'version = 4\n\n[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n',
+    `[[package]]\nname = "shared"\nversion = "1.0.0"\n${registry}\nchecksum = "s"\ndependencies = [\n "hasher",\n]\n`,
+    `[[package]]\nname = "hasher"\nversion = "0.1.5"\n${registry}\nchecksum = "h1"\n`
+  ].join("\n");
+  // A host-only crate brings hasher 0.2.0, so Cargo now names the old one
+  // with its version wherever it was named before.
+  const current = [
+    'version = 4\n\n[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n',
+    `[[package]]\nname = "shared"\nversion = "1.0.0"\n${registry}\nchecksum = "s"\ndependencies = [\n "hasher 0.1.5",\n]\n`,
+    `[[package]]\nname = "hasher"\nversion = "0.1.5"\n${registry}\nchecksum = "h1"\n`,
+    `[[package]]\nname = "hasher"\nversion = "0.2.0"\n${registry}\nchecksum = "h2"\n`
+  ].join("\n");
+  assert.deepEqual(
+    changedLockPackageIdentities(previous, current),
+    new Set([registryIdentity("hasher", "0.2.0")])
+  );
+  // Moving shared onto the new version is still a change to shared.
+  const moved = current.replace('"hasher 0.1.5"', '"hasher 0.2.0"');
+  assert.deepEqual(
+    changedLockPackageIdentities(previous, moved),
+    new Set([registryIdentity("shared"), registryIdentity("hasher", "0.2.0")])
+  );
+});
+
 test("adding a package outside every Store app closure affects no app", () => {
   const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "0.3.1"\n`;
   const current = `${previous}\n[[package]]\nname = "unrelated"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "new"\n`;
