@@ -322,6 +322,10 @@ struct Books {
     /// What each picture handle holds now, so an unchanged picture is not
     /// sent to the runtime again on every repaint.
     placed: BTreeMap<u32, (String, TilePicture)>,
+    /// A document the runtime asked to have opened, by its library id, held
+    /// until a listing that names it arrives. An article announced a moment
+    /// ago is newer than any listing already held.
+    asked_to_open: Option<String>,
 }
 
 impl Default for Books {
@@ -340,6 +344,7 @@ impl Books {
 
     fn empty() -> Self {
         Self {
+            asked_to_open: None,
             view: View::Home,
             came_from: View::Home,
             page: 0,
@@ -1192,6 +1197,13 @@ impl Books {
         self.library_failed = false;
         self.truncated = truncated;
         self.take_documents(entries.into_iter().filter_map(from_entry).collect());
+        if let Some(id) = self.asked_to_open.take() {
+            // Gone since it was announced: the shelf is the honest answer.
+            if let Some(index) = self.documents.iter().position(|document| document.id == id) {
+                self.open_document(context, index);
+                return;
+            }
+        }
         if matches!(self.view, View::Home | View::Shelf(_)) {
             self.show(context);
         }
@@ -1272,6 +1284,13 @@ impl Books {
 }
 
 impl KoboApp for Books {
+    /// The owner tapped a notice announcing this document. Listed afresh
+    /// first, because the document arrived after any listing Books holds.
+    fn on_open_document(&mut self, context: &mut Context, id: String) {
+        self.asked_to_open = Some(id);
+        context.device().list_library();
+    }
+
     /// The platform's own blue: this screen is Cobalt itself rather than an
     /// application running on it, and it wears the colour of the logo.
     fn accent(&self) -> Option<kobo_sdk::Accent> {
@@ -2369,5 +2388,41 @@ mod tests {
         assert!(commands
             .iter()
             .any(|command| matches!(command, Command::Device(DeviceRequest::ListLibrary))));
+    }
+
+    #[test]
+    fn an_article_a_notice_announced_opens_once_a_listing_that_names_it_arrives() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        let asked = runner.open_document("0/Articles/river.epub".to_owned());
+        assert!(asked
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::ListLibrary))));
+        let opened = runner.device_result(DeviceResult::Library {
+            entries: vec![
+                entry("0/sea.epub", "sea", 1, 100, true),
+                entry("0/Articles/river.epub", "river", 1, 100, true),
+            ],
+            truncated: false,
+        });
+        assert!(opened.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::ReadLibrary { id }) if id == "0/Articles/river.epub"
+        )));
+    }
+
+    #[test]
+    fn an_article_deleted_after_its_notice_leaves_books_on_its_shelf() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        runner.open_document("0/Articles/gone.epub".to_owned());
+        let shelf = runner.device_result(DeviceResult::Library {
+            entries: vec![entry("0/sea.epub", "sea", 1, 100, true)],
+            truncated: false,
+        });
+        assert!(!shelf
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::ReadLibrary { id }) if id.contains("gone"))));
+        assert_eq!(runner.app().view, View::Home);
     }
 }
