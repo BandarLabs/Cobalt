@@ -101,6 +101,36 @@ pub fn date_of(value: &str) -> Option<String> {
     ((1..=12).contains(&month) && (1..=31).contains(&day)).then(|| date.to_owned())
 }
 
+/// The title without the site's name tacked onto either end of it, as a
+/// page's `<title>` usually has it. The title page names the site already.
+#[must_use]
+pub fn without_site(title: &str, site: Option<&str>) -> String {
+    let Some(site) = site.map(str::trim).filter(|site| !site.is_empty()) else {
+        return title.to_owned();
+    };
+    let lower = title.to_lowercase();
+    let site_lower = site.to_lowercase();
+    for separator in [
+        " | ",
+        " - ",
+        " \u{2013} ",
+        " \u{2014} ",
+        " \u{b7} ",
+        " :: ",
+        " / ",
+    ] {
+        let suffix = format!("{separator}{site_lower}");
+        if lower.ends_with(&suffix) && lower.len() > suffix.len() {
+            return title[..title.len() - suffix.len()].trim().to_owned();
+        }
+        let prefix = format!("{site_lower}{separator}");
+        if lower.starts_with(&prefix) && lower.len() > prefix.len() {
+            return title[prefix.len()..].trim().to_owned();
+        }
+    }
+    title.to_owned()
+}
+
 /// A language tag, if the page's looks like one.
 fn language_of(value: Option<String>) -> Option<String> {
     let value = value?;
@@ -183,10 +213,14 @@ pub fn extract(html: &str, page: &str) -> Result<Article, Refusal> {
         .image
         .as_deref()
         .and_then(|image| address::resolve(page, image));
+    let site = cleaned(article.site_name);
     Ok(Article {
-        title: cleaned(Some(article.title)).unwrap_or_default(),
+        title: without_site(
+            &cleaned(Some(article.title)).unwrap_or_default(),
+            site.as_deref(),
+        ),
         byline: byline_of(article.byline),
-        site: cleaned(article.site_name),
+        site,
         published: article.published_time.as_deref().and_then(date_of),
         language: language_of(article.lang),
         lead_image,
@@ -229,6 +263,21 @@ mod tests {
         assert_eq!(date_of("2026-13-01"), None);
         assert_eq!(date_of("2026"), None);
         assert_eq!(date_of(""), None);
+    }
+
+    #[test]
+    fn the_site_name_is_taken_off_either_end_of_the_title() {
+        let site = Some("NASA");
+        assert_eq!(
+            without_site("NASA Awards Moon Base Projects - NASA", site),
+            "NASA Awards Moon Base Projects"
+        );
+        assert_eq!(
+            without_site("Gazette | Harbour wall", Some("Gazette")),
+            "Harbour wall"
+        );
+        assert_eq!(without_site("NASA", site), "NASA");
+        assert_eq!(without_site("Moon - Base", None), "Moon - Base");
     }
 
     #[test]
