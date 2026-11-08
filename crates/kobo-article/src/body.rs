@@ -706,6 +706,10 @@ impl Walk<'_> {
     }
 
     fn definitions(&mut self, node: &NodeRef<'_>, depth: usize) -> Element {
+        if depth > MAX_DEPTH {
+            let text = Node::Text(collapse_whitespace(&node.text()));
+            return Element::new("dl", vec![Node::Element(Element::new("dd", vec![text]))]);
+        }
         let mut terms = Vec::new();
         for child in node.children() {
             match child.node_name().as_deref() {
@@ -817,6 +821,13 @@ impl Walk<'_> {
 
     /// Inline context.
     fn phrasing(&mut self, children: &[NodeRef<'_>], depth: usize) -> Vec<Node> {
+        if depth > MAX_DEPTH {
+            let text: String = children
+                .iter()
+                .map(|child| child.text().to_string())
+                .collect();
+            return vec![Node::Text(collapse_whitespace(&text))];
+        }
         let mut out = Vec::new();
         for child in children {
             if child.is_text() {
@@ -1048,15 +1059,21 @@ fn cells<'a>(row: &NodeRef<'a>) -> Vec<NodeRef<'a>> {
 }
 
 /// Collects a `pre` block's text, keeping its line breaks.
+///
+/// Walked with a stack rather than by recursion, since a listing's markup is
+/// only as shallow as the page chose to make it. The edges are trimmed once,
+/// for the whole block: trimming each highlighted span would join the lines
+/// that a span happened to end.
 fn preformatted(node: &NodeRef<'_>) -> String {
     let mut out = String::new();
-    for child in node.children() {
-        if child.is_text() {
-            out.push_str(&child.text());
-        } else if child.node_name().as_deref() == Some("br") {
+    let mut pending: Vec<NodeRef<'_>> = node.children().into_iter().rev().collect();
+    while let Some(next) = pending.pop() {
+        if next.is_text() {
+            out.push_str(&next.text());
+        } else if next.node_name().as_deref() == Some("br") {
             out.push('\n');
-        } else if child.is_element() {
-            out.push_str(&preformatted(&child));
+        } else if next.is_element() {
+            pending.extend(next.children().into_iter().rev());
         }
     }
     out.trim_matches('\n').to_owned()
@@ -1522,6 +1539,41 @@ mod tests {
             out,
             "<p>The short version, in one line.</p>\n<p>The story starts here and runs on for long enough that nobody could take it for a credit or a date line at the top of a page.</p>\n<p>By Jane Doe</p>\n"
         );
+    }
+
+    /// Runs `check` on a thread with a small stack, so recursion that grows
+    /// with the page's nesting fails here rather than on a long page.
+    fn on_small_stack(check: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(check)
+            .expect("a thread")
+            .join()
+            .expect("no stack overflow");
+    }
+
+    #[test]
+    fn markup_nested_thousands_deep_keeps_its_words_without_exhausting_the_stack() {
+        on_small_stack(|| {
+            let deep = 5_000;
+            let nest = |open: &str, close: &str| {
+                format!("{}words{}", open.repeat(deep), close.repeat(deep))
+            };
+            let html = format!(
+                "<body><pre>{}</pre><h2>{}</h2><dl>{}</dl></body>",
+                nest("<span>", "</span>"),
+                nest("<div>", "</div>"),
+                nest("<div>", "</div>"),
+            );
+            let out = written(&html);
+            assert_eq!(out.matches("words").count(), 3, "{out}");
+        });
+    }
+
+    #[test]
+    fn a_code_line_ending_inside_a_highlighted_span_keeps_its_line_break() {
+        let out = written("<body><pre><span>first\n</span><span>second</span></pre></body>");
+        assert_eq!(out, "<pre>first\nsecond</pre>\n");
     }
 
     #[test]
