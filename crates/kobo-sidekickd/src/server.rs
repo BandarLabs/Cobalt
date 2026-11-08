@@ -86,16 +86,17 @@ fn run_mode(sample: bool) -> Result<(), String> {
     let tls = kobo_net::serve::TlsServer::from_pem(&identity.certificate, &identity.key)?;
     let board = Arc::new(Board::new());
     let deck = (!sample).then(|| Deck::new(directory.join("deck.toml"), home));
+    let (hook_port, reader_port) = state::ports();
     let hooks = if sample {
         None
     } else {
         Some(
-            TcpListener::bind(("127.0.0.1", state::HOOK_PORT))
-                .map_err(|error| format!("bind 127.0.0.1:{}: {error}", state::HOOK_PORT))?,
+            TcpListener::bind(("127.0.0.1", hook_port))
+                .map_err(|error| format!("bind 127.0.0.1:{hook_port}: {error}"))?,
         )
     };
-    let reader = TcpListener::bind(("0.0.0.0", state::READER_PORT))
-        .map_err(|error| format!("bind 0.0.0.0:{}: {error}", state::READER_PORT))?;
+    let reader = TcpListener::bind(("0.0.0.0", reader_port))
+        .map_err(|error| format!("bind 0.0.0.0:{reader_port}: {error}"))?;
     if sample {
         println!("Sidekick sample is ready. Open Sidekick on your reader and choose Received.\nNo agent integration is required. This sample cannot run commands.\nPress Ctrl-C to stop.");
         let sample_board = Arc::clone(&board);
@@ -108,11 +109,7 @@ fn run_mode(sample: bool) -> Result<(), String> {
             }
         });
     } else {
-        println!(
-            "sidekick: hooks on 127.0.0.1:{}, reader on 0.0.0.0:{} (TLS)",
-            state::HOOK_PORT,
-            state::READER_PORT
-        );
+        println!("sidekick: hooks on 127.0.0.1:{hook_port}, reader on 0.0.0.0:{reader_port} (TLS)");
     }
     let hook_board = Arc::clone(&board);
     std::thread::spawn(move || {
@@ -147,8 +144,13 @@ fn run_mode(sample: bool) -> Result<(), String> {
             let _seat = seat;
             let _ = stream.set_read_timeout(Some(READ_PATIENCE));
             let _ = stream.set_write_timeout(Some(WRITE_PATIENCE));
+            let peer = stream.peer_addr().ok().map(|address| address.ip());
             if let Ok(mut stream) = tls.accept(stream) {
                 if let Ok(request) = read_request(&mut stream) {
+                    if let (Some(peer), "/articles/sync") = (peer, request.path()) {
+                        articles_route(&pairing, peer, &request, &mut stream);
+                        return;
+                    }
                     reader_route_inner(&board, deck.as_ref(), &pairing, &request, &mut stream);
                 }
             }
@@ -397,6 +399,42 @@ fn reader_route_inner(
     }
 }
 
+/// `POST /articles/sync` from Books: send what is waiting here to the
+/// reader that asked, behind the same code as everything else.
+fn articles_route(
+    pairing: &str,
+    peer: std::net::IpAddr,
+    request: &Request,
+    stream: &mut (impl Read + Write),
+) {
+    articles_route_with(pairing, peer, request, stream, crate::articles::sync_for);
+}
+
+fn articles_route_with(
+    pairing: &str,
+    peer: std::net::IpAddr,
+    request: &Request,
+    stream: &mut (impl Read + Write),
+    sync: impl FnOnce(std::net::IpAddr) -> String,
+) {
+    if request.method != "POST" {
+        respond_json(stream, 404, "Not Found", "{}");
+        return;
+    }
+    let body = String::from_utf8_lossy(&request.body);
+    let token = kobo_json::parse(&body).ok().and_then(|value| {
+        value
+            .get("token")
+            .and_then(kobo_json::Value::as_str)
+            .map(str::to_owned)
+    });
+    if token.as_deref() != Some(pairing) {
+        respond_json(stream, 403, "Forbidden", "{}");
+        return;
+    }
+    respond_json(stream, 200, "OK", &sync(peer));
+}
+
 fn deck_route(
     deck: Option<&Arc<Deck>>,
     pairing: &str,
@@ -492,7 +530,7 @@ fn ask_json(ask: &Ask) -> kobo_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{hook_route, reader_route, reader_route_with_deck};
+    use super::{articles_route_with, hook_route, reader_route, reader_route_with_deck};
     use crate::board::{Board, Decision};
     use crate::deck::Deck;
     use crate::http::Request;
@@ -547,6 +585,46 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn articles_are_synced_back_to_the_reader_that_asked_and_only_with_the_code() {
+        let peer: std::net::IpAddr = "192.168.1.40".parse().expect("an address");
+        let mut wire = Cursor::new(Vec::new());
+        articles_route_with(
+            "code",
+            peer,
+            &post("/articles/sync", r#"{"token":"wrong"}"#),
+            &mut wire,
+            |_| panic!("a wrong code reached the companion"),
+        );
+        assert!(String::from_utf8_lossy(&wire.into_inner()).starts_with("HTTP/1.1 403"));
+        let mut asked = None;
+        let mut wire = Cursor::new(Vec::new());
+        articles_route_with(
+            "code",
+            peer,
+            &post("/articles/sync", r#"{"token":"code"}"#),
+            &mut wire,
+            |from| {
+                asked = Some(from);
+                r#"{"delivered":2,"waiting":0}"#.to_owned()
+            },
+        );
+        assert_eq!(asked, Some(peer));
+        assert_eq!(
+            body_of(&wire.into_inner()),
+            r#"{"delivered":2,"waiting":0}"#
+        );
+        let mut wire = Cursor::new(Vec::new());
+        articles_route_with(
+            "code",
+            peer,
+            &get("/articles/sync?token=code"),
+            &mut wire,
+            |_| panic!("a GET started a delivery"),
+        );
+        assert!(String::from_utf8_lossy(&wire.into_inner()).starts_with("HTTP/1.1 404"));
     }
 
     #[test]
