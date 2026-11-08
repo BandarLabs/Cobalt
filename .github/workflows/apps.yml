@@ -551,8 +551,22 @@ jobs:
           run-id: ${{ needs.trusted-tool.outputs.previous-run }}
           github-token: ${{ github.token }}
       - name: Assemble the complete verified binary set
+        env:
+          BUILT: ${{ needs.trusted-tool.outputs.packages }}
         run: |
           mkdir -p dist/merged dist/artifacts
+          built="$(node -p 'JSON.parse(process.env.BUILT || "[]").join("\n")')"
+          # A pattern that matches one artifact downloads its files straight
+          # into the path, without the folder named after the artifact that it
+          # makes when several match. Left there, a lone app's new build sat
+          # beside the merge, and the previous publication's copy of that app
+          # was published under the new version. Put it back under its name.
+          if [ -d dist/current ] && [ "$(printf '%s\n' "$built" | grep -c .)" = 1 ] &&
+             [ ! -d "dist/current/verified-app-$built" ]; then
+            mv dist/current "dist/lone"
+            mkdir -p dist/current
+            mv dist/lone "dist/current/verified-app-$built"
+          fi
           if [ -d dist/previous ]; then
             cp -R dist/previous/. dist/merged/
           fi
@@ -567,6 +581,15 @@ jobs:
             artifact="verified-app-${package}"
             test -d "dist/merged/$artifact"
             cp -R "dist/merged/$artifact" dist/artifacts/
+          done
+          # Every app this run built is what ships, byte for byte. Anything
+          # else means an older copy was about to go out under a new version.
+          printf '%s\n' "$built" | while IFS= read -r package; do
+            [ -n "$package" ] || continue
+            if ! diff -r "dist/current/verified-app-$package" "dist/artifacts/verified-app-$package" > /dev/null; then
+              echo "::error::$package was built in this run, but the set to publish holds a different copy of it" >&2
+              exit 1
+            fi
           done
       - name: Save the complete verified binary set
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
