@@ -738,6 +738,11 @@ fn fragment_of(href: &str) -> Option<String> {
 pub struct Description {
     pub title: Option<String>,
     pub author: Option<String>,
+    /// Who published it. A saved web article names its site here.
+    pub publisher: Option<String>,
+    /// When the file was last made, as the package's `dcterms:modified`
+    /// says. For a saved web article, when it was saved.
+    pub modified: Option<String>,
     /// The cover picture as the archive holds it, still encoded.
     pub cover: Option<Vec<u8>>,
 }
@@ -778,6 +783,8 @@ fn described(bytes: &[u8], with_cover: bool) -> Result<Description, Fault> {
     Ok(Description {
         title: named(&package.title),
         author: named(&package.author),
+        publisher: named(&package.publisher),
+        modified: named(&package.modified),
         cover: with_cover
             .then(|| cover_of(&archive, &package, &base))
             .flatten(),
@@ -920,6 +927,8 @@ struct Item {
 struct Package {
     title: Option<String>,
     author: Option<String>,
+    publisher: Option<String>,
+    modified: Option<String>,
     manifest: BTreeMap<String, Item>,
     /// Spine entries in order, each with whether it is part of the main flow.
     spine: Vec<(String, bool)>,
@@ -966,6 +975,8 @@ fn read_package(xml: &str) -> Package {
     let mut package = Package {
         title: None,
         author: None,
+        publisher: None,
+        modified: None,
         manifest: BTreeMap::new(),
         spine: Vec::new(),
         nav: None,
@@ -977,6 +988,9 @@ fn read_package(xml: &str) -> Package {
     // The same element names appear in more than one place (`<title>` is in
     // the metadata and also in a `<guide>` reference) so the section matters.
     let mut in_metadata = false;
+    // A `<meta>` names what it holds in its opening tag and holds it before
+    // its closing one, so the name is kept until the value arrives.
+    let mut meta_property = None;
     for_each_element(xml, |name, inside, closing, before| {
         // A namespace prefix is chosen by whoever wrote the file. `dc:title`
         // and a `title` under a default Dublin Core namespace are the same
@@ -991,6 +1005,22 @@ fn read_package(xml: &str) -> Package {
             }
             (true, "creator") if in_metadata && package.author.is_none() => {
                 package.author = Some(decode_entities(before));
+            }
+            (true, "publisher") if in_metadata && package.publisher.is_none() => {
+                package.publisher = Some(decode_entities(before));
+            }
+            (false, "meta") if in_metadata => {
+                meta_property = attribute(inside, "property").map(decode_entities);
+                if attribute(inside, "name").is_some_and(|name| name == "cover") {
+                    package.cover_meta = attribute(inside, "content").map(decode_entities);
+                }
+            }
+            (true, "meta") => {
+                if meta_property.take().as_deref() == Some("dcterms:modified")
+                    && package.modified.is_none()
+                {
+                    package.modified = Some(decode_entities(before));
+                }
             }
             (false, "item") => {
                 let id = attribute(inside, "id").map(decode_entities);
@@ -1019,11 +1049,6 @@ fn read_package(xml: &str) -> Package {
                         },
                     );
                 }
-            }
-            (false, "meta")
-                if in_metadata && attribute(inside, "name").is_some_and(|name| name == "cover") =>
-            {
-                package.cover_meta = attribute(inside, "content").map(decode_entities);
             }
             (false, "reference")
                 if attribute(inside, "type")
@@ -2693,6 +2718,21 @@ mod tests {
         });
         let picture = picture.expect("the figure is a picture");
         assert!(document.images.contains_key(&picture), "{picture} is held");
+    }
+
+    /// A shelf of saved articles names each one's site and when it was
+    /// saved, and reads both from the package without reading the article.
+    #[test]
+    fn a_saved_article_is_described_with_its_site_and_when_it_was_saved() {
+        let bytes = write_publication(&publication()).expect("a small book fits a zip");
+        let description = describe(&bytes).expect("described");
+        assert_eq!(description.publisher.as_deref(), Some("Example News"));
+        assert_eq!(
+            description.modified.as_deref(),
+            Some("2026-11-08T12:00:00Z")
+        );
+        assert_eq!(description.title.as_deref(), Some("Tides & Moons"));
+        assert!(description.cover.is_some(), "the cover is still found");
     }
 
     /// EPUB 3 is the package version, a modified time and a navigation
