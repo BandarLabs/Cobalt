@@ -16,6 +16,7 @@ mod authorize;
 mod beta_store_smoke;
 mod birds;
 mod bootstrap;
+mod clip;
 mod connect;
 mod console;
 mod deck;
@@ -1155,6 +1156,7 @@ fn run_command(arguments: &[String]) -> Result<(), String> {
         "readlater" => readlater::command(&arguments[1..]),
         "connect" => account::command(&arguments[1..]),
         "birds" => birds::command(&arguments[1..]),
+        "clip" => clip::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
@@ -8536,6 +8538,9 @@ Send things to your apps. These go to the reader kobo setup saved; add
   sidekick init | setup | run | status | stop | sample | test  The Sidekick helper
   stream init | stream -- COMMAND  Pair Paperterm, then serve it a terminal
 
+Make a book on this computer:
+  clip PAGE.html --url URL | clip URL [--out FILE.epub] [--colour]  Save a web article as an EPUB
+
 Credentials an app asks for by name:
   connect APP            Connect an account app: asks for the server and
                          token, checks them, and sets the app up on the reader
@@ -8596,6 +8601,7 @@ Publish to the Store:
 const ANSWERS_ITS_OWN_HELP: &[&str] = &[
     "apps",
     "birds",
+    "clip",
     "deck",
     "export",
     "feeds",

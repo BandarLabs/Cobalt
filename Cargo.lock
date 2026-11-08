@@ -1100,6 +1100,7 @@ name = "kobo-cli"
 version = "0.3.35"
 dependencies = [
  "kobo-app-store",
+ "kobo-article",
  "kobo-catalog",
  "kobo-comic",
  "kobo-doc",
