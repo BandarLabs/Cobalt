@@ -2603,6 +2603,15 @@ impl Device<'_> {
         self.request(DeviceRequest::ReadLibrary { id: id.into() });
     }
 
+    /// Deletes one delivered article, by the identifier a listing returned.
+    ///
+    /// Only Books may ask, and only for a file in the card's `Articles`
+    /// folder; anything else is answered `Failed(NotFound)`. Ask the owner
+    /// first: there is no undo.
+    pub fn remove_article(&mut self, id: impl Into<String>) {
+        self.request(DeviceRequest::RemoveArticle { id: id.into() });
+    }
+
     /// Asks where the magnet is now.
     ///
     /// Changes arrive on their own through [`KoboApp::on_cover_change`]. This

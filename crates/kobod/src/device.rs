@@ -4647,6 +4647,7 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
         kobo_protocol::DeviceRequest::MarkNoticesRead
         | kobo_protocol::DeviceRequest::ClearNotices
         | kobo_protocol::DeviceRequest::OpenNotice { .. } => app == "launcher",
+        kobo_protocol::DeviceRequest::RemoveArticle { .. } => app == "books",
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
         | kobo_protocol::DeviceRequest::InstallApp { .. }
