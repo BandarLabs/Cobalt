@@ -82,6 +82,20 @@ either limit are left out, and the command says how many. A page with no
 article on it is refused with the reason. Copy the book to the reader over
 USB as you would any other.
 
+`--later` keeps the article on this computer for the reader instead, in
+`~/.config/kobo/clip/queue`, fitted to the 4 MB Books opens. `kobo clip
+sync` sends everything waiting to the reader's `Articles` folder, oldest
+first, over the same connection `kobo send` uses, and the reader shows a
+notice for each. They are listed on the Articles shelf in Books, unread
+first, with the site and the day each arrived; an article read to its end
+counts as read, and each one's menu archives or deletes it.
+
+Sync on that shelf asks this computer for anything waiting. It reaches the
+Sidekick helper over the pairing `kobo sidekick init` writes onto the
+reader, so run that once and keep `kobo sidekick run` going; the helper then
+sends the waiting articles back to the address the reader asked from. Books
+also asks, without a word unless something arrives, each time it opens.
+
 ## Companion commands by app
 
 Apps that need files, accounts or a paired computer have a `kobo` command.
