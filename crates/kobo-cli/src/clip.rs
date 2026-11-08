@@ -4,7 +4,8 @@
 //! an EPUB the reader opens like any other book. It goes to the reader's
 //! Articles shelf over the connection `kobo send` uses, or waits on this
 //! computer while the reader is asleep; `--out` saves it to a folder
-//! instead.
+//! instead. The browser extension reaches the same code through
+//! `native-host`.
 
 use super::clip_delivery as delivery;
 use std::fs;
@@ -51,6 +52,11 @@ pub(crate) enum Source {
         path: PathBuf,
         url: String,
     },
+    /// A page a browser already rendered, as the extension sends it.
+    Html {
+        html: String,
+        url: String,
+    },
     Address(String),
 }
 
@@ -63,6 +69,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         .map(|(verb, rest)| (verb.as_str(), rest))
     {
         Some(("sync", rest)) => return sync(rest),
+        Some(("native-host", _)) => return super::clip_host::run(),
         _ => {}
     }
     let notify = arguments.iter().any(|word| word == "--notify");
@@ -182,6 +189,7 @@ pub(crate) fn make(
             let html = kobo_article::page_text(&bytes).map_err(|refusal| refusal.to_string())?;
             kobo_article::clip(&html, url, &fetch, options)
         }
+        Source::Html { html, url } => kobo_article::clip(html, url, &fetch, options),
         Source::Address(address) => {
             eprintln!("Fetching {address}");
             // Read against wherever the address redirected to, so the page's
@@ -190,6 +198,14 @@ pub(crate) fn make(
         }
     }
     .map_err(|refusal| refusal.to_string())
+}
+
+/// Options for a book that goes to the reader.
+pub(crate) fn reader_options() -> kobo_article::Options {
+    kobo_article::Options {
+        max_book_bytes: READER_BOOK_BYTES,
+        ..kobo_article::Options::default()
+    }
 }
 
 /// Said when there is no reader to send to at all.
