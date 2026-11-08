@@ -55,7 +55,7 @@ fn detail(notice: &Notice, time: Option<&str>) -> String {
         return "No longer on this reader".to_owned();
     }
     match (notice.detail.is_empty(), time) {
-        (false, Some(time)) => format!("{}, {time}", notice.detail),
+        (false, Some(time)) => format!("{} · {time}", notice.detail),
         (false, None) => notice.detail.clone(),
         (true, Some(time)) => time.to_owned(),
         (true, None) => notice.heading.clone(),
