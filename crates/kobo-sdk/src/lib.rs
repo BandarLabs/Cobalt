@@ -1357,6 +1357,24 @@ impl Context {
         position: Position,
         placed: &Screen,
     ) -> Vec<Vec<usize>> {
+        let rows: Vec<_> = rows
+            .iter()
+            .map(|&(section, title, summary)| (section, title, summary, ""))
+            .collect();
+        self.paginate_rows_in_sections_with_trailing_under(&rows, nav_bar, position, placed)
+    }
+
+    /// The same, for sectioned rows drawn with
+    /// [`ScreenBuilder::rows_with_trailing`],
+    /// measured with the value each one carries at its trailing edge.
+    #[must_use]
+    pub fn paginate_rows_in_sections_with_trailing_under(
+        &self,
+        rows: &[(Option<&str>, &str, &str, &str)],
+        nav_bar: bool,
+        position: Position,
+        placed: &Screen,
+    ) -> Vec<Vec<usize>> {
         kobo_ui::with_text_scale(self.metrics.text_scale, || {
             let used = placed
                 .layout_with(&self.metrics, &Chrome::measuring(true))
@@ -1366,7 +1384,7 @@ impl Context {
                 .height
                 .saturating_sub(used.saturating_add(area.gap))
                 .max(0);
-            kobo_ui::paginate_rows_in_sections(rows, &self.metrics, area)
+            kobo_ui::paginate_rows_in_sections_with_trailing(rows, &self.metrics, area)
         })
     }
 

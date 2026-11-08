@@ -4668,3 +4668,34 @@ fn a_popover_off_the_top_bar_leaves_the_bars_controls_working() {
         Some(ActionId::BACK)
     );
 }
+
+#[test]
+fn sectioned_pagination_leaves_room_for_a_trailing_value_it_will_have_to_draw() {
+    let metrics = CLARA_BW_METRICS;
+    let area = ProseArea {
+        width: 900,
+        height: 900,
+        gap: metrics.space(Space::Small),
+        face: Face::Text,
+    };
+    let title = "A long headline about a small program that reads the news slowly \
+                 and turns its pages by itself";
+    let summary = "example.com, 4 hours ago, 12 comments";
+    let plain: Vec<_> = (0..12)
+        .map(|n| ((n % 4 == 0).then_some("Today"), title, summary))
+        .collect();
+    let marked: Vec<_> = plain
+        .iter()
+        .map(|&(section, title, summary)| {
+            (section, title, summary, "1,284 points and 312 comments")
+        })
+        .collect();
+    let without = paginate_rows_in_sections(&plain, &metrics, area);
+    let with = paginate_rows_in_sections_with_trailing(&marked, &metrics, area);
+    assert!(
+        with[0].len() < without[0].len(),
+        "the value took no room from the page: {} rows either way",
+        with[0].len()
+    );
+    assert_eq!(with.concat(), (0..12).collect::<Vec<_>>());
+}

@@ -13379,6 +13379,24 @@ pub fn paginate_rows_in_sections(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
+    let rows: Vec<_> = rows
+        .iter()
+        .map(|&(section, title, summary)| (section, title, summary, ""))
+        .collect();
+    paginate_rows_in_sections_with_trailing(&rows, metrics, area)
+}
+
+/// The same, for sectioned rows that carry a value at their trailing edge.
+///
+/// The value keeps its column and the title and summary wrap in what is
+/// left, so a list drawn with values and paginated without them counts
+/// lines the rows will not have, and its last row lands under the footer.
+#[must_use]
+pub fn paginate_rows_in_sections_with_trailing(
+    rows: &[(Option<&str>, &str, &str, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<usize>> {
     // A gap, the divider drawn inside it, then another gap: the engine
     // advances by the row's height and a gap, then leaves a second gap after
     // the rule it draws before the next row. The rule's own thickness is not
@@ -13391,7 +13409,7 @@ pub fn paginate_rows_in_sections(
     let mut page: Vec<usize> = Vec::new();
     let mut used = 0;
 
-    for (index, (section, title, summary)) in rows.iter().enumerate() {
+    for (index, (section, title, summary, trailing)) in rows.iter().enumerate() {
         // The header and the row it introduces are measured as one block, so
         // the break can only ever fall before the header or after the row.
         let height = measured_row_height(
@@ -13399,7 +13417,7 @@ pub fn paginate_rows_in_sections(
             area,
             title,
             summary,
-            "",
+            trailing,
             false,
             row_mark_column(metrics),
         ) + if section.is_some() { header } else { 0 };
