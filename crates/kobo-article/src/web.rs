@@ -29,9 +29,17 @@ fn said(error: TaskError) -> String {
     }
 }
 
+/// The address as the transport takes it: escaped as a browser would escape
+/// it, since an owner pastes `https://example.org/café.html` and the
+/// transport parses strictly, and over TLS, the only way it fetches.
+fn request_target(requested: &str) -> String {
+    let escaped = address::resolve(requested, requested).unwrap_or_else(|| requested.to_owned());
+    address::fetchable(&escaped)
+}
+
 impl Fetch for Web {
     fn fetch(&self, request: &Request<'_>) -> Result<Vec<u8>, String> {
-        let target = address::fetchable(request.address);
+        let target = request_target(request.address);
         let accept = match request.kind {
             Kind::Page => "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
             // No AVIF: a CDN that negotiates on this header would otherwise
@@ -76,5 +84,26 @@ impl Fetch for Web {
             Err(_) if timed_out => Err(said(TaskError::TimedOut)),
             Err(error) => Err(said(error)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::request_target;
+
+    #[test]
+    fn a_page_address_with_letters_outside_ascii_is_escaped_before_it_is_fetched() {
+        assert_eq!(
+            request_target("https://example.org/caf\u{e9}.html"),
+            "https://example.org/caf%C3%A9.html"
+        );
+        assert_eq!(
+            request_target("http://example.org/a b?q=x#part"),
+            "https://example.org/a%20b?q=x"
+        );
+        assert_eq!(
+            request_target("https://example.org/caf%C3%A9.html"),
+            "https://example.org/caf%C3%A9.html"
+        );
     }
 }
