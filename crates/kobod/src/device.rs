@@ -61,6 +61,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const COBALT_ROOT: &str = "/mnt/onboard/.adds/cobalt";
+/// Where notices arrive and are kept, under [`COBALT_ROOT`]. See
+/// [`kobod::notices`].
+const NOTICES: &str = "state/notices";
+/// The folder a notice's path is relative to: the card the owner sees when
+/// the reader is plugged in, which is the library's first root.
+const LIBRARY: &str = "/mnt/onboard";
 /// Where named credentials live.
 ///
 /// On the book partition, because that is the one place the owner can reach
@@ -367,6 +373,10 @@ struct StatusSource {
     reading: Reading,
     /// The last radio state seen, kept only to trace its changes.
     link: Option<kobo_hal::network::LinkState>,
+    /// The notice card over the panel, if one is up. Kept beside the band
+    /// because the two are the runtime's own words on every screen, and every
+    /// place that draws or hit-tests a screen already asks this for chrome.
+    notice: Option<kobo_ui::NoticeCard>,
 }
 
 impl StatusSource {
@@ -379,6 +389,7 @@ impl StatusSource {
             audio_sink: None,
             reading: Reading::default(),
             link: None,
+            notice: None,
         }
     }
 
@@ -526,7 +537,16 @@ fn chrome_for(
     status: &mut StatusSource,
     appearance: Appearance,
 ) -> Chrome {
-    Chrome::for_screen(screen, at_home, Some(status.get().clone())).with_appearance(appearance)
+    // A card is drawn only where it may stand, so a screen that turns into a
+    // page or a question under a card that is up never shows it, even for the
+    // moment before the loop takes it away.
+    let notice = status
+        .notice
+        .clone()
+        .filter(|_| kobod::notices::room_on(Some(screen), false) == kobod::notices::Room::Show);
+    Chrome::for_screen(screen, at_home, Some(status.get().clone()))
+        .with_appearance(appearance)
+        .with_notice(notice)
 }
 
 /// What the painter is told about the panel: colour where the session has a
@@ -2583,6 +2603,17 @@ fn host_applications(
         let mut power = kobod::power::Power::default();
         let mut power_button = kobod::power::Button::default();
         let mut consume_wake_touch = false;
+        // News for the owner, and the card announcing it. See
+        // [`kobod::notices`]. The card is in `status.notice` while it is up.
+        let mut notices = kobod::notices::Notices::open(&Path::new(COBALT_ROOT).join(NOTICES));
+        let mut notice_up: Option<(Instant, kobod::notices::Opens)> = None;
+        let mut notices_read_at: Option<Instant> = None;
+        // Whether the reader has slept since the last card, so news that came
+        // in meanwhile can say so.
+        let mut slept = false;
+        // The launcher that has been sent the list, by identity: a launcher
+        // that ended and started again has to be told again.
+        let mut told_launcher: Option<u64> = None;
 
         loop {
             let now = Instant::now();
@@ -2621,6 +2652,77 @@ fn host_applications(
                 )?;
             }
             sync_windows.tend(status.online());
+            if power.state() != kobod::power::State::Awake {
+                slept = true;
+            }
+            // The inbox is read on the band's cadence: one listing of an empty
+            // folder every two seconds, which is nothing beside the band.
+            if notices_read_at.is_none_or(|at| now.saturating_duration_since(at) >= STATUS_POLL) {
+                notices_read_at = Some(now);
+                let (arrived, discarded) = notices.collect(kobod::notices::now_millis());
+                if arrived + discarded > 0 {
+                    trace(&format!(
+                        "notices: {arrived} arrived, {discarded} discarded"
+                    ));
+                }
+                if arrived > 0 {
+                    tell_launcher(&mut apps, &home, &notices, false)?;
+                }
+            }
+            let notice_room = if power.state() == kobod::power::State::Awake {
+                index_of(&apps, front).map_or(kobod::notices::Room::Hold, |index| {
+                    let app = &apps[index];
+                    kobod::notices::room_on(app.screen.as_ref(), app.typing.is_some())
+                })
+            } else {
+                kobod::notices::Room::Hold
+            };
+            if notice_up.is_some()
+                && (notice_room != kobod::notices::Room::Show
+                    || notice_up.as_ref().is_some_and(|(until, _)| now >= *until))
+            {
+                notice_up = None;
+                notices.card_gone();
+                status.notice = None;
+                panel.clean_next();
+                repaint(
+                    &mut apps,
+                    front,
+                    display,
+                    whole_screen,
+                    &mut surface,
+                    &mut panel,
+                    &home,
+                    &mut status,
+                )?;
+            } else if notices.waiting() {
+                match notice_room {
+                    kobod::notices::Room::Quiet => notices.keep_quiet(),
+                    kobod::notices::Room::Hold => {}
+                    kobod::notices::Room::Show => {
+                        if let Some(shown) = notices.announce(slept, notice_mark) {
+                            slept = false;
+                            status.notice = Some(shown.card);
+                            notice_up = Some((
+                                now + Duration::from_millis(kobod::notices::SHOWN_FOR_MS),
+                                shown.opens,
+                            ));
+                            pressed = None;
+                            release_due = None;
+                            repaint(
+                                &mut apps,
+                                front,
+                                display,
+                                whole_screen,
+                                &mut surface,
+                                &mut panel,
+                                &home,
+                                &mut status,
+                            )?;
+                        }
+                    }
+                }
+            }
             // Only the foreground application hears this. A magnet arriving
             // is a thing that happened in front of the reader, and a
             // background application has no standing to react to it.
@@ -2733,6 +2835,9 @@ fn host_applications(
                 )
                 .min(release_due.map_or(BEAT_INTERVAL, |(deadline, _)| {
                     deadline.saturating_duration_since(now)
+                }))
+                .min(notice_up.as_ref().map_or(BEAT_INTERVAL, |(until, _)| {
+                    until.saturating_duration_since(now)
                 }));
             match events.recv_timeout(wait) {
                 Ok(Event::Stopping(number)) => {
@@ -3107,6 +3212,67 @@ fn host_applications(
                     };
                     match disposition {
                         Tap::Handled => {}
+                        Tap::Notice => {
+                            // Taken off first, cleanly, so the screen it opens
+                            // onto is not left with the card's outline.
+                            let opens = notice_up.take().map(|(_, opens)| opens);
+                            notices.card_gone();
+                            status.notice = None;
+                            panel.clean_next();
+                            repaint(
+                                &mut apps,
+                                front,
+                                display,
+                                whole_screen,
+                                &mut surface,
+                                &mut panel,
+                                &home,
+                                &mut status,
+                            )?;
+                            let target = match opens {
+                                Some(kobod::notices::Opens::One(id)) => {
+                                    notices.target(id, Path::new(LIBRARY))
+                                }
+                                _ => None,
+                            };
+                            let wanted = match &target {
+                                Some((app, _)) => open_application(
+                                    &mut apps,
+                                    &mut next_id,
+                                    &catalogue,
+                                    app,
+                                    whole_screen,
+                                    &sender,
+                                    front,
+                                ),
+                                None => id_of_path(&apps, &home)
+                                    .ok_or_else(|| "the launcher is gone".to_owned()),
+                            };
+                            match wanted {
+                                Ok(wanted) => {
+                                    front = switch_to(
+                                        &mut apps,
+                                        front,
+                                        wanted,
+                                        display,
+                                        whole_screen,
+                                        &mut surface,
+                                        &mut panel,
+                                        &home,
+                                        &mut status,
+                                    )?;
+                                    if let Some((_, document)) = target {
+                                        open_document(&mut apps, wanted, document)?;
+                                    } else {
+                                        tell_launcher(&mut apps, &home, &notices, true)?;
+                                    }
+                                }
+                                Err(error) => {
+                                    println!("notice open refused: {error}");
+                                    visited.push(error);
+                                }
+                            }
+                        }
                         Tap::Redraw => {
                             // The key that was pressed is drawn released in
                             // the same update as what it typed.
@@ -3203,6 +3369,12 @@ fn host_applications(
                             // had already dismissed it from.
                             apps[index].top_bar = kobo_ui::TopBarState::Hidden;
                             apps[index].screen = Some(screen.clone());
+                            // The launcher hears about notices once it is
+                            // drawing, and again only when they change.
+                            if apps[index].path == home && told_launcher != Some(id) {
+                                told_launcher = Some(id);
+                                tell_launcher(&mut apps, &home, &notices, false)?;
+                            }
                             // This is the screen an answered field was left up
                             // for. An open one stays, under the title just sent.
                             if matches!(apps[index].typing, Some(TextField::Answered(_))) {
@@ -3361,6 +3533,11 @@ fn host_applications(
                             if matches!(request, kobo_protocol::DeviceRequest::TypeText { .. }) =>
                         {
                             open_text_field(&mut apps[index], frame.request_id, &request)?;
+                            if id == front && notice_up.take().is_some() {
+                                notices.card_gone();
+                                status.notice = None;
+                                panel.clean_next();
+                            }
                             if id == front {
                                 pressed = None;
                                 release_due = None;
@@ -3420,6 +3597,11 @@ fn host_applications(
                                     }
                                 }
                             }
+                            // What a notice request leaves to do once it has
+                            // been answered: the launcher hears its answer
+                            // before the list that follows from it.
+                            let mut notices_changed = false;
+                            let mut notice_open: Option<(String, String)> = None;
                             let result = if not_declared {
                                 kobo_protocol::DeviceResult::Denied(
                                     kobo_protocol::DenyReason::NotDeclared,
@@ -3879,6 +4061,25 @@ fn host_applications(
                                             || services.handle(request.clone()),
                                             kobo_protocol::DeviceResult::Identity,
                                         ),
+                                    kobo_protocol::DeviceRequest::MarkNoticesRead => {
+                                        notices_changed = notices.mark_read();
+                                        kobo_protocol::DeviceResult::Done
+                                    }
+                                    kobo_protocol::DeviceRequest::ClearNotices => {
+                                        notices.clear();
+                                        notices_changed = true;
+                                        kobo_protocol::DeviceResult::Done
+                                    }
+                                    kobo_protocol::DeviceRequest::OpenNotice { id } => {
+                                        notice_open = notices.target(*id, Path::new(LIBRARY));
+                                        if notice_open.is_some() {
+                                            kobo_protocol::DeviceResult::Done
+                                        } else {
+                                            kobo_protocol::DeviceResult::Failed(
+                                                kobo_protocol::DeviceError::NotFound,
+                                            )
+                                        }
+                                    }
                                     _ => services.handle(request.clone()),
                                 }
                             };
@@ -3932,6 +4133,39 @@ fn host_applications(
                                 frame.request_id,
                                 Message::DeviceResult(result),
                             )?;
+                            if notices_changed {
+                                tell_launcher(&mut apps, &home, &notices, false)?;
+                            }
+                            if let Some((app, document)) = notice_open {
+                                match open_application(
+                                    &mut apps,
+                                    &mut next_id,
+                                    &catalogue,
+                                    &app,
+                                    whole_screen,
+                                    &sender,
+                                    front,
+                                ) {
+                                    Ok(opened) => {
+                                        front = switch_to(
+                                            &mut apps,
+                                            front,
+                                            opened,
+                                            display,
+                                            whole_screen,
+                                            &mut surface,
+                                            &mut panel,
+                                            &home,
+                                            &mut status,
+                                        )?;
+                                        open_document(&mut apps, opened, document)?;
+                                    }
+                                    Err(error) => {
+                                        println!("notice open refused: {error}");
+                                        visited.push(error);
+                                    }
+                                }
+                            }
                         }
                         Message::StoreRequest(request) => {
                             // The shelf is asked first and declines anything
@@ -4357,6 +4591,49 @@ fn repaint(
     Ok(())
 }
 
+/// Sends the launcher the notices as they now stand. `open` asks it to show
+/// the list, because the owner tapped a card that stood for several.
+fn tell_launcher(
+    apps: &mut [Hosted],
+    home: &Path,
+    notices: &kobod::notices::Notices,
+    open: bool,
+) -> Result<(), String> {
+    let Some(index) = apps.iter().position(|app| app.path == home) else {
+        return Ok(());
+    };
+    if apps[index].protocol < kobo_protocol::NOTICES_VERSION {
+        return Ok(());
+    }
+    let list = notices.list(Path::new(LIBRARY), open, notice_mark);
+    apps[index].send(Message::Notices(list))
+}
+
+/// The mark a notice from `app` wears: a built-in application's own, else a
+/// Store application's from its verified manifest, else the bell.
+fn notice_mark(app: &str) -> kobo_ui::Glyph {
+    match kobod::notices::builtin_mark(app) {
+        kobo_ui::Glyph::Bell => crate::app_store::installed(Path::new(COBALT_ROOT))
+            .ok()
+            .and_then(|installed| installed.into_iter().find(|entry| entry.id == app))
+            .map_or(kobo_ui::Glyph::Bell, |entry| entry.glyph),
+        glyph => glyph,
+    }
+}
+
+/// Asks the application just brought forward to open one library document,
+/// such as the article a notice announced. Only Books is asked, because only
+/// Books ships with this runtime and so is certain to read the message.
+fn open_document(apps: &mut [Hosted], id: u64, document: String) -> Result<(), String> {
+    let Some(index) = index_of(apps, id) else {
+        return Ok(());
+    };
+    if apps[index].name != "books" || apps[index].protocol < kobo_protocol::NOTICES_VERSION {
+        return Ok(());
+    }
+    apps[index].send(Message::OpenDocument { id: document })
+}
+
 /// Keeps platform replacement and app installation behind distinct built-in
 /// identities even while both travel over the same bounded device channel.
 fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> bool {
@@ -4367,6 +4644,9 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
         | kobo_protocol::DeviceRequest::ReadUpdateChannel
         | kobo_protocol::DeviceRequest::SetUpdateChannel { .. } => app == "settings",
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
+        kobo_protocol::DeviceRequest::MarkNoticesRead
+        | kobo_protocol::DeviceRequest::ClearNotices
+        | kobo_protocol::DeviceRequest::OpenNotice { .. } => app == "launcher",
         kobo_protocol::DeviceRequest::ReadAppCatalog
         | kobo_protocol::DeviceRequest::RefreshAppCatalog
         | kobo_protocol::DeviceRequest::InstallApp { .. }
@@ -5558,6 +5838,10 @@ enum Tap {
     /// A key on a text field the runtime holds was pressed. Nothing is sent
     /// to the application; the field is drawn again as it now stands.
     Redraw,
+    /// The runtime's notice card was tapped. Nothing is sent to the
+    /// application under it: the card is the runtime's, and so is what it
+    /// opens.
+    Notice,
 }
 
 /// Opens the runtime's text field for `app`, or answers why it will not.
@@ -5721,6 +6005,14 @@ fn deliver_touch(
         }
         other => other,
     };
+    // The card is over everything, the bar included, so it is asked first.
+    if chrome.notice.is_some()
+        && matches!(logical_event, TouchEvent::Up { .. })
+        && action_for_oriented(event, current, chrome, held, orientation, landscape_turn)
+            == Some(ActionId::NOTICE)
+    {
+        return Ok(Tap::Notice);
+    }
     // The band the bar occupies is the shell's before it is anybody's. Read
     // here, ahead of holds and taps, so an application cannot bind over the
     // way out and cannot lose it by being busy: nothing below this point runs
@@ -5813,13 +6105,23 @@ fn describe_outcome(outcome: &TaskOutcome) -> String {
 /// important the caller believes the frame to be.
 struct Painter {
     frames: FramePlanner,
+    /// Whether the next paint cleans what it repaints. See
+    /// [`FramePlanner::plan_clean`].
+    clean_next: bool,
 }
 
 impl Painter {
     fn new(width: usize, height: usize) -> Self {
         Self {
             frames: FramePlanner::new(width, height),
+            clean_next: false,
         }
+    }
+
+    /// Asks the next paint to clean every region it repaints, for the paint
+    /// that takes a notice card off the page.
+    fn clean_next(&mut self) {
+        self.clean_next = true;
     }
 
     fn fits(&self, surface: &Surface) -> bool {
@@ -5832,7 +6134,12 @@ impl Painter {
         whole_screen: Rect,
         surface: &Surface,
     ) -> Result<(), String> {
-        let Some(transition) = self.frames.plan(surface) else {
+        let planned = if std::mem::take(&mut self.clean_next) {
+            self.frames.plan_clean(surface)
+        } else {
+            self.frames.plan(surface)
+        };
+        let Some(transition) = planned else {
             // Nothing moved. Refreshing anyway costs a visible flicker and
             // some battery to show exactly the same picture.
             return Ok(());
