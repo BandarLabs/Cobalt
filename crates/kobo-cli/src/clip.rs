@@ -1,8 +1,10 @@
-//! `kobo clip`: a web article saved as a book, made on this computer.
+//! `kobo clip`: a web article made into a book and sent to the reader.
 //!
 //! The page is read the way a browser's reader mode reads it and written as
-//! an EPUB the reader opens like any other book. Nothing is sent to a reader
-//! yet; the book is a file the owner can send or copy.
+//! an EPUB the reader opens like any other book. It goes to the reader's
+//! Articles shelf over the connection `kobo send` uses, or waits on this
+//! computer while the reader is asleep; `--out` saves it to a folder
+//! instead.
 
 use super::clip_delivery as delivery;
 use std::fs;
@@ -11,25 +13,25 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 const USAGE: &str = "\
-usage: kobo clip PAGE.html --url URL [--out FILE.epub | --later] [--colour] [--no-pictures]
-       kobo clip URL [--out FILE.epub | --later] [--colour] [--no-pictures]
+usage: kobo clip URL [--sim | --device IP | --reader NAME] [--colour] [--no-pictures]
+       kobo clip PAGE.html --url URL [same options]
+       kobo clip URL --out FILE.epub|FOLDER
+       kobo clip URL --later
        kobo clip sync [--sim | --device IP | --reader NAME]
 
-Saves a web article as an EPUB, as a browser's reader mode shows it: the
+Makes a web article into an EPUB, as a browser's reader mode shows it: the
 text, headings, lists, tables, code, and figures with their captions, with
 the menus, advertisements, share buttons and cookie notices left out. The
 first page names the site, the author and the date, and links back to the
-page.
+page. Pictures are fitted to the reader's screen and turned grey; --colour
+keeps their colour, and --no-pictures leaves them out.
 
-Give a saved page with the address it came from, or an address to fetch.
-Pictures are fetched, fitted to the reader's screen and turned grey;
---colour keeps their colour, and --no-pictures leaves them out. --out names
-the file or a folder for it; by default the book is named after the article
-and saved in the current folder.
-
---later keeps the book on this computer for the reader instead, and sync
-sends what is waiting to the reader's Articles shelf, oldest first. Sync on
-the reader's Articles shelf does the same.";
+The book goes to your Kobo's Articles shelf, the saved reader unless a
+target is named. A reader that is asleep or away gets it later: it waits on
+this computer until kobo clip sync, Sync on the reader's Articles shelf, or
+the next clip that finds the reader awake. --later keeps it waiting without
+trying now. --out saves it to a file or folder on this computer instead and
+sends nothing.";
 
 struct Request {
     source: Source,
@@ -44,8 +46,11 @@ struct Request {
 /// arriving as a book that will not open there.
 const READER_BOOK_BYTES: usize = kobo_protocol::MAX_LIBRARY_DOCUMENT_BYTES;
 
-enum Source {
-    File { path: PathBuf, url: String },
+pub(crate) enum Source {
+    File {
+        path: PathBuf,
+        url: String,
+    },
     Address(String),
 }
 
@@ -53,66 +58,197 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
         return super::print_command_help(USAGE);
     }
-    if let Some(("sync", rest)) = arguments
+    match arguments
         .split_first()
         .map(|(verb, rest)| (verb.as_str(), rest))
     {
-        return sync(rest);
+        Some(("sync", rest)) => return sync(rest),
+        _ => {}
     }
-    let mut request = parse(arguments)?;
-    if request.later {
+    let notify = arguments.iter().any(|word| word == "--notify");
+    let arguments: Vec<String> = arguments
+        .iter()
+        .filter(|word| *word != "--notify")
+        .cloned()
+        .collect();
+    let result = clip(&arguments);
+    if notify {
+        // The Safari service has no terminal to print to, so the outcome is
+        // a notification instead.
+        let said = match &result {
+            Ok(said) => said.clone(),
+            Err(error) => format!(
+                "Could not send to your Kobo. {}",
+                super::console::display(error)
+            ),
+        };
+        notify_on_this_computer(&said);
+    }
+    result.map(|_| ())
+}
+
+/// Clips, then saves, keeps or sends, and returns the line that says which.
+fn clip(arguments: &[String]) -> Result<String, String> {
+    let (target, rest) = super::targets::TargetArgs::parse(arguments)?;
+    let mut request = parse(&rest)?;
+    if request.out.is_some() && !target.is_empty() {
+        return Err(
+            "--out saves the book in a folder on this computer; leave out --sim, --device and --reader"
+                .to_owned(),
+        );
+    }
+    if !target.is_empty() {
+        // A wrong target is said before anything is fetched.
+        target.resolve()?;
+    }
+    if request.out.is_none() {
         request.options.max_book_bytes = READER_BOOK_BYTES;
     }
-    // A wrong --out is said before anything is fetched.
-    let target = destination(request.out.as_deref())?;
+    // A wrong --out is said before anything is fetched too.
+    let folder = request
+        .out
+        .as_deref()
+        .map(|out| destination(Some(out)))
+        .transpose()?;
+    let clipping = make(&request.source, &request.options)?;
+    let pictures = match clipping.pictures {
+        1 => "1 picture".to_owned(),
+        count => format!("{count} pictures"),
+    };
+    let said = if let Some(folder) = folder {
+        let path = publish(&folder, &clipping.file_name, &clipping.epub)?;
+        format!(
+            "Saved {} ({pictures}, {})",
+            path.display(),
+            size(clipping.epub.len())
+        )
+    } else {
+        let article = article_of(&clipping);
+        let queue = delivery::queue_folder();
+        let landing = if request.later {
+            delivery::enqueue(&queue, &article)?;
+            delivery::Landing::Waiting { why: String::new() }
+        } else {
+            delivery::send_now(&queue, &article, reader_for(&target))?
+        };
+        match landing {
+            delivery::Landing::Landed { also, .. } => {
+                let mut said = format!(
+                    "Landed on your Kobo: {} ({pictures}, {}).",
+                    clipping.title,
+                    size(clipping.epub.len())
+                );
+                if also > 0 {
+                    said.push_str(&format!(
+                        " {} that had been waiting went with it.",
+                        delivery::articles_word(also)
+                    ));
+                }
+                said
+            }
+            delivery::Landing::Waiting { why } => format!(
+                "Waiting for your Kobo: {}. {why}{}It goes over with kobo clip sync, with Sync on the reader's Articles shelf, or with the next clip that finds the reader awake.",
+                clipping.title,
+                if why.is_empty() { "" } else { " " }
+            ),
+        }
+    };
+    println!("{said}");
+    for note in &clipping.notes {
+        println!("{note}");
+    }
+    Ok(said)
+}
+
+/// The clipped book as the queue and the reader take it.
+pub(crate) fn article_of(clipping: &kobo_article::Clipping) -> delivery::Article {
+    delivery::Article {
+        title: clipping.title.clone(),
+        site: clipping.site.clone(),
+        file_name: clipping.file_name.clone(),
+        epub: clipping.epub.clone(),
+    }
+}
+
+/// Reads the page and makes the book.
+pub(crate) fn make(
+    source: &Source,
+    options: &kobo_article::Options,
+) -> Result<kobo_article::Clipping, String> {
     let fetch = kobo_article::Web;
-    let clipping = match &request.source {
+    match source {
         Source::File { path, url } => {
             let bytes = read_page(path)?;
             let html = kobo_article::page_text(&bytes).map_err(|refusal| refusal.to_string())?;
-            kobo_article::clip(&html, url, &fetch, &request.options)
+            kobo_article::clip(&html, url, &fetch, options)
         }
         Source::Address(address) => {
             eprintln!("Fetching {address}");
             // Read against wherever the address redirected to, so the page's
             // pictures and links resolve as they did in the browser.
-            kobo_article::clip_address(address, &fetch, &request.options)
+            kobo_article::clip_address(address, &fetch, options)
         }
     }
-    .map_err(|refusal| refusal.to_string())?;
-    if request.later {
-        delivery::enqueue(
-            &delivery::queue_folder(),
-            &delivery::Article {
-                title: clipping.title.clone(),
-                site: clipping.site.clone(),
-                file_name: clipping.file_name.clone(),
-                epub: clipping.epub.clone(),
-            },
-        )?;
-        println!(
-            "Waiting on this computer: {}. It goes to your Kobo with kobo clip sync, or Sync on the reader's Articles shelf.",
-            clipping.title
-        );
-        for note in &clipping.notes {
-            println!("{note}");
-        }
-        return Ok(());
-    }
-    let path = publish(&target, &clipping.file_name, &clipping.epub)?;
-    let pictures = match clipping.pictures {
-        1 => "1 picture".to_owned(),
-        count => format!("{count} pictures"),
+    .map_err(|refusal| refusal.to_string())
+}
+
+/// Said when there is no reader to send to at all.
+const NO_READER: &str =
+    "No reader is saved on this computer yet. Run kobo setup with the reader plugged in.";
+
+/// The reader to send to, found without waiting for it to be woken: a
+/// reader that is asleep is the article waiting for later, not a minute of
+/// someone looking at a browser notification.
+pub(crate) fn reader_for(target: &super::targets::TargetArgs) -> Result<delivery::Reader, String> {
+    use super::targets::{DefaultReader, Target};
+    let saved = |name: &str| {
+        super::targets::resolve_nickname_now(name)
+            .map(delivery::Reader::Device)
+            .map_err(|error| {
+                if error.contains("No reader is saved") {
+                    super::console::display(&error).to_string()
+                } else {
+                    delivery::AWAY.to_owned()
+                }
+            })
     };
-    println!(
-        "Saved {} ({pictures}, {})",
-        path.display(),
-        size(clipping.epub.len())
-    );
-    for note in &clipping.notes {
-        println!("{note}");
+    if !target.is_empty() {
+        return match target.resolve()? {
+            Target::Simulator => Ok(delivery::Reader::Simulator),
+            Target::Address(host) if super::valid_device_host(&host) => {
+                Ok(delivery::Reader::Device(host))
+            }
+            Target::Address(host) => Err(format!("{host:?} is not an address this can reach")),
+            Target::Nickname(name) => saved(&name),
+        };
     }
-    Ok(())
+    match super::targets::configured() {
+        Ok(DefaultReader::Address(address)) => Ok(delivery::Reader::Device(address)),
+        Ok(DefaultReader::Nickname(name)) => saved(&name),
+        Err(_) => Err(NO_READER.to_owned()),
+    }
+}
+
+/// A notification on this computer, for the Safari service. macOS only, and
+/// quiet if it cannot be shown: the article itself is already decided.
+fn notify_on_this_computer(said: &str) {
+    if cfg!(target_os = "macos") {
+        // Passed as arguments, so no character of a title is read as script.
+        let _ = std::process::Command::new("osascript")
+            .args([
+                "-e",
+                "on run argv",
+                "-e",
+                "display notification (item 2 of argv) with title (item 1 of argv)",
+                "-e",
+                "end run",
+                "Send to Kobo",
+                said,
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
 }
 
 /// How long one sync keeps sending. Sync on the reader waits for the answer,
@@ -146,6 +282,9 @@ fn sync(arguments: &[String]) -> Result<(), String> {
     if json {
         println!("{}", report.to_json());
         return Ok(());
+    }
+    if let Some(detail) = &report.detail {
+        eprintln!("{detail}");
     }
     if report.delivered.is_empty() && report.waiting == 0 {
         println!("Nothing is waiting to go to your Kobo.");

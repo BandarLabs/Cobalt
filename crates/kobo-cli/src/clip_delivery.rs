@@ -374,6 +374,9 @@ pub struct Report {
     pub waiting: usize,
     /// Why some were not delivered, in words for the owner.
     pub problem: Option<String>,
+    /// What the connection itself said, for `kobo clip sync` to print under
+    /// the sentence when someone needs to see why.
+    pub detail: Option<String>,
 }
 
 impl Report {
@@ -422,6 +425,7 @@ pub(crate) fn sync_with(
             delivered: Vec::new(),
             waiting: waiting(queue).len(),
             problem: Some("Another delivery from this computer is under way.".to_owned()),
+            detail: None,
         };
     };
     let started = Instant::now();
@@ -445,16 +449,76 @@ pub(crate) fn sync_with(
                 report.delivered.push(entry.title.clone());
             }
             Err(Missed::Away(reason)) => {
-                report.problem = Some(reason);
+                report.problem = Some(AWAY.to_owned());
+                report.detail = Some(reason);
                 break;
             }
             // A refusal is about this article, such as one too large for the
             // card's space; the rest may still fit.
-            Err(Missed::Refused(reason)) => report.problem = Some(reason),
+            Err(Missed::Refused(reason)) => {
+                report.problem = Some("Your Kobo would not take an article.".to_owned());
+                report.detail = Some(reason);
+            }
         }
     }
     report.waiting = left;
     report
+}
+
+/// What a reader that did not answer is, to its owner.
+pub const AWAY: &str = "Your Kobo did not answer. It may be asleep or away from Wi-Fi.";
+
+/// How long a clip keeps sending before it leaves the rest for later. The
+/// owner, or a browser notification, is waiting on it.
+const SEND_PATIENCE: Duration = Duration::from_secs(60);
+
+/// Where one clip ended up.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Landing {
+    /// On the reader. `also` counts articles that had been waiting and went
+    /// with it.
+    Landed { reader: String, also: usize },
+    /// Kept on this computer for the next sync, and why.
+    Waiting { why: String },
+}
+
+/// Sends an article now if the reader can be reached, and keeps it for
+/// later if not.
+///
+/// The article joins the queue first and the queue is then sent, oldest
+/// first, so anything clipped while the reader was asleep goes with it.
+/// `reader` is the reader to send to, or why there is none to try.
+pub fn send_now(
+    queue: &Path,
+    article: &Article,
+    reader: Result<Reader, String>,
+) -> Result<Landing, String> {
+    send_with(queue, article, reader, |reader, article| {
+        deliver(reader, article)
+    })
+}
+
+pub(crate) fn send_with(
+    queue: &Path,
+    article: &Article,
+    reader: Result<Reader, String>,
+    mut send: impl FnMut(&Reader, &Article) -> Result<String, Missed>,
+) -> Result<Landing, String> {
+    let kept = enqueue(queue, article)?;
+    let reader = match reader {
+        Ok(reader) => reader,
+        Err(why) => return Ok(Landing::Waiting { why }),
+    };
+    let report = sync_with(queue, SEND_PATIENCE, |article| send(&reader, article));
+    if waiting(queue).iter().any(|entry| entry.id == kept.id) {
+        return Ok(Landing::Waiting {
+            why: report.problem.unwrap_or_else(|| AWAY.to_owned()),
+        });
+    }
+    Ok(Landing::Landed {
+        reader: reader.label(),
+        also: report.delivered.len().saturating_sub(1),
+    })
 }
 
 /// The queue's claim, held by one sync at a time and let go when dropped.
@@ -643,7 +707,8 @@ mod tests {
         );
         assert_eq!(report.delivered, ["One"]);
         assert_eq!(report.waiting, 2);
-        assert_eq!(report.problem.as_deref(), Some("The reader is asleep."));
+        assert_eq!(report.problem.as_deref(), Some(AWAY), "said plainly");
+        assert_eq!(report.detail.as_deref(), Some("The reader is asleep."));
         let left: Vec<_> = waiting(&queue).into_iter().map(|w| w.title).collect();
         assert_eq!(left, ["Two", "Three"]);
         let _ = fs::remove_dir_all(&queue);
@@ -691,6 +756,7 @@ mod tests {
             delivered: vec!["One".to_owned(), "Two".to_owned()],
             waiting: 1,
             problem: Some("The reader is asleep.".to_owned()),
+            detail: Some("ssh: connect to host 192.168.1.9 port 22: timed out".to_owned()),
         };
         let parsed = kobo_json::parse(&report.to_json()).expect("valid");
         assert_eq!(
@@ -705,5 +771,76 @@ mod tests {
             parsed.get("problem").and_then(kobo_json::Value::as_str),
             Some("The reader is asleep.")
         );
+        assert!(
+            parsed.get("detail").is_none(),
+            "the reader is told the sentence"
+        );
+    }
+
+    #[test]
+    fn a_clip_lands_with_what_was_waiting_and_the_queue_is_left_empty() {
+        let queue = scratch("send-landed");
+        enqueue(&queue, &article("Earlier")).expect("queued");
+        let mut sent = Vec::new();
+        let landing = send_with(
+            &queue,
+            &article("Now"),
+            Ok(Reader::Device("192.168.1.9".to_owned())),
+            |_, article| {
+                sent.push(article.title.clone());
+                Ok(article.file_name.clone())
+            },
+        )
+        .expect("sent");
+        assert_eq!(sent, ["Earlier", "Now"], "oldest first");
+        assert_eq!(
+            landing,
+            Landing::Landed {
+                reader: "the reader at 192.168.1.9".to_owned(),
+                also: 1
+            }
+        );
+        assert!(waiting(&queue).is_empty());
+        let _ = fs::remove_dir_all(&queue);
+    }
+
+    #[test]
+    fn a_clip_for_a_reader_that_is_asleep_waits_and_says_so_plainly() {
+        let queue = scratch("send-asleep");
+        let landing = send_with(
+            &queue,
+            &article("Now"),
+            Ok(Reader::Device("192.168.1.9".to_owned())),
+            |_, _| Err(Missed::Away("ssh: connect to host: timed out".to_owned())),
+        )
+        .expect("kept");
+        assert_eq!(
+            landing,
+            Landing::Waiting {
+                why: AWAY.to_owned()
+            }
+        );
+        assert_eq!(waiting(&queue).len(), 1);
+        let _ = fs::remove_dir_all(&queue);
+    }
+
+    #[test]
+    fn a_clip_with_no_reader_to_try_is_kept_with_the_reason() {
+        let queue = scratch("send-none");
+        let landing = send_with(
+            &queue,
+            &article("Now"),
+            Err("No reader is saved.".to_owned()),
+            |_, _| panic!("nothing should be sent without a reader"),
+        )
+        .expect("kept");
+        assert_eq!(
+            landing,
+            Landing::Waiting {
+                why: "No reader is saved.".to_owned()
+            }
+        );
+        assert_eq!(waiting(&queue).len(), 1);
+        let _ = fs::remove_dir_all(&queue);
     }
 }
