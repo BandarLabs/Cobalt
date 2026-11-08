@@ -205,6 +205,8 @@ impl std::error::Error for Refusal {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Clipping {
     pub title: String,
+    /// The site it came from, as the book's title page names it.
+    pub site: Option<String>,
     /// A file name for the book, from its title.
     pub file_name: String,
     pub epub: Vec<u8>,
@@ -667,6 +669,7 @@ pub fn clip(
     )?;
     Ok(Clipping {
         file_name: book::file_name(&title),
+        site,
         title,
         epub,
         pictures,

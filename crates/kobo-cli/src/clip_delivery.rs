@@ -72,14 +72,6 @@ pub enum Missed {
     Refused(String),
 }
 
-impl Missed {
-    pub fn reason(&self) -> &str {
-        match self {
-            Self::Away(reason) | Self::Refused(reason) => reason,
-        }
-    }
-}
-
 /// Copies one article to `reader` and announces it there.
 ///
 /// Returns the name it was saved under on the reader, which is the title's
