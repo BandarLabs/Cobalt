@@ -234,24 +234,46 @@ pub fn page_text(bytes: &[u8]) -> Result<String, Refusal> {
     if let Ok(text) = std::str::from_utf8(bytes) {
         return Ok(text.to_owned());
     }
-    let declared = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_ascii_lowercase();
-    let single_byte = [
-        "windows-1252",
-        "iso-8859-1",
-        "latin1",
-        "latin-1",
-        "us-ascii",
-        "cp1252",
-    ]
-    .iter()
-    .any(|name| {
-        declared.contains(&format!("charset={name}"))
-            || declared.contains(&format!("charset=\"{name}"))
+    let declared = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+    let single_byte = declared_charset(&declared).is_some_and(|charset| {
+        matches!(
+            charset.as_str(),
+            "windows-1252"
+                | "iso-8859-1"
+                | "iso8859-1"
+                | "latin1"
+                | "latin-1"
+                | "us-ascii"
+                | "ascii"
+                | "cp1252"
+        )
     });
     if single_byte {
         return Ok(bytes.iter().map(|byte| windows_1252(*byte)).collect());
     }
     Ok(String::from_utf8_lossy(bytes).into_owned())
+}
+
+/// The first character set a page declares, lowercased, however the page
+/// quoted it: `charset=x`, `charset="x"`, `charset='x'`, or inside a
+/// `content` attribute.
+fn declared_charset(head: &str) -> Option<String> {
+    let lower = head.to_ascii_lowercase();
+    let mut rest = lower.as_str();
+    while let Some(at) = rest.find("charset") {
+        rest = &rest[at + "charset".len()..];
+        let Some(value) = rest.trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let value = value.trim_start().trim_start_matches(['"', '\'']);
+        let end = value
+            .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ';' | '>' | '/'))
+            .unwrap_or(value.len());
+        if end > 0 {
+            return Some(value[..end].to_owned());
+        }
+    }
+    None
 }
 
 /// One Windows-1252 byte as a character.

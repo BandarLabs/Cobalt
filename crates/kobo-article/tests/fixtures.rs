@@ -734,8 +734,20 @@ fn a_pdf_or_a_picture_given_as_a_page_is_named_for_what_it_is() {
         kobo_article::page_text(&photograph()).map_err(|refusal| refusal.to_string()),
         Err("The address points to a picture, not a web page.".to_owned())
     );
-    assert_eq!(
-        kobo_article::page_text(b"<p>caf\xe9</p><meta charset=windows-1252>").as_deref(),
-        Ok("<p>caf\u{e9}</p><meta charset=windows-1252>")
-    );
+    for declaration in [
+        "<meta charset=windows-1252>",
+        "<meta charset=\"windows-1252\">",
+        "<meta charset='windows-1252'>",
+        "<meta charset = 'ISO-8859-1' />",
+        "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=windows-1252\">",
+        "<meta http-equiv='Content-Type' content='text/html;charset=latin1'>",
+    ] {
+        let mut page = declaration.as_bytes().to_vec();
+        page.extend_from_slice(b"<p>caf\xe9</p>");
+        assert_eq!(
+            kobo_article::page_text(&page).as_deref(),
+            Ok(format!("{declaration}<p>caf\u{e9}</p>").as_str()),
+            "{declaration}"
+        );
+    }
 }
