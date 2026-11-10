@@ -5,16 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Link your Kobo to Cobalt apps</title>
 <meta name="description" content="Link this browser to your Kobo to install signed Cobalt apps.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
-<link rel="stylesheet" href="../apps/install.css">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<link rel="stylesheet" href="../site.css">
 </head>
 <body>
-<header><div class="wrap"><a class="brand" href="../">Cobalt</a><a class="back" href="../#apps">All apps</a></div></header>
-<main class="wrap">
-  <p class="eyebrow">Install links</p>
-  <h1>Link your Kobo</h1>
-  <p class="summary">Pair this browser once, then install signed apps from any Cobalt app page.</p>
-  <section class="panel">
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="../"><img src="../logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top" aria-label="Main navigation">
+      <a href="../#apps" aria-current="page">Apps</a>
+      <a href="../install/">Install</a>
+      <a href="../developers.html">Developers</a>
+      <a href="../faq.html">FAQ</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</header>
+<main>
+  <div class="page-head wrap">
+    <h1>Link your Kobo</h1>
+    <p class="lede">Pair this browser once, then install signed apps from any Cobalt app page.</p>
+  </div>
+  <div class="wrap">
+  <section class="section">
     <h2>Confirm your Kobo</h2>
     <p>On the Kobo, open App Store and choose <strong>Link a browser</strong>. Enter the pairing code and verification key it shows, or scan its QR code with your phone to fill them in.</p>
     <form id="pair-form">
@@ -29,10 +42,25 @@
       <button type="submit">Link Kobo</button>
     </form>
     <p class="status" id="pair-status" role="status" aria-live="polite"></p>
-    <div class="actions" id="continue" hidden><a href="../#apps">Choose an app</a></div>
-    <p class="privacy">No account is required. Install requests are encrypted in this browser and can only be opened by the linked Kobo.</p>
+    <div class="actions" id="continue" hidden><a class="btn" href="../#apps">Choose an app</a></div>
+    <p class="quiet">No account is required. Install requests are encrypted in this browser and can only be opened by the linked Kobo.</p>
   </section>
+  </div>
 </main>
+<footer>
+  <div class="wrap">
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
+    </div>
+    <nav aria-label="Footer navigation">
+      <a href="../">Home</a>
+      <a href="../faq.html">FAQ</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
+  </div>
+</footer>
 <script src="pair.js" defer></script>
 </body>
 </html>

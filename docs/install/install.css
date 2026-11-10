@@ -1,0 +1,88 @@
+/*
+  The installer and the remover are tools: a short column of numbered steps
+  that open one after another. The site's sheet sets the type and the ink;
+  this adds only the states a step, a list and a download can be in.
+*/
+.tool { padding-block: clamp(32px, 5vw, 64px) var(--band); }
+.tool > * { max-width: 760px; }
+.tool h1 { font-size: clamp(2rem, 1.3rem + 3vw, 3rem); }
+.tool > .lede { margin-top: 14px; color: var(--quiet); }
+
+.tool .steps { max-width: none; margin-top: 28px; }
+.tool .steps h2 { font: 700 var(--step-1)/1.3 var(--sans); letter-spacing: 0; }
+.tool .steps p { color: var(--quiet); }
+.tool .steps > li[aria-disabled="true"] { opacity: 0.45; }
+.tool .steps > li[data-state="done"]::before { content: counter(step) " \2713"; white-space: nowrap; font-size: var(--step-1); }
+.tool .note { margin-top: 10px; padding-left: 0; border-left: 0; font-size: var(--step--1); color: var(--quiet); }
+.tool .ok { color: var(--ink); font-weight: 700; }
+.tool .bad { color: var(--stop); }
+.btn:disabled { cursor: not-allowed; opacity: 0.4; }
+.btn:disabled:hover { background: var(--paper); color: var(--ink); }
+.btn.primary:disabled:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn.small { padding: 6px 12px; font-size: var(--step--1); }
+
+.banner { border: 1px solid var(--stop); border-left-width: 4px; padding: 14px 18px; margin-top: 26px; }
+.banner strong { display: block; margin-bottom: 3px; }
+
+.progress { height: 6px; border: 1px solid var(--ink); margin-top: 14px; }
+.progress > i { display: block; height: 100%; width: 0; background: var(--ink); transition: width 0.2s; }
+
+.optional { font-weight: 400; font-size: var(--step--1); color: var(--quiet); margin-left: 6px; }
+#app-search {
+  width: 100%;
+  padding: 10px 12px;
+  font: 400 1rem/1.3 var(--sans);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 3px;
+}
+/* Bounded so a full catalogue does not push the remaining steps off the page. */
+.applist { max-height: 320px; overflow-y: auto; border: 1px solid var(--rule); border-top: 0; margin-top: 10px; }
+.applist:empty { display: none; }
+.app {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: baseline;
+  padding: 10px 13px;
+  border-top: 1px solid var(--rule);
+  cursor: pointer;
+  font-weight: 400;
+  font-size: 1rem;
+  margin: 0;
+}
+.app:hover { background: var(--wash); }
+.app input { margin: 0; accent-color: var(--ink); width: 16px; height: 16px; }
+.app .app-name { font-weight: 700; color: var(--ink); }
+.app span { display: block; font-size: var(--step--1); color: var(--quiet); }
+.app em { font-style: normal; font-size: var(--step--1); color: var(--quiet); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.app[hidden] { display: none; }
+
+#by-hand, #remove { margin-top: 26px; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--rule); }
+#by-hand > summary, #remove > summary { cursor: pointer; padding-block: 14px; font-weight: 700; }
+#by-hand > div, #remove > div { padding-bottom: 16px; }
+#by-hand ol { padding-left: 1.4em; }
+#by-hand li { margin-block: 7px; }
+#by-hand pre, .tool pre { margin-block: 8px; white-space: pre; }
+.way { padding-block: 16px; }
+.way + .way { border-top: 1px solid var(--rule); }
+.way h3 { margin-bottom: 8px; }
+.way p + p { margin-top: 8px; }
+.tag { display: block; font-weight: 400; font-size: var(--step--1); color: var(--quiet); }
+
+.aside { margin-top: 30px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: var(--step--1); }
+.shot { margin: 12px 0 0; }
+.shot img { border: 1px solid var(--rule); }
+.consent { display: block; margin-top: 9px; font-weight: 400; font-size: 1rem; }
+.consent input { margin-right: 7px; accent-color: var(--ink); }
+.installed { list-style: none; margin: 10px 0 0; padding: 0; border: 1px solid var(--rule); }
+.installed li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 13px; border-top: 1px solid var(--rule); }
+.installed li:first-child { border-top: 0; }
+.installed li.gone { color: var(--quiet); }
+.channel { border: 0; border-top: 1px solid var(--rule); padding: 10px 0 0; margin: 0 0 14px; }
+.channel legend { font-weight: 700; font-size: var(--step--1); padding: 0 8px 0 0; }
+.channel label { display: block; margin-block: 6px; font-weight: 400; font-size: 1rem; cursor: pointer; }
+.channel input { margin-right: 8px; accent-color: var(--ink); }
+.channel label span { color: var(--quiet); font-size: var(--step--1); margin-left: 6px; }
+kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; }
