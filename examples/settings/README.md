@@ -1,6 +1,6 @@
 # Settings
 
-Wi-Fi, Bluetooth, battery details and Cobalt updates.
+Wi-Fi, Bluetooth, battery details, the time zone and Cobalt updates.
 
 <table>
 <tr>
@@ -25,6 +25,9 @@ Wi-Fi, Bluetooth, battery details and Cobalt updates.
 - **Battery**: charge, status and time remaining, plus capacity, chemistry,
   temperature, voltage, current and charge figures from the fuel gauge.
   **Read again** refreshes them.
+- **Time zone**: pick a region, then your city. Cobalt's clock, and every
+  app's, follows it, daylight saving included. With none picked yet, a city
+  is suggested from the network the reader is on.
 - **Software update**: checks for and installs Cobalt updates. A check with
   no network offers **Join Wi-Fi**. **Channel and automatic updates** picks
   the Stable or Beta channel and has switches for updating Cobalt and apps on
@@ -32,7 +35,7 @@ Wi-Fi, Bluetooth, battery details and Cobalt updates.
 - **About**: the model and versions, the reader's Wi-Fi address when the
   runtime provides it, and how `kobo` on a computer finds the reader.
 
-Brightness, time zone, accounts and firmware stay in the Kobo's own settings.
+Brightness, accounts and firmware stay in the Kobo's own settings.
 
 ## Development
 

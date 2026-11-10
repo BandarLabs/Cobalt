@@ -199,6 +199,19 @@ pub const NOTICES_VERSION: u8 = 18;
 /// confirmation the owner tapped, so that window is one tap wide.
 pub const ARTICLES_VERSION: u8 = 18;
 
+/// The protocol whose runtime keeps the time zone the owner picked,
+/// [`DeviceRequest::ReadTimeZone`] and [`DeviceRequest::SetTimeZone`].
+///
+/// On tags of their own, so the version did not move. Settings ships with
+/// the runtime and asks only when the owner opens Date and time, so a
+/// Settings newer than its runtime, between an update applied mid-session
+/// and the next start, is one tap away from a refused frame at most.
+pub const TIME_ZONE_VERSION: u8 = 18;
+
+/// The longest time zone name the protocol carries, such as
+/// `America/Argentina/Buenos_Aires`.
+pub const MAX_TIME_ZONE_LEN: usize = 64;
+
 pub const VERSION: u8 = 18;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
@@ -1469,6 +1482,14 @@ pub enum DeviceRequest {
     ReadUpdateChannel,
     /// Select the published update stream used for platform and app updates.
     SetUpdateChannel { channel: UpdateChannel },
+    /// Report the time zone the owner picked, answered with
+    /// [`DeviceResult::TimeZone`]. Settings only; requires
+    /// [`TIME_ZONE_VERSION`].
+    ReadTimeZone,
+    /// Keep `zone`, a standard zone name such as `Asia/Kolkata`, as the
+    /// reader's time zone; empty forgets the choice. The runtime refuses a
+    /// zone it does not know. Settings only; requires [`TIME_ZONE_VERSION`].
+    SetTimeZone { zone: String },
     /// Install or replace one runtime-owned credential for the calling app.
     ///
     /// The runtime authorizes the app/name pair before writing anything.
@@ -1958,6 +1979,13 @@ pub enum DeviceResult {
     Denied(DenyReason),
     /// Which published update stream the runtime follows.
     UpdateChannel(UpdateChannel),
+    /// The time zone the owner picked, or `None` when none has been, and
+    /// the minutes east of UTC the reader's clock is at now. Requires
+    /// [`TIME_ZONE_VERSION`].
+    TimeZone {
+        zone: Option<String>,
+        offset_minutes: i16,
+    },
     /// Documents already on this device. See [`LibraryEntry`].
     Library {
         entries: Vec<LibraryEntry>,
@@ -3405,6 +3433,19 @@ fn encode_device_request(
             output.extend_from_slice(&[44, radio_flags(*cobalt, *apps)]);
         }
         DeviceRequest::ReadUpdateChannel => output.push(45),
+        DeviceRequest::ReadTimeZone | DeviceRequest::SetTimeZone { .. }
+            if version < TIME_ZONE_VERSION =>
+        {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::ReadTimeZone => output.push(61),
+        DeviceRequest::SetTimeZone { zone } if zone.is_empty() || valid_time_zone(zone) => {
+            output.push(62);
+            push_string(output, zone)?;
+        }
+        DeviceRequest::SetTimeZone { .. } => {
+            return Err(ProtocolError::InvalidValue("time zone"));
+        }
         DeviceRequest::SetUpdateChannel { channel } => {
             output.extend_from_slice(&[46, channel.wire()]);
         }
@@ -3924,6 +3965,14 @@ fn decode_device_request(
             }
             Ok(DeviceRequest::RemoveArticle { id })
         }
+        61 if version >= TIME_ZONE_VERSION => Ok(DeviceRequest::ReadTimeZone),
+        62 if version >= TIME_ZONE_VERSION => {
+            let zone = reader.string()?;
+            if !zone.is_empty() && !valid_time_zone(&zone) {
+                return Err(ProtocolError::InvalidValue("time zone"));
+            }
+            Ok(DeviceRequest::SetTimeZone { zone })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -4160,6 +4209,20 @@ fn encode_device_result(
             output.extend_from_slice(&[17, radio_flags(*cobalt, *apps)]);
         }
         DeviceResult::UpdateChannel(channel) => output.extend_from_slice(&[18, channel.wire()]),
+        DeviceResult::TimeZone {
+            zone,
+            offset_minutes,
+        } => {
+            let zone = zone.as_deref().unwrap_or_default();
+            if (!zone.is_empty() && !valid_time_zone(zone))
+                || !(-900..=900).contains(offset_minutes)
+            {
+                return Err(ProtocolError::InvalidValue("time zone"));
+            }
+            output.push(25);
+            push_string(output, zone)?;
+            output.extend_from_slice(&offset_minutes.to_be_bytes());
+        }
         DeviceResult::Library { entries, truncated } => {
             if entries.len() > MAX_LIBRARY_ENTRIES {
                 return Err(ProtocolError::InvalidValue("library listing"));
@@ -4489,8 +4552,34 @@ fn decode_device_result(
         20 => decode_library_document(reader),
         23 if version >= AUDIOBOOK_VERSION => decode_audio_library(reader),
         24 if version >= AUDIOBOOK_VERSION => decode_audio_detail(reader),
+        25 if version >= TIME_ZONE_VERSION => {
+            let zone = reader.string()?;
+            let offset_minutes = i16::from_be_bytes(reader.u16()?.to_be_bytes());
+            if (!zone.is_empty() && !valid_time_zone(&zone))
+                || !(-900..=900).contains(&offset_minutes)
+            {
+                return Err(ProtocolError::InvalidValue("time zone"));
+            }
+            Ok(DeviceResult::TimeZone {
+                zone: (!zone.is_empty()).then_some(zone),
+                offset_minutes,
+            })
+        }
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+/// A standard zone name: `Region/City`, in the letters, digits and few marks
+/// such names use. Whether the runtime knows it is the runtime's question.
+fn valid_time_zone(zone: &str) -> bool {
+    zone.len() <= MAX_TIME_ZONE_LEN
+        && zone.contains('/')
+        && !zone.starts_with('/')
+        && !zone.ends_with('/')
+        && !zone.contains("//")
+        && zone
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'_' | b'-' | b'+'))
 }
 
 fn valid_library_id(id: &str) -> bool {
