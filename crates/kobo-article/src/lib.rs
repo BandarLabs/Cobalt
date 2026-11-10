@@ -586,6 +586,9 @@ pub fn clip(
 
     let language = article.language.clone().unwrap_or_else(|| "en".to_owned());
     let site = article.site.clone().or_else(|| address::host_of(page));
+    // What the book says it was saved from, and what it is known by: the
+    // same article reached under another name is the same book.
+    let source = article.canonical.as_deref().unwrap_or(page);
     let date = article
         .published
         .as_deref()
@@ -596,7 +599,7 @@ pub fn clip(
             site: site.as_deref(),
             byline: article.byline.as_deref(),
             date: date.as_deref(),
-            source: page,
+            source,
             lead,
         })
     };
@@ -650,7 +653,7 @@ pub fn clip(
             language,
             publisher: site.clone(),
             date: article.published.clone(),
-            source: Some(page.to_owned()),
+            source: Some(source.to_owned()),
             modified: modified_time(options),
             stylesheet: Some(book::STYLESHEET.to_owned()),
             pages: vec![
