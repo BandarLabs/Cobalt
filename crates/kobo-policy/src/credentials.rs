@@ -526,7 +526,12 @@ fn store_app_credential_allowed(
 ) -> Option<bool> {
     let allowed = match app {
         "calibre-web" => {
-            matches!(credential.header, SecretHeader::Basic)
+            // The name is part of the boundary, as it is for every app below.
+            // A catalog address is the owner's to choose, so without it any
+            // key the owner had installed for another provider could be sent
+            // as a password to whichever host a path ending in `/opds` named.
+            credential.secret == "calibre"
+                && matches!(credential.header, SecretHeader::Basic)
                 && usage == CredentialUse::Fetch
                 && parsed_path(url).is_some_and(|path| clean_path(&path).ends_with("/opds"))
         }
@@ -1129,6 +1134,32 @@ mod tests {
             assert!(
                 !allowed("other", &credential, url, usage),
                 "another app used {app}'s credential"
+            );
+        }
+    }
+
+    #[test]
+    fn the_library_sends_only_its_own_account_to_a_catalog() {
+        // An owner-installed account has no saved server to hold it to, so
+        // the catalog address is whatever the application was pointed at.
+        // The name is then the only thing between that address and every
+        // other key on the reader.
+        let catalog = "https://books.example/opds";
+        assert!(allowed(
+            "calibre-web",
+            &Credential::basic("calibre"),
+            catalog,
+            CredentialUse::Fetch
+        ));
+        for other in ["openai", "anthropic", "lichess", "komga", "homeassistant"] {
+            assert!(
+                !allowed(
+                    "calibre-web",
+                    &Credential::basic(other),
+                    catalog,
+                    CredentialUse::Fetch
+                ),
+                "the library sent the {other} key to a catalog"
             );
         }
     }
