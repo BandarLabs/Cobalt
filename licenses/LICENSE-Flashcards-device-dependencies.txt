@@ -4964,7 +4964,7 @@ insights.
 
 ===============================================================================
 GNU Affero General Public License v3.0 [AGPL-3.0]
-Used by: kobo-abi 0.3.36, kobo-dict 0.3.36, kobo-doc 0.3.36, kobo-flashcards 0.3.36, kobo-flashcards-format 0.3.36, kobo-html 0.3.36, kobo-image 0.3.36, kobo-json 0.3.36, kobo-net 0.3.36, kobo-policy 0.3.36, kobo-profile 0.3.36, kobo-protocol 0.3.36, kobo-sdk 0.3.36, kobo-state 0.3.36, kobo-text 0.3.36, kobo-ui 0.3.36
+Used by: kobo-abi 0.3.37, kobo-dict 0.3.37, kobo-doc 0.3.37, kobo-flashcards 0.3.37, kobo-flashcards-format 0.3.37, kobo-html 0.3.37, kobo-image 0.3.37, kobo-json 0.3.37, kobo-net 0.3.37, kobo-policy 0.3.37, kobo-profile 0.3.37, kobo-protocol 0.3.37, kobo-sdk 0.3.37, kobo-state 0.3.37, kobo-text 0.3.37, kobo-ui 0.3.37
 -------------------------------------------------------------------------------
 GNU AFFERO GENERAL PUBLIC LICENSE
 Version 3, 19 November 2007
