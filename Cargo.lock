@@ -969,6 +969,7 @@ dependencies = [
  "dom_smoothie",
  "image",
  "kobo-doc",
+ "kobo-json",
  "kobo-net",
  "kobo-protocol",
 ]

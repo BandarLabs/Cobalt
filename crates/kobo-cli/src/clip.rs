@@ -146,12 +146,16 @@ fn clip(arguments: &[String]) -> Result<String, String> {
             delivery::send_now(&queue, &article, reader_for(&target))?
         };
         match landing {
-            delivery::Landing::Landed { also, .. } => {
-                let mut said = format!(
-                    "Landed on your Kobo: {} ({pictures}, {}).",
-                    clipping.title,
-                    size(clipping.epub.len())
-                );
+            delivery::Landing::Landed { also, already, .. } => {
+                let mut said = if already {
+                    format!("Already on your Kobo: {}.", clipping.title)
+                } else {
+                    format!(
+                        "Landed on your Kobo: {} ({pictures}, {}).",
+                        clipping.title,
+                        size(clipping.epub.len())
+                    )
+                };
                 if also > 0 {
                     said.push_str(&format!(
                         " {} that had been waiting went with it.",
