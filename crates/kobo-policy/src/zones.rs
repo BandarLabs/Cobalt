@@ -501,12 +501,8 @@ mod tests {
 
     #[test]
     fn every_region_has_cities_and_every_city_a_region() {
-        for region in 0..REGIONS.len() {
-            assert!(
-                ZONES.iter().any(|zone| region_of(zone) == region),
-                "{}",
-                REGIONS[region]
-            );
+        for (region, name) in REGIONS.iter().enumerate() {
+            assert!(ZONES.iter().any(|zone| region_of(zone) == region), "{name}");
         }
         assert_eq!(region_of(find("Atlantic/Reykjavik").expect("listed")), 4);
         assert_eq!(region_of(find("Pacific/Honolulu").expect("listed")), 3);

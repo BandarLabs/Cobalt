@@ -2928,13 +2928,9 @@ mod tests {
             time_zone: ZoneChoice::Unset,
             ..Settings::default()
         };
-        for region in 0..kobo_policy::zones::REGIONS.len() {
+        for (region, name) in kobo_policy::zones::REGIONS.iter().enumerate() {
             let pages = Settings::zone_pages(&kobo_sdk::Context::default(), region);
-            assert!(
-                pages <= 8,
-                "{} has {pages} pages",
-                kobo_policy::zones::REGIONS[region]
-            );
+            assert!(pages <= 8, "{name} has {pages} pages");
             let screen = settings.region_screen(&kobo_sdk::Context::default(), region);
             assert!(screen.validate(&CLARA_BW_METRICS).is_empty());
         }
