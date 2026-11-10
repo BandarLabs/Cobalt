@@ -3,10 +3,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// The landing page draws each app's screenshot about 240 pixels wide, but the
-// screenshots are captured at the Clara BW's full 1072. Forty-nine of them
-// came to 3.4 MB for a grid that shows a fraction of those pixels, so each
-// one also gets WebP copies at the widths the grid can use.
+// The landing page draws each app's screenshot 64 pixels wide in its index and
+// about 190 in the rows above it, but the screenshots are captured at the
+// Clara BW's full 1072. Forty-nine of them came to 3.4 MB for a page that
+// shows a fraction of those pixels, so each one also gets WebP copies at the
+// widths the page can use, doubled for dense displays.
 //
 // A copy is named after the bytes of the PNG it was made from. A screenshot
 // replaced without re-encoding then finds no copy, and the page falls back to
@@ -14,7 +15,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const screenshotsDir = resolve(root, "docs/media/site/apps");
 export const thumbsDir = resolve(root, "docs/media/site/app-thumbs");
-export const thumbWidths = [480, 800];
+export const thumbWidths = [160, 480, 800];
 
 export const thumbName = (screenshot, bytes, width) => {
   const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 12);
