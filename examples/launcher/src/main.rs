@@ -633,8 +633,19 @@ impl Launcher {
             if notice.target != kobo_sdk::NoticeTarget::Ready {
                 return true;
             }
+            // Read now, so the row no longer says New when Back from the
+            // article comes to this list again.
+            let id = notice.id;
+            self.fresh.retain(|fresh| *fresh != id);
+            if let Some(held) = self
+                .notices
+                .as_mut()
+                .and_then(|held| held.entries.iter_mut().find(|held| held.id == id))
+            {
+                held.unread = false;
+            }
             self.notice_trouble = None;
-            context.notices().open(notice.id);
+            context.notices().open(id);
             return true;
         } else {
             return false;
@@ -1606,11 +1617,20 @@ mod tests {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
         runner.notices(kept(true));
+        assert!(runner.app().fresh.contains(&2));
         let opened = runner.action(action_id(&super::notices::opening(2)));
         assert!(opened.iter().any(|command| matches!(
             command,
             Command::Device(DeviceRequest::OpenNotice { id: 2 })
         )));
+        // Back from the article finds the row no longer marked New.
+        assert!(!runner.app().fresh.contains(&2));
+        assert!(runner
+            .app()
+            .notices
+            .as_ref()
+            .and_then(|list| list.entries.iter().find(|notice| notice.id == 2))
+            .is_some_and(|notice| !notice.unread));
         let gone = runner.action(action_id(&super::notices::opening(1)));
         assert!(!gone
             .iter()

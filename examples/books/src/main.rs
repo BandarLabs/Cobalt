@@ -448,7 +448,13 @@ impl Books {
                 View::Shelf(pile) => self.shelf(context, pile),
                 _ => self.home(context),
             },
-            View::Reading => self.reading(),
+            // The runtime keeps Back for itself on a screen that does not
+            // claim it, and leaves the application. The page claimed it only
+            // while a followed link had a way back, so Back from any other
+            // page left Books with the book still open, and Books opened that
+            // book again the next time it came forward: the shelves could not
+            // be reached at all. Back from a page closes the book.
+            View::Reading => self.reading().with_own_back(true),
             View::Unreadable(index) => self.unreadable(index),
             View::ConfirmDelete => self.confirm_delete(),
         };
@@ -3106,6 +3112,22 @@ mod tests {
             command,
             Command::Device(DeviceRequest::ReadLibrary { id }) if id == "0/Articles/river.epub"
         )));
+    }
+
+    #[test]
+    fn back_from_a_page_closes_the_book_rather_than_leaving_books() {
+        let mut runner = started_with(None, None);
+        runner.action(action_id("shelf-library"));
+        let page = shown(runner.action(action_id("book-0")));
+        assert_eq!(runner.app().view, View::Reading);
+        // The device decides from the screen alone whether Back is offered to
+        // Books or taken to the launcher, and one that does not claim it goes.
+        assert!(
+            page.owns_back,
+            "Back from a page went to the launcher with the book still open"
+        );
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Shelf(super::Shelf::Library));
     }
 
     #[test]
