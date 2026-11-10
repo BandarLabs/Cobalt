@@ -3404,6 +3404,28 @@ fn row_height(
     tallest
 }
 
+/// How much of the page a row takes as the layout draws it: the cells, and
+/// under a column of cells the half gap that spaces it from the next row.
+///
+/// A heading row is also ruled off, with a gap around the rule. The pages
+/// used to be packed as if every row were spaced like a paragraph, which was
+/// close for a table with one heading row and short for one whose every row
+/// is a heading, as a list of labelled facts is. A page of such rows ran
+/// past the foot, and with a banner under it the screen was refused.
+/// Stacked rows carry their own spacing in [`row_height`].
+fn row_drawn(cells: i32, header: bool, stacked: bool, metrics: &DisplayMetrics) -> i32 {
+    if stacked {
+        return cells;
+    }
+    let gap = metrics.space(kobo_ui::Space::Small);
+    let rule = if header {
+        gap.saturating_add(metrics.rule_thickness())
+    } else {
+        0
+    };
+    cells.saturating_add(gap / 2).saturating_add(rule)
+}
+
 fn lines_high(lines: usize, line: i32) -> i32 {
     i32::try_from(lines)
         .unwrap_or(1)
@@ -3561,31 +3583,6 @@ fn paginate(
             }
             let labels = head.as_ref().map_or(&[][..], |(_, cells)| cells.as_slice());
             let stacked = column_widths(&columns, metrics, area).1;
-            // Stacked, the heading row is not drawn at all: its headings are
-            // written beside the values instead, so it takes no room.
-            let height = if stacked && row_index == 0 && !labels.is_empty() {
-                0
-            } else {
-                row_height(cells, &columns, labels, row_index, metrics, area)
-            };
-            let seam = seam_height(document, page.last(), index, kind, metrics, gap);
-            if !page.is_empty() && used + gap + seam + height > area.height {
-                pages.push(std::mem::take(&mut page));
-                used = 0;
-                // The heading row goes at the top of the continuation, drawn
-                // and charged for exactly as the layout will draw it.
-                if let Some((at, cells)) = head.clone().filter(|(at, _)| *at != index_of(index)) {
-                    if !stacked {
-                        used += row_height(&cells, &columns, &[], 0, metrics, area);
-                    }
-                    page.push(row_piece(at, Kind::Row { header: true }, &cells, &columns));
-                }
-            }
-            used += if page.is_empty() {
-                height
-            } else {
-                row_gap + seam_height(document, page.last(), index, kind, metrics, gap) + height
-            };
             // Marked as the heading it is, whatever the markup called it:
             // LaTeXML writes every cell as data, and the layout has to know
             // which row names the others before it can say so beside them.
@@ -3594,6 +3591,55 @@ fn paginate(
             } else {
                 kind
             };
+            let header = matches!(kind, Kind::Row { header: true });
+            // Stacked, the heading row is not drawn at all: its headings are
+            // written beside the values instead, so it takes no room.
+            let height = if stacked && row_index == 0 && !labels.is_empty() {
+                0
+            } else {
+                row_drawn(
+                    row_height(cells, &columns, labels, row_index, metrics, area),
+                    header,
+                    stacked,
+                    metrics,
+                )
+            };
+            // Rows in a run are one table on the screen, spaced by the table
+            // itself; only the first is set apart from what comes before it.
+            let follows_row = page
+                .last()
+                .is_some_and(|piece| matches!(piece.kind, Kind::Row { .. }));
+            let lead = if page.is_empty() {
+                0
+            } else if follows_row {
+                if stacked {
+                    row_gap
+                } else {
+                    0
+                }
+            } else {
+                gap + seam_height(document, page.last(), index, kind, metrics, gap)
+            };
+            if !page.is_empty() && used + lead + height > area.height {
+                pages.push(std::mem::take(&mut page));
+                used = 0;
+                // The heading row goes at the top of the continuation, drawn
+                // and charged for exactly as the layout will draw it.
+                if let Some((at, cells)) = head.clone().filter(|(at, _)| *at != index_of(index)) {
+                    if !stacked {
+                        used += row_drawn(
+                            row_height(&cells, &columns, &[], 0, metrics, area),
+                            true,
+                            false,
+                            metrics,
+                        );
+                    }
+                    page.push(row_piece(at, Kind::Row { header: true }, &cells, &columns));
+                }
+                used += height;
+            } else {
+                used += lead + height;
+            }
             page.push(row_piece(index_of(index), kind, cells, &columns));
             row_index += 1;
             continue;
@@ -6825,6 +6871,80 @@ mod tests {
         // same guess pagination made: a page that agrees with its own wrong
         // arithmetic still pours words off the panel.
         no_cell_falls_off_a_page(&reader);
+    }
+
+    /// The facts under a NASA picture of the day: a table whose every row is
+    /// a heading, as a list of labels and values is. Each is ruled off, and
+    /// the pages used to be packed as if none were, so a page that ended in
+    /// one ran past the foot; with "This is the end." under it the screen was
+    /// refused and the reader never said it.
+    #[test]
+    fn a_table_of_labelled_rows_fits_its_page_with_or_without_a_banner() {
+        let panel = kobo_ui::CLARA_BW_METRICS;
+        let table = "<table><tbody>\
+            <tr><th scope=\"row\">Date</th><td>November 10, 2026</td></tr>\
+            <tr><th scope=\"row\">Credit &amp; Copyright</th><td>Roberto Ortu</td></tr>\
+            <tr><th scope=\"row\">Authors &amp; editors:</th><td>Robert Nemiroff, Jerry Bonnell, Cecilia Chirenti, Keighley Rockcliffe</td></tr>\
+            <tr><th scope=\"row\">A service of:</th><td>ASD at NASA / GSFC,<br/>NASA Science Activation &amp; Michigan Tech. U.</td></tr>\
+            </tbody></table><p>Yesterday's Image</p>";
+        let sentence = "Saturn disappears from view when the Moon moves in front. ";
+        for words in (10..2_400).step_by(10) {
+            let prose: String = sentence
+                .repeat(words / 10 + 1)
+                .chars()
+                .take(words)
+                .collect();
+            let html = format!("<h2>Saturn Behind the Moon</h2><p>{prose}</p>{table}");
+            let mut reader = Reader::open(kobo_doc::html::parse(&html), Memory::default(), &panel);
+            for page in 0..reader.page_count() {
+                let mut on_page = reader.clone();
+                on_page.page = page;
+                let problems = on_page.screen("Article").validate(&panel);
+                assert!(
+                    problems.is_empty(),
+                    "{words} letters, page {page}: {problems:?}"
+                );
+            }
+            while reader.forward() {}
+            reader.act(action::FORWARD, &panel);
+            assert_eq!(
+                banners(&reader.screen("Article")),
+                vec![(BannerLevel::Info, "This is the end.".to_owned())]
+            );
+            let problems = reader.screen("Article").validate(&panel);
+            assert!(
+                problems.is_empty(),
+                "{words} letters, at the end: {problems:?}"
+            );
+        }
+    }
+
+    /// A long table with one heading row, which the layout rules off once and
+    /// repeats at the top of each page it runs onto.
+    #[test]
+    fn a_long_table_with_a_heading_row_fits_every_page_it_runs_onto() {
+        let panel = kobo_ui::CLARA_BW_METRICS;
+        let mut rows = String::new();
+        for index in 0..120 {
+            rows.push_str(&format!(
+                "<tr><td>Site {index}</td><td>{} lines of the log</td></tr>",
+                index * 7
+            ));
+        }
+        let html = format!(
+            "<p>The stations, and how much each sent.</p><table><tr><th>Station</th><th>Readings</th></tr>{rows}</table>"
+        );
+        let reader = Reader::open(kobo_doc::html::parse(&html), Memory::default(), &panel);
+        assert!(
+            reader.page_count() > 2,
+            "a hundred and twenty rows need pages"
+        );
+        for page in 0..reader.page_count() {
+            let mut on_page = reader.clone();
+            on_page.page = page;
+            let problems = on_page.screen("Log").validate(&panel);
+            assert!(problems.is_empty(), "page {page}: {problems:?}");
+        }
     }
 
     #[test]
