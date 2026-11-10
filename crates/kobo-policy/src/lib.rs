@@ -17,6 +17,7 @@ pub mod services;
 pub mod shelf;
 pub mod store;
 pub mod tasks;
+pub mod zones;
 
 pub use persistence::WriteFault;
 pub use services::{request_capability, Backends, DeviceServices, DeviceState};

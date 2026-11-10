@@ -1696,6 +1696,7 @@ version = "0.3.36"
 dependencies = [
  "kobo-app-store",
  "kobo-json",
+ "kobo-policy",
  "kobo-sdk",
  "kobo-text",
 ]

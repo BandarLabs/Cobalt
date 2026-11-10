@@ -135,6 +135,9 @@ pub struct DeviceServices {
     library_roots: Option<Vec<std::path::PathBuf>>,
     auto_update: AutoUpdateChoices,
     update_channel: UpdateChannel,
+    /// The time zone picked in Settings. Kept in memory here, for the
+    /// simulator; the runtime keeps it on the card.
+    time_zone: Option<&'static crate::zones::Zone>,
 }
 
 /// The two standing update switches, held together because they are asked
@@ -220,6 +223,7 @@ impl DeviceServices {
                 apps: true,
             },
             update_channel: UpdateChannel::Stable,
+            time_zone: None,
         }
     }
 
@@ -419,6 +423,18 @@ impl DeviceServices {
             | DeviceRequest::SetAutoUpdate { .. }
             | DeviceRequest::ReadUpdateChannel
             | DeviceRequest::SetUpdateChannel { .. }) => self.handle_update_preferences(&request),
+            DeviceRequest::ReadTimeZone => crate::zones::answer(self.time_zone, 0),
+            DeviceRequest::SetTimeZone { zone } if zone.is_empty() => {
+                self.time_zone = None;
+                crate::zones::answer(None, 0)
+            }
+            DeviceRequest::SetTimeZone { zone } => match crate::zones::find(&zone) {
+                Some(found) => {
+                    self.time_zone = Some(found);
+                    crate::zones::answer(self.time_zone, 0)
+                }
+                None => DeviceResult::Failed(DeviceError::InvalidInput),
+            },
             DeviceRequest::ListLibrary => self.list_library(),
             DeviceRequest::ReadLibrary { id } => self.read_library(&id),
             DeviceRequest::RemoveArticle { id } => self.remove_article(&id),
@@ -948,6 +964,9 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::SetAutoUpdate { .. }
         | DeviceRequest::ReadUpdateChannel
         | DeviceRequest::SetUpdateChannel { .. }
+        // The time zone is the same kind of choice: one line in a file.
+        | DeviceRequest::ReadTimeZone
+        | DeviceRequest::SetTimeZone { .. }
         | DeviceRequest::SetSecret { .. }
         | DeviceRequest::SetServerSecret { .. }
         | DeviceRequest::CheckSecrets { .. }
@@ -1114,6 +1133,41 @@ mod tests {
         assert_eq!(
             services.handle(DeviceRequest::ReadUpdateChannel),
             DeviceResult::UpdateChannel(UpdateChannel::Beta)
+        );
+    }
+
+    #[test]
+    fn a_picked_time_zone_is_kept_and_one_that_is_not_on_the_list_is_refused() {
+        let mut services =
+            DeviceServices::new(declared(&[]), PowerPolicy::DEFAULT, Backends::with([]));
+        assert_eq!(
+            services.handle(DeviceRequest::ReadTimeZone),
+            DeviceResult::TimeZone {
+                zone: None,
+                offset_minutes: 0
+            }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetTimeZone {
+                zone: "Asia/Kolkata".into()
+            }),
+            DeviceResult::TimeZone {
+                zone: Some("Asia/Kolkata".into()),
+                offset_minutes: 330
+            }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetTimeZone {
+                zone: "Mars/Olympus_Mons".into()
+            }),
+            DeviceResult::Failed(kobo_protocol::DeviceError::InvalidInput)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadTimeZone),
+            DeviceResult::TimeZone {
+                zone: Some("Asia/Kolkata".into()),
+                offset_minutes: 330
+            }
         );
     }
 

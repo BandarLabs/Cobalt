@@ -1,6 +1,7 @@
 //! Radio settings implemented entirely through the public SDK.
 
 use kobo_json::Value;
+use kobo_policy::zones::{Zone, REGIONS, ZONES};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, BannerLevel, BatteryDetail, BluetoothDevice, Context,
@@ -45,6 +46,19 @@ const PREVIOUS: &str = "previous";
 /// Not the SDK's own join control: that one starts Settings, which is this
 /// application, so here it would do nothing at all.
 const JOIN_WIFI: &str = "join-wifi";
+const TIME_ZONE: &str = "time-zone";
+const ZONE_PREVIOUS: &str = "zone-previous";
+const ZONE_NEXT: &str = "zone-next";
+const SUGGESTED_ZONE: &str = "zone-suggested";
+
+/// Asked for the zone this reader's network is in, to put one city at the
+/// top of the list. Asked only when the owner opens the list with no zone
+/// chosen, never on its own. The answer is a zone name and nothing else, and
+/// anything else, a refusal for want of quota included, is no suggestion.
+const ZONE_LOOKUP: &str = "https://ipinfo.io/timezone";
+
+/// Enough for any zone name and a line ending; a longer answer is not one.
+const ZONE_LOOKUP_BYTES: u32 = 128;
 
 /// Where the runtime puts this reader's address on the local network.
 ///
@@ -131,6 +145,30 @@ enum View {
     /// The standing update choices: the channel and the two switches.
     UpdateOptions,
     UpdateChannelConfirm,
+    /// The way into the time zones: a suggestion, then the regions.
+    TimeZone,
+    /// One region's cities, by its place in `REGIONS`.
+    TimeZoneCities(usize),
+}
+
+/// What Settings knows of the owner's time zone.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ZoneChoice {
+    /// The runtime has not answered, or keeps no zone: no row is drawn.
+    #[default]
+    Unread,
+    /// The runtime keeps a zone and none has been picked.
+    Unset,
+    City(&'static Zone),
+}
+
+impl ZoneChoice {
+    const fn city(self) -> Option<&'static Zone> {
+        match self {
+            Self::City(zone) => Some(zone),
+            Self::Unread | Self::Unset => None,
+        }
+    }
 }
 
 /// `Unavailable` is a confirmed hardware fact: it is only ever produced by
@@ -361,6 +399,19 @@ struct Settings {
     pending: Option<Pending>,
     delayed: Option<TaskId>,
     trouble: Option<(Topic, String)>,
+    /// The time zone the owner picked: `None` until the runtime answers,
+    /// then its answer, which may be that none has been picked. A runtime
+    /// that keeps no zone never answers, and the row is not drawn.
+    time_zone: ZoneChoice,
+    /// The page of cities on the panel.
+    zone_page: u16,
+    /// The city the network suggests, put first while none is chosen.
+    suggested: Option<&'static Zone>,
+    suggestion_task: Option<TaskId>,
+    /// Whether the network was asked already: once a visit to Settings.
+    suggestion_asked: bool,
+    /// Why a city tapped was not kept.
+    zone_trouble: Option<String>,
 }
 
 impl Settings {
@@ -382,6 +433,8 @@ impl Settings {
             View::Update => self.update(),
             View::UpdateOptions => self.update_options_for(context),
             View::UpdateChannelConfirm => self.update_channel_confirmation_for(context),
+            View::TimeZone => self.time_zones(),
+            View::TimeZoneCities(region) => self.region_screen(context, region),
         };
         context.set_screen(screen);
     }
@@ -457,7 +510,7 @@ impl Settings {
         };
         // Each row is measured as the longest line it can show, so a summary
         // that grows or shrinks never moves a row to another page.
-        vec![
+        let mut rows = vec![
             SettingsRow::new(
                 Some("Connections"),
                 BLUETOOTH,
@@ -485,7 +538,215 @@ impl Settings {
             )
             .measured_as("Stable · Cobalt and apps update on their own"),
             SettingsRow::new(None, ABOUT, "About", "Model and versions", Glyph::Reader),
-        ]
+        ];
+        // After Battery, once the runtime has said it keeps a zone.
+        if self.time_zone != ZoneChoice::Unread {
+            let chosen = self.time_zone.city();
+            rows.insert(
+                3,
+                SettingsRow::new(
+                    None,
+                    TIME_ZONE,
+                    "Time zone",
+                    chosen.map_or("Not set", |zone| zone.city),
+                    Glyph::Clock,
+                )
+                .measured_as("Ho Chi Minh City"),
+            );
+        }
+        rows
+    }
+
+    /// The cities of one region, by name, each with the action that picks
+    /// it.
+    fn region_cities(region: usize) -> Vec<(String, &'static str)> {
+        ZONES
+            .iter()
+            .enumerate()
+            .filter(|(_, zone)| kobo_policy::zones::region_of(zone) == region)
+            .map(|(index, zone)| (format!("zone-{index}"), zone.city))
+            .collect()
+    }
+
+    /// Where the chosen city sits in its region's list, if it is in this one.
+    fn chosen_in(&self, region: usize) -> Option<usize> {
+        let chosen = self.time_zone.city()?;
+        ZONES
+            .iter()
+            .filter(|zone| kobo_policy::zones::region_of(zone) == region)
+            .position(|zone| zone.id == chosen.id)
+    }
+
+    fn zone_pages(context: &Context, region: usize) -> u16 {
+        let count = Self::region_cities(region).len();
+        let pages = kobo_sdk::options_pages(count, &context.metrics(), false);
+        u16::try_from(pages).unwrap_or(u16::MAX)
+    }
+
+    /// The way in: the network's suggestion while nothing is chosen, then
+    /// the regions, the chosen city named under its own.
+    fn time_zones(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-time-zone")
+            .top_bar("Time zone")
+            .owns_back(true);
+        if let Some(trouble) = &self.zone_trouble {
+            screen = screen.banner(BannerLevel::Error, trouble.clone());
+        }
+        if let (ZoneChoice::Unset, Some(suggested)) = (self.time_zone, self.suggested) {
+            screen = screen
+                .section("Suggested")
+                .rows([(SUGGESTED_ZONE, suggested.city, "", Glyph::Clock)])
+                .section("All cities");
+        }
+        let chosen = self.time_zone.city();
+        screen
+            .rows(REGIONS.iter().enumerate().map(|(region, name)| {
+                let here = chosen
+                    .filter(|zone| kobo_policy::zones::region_of(zone) == region)
+                    .map_or("", |zone| zone.city);
+                (format!("zone-region-{region}"), *name, here, Glyph::Globe)
+            }))
+            .build()
+    }
+
+    /// One region's cities. Only the cities: a city is what the owner
+    /// knows, and the rule behind it is the runtime's business.
+    fn region_screen(&self, context: &Context, region: usize) -> Screen {
+        let mut screen = ScreenBuilder::new("settings-time-zone-cities")
+            .top_bar(REGIONS.get(region).copied().unwrap_or("Time zone"))
+            .owns_back(true);
+        if let Some(trouble) = &self.zone_trouble {
+            screen = screen.banner(BannerLevel::Error, trouble.clone());
+        }
+        let page = self
+            .zone_page
+            .min(Self::zone_pages(context, region).saturating_sub(1));
+        let cities = Self::region_cities(region);
+        let mut screen = screen.option_list(
+            "",
+            page,
+            ZONE_PREVIOUS,
+            ZONE_NEXT,
+            cities.iter().map(|(name, city)| (name.as_str(), *city, "")),
+        );
+        if let Some(index) = self.chosen_in(region) {
+            screen = screen.chosen(index);
+        }
+        screen.build()
+    }
+
+    /// Opens the way in, and asks the network for a suggestion if there is
+    /// no choice to show.
+    fn open_time_zones(&mut self, context: &mut Context) {
+        self.view = View::TimeZone;
+        self.zone_trouble = None;
+        if self.time_zone == ZoneChoice::Unset && !self.suggestion_asked {
+            self.suggestion_asked = true;
+            self.suggestion_task = context.spawn(Task::Fetch {
+                url: ZONE_LOOKUP.to_owned(),
+                offset: 0,
+                max_bytes: ZONE_LOOKUP_BYTES,
+                credential: None,
+                headers: Vec::new(),
+            });
+        }
+        self.show(context);
+    }
+
+    /// Opens a region on the page that holds the chosen city.
+    fn open_region(&mut self, context: &mut Context, region: usize) {
+        self.view = View::TimeZoneCities(region);
+        self.zone_trouble = None;
+        let per_page = kobo_sdk::options_per_page(&context.metrics(), false).max(1);
+        self.zone_page = self
+            .chosen_in(region)
+            .and_then(|index| u16::try_from(index / per_page).ok())
+            .unwrap_or(0);
+        self.show(context);
+    }
+
+    /// The time zone screens' own taps. Returns whether `action` was one.
+    fn time_zone_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id(TIME_ZONE) {
+            self.open_time_zones(context);
+            return true;
+        }
+        if action == ActionId::BACK {
+            if let View::TimeZoneCities(_) = self.view {
+                self.view = View::TimeZone;
+                self.zone_trouble = None;
+                self.show(context);
+                return true;
+            }
+            return false;
+        }
+        let picked = match self.view {
+            View::TimeZone => {
+                if let Some(region) = (0..REGIONS.len())
+                    .find(|region| action == action_id(&format!("zone-region-{region}")))
+                {
+                    self.open_region(context, region);
+                    return true;
+                }
+                self.suggested
+                    .filter(|_| action == action_id(SUGGESTED_ZONE))
+            }
+            View::TimeZoneCities(region) => {
+                if action == action_id(ZONE_PREVIOUS) || action == action_id(ZONE_NEXT) {
+                    let last = Self::zone_pages(context, region).saturating_sub(1);
+                    self.zone_page = if action == action_id(ZONE_NEXT) {
+                        self.zone_page.saturating_add(1).min(last)
+                    } else {
+                        self.zone_page.saturating_sub(1)
+                    };
+                    self.show(context);
+                    return true;
+                }
+                ZONES
+                    .iter()
+                    .enumerate()
+                    .find(|(index, _)| action == action_id(&format!("zone-{index}")))
+                    .map(|(_, zone)| zone)
+            }
+            _ => return false,
+        };
+        let Some(picked) = picked else {
+            return false;
+        };
+        self.zone_trouble = None;
+        context.device().set_time_zone(picked.id);
+        true
+    }
+
+    /// What the runtime said about the zone, read or just kept.
+    ///
+    /// A runtime that keeps no zone refuses the reading, and the row stays
+    /// away. One that would not keep a city says so over the list.
+    fn took_time_zone(&mut self, request: &DeviceRequest, result: DeviceResult) {
+        let setting = matches!(request, DeviceRequest::SetTimeZone { .. });
+        match result {
+            DeviceResult::TimeZone { zone, .. } => {
+                self.time_zone = zone
+                    .as_deref()
+                    .and_then(kobo_policy::zones::find)
+                    .map_or(ZoneChoice::Unset, ZoneChoice::City);
+                if setting && matches!(self.view, View::TimeZone | View::TimeZoneCities(_)) {
+                    self.view = View::Home;
+                }
+            }
+            _ if setting => {
+                self.zone_trouble = Some("That time zone could not be kept. Try again.".to_owned());
+            }
+            _ => {}
+        }
+    }
+
+    /// The network's answer: a zone name, which is a suggestion only if it
+    /// names a city on the list.
+    fn took_suggestion(&mut self, bytes: &[u8]) {
+        self.suggested = std::str::from_utf8(bytes)
+            .ok()
+            .and_then(kobo_policy::zones::find);
     }
 
     fn home_pages(&self, context: &Context) -> Vec<Vec<usize>> {
@@ -1334,6 +1595,7 @@ impl Settings {
         context.device().read_battery_detail();
         context.device().read_auto_update();
         context.device().read_update_channel();
+        context.device().read_time_zone();
     }
 
     /// Asks GitHub what the newest published release is. Nothing is
@@ -1865,6 +2127,9 @@ impl KoboApp for Settings {
         if self.update_channel_action(context, action) {
             return;
         }
+        if self.time_zone_action(context, action) {
+            return;
+        }
         if action == ActionId::BACK {
             self.view = match self.view {
                 View::UpdateChannelConfirm => View::UpdateOptions,
@@ -1939,7 +2204,9 @@ impl KoboApp for Settings {
                 | View::About
                 | View::Update
                 | View::UpdateOptions
-                | View::UpdateChannelConfirm => {}
+                | View::UpdateChannelConfirm
+                | View::TimeZone
+                | View::TimeZoneCities(_) => {}
             }
         } else if action == action_id(RESCAN) {
             match self.view {
@@ -1962,7 +2229,9 @@ impl KoboApp for Settings {
                 View::Home
                 | View::WifiPassword
                 | View::UpdateOptions
-                | View::UpdateChannelConfirm => {}
+                | View::UpdateChannelConfirm
+                | View::TimeZone
+                | View::TimeZoneCities(_) => {}
             }
             self.show(context);
         } else if action == action_id(MORE) {
@@ -1990,12 +2259,24 @@ impl KoboApp for Settings {
         }
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one explicit dispatch table for every reading"
+    )]
     fn on_device_result(
         &mut self,
         context: &mut Context,
         request: DeviceRequest,
         result: DeviceResult,
     ) {
+        if matches!(
+            request,
+            DeviceRequest::ReadTimeZone | DeviceRequest::SetTimeZone { .. }
+        ) {
+            self.took_time_zone(&request, result);
+            self.show(context);
+            return;
+        }
         match result {
             DeviceResult::Bluetooth {
                 available,
@@ -2095,6 +2376,8 @@ impl KoboApp for Settings {
             | DeviceResult::AudioLibrary { .. }
             | DeviceResult::AudioDetail(_)
             | DeviceResult::Secrets { .. }
+            // Answered above, before anything else looks at it.
+            | DeviceResult::TimeZone { .. }
             | DeviceResult::Text(_) => {}
         }
         self.show(context);
@@ -2122,6 +2405,16 @@ impl KoboApp for Settings {
             return;
         }
 
+        if self.suggestion_task == Some(task) {
+            self.suggestion_task = None;
+            if let TaskOutcome::Completed(bytes) = outcome {
+                self.took_suggestion(&bytes);
+                if self.view == View::TimeZone {
+                    self.show(context);
+                }
+            }
+            return;
+        }
         if self.update_task == Some(task) {
             self.update_task = None;
             match outcome {
@@ -2517,8 +2810,8 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        RadioState, Settings, Topic, View, AUTO_APPS, AUTO_COBALT, CANCEL_CHANNEL, CHANNEL_BETA,
-        CHANNEL_STABLE, CONFIRM_CHANNEL, MORE, PREVIOUS, RESCAN, TOGGLE, VERSION,
+        RadioState, Settings, Topic, View, ZoneChoice, AUTO_APPS, AUTO_COBALT, CANCEL_CHANNEL,
+        CHANNEL_BETA, CHANNEL_STABLE, CONFIRM_CHANNEL, MORE, PREVIOUS, RESCAN, TOGGLE, VERSION,
     };
     use kobo_sdk::{
         action_id, BannerLevel, BatteryDetail, BluetoothDevice, BluetoothDeviceKind, Chrome,
@@ -2534,6 +2827,200 @@ mod tests {
             paired: index % 2 == 0,
             connected: index == 0,
         }
+    }
+
+    /// The rows of the time zone list: what each is labelled, which is
+    /// chosen, and which page is showing.
+    fn zone_rows(screen: &kobo_sdk::Screen) -> (Vec<String>, Option<u16>, u16) {
+        screen
+            .nodes
+            .iter()
+            .find_map(|node| match node {
+                Node::Options {
+                    options,
+                    selected,
+                    page,
+                    ..
+                } => Some((
+                    options.iter().map(|option| option.label.clone()).collect(),
+                    *selected,
+                    *page,
+                )),
+                _ => None,
+            })
+            .expect("the list of cities")
+    }
+
+    #[test]
+    fn the_time_zone_row_waits_for_a_runtime_that_keeps_one() {
+        let home = |time_zone| {
+            format!(
+                "{:?}",
+                Settings {
+                    time_zone,
+                    ..Settings::default()
+                }
+                .home()
+            )
+        };
+        assert!(!home(ZoneChoice::Unread).contains("Time zone"));
+        assert!(home(ZoneChoice::Unset).contains("Not set"));
+        let kolkata = kobo_policy::zones::find("Asia/Kolkata").expect("on the list");
+        assert!(home(ZoneChoice::City(kolkata)).contains("Kolkata"));
+    }
+
+    fn lays_out_action(screen: &kobo_sdk::Screen, name: &str) -> bool {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true))
+            .rect_of_action(action_id(name))
+            .is_some()
+    }
+
+    #[test]
+    fn a_region_shows_only_its_cities_and_opens_on_the_page_of_the_chosen_one() {
+        use kobo_sdk::AppRunner;
+        let london = kobo_policy::zones::find("Europe/London").expect("on the list");
+        let mut runner = AppRunner::new(Settings {
+            time_zone: ZoneChoice::City(london),
+            ..Settings::default()
+        });
+        let commands = runner.action(action_id(super::TIME_ZONE));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, kobo_sdk::Command::Spawn { .. })),
+            "the network is asked only when no zone is chosen"
+        );
+        let regions = runner.app().time_zones();
+        assert!(regions.validate(&CLARA_BW_METRICS).is_empty());
+        assert!(
+            format!("{regions:?}").contains("London"),
+            "the region names the city chosen in it"
+        );
+        assert!(!lays_out_action(&regions, super::SUGGESTED_ZONE));
+        runner.action(action_id("zone-region-4"));
+        assert_eq!(runner.app().view, View::TimeZoneCities(4));
+        let screen = runner.app().region_screen(&kobo_sdk::Context::default(), 4);
+        let issues = screen.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
+        let (labels, selected, page) = zone_rows(&screen);
+        assert!(labels.contains(&"Reykjavík".to_owned()));
+        assert!(!labels.contains(&"Kolkata".to_owned()));
+        assert!(labels
+            .iter()
+            .all(|label| !label.contains('/') && !label.contains("UTC") && !label.contains('+')));
+        let at = labels
+            .iter()
+            .position(|label| label == "London")
+            .expect("London");
+        assert_eq!(selected.map(usize::from), Some(at));
+        let per_page = kobo_sdk::options_per_page(&CLARA_BW_METRICS, false);
+        assert_eq!(usize::from(page), at / per_page);
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::TimeZone);
+        runner.action(kobo_sdk::ActionId::BACK);
+        assert_eq!(runner.app().view, View::Home);
+    }
+
+    #[test]
+    fn every_region_fits_the_panel_page_by_page() {
+        let settings = Settings {
+            time_zone: ZoneChoice::Unset,
+            ..Settings::default()
+        };
+        for (region, name) in kobo_policy::zones::REGIONS.iter().enumerate() {
+            let pages = Settings::zone_pages(&kobo_sdk::Context::default(), region);
+            assert!(pages <= 8, "{name} has {pages} pages");
+            let screen = settings.region_screen(&kobo_sdk::Context::default(), region);
+            assert!(screen.validate(&CLARA_BW_METRICS).is_empty());
+        }
+    }
+
+    #[test]
+    fn the_network_suggests_a_city_first_and_one_tap_keeps_it() {
+        use kobo_sdk::{AppRunner, Command, TaskOutcome};
+        let mut runner = AppRunner::new(Settings {
+            time_zone: ZoneChoice::Unset,
+            ..Settings::default()
+        });
+        let commands = runner.action(action_id(super::TIME_ZONE));
+        let task = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Spawn { task, .. } => Some(*task),
+                _ => None,
+            })
+            .expect("the network is asked");
+        runner.task_outcome(task, TaskOutcome::Completed(b"Asia/Kolkata\n".to_vec()));
+        let screen = runner.app().time_zones();
+        assert!(screen.validate(&CLARA_BW_METRICS).is_empty());
+        assert!(lays_out_action(&screen, super::SUGGESTED_ZONE));
+        assert!(format!("{screen:?}").contains("Kolkata"));
+        let kept = runner.action(action_id(super::SUGGESTED_ZONE));
+        assert!(kept.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::SetTimeZone { zone }) if zone == "Asia/Kolkata"
+        )));
+        runner.device_result(DeviceResult::TimeZone {
+            zone: Some("Asia/Kolkata".to_owned()),
+            offset_minutes: 330,
+        });
+        assert_eq!(runner.app().view, View::Home);
+        assert_eq!(
+            runner.app().time_zone.city().map(|zone| zone.city),
+            Some("Kolkata")
+        );
+    }
+
+    #[test]
+    fn a_lookup_that_fails_or_names_no_city_leaves_the_plain_list() {
+        use kobo_sdk::{AppRunner, Command, TaskError, TaskOutcome};
+        for outcome in [
+            TaskOutcome::Failed(TaskError::RateLimited(60)),
+            TaskOutcome::Completed(br#"{"error": "quota"}"#.to_vec()),
+            TaskOutcome::Completed(b"Mars/Olympus_Mons".to_vec()),
+        ] {
+            let mut runner = AppRunner::new(Settings {
+                time_zone: ZoneChoice::Unset,
+                ..Settings::default()
+            });
+            let task = runner
+                .action(action_id(super::TIME_ZONE))
+                .iter()
+                .find_map(|command| match command {
+                    Command::Spawn { task, .. } => Some(*task),
+                    _ => None,
+                })
+                .expect("the network is asked");
+            runner.task_outcome(task, outcome);
+            let screen = runner.app().time_zones();
+            assert!(!lays_out_action(&screen, super::SUGGESTED_ZONE));
+            assert!(lays_out_action(&screen, "zone-region-0"));
+            assert!(
+                !drawn_words(&screen).contains("could not"),
+                "nothing is said about it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_city_the_runtime_would_not_keep_is_said_over_the_list() {
+        use kobo_sdk::AppRunner;
+        let mut runner = AppRunner::new(Settings {
+            time_zone: ZoneChoice::Unset,
+            suggestion_asked: true,
+            ..Settings::default()
+        });
+        runner.action(action_id(super::TIME_ZONE));
+        runner.action(action_id("zone-region-0"));
+        runner.action(action_id("zone-0"));
+        runner.device_result(DeviceResult::Failed(kobo_sdk::DeviceError::Backend));
+        assert_eq!(runner.app().view, View::TimeZoneCities(0));
+        let screen = runner.app().region_screen(&kobo_sdk::Context::default(), 0);
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Banner { level: BannerLevel::Error, text, .. } if text.contains("could not be kept")
+        )));
     }
 
     #[test]
