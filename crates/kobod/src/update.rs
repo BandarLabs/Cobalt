@@ -103,6 +103,28 @@ const EXPANDED_LIMIT: u32 = 128 * 1024 * 1024;
 /// One tar header or payload block.
 const BLOCK: usize = 512;
 
+/// Applies a release an application asked for, once the runtime has checked
+/// it against the signed manifest itself.
+///
+/// [`apply`] trusts its caller to have done that, which the background check
+/// has. A request from the settings screen arrives as an address and a digest
+/// and nothing else, so it comes through here instead. A refusal is recorded
+/// like any other failed update: a release that will not verify is the one an
+/// owner most needs to be able to report.
+///
+/// # Errors
+///
+/// As [`crate::autoupdate::vouched`], then as [`apply`].
+#[cfg(feature = "device-write")]
+pub fn apply_requested(url: &str, sha256: &str) -> Result<(), DeviceError> {
+    crate::autoupdate::vouched(url, sha256).inspect_err(|error| {
+        let reason = format!("the release's signed manifest does not vouch for it: {error}");
+        trace(&format!("platform update: {reason}"));
+        record_failure(Path::new(ADDS), &reason);
+    })?;
+    apply(url, sha256)
+}
+
 /// Downloads a release archive, verifies it, and swaps it in.
 ///
 /// # Errors

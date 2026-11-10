@@ -259,6 +259,102 @@ fn platform_from_manifest(
     })
 }
 
+/// Checks a release somebody else chose against this project's signature.
+///
+/// The settings screen names the archive and the digest it wants installed,
+/// and it does verify the signed manifest before asking. But it is an
+/// application: it runs in a jail, reads replies off the network, and the
+/// runtime that acts on its word replaces the whole installation as root. A
+/// digest only proves the bytes are the ones that were asked for, so the
+/// request alone would let whatever spoke for Settings choose both. The
+/// runtime therefore reads the manifest and its signature itself, from beside
+/// the archive in the same release, and installs only what they name.
+///
+/// This says a release is one the project published. Which release to ask
+/// for, and whether it is newer, stays the settings screen's decision.
+///
+/// # Errors
+///
+/// [`DeviceError::InvalidInput`] for an address with no release beside it,
+/// the transport errors when the metadata cannot be fetched, and
+/// [`DeviceError::Integrity`] when the signature does not verify or the
+/// manifest names a different archive or digest.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub fn vouched(url: &str, sha256: &str) -> Result<(), DeviceError> {
+    let beside = signed_metadata_beside(url).ok_or(DeviceError::InvalidInput)?;
+    let manifest = kobo_net::fetch(&beside.manifest, MANIFEST_LIMIT).map_err(metadata_error)?;
+    let signature = kobo_net::fetch(&beside.signature, SIGNATURE_LIMIT).map_err(metadata_error)?;
+    let signature = String::from_utf8(signature).map_err(|_| DeviceError::Integrity)?;
+    let manifest = kobo_app_store::verify_release_manifest(&manifest, &signature)
+        .map_err(|_| DeviceError::Integrity)?;
+    if manifest_names(&manifest, beside.archive, sha256) {
+        Ok(())
+    } else {
+        Err(DeviceError::Integrity)
+    }
+}
+
+/// A release that publishes no signed metadata is refused as unverifiable
+/// rather than reported as missing, because "not found" on the settings
+/// screen would read as a network fault and invite another try.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+fn metadata_error(error: kobo_protocol::TaskError) -> DeviceError {
+    match error {
+        kobo_protocol::TaskError::Offline
+        | kobo_protocol::TaskError::Unreachable
+        | kobo_protocol::TaskError::RateLimited(_) => DeviceError::Unreachable,
+        kobo_protocol::TaskError::TimedOut => DeviceError::TimedOut,
+        _ => DeviceError::Integrity,
+    }
+}
+
+/// The signed manifest and signature published beside an archive.
+#[derive(Debug, Eq, PartialEq)]
+struct Beside<'a> {
+    archive: &'a str,
+    manifest: String,
+    signature: String,
+}
+
+/// Where a release keeps its signed metadata, given where it keeps its archive.
+///
+/// Every file of one release is served from one folder, which is how the
+/// settings screen and the background check both come to hold three addresses
+/// that differ only in their last component. Deriving the other two here,
+/// rather than taking them from the request, is the point: an address the
+/// requester supplied could name a manifest this project signed for some
+/// other release.
+fn signed_metadata_beside(url: &str) -> Option<Beside<'_>> {
+    if !valid_release_url(url) || url.contains(['?', '#']) {
+        return None;
+    }
+    let (folder, archive) = url.rsplit_once('/')?;
+    // "https://host" splits at the scheme's own slashes, which would put the
+    // metadata on a host named after the archive.
+    if archive.is_empty() || folder.len() <= "https://".len() {
+        return None;
+    }
+    Some(Beside {
+        archive,
+        manifest: format!("{folder}/cobalt-host-manifest.txt"),
+        signature: format!("{folder}/cobalt-host-manifest.txt.sig"),
+    })
+}
+
+/// Whether a verified manifest names exactly this archive under this digest.
+///
+/// The file name is checked against the manifest's own version as well as its
+/// device entry, the same two comparisons the background check makes, so a
+/// manifest cannot vouch for an archive published under another version's
+/// name.
+fn manifest_names(manifest: &kobo_app_store::ReleaseManifest, archive: &str, sha256: &str) -> bool {
+    manifest.device().is_some_and(|device| {
+        device.name == archive
+            && archive == archive_file(&manifest.version)
+            && device.sha256 == sha256
+    })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Release {
     version: String,
@@ -354,8 +450,9 @@ fn numbers(version: &str) -> Option<(u64, u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::{
-        beta_release_from, newer, parse, plan_with, platform_from_manifest, preferences,
-        release_from, render, set_preferences, PlatformUpdate, Preferences,
+        beta_release_from, manifest_names, newer, parse, plan_with, platform_from_manifest,
+        preferences, release_from, render, set_preferences, signed_metadata_beside, PlatformUpdate,
+        Preferences,
     };
     use kobo_protocol::UpdateChannel;
     use std::fs;
@@ -575,6 +672,98 @@ mod tests {
         let mut wrong = manifest;
         wrong.version = "0.4.1".to_owned();
         assert!(platform_from_manifest(release, &wrong).is_none());
+    }
+
+    fn signed_manifest(
+        version: &str,
+        archive: &str,
+        sha256: &str,
+    ) -> kobo_app_store::ReleaseManifest {
+        kobo_app_store::ReleaseManifest {
+            version: version.to_owned(),
+            channels: vec!["stable".to_owned(), "beta".to_owned()],
+            source: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            assets: vec![kobo_app_store::ReleaseAsset {
+                kind: "device".to_owned(),
+                platform: None,
+                name: archive.to_owned(),
+                bytes: 123,
+                sha256: sha256.to_owned(),
+            }],
+        }
+    }
+
+    #[test]
+    fn a_requested_release_is_checked_against_the_metadata_published_beside_it() {
+        let beside = signed_metadata_beside(
+            "https://github.com/BandarLabs/Cobalt/releases/download/v0.4.0/cobalt-0.4.0-KoboRoot.tgz",
+        )
+        .expect("a release address");
+        assert_eq!(beside.archive, "cobalt-0.4.0-KoboRoot.tgz");
+        assert_eq!(
+            beside.manifest,
+            "https://github.com/BandarLabs/Cobalt/releases/download/v0.4.0/cobalt-host-manifest.txt"
+        );
+        assert_eq!(
+            beside.signature,
+            "https://github.com/BandarLabs/Cobalt/releases/download/v0.4.0/cobalt-host-manifest.txt.sig"
+        );
+    }
+
+    #[test]
+    fn an_address_with_no_release_folder_has_no_metadata_to_check() {
+        // Each of these would otherwise put the manifest somewhere the
+        // requester chose: on a host named after the archive, behind a query
+        // the server interprets, or over a transport nothing authenticates.
+        for url in [
+            "https://cobalt-0.4.0-KoboRoot.tgz",
+            "https://example.test/",
+            "https://example.test/cobalt-0.4.0-KoboRoot.tgz?manifest=elsewhere",
+            "https://example.test/release/cobalt-0.4.0-KoboRoot.tgz#fragment",
+            "http://example.test/release/cobalt-0.4.0-KoboRoot.tgz",
+            "",
+        ] {
+            assert_eq!(signed_metadata_beside(url), None, "{url:?}");
+        }
+    }
+
+    #[test]
+    fn a_signed_manifest_vouches_only_for_the_archive_and_digest_it_names() {
+        let digest = "a".repeat(64);
+        let manifest = signed_manifest("0.4.0", "cobalt-0.4.0-KoboRoot.tgz", &digest);
+        assert!(manifest_names(
+            &manifest,
+            "cobalt-0.4.0-KoboRoot.tgz",
+            &digest
+        ));
+        // The bytes a requester would rather have installed.
+        assert!(!manifest_names(
+            &manifest,
+            "cobalt-0.4.0-KoboRoot.tgz",
+            &"b".repeat(64)
+        ));
+        // Another file from the same folder.
+        assert!(!manifest_names(
+            &manifest,
+            "cobalt-0.3.9-KoboRoot.tgz",
+            &digest
+        ));
+        // A manifest whose device entry carries another version's name vouches
+        // for neither version.
+        let renamed = signed_manifest("0.4.0", "cobalt-0.3.9-KoboRoot.tgz", &digest);
+        assert!(!manifest_names(
+            &renamed,
+            "cobalt-0.3.9-KoboRoot.tgz",
+            &digest
+        ));
+        // A manifest with no device package vouches for no archive at all.
+        let mut hostless = manifest;
+        hostless.assets.clear();
+        assert!(!manifest_names(
+            &hostless,
+            "cobalt-0.4.0-KoboRoot.tgz",
+            &digest
+        ));
     }
 
     #[test]
