@@ -1577,7 +1577,15 @@ impl Books {
             .open_bytes(context, document.kind.filename(), bytes, memory)
             .is_ok()
         {
-            self.open_title = Some(document.title.clone());
+            // A book whose package Books has not read yet, such as an article
+            // opened from its notice the moment it arrived, is still known by
+            // its file name, and the bar said "Electronic paper (3)". The
+            // package names it, and reading only that much is cheap.
+            let named = (document.kind == Kind::Epub)
+                .then(|| kobo_doc::epub::names(bytes).ok()?.title)
+                .flatten()
+                .map(|title| drawable(&title));
+            self.open_title = Some(named.unwrap_or_else(|| document.title.clone()));
             self.opened = Some(document.id.clone());
             self.reading_id = Some(id);
             self.view = View::Reading;
@@ -3128,6 +3136,47 @@ mod tests {
         );
         runner.action(ActionId::BACK);
         assert_eq!(runner.app().view, View::Shelf(super::Shelf::Library));
+    }
+
+    #[test]
+    fn an_article_opened_from_its_notice_is_titled_by_its_package_and_closes_onto_its_shelf() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        answer_start(&mut runner, None, None, None);
+        let id = "0/Articles/Electronic paper (3).epub";
+        runner.open_document(id.to_owned());
+        runner.device_result(DeviceResult::Library {
+            entries: vec![entry(id, "Electronic paper (3)", 1, 100, true)],
+            truncated: false,
+        });
+        let bytes = kobo_doc::epub::write(
+            "Electronic paper",
+            None,
+            &[kobo_doc::epub::Chapter {
+                title: "Electronic paper".to_owned(),
+                body: "<p>A display that reflects light like paper.</p>".to_owned(),
+            }],
+        )
+        .expect("a book");
+        // Books reads the new article once for the shelf and once to open
+        // it; the second answer opens it.
+        let mut page = None;
+        for _ in 0..2 {
+            let commands = runner.device_result(DeviceResult::LibraryDocument {
+                id: id.to_owned(),
+                bytes: bytes.clone(),
+            });
+            if runner.app().view == View::Reading {
+                page = Some(shown(commands));
+                break;
+            }
+        }
+        let page = page.expect("the article opened");
+        assert_eq!(runner.app().view, View::Reading);
+        assert_eq!(runner.app().open_title.as_deref(), Some("Electronic paper"));
+        assert!(page.owns_back);
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Shelf(Shelf::Articles));
     }
 
     #[test]
