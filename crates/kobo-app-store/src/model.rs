@@ -27,8 +27,30 @@ const CATALOG_FIELDS: [&str; 2] = ["format_version", "entries"];
 const ENTRY_FIELDS: [&str; 4] = ["manifest", "package_url", "package_sha256", "package_bytes"];
 const MAX_CAPABILITY_NAME_BYTES: usize = 32;
 
+/// The applications Cobalt ships, then the names the runtime keeps for itself
+/// under its state folder.
+///
+/// An application's saved state lives in a folder named after its identifier,
+/// beside the runtime's own records: the browsers the owner linked, the update
+/// switches, the untested-reader acceptances, the notice inbox, the touch
+/// calibration and the reason the last update failed. An application
+/// published under one of those names would be handed that record as its own
+/// state, to read and to rewrite. A name the runtime starts keeping there has
+/// to be added here in the same change.
 static PUBLIC_RESERVED_APP_IDS: &[&str] = &[
-    "books", "cobalt", "kobod", "launcher", "settings", "store", "terminal",
+    "books",
+    "cobalt",
+    "kobod",
+    "launcher",
+    "settings",
+    "store",
+    "terminal",
+    "accepted-untested",
+    "app-link",
+    "auto-update",
+    "last-update-error",
+    "notices",
+    "touch-calibration",
 ];
 
 /// Platform-owned application identifiers that public packages may not use.
@@ -1435,6 +1457,32 @@ mod tests {
         assert!(is_public_reserved_app_id("books"));
         assert!(Manifest::new_public(input("launcher", b"x")).is_err());
         assert!(Manifest::new_public(input("books", b"x")).is_err());
+    }
+
+    #[test]
+    fn an_application_cannot_take_the_name_of_a_record_the_runtime_keeps() {
+        // Each of these is a file or folder the runtime writes beside the
+        // applications' state folders. Every one is a well-formed identifier,
+        // so nothing but the reserved list stands between a published package
+        // and the record of that name.
+        for id in [
+            "accepted-untested",
+            "app-link",
+            "auto-update",
+            "last-update-error",
+            "notices",
+            "touch-calibration",
+        ] {
+            assert!(
+                Manifest::new(input(id, b"x"), &[]).is_ok(),
+                "{id} is refused for its shape, so this test proves nothing about it"
+            );
+            assert_eq!(
+                Manifest::new_public(input(id, b"x")),
+                Err(FormatError::ReservedAppId(id.to_owned())),
+                "{id}"
+            );
+        }
     }
 
     #[test]

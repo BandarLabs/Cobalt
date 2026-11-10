@@ -767,6 +767,16 @@ mod tests {
     }
 
     #[test]
+    fn the_update_switches_are_kept_under_a_name_no_application_can_take() {
+        let name = super::state_file(std::path::Path::new(""));
+        let name = name
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a name");
+        assert!(kobo_app_store::is_public_reserved_app_id(name), "{name}");
+    }
+
+    #[test]
     fn update_plan_checks_only_enabled_sections_in_every_channel() {
         for channel in [UpdateChannel::Stable, UpdateChannel::Beta] {
             for cobalt in [false, true] {

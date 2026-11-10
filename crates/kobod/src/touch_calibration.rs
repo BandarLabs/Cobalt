@@ -49,6 +49,18 @@ pub fn remember(
 #[cfg(test)]
 mod tests {
     use super::{remember, stored};
+
+    #[test]
+    fn the_calibration_is_kept_under_a_name_no_application_can_take() {
+        // An application that owned this record could decide where every tap
+        // on the reader lands.
+        let ledger = super::ledger(std::path::Path::new(""));
+        let name = ledger
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a name");
+        assert!(kobo_app_store::is_public_reserved_app_id(name), "{name}");
+    }
     use kobo_profile::calibration::ALL_MAPPINGS;
     use kobo_profile::{
         Bitfield, DeviceSnapshot, FramebufferSnapshot, IdentitySnapshot, TouchSnapshot,
