@@ -2950,6 +2950,21 @@ impl Device<'_> {
         self.request(DeviceRequest::SetUpdateChannel { channel });
     }
 
+    /// Asks which time zone the owner picked. The reply is
+    /// [`DeviceResult::TimeZone`].
+    #[cfg(feature = "runtime-settings")]
+    pub fn read_time_zone(&mut self) {
+        self.request(DeviceRequest::ReadTimeZone);
+    }
+
+    /// Keeps `zone`, a standard zone name such as `Asia/Kolkata`, as the
+    /// reader's time zone. The reply is [`DeviceResult::TimeZone`], or a
+    /// failure for a zone the runtime does not know.
+    #[cfg(feature = "runtime-settings")]
+    pub fn set_time_zone(&mut self, zone: impl Into<String>) {
+        self.request(DeviceRequest::SetTimeZone { zone: zone.into() });
+    }
+
     fn bluetooth_address(
         &mut self,
         address: impl Into<String>,

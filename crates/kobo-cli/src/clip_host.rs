@@ -212,10 +212,14 @@ pub(crate) fn handle_with(
     };
     say("Sending to your Kobo");
     match send(&article) {
-        Ok(delivery::Landing::Landed { .. }) => done(
+        Ok(delivery::Landing::Landed { already, .. }) => done(
             "landed",
             &article.title,
-            &format!("Landed on your Kobo: {}", article.title),
+            &if already {
+                format!("Already on your Kobo: {}", article.title)
+            } else {
+                format!("Landed on your Kobo: {}", article.title)
+            },
         ),
         Ok(delivery::Landing::Waiting { why }) => done(
             "waiting",
@@ -345,6 +349,7 @@ mod tests {
                 Ok(delivery::Landing::Landed {
                     reader: "the reader".to_owned(),
                     also: 0,
+                    already: false,
                 })
             },
         );

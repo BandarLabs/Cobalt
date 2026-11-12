@@ -417,6 +417,20 @@ jobs:
           #   zstd::stream::copy_decode, which reads through read::Decoder,
           #   and the advisory names that path as unaffected.
           # Re-check when the anki pin moves.
+          #
+          # libsqlite3-sys before 0.39 bundles SQLite before 3.54, which has
+          # RUSTSEC-2026-0459: a database opened together with a crafted -wal
+          # file of another page size can return stale process memory. The
+          # fix needs rusqlite 0.41 and rustc 1.89, newer than both pinned
+          # toolchains. Neither use opens a WAL someone else wrote:
+          # - kobo-policy and kobo-cli open the stock reader's library
+          #   database read-only, on the reader or as copied off it. Whoever
+          #   can put files on the card can already replace Cobalt's own
+          #   binaries there, so a crafted pair gives them nothing more.
+          # - The flashcards importer writes only the package's collection,
+          #   to a scratch file it creates new after deleting any -wal, -shm
+          #   or -journal beside it. A package cannot supply the sibling.
+          # Re-check when either toolchain reaches 1.89.
           ignore=(
             --ignore RUSTSEC-2026-0367
             --ignore RUSTSEC-2026-0368
@@ -428,6 +442,7 @@ jobs:
             --ignore RUSTSEC-2026-0391
             --ignore RUSTSEC-2026-0398
             --ignore RUSTSEC-2026-0403
+            --ignore RUSTSEC-2026-0459
           )
           set +e
           output="$(cargo audit "${ignore[@]}" --db advisory-db --no-fetch 2>&1)"

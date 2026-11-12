@@ -161,6 +161,13 @@ fn every_device_request_round_trips() {
         DeviceRequest::SetUpdateChannel {
             channel: UpdateChannel::Beta,
         },
+        DeviceRequest::ReadTimeZone,
+        DeviceRequest::SetTimeZone {
+            zone: "America/Argentina/Buenos_Aires".to_owned(),
+        },
+        DeviceRequest::SetTimeZone {
+            zone: String::new(),
+        },
         DeviceRequest::SetSecret {
             name: "lichess".to_owned(),
             value: SecretValue::new("token-value"),
@@ -522,6 +529,50 @@ fn secret_presence_round_trips_and_stays_bounded() {
         };
         assert!(encode(&frame).is_err());
     }
+}
+
+#[test]
+fn a_time_zone_travels_both_ways_and_nothing_that_is_not_one_does() {
+    for message in [
+        Message::DeviceResult(DeviceResult::TimeZone {
+            zone: Some("Asia/Kolkata".to_owned()),
+            offset_minutes: 330,
+        }),
+        Message::DeviceResult(DeviceResult::TimeZone {
+            zone: None,
+            offset_minutes: -210,
+        }),
+    ] {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 9,
+            message,
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+    for zone in [
+        "../etc/passwd",
+        "Asia",
+        "/Asia/Kolkata",
+        "Asia//Kolkata",
+        "Asia/Kolkata\n",
+    ] {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 9,
+            message: Message::DeviceRequest(DeviceRequest::SetTimeZone {
+                zone: zone.to_owned(),
+            }),
+        };
+        assert!(encode(&frame).is_err(), "{zone}");
+    }
+    let old = Frame {
+        version: TIME_ZONE_VERSION - 1,
+        request_id: 9,
+        message: Message::DeviceRequest(DeviceRequest::ReadTimeZone),
+    };
+    assert!(encode(&old).is_err());
 }
 
 #[test]

@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="Play 600 original Sudoku puzzles, 200 at each of three difficulties, each with exactly one solution. Pencil notes, undo, an optional mistakes check, and saved games survive reopening. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/sudoku.png">
 <meta name="twitter:image:alt" content="An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-V/iuA8miq3ThH05SYraP97v0w58hJqXe8Q6aug/khCE='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-V/iuA8miq3ThH05SYraP97v0w58hJqXe8Q6aug/khCE='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -75,7 +75,7 @@
     }
   ]
 }</script>
-<link rel="stylesheet" href="../install.css">
+<link rel="stylesheet" href="../../site.css">
 </head>
 <body>
 <header class="masthead">
@@ -83,57 +83,54 @@
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
+      <a href="../../install/">Install</a>
       <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
-      <a href="../../#store">Store</a>
-      <a href="../../#install">Install</a>
-      <a href="../../#contributing">Contributing</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="sudoku" data-minimum-cobalt-version="0.3.34">
-  <div class="app-hero">
-    <div class="app-copy">
-      <p class="eyebrow">Games</p>
+<main data-app-id="sudoku" data-minimum-cobalt-version="0.3.34">
+  <div class="app-head wrap">
+    <div>
+      <p class="crumb"><a href="../../#apps">Apps</a> / <a href="../../#games">Games</a></p>
       <h1>Sudoku</h1>
-      <p class="summary">Play 600 original Sudoku puzzles, 200 at each of three difficulties, each with exactly one solution. Pencil notes, undo, an optional mistakes check, and saved games survive reopening.</p>
+      <p class="lede">Play 600 original Sudoku puzzles, 200 at each of three difficulties, each with exactly one solution. Pencil notes, undo, an optional mistakes check, and saved games survive reopening.</p>
+      <div class="actions">
+        <a class="btn primary" href="#setup-panel">Install on your Kobo</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/sudoku">Source code on GitHub</a>
+      </div>
       <dl class="facts">
         <div><dt>Version</dt><dd>1.0.23</dd></div>
-        <div><dt>Permissions</dt><dd>No additional permissions</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.34</dd></div>
+        <div><dt>Needs</dt><dd>Cobalt 0.3.34 or newer</dd></div>
+        <div><dt>May use</dt><dd>Nothing beyond its own storage</dd></div>
       </dl>
-      <a class="cta" href="#setup-panel">Install on your Kobo</a>
-      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/sudoku">Source code on GitHub</a></p>
     </div>
-    <figure class="app-shot">
-      <img src="../../media/site/apps/sudoku.png" width="1072" height="1448" alt="An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded">
+    <figure class="reader">
+      <div class="reader-body">
+        <div class="reader-screen">
+          <img src="../../media/site/apps/sudoku.png" width="1072" height="1448" alt="An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded">
+        </div>
+      </div>
     </figure>
   </div>
-  <section class="gallery" aria-label="Sudoku screenshots">
+  <section class="gallery wrap" aria-label="Sudoku screenshots">
     <div class="strip">
-      <figure><img src="../../media/site/apps/sudoku/completed.png" width="1072" height="1448" loading="lazy" alt="Sudoku: Completed"><figcaption>Completed</figcaption></figure>
-      <figure><img src="../../media/site/apps/sudoku/game.png" width="1072" height="1448" loading="lazy" alt="Sudoku: Game"><figcaption>Game</figcaption></figure>
-      <figure><img src="../../media/site/apps/sudoku/landscape.png" width="1072" height="1448" loading="lazy" alt="Sudoku: Landscape"><figcaption>Landscape</figcaption></figure>
-      <figure><img src="../../media/site/apps/sudoku/recovery.png" width="1072" height="1448" loading="lazy" alt="Sudoku: Recovery"><figcaption>Recovery</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/sudoku/completed.png" width="1072" height="1448" loading="lazy" alt="Sudoku: Completed"></span><figcaption>Completed</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/sudoku/game.png" width="1072" height="1448" loading="lazy" alt="Sudoku: Game"></span><figcaption>Game</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/sudoku/landscape.png" width="1072" height="1448" loading="lazy" alt="Sudoku: Landscape"></span><figcaption>Landscape</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/sudoku/recovery.png" width="1072" height="1448" loading="lazy" alt="Sudoku: Recovery"></span><figcaption>Recovery</figcaption></figure>
     </div>
   </section>
-  <section class="whats-new">
-    <h2>New in 1.0.23</h2>
-    <p>Use landscape now works on every Kobo, with Undo, Notes and Erase beside the digits. A saved game that cannot be read can be set aside to start over, and Erase no longer reopens a finished puzzle.</p>
+  <div class="wrap">
+  <section class="section" id="setup-panel">
+    <h2>New to Cobalt? Install it from your browser.</h2>
+    <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
+    <p class="quiet">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
+    <p><a class="btn" href="../../install/">Install Cobalt</a></p>
   </section>
-  <section class="panel get-cobalt" id="setup-panel">
-    <div class="get-cobalt-copy">
-      <p class="eyebrow">New to Cobalt?</p>
-      <h2>Install Cobalt from your browser</h2>
-      <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
-      <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
-    </div>
-    <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
-  </section>
-  <section class="panel" id="pair-panel">
-    <p class="eyebrow">Already have Cobalt?</p>
-    <h2>Link your Kobo to install</h2>
+  <section class="section" id="pair-panel">
+    <h2>Already have Cobalt? Link your Kobo.</h2>
     <p>On your Kobo, open <strong>App Store</strong> and tap <strong>Link a browser</strong> in the top bar, then <strong>Link a browser</strong> again. Scan the QR code, or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
@@ -148,7 +145,7 @@
     </form>
     <p class="status" id="pair-status" role="status" aria-live="polite"></p>
   </section>
-  <section class="panel" id="install-panel" hidden>
+  <section class="section" id="install-panel" hidden>
     <h2>Install on <span id="device-name">your Kobo</span></h2>
     <p>Your Kobo checks the app's signature before installing it.</p>
     <div class="actions">
@@ -157,17 +154,24 @@
     </div>
     <p class="status" id="install-status" role="status" aria-live="polite"></p>
   </section>
-  <aside class="community">
-    <strong>Want another Kobo app?</strong>
-    Request it, suggest a feature or report a bug in
-    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
-  </aside>
+  <section class="section whats-new">
+    <h2>New in 1.0.23</h2>
+    <p>Use landscape now works on every Kobo, with Undo, Notes and Erase beside the digits. A saved game that cannot be read can be set aside to start over, and Erase no longer reopens a finished puzzle.</p>
+  </section>
+  <section class="section">
+    <p class="after-index">Want another Kobo app? Request it, suggest a feature or report a bug in <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.</p>
+  </section>
+  </div>
 </main>
 <footer>
   <div class="wrap">
-    <span>Cobalt · AGPL-3.0</span>
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
+    </div>
     <nav aria-label="Footer navigation">
       <a href="../../">Home</a>
+      <a href="../../faq.html">FAQ</a>
       <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>

@@ -67,6 +67,17 @@ impl Reader {
     }
 }
 
+/// What a reader did with an article it was sent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Saved {
+    /// Saved under this name and announced.
+    New(String),
+    /// The reader already had this article, under this name, so nothing was
+    /// saved or announced. The same page clipped again, or reached under
+    /// another address, is the same article and not a second copy.
+    Already(String),
+}
+
 /// Why an article did not land.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Missed {
@@ -85,7 +96,7 @@ pub enum Missed {
 ///
 /// The copy is given at most `patience`, so a sync with a deadline ends by
 /// it rather than one copy past it.
-pub fn deliver(reader: &Reader, article: &Article, patience: Duration) -> Result<String, Missed> {
+pub fn deliver(reader: &Reader, article: &Article, patience: Duration) -> Result<Saved, Missed> {
     match reader {
         Reader::Simulator => deliver_to_folders(
             &kobo_sim::simulated_library_root(),
@@ -102,11 +113,29 @@ pub(crate) fn deliver_to_folders(
     card: &Path,
     inbox: &Path,
     article: &Article,
-) -> Result<String, String> {
+) -> Result<Saved, String> {
     let folder = card.join(ARTICLES);
     fs::create_dir_all(&folder)
         .and_then(|()| fs::create_dir_all(inbox))
         .map_err(|error| format!("could not make the articles folder: {error}"))?;
+    if let Some(mark) = identity_of(&article.epub) {
+        let held = fs::read_dir(&folder)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension == "epub")
+            })
+            .find(|path| fs::read(path).is_ok_and(|bytes| contains(&bytes, mark.as_bytes())));
+        if let Some(held) = held {
+            let name = held
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned());
+            return Ok(Saved::Already(name.unwrap_or_default()));
+        }
+    }
     let stem = stem_of(&article.file_name);
     let partial = folder.join(format!(".{}.writing", unique()));
     fs::write(&partial, &article.epub)
@@ -132,17 +161,53 @@ pub(crate) fn deliver_to_folders(
     fs::write(&waiting, record)
         .and_then(|()| fs::rename(&waiting, inbox.join(format!("clip-{}.json", unique()))))
         .map_err(|error| format!("saved the article but could not announce it: {error}"))?;
-    Ok(name)
+    Ok(Saved::New(name))
 }
 
-fn deliver_to_device(host: &str, article: &Article, patience: Duration) -> Result<String, Missed> {
+/// What a clipped book is known by, as its package writes it.
+///
+/// Every clip of one article carries the same identifier, made from the
+/// address it lives at, and the book is stored uncompressed, so the
+/// identifier can be looked for in the bytes of the books already on a
+/// reader without opening any of them. Returned with the brackets either
+/// side, so one identifier is never found inside a longer one. `None` for a
+/// book that has none to look for.
+fn identity_of(epub: &[u8]) -> Option<String> {
+    const OPENING: &[u8] = b"<dc:identifier id=\"bookid\">";
+    let start = epub
+        .windows(OPENING.len())
+        .position(|window| window == OPENING)?
+        + OPENING.len();
+    let rest = epub.get(start..)?;
+    let end = rest.iter().take(512).position(|byte| *byte == b'<')?;
+    let identifier = std::str::from_utf8(&rest[..end]).ok()?;
+    let plain = identifier.strip_prefix("urn:cobalt:").is_some_and(|slug| {
+        !slug.is_empty()
+            && slug
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    });
+    plain.then(|| format!(">{identifier}<"))
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
+}
+
+fn deliver_to_device(host: &str, article: &Article, patience: Duration) -> Result<Saved, Missed> {
     let output =
         super::run_remote_shell(&format!("root@{host}"), &device_script(article), patience)
             .map_err(Missed::Away)?;
     let said = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
         if let Some(name) = said.lines().find_map(|line| line.strip_prefix("saved=")) {
-            return Ok(name.to_owned());
+            return Ok(Saved::New(name.to_owned()));
+        }
+        if let Some(name) = said.lines().find_map(|line| line.strip_prefix("already=")) {
+            return Ok(Saved::Already(name.to_owned()));
         }
     }
     let error = super::remote_shell_error(
@@ -163,9 +228,12 @@ fn deliver_to_device(host: &str, article: &Article, patience: Duration) -> Resul
 /// Every value travels base64 encoded in a quoted here-document or argument,
 /// so no byte of a title is ever read by the reader's shell. The book is
 /// written under a hidden name and moved into place, so Books never lists
-/// half of one, and the notice follows only once the book is there.
+/// half of one, and the notice follows only once the book is there. A book
+/// already on the shelf, archived or not, is found by its identifier first
+/// and nothing is written.
 pub(crate) fn device_script(article: &Article) -> String {
     let stem = super::base64_encode(stem_of(&article.file_name).as_bytes());
+    let mark = super::base64_encode(identity_of(&article.epub).unwrap_or_default().as_bytes());
     let (before, after) = notice_halves(article);
     format!(
         "set -eu\n\
@@ -174,6 +242,12 @@ pub(crate) fn device_script(article: &Article) -> String {
          inbox='{DEVICE_INBOX}'\n\
          mkdir -p \"$dir\" \"$inbox\"\n\
          stem=$(printf '%s' '{stem}' | base64 -d)\n\
+         mark=$(printf '%s' '{mark}' | base64 -d)\n\
+         if [ -n \"$mark\" ]; then\n\
+         for held in \"$dir\"/*.epub; do\n\
+         if [ -f \"$held\" ] && grep -qF -- \"$mark\" \"$held\"; then printf 'already=%s\\n' \"${{held##*/}}\"; exit 0; fi\n\
+         done\n\
+         fi\n\
          partial=\"$dir/.clip-$$.writing\"\n\
          base64 -d > \"$partial\" <<'KOBO_ARTICLE'\n\
          {epub}\n\
@@ -375,6 +449,8 @@ fn forget(queue: &Path, waiting: &Waiting) {
 pub struct Report {
     /// The titles that landed, oldest first.
     pub delivered: Vec<String>,
+    /// The queue entries the reader already had, which were let go.
+    pub already: Vec<String>,
     /// How many are still waiting.
     pub waiting: usize,
     /// Why some were not delivered, in words for the owner.
@@ -421,14 +497,13 @@ pub fn sync(queue: &Path, reader: &Reader, patience: Duration) -> Report {
 pub(crate) fn sync_with(
     queue: &Path,
     patience: Duration,
-    mut send: impl FnMut(&Article, Duration) -> Result<String, Missed>,
+    mut send: impl FnMut(&Article, Duration) -> Result<Saved, Missed>,
 ) -> Report {
     let Some(_claim) = Claim::take(queue) else {
         return Report {
-            delivered: Vec::new(),
             waiting: waiting(queue).len(),
             problem: Some("Another delivery from this computer is under way.".to_owned()),
-            detail: None,
+            ..Report::default()
         };
     };
     let started = Instant::now();
@@ -447,10 +522,16 @@ pub(crate) fn sync_with(
             continue;
         };
         match send(&article, time_left) {
-            Ok(_) => {
+            Ok(Saved::New(_)) => {
                 forget(queue, entry);
                 left -= 1;
                 report.delivered.push(entry.title.clone());
+            }
+            // Not an arrival, so not counted as one.
+            Ok(Saved::Already(_)) => {
+                forget(queue, entry);
+                left -= 1;
+                report.already.push(entry.id.clone());
             }
             Err(Missed::Away(reason)) => {
                 report.problem = Some(AWAY.to_owned());
@@ -480,8 +561,12 @@ const SEND_PATIENCE: Duration = Duration::from_secs(60);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Landing {
     /// On the reader. `also` counts articles that had been waiting and went
-    /// with it.
-    Landed { reader: String, also: usize },
+    /// with it. `already` is an article the reader had before this clip.
+    Landed {
+        reader: String,
+        also: usize,
+        already: bool,
+    },
     /// Kept on this computer for the next sync, and why.
     Waiting { why: String },
 }
@@ -504,7 +589,7 @@ pub(crate) fn send_with(
     queue: &Path,
     article: &Article,
     reader: Result<Reader, String>,
-    mut send: impl FnMut(&Reader, &Article, Duration) -> Result<String, Missed>,
+    mut send: impl FnMut(&Reader, &Article, Duration) -> Result<Saved, Missed>,
 ) -> Result<Landing, String> {
     let kept = enqueue(queue, article)?;
     let reader = match reader {
@@ -519,9 +604,11 @@ pub(crate) fn send_with(
             why: report.problem.unwrap_or_else(|| AWAY.to_owned()),
         });
     }
+    let already = report.already.contains(&kept.id);
     Ok(Landing::Landed {
         reader: reader.label(),
-        also: report.delivered.len().saturating_sub(1),
+        also: report.delivered.len().saturating_sub(usize::from(!already)),
+        already,
     })
 }
 
@@ -587,8 +674,11 @@ mod tests {
     fn an_article_lands_in_the_articles_folder_and_is_announced_after() {
         let card = scratch("land-card");
         let inbox = card.join("inbox");
-        let name = deliver_to_folders(&card, &inbox, &article("How the river \"ran\""))
-            .expect("delivered");
+        let name = new(deliver_to_folders(
+            &card,
+            &inbox,
+            &article("How the river \"ran\""),
+        ));
         assert_eq!(name, "How the river ran.epub");
         assert_eq!(
             fs::read(card.join("Articles").join(&name)).expect("saved"),
@@ -625,12 +715,134 @@ mod tests {
         let _ = fs::remove_dir_all(&card);
     }
 
+    fn new(saved: Result<Saved, String>) -> String {
+        match saved {
+            Ok(Saved::New(name)) => name,
+            other => panic!("not saved: {other:?}"),
+        }
+    }
+
+    /// A book with the identifier a clip of `address` carries.
+    fn clipped(title: &str, address: &str) -> Article {
+        let slug: String = address
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        Article {
+            epub: format!(
+                "PK..<dc:identifier id=\"bookid\">urn:cobalt:{slug}</dc:identifier>..{title}"
+            )
+            .into_bytes(),
+            ..article(title)
+        }
+    }
+
+    #[test]
+    fn the_same_article_clipped_again_is_not_a_second_copy() {
+        let card = scratch("same-card");
+        let inbox = card.join("inbox");
+        let first = new(deliver_to_folders(
+            &card,
+            &inbox,
+            &clipped("Electronic paper", "en-wikipedia-org-wiki-electronic-paper"),
+        ));
+        let again = deliver_to_folders(
+            &card,
+            &inbox,
+            &clipped("Electronic paper", "en-wikipedia-org-wiki-electronic-paper"),
+        );
+        assert_eq!(again, Ok(Saved::Already(first.clone())));
+        // One identifier inside a longer one is a different article.
+        let longer = new(deliver_to_folders(
+            &card,
+            &inbox,
+            &clipped(
+                "Electronic paper",
+                "en-wikipedia-org-wiki-electronic-paper-display",
+            ),
+        ));
+        assert_eq!(longer, "Electronic paper (2).epub");
+        let announced = fs::read_dir(&inbox).expect("the inbox").count();
+        assert_eq!(
+            announced, 2,
+            "the copy the reader had was not announced again"
+        );
+        let _ = fs::remove_dir_all(&card);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_reader_script_saves_an_article_once_and_reports_the_copy_it_had() {
+        let card = scratch("script-card");
+        let run = |article: &Article| {
+            let script = device_script(article)
+                .replace(DEVICE_ARTICLES, &card.join("Articles").to_string_lossy())
+                .replace(DEVICE_INBOX, &card.join("inbox").to_string_lossy());
+            let output = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(script)
+                .output()
+                .expect("sh runs");
+            assert!(output.status.success(), "{output:?}");
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+        };
+        let page = "en-wikipedia-org-wiki-electronic-paper";
+        assert_eq!(
+            run(&clipped("Electronic paper", page)),
+            "saved=Electronic paper.epub"
+        );
+        assert_eq!(
+            run(&clipped("Electronic paper", page)),
+            "already=Electronic paper.epub"
+        );
+        assert_eq!(
+            run(&article("Electronic paper")),
+            "saved=Electronic paper (2).epub"
+        );
+        let announced = fs::read_dir(card.join("inbox")).expect("the inbox").count();
+        assert_eq!(announced, 2);
+        let _ = fs::remove_dir_all(&card);
+    }
+
+    #[test]
+    fn a_book_without_an_identifier_has_nothing_to_look_for() {
+        assert_eq!(identity_of(b"book of Tides"), None);
+        assert_eq!(
+            identity_of(b"<dc:identifier id=\"bookid\">urn:cobalt:a b</dc:identifier>"),
+            None
+        );
+        assert_eq!(
+            identity_of(b"<dc:identifier id=\"bookid\">urn:cobalt:tides-1</dc:identifier>")
+                .as_deref(),
+            Some(">urn:cobalt:tides-1<")
+        );
+    }
+
+    #[test]
+    fn a_sync_lets_go_of_what_the_reader_had_without_counting_it_as_arrived() {
+        let queue = scratch("already-queue");
+        enqueue(&queue, &article("One")).expect("queued");
+        enqueue(&queue, &article("Two")).expect("queued");
+        let report = sync_with(&queue, Duration::from_secs(60), |article, _| {
+            Ok(if article.title == "One" {
+                Saved::Already(article.file_name.clone())
+            } else {
+                Saved::New(article.file_name.clone())
+            })
+        });
+        assert_eq!(report.delivered, ["Two"]);
+        assert_eq!(report.already.len(), 1);
+        assert_eq!(report.waiting, 0);
+        assert!(waiting(&queue).is_empty());
+        let _ = fs::remove_dir_all(&queue);
+    }
+
     #[test]
     fn a_second_article_with_the_same_title_takes_the_next_number() {
         let card = scratch("again-card");
         let inbox = card.join("inbox");
-        let first = deliver_to_folders(&card, &inbox, &article("Tides")).expect("first");
-        let second = deliver_to_folders(&card, &inbox, &article("Tides")).expect("second");
+        let first = new(deliver_to_folders(&card, &inbox, &article("Tides")));
+        let second = new(deliver_to_folders(&card, &inbox, &article("Tides")));
         assert_eq!(
             (first.as_str(), second.as_str()),
             ("Tides.epub", "Tides (2).epub")
@@ -701,7 +913,7 @@ mod tests {
             if article.title == "Two" {
                 Err(Missed::Away("The reader is asleep.".to_owned()))
             } else {
-                Ok(article.file_name.clone())
+                Ok(Saved::New(article.file_name.clone()))
             }
         });
         assert_eq!(
@@ -728,7 +940,7 @@ mod tests {
             if article.title == "Huge" {
                 Err(Missed::Refused("The card is full.".to_owned()))
             } else {
-                Ok(article.file_name.clone())
+                Ok(Saved::New(article.file_name.clone()))
             }
         });
         assert_eq!(report.delivered, ["Small"]);
@@ -748,7 +960,7 @@ mod tests {
         assert!(report.problem.is_some());
         drop(held);
         let report = sync_with(&queue, Duration::from_secs(60), |article, _| {
-            Ok(article.file_name.clone())
+            Ok(Saved::New(article.file_name.clone()))
         });
         assert_eq!(report.delivered, ["Only"]);
         let _ = fs::remove_dir_all(&queue);
@@ -761,6 +973,7 @@ mod tests {
             waiting: 1,
             problem: Some("The reader is asleep.".to_owned()),
             detail: Some("ssh: connect to host 192.168.1.9 port 22: timed out".to_owned()),
+            ..Report::default()
         };
         let parsed = kobo_json::parse(&report.to_json()).expect("valid");
         assert_eq!(
@@ -808,7 +1021,7 @@ mod tests {
         let mut given = Vec::new();
         let report = sync_with(&queue, Duration::from_secs(30), |article, left| {
             given.push(left);
-            Ok(article.file_name.clone())
+            Ok(Saved::New(article.file_name.clone()))
         });
         assert_eq!(report.delivered, ["One", "Two"]);
         assert!(given.iter().all(|left| *left <= Duration::from_secs(30)));
@@ -833,7 +1046,7 @@ mod tests {
             Ok(Reader::Device("192.168.1.9".to_owned())),
             |_, article, _| {
                 sent.push(article.title.clone());
-                Ok(article.file_name.clone())
+                Ok(Saved::New(article.file_name.clone()))
             },
         )
         .expect("sent");
@@ -842,7 +1055,8 @@ mod tests {
             landing,
             Landing::Landed {
                 reader: "the reader at 192.168.1.9".to_owned(),
-                also: 1
+                also: 1,
+                already: false,
             }
         );
         assert!(waiting(&queue).is_empty());

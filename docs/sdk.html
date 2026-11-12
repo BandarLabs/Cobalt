@@ -13,204 +13,18 @@
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/sdk.html">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/og-card.jpg">
 <meta name="twitter:card" content="summary_large_image">
-<style>
-:root {
-  --paper: #f6f2ea;
-  --paper-deep: #eee8db;
-  --ink: #1b1813;
-  --ink-soft: #5a5347;
-  --rule: #d9d1c0;
-  --cobalt: #1a41a8;
-  --cobalt-deep: #143283;
-  --dither-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect x='0' y='0' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='4' y='4' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3C/svg%3E");
-  --serif: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
-  --mono: "SF Mono", "Menlo", "Consolas", monospace;
-}
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html { scroll-behavior: smooth; max-width: 100%; overflow-x: hidden; }
-body {
-  background: var(--paper) url("media/site/grain.png") repeat;
-  background-size: 128px 128px;
-  background-blend-mode: multiply;
-  color: var(--ink);
-  font-family: var(--serif);
-  font-size: 18px;
-  line-height: 1.58;
-  -webkit-font-smoothing: antialiased;
-  border-top: 5px solid var(--cobalt);
-  max-width: 100%; overflow-x: hidden;
-}
-::selection { background: var(--cobalt); color: var(--paper); }
-a { color: var(--cobalt); text-decoration: none; }
-a:hover { text-decoration: underline; text-underline-offset: 3px; }
-.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
-header.masthead { border-bottom: 1px solid var(--ink); padding: 18px 0; }
-.masthead .wrap {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 24px; flex-wrap: wrap;
-}
-.brand { display: flex; align-items: center; color: var(--ink); }
-.brand img { height: 34px; width: auto; }
-nav.top { display: flex; gap: 24px; font-size: 16px; flex-wrap: wrap; }
-nav.top a { color: var(--ink); }
-nav.top a.active, nav.top a:hover { color: var(--cobalt); }
-.icon-link { display: inline-flex; align-items: center; gap: 6px; }
-.icon-link svg { width: 15px; height: 15px; flex: none; fill: currentColor; }
-h1 { font-size: clamp(36px, 5vw, 52px); line-height: 1.06; }
-.cta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 30px; }
-.btn {
-  display: inline-block; padding: 11px 20px; font-size: 16px;
-  border: 1.5px solid var(--ink); color: var(--ink);
-}
-.btn:hover { background: var(--ink); color: var(--paper); text-decoration: none; }
-.btn.primary { background: var(--cobalt); border-color: var(--cobalt); color: #fff; }
-.btn.primary:hover { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
-.docs {
-  display: grid; grid-template-columns: 220px minmax(0, 1fr);
-  gap: 58px; padding-top: 62px; padding-bottom: 86px;
-}
-.docs > *, article, article section { min-width: 0; }
-.page-intro { padding-bottom: 52px; margin-bottom: 64px; border-bottom: 1px solid var(--rule); }
-.page-intro .lede { font-size: 21px; max-width: 38em; margin-top: 20px; }
-.page-intro .sub { color: var(--ink-soft); max-width: 45em; margin-top: 10px; }
-.contents { align-self: start; position: sticky; top: 24px; }
-.contents h2 {
-  font-family: var(--mono); font-size: 13px; letter-spacing: .12em;
-  text-transform: uppercase; margin-bottom: 13px; color: var(--ink-soft);
-}
-.contents a {
-  display: block; color: var(--ink); font-size: 15px;
-  padding: 6px 0; border-bottom: 1px solid var(--rule);
-}
-.contents a:hover { color: var(--cobalt); }
-article section { padding: 0 0 64px; margin-bottom: 64px; border-bottom: 1px solid var(--rule); }
-article section:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 0; }
-h2 { font-size: clamp(28px, 4vw, 39px); line-height: 1.12; margin-bottom: 18px; }
-h3 { font-size: 21px; line-height: 1.25; margin: 34px 0 12px; }
-p + p { margin-top: 14px; }
-.quiet { color: var(--ink-soft); }
-code {
-  font-family: var(--mono); font-size: .82em;
-  background: #ece5d7; border: 1px solid #d1c6b3; color: #211e18;
-  padding: 1px 5px; font-weight: 600;
-  -webkit-font-smoothing: auto; font-variant-ligatures: none;
-}
-pre {
-  font-family: var(--mono); font-size: 13.5px; line-height: 1.6;
-  background: #171510; color: #f1ecdf; padding: 22px 26px;
-  overflow-x: auto; tab-size: 4; border-left: 4px solid var(--cobalt);
-  margin: 22px 0;
-  -webkit-font-smoothing: auto; text-rendering: optimizeLegibility;
-  font-variant-ligatures: none;
-}
-pre code {
-  font: inherit; background: none; border: 0; padding: 0;
-  color: inherit; font-weight: inherit;
-}
-pre .kw { color: #8fd7ff; }
-pre .ty { color: #86d6c3; }
-pre .fn { color: #f0d48a; }
-pre .str { color: #dbc18c; }
-pre .num { color: #eea18f; }
-pre .com { color: #9a9384; }
-pre .macro { color: #d9a5dc; }
-pre .cmd { color: #8fd7ff; font-weight: 700; }
-.cards {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px; margin-top: 28px;
-}
-.card {
-  border: 1px solid var(--rule); padding: 20px;
-  background: rgba(255,255,255,.28);
-}
-.card h3 { font-size: 18px; margin: 0 0 9px; }
-.card p { color: var(--ink-soft); font-size: 15px; line-height: 1.55; }
-.card code { color: var(--ink); }
-.table-wrap { max-width: 100%; overflow-x: auto; margin-top: 24px; }
-table { border-collapse: collapse; width: 100%; min-width: 650px; font-size: 15px; }
-th, td { text-align: left; vertical-align: top; border-bottom: 1px solid var(--rule); padding: 11px 12px; }
-th { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
-td:first-child { color: var(--ink); font-weight: 700; }
-.service-table { table-layout: fixed; min-width: 760px; }
-.service-table th:nth-child(1) { width: 16%; }
-.service-table th:nth-child(2) { width: 36%; }
-.service-table th:nth-child(3) { width: 48%; }
-.service-table td { overflow-wrap: break-word; }
-.service-table code { white-space: normal; overflow-wrap: anywhere; }
-.note {
-  border-left: 4px solid var(--cobalt); background: var(--paper-deep);
-  padding: 17px 20px; margin: 24px 0; color: var(--ink-soft);
-}
-.note strong { color: var(--ink); }
-.links { display: flex; flex-wrap: wrap; gap: 12px 22px; margin-top: 22px; font-size: 16px; }
-footer {
-  background: var(--cobalt) var(--dither-light); background-size: 8px 8px;
-  padding: 46px 0 54px; font-size: 15px; color: #fff;
-}
-footer a { color: #fff; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(255,255,255,.45); }
-footer .wrap { display: flex; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
-footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
-@media (max-width: 820px) {
-  body { font-size: 17px; }
-  .docs { grid-template-columns: 1fr; gap: 34px; padding-top: 42px; }
-  .contents { position: static; display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
-  .contents h2 { grid-column: 1 / -1; }
-  .page-intro { padding-bottom: 44px; margin-bottom: 52px; }
-}
-@media (max-width: 560px) {
-  .wrap { padding-left: 18px; padding-right: 18px; }
-  .cards { grid-template-columns: 1fr; }
-  .contents { display: none; }
-  .docs { gap: 28px; padding-top: 30px; padding-bottom: 60px; }
-  .docs, article, article section, .page-intro {
-    width: 100%; max-width: 100%; min-width: 0;
-  }
-  .page-intro .lede, .page-intro .sub { max-width: 100%; overflow-wrap: break-word; }
-  .masthead .wrap { align-items: center; }
-  nav.top {
-    width: 100%; gap: 18px; font-size: 15px; flex-wrap: nowrap;
-    overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin;
-  }
-  nav.top a { white-space: nowrap; }
-  h1 { font-size: 36px; }
-  h2 { font-size: 29px; }
-  .page-intro { padding-bottom: 38px; margin-bottom: 44px; }
-  .page-intro .lede { font-size: 19px; }
-  .cta { display: grid; grid-template-columns: 1fr; gap: 10px; }
-  .btn { text-align: center; }
-  pre {
-    margin-left: -18px; margin-right: -18px; padding: 16px 18px;
-    border-left-width: 3px; white-space: pre-wrap; overflow-wrap: anywhere;
-  }
-  .table-wrap {
-    width: calc(100% + 36px); max-width: none;
-    margin-left: -18px; margin-right: -18px;
-    padding: 0 18px 8px; overscroll-behavior-x: contain;
-  }
-  .card { padding: 17px; }
-  article section { padding-bottom: 46px; margin-bottom: 46px; }
-  footer .wrap { display: block; }
-  footer nav { margin-top: 18px; }
-}
-</style>
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
 <header class="masthead">
   <div class="wrap">
-    <a class="brand" href="index.html"><img src="logo.svg" alt="Cobalt" width="81" height="34"></a>
-    <nav class="top">
-      <a href="index.html">Home</a>
-      <a href="developers.html">Developers</a>
-      <a class="active" href="sdk.html">SDK reference</a>
+    <a class="brand" href="./"><img src="logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top" aria-label="Main navigation">
+      <a href="index.html#apps">Apps</a>
+      <a href="install/">Install</a>
+      <a href="developers.html" aria-current="page">Developers</a>
       <a href="faq.html">FAQ</a>
-      <a href="APP_STORE.md">Publishing apps</a>
-      <a href="INSTALL.md">Install</a>
-      <a class="icon-link" href="https://github.com/BandarLabs/Cobalt">
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-1.08-2.7-1.08-.37-.93-.9-1.18-.9-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82A7.66 7.66 0 0 1 8 3.72a7.7 7.7 0 0 1 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.88 3.75-3.66 3.95.29.25.54.74.54 1.5v2.32c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
-        </svg>
-        GitHub
-      </a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>
   </div>
 </header>
@@ -235,7 +49,7 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
       <h1>Build apps for Cobalt.</h1>
       <p class="lede">Create a Rust application, run it in the simulator, and publish it for supported e-readers.</p>
       <p class="sub">Cobalt provides the interface, device services, application lifecycle, packaging, and Store delivery.</p>
-      <div class="cta">
+      <div class="actions">
         <a class="btn primary" href="#quick-start">Quick start</a>
         <a class="btn" href="CONTRIBUTING_APPS.md">Publish an app</a>
       </div>
@@ -389,23 +203,23 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
       <p>Use <code>kobo_state::draft::Draft</code> for acknowledged edits, <code>record::Schema</code> for bounded versioned records, and <code>outbox</code> for deferred work. Keep failed writes visible and offer a retry. Queued work is not delivered work.</p>
       <p><code>grid_with_selection(columns, square, cells)</code> accepts <code>(action, label, selected)</code> tuples. Selected keypad keys add an ink outline without expanding their labels. Fixed board marks use the largest fitting semantic size; short marks may step down the interface scale when needed to fit a legal square.</p>
       <p><code>BoardViewport</code> keeps absolute cell and clue actions while fitting a movable window to the allocated area. Nonograms uses attached clues and full-clue inspection; the selected square’s matching row and column gutters receive a shaded field and ink outline. The app measures controls first, then gives the remaining area to the board.</p>
-      <figure><img src="media/site/apps/nonograms.png" width="536" height="724" alt="Nonograms with the selected square and its matching clues outlined" loading="lazy"><figcaption>Nonograms in the Clara BW simulator at the extra-large text size.</figcaption></figure>
+      <figure><span class="panel-shot"><img src="media/site/apps/nonograms.png" width="536" height="724" alt="Nonograms with the selected square and its matching clues outlined" loading="lazy"></span><figcaption>Nonograms in the Clara BW simulator at the extra-large text size.</figcaption></figure>
       <p><code>crossword_board</code> adds joined squares, corner clue numbers and noninteractive black blocks. Crossword owns the active word and saved answers; the component owns grid geometry and lettering.</p>
-      <figure><img src="media/site/apps/crossword.png" width="536" height="724" alt="Crossword with numbered squares, solid black blocks and a shaded active word" loading="lazy"><figcaption>Crossword in the Clara BW simulator at the extra-large text size.</figcaption></figure>
+      <figure><span class="panel-shot"><img src="media/site/apps/crossword.png" width="536" height="724" alt="Crossword with numbered squares, solid black blocks and a shaded active word" loading="lazy"></span><figcaption>Crossword in the Clara BW simulator at the extra-large text size.</figcaption></figure>
       <p>An eight-by-eight square grid whose cells carry chess-piece glyphs is drawn as a joined checkerboard, and a selected dark square keeps a visible border. Keep the board at the screen root rather than inside a fixed-width band, so the layout can reserve room below it for player names, clocks and controls at larger text sizes. The app owns legal-move hints and accepts only acknowledged game state.</p>
       <p><code>pencil_board(PencilBoard)</code> draws dots, clue numbers, circular islands, connected single/double strokes and joined cross-sum cells. A board uses integer row/column positions and a physical cell size; fixed clues have no action. Edge targets occupy the space between endpoints, so tapping an island or clue does not accidentally change a line. The reader and simulator use the same layout and ink.</p>
       <p>Build marks with <code>PencilMarkKind::{Dot, Clue, Island, Block, Sum, Digit}</code> and stable <code>action_id</code> values for editable marks or edges. Sum clues use <code>across</code> at upper right and <code>down</code> at lower left; zero omits that direction. Edge states are blank (0), single (1), double (2), and excluded (3). Given digits and clues carry no action. Number fitting retains the board’s physical geometry, including at large text settings.</p>
       <p>The component is bounded to 9 × 9 positions, 81 marks and 144 orthogonal edges, with additional layout-node limits. Endpoints must be dots or islands at least two positions apart; duplicate coordinates, edges or actions, reserved action IDs and invalid values are rejected. Use endpoint selection instead of overlapping direct edge targets when a puzzle has crossing candidate routes. Applications own the rules, selection, progress and undo. Keep the board within the area left after controls; invalid or oversized layouts fail diagnostics.</p>
       <p>Pencil boards are node tag 34, added in protocol 14. A runtime older than that rejects the screen; existing board and grid tags are unchanged.</p>
-      <figure><img src="media/site/sdk/pencil-boards.png" width="536" height="724" alt="Logic Pack showing Hashi islands joined by continuous bridges" loading="lazy"><figcaption>Shared pencil-board geometry in the Clara BW simulator.</figcaption></figure>
+      <figure><span class="panel-shot"><img src="media/site/sdk/pencil-boards.png" width="536" height="724" alt="Logic Pack showing Hashi islands joined by continuous bridges" loading="lazy"></span><figcaption>Shared pencil-board geometry in the Clara BW simulator.</figcaption></figure>
       <p><code>paginate_oriented(text, nav_bar, orientation)</code> measures interface prose for the requested app orientation. Pair it with <code>set_orientation</code> and <code>metrics().oriented(orientation)</code>. Sudoku uses these contracts for pencil-note keys and landscape help.</p>
-      <figure><img src="media/site/apps/sudoku.png" width="536" height="724" alt="Sudoku with pencil-note keys selected and the row and column highlighted" loading="lazy"><figcaption>Sudoku in the Clara BW simulator at the extra-large text size.</figcaption></figure>
+      <figure><span class="panel-shot"><img src="media/site/apps/sudoku.png" width="536" height="724" alt="Sudoku with pencil-note keys selected and the row and column highlighted" loading="lazy"></span><figcaption>Sudoku in the Clara BW simulator at the extra-large text size.</figcaption></figure>
       <p><code>kobo_sdk::imports::Import</code> verifies a local copy before saving its receipt. <code>exports::Export</code> prepares text, Markdown, PNG or JPEG copies up to 32 MiB for the existing computer connection. Forward shelf and save callbacks; Ready means the reader stored its offer, not that the computer received it.</p>
       <pre><code>kobo export --app APP --device reader.local --out "$HOME/Downloads"</code></pre>
       <p>Replace <code>APP</code> with an app that has prepared an export. For a running simulator use <code>--sim</code> and the same <code>TMPDIR</code>. The receiver verifies the file and preserves existing copies. See the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/quality/sdk-export-and-copy.md">integration guide</a> for callbacks and recovery.</p>
       <p><code>kobo_comic</code> and <code>kobo_bookview::comic::ComicView</code> share bounded CBZ inspection, page decoding, zoom, pan, thumbnails, page jump, spreads and right-to-left reading. Save reading memory through an acknowledged draft. CBR/RAR support is deferred.</p>
       <p>For cover lists, use <code>clamped_cover_row</code> and <code>paginate_cover_rows_below_section</code> so measurement reserves the same picture column as rendering. <code>ComicView::cover_preview</code> supplies a bounded cover without moving the page. <code>Memory::saved_page</code> validates a small saved record for a shelf summary without decoding its archive; use unchanged page order, such as a content-addressed CBZ.</p>
-      <figure><img src="media/site/apps/panels.png" width="320" alt="Panels shelf showing a comic cover and saved progress, page 2 of 4" loading="lazy"><figcaption>The Panels shelf in the Clara BW simulator, with covers and saved progress.</figcaption></figure>
+      <figure><span class="panel-shot"><img src="media/site/apps/panels.png" width="320" alt="Panels shelf showing a comic cover and saved progress, page 2 of 4" loading="lazy"></span><figcaption>The Panels shelf in the Clara BW simulator, with covers and saved progress.</figcaption></figure>
       <p><code>Task::Update</code> accepts <code>UpdateMethod::Put</code> or <code>UpdateMethod::Patch</code>, with named credentials, bounded bodies and responses, and cancellation. POST permissions do not authorize these methods. The reviewed Miniflux token policy permits bounded entry PUTs within its saved server scope. Other providers require their own method, destination and body review.</p>
       <p>Updates are task tag 4, added in protocol 14. They are sent once, even through <code>spawn_retrying</code>. After a lost response, read back server state before retrying; cancellation cannot undo a request already accepted by the server.</p>
       <p>Owner-hosted accounts use <code>CredentialSetup::bind_server</code> or <code>secrets().set_server</code> to bind an authorized account to an HTTPS origin, port and base path. <code>ProviderSetup::with_server_accounts</code> supplies separate username and password steps. Changing servers requires account entry for that address. The reviewed server-bound Basic providers are Panels (<code>komga</code>) and calibre-web (<code>calibre</code>); both permit reads within the saved server scope, never writes. Miniflux (<code>miniflux</code>, <code>X-Auth-Token</code>) additionally permits reviewed entry updates and feed creation; unknown routes, toggle bookmarks and unbound writes are refused.</p>
@@ -578,13 +392,17 @@ footer nav { display: flex; gap: 20px; flex-wrap: wrap; }
 
 <footer>
   <div class="wrap">
-    <p>Cobalt SDK · AGPL-3.0 · <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a></p>
-    <nav>
-      <a href="index.html">Home</a>
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
+    </div>
+    <nav aria-label="Footer navigation">
+      <a href="./">Home</a>
+      <a href="developers.html">Developers</a>
+      <a href="sdk.html">SDK reference</a>
       <a href="faq.html">FAQ</a>
-      <a href="https://github.com/BandarLabs/Cobalt/blob/main/SDK.md">Detailed guide</a>
-      <a href="INSTALL.md">Install</a>
-      <a href="CONTRIBUTING_APPS.md">Contribute an app</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
+      <a href="https://github.com/BandarLabs/Cobalt/blob/main/SECURITY.md">Security</a>
     </nav>
   </div>
 </footer>

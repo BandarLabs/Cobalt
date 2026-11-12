@@ -624,7 +624,21 @@ fn clock() -> String {
 /// time the owner already sees on the home screen, and a second opinion here
 /// could only be a wrong one. Finding neither means UTC, which is also the
 /// right answer on a firmware that keeps the system clock at local time.
+///
+/// A zone the owner picked in Settings comes before all of that. A firmware
+/// that sets no `TZ`, ships no zone file and keeps its clock in UTC, as a
+/// Clara BW on 4.46 does, leaves nothing to agree with, and the owner saw
+/// midnight at half past five in the morning.
 fn reader_offset_minutes() -> i16 {
+    picked_offset_minutes().unwrap_or_else(firmware_offset_minutes)
+}
+
+/// The offset of the zone picked in Settings, now, if one was picked.
+fn picked_offset_minutes() -> Option<i16> {
+    kobod::time_zone::chosen(Path::new(COBALT_ROOT)).and_then(kobo_policy::zones::offset_now)
+}
+
+fn firmware_offset_minutes() -> i16 {
     offset_minutes(std::env::var("TZ").ok().as_deref(), |path| {
         fs::read(path).ok()
     })
@@ -4032,6 +4046,35 @@ fn host_applications(
                                             }
                                         }
                                     }
+                                    kobo_protocol::DeviceRequest::ReadTimeZone => {
+                                        kobo_policy::zones::answer(
+                                            kobod::time_zone::chosen(Path::new(COBALT_ROOT)),
+                                            firmware_offset_minutes(),
+                                        )
+                                    }
+                                    kobo_protocol::DeviceRequest::SetTimeZone { zone } => {
+                                        // Empty forgets the choice; anything
+                                        // else must be a city on the list.
+                                        let picked = kobo_policy::zones::find(zone);
+                                        if !zone.is_empty() && picked.is_none() {
+                                            kobo_protocol::DeviceResult::Failed(
+                                                kobo_protocol::DeviceError::InvalidInput,
+                                            )
+                                        } else {
+                                            match kobod::time_zone::choose(
+                                                Path::new(COBALT_ROOT),
+                                                picked,
+                                            ) {
+                                                Ok(()) => kobo_policy::zones::answer(
+                                                    picked,
+                                                    firmware_offset_minutes(),
+                                                ),
+                                                Err(error) => {
+                                                    kobo_protocol::DeviceResult::Failed(error)
+                                                }
+                                            }
+                                        }
+                                    }
                                     kobo_protocol::DeviceRequest::ReadUpdateChannel => {
                                         update_channel_result(crate::autoupdate::preferences(
                                             Path::new(COBALT_ROOT),
@@ -4120,6 +4163,7 @@ fn host_applications(
                                 kobo_protocol::DeviceRequest::SetWifi { .. }
                                     | kobo_protocol::DeviceRequest::JoinWifi { .. }
                                     | kobo_protocol::DeviceRequest::DisconnectWifi
+                                    | kobo_protocol::DeviceRequest::SetTimeZone { .. }
                             ) && status.refresh()
                             {
                                 repaint(
@@ -4647,7 +4691,9 @@ fn system_request_allowed(app: &str, request: &kobo_protocol::DeviceRequest) -> 
         | kobo_protocol::DeviceRequest::ReadAutoUpdate
         | kobo_protocol::DeviceRequest::SetAutoUpdate { .. }
         | kobo_protocol::DeviceRequest::ReadUpdateChannel
-        | kobo_protocol::DeviceRequest::SetUpdateChannel { .. } => app == "settings",
+        | kobo_protocol::DeviceRequest::SetUpdateChannel { .. }
+        | kobo_protocol::DeviceRequest::ReadTimeZone
+        | kobo_protocol::DeviceRequest::SetTimeZone { .. } => app == "settings",
         kobo_protocol::DeviceRequest::ListInstalledApps => matches!(app, "launcher" | "store"),
         kobo_protocol::DeviceRequest::MarkNoticesRead
         | kobo_protocol::DeviceRequest::ClearNotices

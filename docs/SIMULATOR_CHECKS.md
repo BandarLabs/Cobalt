@@ -71,6 +71,10 @@ for example `KOBO_UTC_OFFSET_MINUTES=600` to check that an evening check-in in
 Sydney lands on the right day. The value is fixed for the life of the app
 process, as it is on a reader.
 
+On a reader the offset comes from the time zone picked in Settings, then from
+the firmware's `TZ` or zone file, then UTC. A zone picked in the simulator's
+Settings is kept only for that run and does not move the simulator's clock.
+
 `KOBO_SIM_CLOCK_MILLIS` starts the simulator's clock at a chosen moment, and
 an application that reads the time through `SystemClock::reader()` starts
 from the same moment, so a run can be placed on any day. The status bar
