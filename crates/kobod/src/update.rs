@@ -11,6 +11,16 @@
 //! then unpacked next to the installation, not over it, and only a complete
 //! unpack is swapped in. Owner data is held outside all three versioned trees
 //! while a durable direction journal makes every rename restartable.
+//!
+//! The swap waits for the next start. The runtime that downloads a release is
+//! still running when the download finishes, and it starts every application
+//! from the files on disk each time one is opened. Swapping straight away left
+//! an old runtime starting new applications, and when the release changed the
+//! protocol it refused every one of them: on a real Clara, 0.3.31 updating
+//! itself to 0.3.32 mid-session left each app opened afterwards on its launch
+//! splash until Cobalt was closed. A staged release is complete and verified
+//! beside the installation, and it becomes the installation in the moment
+//! before anything is launched, when nothing is running from either tree.
 
 #[cfg(feature = "device-write")]
 use crate::blackbox::trace;
@@ -103,7 +113,7 @@ const EXPANDED_LIMIT: u32 = 128 * 1024 * 1024;
 /// One tar header or payload block.
 const BLOCK: usize = 512;
 
-/// Downloads a release archive, verifies it, and swaps it in.
+/// Downloads a release archive, verifies it, and stages it for the next start.
 ///
 /// # Errors
 ///
@@ -112,6 +122,16 @@ const BLOCK: usize = 512;
 /// [`DeviceError::Backend`] when the book partition refuses a write.
 #[cfg(feature = "device-write")]
 pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
+    // The background check compares what is published with the version this
+    // process was built as, and that stays the old one until Cobalt restarts,
+    // so the same release looks new at every check of a long session. Each
+    // one used to download it again, tens of megabytes on a reader's Wi-Fi,
+    // and swap it in a second time, which retired the release just installed
+    // as the "previous" copy and threw away the one an owner could go back to.
+    if already_staged(Path::new(ADDS), sha256) {
+        trace("platform update: that release is already staged for the next start");
+        return Ok(());
+    }
     // Traced before it is returned, because the reply an owner sees is one of
     // seven shared codes and several failures here map to the same one. An
     // update that could not be downloaded and an update whose archive would
@@ -163,11 +183,13 @@ pub fn apply(url: &str, sha256: &str) -> Result<(), DeviceError> {
     })
 }
 
-/// Verifies `archive` against `sha256` and installs it under `adds`.
+/// Verifies `archive` against `sha256` and stages it under `adds`.
 ///
-/// The staging copy is written to `adds/cobalt.next`, and only after every
-/// member has been written is it renamed into place. The copy it replaces is
-/// kept at `adds/cobalt.prev` so a bad release can be undone by hand.
+/// The staging copy is written to `adds/cobalt.next` and marked staged only
+/// after every member has been written and synced, so the mark is the proof
+/// that the tree beside it is whole. [`settle_before_launch`] renames it into
+/// place at the next start, and the copy it replaces is kept at
+/// `adds/cobalt.prev` so a bad release can be undone by hand.
 fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError> {
     if kobo_net::sha256::hex_digest(archive) != sha256 {
         let reason = format!(
@@ -203,9 +225,7 @@ fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError>
     ensure_launch_bootstrap(adds)?;
     recover_interrupted_update(adds)?;
     let staging = adds.join("cobalt.next");
-    if staging.exists() {
-        fs::remove_dir_all(&staging).map_err(|_| DeviceError::Backend)?;
-    }
+    discard_staging(&staging)?;
     let unpacked = unpack(&tar, &staging);
     if unpacked.is_err() {
         // A half-written staging folder is not left behind to be mistaken
@@ -222,7 +242,97 @@ fn install(archive: &[u8], sha256: &str, adds: &Path) -> Result<(), DeviceError>
         return Err(DeviceError::Backend);
     }
 
-    swap(adds, &staging)
+    atomic_file(
+        &staging,
+        STAGED_MARK,
+        STAGED_MARK_TEMPORARY,
+        format!("{sha256}\n").as_bytes(),
+        0o644,
+    )
+}
+
+/// Whether the release published as `sha256` is already staged and whole.
+fn already_staged(adds: &Path, sha256: &str) -> bool {
+    let staging = adds.join("cobalt.next");
+    fs::read_to_string(staging.join(STAGED_MARK)).is_ok_and(|mark| mark == format!("{sha256}\n"))
+        && complete_launch_chain(&staging)
+}
+
+/// Removes a staging tree, its mark first.
+///
+/// Removing a folder is many writes, and a reader can lose power between any
+/// two. If the mark outlived the files around it, the next start would take a
+/// half-deleted tree for a staged release. With the mark gone first, whatever
+/// is left is only debris that the next download clears.
+fn discard_staging(staging: &Path) -> Result<(), DeviceError> {
+    if !staging.exists() {
+        return Ok(());
+    }
+    match fs::remove_file(staging.join(STAGED_MARK)) {
+        Ok(()) => sync_directory(staging)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err(DeviceError::Backend),
+    }
+    fs::remove_dir_all(staging).map_err(|_| DeviceError::Backend)
+}
+
+/// Finishes whatever the last session left for this start to do, before
+/// anything is launched, and says whether the installation changed under it.
+///
+/// An interrupted transaction is completed first, as it always has been. Then
+/// a staged release, if there is one, becomes the installation. `true` means
+/// the files this process was started from may no longer be the installation,
+/// and the caller has to start again from the one now in place rather than go
+/// on as the old runtime with new applications around it.
+///
+/// A staged release that cannot be put in place is discarded rather than
+/// retried, so a release that fails here costs one start and not every one
+/// after it. The reason is kept where [`record_failure`] keeps the others.
+///
+/// # Errors
+///
+/// [`DeviceError::Backend`] when an interrupted transaction cannot be read or
+/// completed, which leaves the installation for the launch bootstrap to judge.
+pub fn settle_before_launch(adds: &Path) -> Result<bool, DeviceError> {
+    let interrupted = read_direction(adds)?.is_some();
+    recover_interrupted_update(adds)?;
+    let opened = open_staged_release(adds);
+    // A promotion carries the mark into the installation with the tree it
+    // marked, whether it ran just now or was finished by recovery, and there
+    // it vouches for nothing.
+    let _ignored = fs::remove_file(adds.join("cobalt").join(STAGED_MARK));
+    Ok(opened || interrupted)
+}
+
+fn open_staged_release(adds: &Path) -> bool {
+    let staging = adds.join("cobalt.next");
+    if !staging.join(STAGED_MARK).is_file() {
+        return false;
+    }
+    if !complete_launch_chain(&staging) || has_owner_folders(&staging) {
+        let reason = "the staged release was not whole when Cobalt started, so it was discarded";
+        trace(&format!("platform update: {reason}"));
+        record_failure(adds, reason);
+        let _ignored = discard_staging(&staging);
+        return false;
+    }
+    match swap(adds, &staging) {
+        Ok(()) => trace("platform update: the staged release is now the installation"),
+        Err(error) => {
+            let reason = format!("the staged release could not be put in place: {error}");
+            trace(&format!("platform update: {reason}"));
+            record_failure(adds, &reason);
+            // A transaction still open means the rollback did not finish
+            // either, and the trees are the next start's to recover. Pulling
+            // one of them out from under the journal would leave it guessing.
+            if matches!(read_direction(adds), Ok(None)) {
+                let _ignored = discard_staging(&staging);
+            }
+        }
+    }
+    // Either way the trees have moved, even if only there and back, so the
+    // process starts again from whatever is in place now.
+    true
 }
 
 fn complete_launch_chain(release: &Path) -> bool {
@@ -395,6 +505,11 @@ enum Direction {
 const OWNER_HOLDER: &str = "cobalt.owner";
 const JOURNAL: &str = ".cobalt-update-transaction";
 const JOURNAL_TEMPORARY: &str = ".cobalt-update-transaction.new";
+/// Inside the staging tree rather than beside it, so that anything which
+/// deletes or rewrites `cobalt.next`, the computer's `kobo setup` included,
+/// takes the mark with it and cannot leave it vouching for different files.
+const STAGED_MARK: &str = ".staged-release";
+const STAGED_MARK_TEMPORARY: &str = ".staged-release.new";
 const LAUNCH_BOOTSTRAP: &str = "cobalt-launch.sh";
 const LAUNCH_BOOTSTRAP_TEMPORARY: &str = "cobalt-launch.sh.new";
 const LAUNCH_BOOTSTRAP_CONTENT: &str = include_str!("../../../assets/cobalt-launch.sh");
@@ -960,8 +1075,9 @@ fn read_octal(field: &[u8]) -> Result<u64, DeviceError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_launch_bootstrap, install, recover_interrupted_update, swap_with_fault,
-        TransactionFailure, TransactionStep, JOURNAL, OWNER_FOLDERS, PREFIX,
+        already_staged, ensure_launch_bootstrap, install, recover_interrupted_update,
+        settle_before_launch, swap_with_fault, TransactionFailure, TransactionStep, JOURNAL,
+        OWNER_FOLDERS, PREFIX, STAGED_MARK,
     };
     use kobo_protocol::DeviceError;
     use std::fs;
@@ -1111,6 +1227,17 @@ mod tests {
         assert!(adds.join("cobalt/state").is_dir());
     }
 
+    /// What an owner sees across one update: the release is staged during a
+    /// session and becomes the installation when Cobalt next starts.
+    fn install_and_start(
+        archive: &[u8],
+        digest: &str,
+        adds: &std::path::Path,
+    ) -> Result<(), DeviceError> {
+        install(archive, digest, adds)?;
+        settle_before_launch(adds).map(|_| ())
+    }
+
     fn scratch(name: &str) -> std::path::PathBuf {
         let folder = std::env::current_dir()
             .expect("working directory")
@@ -1127,11 +1254,190 @@ mod tests {
         let mut members = launch_files(b"#!/bin/sh\n");
         members.push(folder(""));
         let (archive, digest) = published(&members);
-        install(&archive, &digest, &adds).expect("install succeeds");
+        install_and_start(&archive, &digest, &adds).expect("install succeeds");
         let read = |path: &str| fs::read(adds.join("cobalt").join(path)).expect("installed file");
         assert_eq!(read("bin/kobod"), b"daemon");
         assert_eq!(read("start.sh"), b"#!/bin/sh\n");
         assert!(!adds.join("cobalt.next").exists());
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    /// The bug this staging exists for: a runtime that kept running after its
+    /// own files were replaced started the new release's applications, and
+    /// refused every one of them when the protocol had moved on. Until the
+    /// next start, the installation has to stay the one that is running.
+    #[test]
+    fn an_update_waits_beside_the_installation_until_the_next_start() {
+        let adds = scratch("staged");
+        complete_release(&adds.join("cobalt"), "old").expect("running release");
+        let (archive, digest) = published(&launch_files(b"new"));
+
+        install(&archive, &digest, &adds).expect("staging succeeds");
+
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt/release")).expect("running release"),
+            "old",
+            "the update replaced the files the running runtime starts apps from"
+        );
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt.next").join(STAGED_MARK)).expect("mark"),
+            format!("{digest}\n")
+        );
+        assert!(!adds.join("cobalt.prev").exists());
+
+        assert_eq!(settle_before_launch(&adds), Ok(true));
+
+        assert_eq!(
+            fs::read(adds.join("cobalt/start.sh")).expect("new release"),
+            b"new"
+        );
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt.prev/release")).expect("kept release"),
+            "old"
+        );
+        assert!(!adds.join("cobalt.next").exists());
+        assert!(
+            !adds.join("cobalt").join(STAGED_MARK).exists(),
+            "the mark came along into the installation"
+        );
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    /// A start with nothing staged must say so, or every launch would start
+    /// itself a second time for nothing.
+    #[test]
+    fn a_start_with_nothing_staged_moves_nothing() {
+        let adds = scratch("nothing-staged");
+        complete_release(&adds.join("cobalt"), "old").expect("running release");
+
+        assert_eq!(settle_before_launch(&adds), Ok(false));
+
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt/release")).expect("running release"),
+            "old"
+        );
+        assert!(!adds.join("cobalt.prev").exists());
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    /// The background check keeps finding the same release newer than the
+    /// running build until Cobalt restarts. Staging it again would download
+    /// it again each time; once it was swapped in, it would also have retired
+    /// the new release as the previous copy and lost the old one.
+    #[test]
+    fn a_release_already_staged_is_recognised_and_a_different_one_is_not() {
+        let adds = scratch("already-staged");
+        complete_release(&adds.join("cobalt"), "old").expect("running release");
+        let (archive, digest) = published(&launch_files(b"new"));
+        assert!(!already_staged(&adds, &digest));
+
+        install(&archive, &digest, &adds).expect("staging succeeds");
+
+        assert!(already_staged(&adds, &digest));
+        let other = kobo_net::sha256::hex_digest(b"another release");
+        assert!(!already_staged(&adds, &other));
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    /// Two releases can arrive before Cobalt restarts. The later one is what
+    /// starts, and the copy kept for going back is still the one that was
+    /// running, not the release nobody ever ran.
+    #[test]
+    fn a_later_release_replaces_a_staged_one_and_the_running_one_is_kept() {
+        let adds = scratch("restaged");
+        complete_release(&adds.join("cobalt"), "old").expect("running release");
+        let (first, first_digest) = published(&launch_files(b"first"));
+        let (second, second_digest) = published(&launch_files(b"second"));
+
+        install(&first, &first_digest, &adds).expect("first staging");
+        install(&second, &second_digest, &adds).expect("second staging");
+        assert!(!already_staged(&adds, &first_digest));
+
+        assert_eq!(settle_before_launch(&adds), Ok(true));
+
+        assert_eq!(
+            fs::read(adds.join("cobalt/start.sh")).expect("new release"),
+            b"second"
+        );
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt.prev/release")).expect("kept release"),
+            "old"
+        );
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    /// The book partition is a USB drive to anyone with a cable, and a mark
+    /// only proves the tree was whole when it was written. A staged release
+    /// that has lost part of its launch chain since is thrown away and the
+    /// running one starts, rather than a start that cannot finish.
+    #[test]
+    fn a_staged_release_that_lost_files_is_discarded_and_the_installation_starts() {
+        let adds = scratch("staged-damaged");
+        complete_release(&adds.join("cobalt"), "old").expect("running release");
+        let (archive, digest) = published(&launch_files(b"new"));
+        install(&archive, &digest, &adds).expect("staging succeeds");
+        fs::remove_file(adds.join("cobalt.next/bin/kobod")).expect("damage the staging");
+
+        assert_eq!(settle_before_launch(&adds), Ok(false));
+
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt/release")).expect("running release"),
+            "old"
+        );
+        assert!(!adds.join("cobalt.next").exists());
+        assert!(!adds.join("cobalt.prev").exists());
+        assert!(
+            fs::read_to_string(adds.join("cobalt/state/last-update-error"))
+                .expect("an account of the discarded release")
+                .contains("discarded"),
+        );
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    /// Staging that lost power before its mark was written is debris, not a
+    /// release. It is left for the next download to clear, never started.
+    #[test]
+    fn staging_without_a_mark_is_never_started() {
+        let adds = scratch("unmarked");
+        complete_release(&adds.join("cobalt"), "old").expect("running release");
+        complete_release(&adds.join("cobalt.next"), "half").expect("unmarked staging");
+
+        assert_eq!(settle_before_launch(&adds), Ok(false));
+
+        assert_eq!(
+            fs::read_to_string(adds.join("cobalt/release")).expect("running release"),
+            "old"
+        );
+        let _ignored = fs::remove_dir_all(&adds);
+    }
+
+    /// A promotion that lost power halfway is finished by the next start, the
+    /// same as before staging. That start was made from the old files, so it
+    /// has to say the installation changed under it.
+    #[test]
+    fn a_start_that_finishes_an_interrupted_promotion_says_the_installation_changed() {
+        let adds = scratch("interrupted-promotion");
+        complete_release(&adds.join("cobalt"), "old").expect("running release");
+        let (archive, digest) = published(&launch_files(b"new"));
+        install(&archive, &digest, &adds).expect("staging succeeds");
+        let interrupted = swap_with_fault(&adds, &adds.join("cobalt.next"), &mut |step| {
+            if step == TransactionStep::PromoteStaging {
+                Err(TransactionFailure::Interrupted)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!(interrupted, Err(DeviceError::Backend));
+        assert!(adds.join(JOURNAL).exists());
+
+        assert_eq!(settle_before_launch(&adds), Ok(true));
+
+        assert_eq!(
+            fs::read(adds.join("cobalt/start.sh")).expect("new release"),
+            b"new"
+        );
+        assert!(!adds.join(JOURNAL).exists());
+        assert!(!adds.join("cobalt").join(STAGED_MARK).exists());
         let _ignored = fs::remove_dir_all(&adds);
     }
 
@@ -1247,7 +1553,8 @@ mod tests {
         let members = launch_files(b"new");
         let (archive, digest) = published_in_the_old_layout(&members);
 
-        install(&archive, &digest, &adds).expect("an archive without the launcher installs");
+        install_and_start(&archive, &digest, &adds)
+            .expect("an archive without the launcher installs");
 
         assert_eq!(
             fs::read(adds.join("cobalt/start.sh")).expect("new file"),
@@ -1327,7 +1634,7 @@ mod tests {
         fs::write(adds.join("cobalt/start.sh"), b"old").expect("current file");
         let members = launch_files(b"new");
         let (archive, digest) = published(&members);
-        install(&archive, &digest, &adds).expect("install succeeds");
+        install_and_start(&archive, &digest, &adds).expect("install succeeds");
         assert_eq!(
             fs::read(adds.join("cobalt/start.sh")).expect("new file"),
             b"new"
@@ -1349,7 +1656,7 @@ mod tests {
         fs::write(adds.join("cobalt/start.sh"), b"old").expect("current file");
         let members = launch_files(b"new");
         let (archive, digest) = published(&members);
-        install(&archive, &digest, &adds).expect("install succeeds");
+        install_and_start(&archive, &digest, &adds).expect("install succeeds");
         // The release replaced its own files and carried the owner's.
         assert_eq!(
             fs::read(adds.join("cobalt/start.sh")).expect("new file"),
@@ -1886,7 +2193,7 @@ mod tests {
         ];
         members.extend(launch_files(b"#!/bin/sh\n"));
         let (archive, digest) = published(&members);
-        install(&archive, &digest, &adds).expect("install succeeds");
+        install_and_start(&archive, &digest, &adds).expect("install succeeds");
         assert_eq!(
             fs::read(adds.join("cobalt/start.sh")).expect("installed file"),
             b"#!/bin/sh\n"

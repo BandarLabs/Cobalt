@@ -809,7 +809,7 @@ impl Settings {
             UpdateFlow::Ahead { .. } => "Newer than this channel".to_owned(),
             UpdateFlow::Ready { version, .. } => format!("{version} available"),
             UpdateFlow::Installing { .. } => "Installing".to_owned(),
-            UpdateFlow::Installed { version } => format!("Updated to {version}"),
+            UpdateFlow::Installed { version } => format!("{version} ready"),
             UpdateFlow::Offline => "Not on Wi-Fi".to_owned(),
             UpdateFlow::Failed(_) => "Update failed".to_owned(),
         }
@@ -868,16 +868,18 @@ impl Settings {
             }
             UpdateFlow::Installing { version } => {
                 screen = screen.section_with_value("Installing", version).text(
-                    "Keep the reader awake. This screen will change when installation is complete.",
+                    "Keep the reader awake. This screen will change when the update is ready.",
                 );
             }
+            // The release is staged, not running: it takes over at the next
+            // start, so what is installed is still this build until then.
             UpdateFlow::Installed { version } => {
                 screen = screen
-                    .facts([("Installed", version)])
+                    .facts([("Installed", VERSION), ("Ready", version.as_str())])
                     .splash(
                         Some(Glyph::Check),
-                        "Update complete",
-                        "Close Cobalt, then reopen it from the menu.",
+                        "Update ready",
+                        "Close Cobalt, then reopen it from the menu to finish.",
                     )
                     .primary_button(CLOSE, "Close Cobalt");
             }
@@ -3977,7 +3979,7 @@ mod tests {
     }
 
     #[test]
-    fn a_completed_update_has_a_checkmark_and_a_primary_way_to_close() {
+    fn a_staged_update_has_a_checkmark_and_a_primary_way_to_close() {
         let screen = Settings {
             view: super::View::Update,
             update: super::UpdateFlow::Installed {
@@ -3987,6 +3989,14 @@ mod tests {
         }
         .update();
 
+        // The new release waits for the next start, so the page must not
+        // already call it installed: until then this build is what runs.
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            Node::Facts { entries, .. }
+                if entries.contains(&("Installed".to_owned(), super::VERSION.to_owned()))
+                    && entries.contains(&("Ready".to_owned(), "9.9.9".to_owned()))
+        )));
         assert!(screen.nodes.iter().any(|node| matches!(
             node,
             Node::Splash {
@@ -3994,8 +4004,8 @@ mod tests {
                 title,
                 summary,
                 ..
-            } if title == "Update complete"
-                && summary == "Close Cobalt, then reopen it from the menu."
+            } if title == "Update ready"
+                && summary == "Close Cobalt, then reopen it from the menu to finish."
         )));
         assert!(screen.nodes.iter().any(|node| matches!(
             node,
