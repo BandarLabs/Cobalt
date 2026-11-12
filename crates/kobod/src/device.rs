@@ -3934,9 +3934,14 @@ fn host_applications(
                                     // The heartbeat is not quiet, though: a
                                     // release takes longer to fetch and
                                     // unpack than the watchdog waits.
+                                    //
+                                    // Settings checked the signed manifest
+                                    // before asking, and the runtime checks it
+                                    // again: what replaces the installation is
+                                    // not decided by an application's word.
                                     kobo_protocol::DeviceRequest::Update { url, sha256 } => {
                                         match while_beating(watchdog, || {
-                                            crate::update::apply(url, sha256)
+                                            crate::update::apply_requested(url, sha256)
                                         }) {
                                             Ok(()) => kobo_protocol::DeviceResult::Done,
                                             Err(error) => {

@@ -1552,6 +1552,19 @@ mod tests {
         root
     }
 
+    #[test]
+    fn linked_browsers_are_kept_under_a_name_no_application_can_take() {
+        // An application's state folder is named after its identifier, in the
+        // same folder as this one. The keys that let a browser install onto
+        // the reader must not be some published package's saved state.
+        let folder = state_root(Path::new(""));
+        let name = folder
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("a name");
+        assert!(kobo_app_store::is_public_reserved_app_id(name), "{name}");
+    }
+
     #[derive(Default)]
     struct FakeRelay {
         responses: VecDeque<Result<Vec<u8>, DeviceError>>,

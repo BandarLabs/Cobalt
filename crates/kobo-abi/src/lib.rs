@@ -2568,9 +2568,14 @@ pub mod pty {
     }
 
     fn open_master() -> io::Result<File> {
+        // The master must not survive exec. The runtime holds it for as long
+        // as a root shell runs and starts applications meanwhile, and Command
+        // closes nothing for them: every descriptor without the flag reaches
+        // the jail, and this one types at root. Asking for it in the open
+        // itself leaves no moment in which another thread could fork.
         // SAFETY: a plain libc call taking only flags. The descriptor it
         // returns is handed straight to `File`, which owns it from here on.
-        let fd: RawFd = unsafe { posix_openpt(O_RDWR | O_NOCTTY) };
+        let fd: RawFd = unsafe { posix_openpt(O_RDWR | O_NOCTTY | libc::O_CLOEXEC) };
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
@@ -2619,6 +2624,26 @@ pub mod pty {
             return Err(io::Error::last_os_error());
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::Pty;
+        use std::os::fd::AsRawFd;
+
+        #[test]
+        fn the_master_of_an_open_terminal_is_not_inherited_by_later_programs() {
+            // The runtime holds a root shell's master and goes on starting
+            // applications while it is open. A descriptor that survives exec
+            // reaches every one of them inside its jail, and writing to it is
+            // typing at that shell.
+            let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+            // SAFETY: F_GETFD reads the flags of a descriptor this test owns.
+            let flags = unsafe { libc::fcntl(pty.master.as_raw_fd(), libc::F_GETFD) };
+            assert!(flags >= 0, "read the master's descriptor flags");
+            assert_ne!(flags & libc::FD_CLOEXEC, 0, "the master survives exec");
+            pty.close().expect("closing");
+        }
     }
 }
 
