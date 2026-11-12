@@ -116,8 +116,22 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         arguments.first().map(String::as_str),
         Some("--present" | "--restart-from")
     ) {
-        update::recover_at_startup(Path::new("/mnt/onboard/.adds"))
-            .map_err(|error| format!("recover interrupted update before launch: {error}"))?;
+        let adds = Path::new("/mnt/onboard/.adds");
+        // Only a session start takes a staged release. The watchdog's restart
+        // is on its way back to the stock reader and launches nothing, and a
+        // process already started again for this has nothing left to take,
+        // which is also what keeps a release that will not settle from
+        // restarting Cobalt forever.
+        if arguments[0] == "--present" && env::var_os(SETTLED_VARIABLE).is_none() {
+            let replaced = update::settle_before_launch(adds)
+                .map_err(|error| format!("finish the update before launch: {error}"))?;
+            if replaced {
+                return Err(start_from_the_installation_in_place(adds).into());
+            }
+        } else {
+            update::recover_at_startup(adds)
+                .map_err(|error| format!("recover interrupted update before launch: {error}"))?;
+        }
     }
     if arguments.len() == 4 && arguments[0] == "--sim-socket" && arguments[2] == "--frame" {
         return serve_simulation(Path::new(&arguments[1]), Path::new(&arguments[3]));
@@ -497,6 +511,30 @@ fn fetch_once(url: &str, max_bytes: &str) -> Result<(), Box<dyn Error>> {
         }
         Err(error) => Err(format!("{url} -> {error}").into()),
     }
+}
+
+/// Set on the process started again after an update settles, so that one does
+/// not try to settle it a second time.
+#[cfg(feature = "device-write")]
+const SETTLED_VARIABLE: &str = "KOBOD_UPDATE_SETTLED";
+
+/// Replaces this process with the installation now in place.
+///
+/// This process is the old release: its code is in memory and its files are
+/// now the previous copy. Carrying on would be the old runtime launching the
+/// new release's applications, which is the mismatch staging exists to
+/// prevent, so it starts again through the new release's own `start.sh`,
+/// which may prepare the reader differently from the old one. Only returns if
+/// that start could not happen, with the reason.
+#[cfg(feature = "device-write")]
+fn start_from_the_installation_in_place(adds: &Path) -> String {
+    use std::os::unix::process::CommandExt;
+    let start = adds.join("cobalt/start.sh");
+    let error = std::process::Command::new("/bin/sh")
+        .arg(&start)
+        .env(SETTLED_VARIABLE, "1")
+        .exec();
+    format!("start {} after the update: {error}", start.display())
 }
 
 /// Stops the stock reader, gives the panel to one application, and puts

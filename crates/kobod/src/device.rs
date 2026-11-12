@@ -3929,8 +3929,10 @@ fn host_applications(
                                     // Bluetooth scan does. The application
                                     // paints its progress screen before
                                     // asking, and nothing else is served
-                                    // while the installation is replaced,
-                                    // which is exactly the quiet wanted.
+                                    // while the release is fetched and
+                                    // staged, which is exactly the quiet
+                                    // wanted. It becomes the installation
+                                    // at the next start, not here.
                                     // The heartbeat is not quiet, though: a
                                     // release takes longer to fetch and
                                     // unpack than the watchdog waits.
