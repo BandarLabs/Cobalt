@@ -1,0 +1,69 @@
+# Solving a puzzle with one check and one reveal, then what stays after a restart.
+expect Crossword
+tap-id puzzle-3
+tap-id cell-1
+type put
+tap Enter
+tap-id cell-5
+type minor
+tap Enter
+tap-id cell-10
+type alike
+tap Enter
+tap-id cell-15
+type noted
+tap Enter
+tap-id game-more
+tap Check word
+expect This word is correct.
+tap Back to puzzle
+# A revealed square counts, and the last two letters finish the grid.
+tap-id cell-21
+tap-id 4294967295
+tap-id game-more
+tap Reveal square
+tap Reveal
+tap-id cell-22
+type e
+tap Enter
+expect Letter or whole word
+type n
+tap Enter
+expect Puzzle complete · 1 check · 1 reveal
+expect Undo
+expect Rules
+clean
+shot crossword-completed
+# The shelf marks it Completed.
+tap-id game-more
+tap Puzzles
+expect Completed
+expect-missing 21/21 squares
+clean
+shot crossword-completed-shelf
+# New game skips to the next puzzle nobody has started.
+tap-id puzzle-3
+tap-id game-more
+tap New game
+expect Small beginnings
+# A solved puzzle stays solved after the app is closed and opened again.
+tap-id game-more
+tap Puzzles
+restart
+wait-for Small beginnings
+tap-id game-more
+tap Puzzles
+expect Completed
+tap-id puzzle-3
+expect Puzzle complete · 1 check · 1 reveal
+# Restart clears its letters, and it stays marked Completed.
+tap-id game-more
+tap Restart puzzle
+tap Restart
+expect 8 Across: Fingers on two hands
+expect-missing Puzzle complete
+tap-id game-more
+tap Puzzles
+expect Completed
+clean
+shot crossword-restarted-still-completed

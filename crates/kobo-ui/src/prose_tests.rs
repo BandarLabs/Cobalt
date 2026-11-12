@@ -784,42 +784,50 @@ fn an_ordinary_control_still_reads_as_available_next_to_a_disabled_one() {
 }
 
 #[test]
-fn an_attention_banner_marks_its_edge_rather_than_blacking_out_the_panel() {
+fn an_attention_banner_is_never_blacked_out_and_only_an_older_application_marks_its_edge() {
     // It used to be reversed out of solid black across the full width,
     // which shouted louder than whatever it was warning about and left the
     // panel a slab to clear before anything near it could be redrawn.
-    let screen = Screen::new(
-        1,
-        vec![Node::Banner {
-            id: NodeId(1),
-            level: BannerLevel::Attention,
-            text: "The network went away.".to_owned(),
-            action: None,
-        }],
-    );
-    let rect = screen
-        .layout()
-        .nodes
-        .into_iter()
-        .find(|node| matches!(node.kind, LayoutKind::Banner(_)))
-        .expect("the banner was laid out")
-        .rect;
-    let (surface, stride) = paint(&screen);
-    let ink = tone_count(&surface, rect, tone::INK, stride);
-    let area = usize::try_from(rect.width * rect.height).expect("a real banner");
-    assert!(
-        ink * 4 < area,
-        "the banner is still mostly black: {ink} of {area}"
-    );
-    // The leading edge is the mark that distinguishes it, so it must be
-    // solid ink for the full height of the banner.
-    let bar = CLARA_BW_METRICS.rule_thickness() * 3;
-    let edge = Rect { width: bar, ..rect };
-    assert_eq!(
-        tone_count(&surface, edge, tone::INK, stride),
-        usize::try_from(bar * rect.height).expect("a real edge"),
-        "the leading edge was not drawn solid"
-    );
+    for typography in [Typography::Quiet, Typography::Fine] {
+        let screen = Screen::new(
+            1,
+            vec![Node::Banner {
+                id: NodeId(1),
+                level: BannerLevel::Attention,
+                text: "The network went away.".to_owned(),
+                action: None,
+            }],
+        )
+        .with_typography(typography);
+        let rect = screen
+            .layout()
+            .nodes
+            .into_iter()
+            .find(|node| matches!(node.kind, LayoutKind::Banner(_)))
+            .expect("the banner was laid out")
+            .rect;
+        let (surface, stride) = paint(&screen);
+        let ink = tone_count(&surface, rect, tone::INK, stride);
+        let area = usize::try_from(rect.width * rect.height).expect("a real banner");
+        assert!(
+            ink * 4 < area,
+            "{typography:?}: the banner is still mostly black: {ink} of {area}"
+        );
+        // An application at an older protocol gave an attention banner no
+        // column for a mark, so the bar down its leading edge is what tells
+        // it from info, solid for the full height of the banner. From Fine
+        // on the caution mark does that, and the banner is the same rounded
+        // field as every other level.
+        let bar = CLARA_BW_METRICS.rule_thickness() * 3;
+        let edge = Rect { width: bar, ..rect };
+        let solid = tone_count(&surface, edge, tone::INK, stride)
+            == usize::try_from(bar * rect.height).expect("a real edge");
+        assert_eq!(
+            solid,
+            typography < Typography::Fine,
+            "{typography:?}: the leading edge"
+        );
+    }
 }
 
 #[test]
@@ -914,6 +922,129 @@ fn depth_is_counted_in_rules_rather_than_left_to_the_indent() {
             "a reply at depth {depth} was marked with {columns} rules"
         );
     }
+}
+
+#[test]
+fn depth_rules_run_unbroken_down_a_reply_and_stop_where_the_reply_does() {
+    // A thread is a byline and its paragraphs with air between them. Drawn
+    // per block, the rules stopped at every edge and came out as a dashed
+    // line down the page; a level both blocks share carries on through the
+    // gap, and a level the lower block opens starts at its own top.
+    let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+    let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+    let quote = |id: u32, depth: u8, role: QuoteRole, text: &str| Node::Quote {
+        id: NodeId(id),
+        depth,
+        role,
+        fold: None,
+        text: text.to_owned(),
+    };
+    let screen = Screen::new(
+        1,
+        vec![
+            quote(1, 1, QuoteRole::Byline, "someone \u{b7} 3h ago"),
+            quote(2, 1, QuoteRole::Body, "The first paragraph of a reply."),
+            quote(3, 1, QuoteRole::Body, "Its second paragraph."),
+            quote(4, 2, QuoteRole::Byline, "another \u{b7} 2h ago"),
+            quote(5, 2, QuoteRole::Body, "A reply to the reply."),
+        ],
+    );
+    let quotes = screen
+        .layout()
+        .nodes
+        .into_iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Quote(..)))
+        .collect::<Vec<_>>();
+    assert_eq!(quotes.len(), 5);
+    let mut surface = Surface::new(stride, height);
+    surface.clear(tone::PAPER);
+    render(&screen, &mut surface, None);
+    let step = CLARA_BW_METRICS.space(Space::Small);
+    let ruled = |x: i32, y: i32| {
+        let at = usize::try_from(y).expect("on the panel") * stride
+            + usize::try_from(x).expect("on the panel");
+        surface.pixels[at] == tone::RULE
+    };
+    // The outer rule, one step left of the depth-one text, from the first
+    // byline's top to the last reply's foot without a gap.
+    let outer = quotes[0].rect.x - step + CLARA_BW_METRICS.rule_thickness() / 2;
+    let top = quotes[0].rect.y;
+    let foot = quotes[4].rect.y + quotes[4].rect.height;
+    let gaps = (top..foot).filter(|&y| !ruled(outer, y)).count();
+    assert_eq!(
+        gaps, 0,
+        "the depth-one rule broke {gaps} times down the reply"
+    );
+    // The inner rule belongs to the reply-to-a-reply alone: nothing of it
+    // above that reply's own byline.
+    let inner = quotes[3].rect.x - step + CLARA_BW_METRICS.rule_thickness() / 2;
+    assert!(
+        ruled(inner, quotes[3].rect.y + 1),
+        "the depth-two rule is missing"
+    );
+    assert!(
+        !ruled(inner, quotes[3].rect.y - 1),
+        "the depth-two rule reached up into the reply above it"
+    );
+}
+
+#[test]
+fn a_repaint_of_only_the_gap_between_two_quotes_keeps_their_rule() {
+    // A refresh can be as small as the strip between two paragraphs. That
+    // strip is cleared to paper first, and the rule running through it
+    // belongs to the quote below, whose own rectangle starts lower down; if
+    // that quote is skipped as outside the repaint, the strip stays blank and
+    // the thread is broken on the panel though a full repaint would join it.
+    let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+    let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+    let quote = |id: u32, role: QuoteRole, text: &str| Node::Quote {
+        id: NodeId(id),
+        depth: 1,
+        role,
+        fold: None,
+        text: text.to_owned(),
+    };
+    let screen = Screen::new(
+        1,
+        vec![
+            quote(1, QuoteRole::Byline, "someone \u{b7} 3h ago"),
+            quote(2, QuoteRole::Body, "The first paragraph of a reply."),
+        ],
+    );
+    let quotes = screen
+        .layout()
+        .nodes
+        .into_iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Quote(..)))
+        .collect::<Vec<_>>();
+    let gap_top = quotes[0].rect.y + quotes[0].rect.height;
+    let gap_bottom = quotes[1].rect.y;
+    assert!(gap_bottom > gap_top, "the two blocks have air between them");
+    let mut full = Surface::new(stride, height);
+    full.clear(tone::PAPER);
+    render(&screen, &mut full, None);
+    // Only the column the rule runs down: the strip either side of it also
+    // holds the descenders of the byline above, which this is not about.
+    let step = CLARA_BW_METRICS.space(Space::Small);
+    let thickness = CLARA_BW_METRICS.rule_thickness();
+    let gap = Rect {
+        x: quotes[1].rect.x - step - thickness,
+        y: gap_top,
+        width: thickness * 3,
+        height: gap_bottom - gap_top,
+    };
+    let mut partial = full.clone();
+    render(&screen, &mut partial, Some(gap));
+    let mut blank = full.clone();
+    blank.fill_rect(gap, tone::PAPER);
+    assert!(
+        full.pixels != blank.pixels,
+        "a full repaint draws the rule through the gap"
+    );
+    assert!(
+        full.pixels == partial.pixels,
+        "repainting only the gap left it different from a full repaint"
+    );
 }
 
 #[test]
@@ -1539,11 +1670,10 @@ fn a_byline(fold: Option<Fold>) -> Screen {
 }
 
 #[test]
-fn a_byline_is_set_on_a_tint_and_the_words_underneath_it_are_not() {
-    // Muted caption text alone was not enough to tell a name apart from a
-    // sentence, so the byline gets a band. The band has to stop at the
-    // byline: a comment drawn entirely on a tint is a card, and a page of
-    // cards is a page with no white space in it.
+fn a_byline_is_quiet_type_on_bare_paper_set_apart_by_the_air_above_it() {
+    // A tinted strip under every name turned a thread into a stack of grey
+    // bands, the heaviest thing on the page marking the least important line
+    // of each comment.
     let screen = a_byline(None);
     let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
     let (surface, stride) = paint(&screen);
@@ -1552,19 +1682,18 @@ fn a_byline_is_set_on_a_tint_and_the_words_underneath_it_are_not() {
         .iter()
         .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Byline)))
         .expect("a byline");
-    let body = layout
-        .nodes
-        .iter()
-        .find(|node| matches!(node.kind, LayoutKind::Quote(_, QuoteRole::Body)))
-        .expect("a body");
-    assert!(
-        tone_count(&surface, byline.rect, tone::SURFACE, stride) > 0,
-        "the byline was drawn on bare paper, so it still reads as a sentence"
-    );
     assert_eq!(
-        tone_count(&surface, body.rect, tone::SURFACE, stride),
+        tone_count(&surface, byline.rect, tone::SURFACE, stride),
         0,
-        "the tint ran on past the byline and under the comment"
+        "the byline was drawn on a band"
+    );
+    assert!(
+        tone_count(&surface, byline.rect, tone::MUTED, stride) > 0,
+        "the byline is set in the muted tone"
+    );
+    assert!(
+        byline.rect.height > FontSize::Caption.line_height(),
+        "the byline keeps the air that sets it apart from the comment above"
     );
 }
 
@@ -2062,6 +2191,58 @@ fn a_popover_is_only_as_wide_as_what_is_in_it() {
     );
 }
 
+/// The key rectangles of a five-across deck with `keys` labelled keys.
+fn deck_keys(keys: u32) -> Vec<Rect> {
+    let cells = (0..keys)
+        .map(|index| Cell::new(ActionId(index + 1), "Build").with_glyph(Glyph::Terminal))
+        .collect();
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 5,
+            square: true,
+            cells,
+        }],
+    );
+    screen
+        .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::Pad, _)))
+        .map(|node| node.rect)
+        .collect()
+}
+
+#[test]
+fn a_deck_with_few_keys_lays_them_out_fewer_across_so_they_fill_the_width() {
+    // Two keys drawn five across were two small squares in the corner of an
+    // empty panel.
+    for (keys, across) in [
+        (2, 2),
+        (3, 3),
+        (4, 2),
+        (5, 5),
+        (6, 3),
+        (7, 4),
+        (9, 3),
+        (10, 5),
+        (12, 4),
+        (15, 5),
+    ] {
+        let rects = deck_keys(keys);
+        assert_eq!(rects.len(), keys as usize);
+        let first_row = rects.iter().filter(|rect| rect.y == rects[0].y).count();
+        assert_eq!(first_row, across, "{keys} keys");
+        let left = rects.iter().map(|rect| rect.x).min().unwrap();
+        let right = rects.iter().map(|rect| rect.x + rect.width).max().unwrap();
+        assert!(
+            right - left >= CLARA_BW_METRICS.width * 4 / 5,
+            "{keys} keys span {left}..{right}"
+        );
+    }
+}
+
 #[test]
 fn a_deck_place_with_nothing_on_it_is_drawn_lighter_than_a_key() {
     // Fifteen places with three assigned used to be twelve boxes as heavy
@@ -2219,10 +2400,7 @@ fn a_menu_of_buttons_is_wide_enough_for_the_words_on_them() {
             .layout_with(&metrics, &Chrome::default())
             .nodes
             .iter()
-            .find(|node| {
-                node.kind
-                    == LayoutKind::Button(ActionId(6), ControlState::Enabled, Emphasis::Normal)
-            })
+            .find(|node| node.kind == LayoutKind::RowTitle)
             .expect("the menu item")
             .text_lines
             .clone();
@@ -2245,8 +2423,8 @@ fn a_popover_never_gets_wider_than_a_modal() {
                         including the parts nobody read, at once and for good";
     let width = overlay_width(&with_a_menu(&[sentence]));
     let modal = overlay_width(&with_an_overlay(OverlayKind::Modal));
-    assert_eq!(
-        width, modal,
+    assert!(
+        width <= modal,
         "a long menu item pushed the popover past the width a modal is allowed"
     );
 }
@@ -2383,6 +2561,81 @@ fn a_popover_points_at_the_control_that_opened_it() {
     );
 }
 
+fn menu_popover(second: ControlState) -> Screen {
+    let item = |id: u32, action: u32, label: &str, state| Node::Button {
+        id: NodeId(id),
+        action: ActionId(action),
+        label: label.to_owned(),
+        state,
+        emphasis: Emphasis::Normal,
+    };
+    Screen::new(1, vec![item(1, 5, "More", ControlState::Enabled)]).with_overlay(Overlay::popover(
+        NodeId(40),
+        ActionId(5),
+        vec![
+            item(41, 6, "New game", ControlState::Enabled),
+            item(42, 7, "Check word", second),
+            item(43, 8, "Puzzles", ControlState::Enabled),
+        ],
+    ))
+}
+
+#[test]
+fn a_popover_of_plain_buttons_is_set_as_menu_rows_with_a_hairline_between_them() {
+    let layout =
+        menu_popover(ControlState::Enabled).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let rows: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::Row(_)))
+        .collect();
+    let rules: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| node.kind == LayoutKind::RowRule)
+        .collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rules.len(), 2);
+    assert!(!layout
+        .nodes
+        .iter()
+        .any(|node| matches!(node.kind, LayoutKind::Button(ActionId(6..=8), _, _))));
+    for (rule, pair) in rules.iter().zip(rows.windows(2)) {
+        assert!(rule.rect.y >= pair[0].rect.y + pair[0].rect.height);
+        assert!(rule.rect.y + rule.rect.height <= pair[1].rect.y);
+    }
+    for (row, action) in rows.iter().zip([6, 7, 8]) {
+        let (x, y) = (
+            row.rect.x + row.rect.width / 2,
+            row.rect.y + row.rect.height / 2,
+        );
+        assert_eq!(layout.hit_test(x, y), Some(ActionId(action)));
+    }
+}
+
+#[test]
+fn a_menu_is_exactly_as_tall_as_the_buttons_it_was_measured_as() {
+    let menu =
+        menu_popover(ControlState::Enabled).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let buttons =
+        menu_popover(ControlState::Disabled).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let frame = |layout: &Layout| {
+        layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Overlay)
+            .expect("the popover")
+            .rect
+    };
+    assert_eq!(frame(&menu), frame(&buttons));
+    // A popover with a disabled choice keeps its buttons, because a row has
+    // no way to show that it cannot be pressed.
+    assert!(buttons.nodes.iter().any(|node| matches!(
+        node.kind,
+        LayoutKind::Button(ActionId(7), ControlState::Disabled, _)
+    )));
+}
+
 #[test]
 fn an_overlay_with_nothing_to_point_at_is_still_shown() {
     // Naming an anchor that is not on the screen is an application bug.
@@ -2456,6 +2709,67 @@ fn an_overlay_takes_the_page_turns_away() {
 /// without a cross it is a screen with no way off it unless the
 /// application remembered to put one in a row. The frame draws it, so the
 /// application cannot forget.
+fn details_dialog(dismiss: ActionId) -> Screen {
+    Screen::new(1, Vec::new()).with_overlay(Overlay::dialog(
+        NodeId(2),
+        "Details",
+        dismiss,
+        vec![
+            Node::Text {
+                id: NodeId(3),
+                text: "EPUB, 1.1 MB".into(),
+                links: Vec::new(),
+            },
+            Node::Button {
+                id: NodeId(4),
+                action: ActionId(9),
+                label: "Close".into(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            },
+        ],
+    ))
+}
+
+#[test]
+fn a_dialogue_with_its_own_close_button_draws_no_second_cross() {
+    for (name, metrics) in PANELS {
+        let layout = details_dialog(ActionId(9)).layout_with(&metrics, &Chrome::with_back(false));
+        assert!(
+            !layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::OverlayClose),
+            "{name}: the cross was drawn beside Close"
+        );
+        let close = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Button(ActionId(9), _, _)))
+            .unwrap_or_else(|| panic!("{name}: no Close"))
+            .rect;
+        assert_eq!(
+            layout.hit_test(close.x + close.width / 2, close.y + close.height / 2),
+            Some(ActionId(9)),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn a_dialogue_whose_way_out_is_missing_gets_the_cross_after_all() {
+    for (name, metrics) in PANELS {
+        let layout = details_dialog(ActionId(77)).layout_with(&metrics, &Chrome::with_back(false));
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| node.kind == LayoutKind::OverlayClose),
+            "{name}: a dialogue was left with no way off it"
+        );
+    }
+}
+
 #[test]
 fn a_modal_always_carries_a_way_out() {
     for (name, metrics) in PANELS {
@@ -3971,6 +4285,107 @@ fn a_natural_slot_takes_only_what_it_measures() {
     );
 }
 
+#[test]
+fn a_chip_in_a_natural_slot_sits_beside_the_text_against_the_far_edge() {
+    let screen = Screen::new(
+        1,
+        vec![Node::Band {
+            id: NodeId(1),
+            align: BandAlign::Top,
+            slots: vec![
+                BandSlot::fill(vec![Node::Text {
+                    id: NodeId(2),
+                    text: "You".to_owned(),
+                    links: Vec::new(),
+                }]),
+                BandSlot::natural(vec![Node::Chips {
+                    id: NodeId(3),
+                    chips: vec![Chip {
+                        action: ActionId(7),
+                        label: "Undo".to_owned(),
+                        selected: false,
+                    }],
+                }]),
+            ],
+        }],
+    );
+    let layout = screen.layout();
+    let band = layout
+        .nodes
+        .iter()
+        .find(|node| node.id == NodeId(1))
+        .expect("band")
+        .rect;
+    let text = layout
+        .nodes
+        .iter()
+        .find(|node| node.id == NodeId(2))
+        .expect("text")
+        .rect;
+    let chip = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::Chip(..)))
+        .expect("chip")
+        .rect;
+    assert_eq!(chip.y, text.y, "the chip was stacked under the text");
+    assert_eq!(
+        chip.x + chip.width,
+        band.x + band.width,
+        "the chip stopped short of the band's edge"
+    );
+}
+
+#[test]
+fn two_blocks_of_facts_on_one_page_start_their_values_in_one_column() {
+    let facts = |id: u32, labels: &[&str]| Node::Facts {
+        id: NodeId(id),
+        entries: labels
+            .iter()
+            .map(|label| ((*label).to_owned(), "4.9.77".to_owned()))
+            .collect(),
+    };
+    let screen = Screen::new(
+        1,
+        vec![
+            facts(1, &["Model", "Kobo software", "Wi-Fi address"]),
+            Node::Section {
+                id: NodeId(2),
+                title: "For support".to_owned(),
+                value: None,
+                link: None,
+            },
+            facts(3, &["Profile", "Device code"]),
+        ],
+    );
+    let layout = screen.layout();
+    let starts = |id: u32| {
+        layout
+            .nodes
+            .iter()
+            .filter(|node| node.id == NodeId(id) && node.kind == LayoutKind::FactValue)
+            .map(|node| node.rect.x)
+            .collect::<Vec<_>>()
+    };
+    let (first, second) = (starts(1), starts(3));
+    assert_eq!((first.len(), second.len()), (3, 2));
+    assert!(
+        first.iter().chain(&second).all(|x| *x == first[0]),
+        "{first:?} {second:?}"
+    );
+    // A block alone on its page keeps the column its own labels need.
+    let alone = Screen::new(1, vec![facts(3, &["Profile", "Device code"])]);
+    let own = alone
+        .layout()
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::FactValue)
+        .expect("a value")
+        .rect
+        .x;
+    assert!(own < first[0], "{own} {first:?}");
+}
+
 /// A panel narrow enough that two columns cannot both stay readable.
 fn metrics_width_for_one_column() -> i32 {
     CLARA_BW_METRICS.tenth_mm(MIN_BAND_SLOT_TENTH_MM) * 2
@@ -4065,4 +4480,222 @@ fn a_sections_value_is_measured_before_its_title_is_clamped() {
         together <= node.rect.width,
         "a title and its value together ran past the right margin"
     );
+}
+
+fn dialog_over_a_page(typography: Typography) -> Layout {
+    let words = |id: u32| Node::Text {
+        id: NodeId(id),
+        text: "Play six hundred puzzles with pencil notes, undo and saved games.".into(),
+        links: Vec::new(),
+    };
+    Screen::new(
+        1,
+        vec![
+            Node::Splash {
+                id: NodeId(2),
+                glyph: Some(Glyph::Grid),
+                title: "Sudoku".into(),
+                summary: "Puzzles for a quiet evening.".into(),
+            },
+            words(3),
+            words(4),
+        ],
+    )
+    .with_top_bar(TopBar::new(NodeId(1), "Sudoku"))
+    .with_overlay(Overlay::dialog(
+        NodeId(10),
+        "Uninstall Sudoku?",
+        ActionId(11),
+        vec![
+            Node::Text {
+                id: NodeId(12),
+                text: "Its saved data stays on this reader.".into(),
+                links: Vec::new(),
+            },
+            Node::Button {
+                id: NodeId(13),
+                action: ActionId(11),
+                label: "Cancel".into(),
+                state: ControlState::Enabled,
+                emphasis: Emphasis::Normal,
+            },
+        ],
+    ))
+    .with_typography(typography)
+    .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
+}
+
+#[test]
+fn a_dialog_never_cuts_through_a_glyph_a_picture_or_a_line_of_words_behind_it() {
+    let layout = dialog_over_a_page(Typography::Fine);
+    let frame = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Overlay)
+        .expect("the dialogue")
+        .rect;
+    let behind = layout
+        .nodes
+        .iter()
+        .take_while(|node| !matches!(node.kind, LayoutKind::Scrim { .. }))
+        .filter(|node| {
+            matches!(node.kind, LayoutKind::SplashGlyph(_))
+                || (matches!(
+                    node.kind,
+                    LayoutKind::Text | LayoutKind::SplashTitle | LayoutKind::SplashText
+                ) && !node.text_lines.is_empty())
+        })
+        .filter(|node| {
+            node.rect.x < frame.x + frame.width && node.rect.x + node.rect.width > frame.x
+        });
+    for node in behind {
+        for edge in [frame.y, frame.y + frame.height] {
+            assert!(
+                !(node.rect.y < edge && node.rect.y + node.rect.height > edge),
+                "{:?} at {:?} is cut by the edge at {edge}",
+                node.kind,
+                node.rect
+            );
+        }
+    }
+    // And it stays between the bars.
+    let bar = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::TopBar)
+        .expect("the bar")
+        .rect;
+    assert!(frame.y >= bar.y + bar.height);
+    assert!(frame.y + frame.height <= CLARA_BW_METRICS.height);
+}
+
+#[test]
+fn an_older_applications_dialog_is_still_centred_on_the_panel() {
+    let layout = dialog_over_a_page(Typography::Quiet);
+    let frame = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Overlay)
+        .expect("the dialogue")
+        .rect;
+    assert_eq!(frame.y, (CLARA_BW_METRICS.height - frame.height) / 2);
+}
+
+#[test]
+fn a_dialog_spans_the_page_column_so_nothing_behind_it_shows_at_its_sides() {
+    let layout = dialog_over_a_page(Typography::Fine);
+    let frame = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Overlay)
+        .expect("the dialogue")
+        .rect;
+    let margin = CLARA_BW_METRICS.screen_margin();
+    let column = (CLARA_BW_METRICS.width - 2 * margin).min(CLARA_BW_METRICS.readable_width());
+    let words = layout
+        .nodes
+        .iter()
+        .find(|node| node.kind == LayoutKind::Text)
+        .expect("the words behind")
+        .rect;
+    assert_eq!(frame.width, column);
+    assert_eq!(frame.x, words.x);
+    assert_eq!(frame.x + frame.width, words.x + words.width);
+}
+
+#[test]
+fn the_back_arrow_under_a_dialogue_answers_it_as_its_own_close_does() {
+    // The arrow stays drawn while a question is up. It did nothing, which
+    // read as a broken arrow; it now answers the question the way its own
+    // Cancel or Close does.
+    for (name, metrics) in PANELS {
+        let screen = details_dialog(ActionId(9)).with_top_bar(TopBar::new(NodeId(8), "Book"));
+        let layout = screen.layout_with(&metrics, &Chrome::with_back(true));
+        let back = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::Back)
+            .expect("the bar draws a back arrow");
+        let (x, y) = (
+            back.rect.x + back.rect.width / 2,
+            back.rect.y + back.rect.height / 2,
+        );
+        assert_eq!(layout.hit_test(x, y), Some(ActionId(9)), "{name}");
+        // A dialogue that draws its own cross answers Back, as the cross does.
+        let crossed = details_dialog(ActionId(77)).with_top_bar(TopBar::new(NodeId(8), "Book"));
+        let layout = crossed.layout_with(&metrics, &Chrome::with_back(true));
+        assert_eq!(layout.hit_test(x, y), Some(ActionId::BACK), "{name}");
+    }
+}
+
+#[test]
+fn a_popover_off_the_top_bar_leaves_the_bars_controls_working() {
+    // The reader's type panel hangs off Aa. A tap on the light beside it
+    // used to land on the scrim and be read as Back.
+    let screen = Screen::new(1, Vec::new())
+        .with_top_bar(
+            TopBar::new(NodeId(8), "Book")
+                .action(ActionId(20), "Light")
+                .action(ActionId(21), "Aa"),
+        )
+        .with_overlay(Overlay::popover(
+            NodeId(2),
+            ActionId(21),
+            vec![Node::Text {
+                id: NodeId(3),
+                text: "Type size".into(),
+                links: Vec::new(),
+            }],
+        ));
+    let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+    // The light answers as itself; Aa, which the panel hangs off, puts it
+    // away as a tap on any popover's own control does.
+    for (control, answer) in [(ActionId(20), ActionId(20)), (ActionId(21), ActionId::BACK)] {
+        let control = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::BarAction(control))
+            .expect("the bar draws the control");
+        let (x, y) = (
+            control.rect.x + control.rect.width / 2,
+            control.rect.y + control.rect.height / 2,
+        );
+        assert_eq!(layout.hit_test(x, y), Some(answer));
+    }
+    // A miss anywhere else still puts the popover away.
+    assert_eq!(
+        layout.hit_test(CLARA_BW_METRICS.width / 2, CLARA_BW_METRICS.height - 40),
+        Some(ActionId::BACK)
+    );
+}
+
+#[test]
+fn sectioned_pagination_leaves_room_for_a_trailing_value_it_will_have_to_draw() {
+    let metrics = CLARA_BW_METRICS;
+    let area = ProseArea {
+        width: 900,
+        height: 900,
+        gap: metrics.space(Space::Small),
+        face: Face::Text,
+    };
+    let title = "A long headline about a small program that reads the news slowly \
+                 and turns its pages by itself";
+    let summary = "example.com, 4 hours ago, 12 comments";
+    let plain: Vec<_> = (0..12)
+        .map(|n| ((n % 4 == 0).then_some("Today"), title, summary))
+        .collect();
+    let marked: Vec<_> = plain
+        .iter()
+        .map(|&(section, title, summary)| {
+            (section, title, summary, "1,284 points and 312 comments")
+        })
+        .collect();
+    let without = paginate_rows_in_sections(&plain, &metrics, area);
+    let with = paginate_rows_in_sections_with_trailing(&marked, &metrics, area);
+    assert!(
+        with[0].len() < without[0].len(),
+        "the value took no room from the page: {} rows either way",
+        with[0].len()
+    );
+    assert_eq!(with.concat(), (0..12).collect::<Vec<_>>());
 }

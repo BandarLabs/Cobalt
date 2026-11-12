@@ -157,13 +157,61 @@ pub fn search(notes: &[Note], query: &str) -> Vec<(usize, String)> {
         .iter()
         .enumerate()
         .filter_map(|(index, note)| {
-            note.body
-                .lines()
-                .find(|line| line.to_lowercase().contains(&query))
-                .map(|line| (index, line.trim().to_owned()))
+            note.body.lines().find_map(|line| {
+                let at = line.to_lowercase().find(&query)?;
+                Some((index, excerpt(line, at)))
+            })
         })
         .take(200)
         .collect()
+}
+
+/// The most characters of a matching line shown under a result.
+const EXCERPT_CHARS: usize = 120;
+/// How many of them come before the match, so it sits near the start.
+const EXCERPT_LEAD: usize = 40;
+
+/// The part of `line` around the match that starts at byte `at` of its
+/// lowercase form.
+///
+/// A whole paragraph under every result filled the panel with one hit and
+/// left the reader hunting for the word inside it. A window that opens just
+/// before the match, cut at spaces and marked where it was cut, shows the
+/// words around it and leaves room for the other notes.
+fn excerpt(line: &str, at: usize) -> String {
+    let line = line.trim();
+    let chars: Vec<char> = line.chars().collect();
+    if chars.len() <= EXCERPT_CHARS {
+        return line.to_owned();
+    }
+    // Lowercasing can change byte lengths, so the match is found again by
+    // character position, counted on the lowercase text it was found in.
+    let lead = line
+        .to_lowercase()
+        .get(..at)
+        .map_or(0, |before| before.chars().count())
+        .min(chars.len());
+    let mut start = lead.saturating_sub(EXCERPT_LEAD);
+    if start > 0 {
+        start = (start..lead)
+            .find(|&index| chars[index - 1] == ' ')
+            .unwrap_or(start);
+    }
+    let mut end = (start + EXCERPT_CHARS).min(chars.len());
+    if end < chars.len() {
+        end = (start + 1..end)
+            .rev()
+            .find(|&index| chars[index] == ' ')
+            .unwrap_or(end);
+    }
+    let middle: String = chars[start..end].iter().collect();
+    let middle = middle.trim();
+    match (start > 0, end < chars.len()) {
+        (true, true) => format!("…{middle}…"),
+        (true, false) => format!("…{middle}"),
+        (false, true) => format!("{middle}…"),
+        (false, false) => middle.to_owned(),
+    }
 }
 
 #[allow(dead_code)]

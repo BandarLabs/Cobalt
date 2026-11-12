@@ -188,7 +188,16 @@ impl Project {
         if sections.is_empty() {
             return;
         }
-        let working = self.sections.get(self.section).cloned();
+        // The everyday three are placeholders until something is counted in
+        // them. A new project from a pattern that also has a Body section
+        // used to open on Body, partway down, rather than at its start.
+        let placeholder = self.sections.iter().map(String::as_str).eq(SECTIONS)
+            && self.counters.iter().all(|counter| counter.row == 0);
+        let working = if placeholder {
+            None
+        } else {
+            self.sections.get(self.section).cloned()
+        };
         let counters = sections
             .iter()
             .map(|name| {
@@ -224,6 +233,9 @@ struct Needles {
     collection_pages: [usize; 3],
     libraries: [Vec<Pattern>; 3],
     loaded: [bool; 3],
+    /// Which collections a sync has ever brought to this reader, so one that
+    /// never arrived is not called empty.
+    synced: [bool; 3],
     selected: Option<Pattern>,
     /// What the last thing done has to say, and how much it matters: news
     /// and nudges are Info, a failure the owner has to act on is an Error.
@@ -644,7 +656,7 @@ impl Needles {
                     format!("project-{index}"),
                     context.clamped_row(&project.name, 2, false),
                     format!(
-                        "{} - row {}",
+                        "{} · row {}",
                         project
                             .sections
                             .get(project.section)
@@ -716,11 +728,27 @@ impl Needles {
                     ("favorites-tab", "Favorites"),
                 ],
             );
-            if self.libraries[selected].is_empty() {
+            if self.libraries[selected].is_empty() && !self.synced[selected] {
+                // Under a failed sync, "nothing in your favorites" would be
+                // a guess: they have simply not reached this reader yet.
                 screen = screen.splash(
                     Some(Glyph::Bookmark),
-                    format!("No {} patterns", self.collection.title().to_lowercase()),
-                    "Add your Ravelry sign-in during setup, then sync this collection.",
+                    "Not synced yet",
+                    format!(
+                        "Sync to bring your Ravelry {} to this reader.",
+                        self.collection.title().to_lowercase()
+                    ),
+                );
+            } else if self.libraries[selected].is_empty() {
+                screen = screen.splash(
+                    Some(Glyph::Bookmark),
+                    // The banner above says what is wrong with the account,
+                    // if anything, so this only says what belongs here.
+                    format!(
+                        "Nothing in your Ravelry {}",
+                        self.collection.title().to_lowercase()
+                    ),
+                    "Patterns you add on Ravelry show here after you sync.",
                 );
             } else {
                 let rows = self.libraries[selected]
@@ -1205,6 +1233,7 @@ impl Needles {
             .take(MAX_PATTERNS)
             .collect();
         self.loaded[collection.index()] = true;
+        self.synced[collection.index()] = true;
         self.collection_pages[collection.index()] = 0;
         true
     }
@@ -1375,6 +1404,7 @@ impl Default for Needles {
             collection_pages: [0; 3],
             libraries: std::array::from_fn(|_| Vec::new()),
             loaded: [false; 3],
+            synced: [false; 3],
             selected: None,
             notice: None,
             sync_problem: None,
@@ -2047,6 +2077,24 @@ mod tests {
         project.counters[1].row = 30;
         project.adopt_sections(sections);
         assert_eq!(project.counters[1].row, 30);
+    }
+
+    #[test]
+    fn a_new_project_starts_on_its_patterns_first_section_even_when_it_shares_a_placeholder_name() {
+        let sections: Vec<String> = ["Garter tab", "Body", "Sleeve", "Finishing"]
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        let mut fresh = super::Project::new("Lace shawl");
+        fresh.adopt_sections(sections.clone());
+        assert_eq!(fresh.section, 0);
+
+        // Rows already counted in Body keep the knitter on Body.
+        let mut counted = super::Project::new("Row counter");
+        counted.counters[0].row = 14;
+        counted.adopt_sections(sections);
+        assert_eq!(counted.sections[counted.section], "Body");
+        assert_eq!(counted.counters[counted.section].row, 14);
     }
 
     #[test]
@@ -2729,6 +2777,22 @@ mod tests {
             plus.y, undo.y,
             "undo is not beside the increment: {plus:?} vs {undo:?}"
         );
+    }
+
+    #[test]
+    fn a_collection_that_never_synced_is_not_called_empty_until_a_sync_says_so() {
+        let mut app = Needles {
+            loaded: [true; 3],
+            ..Needles::default()
+        };
+        let drawn = format!("{:?}", app.library(&Context::default()).0);
+        assert!(drawn.contains("Not synced yet"), "{drawn}");
+        assert!(!drawn.contains("Nothing in your Ravelry"), "{drawn}");
+
+        let empty = format!("{{\"{}\": []}}", Collection::Library.result_key());
+        assert!(app.read_library(empty.as_bytes(), Collection::Library));
+        let drawn = format!("{:?}", app.library(&Context::default()).0);
+        assert!(drawn.contains("Nothing in your Ravelry library"), "{drawn}");
     }
 
     #[test]

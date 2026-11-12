@@ -1,0 +1,59 @@
+# sweep: --seed-root apps/readlater/fixtures/signed-in
+# A sign-in the computer left on the reader is picked up at start. The
+# server in it never resolves, and the route only uses the simulator's own
+# failure scenarios, so nothing here reaches a real Wallabag.
+wait-for Signed in to https://wallabag.invalid
+expect No saved articles
+expect Sync Wallabag to add some
+expect-missing Connect Wallabag
+clean
+shot readlater-signed-in
+# Each tab says what it would hold.
+tap Starred
+wait-for No starred articles
+clean
+shot readlater-starred-empty
+tap Archive
+wait-for No archived articles
+tap Unread
+wait-for No saved articles
+# Sync with no network names the cause over the list.
+scenario offline
+tap Sync
+wait-for not on Wi-Fi
+expect No saved articles
+clean
+shot readlater-sync-offline
+# A server that does not answer is a different sentence from no network.
+scenario host-down
+tap Sync
+wait-for Wallabag did not answer
+clean
+shot readlater-sync-host-down
+scenario normal
+# Settings name the account and offer how many articles to keep.
+tap Settings
+wait-for Read Later settings
+expect Signed in to https://wallabag.invalid
+expect kobo connect readlater
+expect 50 newest
+expect-missing Server address
+clean
+shot readlater-settings
+tap 20 newest
+wait-idle
+# The choice is the eleventh node under the status band and the bar.
+expect-state /layout#/nodes/10/kind "ChoiceOption(ActionId(532720383), true)"
+tap-id 4294967295
+wait-for No saved articles
+# The sign-in outlives the app, and the shelf file it came in is gone.
+restart
+wait-idle
+expect No saved articles
+expect-missing Connect Wallabag
+# The choice of how many articles to keep should outlive the app too.
+tap Settings
+wait-for Read Later settings
+shot readlater-settings-after-restart
+expect 20 newest
+expect-state /layout#/nodes/10/kind "ChoiceOption(ActionId(532720383), true)"

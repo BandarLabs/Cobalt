@@ -1,0 +1,151 @@
+# The cube from offer to drop, a whole match won, the Crawford game, and
+# a match that survives a relaunch at each stage. Two players pass the
+# reader, because only a person can drop a double; the computer always
+# takes. The sweep pins the dice to seed 7, and a relaunch starts the
+# seeded dice over, so the rolls below follow from these exact steps.
+wait-for Backgammon
+tap-id game-more
+tap Match settings
+expect Fixture dice, seed 7.
+expect Against the computer
+tap Two players
+tap-id length-3
+expect White 0 · Black 0
+clean
+shot match-settings-two-players
+tap Play
+expect This match now plays to 3 points. Tap Roll to begin.
+tap Roll
+expect Black opened with 4 and 6.
+expect Black to play
+# The board turns to Black; Black's 13 is White's 12th point.
+tap-id point-11
+tap-id point-17
+tap-id point-11
+tap-id point-15
+expect Pass the reader to White.
+expect 1 · either side may double
+clean
+shot pass-to-white
+tap Double
+expect Offer the cube at 2?
+tap Offer double
+expect White offers the cube at 2
+expect Black may take and play on for 2 points
+clean
+shot cube-offered
+# A pending offer is saved, so a relaunch puts the question back.
+restart
+wait-for White offers the cube at 2
+tap Drop
+expect Drop White's double?
+expect This ends the game and cannot be undone.
+clean
+shot drop-confirm
+tap Cancel
+expect White offers the cube at 2
+tap Take
+expect Black takes. White to roll.
+expect 2 · Black owns it
+tap Double
+expect Only the cube owner may double.
+tap Roll
+expect White rolled 4 and 6.
+tap Roll
+expect The dice are already rolled. 4 and 6 left to play.
+# Dice in play survive a relaunch too.
+restart
+wait-for Resumed saved game. 4 and 6 left to play.
+tap-id point-12
+tap-id point-6
+tap-id point-12
+tap-id point-8
+expect Pass the reader to Black.
+# Black owns the cube, redoubles to 4, and White drops: 2 points to Black.
+tap Double
+tap Offer double
+expect Black offers the cube at 4
+tap Drop
+tap Drop cube
+expect Black won this game.
+expect White 0 · Black 2 · first to 3
+expect White dropped the cube. The game was worth 2 points.
+expect Next game
+# A finished game has nothing to take back.
+expect-missing Undo
+clean
+shot game-won
+restart
+wait-for Black won the saved game.
+expect Next game
+tap-id game-more
+tap Turn history
+expect Black won a game worth 2 points on a drop.
+expect White 13/7 13/9
+expect Black 13/7 13/9
+clean
+shot history-after-drop
+tap-id 4294967295
+# Black is a point from the match, so the next game is the Crawford game.
+tap Next game
+expect Crawford game: nobody may double. Tap Roll to begin.
+tap Double
+expect Nobody can double before the opening roll.
+tap Roll
+expect Black opened with 4 and 6.
+tap-id point-11
+tap-id point-17
+tap-id point-11
+tap-id point-15
+tap Double
+expect Nobody may double in the Crawford game.
+expect no doubling this game
+clean
+shot crawford
+# Starting again mid-match asks first; the length can change only then.
+tap-id game-more
+tap New game
+expect Start a new game?
+tap Start new game
+expect White 0 · Black 0
+tap-id game-more
+tap Match settings
+tap-id length-1
+tap Play
+expect This match now plays to 1 point. Tap Roll to begin.
+tap Roll
+expect White opened with 3 and 2.
+tap-id point-12
+tap-id point-9
+tap-id point-12
+tap-id point-10
+tap Double
+tap Offer double
+tap Drop
+tap Drop cube
+expect Black won the match 1–0.
+expect White 0 · Black 1 · first to 1
+expect New game
+clean
+shot match-won
+restart
+wait-for Black won the saved match.
+tap New game
+expect Tap Roll. The higher die moves first.
+expect-missing Start a new game?
+# Back against the computer, which takes every double it is offered.
+tap-id game-more
+tap Match settings
+tap Against the computer
+tap Play
+tap Roll
+expect Computer opened with
+tap Double
+tap Offer double
+expect Computer takes. Your roll.
+restart
+wait-for Resumed saved game. Your roll.
+clean
+shot solo-cube-taken
+# The cube line names the sides the way the score does.
+expect 2 · Computer owns it

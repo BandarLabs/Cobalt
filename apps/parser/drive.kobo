@@ -13,12 +13,12 @@ wait-for light.
 clean
 shot parser-opening
 # A verb that needs an object asks which thing instead of sending "open".
-tap OPEN
+tap Open
 wait-for Open what?
-expect CRATE
+expect Wooden crate
 clean
 shot parser-open-what
-tap CRATE
+tap Wooden crate
 # The reply lands on its last page, and at larger text sizes the echoed
 # command is a page earlier; the reply's last word is on screen at every size.
 wait-for note.

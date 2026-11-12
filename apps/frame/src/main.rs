@@ -18,11 +18,11 @@ const MAX_PHOTOS: usize = 500;
 const MAX_MANIFEST: usize = 256 * 1024;
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
+/// Asks for the photograph again after it could not be opened.
 const SHOW: &str = "show";
 const NEXT: &str = "next";
 const PREVIOUS: &str = "previous";
 const MENU: &str = "menu";
-const EXIT: &str = "exit";
 const SETTINGS: &str = "settings";
 const CHECK: &str = "check";
 const MODE_FRAME: &str = "mode-frame";
@@ -42,7 +42,6 @@ enum View {
     Opening,
     #[default]
     Home,
-    Show,
     Settings,
 }
 
@@ -117,6 +116,8 @@ struct Frame {
     photo_load_id: Option<String>,
     panel_width: u32,
     panel_height: u32,
+    /// The white border round the photograph, in panel pixels.
+    mat: u32,
     startup: Startup,
     unreadable: BTreeSet<String>,
     verified: BTreeSet<String>,
@@ -156,7 +157,6 @@ impl Frame {
                 .activity("Opening your photo shelf", None)
                 .build(),
             View::Home => self.home(context),
-            View::Show => self.photo_screen(),
             View::Settings => self.settings_screen(),
         }
     }
@@ -172,35 +172,34 @@ impl Frame {
         // Settings sit in the bar where they can be seen. They used to open
         // only from a tap in the middle of the photo, which nothing on the
         // screen ever mentioned.
-        screen = screen.top_bar_action(SETTINGS, "Settings");
+        screen = screen.top_bar_glyph(SETTINGS, "Settings", Glyph::Settings);
         if self.photos.is_empty() {
             return Self::empty_home(context, &screen);
+        }
+        if let Some(picture) = self.picture {
+            return self.frame_screen(picture);
+        }
+        // A shelf where nothing opens is said once, on the splash, with the
+        // way to look again after a push. A banner over it and another under
+        // it used to repeat the same sentence three times.
+        if self.photos_all_unreadable() && !self.loading_selected() {
+            return screen
+                .splash(
+                    Some(Glyph::App),
+                    "No photograph can be opened",
+                    format!(
+                        "{} could not be read. Push the album again from your computer.",
+                        count_of(self.unreadable.len(), "photo", "photos")
+                    ),
+                )
+                .bottom_action(CHECK, "Check for photos")
+                .build();
         }
         let index = self.settings.position % self.photos.len().max(1) + 1;
         screen =
             screen.section_with_value("Photographs", format!("{index} of {}", self.photos.len()));
-        if let Some(selected) = self.selected() {
-            screen = screen.secondary(format!(
-                "{} · {} · {}",
-                selected.name,
-                selected.album,
-                format_taken(selected.taken)
-            ));
-        }
-        if let Some(picture) = self.picture {
-            screen = screen
-                .picture(picture, 76)
-                .page_turns(PREVIOUS, NEXT)
-                .reading_menu(MENU)
-                .buttons([(SHOW, "Open"), (NEXT, "Next")]);
-        } else if self.loading_selected() {
+        if self.loading_selected() {
             screen = screen.activity("Opening this photograph", None);
-        } else if self.photos_all_unreadable() {
-            screen = screen.splash(
-                Some(Glyph::App),
-                "No photograph can be opened",
-                "Re-push the album from your computer.",
-            );
         } else {
             screen = screen
                 .secondary("This photograph could not be opened.")
@@ -210,8 +209,13 @@ impl Frame {
             screen = screen.banner(
                 BannerLevel::Attention,
                 format!(
-                    "{} photo(s) could not be read. Push them again from your computer.",
-                    self.unreadable.len()
+                    "{} could not be read. Push {} again from your computer.",
+                    count_of(self.unreadable.len(), "photo", "photos"),
+                    if self.unreadable.len() == 1 {
+                        "it"
+                    } else {
+                        "them"
+                    }
                 ),
             );
         }
@@ -311,61 +315,58 @@ impl Frame {
             .with_own_back(true)
     }
 
-    fn photo_screen(&self) -> Screen {
-        let Some(picture) = self.picture else {
-            let screen = ScreenBuilder::new("frame-show").top_bar("Frame");
-            if self.loading_selected() {
-                return screen
-                    .activity("Loading photo", None)
-                    .build()
-                    .with_own_back(true);
-            }
-            return screen
-                .banner(
-                    BannerLevel::Attention,
-                    self.notice
-                        .clone()
-                        .unwrap_or_else(|| "This photograph could not be opened.".to_owned()),
-                )
-                .buttons([(SHOW, "Try again"), (NEXT, "Next photo")])
-                .build()
-                .with_own_back(true);
-        };
-        // A picture frame with a bar across the top of it is a picture frame
-        // with somebody else's label on the glass. The photograph is measured
-        // against the panel and the bar waits at the top edge until it is
-        // asked for, and names the photograph when it is; the centre tap
-        // already opens a way out that does not need it.
-        let mut screen = ScreenBuilder::new("frame-show")
+    /// The photograph on the whole panel, inside a narrow white mat, the way
+    /// a frame on a shelf shows one.
+    ///
+    /// It used to sit between a caption and a pair of buttons on a page with
+    /// a bar across the top, which gave the photograph about three fifths of
+    /// the panel and made the frame a list of one. The bar waits at the top
+    /// edge until it is asked for and holds Settings, the sides change the
+    /// photograph, and the middle shows what it is.
+    fn frame_screen(&self, picture: TilePicture) -> Screen {
+        let mut screen = ScreenBuilder::new("frame-home")
             .full_bleed_picture(picture, 500)
-            .top_bar(self.selected().map_or("Frame", |photo| photo.name.as_str()))
+            .top_bar("Frame")
+            .top_bar_glyph(SETTINGS, "Settings", Glyph::Settings)
             .page_turns(PREVIOUS, NEXT)
             .reading_menu(MENU);
         if self.overlay {
-            let selected = self.selected().expect("visible photo has a selection");
-            screen = screen.modal("Photo", |overlay| {
-                overlay
-                    .facts([
-                        ("File", selected.name.clone()),
-                        ("Album", selected.album.clone()),
-                        ("Taken", format_taken(selected.taken)),
-                        (
-                            "Transfer",
-                            if self.verified.contains(&selected.id) {
-                                "Verified against the manifest".to_owned()
-                            } else if self.mismatched.contains(&selected.id) {
-                                "Does not match the transfer record".to_owned()
-                            } else {
-                                "Not yet checked".to_owned()
-                            },
-                        ),
-                    ])
-                    .buttons([(PREVIOUS, "Previous"), (NEXT, "Next"), (EXIT, "Exit")])
-            });
+            if let Some(selected) = self.selected() {
+                let index = self.settings.position % self.photos.len().max(1) + 1;
+                let title = format!("Photo {index} of {}", self.photos.len());
+                let mut facts = vec![("File", selected.name.clone())];
+                // A photograph pushed on its own was once filed under an
+                // album named after itself; saying the name twice says nothing.
+                if !selected.album.is_empty() && selected.album != selected.name {
+                    facts.push(("Album", selected.album.clone()));
+                }
+                facts.push(("Taken", format_taken(selected.taken)));
+                facts.push((
+                    "Transfer",
+                    if self.verified.contains(&selected.id) {
+                        "Verified against the manifest".to_owned()
+                    } else if self.mismatched.contains(&selected.id) {
+                        "Does not match the transfer record".to_owned()
+                    } else {
+                        "Not yet checked".to_owned()
+                    },
+                ));
+                let notice = self.notice.clone();
+                screen = screen.modal(title, |overlay| {
+                    let overlay = overlay.facts(facts);
+                    let overlay = match notice {
+                        Some(notice) => overlay.secondary(notice),
+                        None => overlay,
+                    };
+                    overlay.buttons([(SETTINGS, "Settings")])
+                });
+            }
         }
+        // A reading screen has no clock and battery band, and only a screen
+        // without one can hide its bar: both would otherwise sit on the mat.
         screen
             .build()
-            .with_own_back(true)
+            .with_reading(true)
             .with_auto_hidden_top_bar(true)
     }
 
@@ -482,7 +483,7 @@ impl Frame {
         self.picture = None;
         self.notice = Some(error);
         if self.photos_all_unreadable() {
-            self.notice = Some("No photo on this shelf can be read. Re-push the album.".to_owned());
+            self.notice = None;
             self.view = View::Home;
             return;
         }
@@ -620,23 +621,27 @@ impl Frame {
             }
             self.verified.insert(id.to_owned());
         }
-        let picture = kobo_image::decode(bytes).and_then(|picture| {
-            if picture.width() == self.panel_width && picture.height() == self.panel_height {
-                Ok(picture)
-            } else if fit == FitChoice::Pad {
-                picture.fit(self.panel_width, self.panel_height)
-            } else {
-                picture.cover(self.panel_width, self.panel_height)
-            }
+        // In colour on a reader that shows it. A photograph is the one thing
+        // on this panel that is worth every byte of colour it costs.
+        let decoded = if context.panel_shows_colour() {
+            kobo_image::decode_colour(bytes)
+        } else {
+            kobo_image::decode(bytes)
+        };
+        let picture = decoded.and_then(|picture| {
+            matted(
+                &picture,
+                fit,
+                (self.panel_width, self.panel_height),
+                self.mat,
+            )
         });
         match picture {
             Ok(picture) => {
-                self.picture = context.put_picture(
-                    PHOTO,
-                    picture.width(),
-                    picture.height(),
-                    picture.into_grey(),
-                );
+                let (width, height) = (picture.width(), picture.height());
+                let colour = picture.colour().map(<[u8]>::to_vec);
+                self.picture =
+                    context.put_picture_shown(PHOTO, width, height, picture.into_grey(), colour);
                 if self.picture.is_none() {
                     self.skip_unreadable(
                         context,
@@ -897,6 +902,7 @@ impl KoboApp for Frame {
     fn on_start(&mut self, context: &mut Context) {
         self.panel_width = u32::try_from(context.metrics().width).unwrap_or_default();
         self.panel_height = u32::try_from(context.metrics().height).unwrap_or_default();
+        self.mat = u32::try_from(context.metrics().screen_margin()).unwrap_or_default();
         self.view = View::Opening;
         context.store().load(STATE);
         self.start_shelf_reads(context);
@@ -946,12 +952,11 @@ impl KoboApp for Frame {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == ActionId::BACK || action == action_id(EXIT) {
-            if self.view == View::Settings {
-                self.view = View::Home;
-            } else if self.view == View::Show {
-                self.view = View::Home;
+        if action == ActionId::BACK {
+            if self.overlay {
                 self.overlay = false;
+            } else if self.view == View::Settings {
+                self.view = View::Home;
             } else {
                 context.exit();
             }
@@ -959,23 +964,23 @@ impl KoboApp for Frame {
             if let Some(id) = self.selected().map(|photo| photo.id.clone()) {
                 self.unreadable.remove(&id);
             }
-            if self.picture.is_some() {
-                self.view = View::Show;
-            }
             self.start_current(context);
         } else if action == action_id(NEXT) {
             self.advance(context, true);
         } else if action == action_id(PREVIOUS) {
             self.advance(context, false);
         } else if action == action_id(CHECK) {
+            // After a push of the same files the list can come back unchanged,
+            // so a shelf where nothing opened tries its photos again as well.
+            if self.photos_all_unreadable() {
+                self.unreadable.clear();
+                self.start_current(context);
+            }
             self.reload_shelf(context);
         } else if action == action_id(MENU) {
-            if self.view == View::Home {
-                self.view = View::Settings;
-            } else {
-                self.overlay = true;
-            }
+            self.overlay = self.picture.is_some();
         } else if action == action_id(SETTINGS) {
+            self.overlay = false;
             self.view = View::Settings;
         } else if action == action_id(MODE_FRAME) || action == action_id(MODE_SLOW) {
             let slow = action == action_id(MODE_SLOW);
@@ -1149,6 +1154,48 @@ fn decode_digest_map(bytes: &[u8]) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// The photograph fitted inside a white border `mat` wide, on a picture the
+/// size of the panel.
+///
+/// A cropped photograph fills what the border leaves; a padded one keeps all
+/// of itself and the border widens on the short sides. Either way it is
+/// centred, so the border is even where it is meant to be.
+fn matted(
+    picture: &kobo_image::Picture,
+    fit: FitChoice,
+    (width, height): (u32, u32),
+    mat: u32,
+) -> Result<kobo_image::Picture, kobo_image::ImageError> {
+    let mat = mat.min(width / 4).min(height / 4);
+    let (inner_width, inner_height) = (width - 2 * mat, height - 2 * mat);
+    let inner = if fit == FitChoice::Pad {
+        picture.fit_enlarging(inner_width, inner_height)?
+    } else {
+        picture.cover(inner_width, inner_height)?
+    };
+    let left = (width - inner.width()) / 2;
+    let top = (height - inner.height()) / 2;
+    let place = |source: &[u8], depth: usize| {
+        let row = width as usize * depth;
+        let mut canvas = vec![255_u8; row * height as usize];
+        let line = inner.width() as usize * depth;
+        for (y, source_row) in source.chunks_exact(line).enumerate() {
+            let at = (top as usize + y) * row + left as usize * depth;
+            canvas[at..at + line].copy_from_slice(source_row);
+        }
+        canvas
+    };
+    match inner.colour() {
+        Some(rgb) => kobo_image::Picture::from_rgb(width, height, place(rgb, 3)),
+        None => kobo_image::Picture::from_grey(width, height, place(inner.grey(), 1)),
+    }
+}
+
+/// "1 photo", "3 photos".
+fn count_of(count: usize, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
@@ -1225,7 +1272,7 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
     use kobo_sdk::{Command, DeviceRequest};
-    use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    use kobo_ui::{Chrome, LayoutKind, CLARA_BW_METRICS};
 
     fn photo(id: &str, taken: u64) -> Photo {
         Photo {
@@ -1530,7 +1577,7 @@ mod tests {
         // each resolve as missing.
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
-        runner.action(action_id(MENU));
+        runner.action(action_id(SETTINGS));
         assert_eq!(runner.app().view, View::Settings);
         runner.action(action_id(MODE_SLOW));
         assert!(runner.app().settings.slow);
@@ -1565,11 +1612,11 @@ mod tests {
             size: u32::try_from(png.len()).expect("png fits"),
         });
         assert!(runner.app().picture.is_some());
-        runner.action(action_id(SHOW));
-        assert_eq!(runner.app().view, View::Show);
+        // The middle of the photograph says what it is, and Back puts that
+        // away without leaving the frame.
         runner.action(action_id(MENU));
         assert!(runner.app().overlay);
-        runner.action(action_id(EXIT));
+        runner.action(ActionId::BACK);
         assert_eq!(runner.app().view, View::Home);
         assert!(!runner.app().overlay);
     }
@@ -1607,6 +1654,57 @@ mod tests {
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Missing));
         runner
+    }
+
+    fn all_unreadable() -> Frame {
+        Frame {
+            startup: Startup {
+                manifest_loaded: true,
+                state_loaded: true,
+                started: true,
+            },
+            photos: vec![
+                photo("photo-aaaaaaaaaaaaaaaa", 1),
+                photo("photo-bbbbbbbbbbbbbbbb", 2),
+            ],
+            unreadable: ["photo-aaaaaaaaaaaaaaaa", "photo-bbbbbbbbbbbbbbbb"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            panel_width: CLARA_BW_METRICS.width as u32,
+            panel_height: CLARA_BW_METRICS.height as u32,
+            ..Frame::default()
+        }
+    }
+
+    #[test]
+    fn a_shelf_where_nothing_opens_says_so_once_and_offers_to_check_for_photos() {
+        let home = all_unreadable().home(&Context::default());
+        let banners = home
+            .nodes
+            .iter()
+            .filter(|node| matches!(node, kobo_ui::Node::Banner { .. }))
+            .count();
+        assert_eq!(banners, 0);
+        let text = format!("{home:?}");
+        assert_eq!(text.matches("could not be read").count(), 1);
+        assert!(text.contains("2 photos could not be read"));
+        let metrics = CLARA_BW_METRICS;
+        let layout = home.diagnostics(&metrics, &Chrome::measuring(true));
+        assert!(layout.layout.rect_of_action(action_id(CHECK)).is_some());
+    }
+
+    #[test]
+    fn checking_for_photos_on_a_shelf_where_nothing_opened_tries_them_again() {
+        let mut frame = all_unreadable();
+        let mut context = Context::default();
+        frame.on_action(&mut context, action_id(CHECK));
+        assert!(frame.unreadable.is_empty());
+        assert!(frame.photo_load.is_some(), "the photo was not read again");
+        assert!(
+            frame.manifest_load.is_some(),
+            "the shelf was not read again"
+        );
     }
 
     #[test]
@@ -1833,7 +1931,7 @@ mod tests {
 
     #[test]
     fn home_and_photo_layouts_are_clean() {
-        let frame = Frame {
+        let frame = |overlay: bool| Frame {
             startup: Startup {
                 manifest_loaded: true,
                 ..Startup::default()
@@ -1844,13 +1942,78 @@ mod tests {
                 CLARA_BW_METRICS.width as u32,
                 CLARA_BW_METRICS.height as u32,
             )),
+            overlay,
             ..Frame::default()
         };
-        for screen in [frame.home(&Context::default()), frame.photo_screen()] {
+        for screen in [
+            frame(false).home(&Context::default()),
+            frame(true).home(&Context::default()),
+        ] {
             assert!(screen
                 .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
                 .issues
                 .is_empty());
         }
+    }
+
+    /// The photograph is the panel less a narrow even border, with nothing
+    /// drawn over it until the reader asks: no caption, no buttons, no bar.
+    #[test]
+    fn a_photograph_fills_the_panel_inside_an_even_mat() {
+        let (width, height) = (
+            CLARA_BW_METRICS.width as u32,
+            CLARA_BW_METRICS.height as u32,
+        );
+        let source = kobo_image::Picture::from_grey(300, 400, vec![0; 300 * 400]).expect("photo");
+        let mat = 40;
+        let framed = matted(&source, FitChoice::Crop, (width, height), mat).expect("matted");
+        assert_eq!((framed.width(), framed.height()), (width, height));
+        let at = |x: u32, y: u32| framed.grey()[(y * width + x) as usize];
+        for (x, y) in [
+            (mat - 1, height / 2),
+            (width - mat, height / 2),
+            (width / 2, mat - 1),
+            (width / 2, height - mat),
+        ] {
+            assert_eq!(at(x, y), 255, "the mat at {x},{y} is not white");
+        }
+        for (x, y) in [
+            (mat, height / 2),
+            (width - mat - 1, height / 2),
+            (width / 2, mat),
+            (width / 2, height - mat - 1),
+        ] {
+            assert!(at(x, y) < 128, "the photograph does not reach {x},{y}");
+        }
+        let frame = Frame {
+            startup: Startup {
+                manifest_loaded: true,
+                ..Startup::default()
+            },
+            photos: vec![photo("photo-aaaaaaaaaaaaaaaa", 1)],
+            picture: Some(TilePicture::new(PHOTO, width, height)),
+            ..Frame::default()
+        };
+        let screen = frame.home(&Context::default());
+        assert!(screen.reading && screen.auto_hide_top_bar);
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let picture = layout
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, LayoutKind::Picture(_)))
+            .expect("the photograph");
+        assert_eq!(
+            (
+                picture.rect.x,
+                picture.rect.y,
+                picture.rect.width,
+                picture.rect.height
+            ),
+            (0, 0, CLARA_BW_METRICS.width, CLARA_BW_METRICS.height)
+        );
+        assert!(!layout.nodes.iter().any(|node| matches!(
+            node.kind,
+            LayoutKind::Button(..) | LayoutKind::Secondary | LayoutKind::Text
+        )));
     }
 }

@@ -51,7 +51,8 @@ pub fn save(root: &Path, previous: &Manifest) -> Result<(), String> {
 }
 
 pub fn load(root: &Path) -> Result<(Manifest, std::path::PathBuf), String> {
-    let current = slot(root)?.ok_or("No previous Frame album is available")?;
+    let current = slot(root)?
+        .ok_or("No previous Frame album is saved on this shelf, so there is nothing to restore")?;
     let dir = root.join(format!(".recovery-{current}"));
     let bytes =
         fs::read(dir.join(MANIFEST)).map_err(|e| format!("Read previous Frame album: {e}"))?;
@@ -119,12 +120,15 @@ pub fn save_script(previous: &Manifest) -> String {
             photo.id, photo.id
         );
     }
-    let _ = write!(script, "cp \"$root/{MANIFEST}\" \"$backup/{MANIFEST}\"\nfor sidecar in {FIT_MANIFEST} {DIGEST_MANIFEST}; do if [ -f \"$root/$sidecar\" ]; then cp \"$root/$sidecar\" \"$backup/$sidecar\"; fi; done\nsync\nprintf '%s' \"$next\" > \"$root/.recovery-pointer.writing\"\nmv -f \"$root/.recovery-pointer.writing\" \"$root/{POINTER}\"\nsync\n");
+    // The kept list is written from the photos copied above rather than
+    // copied from the shelf, which may still name a photo whose file is gone.
+    let encoded = super::base64_encode(&previous.encode());
+    let _ = write!(script, "base64 -d > \"$backup/{MANIFEST}\" <<'COBALT_FRAME_MANIFEST'\n{encoded}\nCOBALT_FRAME_MANIFEST\nfor sidecar in {FIT_MANIFEST} {DIGEST_MANIFEST}; do if [ -f \"$root/$sidecar\" ]; then cp \"$root/$sidecar\" \"$backup/$sidecar\"; fi; done\nsync\nprintf '%s' \"$next\" > \"$root/.recovery-pointer.writing\"\nmv -f \"$root/.recovery-pointer.writing\" \"$root/{POINTER}\"\nsync\n");
     script
 }
 
 pub fn select_script() -> String {
-    format!("current=$(cat \"$root/{POINTER}\")\ncase \"$current\" in a|b) ;; *) echo 'No valid previous Frame album' >&2; exit 1 ;; esac\nbackup=\"$root/.recovery-$current\"\n")
+    format!("current=$(cat \"$root/{POINTER}\")\ncase \"$current\" in a|b) ;; *) echo 'No previous Frame album is saved on this reader, so there is nothing to restore' >&2; exit 1 ;; esac\nbackup=\"$root/.recovery-$current\"\n")
 }
 
 pub fn restore_script(manifest: &Manifest) -> String {

@@ -4,9 +4,9 @@
   "short_label": "Library",
   "summary": "Browse and read books from your calibre-web library. Needs an account.",
   "page_description": "Browse a public or private OPDS library, download EPUBs and continue reading offline. Library is an unofficial OPDS client and is not affiliated with or endorsed by the calibre-web or calibre projects.",
-  "version": "0.1.8",
-  "release_notes": "Your password and the library address are typed on Cobalt's own keyboard, and the reader saves the password without the app seeing it. Sign in again, Try again and Retry saving sit on the message that explains the problem.",
-  "glyph": "book",
+  "version": "0.1.14",
+  "release_notes": "A public library added while its catalog is out of reach is now kept. A reading position saved after Retry saving no longer says a book was saved for offline reading.",
+  "glyph": "books",
   "capabilities": [
     "network"
   ],
@@ -21,7 +21,7 @@
         "command": "kobo connect calibre-web"
       },
       {
-        "text": "Or add the HTTPS OPDS address on the reader and choose Sign in, or Use public library for a library without an account."
+        "text": "Or choose Add library on the reader, enter the address you open calibre-web at, and choose Sign in, or Use public library for a library without an account."
       },
       {
         "text": "For a private certificate authority, install its trust root on the reader. Pass the same file to kobo connect with --ca.",

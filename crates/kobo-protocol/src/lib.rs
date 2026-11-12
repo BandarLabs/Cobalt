@@ -6,8 +6,8 @@ use std::fmt;
 use std::io::{self, Read, Write};
 
 use kobo_ui::{
-    ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState, FieldKind,
-    FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
+    Accent, ActionId, BannerLevel, BarAction, BarStyle, BottomAction, Caret, Cell, ControlState,
+    FieldKind, FontHandle, Freeform, Glyph, NavBar, Node, NodeId, Orientation, PageTurns, Percent,
     PictureFormat, PictureHandle, Row, RowLead, RowState, Screen, Space, TextScale, Tile,
     TilePicture, TileShape, TileState, TopBar, TransferFailure, MAX_BAR_ACTIONS,
     MAX_TERMINAL_COLUMNS, MAX_TERMINAL_ROWS, MIN_NAV_DESTINATIONS,
@@ -66,6 +66,10 @@ pub const MAGIC: [u8; 4] = *b"KOBO";
 /// bytes after everything tags 11, 14 and 24 already carried; see
 /// [`CONTROLS_VERSION`]. Version 15 remains readable and is written exactly as
 /// it was.
+/// Version 17 adds the screen's accent, one byte after everything a screen
+/// already carried; see [`ACCENT_VERSION`]. Version 16 remains readable and is
+/// written exactly as it was. Version 17 is also the quiet type and spacing,
+/// and the command role of a quoted paragraph; see [`QUIET_TYPE_VERSION`].
 ///
 /// A colour picture travels the same way: a grey picture still uses the tags it
 /// always did, byte for byte, and a colour one uses tags of its own that an
@@ -103,7 +107,112 @@ pub const CONTROLS_VERSION: u8 = 16;
 /// either at an earlier protocol is refused rather than misread.
 pub const TEXT_ENTRY_VERSION: u8 = 16;
 
-pub const VERSION: u8 = 16;
+/// The protocol a screen must be encoded at to name its application's colour,
+/// [`kobo_ui::Accent`].
+///
+/// One byte at the very end of the screen, after the overlay, so a version-16
+/// reader stops exactly where it always did and a version-17 reader finds it
+/// where nothing else could be. Zero means no accent, and is what every
+/// screen encoded at an earlier protocol is read as. A value this runtime has
+/// no accent for is also read as none, rather than refused, because grey is
+/// the right rendering of every accent and an application should not fail to
+/// open over the colour of its bar.
+pub const ACCENT_VERSION: u8 = 17;
+
+/// The protocol whose screens are laid out in [`kobo_ui::Typography::Quiet`],
+/// and may set a quoted paragraph as a command for the owner to type.
+///
+/// Not a byte on the wire but a promise about measurement: an application at
+/// this version fitted its text to the quiet sizes and spacing, and one at an
+/// earlier version fitted it to Folio's. The runtime lays each frame out in
+/// the edition its version names, so neither is drawn in type it was not
+/// measured in. A command role sent at an earlier version is read as a plain
+/// quotation, which is how those runtimes drew it.
+pub const QUIET_TYPE_VERSION: u8 = 17;
+
+/// The protocol an application must speak to list the audiobooks on the
+/// reader, play one from that list, read what it says about itself and
+/// change its speed: [`DeviceRequest::ListAudio`], a library
+/// [`AudioSource`], [`DeviceRequest::ReadAudioDetail`] and
+/// [`DeviceRequest::SetAudioSpeed`], answered with
+/// [`DeviceResult::AudioLibrary`] and [`DeviceResult::AudioDetail`].
+///
+/// All of them travel on tags an older runtime has no reading for, so an
+/// older runtime refuses the frame rather than misreading it, and the
+/// version itself did not move: the Store floors an application that
+/// declares `audio` at the first release carrying them, which is the
+/// change that matters to an owner.
+pub const AUDIOBOOK_VERSION: u8 = 17;
+
+/// The protocol a grid cell must be encoded at to carry a
+/// [`kobo_ui::CellTone`], the three marks a word game prints on its tiles.
+///
+/// The tone travels in the upper bits of the byte that already says whether
+/// a cell is selected, so a cell without one is encoded exactly as it always
+/// was. A runtime released before tones existed reads that byte as a flag and
+/// refuses any other value, which is the right failure: the screen is refused
+/// rather than drawn with every tile alike. As with the audiobook messages,
+/// the version itself did not move, and an application that marks its tiles
+/// names the first release that draws them as its minimum.
+pub const CELL_TONE_VERSION: u8 = 17;
+
+/// The protocol whose screens are laid out in [`kobo_ui::Typography::Fine`]:
+/// emphasis in prose is measured and set in the reading face's own italic.
+///
+/// Like [`QUIET_TYPE_VERSION`], a promise about measurement rather than a
+/// byte on the wire. An application at an earlier version measured its
+/// emphasis upright, so the runtime keeps leaning the upright letters for it
+/// instead of drawing a narrower italic into lines it did not fit.
+pub const FINE_TYPE_VERSION: u8 = 18;
+
+/// The protocol whose frames may name the application marks: the glyphs,
+/// such as [`Glyph::Dice`] and [`Glyph::Map`], that let every application
+/// on the launcher wear a picture of its own.
+///
+/// They travel on glyph bytes an older runtime has no reading for, and an
+/// older runtime refuses a whole frame over one byte it cannot read rather
+/// than drawing a blank. So a frame encoded at an earlier protocol carries,
+/// in place of each mark, the glyph the application wore before the mark
+/// existed, and a frame at an earlier protocol that names one is refused.
+pub const APP_MARK_VERSION: u8 = 18;
+
+/// The protocol whose runtime keeps notices: [`Message::Notices`], sent to
+/// the launcher, [`Message::OpenDocument`], sent to Books, and [`DeviceRequest::MarkNoticesRead`],
+/// [`DeviceRequest::ClearNotices`] and [`DeviceRequest::OpenNotice`], which
+/// only the launcher may send. Also the bell, [`Glyph::Bell`], it opens them
+/// with.
+///
+/// All on tags of their own, so the version did not move. The runtime sends
+/// the list only to the launcher, which ships with it, and the launcher sends
+/// nothing back, nor draws the bell, until a list has arrived: a launcher
+/// newer than the runtime it finds itself under, which is what an update
+/// applied mid-session leaves behind, never sends a frame that runtime would
+/// refuse.
+pub const NOTICES_VERSION: u8 = 18;
+
+/// The protocol whose runtime deletes a delivered article for Books,
+/// [`DeviceRequest::RemoveArticle`].
+///
+/// On a tag of its own, as the notices are, so the version did not move.
+/// Books ships with the runtime, so the two only disagree between an update
+/// applied mid-session and the next start, and Books sends this only from a
+/// confirmation the owner tapped, so that window is one tap wide.
+pub const ARTICLES_VERSION: u8 = 18;
+
+/// The protocol whose runtime keeps the time zone the owner picked,
+/// [`DeviceRequest::ReadTimeZone`] and [`DeviceRequest::SetTimeZone`].
+///
+/// On tags of their own, so the version did not move. Settings ships with
+/// the runtime and asks only when the owner opens Date and time, so a
+/// Settings newer than its runtime, between an update applied mid-session
+/// and the next start, is one tap away from a refused frame at most.
+pub const TIME_ZONE_VERSION: u8 = 18;
+
+/// The longest time zone name the protocol carries, such as
+/// `America/Argentina/Buenos_Aires`.
+pub const MAX_TIME_ZONE_LEN: usize = 64;
+
+pub const VERSION: u8 = 18;
 /// Version introducing server-bound account records.
 pub const SERVER_ACCOUNT_VERSION: u8 = 14;
 /// Beta wire version introducing explicit update tasks.
@@ -111,7 +220,13 @@ pub const UPDATE_TASK_VERSION: u8 = 14;
 /// Version with persistent selected grid cells, retained for installed apps.
 pub const SELECTED_GRID_VERSION: u8 = 13;
 mod board;
+mod notices;
 mod pencil;
+
+pub use notices::{
+    Notice, NoticeList, NoticeTarget, MAX_NOTICES, MAX_NOTICE_DETAIL_LEN, MAX_NOTICE_HEADING_LEN,
+    MAX_NOTICE_TITLE_LEN,
+};
 
 /// Opt-in simulator callback boundary carried in an ordinary debug log frame.
 /// It does not add a wire tag or authorize any runtime operation.
@@ -144,14 +259,17 @@ const PRE_FOLIO_VERSIONS: [u8; 2] = [DICTIONARY_VERSION, LEGACY_VERSION];
 /// application can still be speaking it. A test holds it to the release
 /// registry's `tools/protocol-minimums.json`, so removing one is a visible
 /// decision rather than a side effect.
-pub const ACCEPTED_VERSIONS: [u8; 7] = [
+pub const ACCEPTED_VERSIONS: [u8; 9] = [
     DICTIONARY_VERSION,
     LEGACY_VERSION,
     FOLIO_VERSION,
     SELECTED_GRID_VERSION,
     SUSPEND_VERSION,
-    // Fifteen, named by what it added now that it is no longer the newest.
+    // Fifteen and sixteen, each named by what it added now that it is no
+    // longer the newest.
     PICTURE_BLEED_VERSION,
+    CONTROLS_VERSION,
+    QUIET_TYPE_VERSION,
     VERSION,
 ];
 
@@ -721,6 +839,11 @@ pub enum Message {
         /// The reader's accessibility preference. Applications receive this
         /// before laying out or paginating any content.
         text_scale: TextScale,
+        /// Whether the panel can show colour, so an application that has a
+        /// picture in colour knows whether sending it in colour buys anything
+        /// for three times the bytes. Carried from protocol 17; an older
+        /// application never reads it and is told nothing.
+        colour_panel: bool,
     },
     SetScreen(Screen),
     /// Selects the application's logical viewport for subsequent screens.
@@ -878,6 +1001,17 @@ pub enum Message {
     /// Releases a publisher face and its glyph cache.
     DropFont {
         handle: FontHandle,
+    },
+    /// The runtime's notices, sent to the launcher when it starts and again
+    /// whenever the list changes. Unsolicited, like [`Self::CoverChanged`].
+    /// Requires [`NOTICES_VERSION`].
+    Notices(NoticeList),
+    /// The runtime asking the application it just brought forward to open
+    /// one library document, by the identifier a library listing uses: the
+    /// article a notice announced. Unsolicited, and sent only to Books, which
+    /// ships with the runtime. Requires [`NOTICES_VERSION`].
+    OpenDocument {
+        id: String,
     },
 }
 
@@ -1348,6 +1482,14 @@ pub enum DeviceRequest {
     ReadUpdateChannel,
     /// Select the published update stream used for platform and app updates.
     SetUpdateChannel { channel: UpdateChannel },
+    /// Report the time zone the owner picked, answered with
+    /// [`DeviceResult::TimeZone`]. Settings only; requires
+    /// [`TIME_ZONE_VERSION`].
+    ReadTimeZone,
+    /// Keep `zone`, a standard zone name such as `Asia/Kolkata`, as the
+    /// reader's time zone; empty forgets the choice. The runtime refuses a
+    /// zone it does not know. Settings only; requires [`TIME_ZONE_VERSION`].
+    SetTimeZone { zone: String },
     /// Install or replace one runtime-owned credential for the calling app.
     ///
     /// The runtime authorizes the app/name pair before writing anything.
@@ -1368,6 +1510,20 @@ pub enum DeviceRequest {
     ListLibrary,
     /// Read one library document by the identifier a listing returned.
     ReadLibrary { id: String },
+    /// List the audiobooks on the reader: every file the runtime can play,
+    /// and every folder of them that reads as one book, under the same
+    /// roots the library is listed from. Requires [`AUDIOBOOK_VERSION`].
+    ListAudio,
+    /// Ask what the prepared audio source says about itself: its title,
+    /// author, chapters and cover. Answered with [`DeviceResult::AudioDetail`]
+    /// once a load has finished, and refused before. Requires
+    /// [`AUDIOBOOK_VERSION`].
+    ReadAudioDetail,
+    /// Play the prepared source faster or slower without changing its pitch,
+    /// as a percentage of its own speed. The runtime clamps to what sounds
+    /// acceptable and the next audio reading says what it kept. Requires
+    /// [`AUDIOBOOK_VERSION`].
+    SetAudioSpeed { percent: u16 },
     /// Ask which of these runtime-owned credentials are installed.
     ///
     /// Presence only, never values. An application that spends several
@@ -1406,6 +1562,22 @@ pub enum DeviceRequest {
         kind: kobo_ui::FieldKind,
         save_as: Option<SecretTarget>,
     },
+    /// Mark every notice read: the owner has opened the list. Launcher only;
+    /// requires [`NOTICES_VERSION`].
+    MarkNoticesRead,
+    /// Forget every notice. Launcher only; requires [`NOTICES_VERSION`].
+    ClearNotices,
+    /// Open what one notice names, such as the article that arrived, in the
+    /// application that reads it. Launcher only; requires
+    /// [`NOTICES_VERSION`].
+    OpenNotice { id: u64 },
+    /// Delete one delivered article, by the identifier a listing gave it.
+    ///
+    /// The one write the library allows, and only of a file in the card's
+    /// `Articles` folder, which holds nothing but what a computer delivered
+    /// there. A book the owner copied on is never in reach. Books only;
+    /// requires [`ARTICLES_VERSION`].
+    RemoveArticle { id: String },
 }
 
 /// Where the runtime keeps a secret typed into a [`DeviceRequest::TypeText`]
@@ -1807,6 +1979,13 @@ pub enum DeviceResult {
     Denied(DenyReason),
     /// Which published update stream the runtime follows.
     UpdateChannel(UpdateChannel),
+    /// The time zone the owner picked, or `None` when none has been, and
+    /// the minutes east of UTC the reader's clock is at now. Requires
+    /// [`TIME_ZONE_VERSION`].
+    TimeZone {
+        zone: Option<String>,
+        offset_minutes: i16,
+    },
     /// Documents already on this device. See [`LibraryEntry`].
     Library {
         entries: Vec<LibraryEntry>,
@@ -1815,6 +1994,15 @@ pub enum DeviceResult {
     /// The bytes of one library document, or empty when it is listed but not
     /// on the card (a Kobo Store title that has not been downloaded).
     LibraryDocument { id: String, bytes: Vec<u8> },
+    /// The audiobooks on the reader, and whether a bound cut the walk short.
+    /// Requires [`AUDIOBOOK_VERSION`].
+    AudioLibrary {
+        entries: Vec<AudioEntry>,
+        truncated: bool,
+    },
+    /// What the prepared audio source says about itself. Requires
+    /// [`AUDIOBOOK_VERSION`].
+    AudioDetail(AudioDetail),
     /// The subset of a [`DeviceRequest::CheckSecrets`] list that is
     /// installed on this reader. Names only: a stored value never
     /// leaves the runtime, and an absent name says so by omission.
@@ -1826,6 +2014,21 @@ pub enum DeviceResult {
 
 /// The largest library listing one result may carry.
 pub const MAX_LIBRARY_ENTRIES: usize = 400;
+/// How many audiobooks one listing may name. A collection past this is
+/// listed as far as this and said to be cut short.
+pub const MAX_AUDIO_ENTRIES: usize = 2_000;
+/// How many chapters one book may describe.
+pub const MAX_AUDIO_CHAPTERS: usize = 2_000;
+/// The longest title, author, narrator or album a book may describe, in
+/// bytes.
+pub const MAX_AUDIO_TEXT_LEN: usize = 256;
+/// The longest chapter title, in bytes.
+pub const MAX_AUDIO_CHAPTER_TITLE_LEN: usize = 160;
+/// The largest cover a book may carry, as it was embedded: JPEG or PNG.
+pub const MAX_AUDIO_COVER_BYTES: usize = 2 * 1024 * 1024;
+/// The kinds an audiobook entry may be: MP3, MPEG-4, Ogg Vorbis, Ogg Opus,
+/// FLAC, WAV and the firmware's `.mp3z` archive.
+pub const AUDIO_KINDS: [u8; 7] = [1, 2, 3, 4, 5, 6, 7];
 /// The largest identifier a library entry may use.
 pub const MAX_LIBRARY_ID_LEN: usize = 256;
 /// The largest title a shelf tile may carry.
@@ -1856,6 +2059,73 @@ impl LibraryEntry {
     pub const fn is_readable(&self) -> bool {
         self.on_card && self.kind != 5 && self.kind != 6
     }
+}
+
+/// One audiobook the owner has on the reader.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioEntry {
+    /// What to pass back as [`AudioSource::Library`] to play it. Opaque, and
+    /// stable across listings.
+    pub id: String,
+    /// The file or folder name without its suffix: the best title there is
+    /// without opening the book, which a listing never does.
+    pub title: String,
+    /// 1 MP3, 2 MPEG-4 (M4A, M4B), 3 Ogg Vorbis, 4 Ogg Opus, 5 FLAC, 6 WAV,
+    /// 7 MP3Z. A folder of files is the kind of its first file.
+    pub kind: u8,
+    /// How many files make up the book: one for a file, and the folder's
+    /// count for a folder.
+    pub parts: u16,
+    pub bytes: u64,
+}
+
+/// One chapter of a described audiobook.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AudioChapter {
+    pub start_ms: u32,
+    pub title: String,
+}
+
+/// What a prepared audio source says about itself. Every text is empty
+/// when the book does not say.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AudioDetail {
+    pub title: String,
+    pub author: String,
+    pub narrator: String,
+    pub album: String,
+    /// The codec, rate and channels as a short line, for a facts row.
+    pub format: String,
+    pub duration_ms: u32,
+    /// In order of start. Empty for a book that has none.
+    pub chapters: Vec<AudioChapter>,
+    /// The cover as it was embedded, JPEG or PNG, or empty.
+    pub cover: Vec<u8>,
+}
+
+impl AudioDetail {
+    /// Whether every field is within what the wire carries.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        [&self.title, &self.author, &self.narrator, &self.album]
+            .iter()
+            .all(|text| text.len() <= MAX_AUDIO_TEXT_LEN)
+            && self.format.len() <= MAX_AUDIO_TEXT_LEN
+            && self.chapters.len() <= MAX_AUDIO_CHAPTERS
+            && self
+                .chapters
+                .iter()
+                .all(|chapter| chapter.title.len() <= MAX_AUDIO_CHAPTER_TITLE_LEN)
+            && self.cover.len() <= MAX_AUDIO_COVER_BYTES
+    }
+}
+
+fn valid_audio_entry(entry: &AudioEntry) -> bool {
+    valid_library_id(&entry.id)
+        && !entry.title.is_empty()
+        && entry.title.len() <= MAX_LIBRARY_TITLE_LEN
+        && AUDIO_KINDS.contains(&entry.kind)
+        && entry.parts > 0
 }
 
 /// Application metadata safe to show to an unprivileged launcher or Store UI.
@@ -1940,11 +2210,16 @@ fn numeric_version(version: &str) -> Option<Vec<u64>> {
 /// Shelf names are resolved inside the calling application's own shelf. A
 /// stream is always HTTPS and carries no credentials, so an application can
 /// neither escape its data root nor turn the player into a secret-bearing
-/// request primitive.
+/// request primitive. A library identifier is one a
+/// [`DeviceResult::AudioLibrary`] listing handed out, so an application plays
+/// what the owner put on the reader without ever naming a path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AudioSource {
     Shelf(String),
     Stream(String),
+    /// An audiobook the runtime listed, by the identifier it gave it.
+    /// Requires [`AUDIOBOOK_VERSION`].
+    Library(String),
 }
 
 /// Observable state of the runtime-owned audio transport.
@@ -2222,11 +2497,17 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             height,
             pixels_per_inch,
             text_scale,
+            colour_panel,
         } => {
             push_u16(&mut payload, *width);
             push_u16(&mut payload, *height);
             push_u16(&mut payload, *pixels_per_inch);
             payload.push(text_scale.wire_value());
+            // After everything a protocol-16 application reads, and only for
+            // one that reads further.
+            if frame.version >= ACCENT_VERSION {
+                payload.push(u8::from(*colour_panel));
+            }
         }
         Message::SetScreen(screen) => {
             let mut count = 0;
@@ -2310,6 +2591,8 @@ pub fn encode(frame: &Frame) -> Result<Vec<u8>, ProtocolError> {
             payload.extend_from_slice(bytes);
         }
         Message::DropFont { handle } => push_u32(&mut payload, handle.0),
+        Message::Notices(list) => notices::push_list(&mut payload, list, frame.version)?,
+        Message::OpenDocument { id } => push_string(&mut payload, id)?,
         Message::PrepareSuspend { generation } => push_u64(&mut payload, *generation),
         Message::ScheduledWake { occurrence } => push_u64(&mut payload, *occurrence),
         Message::Resume { generation, reason } => {
@@ -2851,7 +3134,7 @@ fn begin_picture_layout(
 fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize), ProtocolError> {
     match message {
         Message::Hello { name } => Ok((1, encoded_string_len(name)?)),
-        Message::Welcome { .. } => Ok((2, 7)),
+        Message::Welcome { .. } => Ok((2, if version >= ACCENT_VERSION { 8 } else { 7 })),
         Message::SetScreen(screen) => {
             let mut count = 0;
             Ok((3, encoded_screen_len(screen, 0, &mut count, version)?))
@@ -2933,6 +3216,20 @@ fn encoded_message_layout(message: &Message, version: u8) -> Result<(u8, usize),
             Ok((24, length))
         }
         Message::DropFont { .. } => Ok((25, 4)),
+        Message::Notices(_) | Message::OpenDocument { .. } if version < NOTICES_VERSION => {
+            Err(ProtocolError::UnsupportedVersion(version))
+        }
+        Message::OpenDocument { id } => {
+            if !valid_library_id(id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            Ok((42, encoded_string_len(id)?))
+        }
+        Message::Notices(list) => {
+            let mut encoded = Vec::new();
+            notices::push_list(&mut encoded, list, version)?;
+            Ok((41, encoded.len()))
+        }
     }
 }
 
@@ -3061,24 +3358,28 @@ fn encode_device_request(
         }
         DeviceRequest::DisconnectWifi => output.push(21),
         DeviceRequest::ReadAudio => output.push(22),
-        DeviceRequest::LoadAudio { source } => {
-            output.push(23);
-            match source {
-                AudioSource::Shelf(name) if is_valid_key(name) => {
-                    output.push(1);
-                    push_string(output, name)?;
-                }
-                AudioSource::Stream(url)
-                    if url.starts_with("https://") && url.len() <= MAX_URL_LEN =>
-                {
-                    output.push(2);
-                    push_string(output, url)?;
-                }
-                AudioSource::Shelf(_) | AudioSource::Stream(_) => {
-                    return Err(ProtocolError::InvalidValue("audio source"));
-                }
+        DeviceRequest::LoadAudio { source } => match source {
+            AudioSource::Shelf(name) if is_valid_key(name) => {
+                output.push(23);
+                output.push(1);
+                push_string(output, name)?;
             }
-        }
+            AudioSource::Stream(url) if url.starts_with("https://") && url.len() <= MAX_URL_LEN => {
+                output.push(23);
+                output.push(2);
+                push_string(output, url)?;
+            }
+            // A tag of its own rather than a third source byte under tag 23,
+            // so a runtime from before audiobooks refuses the frame outright
+            // instead of reading an identifier as something it is not.
+            AudioSource::Library(id) if valid_library_id(id) => {
+                output.push(54);
+                push_string(output, id)?;
+            }
+            AudioSource::Shelf(_) | AudioSource::Stream(_) | AudioSource::Library(_) => {
+                return Err(ProtocolError::InvalidValue("audio source"));
+            }
+        },
         DeviceRequest::PlayAudio => output.push(24),
         DeviceRequest::PauseAudio => output.push(25),
         DeviceRequest::SeekAudio { position_ms } => {
@@ -3132,6 +3433,19 @@ fn encode_device_request(
             output.extend_from_slice(&[44, radio_flags(*cobalt, *apps)]);
         }
         DeviceRequest::ReadUpdateChannel => output.push(45),
+        DeviceRequest::ReadTimeZone | DeviceRequest::SetTimeZone { .. }
+            if version < TIME_ZONE_VERSION =>
+        {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::ReadTimeZone => output.push(61),
+        DeviceRequest::SetTimeZone { zone } if zone.is_empty() || valid_time_zone(zone) => {
+            output.push(62);
+            push_string(output, zone)?;
+        }
+        DeviceRequest::SetTimeZone { .. } => {
+            return Err(ProtocolError::InvalidValue("time zone"));
+        }
         DeviceRequest::SetUpdateChannel { channel } => {
             output.extend_from_slice(&[46, channel.wire()]);
         }
@@ -3173,8 +3487,34 @@ fn encode_device_request(
             output.push(49);
             push_string(output, id)?;
         }
-        DeviceRequest::ReadLibrary { .. } => {
+        DeviceRequest::RemoveArticle { .. } if version < ARTICLES_VERSION => {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::RemoveArticle { id } if valid_library_id(id) => {
+            output.push(60);
+            push_string(output, id)?;
+        }
+        DeviceRequest::ReadLibrary { .. } | DeviceRequest::RemoveArticle { .. } => {
             return Err(ProtocolError::InvalidValue("library id"));
+        }
+        DeviceRequest::ListAudio => output.push(53),
+        DeviceRequest::MarkNoticesRead
+        | DeviceRequest::ClearNotices
+        | DeviceRequest::OpenNotice { .. }
+            if version < NOTICES_VERSION =>
+        {
+            return Err(ProtocolError::UnsupportedVersion(version));
+        }
+        DeviceRequest::MarkNoticesRead => output.push(57),
+        DeviceRequest::ClearNotices => output.push(58),
+        DeviceRequest::OpenNotice { id } => {
+            output.push(59);
+            push_u64(output, *id);
+        }
+        DeviceRequest::ReadAudioDetail => output.push(55),
+        DeviceRequest::SetAudioSpeed { percent } => {
+            output.push(56);
+            push_u16(output, *percent);
         }
         DeviceRequest::CheckSecrets { names } if !names.is_empty() && valid_secret_names(names) => {
             output.push(51);
@@ -3601,6 +3941,38 @@ fn decode_device_request(
             Ok(DeviceRequest::ReadLibrary { id })
         }
         52 if version >= TEXT_ENTRY_VERSION => decode_text_request(reader),
+        53 if version >= AUDIOBOOK_VERSION => Ok(DeviceRequest::ListAudio),
+        54 if version >= AUDIOBOOK_VERSION => {
+            let id = reader.string()?;
+            if !valid_library_id(&id) {
+                return Err(ProtocolError::InvalidValue("audio source"));
+            }
+            Ok(DeviceRequest::LoadAudio {
+                source: AudioSource::Library(id),
+            })
+        }
+        55 if version >= AUDIOBOOK_VERSION => Ok(DeviceRequest::ReadAudioDetail),
+        56 if version >= AUDIOBOOK_VERSION => Ok(DeviceRequest::SetAudioSpeed {
+            percent: reader.u16()?,
+        }),
+        57 if version >= NOTICES_VERSION => Ok(DeviceRequest::MarkNoticesRead),
+        58 if version >= NOTICES_VERSION => Ok(DeviceRequest::ClearNotices),
+        59 if version >= NOTICES_VERSION => Ok(DeviceRequest::OpenNotice { id: reader.u64()? }),
+        60 if version >= ARTICLES_VERSION => {
+            let id = reader.string()?;
+            if !valid_library_id(&id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            Ok(DeviceRequest::RemoveArticle { id })
+        }
+        61 if version >= TIME_ZONE_VERSION => Ok(DeviceRequest::ReadTimeZone),
+        62 if version >= TIME_ZONE_VERSION => {
+            let zone = reader.string()?;
+            if !zone.is_empty() && !valid_time_zone(&zone) {
+                return Err(ProtocolError::InvalidValue("time zone"));
+            }
+            Ok(DeviceRequest::SetTimeZone { zone })
+        }
         _ => Err(ProtocolError::InvalidValue("device request")),
     }
 }
@@ -3802,7 +4174,7 @@ fn encode_device_result(
                 u16::try_from(entries.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
             );
             for entry in entries {
-                encode_app_info(output, entry)?;
+                encode_app_info(output, entry, version)?;
             }
         }
         DeviceResult::Dictionary { word, entries } => {
@@ -3837,6 +4209,20 @@ fn encode_device_result(
             output.extend_from_slice(&[17, radio_flags(*cobalt, *apps)]);
         }
         DeviceResult::UpdateChannel(channel) => output.extend_from_slice(&[18, channel.wire()]),
+        DeviceResult::TimeZone {
+            zone,
+            offset_minutes,
+        } => {
+            let zone = zone.as_deref().unwrap_or_default();
+            if (!zone.is_empty() && !valid_time_zone(zone))
+                || !(-900..=900).contains(offset_minutes)
+            {
+                return Err(ProtocolError::InvalidValue("time zone"));
+            }
+            output.push(25);
+            push_string(output, zone)?;
+            output.extend_from_slice(&offset_minutes.to_be_bytes());
+        }
         DeviceResult::Library { entries, truncated } => {
             if entries.len() > MAX_LIBRARY_ENTRIES {
                 return Err(ProtocolError::InvalidValue("library listing"));
@@ -3862,6 +4248,53 @@ fn encode_device_result(
                 u32::try_from(bytes.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
             );
             output.extend_from_slice(bytes);
+        }
+        DeviceResult::AudioLibrary { entries, truncated } => {
+            if entries.len() > MAX_AUDIO_ENTRIES || !entries.iter().all(valid_audio_entry) {
+                return Err(ProtocolError::InvalidValue("audio listing"));
+            }
+            output.push(23);
+            push_u16(
+                output,
+                u16::try_from(entries.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            output.push(u8::from(*truncated));
+            for entry in entries {
+                push_string(output, &entry.id)?;
+                push_string(output, &entry.title)?;
+                output.push(entry.kind);
+                push_u16(output, entry.parts);
+                push_u64(output, entry.bytes);
+            }
+        }
+        DeviceResult::AudioDetail(detail) => {
+            if !detail.is_valid() {
+                return Err(ProtocolError::InvalidValue("audio detail"));
+            }
+            output.push(24);
+            for text in [
+                &detail.title,
+                &detail.author,
+                &detail.narrator,
+                &detail.album,
+                &detail.format,
+            ] {
+                push_string(output, text)?;
+            }
+            push_u32(output, detail.duration_ms);
+            push_u16(
+                output,
+                u16::try_from(detail.chapters.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            for chapter in &detail.chapters {
+                push_u32(output, chapter.start_ms);
+                push_string(output, &chapter.title)?;
+            }
+            push_u32(
+                output,
+                u32::try_from(detail.cover.len()).map_err(|_| ProtocolError::FrameTooLarge)?,
+            );
+            output.extend_from_slice(&detail.cover);
         }
         DeviceResult::Secrets { present } if valid_secret_names(present) => {
             output.push(21);
@@ -3964,7 +4397,11 @@ fn encode_remote_install(
     Ok(())
 }
 
-fn encode_app_info(output: &mut Vec<u8>, entry: &AppInfo) -> Result<(), ProtocolError> {
+fn encode_app_info(
+    output: &mut Vec<u8>,
+    entry: &AppInfo,
+    protocol: u8,
+) -> Result<(), ProtocolError> {
     validate_app_info(entry)?;
     for text in [
         &entry.id,
@@ -3976,7 +4413,7 @@ fn encode_app_info(output: &mut Vec<u8>, entry: &AppInfo) -> Result<(), Protocol
     ] {
         push_string(output, text)?;
     }
-    output.push(encode_glyph(entry.glyph));
+    output.push(glyph_tag(entry.glyph, protocol));
     output.push(u8::try_from(entry.capabilities.len()).map_err(|_| ProtocolError::FrameTooLarge)?);
     for capability in &entry.capabilities {
         push_string(output, capability)?;
@@ -4089,7 +4526,7 @@ fn decode_device_result(
         }
         8 => Ok(DeviceResult::Failed(DeviceError::try_from(reader.u8()?)?)),
         9 => decode_audio_result(reader),
-        12 => decode_apps_result(reader),
+        12 => decode_apps_result(reader, version),
         13 => decode_dictionary_result(reader),
         14 => decode_app_link(reader),
         15 => decode_remote_install(reader),
@@ -4113,8 +4550,36 @@ fn decode_device_result(
         }
         19 => decode_library_result(reader),
         20 => decode_library_document(reader),
+        23 if version >= AUDIOBOOK_VERSION => decode_audio_library(reader),
+        24 if version >= AUDIOBOOK_VERSION => decode_audio_detail(reader),
+        25 if version >= TIME_ZONE_VERSION => {
+            let zone = reader.string()?;
+            let offset_minutes = i16::from_be_bytes(reader.u16()?.to_be_bytes());
+            if (!zone.is_empty() && !valid_time_zone(&zone))
+                || !(-900..=900).contains(&offset_minutes)
+            {
+                return Err(ProtocolError::InvalidValue("time zone"));
+            }
+            Ok(DeviceResult::TimeZone {
+                zone: (!zone.is_empty()).then_some(zone),
+                offset_minutes,
+            })
+        }
         _ => Err(ProtocolError::InvalidValue("device result")),
     }
+}
+
+/// A standard zone name: `Region/City`, in the letters, digits and few marks
+/// such names use. Whether the runtime knows it is the runtime's question.
+fn valid_time_zone(zone: &str) -> bool {
+    zone.len() <= MAX_TIME_ZONE_LEN
+        && zone.contains('/')
+        && !zone.starts_with('/')
+        && !zone.ends_with('/')
+        && !zone.contains("//")
+        && zone
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'_' | b'-' | b'+'))
 }
 
 fn valid_library_id(id: &str) -> bool {
@@ -4182,6 +4647,68 @@ fn decode_library_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Protoc
         entries.push(decode_library_entry(reader)?);
     }
     Ok(DeviceResult::Library { entries, truncated })
+}
+
+fn decode_audio_library(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let count = usize::from(reader.u16()?);
+    if count > MAX_AUDIO_ENTRIES {
+        return Err(ProtocolError::InvalidValue("audio listing"));
+    }
+    let truncated = read_boolean(reader, "audio listing truncated")?;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        let entry = AudioEntry {
+            id: reader.string()?,
+            title: reader.string()?,
+            kind: reader.u8()?,
+            parts: reader.u16()?,
+            bytes: reader.u64()?,
+        };
+        if !valid_audio_entry(&entry) {
+            return Err(ProtocolError::InvalidValue("audio entry"));
+        }
+        entries.push(entry);
+    }
+    Ok(DeviceResult::AudioLibrary { entries, truncated })
+}
+
+fn decode_audio_detail(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+    let title = reader.string()?;
+    let author = reader.string()?;
+    let narrator = reader.string()?;
+    let album = reader.string()?;
+    let format = reader.string()?;
+    let duration_ms = reader.u32()?;
+    let count = usize::from(reader.u16()?);
+    if count > MAX_AUDIO_CHAPTERS {
+        return Err(ProtocolError::InvalidValue("audio chapters"));
+    }
+    let mut chapters = Vec::with_capacity(count);
+    for _ in 0..count {
+        chapters.push(AudioChapter {
+            start_ms: reader.u32()?,
+            title: reader.string()?,
+        });
+    }
+    let length = usize::try_from(reader.u32()?).unwrap_or(usize::MAX);
+    if length > MAX_AUDIO_COVER_BYTES {
+        return Err(ProtocolError::InvalidValue("audio cover"));
+    }
+    let cover = reader.take(length)?.to_vec();
+    let detail = AudioDetail {
+        title,
+        author,
+        narrator,
+        album,
+        format,
+        duration_ms,
+        chapters,
+        cover,
+    };
+    if !detail.is_valid() {
+        return Err(ProtocolError::InvalidValue("audio detail"));
+    }
+    Ok(DeviceResult::AudioDetail(detail))
 }
 
 fn decode_library_document(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
@@ -4365,7 +4892,10 @@ fn decode_dictionary_result(reader: &mut Reader<'_>) -> Result<DeviceResult, Pro
     Ok(DeviceResult::Dictionary { word, entries })
 }
 
-fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolError> {
+fn decode_apps_result(
+    reader: &mut Reader<'_>,
+    protocol: u8,
+) -> Result<DeviceResult, ProtocolError> {
     let count = usize::from(reader.u16()?);
     if count > MAX_APP_CATALOG_ENTRIES {
         return Err(ProtocolError::InvalidValue("too many applications"));
@@ -4378,8 +4908,8 @@ fn decode_apps_result(reader: &mut Reader<'_>) -> Result<DeviceResult, ProtocolE
         let summary = reader.string()?;
         let version = reader.string()?;
         let minimum_cobalt_version = reader.string()?;
-        let glyph =
-            decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("application glyph"))?;
+        let glyph = glyph_at(reader.u8()?, protocol)
+            .ok_or(ProtocolError::InvalidValue("application glyph"))?;
         let capability_count = usize::from(reader.u8()?);
         if capability_count > MAX_APP_CAPABILITIES {
             return Err(ProtocolError::InvalidValue(
@@ -4504,13 +5034,21 @@ fn encoded_screen_len(
     add_encoded_len(&mut length, 1)?;
     if let Some(overlay) = &screen.overlay {
         add_encoded_len(&mut length, 7)?;
-        if matches!(overlay.kind, kobo_ui::OverlayKind::Popover { .. }) {
-            add_encoded_len(&mut length, 4)?;
+        match overlay.kind {
+            kobo_ui::OverlayKind::Popover { .. } => add_encoded_len(&mut length, 4)?,
+            kobo_ui::OverlayKind::Dialog { .. } if version >= FINE_TYPE_VERSION => {
+                add_encoded_len(&mut length, 4)?;
+            }
+            kobo_ui::OverlayKind::Modal | kobo_ui::OverlayKind::Dialog { .. } => {}
         }
         add_encoded_len(&mut length, encoded_string_len(&overlay.title)?)?;
         for node in &overlay.nodes {
             add_encoded_len(&mut length, encoded_node_len(node, depth, count, version)?)?;
         }
+    }
+    // The accent, on protocols that carry one.
+    if version >= ACCENT_VERSION {
+        add_encoded_len(&mut length, 1)?;
     }
     Ok(length)
 }
@@ -4570,6 +5108,10 @@ fn encoded_node_len(
             let mut length = 5;
             add_encoded_len(&mut length, encoded_string_len(text)?)?;
             add_encoded_len(&mut length, 2 + spans.len() * 9 + 9 + 1 + 1)?;
+            if version >= FINE_TYPE_VERSION {
+                // The block indent and the initial's line count.
+                add_encoded_len(&mut length, 3)?;
+            }
             for _ in links.iter().take(kobo_ui::MAX_TEXT_LINKS) {
                 add_encoded_len(&mut length, 12)?;
             }
@@ -5089,6 +5631,15 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
             pixels_per_inch: reader.u16()?,
             text_scale: TextScale::from_wire(reader.u8()?)
                 .ok_or(ProtocolError::InvalidValue("text scale"))?,
+            colour_panel: if version >= ACCENT_VERSION {
+                match reader.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(ProtocolError::InvalidValue("colour panel flag")),
+                }
+            } else {
+                false
+            },
         },
         3 => {
             let mut count = 0;
@@ -5484,6 +6035,16 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ProtocolError> {
         25 => Message::DropFont {
             handle: FontHandle(reader.u32()?),
         },
+        41 if version >= NOTICES_VERSION => {
+            Message::Notices(notices::read_list(&mut reader, version)?)
+        }
+        42 if version >= NOTICES_VERSION => {
+            let id = reader.string()?;
+            if !valid_library_id(&id) {
+                return Err(ProtocolError::InvalidValue("library id"));
+            }
+            Message::OpenDocument { id }
+        }
         tag @ (37..=40) if version >= SUSPEND_VERSION => {
             let generation = reader.u64()?;
             if generation == 0 {
@@ -5583,7 +6144,7 @@ fn encode_top_bar(
     let actions = &top_bar.actions[..min(top_bar.actions.len(), MAX_BAR_ACTIONS)];
     output.push(u8::try_from(actions.len()).unwrap_or(0));
     for action in actions {
-        encode_bar_action(output, action)?;
+        encode_bar_action(output, action, version)?;
     }
     Ok(())
 }
@@ -5641,7 +6202,7 @@ fn encode_screen(
                 None => NAV_SELECTION_NONE,
             });
             for destination in &nav_bar.destinations {
-                encode_bar_action(output, destination)?;
+                encode_bar_action(output, destination, version)?;
             }
         }
     }
@@ -5654,7 +6215,7 @@ fn encode_screen(
         Some(bottom) if screen.nav_bar.is_none() => {
             output.push(1);
             push_u32(output, bottom.id.0);
-            encode_bar_action(output, &bottom.action)?;
+            encode_bar_action(output, &bottom.action, version)?;
         }
         _ => output.push(0),
     }
@@ -5723,6 +6284,20 @@ fn encode_screen(
                     output.push(1);
                     push_u32(output, anchor.0);
                 }
+                // Protocol 18. An older runtime is sent a plain modal, which
+                // draws its own cross beside the dialogue's way out: one
+                // control too many, and nothing missing.
+                kobo_ui::OverlayKind::Dialog { dismiss } => {
+                    if version >= FINE_TYPE_VERSION {
+                        if dismiss.is_reserved() {
+                            return Err(ProtocolError::InvalidValue("dialogue dismissal"));
+                        }
+                        output.push(2);
+                        push_u32(output, dismiss.0);
+                    } else {
+                        output.push(0);
+                    }
+                }
             }
             push_string(output, &overlay.title)?;
             push_u16(
@@ -5734,10 +6309,21 @@ fn encode_screen(
             }
         }
     }
+    // Last of all, and only on a protocol that has a reading for it. An
+    // application built against an earlier protocol never sends one, and a
+    // screen encoded at an earlier protocol on behalf of one is written
+    // exactly as it was, accent or no accent.
+    if version >= ACCENT_VERSION {
+        output.push(screen.accent.chosen().map_or(0, Accent::wire_value));
+    }
     Ok(())
 }
 
-fn encode_bar_action(output: &mut Vec<u8>, action: &BarAction) -> Result<(), ProtocolError> {
+fn encode_bar_action(
+    output: &mut Vec<u8>,
+    action: &BarAction,
+    version: u8,
+) -> Result<(), ProtocolError> {
     push_u32(output, action.action.0);
     // The mark travels with every bar action rather than only the top bar's.
     // It used to be encoded beside the top bar alone, on the reasoning that a
@@ -5748,7 +6334,7 @@ fn encode_bar_action(output: &mut Vec<u8>, action: &BarAction) -> Result<(), Pro
         None => output.push(0),
         Some(glyph) => {
             output.push(1);
-            output.push(encode_glyph(glyph));
+            output.push(glyph_tag(glyph, version));
         }
     }
     push_string(output, &action.label)
@@ -5765,7 +6351,7 @@ fn encoded_bar_action_len(action: &BarAction) -> Result<usize, ProtocolError> {
     Ok(length)
 }
 
-fn decode_bar_action(reader: &mut Reader<'_>) -> Result<BarAction, ProtocolError> {
+fn decode_bar_action(reader: &mut Reader<'_>, version: u8) -> Result<BarAction, ProtocolError> {
     let action = ActionId(reader.u32()?);
     // The runtime owns going back, so an application is not allowed to name
     // that identifier. Rejecting it here means a hostile frame cannot forge a
@@ -5775,7 +6361,7 @@ fn decode_bar_action(reader: &mut Reader<'_>) -> Result<BarAction, ProtocolError
     }
     let glyph = match reader.u8()? {
         0 => None,
-        1 => Some(decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("bar glyph"))?),
+        1 => Some(glyph_at(reader.u8()?, version).ok_or(ProtocolError::InvalidValue("bar glyph"))?),
         _ => return Err(ProtocolError::InvalidValue("bar glyph flag")),
     };
     Ok(BarAction {
@@ -5795,10 +6381,11 @@ fn text_presentation_byte(style: kobo_ui::TextPresentation) -> u8 {
         | (u8::from(style.superscript) << 3)
         | (u8::from(style.subscript) << 4)
         | (u8::from(style.highlighted) << 5)
+        | (u8::from(style.muted) << 6)
 }
 
 fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, ProtocolError> {
-    if value & !0x3f != 0 {
+    if value & !0x7f != 0 {
         return Err(ProtocolError::InvalidValue("rich text style"));
     }
     Ok(kobo_ui::TextPresentation {
@@ -5808,6 +6395,7 @@ fn text_presentation_from_byte(value: u8) -> Result<kobo_ui::TextPresentation, P
         superscript: value & 8 != 0,
         subscript: value & 16 != 0,
         highlighted: value & 32 != 0,
+        muted: value & 64 != 0,
     })
 }
 
@@ -5895,6 +6483,12 @@ fn encode_node(
                 output,
                 u16::from_ne_bytes(presentation.first_line_indent_em.to_ne_bytes()),
             );
+            // An older runtime reads the links next, so the block indent and
+            // the initial travel only to runtimes that expect them.
+            if version >= FINE_TYPE_VERSION {
+                push_u16(output, presentation.start_indent_em);
+                output.push(presentation.initial_lines);
+            }
             let links = &links[..links.len().min(kobo_ui::MAX_TEXT_LINKS)];
             output.push(u8::try_from(links.len()).map_err(|_| ProtocolError::TooManyNodes)?);
             for link in links {
@@ -5977,8 +6571,11 @@ fn encode_node(
             push_u32(output, id.0);
             output.push((*depth).min(kobo_ui::MAX_QUOTE_DEPTH));
             output.push(match role {
-                kobo_ui::QuoteRole::Body => 0,
                 kobo_ui::QuoteRole::Byline => 1,
+                kobo_ui::QuoteRole::Command if version >= QUIET_TYPE_VERSION => 2,
+                // A command at an earlier protocol is sent as a quotation,
+                // which is what a runtime without the role drew it as.
+                kobo_ui::QuoteRole::Body | kobo_ui::QuoteRole::Command => 0,
             });
             // A flag rather than a reserved action id, because zero is a
             // perfectly ordinary action and there is no value to spare.
@@ -6192,11 +6789,16 @@ fn encode_node(
                     None => output.push(0),
                     Some(glyph) => {
                         output.push(1);
-                        output.push(encode_glyph(glyph));
+                        output.push(glyph_tag(glyph, version));
                     }
                 }
+                if cell.tone != kobo_ui::CellTone::Plain && version < CELL_TONE_VERSION {
+                    return Err(ProtocolError::InvalidValue(
+                        "cell tone requires protocol 17",
+                    ));
+                }
                 if version >= 13 {
-                    output.push(u8::from(cell.selected));
+                    output.push(u8::from(cell.selected) | (cell.tone.code() << 1));
                 }
                 if numbered {
                     let number = cell.corner.unwrap_or(0);
@@ -6215,7 +6817,7 @@ fn encode_node(
                 push_u32(output, row.action.0);
                 push_string(output, &row.title)?;
                 push_string(output, &row.summary)?;
-                push_row_lead(output, row.lead);
+                push_row_lead(output, row.lead, version);
                 output.push(encode_row_state(row.state));
                 output.push(u8::from(row.trailing.is_some()));
                 if let Some(trailing) = &row.trailing {
@@ -6233,7 +6835,7 @@ fn encode_node(
                     match &row.button {
                         Some(button) => {
                             output.push(1);
-                            encode_bar_action(output, button)?;
+                            encode_bar_action(output, button, version)?;
                         }
                         None => output.push(0),
                     }
@@ -6262,7 +6864,7 @@ fn encode_node(
             for tile in tiles {
                 push_u32(output, tile.action.0);
                 push_string(output, &tile.label)?;
-                output.push(encode_glyph(tile.glyph));
+                output.push(glyph_tag(tile.glyph, version));
                 output.push(match tile.state {
                     TileState::Normal => 0,
                     TileState::Held => 1,
@@ -6357,8 +6959,8 @@ fn encode_node(
             output.push(29);
             push_u32(output, id.0);
             push_string(output, label)?;
-            encode_bar_action(output, less)?;
-            encode_bar_action(output, more)?;
+            encode_bar_action(output, less, version)?;
+            encode_bar_action(output, more, version)?;
             for state in [less_state, more_state] {
                 output.push(match state {
                     ControlState::Enabled => 0,
@@ -6384,7 +6986,7 @@ fn encode_node(
             push_string(output, prompt)?;
             output.push(u8::try_from(options.len()).map_err(|_| ProtocolError::TooManyNodes)?);
             for option in options {
-                encode_bar_action(output, option)?;
+                encode_bar_action(output, option, version)?;
             }
             // Sent as one past the index so that "no answer yet" is zero, which
             // is what a peer that never sets it produces.
@@ -6425,7 +7027,7 @@ fn encode_node(
                 match action {
                     Some(action) => {
                         output.push(1);
-                        encode_bar_action(output, action)?;
+                        encode_bar_action(output, action, version)?;
                     }
                     None => output.push(0),
                 }
@@ -6448,7 +7050,7 @@ fn encode_node(
                 None => output.push(0),
                 Some(glyph) => {
                     output.push(1);
-                    output.push(encode_glyph(*glyph));
+                    output.push(glyph_tag(*glyph, version));
                 }
             }
             push_string(output, title)?;
@@ -6476,7 +7078,7 @@ fn encode_node(
                 None => output.push(0),
                 Some(cancel) => {
                     output.push(1);
-                    encode_bar_action(output, cancel)?;
+                    encode_bar_action(output, cancel, version)?;
                 }
             }
             match transferred {
@@ -6555,7 +7157,7 @@ fn encode_node(
             push_u32(output, *count);
             output.push(u8::try_from(actions.len()).map_err(|_| ProtocolError::TooManyNodes)?);
             for action in actions {
-                encode_bar_action(output, action)?;
+                encode_bar_action(output, action, version)?;
             }
         }
         Node::Options {
@@ -6780,6 +7382,78 @@ fn store_result_len(result: &StoreResult) -> Result<usize, ProtocolError> {
     Ok(length)
 }
 
+/// The byte a glyph travels as in a frame encoded at `version`.
+///
+/// An application mark sent at a protocol that predates it becomes the glyph
+/// its application wore before, so a runtime that has never heard of the mark
+/// still opens the frame and draws something the owner has seen before.
+const fn glyph_tag(glyph: Glyph, version: u8) -> u8 {
+    if version >= APP_MARK_VERSION {
+        encode_glyph(glyph)
+    } else {
+        encode_glyph(earlier_glyph(glyph))
+    }
+}
+
+/// The glyph a frame encoded at `version` names with `tag`.
+///
+/// Refused rather than read as the earlier glyph when an older frame names an
+/// application mark, because no sender at that protocol could have meant one.
+const fn glyph_at(tag: u8, version: u8) -> Option<Glyph> {
+    match decode_glyph(tag) {
+        Some(glyph) if version < APP_MARK_VERSION && is_app_mark(glyph) => None,
+        decoded => decoded,
+    }
+}
+
+/// Whether `glyph` arrived with [`APP_MARK_VERSION`], which is the same as
+/// whether it has an earlier glyph to stand in for it.
+const fn is_app_mark(glyph: Glyph) -> bool {
+    encode_glyph(earlier_glyph(glyph)) != encode_glyph(glyph)
+}
+
+/// The glyph an application drew before it had a mark of its own.
+///
+/// Each mark falls back to the picture the applications it was drawn for used
+/// to share, which is the picture an owner on an older runtime already knows
+/// them by.
+const fn earlier_glyph(glyph: Glyph) -> Glyph {
+    match glyph {
+        Glyph::CrosswordGrid
+        | Glyph::CellGrid
+        | Glyph::NoughtsCrosses
+        | Glyph::CluedGrid
+        | Glyph::Puzzle
+        | Glyph::Remote => Glyph::Grid,
+        Glyph::Dice | Glyph::BoardPieces => Glyph::Circle,
+        Glyph::Question | Glyph::Mail => Glyph::Chat,
+        Glyph::Swords | Glyph::Map | Glyph::Books | Glyph::BookDownload | Glyph::Stack => {
+            Glyph::Book
+        }
+        Glyph::Flask | Glyph::LetterCheck | Glyph::Music | Glyph::Lock | Glyph::Quote => {
+            Glyph::Note
+        }
+        Glyph::Paperclip | Glyph::Cards | Glyph::Yarn => Glyph::Bookmark,
+        Glyph::Feather | Glyph::Photo => Glyph::App,
+        Glyph::Binoculars => Glyph::Search,
+        Glyph::CalendarCheck | Glyph::Checklist => Glyph::Check,
+        Glyph::House => Glyph::Light,
+        Glyph::Cutlery | Glyph::ComicPanels => Glyph::Reader,
+        Glyph::Inbox => Glyph::Rss,
+        Glyph::Keyboard => Glyph::Terminal,
+        Glyph::Sunrise => Glyph::Clock,
+        // The bell is drawn only by a launcher that knows its runtime keeps
+        // notices, which is protocol 18 at the least; an older frame never
+        // carries it, and this is only the picture it would fall back to.
+        Glyph::Bell => Glyph::Note,
+        other => other,
+    }
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per glyph, so the wire table reads as a table"
+)]
 const fn encode_glyph(glyph: Glyph) -> u8 {
     match glyph {
         Glyph::App => 0,
@@ -6851,9 +7525,48 @@ const fn encode_glyph(glyph: Glyph) -> u8 {
         Glyph::Backspace => 66,
         Glyph::Shift => 67,
         Glyph::Mill => 68,
+        Glyph::CrosswordGrid => 69,
+        Glyph::CellGrid => 70,
+        Glyph::NoughtsCrosses => 71,
+        Glyph::CluedGrid => 72,
+        Glyph::Puzzle => 73,
+        Glyph::Remote => 74,
+        Glyph::Dice => 75,
+        Glyph::Question => 76,
+        Glyph::Swords => 77,
+        Glyph::Map => 78,
+        Glyph::Books => 79,
+        Glyph::BookDownload => 80,
+        Glyph::Stack => 81,
+        Glyph::Flask => 82,
+        Glyph::Paperclip => 83,
+        Glyph::Cards => 84,
+        Glyph::Yarn => 85,
+        Glyph::Music => 86,
+        Glyph::Lock => 87,
+        Glyph::Quote => 88,
+        Glyph::Feather => 89,
+        Glyph::Binoculars => 90,
+        Glyph::Mail => 91,
+        Glyph::CalendarCheck => 92,
+        Glyph::Checklist => 93,
+        Glyph::House => 94,
+        Glyph::Cutlery => 95,
+        Glyph::ComicPanels => 96,
+        Glyph::Inbox => 97,
+        Glyph::Photo => 98,
+        Glyph::BoardPieces => 99,
+        Glyph::LetterCheck => 100,
+        Glyph::Keyboard => 101,
+        Glyph::Sunrise => 102,
+        Glyph::Bell => 103,
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one arm per glyph, so the wire table reads as a table"
+)]
 const fn decode_glyph(tag: u8) -> Option<Glyph> {
     Some(match tag {
         0 => Glyph::App,
@@ -6925,6 +7638,41 @@ const fn decode_glyph(tag: u8) -> Option<Glyph> {
         66 => Glyph::Backspace,
         67 => Glyph::Shift,
         68 => Glyph::Mill,
+        69 => Glyph::CrosswordGrid,
+        70 => Glyph::CellGrid,
+        71 => Glyph::NoughtsCrosses,
+        72 => Glyph::CluedGrid,
+        73 => Glyph::Puzzle,
+        74 => Glyph::Remote,
+        75 => Glyph::Dice,
+        76 => Glyph::Question,
+        77 => Glyph::Swords,
+        78 => Glyph::Map,
+        79 => Glyph::Books,
+        80 => Glyph::BookDownload,
+        81 => Glyph::Stack,
+        82 => Glyph::Flask,
+        83 => Glyph::Paperclip,
+        84 => Glyph::Cards,
+        85 => Glyph::Yarn,
+        86 => Glyph::Music,
+        87 => Glyph::Lock,
+        88 => Glyph::Quote,
+        89 => Glyph::Feather,
+        90 => Glyph::Binoculars,
+        91 => Glyph::Mail,
+        92 => Glyph::CalendarCheck,
+        93 => Glyph::Checklist,
+        94 => Glyph::House,
+        95 => Glyph::Cutlery,
+        96 => Glyph::ComicPanels,
+        97 => Glyph::Inbox,
+        98 => Glyph::Photo,
+        99 => Glyph::BoardPieces,
+        100 => Glyph::LetterCheck,
+        101 => Glyph::Keyboard,
+        102 => Glyph::Sunrise,
+        103 => Glyph::Bell,
 
         _ => return None,
     })
@@ -6958,7 +7706,7 @@ fn decode_screen(
             }
             let mut actions = Vec::with_capacity(count);
             for _ in 0..count {
-                actions.push(decode_bar_action(reader)?);
+                actions.push(decode_bar_action(reader, version)?);
             }
             Some(TopBar {
                 id: bar_id,
@@ -6981,7 +7729,7 @@ fn decode_screen(
             let selected = usize::from(reader.u8()?);
             let mut destinations = Vec::with_capacity(len);
             for _ in 0..len {
-                destinations.push(decode_bar_action(reader)?);
+                destinations.push(decode_bar_action(reader, version)?);
             }
             if destinations.len() < MIN_NAV_DESTINATIONS {
                 return Err(ProtocolError::InvalidValue("nav bar destinations"));
@@ -7008,7 +7756,7 @@ fn decode_screen(
         0 => None,
         1 => Some(BottomAction::new(
             NodeId(reader.u32()?),
-            decode_bar_action(reader)?,
+            decode_bar_action(reader, version)?,
         )),
         _ => return Err(ProtocolError::InvalidValue("bottom action flag")),
     };
@@ -7075,6 +7823,13 @@ fn decode_screen(
                 1 => kobo_ui::OverlayKind::Popover {
                     anchor: ActionId(reader.u32()?),
                 },
+                2 if version >= FINE_TYPE_VERSION => {
+                    let dismiss = ActionId(reader.u32()?);
+                    if dismiss.is_reserved() {
+                        return Err(ProtocolError::InvalidValue("dialogue dismissal"));
+                    }
+                    kobo_ui::OverlayKind::Dialog { dismiss }
+                }
                 _ => return Err(ProtocolError::InvalidValue("overlay kind")),
             };
             let title = reader.string()?;
@@ -7095,8 +7850,16 @@ fn decode_screen(
         }
         _ => return Err(ProtocolError::InvalidValue("overlay flag")),
     };
+    // Zero, and any value this build has no accent for, both read as none:
+    // see [`ACCENT_VERSION`].
+    let accent = if version >= ACCENT_VERSION {
+        Accent::from_wire(reader.u8()?)
+    } else {
+        None
+    };
     let mut screen = Screen::new(id, nodes);
     screen.overlay = overlay;
+    screen.accent = kobo_ui::ScreenAccent::decided(accent);
     screen.top_bar = top_bar;
     screen.nav_bar = nav_bar;
     // Only when there is no bar. A frame carrying both is a peer that built
@@ -7112,7 +7875,15 @@ fn decode_screen(
     screen.reading = reading;
     screen.auto_hide_top_bar = auto_hide_top_bar;
     screen.reading_font = reading_font;
-    screen.legacy_typography = version < FOLIO_VERSION;
+    screen.typography = if version < FOLIO_VERSION {
+        kobo_ui::Typography::Paperback
+    } else if version < QUIET_TYPE_VERSION {
+        kobo_ui::Typography::Folio
+    } else if version < FINE_TYPE_VERSION {
+        kobo_ui::Typography::Quiet
+    } else {
+        kobo_ui::Typography::Fine
+    };
     Ok(screen)
 }
 
@@ -7200,6 +7971,16 @@ fn decode_node(
                 margin_after_em: reader.u16()?.min(2_000),
                 first_line_indent_em: i16::from_ne_bytes(reader.u16()?.to_ne_bytes())
                     .clamp(-2_000, 2_000),
+                ..kobo_ui::ParagraphPresentation::default()
+            };
+            let presentation = if version >= FINE_TYPE_VERSION {
+                kobo_ui::ParagraphPresentation {
+                    start_indent_em: reader.u16()?.min(2_000),
+                    initial_lines: reader.u8()?.min(4),
+                    ..presentation
+                }
+            } else {
+                presentation
             };
             let link_count = usize::from(reader.u8()?);
             let mut links = Vec::with_capacity(link_count.min(kobo_ui::MAX_TEXT_LINKS));
@@ -7289,6 +8070,7 @@ fn decode_node(
                 // readable, and the thing it certainly is not is a byline.
                 role: match role {
                     1 => kobo_ui::QuoteRole::Byline,
+                    2 if version >= QUIET_TYPE_VERSION => kobo_ui::QuoteRole::Command,
                     _ => kobo_ui::QuoteRole::Body,
                 },
                 fold,
@@ -7526,8 +8308,8 @@ fn decode_node(
                     return Err(ProtocolError::InvalidValue("reserved action id"));
                 }
                 let label = reader.string()?;
-                let glyph =
-                    decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("tile glyph"))?;
+                let glyph = glyph_at(reader.u8()?, version)
+                    .ok_or(ProtocolError::InvalidValue("tile glyph"))?;
                 let state = match reader.u8()? {
                     0 => TileState::Normal,
                     1 => TileState::Held,
@@ -7606,7 +8388,7 @@ fn decode_node(
             let len = usize::from(reader.u8()?);
             let mut options = Vec::with_capacity(len);
             for _ in 0..len {
-                options.push(decode_bar_action(reader)?);
+                options.push(decode_bar_action(reader, version)?);
             }
             // Clamped rather than refused: an answer that does not name one of
             // the options is a caller mistake, and refusing the frame would
@@ -7666,8 +8448,8 @@ fn decode_node(
         }
         29 => {
             let label = reader.string()?;
-            let less = decode_bar_action(reader)?;
-            let more = decode_bar_action(reader)?;
+            let less = decode_bar_action(reader, version)?;
+            let more = decode_bar_action(reader, version)?;
             let mut states = [ControlState::Enabled; 2];
             for state in &mut states {
                 *state = match reader.u8()? {
@@ -7706,7 +8488,7 @@ fn decode_node(
             } else {
                 match reader.u8()? {
                     0 => None,
-                    1 => Some(decode_bar_action(reader)?),
+                    1 => Some(decode_bar_action(reader, version)?),
                     _ => return Err(ProtocolError::InvalidValue("banner action flag")),
                 }
             };
@@ -7747,7 +8529,7 @@ fn decode_node(
             }
             let mut actions = Vec::with_capacity(shown);
             for _ in 0..shown {
-                actions.push(decode_bar_action(reader)?);
+                actions.push(decode_bar_action(reader, version)?);
             }
             Ok(Node::SelectionBar { id, count, actions })
         }
@@ -7832,7 +8614,7 @@ fn decode_node(
             let glyph = match reader.u8()? {
                 0 => None,
                 1 => Some(
-                    decode_glyph(reader.u8()?)
+                    glyph_at(reader.u8()?, version)
                         .ok_or(ProtocolError::InvalidValue("splash glyph"))?,
                 ),
                 _ => return Err(ProtocolError::InvalidValue("splash glyph flag")),
@@ -7853,7 +8635,7 @@ fn decode_node(
             };
             let cancel = match reader.u8()? {
                 0 => None,
-                1 => Some(decode_bar_action(reader)?),
+                1 => Some(decode_bar_action(reader, version)?),
                 _ => return Err(ProtocolError::InvalidValue("activity cancel flag")),
             };
             let transferred = match reader.u8()? {
@@ -7940,16 +8722,20 @@ fn decode_node(
                 let cell = match reader.u8()? {
                     0 => cell,
                     1 => cell.with_glyph(
-                        decode_glyph(reader.u8()?).ok_or(ProtocolError::InvalidValue("glyph"))?,
+                        glyph_at(reader.u8()?, version)
+                            .ok_or(ProtocolError::InvalidValue("glyph"))?,
                     ),
                     _ => return Err(ProtocolError::InvalidValue("cell glyph flag")),
                 };
                 let mut cell = if version >= 13 {
-                    cell.with_selected(match reader.u8()? {
-                        0 => false,
-                        1 => true,
-                        _ => return Err(ProtocolError::InvalidValue("cell selected flag")),
-                    })
+                    let flags = reader.u8()?;
+                    let tone = if version >= CELL_TONE_VERSION {
+                        kobo_ui::CellTone::from_code(flags >> 1)
+                    } else {
+                        (flags >> 1 == 0).then_some(kobo_ui::CellTone::Plain)
+                    }
+                    .ok_or(ProtocolError::InvalidValue("cell selected flag"))?;
+                    cell.with_selected(flags & 1 == 1).with_tone(tone)
                 } else {
                     cell
                 };
@@ -7982,7 +8768,7 @@ fn decode_node(
                 }
                 let title = reader.string()?;
                 let summary = reader.string()?;
-                let lead = read_row_lead(reader)?;
+                let lead = read_row_lead(reader, version)?;
                 let state = decode_row_state(reader.u8()?, version)
                     .ok_or(ProtocolError::InvalidValue("row state"))?;
                 let trailing = if reader.u8()? == 0 {
@@ -8004,7 +8790,7 @@ fn decode_node(
                 } else {
                     let button = match reader.u8()? {
                         0 => None,
-                        1 => Some(decode_bar_action(reader)?),
+                        1 => Some(decode_bar_action(reader, version)?),
                         _ => return Err(ProtocolError::InvalidValue("row button flag")),
                     };
                     let badge = match reader.u8()? {
@@ -8041,12 +8827,12 @@ fn decode_node(
 /// arithmetic that has already produced one `debug_assert` panic in this file.
 /// Thirteen wasted bytes per row is the price of keeping that prediction a
 /// constant, and it is a price worth paying twice.
-fn push_row_lead(output: &mut Vec<u8>, lead: RowLead) {
+fn push_row_lead(output: &mut Vec<u8>, lead: RowLead, version: u8) {
     let before = output.len();
     match lead {
         RowLead::Icon(glyph) => {
             output.push(0);
-            push_u16(output, u16::from(encode_glyph(glyph)));
+            push_u16(output, u16::from(glyph_tag(glyph, version)));
         }
         RowLead::Number(number) => {
             output.push(1);
@@ -8054,7 +8840,7 @@ fn push_row_lead(output: &mut Vec<u8>, lead: RowLead) {
         }
         RowLead::Picture(picture, glyph) => {
             output.push(2);
-            push_u16(output, u16::from(encode_glyph(glyph)));
+            push_u16(output, u16::from(glyph_tag(glyph, version)));
             push_u32(output, picture.handle.0);
             push_u32(output, picture.source.0);
             push_u32(output, picture.source.1);
@@ -8067,13 +8853,13 @@ fn push_row_lead(output: &mut Vec<u8>, lead: RowLead) {
 /// The fixed width of an encoded row lead.
 const ROW_LEAD_LEN: usize = 15;
 
-fn read_row_lead(reader: &mut Reader<'_>) -> Result<RowLead, ProtocolError> {
+fn read_row_lead(reader: &mut Reader<'_>, version: u8) -> Result<RowLead, ProtocolError> {
     let tag = reader.u8()?;
     let value = reader.u16()?;
     let glyph = || {
         u8::try_from(value)
             .ok()
-            .and_then(decode_glyph)
+            .and_then(|tag| glyph_at(tag, version))
             .ok_or(ProtocolError::InvalidValue("row glyph"))
     };
     let lead = match tag {
@@ -8325,3 +9111,6 @@ mod update_task_tests;
 
 #[cfg(test)]
 mod text_entry_tests;
+
+#[cfg(test)]
+mod accent_wire_tests;

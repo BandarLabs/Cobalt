@@ -72,12 +72,29 @@ impl Item {
 
     /// The date in a form that fits the end of a row, or nothing.
     ///
-    /// Deliberately not a parse into a calendar type. Feeds carry RFC 822 in
-    /// RSS and RFC 3339 in Atom, both with a long tail of near-misses, and the
-    /// only use here is six characters at the end of a row. Recognising the
-    /// two shapes and giving up on anything else is honest about that.
+    /// Said the way a person would, against the reader's clock: "Today,
+    /// 07:25", "Yesterday", "6 Nov". Feeds carry RFC 822 in RSS and RFC 3339
+    /// in Atom, both with a long tail of near-misses; a stamp that is
+    /// neither, but still starts with a day and a month, is given as those.
     #[must_use]
-    pub fn short_date(&self) -> String {
+    pub fn short_date(&self, now: Option<kobo_sdk::clock::Snapshot>) -> String {
+        if let Some(said) = self
+            .moment()
+            .zip(now)
+            .and_then(|(moment, now)| kobo_sdk::when::spoken(moment, now))
+        {
+            return said;
+        }
+        self.identity_date().trim_start_matches('0').to_owned()
+    }
+
+    /// The day and month as the stamp writes them, "05 Jul", or nothing.
+    ///
+    /// Never shown. Article identities were hashed over a byline holding
+    /// this, so it stays exactly as earlier versions wrote it: changing it
+    /// would mark every saved article unread and lose every reading place.
+    #[must_use]
+    pub fn identity_date(&self) -> String {
         let stamp = self.stamp.trim();
         if let Some(head) = stamp.get(..10) {
             let bytes = head.as_bytes();
@@ -108,7 +125,59 @@ impl Item {
             _ => String::new(),
         }
     }
+
+    /// When the item was published, in milliseconds since 1970, if its
+    /// stamp is one of the two shapes feeds use.
+    #[must_use]
+    pub fn moment(&self) -> Option<u64> {
+        let stamp = self.stamp.trim();
+        kobo_sdk::when::stamp_millis(stamp).or_else(|| rfc822_millis(stamp))
+    }
 }
+
+/// An RSS date such as "Fri, 06 Nov 2026 07:25:00 GMT", in milliseconds
+/// since 1970. Rewritten as the ISO form and read by the SDK, so the two
+/// shapes share one calendar.
+fn rfc822_millis(stamp: &str) -> Option<u64> {
+    let mut fields: Vec<&str> = stamp.split_whitespace().collect();
+    if fields.first().is_some_and(|first| first.ends_with(',')) {
+        fields.remove(0);
+    }
+    let [day, month, year, time, rest @ ..] = fields.as_slice() else {
+        return None;
+    };
+    let day: u8 = day.parse().ok()?;
+    let month = month.get(..3)?;
+    let month = MONTHS
+        .iter()
+        .position(|name| name.eq_ignore_ascii_case(month))?
+        + 1;
+    let year: u16 = match year.parse::<u16>().ok()? {
+        short @ 0..=49 => 2000 + short,
+        short @ 50..=99 => 1900 + short,
+        full => full,
+    };
+    let time = if time.len() == 5 {
+        format!("{time}:00")
+    } else {
+        (*time).to_owned()
+    };
+    let offset = match rest.first().copied().unwrap_or("GMT") {
+        "GMT" | "UT" | "UTC" | "Z" => "+0000",
+        "EDT" => "-0400",
+        "EST" | "CDT" => "-0500",
+        "CST" | "MDT" => "-0600",
+        "MST" | "PDT" => "-0700",
+        "PST" => "-0800",
+        zone if zone.starts_with(['+', '-']) => zone,
+        _ => return None,
+    };
+    kobo_sdk::when::stamp_millis(&format!("{year:04}-{month:02}-{day:02}T{time}{offset}"))
+}
+
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
 /// A numeric month as the three letters a row shows.
 fn month_name(month: &str) -> &'static str {
@@ -591,7 +660,8 @@ mod tests {
         assert_eq!(feed.items[0].title, "A headline");
         assert_eq!(feed.items[0].link, "https://example.com/one");
         assert_eq!(feed.items[0].body, "Some body text.");
-        assert_eq!(feed.items[0].short_date(), "05 Jul");
+        assert_eq!(feed.items[0].short_date(None), "5 Jul");
+        assert_eq!(feed.items[0].identity_date(), "05 Jul");
     }
 
     #[test]
@@ -614,7 +684,41 @@ mod tests {
         assert_eq!(feed.site, "https://example.com/");
         assert_eq!(feed.items[0].link, "https://example.com/entry");
         assert_eq!(feed.items[0].author, "A Writer");
-        assert_eq!(feed.items[0].short_date(), "05 Jul");
+        assert_eq!(feed.items[0].short_date(None), "5 Jul");
+        assert_eq!(feed.items[0].identity_date(), "05 Jul");
+    }
+
+    #[test]
+    fn an_articles_date_is_said_against_the_readers_clock_in_either_feed_shape() {
+        // 7 November 2026, 09:30 UTC.
+        let now = Some(kobo_sdk::clock::Snapshot {
+            unix_millis: kobo_sdk::when::stamp_millis("2026-11-07T09:30:00Z").unwrap(),
+            monotonic_millis: 0,
+            utc_offset_minutes: 0,
+        });
+        let dated = |stamp: &str| Item {
+            stamp: stamp.to_owned(),
+            ..Item::default()
+        };
+        assert_eq!(
+            dated("Sat, 07 Nov 2026 07:25:00 GMT").short_date(now),
+            "Today, 07:25"
+        );
+        assert_eq!(
+            dated("Fri, 06 Nov 2026 22:00:00 -0500").short_date(now),
+            "Today, 03:00"
+        );
+        assert_eq!(
+            dated("Thu, 05 Nov 2026 12:00:00 EST").short_date(now),
+            "5 Nov"
+        );
+        assert_eq!(dated("2026-11-06T08:00:00Z").short_date(now), "Yesterday");
+        assert_eq!(
+            dated("Mon, 03 Nov 2025 12:00 +0000").short_date(now),
+            "3 Nov 2025"
+        );
+        // A stamp with a day and a month but nothing else readable.
+        assert_eq!(dated("06 Nov sometime").short_date(now), "6 Nov");
     }
 
     #[test]

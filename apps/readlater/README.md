@@ -5,12 +5,12 @@ off.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/readlater/readlater-queue.png" alt="The unread list after a sync"><br>The unread list after a sync</td>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/readlater/readlater-article.png" alt="An article, with star and archive controls"><br>An article, with star and archive controls</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/readlater-queue.png" alt="The unread list after a sync, with reading times"><br>The unread list after a sync, with reading times</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/readlater-article.png" alt="An essay open for reading, with star and archive controls"><br>An essay open for reading, with star and archive controls</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/readlater/readlater-starred-tab.png" alt="The Starred tab"><br>The Starred tab</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/readlater-setup.png" alt="Setup"><br>Setup</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/readlater-starred.png" alt="The Starred tab"><br>The Starred tab</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/readlater-setup.png" alt="Connecting Wallabag from a computer"><br>Connecting Wallabag from a computer</td>
 </tr>
 </table>
 

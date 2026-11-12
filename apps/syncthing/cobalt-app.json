@@ -4,8 +4,8 @@
   "short_label": "Sync",
   "summary": "Sync folders between your computer and your Kobo with Syncthing. Needs your computer.",
   "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.",
-  "version": "0.3.6",
-  "release_notes": "Sync is one switch at the top of the screen that says whether files are moving or paused, and the schedule is picked from a list. The status screen keeps every fact on the panel after a sync brings files in.",
+  "version": "0.3.10",
+  "release_notes": "Back from About now returns to the folders page, and the setup steps name the Sync switch as it appears on the reader.",
   "glyph": "refresh",
   "capabilities": [
     "scheduled-wake"
@@ -25,7 +25,7 @@
         "command": "kobo sync run"
       },
       {
-        "text": "On the reader, open Sync and tap Turn on Sync. The first sync starts at once and takes up to five minutes."
+        "text": "On the reader, open Sync and turn on the Sync switch. The first sync starts at once and takes up to five minutes."
       }
     ]
   }

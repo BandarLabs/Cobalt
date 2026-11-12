@@ -169,6 +169,11 @@ const MAX_BOOK_BYTES: u64 = 12 * 1024 * 1024;
 const NAV_COVER_HANDLE_BASE: u32 = 2_000;
 const NAV_COVER_HANDLES: u32 = 64;
 
+/// Where the handles for the lettered covers of the navigation tiles on the
+/// page showing start: one for each place on the page, below the open
+/// book's cover and clear of every other range here.
+const NAV_LETTER_HANDLE_BASE: u32 = u32::MAX - 16;
+
 /// How many rows are followed at once to find their pictures.
 ///
 /// Two rather than the three the shelf's own covers get, and both together
@@ -719,6 +724,9 @@ struct Gutenbird {
 
     /// Which navigation tile picture handle to use next.
     nav_cover_handle: u32,
+    /// The lettered covers standing in for the navigation tiles on the page
+    /// showing, by the tile they belong to, until their pictures arrive.
+    nav_letters: Vec<(usize, TilePicture)>,
 
     /// The book on the details or reading screen, if any.
     open: Option<Publication>,
@@ -823,6 +831,7 @@ impl Default for Gutenbird {
     fn default() -> Self {
         Self {
             nav_cover_handle: 0,
+            nav_letters: Vec::new(),
             // The catalog list, not a shelf. Starting up opens the catalog
             // that was last open, which is a step taken from here, and that is
             // what puts a way back to the list under the first shelf drawn.
@@ -1041,7 +1050,9 @@ impl Gutenbird {
             .iter()
             .enumerate()
             .map(|(index, catalog)| {
-                let state = if index == self.current { "Open" } else { "" };
+                // "Open" here read as a button on a row that is opened by
+                // tapping it anywhere; this marks the catalog being browsed.
+                let state = if index == self.current { "Current" } else { "" };
                 (
                     context.clamped_row_beside(&catalog.name, state, 2, false),
                     context.clamped_row(catalog.summary(), 2, false),
@@ -2121,7 +2132,7 @@ impl Gutenbird {
         // a second list of books sat underneath gave the page two paginations
         // and left the books past the first screenful unreachable.
         let shown_screen = if entry.feed.publications.is_empty() {
-            Self::navigation_grid(entry, screen)
+            Self::navigation_grid(entry, &self.nav_letters, screen)
         } else {
             self.publication_grid(context, entry, screen)
         };
@@ -2153,7 +2164,11 @@ impl Gutenbird {
     /// afterwards if following it turns up a cover -- so the page is complete
     /// from the first draw and only gets better, rather than rearranging
     /// itself under the reader.
-    fn navigation_grid(entry: &StackEntry, screen: ScreenBuilder) -> ScreenBuilder {
+    fn navigation_grid(
+        entry: &StackEntry,
+        letters: &[(usize, TilePicture)],
+        screen: ScreenBuilder,
+    ) -> ScreenBuilder {
         let first = entry.page * SHELF_PAGE;
         let tiles = entry
             .feed
@@ -2164,7 +2179,12 @@ impl Gutenbird {
             .take(SHELF_PAGE)
             .map(|(index, navigation)| {
                 let subtitle = navigation.summary.clone().unwrap_or_default();
-                let picture = entry.nav_covers.get(index).copied().flatten();
+                let picture = entry.nav_covers.get(index).copied().flatten().or_else(|| {
+                    letters
+                        .iter()
+                        .find(|(lettered, _)| *lettered == index)
+                        .map(|(_, picture)| *picture)
+                });
                 (
                     format!("nav-{index}"),
                     navigation.title.clone(),
@@ -2404,8 +2424,8 @@ impl Gutenbird {
     fn detail_blocks(publication: &Publication) -> Vec<DetailBlock> {
         let mut blocks = Vec::new();
         if let Some(summary) = &publication.summary {
-            let (description, edition) = description_parts(summary);
-            if let Some(edition) = edition {
+            let description = description_parts(summary).0;
+            if let Some(edition) = edition_notice(publication) {
                 blocks.push(DetailBlock::Section("Edition"));
                 blocks.push(DetailBlock::Text(edition.to_owned()));
             }
@@ -2902,16 +2922,21 @@ impl Gutenbird {
     fn took_nav_cover(&mut self, context: &mut Context, bytes: &[u8], href: &str) {
         let (cell_width, cell_height) = context.metrics().tile_body(TileShape::Portrait);
         if let (Ok(width), Ok(height)) = (u32::try_from(cell_width), u32::try_from(cell_height)) {
-            if let Ok(picture) = kobo_image::decode(bytes) {
+            if let Ok(picture) = decode_for_panel(context, bytes) {
                 if let Ok(mut picture) = picture.fit_enlarging(width, height) {
                     picture.dither(kobo_image::PANEL_GREYS);
                     let handle = PictureHandle(NAV_COVER_HANDLE_BASE + self.nav_cover_handle);
                     self.nav_cover_handle =
                         self.nav_cover_handle.wrapping_add(1) % NAV_COVER_HANDLES;
                     let (drawn_width, drawn_height) = (picture.width(), picture.height());
-                    if let Some(reference) =
-                        context.put_picture(handle, drawn_width, drawn_height, picture.into_grey())
-                    {
+                    let colour = picture.colour().map(<[u8]>::to_vec);
+                    if let Some(reference) = context.put_picture_shown(
+                        handle,
+                        drawn_width,
+                        drawn_height,
+                        picture.into_grey(),
+                        colour,
+                    ) {
                         if let Some(entry) = self.stack.last_mut() {
                             if let Some(at) = entry
                                 .feed
@@ -2932,8 +2957,51 @@ impl Gutenbird {
         self.hydrate_visible(context);
     }
 
+    /// Sets the navigation tiles on the page showing in type, each from its
+    /// own title and summary, until a followed entry turns up a picture.
+    ///
+    /// A catalog like Project Gutenberg's is all navigation entries, and
+    /// every tile on its pages was the same open-book mark until its picture
+    /// had been followed two requests deep, which on a slow connection was
+    /// most of the time anyone looked at it.
+    fn letter_navigation(&mut self, context: &mut Context, first: usize, width: u32, height: u32) {
+        let Some(entry) = self.stack.last() else {
+            return;
+        };
+        let mut letters = Vec::new();
+        let last = (first + SHELF_PAGE).min(entry.feed.navigation.len());
+        for (place, index) in (first..last).enumerate() {
+            if entry.nav_covers.get(index).copied().flatten().is_some() {
+                continue;
+            }
+            let navigation = &entry.feed.navigation[index];
+            let grey = kobo_sdk::typographic_cover(
+                &navigation.title,
+                navigation.summary.as_deref(),
+                width,
+                height,
+            );
+            if grey.is_empty() {
+                continue;
+            }
+            let handle = PictureHandle(NAV_LETTER_HANDLE_BASE + u32::try_from(place).unwrap_or(0));
+            if let Some(reference) = context.put_picture(handle, width, height, grey) {
+                letters.push((index, reference));
+            }
+        }
+        self.nav_letters = letters;
+    }
+
     fn want_covers(&mut self, context: &mut Context) {
         self.wanted.clear();
+        let (tile_width, tile_height) = context.metrics().tile_body(TileShape::Portrait);
+        if let (Some(first), Ok(width), Ok(height)) = (
+            self.stack.last().map(|entry| entry.page * SHELF_PAGE),
+            u32::try_from(tile_width),
+            u32::try_from(tile_height),
+        ) {
+            self.letter_navigation(context, first, width, height);
+        }
         let Some(entry) = self.stack.last() else {
             return;
         };
@@ -3071,7 +3139,7 @@ impl Gutenbird {
         let Ok(cell_height) = u32::try_from(cell_height) else {
             return false;
         };
-        let Ok(picture) = kobo_image::decode(bytes) else {
+        let Ok(picture) = decode_for_panel(context, bytes) else {
             self.set_a_cover(context, index, cell_width, cell_height);
             return false;
         };
@@ -3085,7 +3153,9 @@ impl Gutenbird {
         picture.dither(kobo_image::PANEL_GREYS);
         let handle = PictureHandle(u32::try_from(index).unwrap_or(0));
         let (width, height) = (picture.width(), picture.height());
-        let Some(reference) = context.put_picture(handle, width, height, picture.into_grey())
+        let colour = picture.colour().map(<[u8]>::to_vec);
+        let Some(reference) =
+            context.put_picture_shown(handle, width, height, picture.into_grey(), colour)
         else {
             return false;
         };
@@ -3162,19 +3232,23 @@ impl Gutenbird {
     // ---------------------------------------------------------------
 
     fn ask_open_cover(&mut self, context: &mut Context) {
-        let Some(image) = self.open.as_ref().and_then(Publication::cover).cloned() else {
-            // Nothing is coming, so nothing is reserved. An empty frame that
-            // will never be filled is not a placeholder, it is a hole.
+        if self.open.is_none() {
             return;
-        };
-        // Claimed now, drawn as an outlined box until the bytes land. A
-        // publication that says it has a cover is going to have one, and the
-        // room it takes is decided here rather than by what turns up.
+        }
+        // Every book's page has a cover, and it is set in type from the
+        // book's own title and author until a picture replaces it. The room
+        // was claimed as an outlined box before, which is what a reader saw
+        // for as long as a slow catalog took to answer, and for good when a
+        // book had no picture at all.
         self.open_cover = Some(TilePicture::new(
             OPEN_COVER_HANDLE,
             OPEN_COVER_PX.0,
             OPEN_COVER_PX.1,
         ));
+        self.letter_open_cover(context);
+        let Some(image) = self.open.as_ref().and_then(Publication::cover).cloned() else {
+            return;
+        };
         match image.href {
             ImageSource::Inline { bytes, .. } => {
                 if !self.took_open_cover(context, &bytes) {
@@ -3220,17 +3294,13 @@ impl Gutenbird {
         true
     }
 
-    /// Sets the book's own title in the room its cover was going to take.
+    /// Sets the book's own title in the room its cover takes.
     ///
-    /// For a cover that was promised and did not arrive, or arrived and would
-    /// not decode. Emptying the frame instead would move everything under it
-    /// back up the panel, which is the reflow this reservation exists to stop,
-    /// and leaving it empty says only that something is missing. The shelf
+    /// For a book with no picture, for one whose picture is on its way, and
+    /// for one whose picture did not arrive or would not decode. The shelf
     /// already letters a tile whose cover will not decode; this is the same
     /// answer one page in.
     fn letter_open_cover(&mut self, context: &mut Context) {
-        // Nothing was reserved, so nothing was promised: this book has no
-        // cover at all and its metadata already has the whole width.
         if self.open_cover.is_none() {
             return;
         }
@@ -3986,13 +4056,9 @@ fn publication_caption(
         );
     }
     if peers.len() > 1 {
-        let notice = publication
-            .summary
-            .as_deref()
-            .and_then(|summary| description_parts(summary).1);
-        let image_label = match notice {
-            Some("This edition had all images removed.") => Some("No images"),
-            Some("This edition has images.") => Some("With images"),
+        let image_label = match edition_notice(publication) {
+            Some(NO_IMAGES) => Some("No images"),
+            Some(WITH_IMAGES) => Some("With images"),
             _ => None,
         };
         if let Some(label) = image_label {
@@ -4092,10 +4158,19 @@ fn has_pictures(edition: &Publication) -> Option<bool> {
         .as_deref()
         .and_then(|summary| description_parts(summary).1)
     {
-        Some("This edition had all images removed.") => return Some(false),
-        Some("This edition has images.") => return Some(true),
+        Some(NO_IMAGES) => return Some(false),
+        Some(WITH_IMAGES) => return Some(true),
         _ => {}
     }
+    download_has_pictures(edition)
+}
+
+const NO_IMAGES: &str = "This edition had all images removed.";
+const WITH_IMAGES: &str = "This edition has images.";
+
+/// Whether the download that would be read keeps its pictures, going by its
+/// address alone.
+fn download_has_pictures(edition: &Publication) -> Option<bool> {
     let href = edition.best_acquisition()?.href.to_ascii_lowercase();
     if href.contains("noimages") {
         Some(false)
@@ -4104,6 +4179,24 @@ fn has_pictures(edition: &Publication) -> Option<bool> {
     } else {
         None
     }
+}
+
+/// The edition notice for the download that would be read.
+///
+/// The catalog writes the notice for the edition it lists first, and the
+/// other edition of the pair rides along as a second download. Once the
+/// owner picks that one, the notice has to follow it: the page said "This
+/// edition has images." over a copy with every image removed.
+fn edition_notice(publication: &Publication) -> Option<&str> {
+    let notice = publication
+        .summary
+        .as_deref()
+        .and_then(|summary| description_parts(summary).1)?;
+    Some(match (notice, download_has_pictures(publication)) {
+        (WITH_IMAGES, Some(false)) => NO_IMAGES,
+        (NO_IMAGES, Some(true)) => WITH_IMAGES,
+        (notice, _) => notice,
+    })
 }
 
 fn language_name(code: &str) -> String {
@@ -4785,8 +4878,15 @@ impl KoboApp for Gutenbird {
             .enumerate()
         {
             if action == action_id(&format!("recent-{index}")) {
-                self.go(View::Search);
-                self.begin_search(context, self.current, term, false);
+                // The switch beside the chips says where the next search
+                // goes, and a recent search is the next search too.
+                self.query.clone_from(&term);
+                if self.search_all {
+                    self.begin_federated_search(context, term);
+                } else {
+                    self.go(View::Search);
+                    self.begin_search(context, self.current, term, false);
+                }
                 self.show(context);
                 return;
             }
@@ -6321,6 +6421,67 @@ Please read this before you distribute or use this work.\n";
         assert!(app.wanted.is_empty());
     }
 
+    fn lettered(context: &Context, title: &str, author: Option<&str>) -> bool {
+        context.commands().iter().any(|command| {
+            matches!(command,
+                Command::PutPicture { width, height, pixels, .. }
+                    if *pixels == kobo_sdk::typographic_cover(title, author, *width, *height))
+        })
+    }
+
+    #[test]
+    fn a_book_with_no_picture_has_its_cover_set_in_type() {
+        let book = publication("Plain Book", vec![epub_acquisition("https://x/1.epub")]);
+        let mut app = app_with_stack(Feed::default());
+        let mut context = Context::default();
+        app.open_publication(&mut context, book);
+        assert!(app.open_cover.is_some(), "the page has a cover");
+        assert!(lettered(&context, "Plain Book", Some("Some Author")));
+    }
+
+    #[test]
+    fn a_book_whose_picture_is_on_its_way_shows_its_title_in_the_meantime() {
+        let mut book = publication("Slow Cover", vec![epub_acquisition("https://x/1.epub")]);
+        book.images = vec![cover_url("https://x/cover.jpg")];
+        let mut app = app_with_stack(Feed::default());
+        let mut context = Context::default();
+        app.open_publication(&mut context, book);
+        assert!(app.open_cover_task.is_some(), "the picture was asked for");
+        assert!(lettered(&context, "Slow Cover", Some("Some Author")));
+    }
+
+    #[test]
+    fn navigation_tiles_are_set_in_type_until_their_pictures_arrive() {
+        let mut first = navigation("Pride and Prejudice", "https://x/1");
+        first.summary = Some("Jane Austen".to_owned());
+        let mut app = app_with_stack(Feed {
+            navigation: vec![first, navigation("Dracula", "https://x/2")],
+            ..Feed::default()
+        });
+        let mut context = Context::default();
+        app.want_covers(&mut context);
+        assert_eq!(app.nav_letters.len(), 2);
+        assert!(lettered(
+            &context,
+            "Pride and Prejudice",
+            Some("Jane Austen")
+        ));
+        assert!(lettered(&context, "Dracula", None));
+        let grid = Gutenbird::navigation_grid(
+            &app.stack[0],
+            &app.nav_letters,
+            kobo_sdk::ScreenBuilder::new("grid"),
+        )
+        .build();
+        let pictured = grid.nodes.iter().any(|node| match node {
+            kobo_sdk::Node::TileGrid { tiles, .. } => {
+                tiles.iter().all(|tile| tile.picture.is_some())
+            }
+            _ => false,
+        });
+        assert!(pictured, "every tile has a cover");
+    }
+
     #[test]
     fn a_data_uri_thumbnail_is_decoded_rather_than_fetched() {
         let mut book = publication("Inline Cover", vec![epub_acquisition("https://x/1.epub")]);
@@ -6664,6 +6825,47 @@ Please read this before you distribute or use this work.\n";
             runner.app().task.is_some(),
             "the second catalog was not asked yet"
         );
+    }
+
+    #[test]
+    fn the_edition_notice_follows_the_download_chosen_rather_than_the_one_the_catalog_listed() {
+        let mut book = publication(
+            "Pride and Prejudice",
+            vec![epub_acquisition("https://x/ebooks/1342.epub3.images")],
+        );
+        book.summary = Some(
+            "Title: Pride and Prejudice\n\nEBook No.: 1342\n\nSummary: A novel.\n\n\
+             This edition has images."
+                .to_owned(),
+        );
+        assert_eq!(
+            super::edition_notice(&book),
+            Some("This edition has images.")
+        );
+        book.acquisition = vec![epub_acquisition("https://x/ebooks/1342.epub.noimages")];
+        assert_eq!(
+            super::edition_notice(&book),
+            Some("This edition had all images removed.")
+        );
+        let blocks = format!("{:?}", Gutenbird::detail_blocks(&book));
+        assert!(!blocks.contains("This edition has images."), "{blocks}");
+    }
+
+    #[test]
+    fn a_recent_search_goes_to_every_catalog_when_the_switch_beside_it_says_so() {
+        let mut app = Gutenbird::default();
+        known_search(&mut app.catalogs[0], "https://a.example/search{?query}");
+        known_search(&mut app.catalogs[1], "https://b.example/search{?query}");
+        app.catalogs[0].recent = vec!["austen".to_owned()];
+        app.search_all = true;
+        app.view = View::Search;
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("recent-0"));
+        assert!(
+            runner.app().federating,
+            "the recent search asked only this catalog"
+        );
+        assert_eq!(runner.app().federated_query.as_deref(), Some("austen"));
     }
 
     #[test]
@@ -8865,5 +9067,20 @@ mod device_tests {
         assert_eq!(decoded, vec![tabbed, record("book-00000001", "Emma")]);
         assert!(decode_library(b"book-1\tonly two fields\n").is_empty());
         assert!(decode_library(b"not-a-book\tT\tA\t\t\n").is_empty());
+    }
+}
+
+/// Reads a cover for the panel it will be shown on: in colour where the reader
+/// can show colour, since a cover is the one picture here worth it, and in grey
+/// everywhere else, where a colour read would cost twice the memory to draw
+/// the same thing.
+fn decode_for_panel(
+    context: &Context,
+    bytes: &[u8],
+) -> Result<kobo_image::Picture, kobo_image::ImageError> {
+    if context.panel_shows_colour() {
+        kobo_image::decode_colour(bytes)
+    } else {
+        kobo_image::decode(bytes)
     }
 }

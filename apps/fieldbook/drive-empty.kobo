@@ -1,0 +1,38 @@
+# sweep: --bare
+# A reader with no pack and no outing: every tab says what is missing.
+wait-for No field pack yet
+expect logging works without one
+expect Start an outing
+clean
+shot empty-today
+tap Packs
+wait-for No field pack yet
+expect kobo fieldbook push
+clean
+shot empty-packs
+tap Life list
+wait-for No birds logged
+expect Start an outing from Today
+clean
+shot empty-life
+tap Search
+wait-for Nothing to search yet
+clean
+shot empty-search
+tap-id 4294967295
+wait-for Start an outing
+tap Export
+wait-for Nothing to export
+expect kobo fieldbook export
+clean
+shot empty-export
+# The tabs stay along the foot on every empty page, as they do on Packs and
+# Life list, so the way on is in sight.
+expect Today
+expect Packs
+tap Search
+wait-for Nothing to search yet
+expect Life list
+expect Export
+tap Today
+wait-for Start an outing

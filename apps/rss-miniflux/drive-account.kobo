@@ -1,0 +1,69 @@
+# sweep: --bare
+# An address typed on the reader and a key from the computer make the
+# account. With no Miniflux server to answer, every sync and every feed
+# added ends in a banner that names the real cause, and the address
+# survives a restart.
+wait-for Connect Miniflux
+tap Type the address here
+wait-for Server address
+tap https://miniflux.example
+wait-for Miniflux HTTPS server
+type flux.invalid
+tap Save
+wait-for https://flux.invalid
+clean
+shot address-saved
+tap Back
+wait-for Unread
+expect Starred
+expect History
+expect No unread articles
+clean
+shot shelf-empty
+# No key yet: the sync says what is missing and which command adds it.
+tap Sync
+wait-for No Miniflux account is on this reader
+clean
+shot sync-no-key
+companion secret set miniflux --from scripts/fixtures/rss-miniflux/token --sim
+tap Sync
+wait-idle 30000
+wait 5000
+wait-for Miniflux did not answer
+clean
+shot sync-unreachable
+scenario offline
+tap Sync
+wait-idle 30000
+wait 5000
+wait-for This reader is not on Wi-Fi
+clean
+shot sync-offline
+scenario normal
+# With the last sync failed and nothing kept, no tab claims to be empty.
+tap Starred
+wait-for Nothing on this reader yet
+expect-missing No starred articles
+clean
+shot starred-empty
+tap History
+wait-for Nothing on this reader yet
+expect-missing Nothing read yet
+clean
+shot history-empty
+tap Unread
+wait-for Nothing on this reader yet
+expect-missing No unread articles
+restart
+wait-for Unread
+tap Settings
+wait-for https://flux.invalid
+tap Suggested feeds
+wait-for NASA Science
+tap NASA Science
+wait-idle 30000
+wait 5000
+clean
+shot add-feed-failed
+# A feed that could not be added says so, not that a sync failed.
+expect-missing Could not sync

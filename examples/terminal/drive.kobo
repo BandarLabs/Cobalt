@@ -20,7 +20,9 @@ tap-id kb.enter
 wait-for No such file
 type exit
 tap-id kb.enter
-wait-for Shell closed after an error
+# Typing exit closes the shell, even after a command that failed.
+wait-for Shell closed
+expect-missing after an error
 expect-missing exited
 expect Restart
 shot terminal-closed

@@ -3,9 +3,10 @@
   "display_name": "Backgammon",
   "short_label": "Backgammon",
   "summary": "Play complete solo or pass-and-play backgammon on one Kobo.",
-  "version": "0.1.14",
-  "release_notes": "Offering, taking and dropping the cube now ask the way New match does, with both answers as full buttons, and the match score stays beside whose move it is at every text size.",
-  "glyph": "circle",
+  "version": "0.1.19",
+  "release_notes": "Against the computer, the cube and its offers now say You and Computer. A finished game no longer shows Undo, a checker on the bar asks you to tap Bar, and a turn with no move is kept in the history.",
+  "minimum_cobalt_version": "0.3.34",
+  "glyph": "dice",
   "capabilities": [],
   "page_description": "Play complete backgammon on one Kobo, solo against a modest computer player or pass-and-play with the board reversed between turns. Full legal-move rules, the doubling cube with the Crawford rule, match play to 7 points, undo, and autosave."
 }

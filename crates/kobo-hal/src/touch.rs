@@ -78,6 +78,118 @@ enum Recovery {
     Query,
 }
 
+/// How a touch controller tells one contact from another.
+///
+/// Every controller on a measured Kobo sends a tracking id with each contact,
+/// and the decoder was written around that. Older and less common
+/// controllers do not, and a decoder that waits for an id they never send
+/// sees no touch at all. The kind is read from what the device declares it
+/// can send rather than guessed from the first few events, because a tracked
+/// controller whose finger was already down when the session began sends
+/// positions with no id until it lifts, which looks exactly like an
+/// untracked one.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ContactReporting {
+    /// Contacts carry `ABS_MT_TRACKING_ID`, with or without numbered slots.
+    #[default]
+    Tracked,
+    /// Contacts are an anonymous list, each ended by `SYN_MT_REPORT`, and a
+    /// frame with no contacts in it means every finger has lifted.
+    Untracked,
+    /// One contact on `ABS_X` and `ABS_Y`, down while `BTN_TOUCH` is 1.
+    SingleTouch,
+}
+
+impl ContactReporting {
+    /// Picks the reporting style from the codes the device declares.
+    ///
+    /// A tracking id wins whenever it is declared, so a controller that also
+    /// mirrors its first contact onto `ABS_X` and `ABS_Y` is still decoded
+    /// the way it always was.
+    #[must_use]
+    pub const fn from_capabilities(
+        tracking_id: bool,
+        multitouch_position: bool,
+        single_position: bool,
+    ) -> Option<Self> {
+        if tracking_id {
+            Some(Self::Tracked)
+        } else if multitouch_position {
+            Some(Self::Untracked)
+        } else if single_position {
+            Some(Self::SingleTouch)
+        } else {
+            None
+        }
+    }
+}
+
+/// Reads which way the device reports contacts from its declared codes.
+///
+/// A device that will not answer is treated as tracked, which is how every
+/// measured Kobo reports and what the decoder did before it knew of anything
+/// else.
+#[must_use]
+pub fn contact_reporting(device: &std::fs::File) -> ContactReporting {
+    let declares = |code| input::supports(device, input::EV_ABS, code).unwrap_or(false);
+    let button = input::supports(device, input::EV_KEY, input::BTN_TOUCH).unwrap_or(false);
+    ContactReporting::from_capabilities(
+        declares(input::ABS_MT_TRACKING_ID),
+        declares(input::ABS_MT_POSITION_X) && declares(input::ABS_MT_POSITION_Y),
+        declares(input::ABS_X) && declares(input::ABS_Y) && button,
+    )
+    .unwrap_or_default()
+}
+
+/// What one frame said, gathered until its `SYN_REPORT`.
+#[derive(Clone, Copy, Debug, Default)]
+struct Frame {
+    /// The contact being assembled before its `SYN_MT_REPORT`.
+    pending_x: Option<i32>,
+    pending_y: Option<i32>,
+    /// The first complete contact in the frame, which is the one followed.
+    first: Option<(i32, i32)>,
+    /// A `SYN_MT_REPORT` arrived.
+    separator: bool,
+    /// Any multi-touch axis arrived, including ones this decoder ignores.
+    multitouch_data: bool,
+    /// `BTN_TOUCH` went to 0.
+    lifted: bool,
+}
+
+impl Frame {
+    /// A frame that is nothing but a contact separator.
+    ///
+    /// That is how a controller without tracking ids says no finger is on
+    /// the panel. Any multi-touch axis in the frame disqualifies it, so a
+    /// frame that only updated pressure is never read as a lift.
+    const fn says_no_contacts(&self) -> bool {
+        self.separator && !self.multitouch_data
+    }
+
+    fn close_contact(&mut self) {
+        if let (None, Some(x), Some(y)) = (self.first, self.pending_x, self.pending_y) {
+            self.first = Some((x, y));
+        }
+        self.pending_x = None;
+        self.pending_y = None;
+    }
+}
+
+/// The single contact followed on a controller without tracking ids.
+#[derive(Clone, Copy, Debug, Default)]
+struct Untracked {
+    /// Single-touch axes keep their last value across frames because the
+    /// kernel drops a repeat of an unchanged one.
+    single_x: Option<i32>,
+    single_y: Option<i32>,
+    button_down: bool,
+    /// Where the followed contact was in the last frame, so a frame that
+    /// restates the same point is not reported as a move.
+    last: Option<(i32, i32)>,
+    next_id: i32,
+}
+
 #[derive(Clone, Debug)]
 pub struct TouchDecoder {
     slots: [SlotState; MAX_TOUCH_SLOTS],
@@ -86,10 +198,21 @@ pub struct TouchDecoder {
     blocked_until_quiescent: bool,
     unknown_slot_activity: bool,
     recovery: Recovery,
+    reporting: ContactReporting,
+    frame: Frame,
+    untracked: Untracked,
 }
 
 impl Default for TouchDecoder {
     fn default() -> Self {
+        Self::new(ContactReporting::Tracked)
+    }
+}
+
+impl TouchDecoder {
+    /// A decoder for a controller that reports contacts the given way.
+    #[must_use]
+    pub fn new(reporting: ContactReporting) -> Self {
         Self {
             slots: [SlotState::default(); MAX_TOUCH_SLOTS],
             current_slot: Some(0),
@@ -97,14 +220,15 @@ impl Default for TouchDecoder {
             blocked_until_quiescent: false,
             unknown_slot_activity: false,
             recovery: Recovery::Ready,
+            reporting,
+            frame: Frame::default(),
+            untracked: Untracked::default(),
         }
     }
-}
 
-impl TouchDecoder {
     pub fn push(&mut self, event: InputEvent32, pose: &PanelPose<'_>) -> Option<TouchEvent> {
         if (event.kind, event.code) == (input::EV_SYN, input::SYN_DROPPED) {
-            *self = Self::default();
+            *self = Self::new(self.reporting);
             self.recovery = Recovery::Discarding;
             return Some(TouchEvent::Cancel);
         }
@@ -114,6 +238,7 @@ impl TouchDecoder {
             }
             return None;
         }
+        self.observe(event);
         match (event.kind, event.code) {
             (input::EV_ABS, input::ABS_MT_SLOT) => {
                 self.current_slot = usize::try_from(event.value)
@@ -157,11 +282,105 @@ impl TouchDecoder {
                 }
             }
             (input::EV_SYN, input::SYN_REPORT) => {
+                self.settle_frame();
                 return self.finish_report(pose);
             }
             _ => {}
         }
         None
+    }
+
+    /// Notes what this event says about the frame it belongs to.
+    ///
+    /// Kept apart from the slot bookkeeping above, which is unchanged for
+    /// tracked controllers. Nothing recorded here is acted on until the
+    /// frame ends.
+    fn observe(&mut self, event: InputEvent32) {
+        match (event.kind, event.code) {
+            (input::EV_ABS, code) if (input::ABS_MT_SLOT..=0x3d).contains(&code) => {
+                self.frame.multitouch_data = true;
+                match code {
+                    input::ABS_MT_POSITION_X => self.frame.pending_x = Some(event.value),
+                    input::ABS_MT_POSITION_Y => self.frame.pending_y = Some(event.value),
+                    _ => {}
+                }
+            }
+            (input::EV_ABS, input::ABS_X) => self.untracked.single_x = Some(event.value),
+            (input::EV_ABS, input::ABS_Y) => self.untracked.single_y = Some(event.value),
+            (input::EV_KEY, input::BTN_TOUCH) => {
+                self.untracked.button_down = event.value != 0;
+                if event.value == 0 {
+                    self.frame.lifted = true;
+                }
+            }
+            (input::EV_SYN, input::SYN_MT_REPORT) => {
+                self.frame.separator = true;
+                self.frame.close_contact();
+            }
+            _ => {}
+        }
+    }
+
+    /// Turns a finished frame into slot state the report logic understands.
+    ///
+    /// A tracked controller only needs one thing from here: a frame that says
+    /// there are no contacts ends any contact still open, for the controller
+    /// that never sends a tracking id of -1. An untracked or single-touch
+    /// controller has its one followed contact written into slot 0 with an
+    /// invented tracking id, so press, move and release come out of exactly
+    /// the same code as they do for every measured Kobo.
+    fn settle_frame(&mut self) {
+        let mut frame = std::mem::take(&mut self.frame);
+        frame.close_contact();
+        if frame.says_no_contacts() {
+            self.release_all();
+        }
+        let contact = match self.reporting {
+            ContactReporting::Tracked => return,
+            ContactReporting::Untracked => frame.first.filter(|_| !frame.lifted),
+            ContactReporting::SingleTouch => {
+                match (self.untracked.single_x, self.untracked.single_y) {
+                    (Some(x), Some(y)) if self.untracked.button_down => Some((x, y)),
+                    _ => None,
+                }
+            }
+        };
+        self.follow(contact);
+    }
+
+    fn release_all(&mut self) {
+        for slot in &mut self.slots {
+            if slot.tracking_id.is_some() {
+                slot.tracking_id = None;
+                slot.set(SLOT_CHANGED, true);
+            }
+        }
+    }
+
+    /// Writes the followed contact of an untracked controller into slot 0.
+    fn follow(&mut self, contact: Option<(i32, i32)>) {
+        let Some((x, y)) = contact else {
+            if self.slots[0].tracking_id.is_some() {
+                self.slots[0].tracking_id = None;
+                self.slots[0].set(SLOT_CHANGED, true);
+            }
+            self.untracked.last = None;
+            return;
+        };
+        let began = self.slots[0].tracking_id.is_none();
+        if began {
+            // Any non-negative id will do. It only has to differ from the
+            // previous contact's so the slot logic sees a new press.
+            self.untracked.next_id = self.untracked.next_id.wrapping_add(1) & i32::MAX;
+            self.update_tracking(0, self.untracked.next_id);
+        }
+        let moved = began || self.untracked.last != Some((x, y));
+        let slot = &mut self.slots[0];
+        slot.raw_x = x;
+        slot.raw_y = y;
+        slot.flags |= SLOT_X_FRESH | SLOT_Y_FRESH;
+        slot.set(SLOT_CHANGED, moved);
+        self.untracked.last = Some((x, y));
     }
 
     /// A hardware snapshot is needed only after a complete report boundary.
@@ -176,9 +395,21 @@ impl TouchDecoder {
         if !self.needs_resynchronization() {
             return;
         }
+        // Each frame from an untracked controller lists every contact on the
+        // panel, so the next one is a complete picture and there is no
+        // kernel state worth asking for. Waiting on a query those
+        // controllers often cannot answer would leave touch dead after one
+        // overflow.
+        let snapshot = match (snapshot, self.reporting) {
+            (None, ContactReporting::Untracked) => Some(input::TouchSnapshot {
+                active: false,
+                slot: Some(0),
+            }),
+            (snapshot, _) => snapshot,
+        };
         match snapshot {
             Some(snapshot) if !snapshot.active => {
-                *self = Self::default();
+                *self = Self::new(self.reporting);
                 self.current_slot = Some(usize::from(snapshot.slot.unwrap_or(0)));
                 if self
                     .current_slot
@@ -289,7 +520,7 @@ impl TouchDecoder {
 
 #[cfg(test)]
 mod tests {
-    use super::{InputEvent32, TouchDecoder, TouchEvent, MAX_TOUCH_SLOTS};
+    use super::{ContactReporting, InputEvent32, TouchDecoder, TouchEvent, MAX_TOUCH_SLOTS};
     use kobo_abi::input;
     use kobo_profile::{PanelPose, CLARA_BW_391};
 
@@ -666,5 +897,263 @@ mod tests {
             feed(&mut decoder, CAPTURED_PRESS).as_slice(),
             [TouchEvent::Down { .. }]
         ));
+    }
+    /// Where the Clara BW pose puts a raw point, so the tests below assert
+    /// decoding rather than restating the mapping.
+    fn at(raw_x: i32, raw_y: i32) -> (u32, u32) {
+        CLARA_BW_POSE
+            .touch_to_display(raw_x, raw_y)
+            .expect("the point is inside the panel")
+    }
+
+    fn down(raw_x: i32, raw_y: i32) -> TouchEvent {
+        let (x, y) = at(raw_x, raw_y);
+        TouchEvent::Down { x, y }
+    }
+
+    fn moved(raw_x: i32, raw_y: i32) -> TouchEvent {
+        let (x, y) = at(raw_x, raw_y);
+        TouchEvent::Move { x, y }
+    }
+
+    fn up(raw_x: i32, raw_y: i32) -> TouchEvent {
+        let (x, y) = at(raw_x, raw_y);
+        TouchEvent::Up { x, y }
+    }
+
+    const SEPARATOR: (u16, u16, i32) = (input::EV_SYN, input::SYN_MT_REPORT, 0);
+    const REPORT: (u16, u16, i32) = (input::EV_SYN, input::SYN_REPORT, 0);
+
+    fn contact(x: i32, y: i32) -> [(u16, u16, i32); 3] {
+        [
+            (input::EV_ABS, input::ABS_MT_POSITION_X, x),
+            (input::EV_ABS, input::ABS_MT_POSITION_Y, y),
+            SEPARATOR,
+        ]
+    }
+
+    #[test]
+    fn a_tap_from_a_controller_without_tracking_ids_is_a_press_and_a_release() {
+        let mut decoder = TouchDecoder::new(ContactReporting::Untracked);
+        let press = [contact(300, 400).as_slice(), &[REPORT]].concat();
+        assert_eq!(feed(&mut decoder, &press), vec![down(300, 400)]);
+        // The same contact restated in the next frame is not a move.
+        assert!(feed(&mut decoder, &press).is_empty());
+        let drag = [contact(320, 410).as_slice(), &[REPORT]].concat();
+        assert_eq!(feed(&mut decoder, &drag), vec![moved(320, 410)]);
+        // A frame holding only a separator is how this protocol says nothing
+        // is touching the panel any more.
+        assert_eq!(feed(&mut decoder, &[SEPARATOR, REPORT]), vec![up(320, 410)]);
+        assert!(decoder.is_quiescent());
+        assert_eq!(feed(&mut decoder, &press), vec![down(300, 400)]);
+    }
+
+    #[test]
+    fn an_untracked_controller_that_lifts_with_btn_touch_alone_is_released() {
+        let mut decoder = TouchDecoder::new(ContactReporting::Untracked);
+        let press = [contact(300, 400).as_slice(), &[REPORT]].concat();
+        feed(&mut decoder, &press);
+        assert_eq!(
+            feed(
+                &mut decoder,
+                &[(input::EV_KEY, input::BTN_TOUCH, 0), REPORT]
+            ),
+            vec![up(300, 400)]
+        );
+        assert!(decoder.is_quiescent());
+    }
+
+    #[test]
+    fn with_two_fingers_on_an_untracked_controller_the_first_one_listed_is_followed() {
+        let mut decoder = TouchDecoder::new(ContactReporting::Untracked);
+        let frame = [
+            contact(300, 400).as_slice(),
+            contact(900, 800).as_slice(),
+            &[REPORT],
+        ]
+        .concat();
+        assert_eq!(feed(&mut decoder, &frame), vec![down(300, 400)]);
+    }
+
+    #[test]
+    fn an_untracked_controller_that_omits_the_separator_on_its_only_contact_is_still_read() {
+        let mut decoder = TouchDecoder::new(ContactReporting::Untracked);
+        let frame = [
+            (input::EV_ABS, input::ABS_MT_POSITION_X, 300),
+            (input::EV_ABS, input::ABS_MT_POSITION_Y, 400),
+            REPORT,
+        ];
+        assert_eq!(feed(&mut decoder, &frame), vec![down(300, 400)]);
+    }
+
+    #[test]
+    fn a_slotted_controller_that_never_sends_minus_one_is_released_by_btn_touch() {
+        let mut decoder = TouchDecoder::default();
+        let press = [
+            (input::EV_ABS, input::ABS_MT_SLOT, 0),
+            (input::EV_ABS, input::ABS_MT_TRACKING_ID, 5),
+            (input::EV_ABS, input::ABS_MT_POSITION_X, 300),
+            (input::EV_ABS, input::ABS_MT_POSITION_Y, 400),
+            (input::EV_KEY, input::BTN_TOUCH, 1),
+            REPORT,
+        ];
+        assert_eq!(feed(&mut decoder, &press), vec![down(300, 400)]);
+        assert_eq!(
+            feed(
+                &mut decoder,
+                &[(input::EV_KEY, input::BTN_TOUCH, 0), REPORT]
+            ),
+            vec![up(300, 400)]
+        );
+        assert!(decoder.is_quiescent());
+        // The next contact brings a new id and has to start a new press.
+        let again = [
+            (input::EV_ABS, input::ABS_MT_TRACKING_ID, 6),
+            (input::EV_ABS, input::ABS_MT_POSITION_X, 500),
+            (input::EV_ABS, input::ABS_MT_POSITION_Y, 600),
+            (input::EV_KEY, input::BTN_TOUCH, 1),
+            REPORT,
+        ];
+        assert_eq!(feed(&mut decoder, &again), vec![down(500, 600)]);
+    }
+
+    #[test]
+    fn a_tracked_controller_that_never_sends_minus_one_is_released_by_an_empty_frame() {
+        let mut decoder = TouchDecoder::default();
+        let press = [
+            (input::EV_ABS, input::ABS_MT_TRACKING_ID, 5),
+            (input::EV_ABS, input::ABS_MT_POSITION_X, 300),
+            (input::EV_ABS, input::ABS_MT_POSITION_Y, 400),
+            SEPARATOR,
+            REPORT,
+        ];
+        assert_eq!(feed(&mut decoder, &press), vec![down(300, 400)]);
+        assert_eq!(feed(&mut decoder, &[SEPARATOR, REPORT]), vec![up(300, 400)]);
+        assert!(decoder.is_quiescent());
+    }
+
+    #[test]
+    fn a_frame_that_only_changes_pressure_is_not_read_as_a_lift() {
+        let mut decoder = TouchDecoder::default();
+        feed(&mut decoder, CAPTURED_PRESS);
+        let pressure_only = [(input::EV_ABS, 58, 3), SEPARATOR, REPORT];
+        assert!(feed(&mut decoder, &pressure_only).is_empty());
+        assert!(!decoder.is_quiescent(), "the finger is still down");
+    }
+
+    #[test]
+    fn a_single_touch_controller_reports_press_move_and_release_from_btn_touch() {
+        let mut decoder = TouchDecoder::new(ContactReporting::SingleTouch);
+        let press = [
+            (input::EV_ABS, input::ABS_X, 300),
+            (input::EV_ABS, input::ABS_Y, 400),
+            (input::EV_KEY, input::BTN_TOUCH, 1),
+            REPORT,
+        ];
+        assert_eq!(feed(&mut decoder, &press), vec![down(300, 400)]);
+        // The kernel drops a repeat of an unchanged axis, so a move may carry
+        // one axis alone.
+        assert_eq!(
+            feed(&mut decoder, &[(input::EV_ABS, input::ABS_X, 310), REPORT]),
+            vec![moved(310, 400)]
+        );
+        assert_eq!(
+            feed(
+                &mut decoder,
+                &[(input::EV_KEY, input::BTN_TOUCH, 0), REPORT]
+            ),
+            vec![up(310, 400)]
+        );
+        assert!(decoder.is_quiescent());
+        // A second tap in the same place sends no position at all.
+        assert_eq!(
+            feed(
+                &mut decoder,
+                &[(input::EV_KEY, input::BTN_TOUCH, 1), REPORT]
+            ),
+            vec![down(310, 400)]
+        );
+    }
+
+    #[test]
+    fn a_single_touch_press_before_any_position_waits_for_one() {
+        let mut decoder = TouchDecoder::new(ContactReporting::SingleTouch);
+        assert!(feed(
+            &mut decoder,
+            &[(input::EV_KEY, input::BTN_TOUCH, 1), REPORT]
+        )
+        .is_empty());
+        assert_eq!(
+            feed(
+                &mut decoder,
+                &[
+                    (input::EV_ABS, input::ABS_X, 300),
+                    (input::EV_ABS, input::ABS_Y, 400),
+                    REPORT
+                ]
+            ),
+            vec![down(300, 400)]
+        );
+    }
+
+    #[test]
+    fn a_tracked_controller_ignores_its_mirrored_single_touch_axes() {
+        // The Clara BW sends ABS_X and ABS_Y beside its multi-touch axes.
+        // Reading them as a second source of contacts would change a measured
+        // device, so the default decoder must not.
+        let mut decoder = TouchDecoder::default();
+        let frame = [
+            (input::EV_ABS, input::ABS_X, 300),
+            (input::EV_ABS, input::ABS_Y, 400),
+            (input::EV_KEY, input::BTN_TOUCH, 1),
+            REPORT,
+        ];
+        assert!(feed(&mut decoder, &frame).is_empty());
+    }
+
+    #[test]
+    fn an_untracked_controller_recovers_from_an_overflow_without_a_kernel_query() {
+        let mut decoder = TouchDecoder::new(ContactReporting::Untracked);
+        feed(
+            &mut decoder,
+            &[contact(300, 400).as_slice(), &[REPORT]].concat(),
+        );
+        assert_eq!(
+            feed(
+                &mut decoder,
+                &[(input::EV_SYN, input::SYN_DROPPED, 0), REPORT]
+            ),
+            vec![TouchEvent::Cancel]
+        );
+        assert!(decoder.needs_resynchronization());
+        decoder.resynchronize(None);
+        assert!(decoder.is_quiescent());
+        assert_eq!(
+            feed(
+                &mut decoder,
+                &[contact(500, 600).as_slice(), &[REPORT]].concat()
+            ),
+            vec![down(500, 600)]
+        );
+    }
+
+    #[test]
+    fn the_reporting_style_follows_what_the_device_declares() {
+        assert_eq!(
+            ContactReporting::from_capabilities(true, true, true),
+            Some(ContactReporting::Tracked)
+        );
+        assert_eq!(
+            ContactReporting::from_capabilities(false, true, true),
+            Some(ContactReporting::Untracked)
+        );
+        assert_eq!(
+            ContactReporting::from_capabilities(false, false, true),
+            Some(ContactReporting::SingleTouch)
+        );
+        assert_eq!(
+            ContactReporting::from_capabilities(false, false, false),
+            None
+        );
     }
 }

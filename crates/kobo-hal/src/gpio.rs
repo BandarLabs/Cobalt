@@ -29,8 +29,19 @@ use std::thread;
 const EVENT_BYTES: usize = 16;
 const READ_CHUNK_EVENTS: usize = 64;
 
-/// The device name this module owns. Every NTX Kobo ships it.
+/// The device name this module owns. Every measured NTX Kobo ships it.
 const DEVICE_NAME: &str = "gpio-keys";
+
+/// The name older NTX kernels give the same key node.
+///
+/// Unverified: no reader with this name has been tested here. It is only
+/// tried when no `gpio-keys` node exists, so it can only add buttons to a
+/// reader that would otherwise have none.
+const OLDER_DEVICE_NAME: &str = "ntx_event0";
+
+/// The button node names, most preferred first.
+const BUTTON_DEVICE_NAMES: [&str; 2] = [DEVICE_NAME, OLDER_DEVICE_NAME];
+
 const POWER_DEVICE_NAME: &str = "bd71828-pwrkey";
 
 /// A physical button, named by what it is rather than what it means.
@@ -85,8 +96,9 @@ pub enum GpioEvent {
 
 /// Turns one raw event into a typed one, or nothing.
 ///
-/// The sleep-cover key (code 35) is deliberately not claimed: the cover
-/// watcher owns it through its own open of the same node. Auto-repeat
+/// The sleep-cover keys (code 35, and 59 on i.MX readers) are deliberately
+/// not claimed: the cover watcher owns them through its own open of the same
+/// node. Auto-repeat
 /// (value 2) is dropped for now — no capture has produced one, and
 /// hold-to-turn is a decision for the runtime once it exists.
 #[must_use]
@@ -125,7 +137,19 @@ pub fn discover_buttons_path() -> Option<PathBuf> {
 }
 
 fn discover_buttons_path_from(content: &str) -> Option<PathBuf> {
-    discover_named_path_from(content, DEVICE_NAME)
+    BUTTON_DEVICE_NAMES
+        .iter()
+        .find_map(|name| discover_named_path_from(content, name))
+}
+
+/// The name of the button node this reader has, by the same preference as
+/// [`discover_buttons_path_from`].
+fn button_device_name_from(content: &str) -> &'static str {
+    BUTTON_DEVICE_NAMES
+        .iter()
+        .copied()
+        .find(|name| discover_named_path_from(content, name).is_some())
+        .unwrap_or(DEVICE_NAME)
 }
 
 /// True when the `gpio-keys` device advertises `KEY_POWER` itself.
@@ -136,7 +160,12 @@ fn discover_buttons_path_from(content: &str) -> Option<PathBuf> {
 #[must_use]
 pub fn buttons_report_power() -> bool {
     std::fs::read_to_string("/proc/bus/input/devices").is_ok_and(|content| {
-        named_device_reports_key(&content, DEVICE_NAME, input::KEY_POWER, usize::BITS)
+        named_device_reports_key(
+            &content,
+            button_device_name_from(&content),
+            input::KEY_POWER,
+            usize::BITS,
+        )
     })
 }
 
@@ -154,7 +183,7 @@ fn named_device_reports_key(content: &str, name: &str, code: u16, word_bits: u32
     })
 }
 
-fn bitmap_has(bitmap: &str, code: u16, word_bits: u32) -> bool {
+pub(crate) fn bitmap_has(bitmap: &str, code: u16, word_bits: u32) -> bool {
     let words = bitmap.split_whitespace().collect::<Vec<_>>();
     let word_bits = word_bits as usize;
     let index = usize::from(code) / word_bits;
@@ -242,9 +271,9 @@ impl GpioSession {
     /// # Errors
     ///
     /// Returns an error when the device cannot be opened or is not
-    /// `gpio-keys`.
+    /// `gpio-keys` or its older name.
     pub fn acquire(path: &Path) -> Result<Self, GpioError> {
-        Self::acquire_named(path, DEVICE_NAME)
+        Self::acquire_named(path, &BUTTON_DEVICE_NAMES)
     }
 
     /// Opens the separate power-key device. It reports nothing but
@@ -254,15 +283,15 @@ impl GpioSession {
     ///
     /// Returns an error when the node cannot be opened or has another name.
     pub fn acquire_power(path: &Path) -> Result<Self, GpioError> {
-        Self::acquire_named(path, POWER_DEVICE_NAME)
+        Self::acquire_named(path, &[POWER_DEVICE_NAME])
     }
 
-    fn acquire_named(path: &Path, expected: &'static str) -> Result<Self, GpioError> {
+    fn acquire_named(path: &Path, expected: &[&'static str]) -> Result<Self, GpioError> {
         let device = File::open(path)?;
         let name = input::device_name(&device)?;
-        if name != expected {
+        if !expected.contains(&name.as_str()) {
             return Err(GpioError::WrongDevice {
-                expected,
+                expected: expected[0],
                 found: name,
             });
         }
@@ -416,6 +445,31 @@ H: Handlers=event1\n";
         assert_eq!(
             discover_buttons_path_from(fixture).as_deref(),
             Some(Path::new("/dev/input/event0"))
+        );
+    }
+
+    #[test]
+    fn an_older_key_node_name_is_used_only_when_gpio_keys_is_missing() {
+        let older = "N: Name=\"ntx_event0\"\n\
+H: Handlers=kbd event0\n\
+B: KEY=100000 0 0 0\n\n\
+N: Name=\"touch\"\n\
+H: Handlers=event1\n";
+        assert_eq!(
+            discover_buttons_path_from(older).as_deref(),
+            Some(Path::new("/dev/input/event0"))
+        );
+        assert_eq!(super::button_device_name_from(older), "ntx_event0");
+        assert!(named_device_reports_key(
+            older,
+            super::button_device_name_from(older),
+            116,
+            32
+        ));
+        let both = format!("{older}\nN: Name=\"gpio-keys\"\nH: Handlers=event3\n");
+        assert_eq!(
+            discover_buttons_path_from(&both).as_deref(),
+            Some(Path::new("/dev/input/event3"))
         );
     }
 

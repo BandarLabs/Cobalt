@@ -1,0 +1,143 @@
+# sweep: --seed-root apps/readeck/fixtures/kept
+# A Readeck account with the last inbox kept on the reader and one article
+# kept from an earlier read. The sweep has no Readeck server, so this is a
+# reader away from home: the kept inbox stays on screen under a banner that
+# says why, the kept article reads to its end, and every change or search
+# says the server did not answer instead of pretending.
+wait 10000
+wait-for did not answer
+expect Try again
+expect A morning at the river
+expect A morning at the harbour
+clean
+shot inbox-kept
+# The kept inbox pages to its last article.
+page next
+page next
+page next
+page next
+wait-for A morning at the bridge
+clean
+shot inbox-last-page
+# The page key turns back; on the first page it stays put.
+page back
+page back
+page back
+page back
+wait-for A morning at the harbour
+# The harbour article was opened before, so it opens without the server and
+# reads to its last line.
+tap A morning at the harbour
+wait-for-id reader-forward
+wait-idle
+expect A morning at the harbour
+expect Paragraph 1.
+clean
+shot article-first-page
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+expect The end of the walk.
+clean
+shot article-end
+# The middle of the page opens the article's controls. A change needs the
+# server, so it says the server did not answer and keeps the article.
+tap-id reader-controls
+wait-for Article controls
+expect Mark read
+expect Archive
+expect Unfavorite
+expect Delete article
+clean
+shot controls
+tap Delete article
+wait-for Delete this article?
+expect This removes it from your Readeck library.
+clean
+shot delete-confirm
+tap Keep article
+wait-for Article controls
+tap Mark read
+wait 10000
+wait-for did not answer
+expect Continue
+clean
+shot change-refused
+tap Continue
+wait-for Article controls
+tap Return to article
+wait-for-id reader-forward
+expect The end of the walk.
+# Back keeps the place: the article reopens on its last page, and so it
+# does after a restart.
+tap Back
+wait-for A morning at the harbour
+tap A morning at the harbour
+wait-for-id reader-forward
+wait-idle
+expect The end of the walk.
+tap Back
+wait-for A morning at the harbour
+restart
+wait 10000
+wait-for did not answer
+tap A morning at the harbour
+wait-for-id reader-forward
+wait-idle
+expect The end of the walk.
+tap Back
+wait-for A morning at the harbour
+# Search needs the server too, and says so; Back returns to the kept inbox.
+tap Search
+wait-for Search terms
+expect Search includes read and archived articles.
+type river
+tap Search
+wait 10000
+wait-for did not answer
+expect Search: river
+clean
+shot search-refused
+tap Back
+wait 10000
+wait-for A morning at the harbour
+# More holds Refresh and the account, which opens on the saved address.
+tap More
+wait-for Refresh
+expect Account
+clean
+shot more
+tap Account
+wait-for Connect Readeck
+expect https://127.0.0.1:47444
+expect Use saved token
+clean
+shot account
+tap Back
+wait 10000
+wait-for A morning at the harbour
+# The inbox says which page of how many it is on, as every paged list does.
+expect 1 of

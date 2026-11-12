@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr" prefix="content: http://purl.org/rss/1.0/modules/content/  dc: http://purl.org/dc/terms/  foaf: http://xmlns.com/foaf/0.1/  og: http://ogp.me/ns#  rdfs: http://www.w3.org/2000/01/rdf-schema#  schema: http://schema.org/  sioc: http://rdfs.org/sioc/ns#  sioct: http://rdfs.org/sioc/types#  skos: http://www.w3.org/2004/02/skos/core#  xsd: http://www.w3.org/2001/XMLSchema# ">
+  <head>
+    <meta charset="utf-8" /><script type="text/javascript">(window.NREUM||(NREUM={})).init={ajax:{deny_list:["bam.nr-data.net"]},feature_flags:["rum_v2"]};(window.NREUM||(NREUM={})).loader_config={licenseKey:"37b7ccb661",applicationID:"1089704227",browserID:"1134161994"};;/*! For license information please see nr-loader-rum-1.324.1.min.js.LICENSE.txt */
+(()=>{var e={8122(e,t,r){"use strict";r.d(t,{a:()=>i});var n=r(944);function i(e,t){try{if(!e||"object"!=typeof e)return(0,n.R)(3);if(!t||"object"!=typeof t)return(0,n.R)(4);const r=Object.create(Object.getPrototypeOf(t),Object.getOwnPropertyDescriptors(t)),a=0===Object.keys(r).length?e:r;for(let s in a)if(void 0!==e[s])try{if(null===e[s]){r[s]=null;continue}Array.isArray(e[s])&&Array.isArray(t[s])?r[s]=Array.from(new Set([...e[s],...t[s]])):e[s]instanceof Map||e[s]instanceof Set||e[s]instanceof Date||e[s]instanceof RegExp?r[s]=e[s]:"object"==typeof e[s]&&null!==t[s]&&"object"==typeof t[s]?r[s]=i(e[s],t[s]):r[s]=e[s]}catch(e){r[s]||(0,n.R)(1,e)}return r}catch(e){(0,n.R)(2,e)}}},2555(e,t,r){"use strict";r.d(t,{f:()=>s});var n=r(384),i=r(8122);const a={beacon:n.NT.beacon,errorBeacon:n.NT.errorBeacon,licenseKey:void 0,applicationID:void 0,sa:void 0,queueTime:void 0,applicationTime:void 0,ttGuid:void 0,user:void 0,account:void 0,product:void 0,extra:void 0,jsAttributes:{},userAttributes:void 0,atts:void 0,transactionName:void 0,tNamePlain:void 0};function s(e){try{return!!e.licenseKey&&!!e.errorBeacon&&!!e.applicationID}catch(e){return!1}}r.d(t,["D",0,e=>(0,i.a)(e,a)])},7699(e,t,r){"use strict";var n=r(860);const i=1e6,a={[n.K7.logging]:!0,[n.K7.genericEvents]:!0,[n.K7.jserrors]:!0,[n.K7.ajax]:!0};r.d(t,["It",0,i,"KC",0,a,"qh",0,"SESSION_ERROR","zd",0,5e5])},9324(e,t,r){"use strict";r.d(t,["xv",0,"1.324.1"])},981(e,t,r){"use strict";r.d(t,["R",0,{AJAX:"AjaxRequest",PA:"PageAction",UA:"UserAction",BP:"BrowserPerformance",WS:"WebSocket",SPV:"SecurityPolicyViolation",JSE:"JavaScriptError",LOG:"Log",PVE:"PageView",PVT:"PageViewTiming",SR:"SessionReplay",ST:"SessionTrace",BI:"BrowserInteraction"}])},6154(e,t,r){"use strict";var n=r(1863);const i="undefined"!=typeof window&&!!window.document,a="undefined"!=typeof WorkerGlobalScope&&("undefined"!=typeof self&&self instanceof WorkerGlobalScope&&self.navigator instanceof WorkerNavigator||"undefined"!=typeof globalThis&&globalThis instanceof WorkerGlobalScope&&globalThis.navigator instanceof WorkerNavigator),s=i?window:"undefined"!=typeof WorkerGlobalScope&&("undefined"!=typeof self&&self instanceof WorkerGlobalScope&&self||"undefined"!=typeof globalThis&&globalThis instanceof WorkerGlobalScope&&globalThis),o=Boolean("hidden"===s?.document?.visibilityState),c=""+s?.location,u=/iPad|iPhone|iPod/.test(s.navigator?.userAgent),d=u&&"undefined"==typeof SharedWorker,l=((()=>{const e=s.navigator?.userAgent?.match(/Firefox[/\s](\d+\.\d+)/);Array.isArray(e)&&e.length>=2&&e[1]})(),Date.now()-(0,n.t)());r.d(t,["OF",0,u,"RI",0,i,"WN",0,l,"bv",0,a,"gm",0,s,"m",0,c,"mw",0,o,"sb",0,d,"zk",0,()=>{const e=s?.performance?.getEntriesByType?.("navigation")?.[0];if(e&&e.responseStart>0&&e.responseStart<s.performance.now())return e}])},3241(e,t,r){"use strict";r.d(t,{W:()=>i});var n=r(6154);function i(e={}){try{n.gm.dispatchEvent(new CustomEvent("newrelic",{detail:e}))}catch(e){}}},1687(e,t,r){"use strict";r.d(t,{Ak:()=>o,Ze:()=>u,x3:()=>c});var n=r(3241),i=r(3606),a=r(860),s=r(2646);function o(e,t){if(!e)return;const r={staged:!1,priority:a.P3[t]||0};e.runtime.drainRegistry.get(t)||e.runtime.drainRegistry.set(t,r)}function c(e,t){if(!e)return;const r=e.runtime.drainRegistry;r&&(r.get(t)&&r.delete(t),l(e,t,!1),r.size&&d(e))}function u(e,t="feature",r=!1){if(e){if(!e.runtime.drainRegistry.get(t)||r)return l(e,t);e.runtime.drainRegistry.get(t).staged=!0,d(e)}}function d(e){if(!e)return;const t=Array.from(e.runtime.drainRegistry);t.every(([e,t])=>t.staged)&&(t.sort((e,t)=>e[1].priority-t[1].priority),t.forEach(([t])=>{e.runtime.drainRegistry.delete(t),l(e,t)}))}function l(e,t,r=!0){if(!e)return;const a=e.ee,o=i.i.handlers;if(a&&!a.aborted&&a.backlog&&o){if((0,n.W)({type:"lifecycle",name:"drain",feature:t}),r){const e=a.backlog[t],r=o[t];if(r){for(let t=0;e&&t<e.length;++t)f(e[t],r);Object.entries(r).forEach(([e,t])=>{Object.values(t||{}).forEach(t=>{t[0]?.on&&t[0].context()instanceof s.y&&!t[0].listeners(e).includes(t[1])&&t[0].on(e,t[1])})})}}a.isolatedBacklog||delete o[t],a.backlog[t]=null,a.emit("drain-"+t,[])}}function f(e,t){var r=e[1];Object.values(t[r]||{}).forEach(t=>{var r=e[0];if(t[0]===r){var n=t[1],i=e[3],a=e[2];n.apply(i,a)}})}},7836(e,t,r){"use strict";var n=r(384),i=r(8990),a=r(2646),s=r(5607);const o="nr@context:".concat(s.W),c=function e(t,r){var n={},s={},d={},l=!1;try{l=16===r.length&&u.initializedAgents?.[r]?.runtime.isolatedBacklog}catch(e){}var f={on:p,addEventListener:p,removeEventListener:function(e,t){var r=n[e];if(!r)return;for(var i=0;i<r.length;i++)r[i]===t&&r.splice(i,1)},emit:function(e,r,n,i,a){!1!==a&&(a=!0);if(c.aborted&&!i)return;t&&a&&t.emit(e,r,n);var o=g(n);m(e).forEach(e=>{e.apply(o,r)});var u=v()[s[e]];u&&u.push([f,e,r,o]);return o},get:h,listeners:m,context:g,buffer:function(e,t){const r=v();if(t=t||"feature",f.aborted)return;Object.entries(e||{}).forEach(([e,n])=>{s[n]=t,t in r||(r[t]=[])})},abort:function(){f._aborted=!0,Object.keys(f.backlog).forEach(e=>{delete f.backlog[e]})},isBuffering:function(e){return!!v()[s[e]]},debugId:r,backlog:l?{}:t&&"object"==typeof t.backlog?t.backlog:{},isolatedBacklog:l};return Object.defineProperty(f,"aborted",{get:()=>{let e=f._aborted||!1;return e||(t&&(e=t.aborted),e)}}),f;function g(e){return e&&e instanceof a.y?e:e?(0,i.I)(e,o,()=>new a.y(o)):new a.y(o)}function p(e,t){n[e]=m(e).concat(t)}function m(e){return n[e]||[]}function h(t){return d[t]=d[t]||e(f,t)}function v(){return f.backlog}}(void 0,"globalEE"),u=(0,n.Zm)();u.ee||(u.ee=c),r.d(t,["P",0,o,"ee",0,c])},2646(e,t,r){"use strict";r.d(t,{y:()=>n});class n{constructor(e){this.contextId=e}}},9908(e,t,r){"use strict";r.d(t,{d:()=>n,p:()=>i});var n=r(7836).ee.get("handle");function i(e,t,r,i,a){a?(a.buffer([e],i),a.emit(e,t,r)):(n.buffer([e],i),n.emit(e,t,r))}},3606(e,t,r){"use strict";r.d(t,{i:()=>a});var n=r(9908);a.on=s;var i=a.handlers={};function a(e,t,r,a){s(a||n.d,i,e,t,r)}function s(e,t,r,i,a){a||(a="feature"),e||(e=n.d);var s=t[a]=t[a]||{};(s[r]=s[r]||[]).push([e,i])}},3878(e,t,r){"use strict";function n(e,t){return{capture:e,passive:!1,signal:t}}function i(e,t,r=!1,i){window.addEventListener(e,t,n(r,i))}function a(e,t,r=!1,i){document.addEventListener(e,t,n(r,i))}r.d(t,{DD:()=>a,jT:()=>n,sp:()=>i})},5607(e,t,r){"use strict";const n=(0,r(9566).bz)();r.d(t,["W",0,n])},9566(e,t,r){"use strict";r.d(t,{LA:()=>s,bz:()=>a});var n=r(6154);function i(e,t){return e?15&e[t]:16*Math.random()|0}function a(){const e=n.gm?.crypto||n.gm?.msCrypto;let t,r=0;return e&&e.getRandomValues&&(t=e.getRandomValues(new Uint8Array(30))),"xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".split("").map(e=>"x"===e?i(t,r++).toString(16):"y"===e?(3&i()|8).toString(16):e).join("")}function s(e){const t=n.gm?.crypto||n.gm?.msCrypto;let r,a=0;t&&t.getRandomValues&&(r=t.getRandomValues(new Uint8Array(e)));const s=[];for(var o=0;o<e;o++)s.push(i(r,a++).toString(16));return s.join("")}},2614(e,t,r){"use strict";r.d(t,["BB",0,18e5,"Wt",0,"NRBA_SESSION::","iL",0,{SAME_TAB:"same-tab",CROSS_TAB:"cross-tab"},"tS",0,{STARTED:"session-started",PAUSE:"session-pause",RESET:"session-reset",RESUME:"session-resume",UPDATE:"session-update"},"wk",0,144e5])},1863(e,t,r){"use strict";function n(){return Math.floor(performance.now())}r.d(t,{t:()=>n})},944(e,t,r){"use strict";r.d(t,{R:()=>i});var n=r(3241);function i(e,t){"function"==typeof console.debug&&(console.debug("New Relic Warning: https://github.com/newrelic/newrelic-browser-agent/blob/main/docs/warning-codes.md#".concat(e),t),(0,n.W)({drained:null,type:"data",name:"warn",feature:"warn",data:{code:e,secondary:t}}))}},8990(e,t,r){"use strict";r.d(t,{I:()=>i});var n=Object.prototype.hasOwnProperty;function i(e,t,r){if(n.call(e,t))return e[t];var i=r();if(Object.defineProperty&&Object.keys)try{return Object.defineProperty(e,t,{value:i,writable:!0,enumerable:!1}),i}catch(e){}return e[t]=i,i}},6389(e,t,r){"use strict";function n(e,t=500,r={}){const n=r?.leading||!1;let i;return(...r)=>{n&&void 0===i&&(e.apply(this,r),i=setTimeout(()=>{i=clearTimeout(i)},t)),n||(clearTimeout(i),i=setTimeout(()=>{e.apply(this,r)},t))}}function i(e){let t=!1;return(...r)=>{t||(t=!0,e.apply(this,r))}}r.d(t,{J:()=>i,s:()=>n})},1910(e,t,r){"use strict";r.d(t,{i:()=>a});var n=r(944);const i=new Map;function a(...e){return e.every(e=>{if(i.has(e))return i.get(e);const t="function"==typeof e?e.toString():"",r=t.includes("[native code]"),a=t.includes("nrWrapper");return r||a||(0,n.R)(64,e?.name||t),i.set(e,r),r})}},5289(e,t,r){"use strict";r.d(t,{GG:()=>s,Qr:()=>c,sB:()=>o});var n=r(3878),i=r(6389);function a(){return"undefined"==typeof document||"complete"===document.readyState}function s(e,t){if(a())return e();const r=(0,i.J)(e),s=setInterval(()=>{a()&&(clearInterval(s),r())},500);(0,n.sp)("load",r,t)}function o(e){if(a())return e();(0,n.DD)("DOMContentLoaded",e)}function c(e){if(a())return e();(0,n.sp)("popstate",e)}},384(e,t,r){"use strict";r.d(t,{Zm:()=>c,bQ:()=>d,dV:()=>u,pV:()=>l});var n=r(6154),i=r(1863),a=r(944),s=r(1910);const o={beacon:"bam.nr-data.net",errorBeacon:"bam.nr-data.net"};function c(){return n.gm.NREUM||(n.gm.NREUM={}),void 0===n.gm.newrelic&&(n.gm.newrelic=n.gm.NREUM),n.gm.NREUM}function u(){let e=c();return e.o||(e.o={ST:n.gm.setTimeout,SI:n.gm.setImmediate||n.gm.setInterval,CT:n.gm.clearTimeout,XHR:n.gm.XMLHttpRequest,REQ:n.gm.Request,EV:n.gm.Event,PR:n.gm.Promise,MO:n.gm.MutationObserver,FETCH:n.gm.fetch,WS:n.gm.WebSocket},(0,s.i)(...Object.values(e.o))),e}function d(e,t){let r=c();r.initializedAgents??={},t.initializedAt={ms:(0,i.t)(),date:new Date},r.initializedAgents[e]=t,2===Object.keys(r.initializedAgents).length&&(0,a.R)(69)}function l(){return function(){let e=c();const t=e.info||{};e.info={beacon:o.beacon,errorBeacon:o.errorBeacon,...t}}(),function(){let e=c();const t=e.init||{};e.init={...t}}(),u(),function(){let e=c();const t=e.loader_config||{};e.loader_config={...t}}(),c()}r.d(t,["NT",0,o])},2843(e,t,r){"use strict";r.d(t,{G:()=>a,u:()=>i});var n=r(3878);function i(e,t=!1,r,i){(0,n.DD)("visibilitychange",function(){if(t)return void("hidden"===document.visibilityState&&e());e(document.visibilityState)},r,i)}function a(e,t,r){(0,n.sp)("pagehide",e,t,r)}},9300(e,t,r){"use strict";r(860).K7.ajax;r.d(t,["mo",0,{NONE:"none",FAILURES:"failures",ALL:"all"}])},3969(e,t,r){"use strict";const n=r(860).K7.metrics;r.d(t,["TZ",0,n,"XG",0,"storeEventMetrics","xV",0,"storeSupportabilityMetrics"])},6630(e,t,r){"use strict";const n=r(860).K7.pageViewEvent;r.d(t,["T",0,n])},782(e,t,r){"use strict";const n=r(860).K7.pageViewTiming;r.d(t,["T",0,n])},4234(e,t,r){"use strict";r.d(t,{W:()=>i});var n=r(1687);class i{constructor(e,t){this.agentRef=e,this.ee=e?.ee,this.featureName=t,this.blocked=!1}deregisterDrain(){(0,n.x3)(this.agentRef,this.featureName)}}},7767(e,t,r){"use strict";var n=r(6154);r.d(t,["V",0,e=>n.RI&&!0===e?.privacy.cookies_enabled])},8362(e,t,r){"use strict";r.d(t,{d:()=>a});var n=r(9566),i=r(1741);class a extends i.W{agentIdentifier=(0,n.LA)(16)}},1741(e,t,r){"use strict";r.d(t,{W:()=>a});var n=r(944),i=r(4261);class a{#e(e,...t){if(this[e]!==a.prototype[e])return this[e](...t);(0,n.R)(35,e)}addPageAction(e,t){return this.#e(i.hG,e,t)}register(e){return this.#e(i.eY,e)}recordCustomEvent(e,t){return this.#e(i.fF,e,t)}setPageViewName(e,t){return this.#e(i.Fw,e,t)}setCustomAttribute(e,t,r){return this.#e(i.cD,e,t,r)}noticeError(e,t){return this.#e(i.o5,e,t)}setUserId(e,t=!1){return this.#e(i.Dl,e,t)}setApplicationVersion(e){return this.#e(i.nb,e)}setErrorHandler(e){return this.#e(i.bt,e)}addRelease(e,t){return this.#e(i.k6,e,t)}log(e,t){return this.#e("log",e,t)}start(){return this.#e("start")}finished(e){return this.#e(i.BL,e)}recordReplay(){return this.#e(i.CH)}pauseReplay(){return this.#e(i.Tb)}addToTrace(e){return this.#e(i.U2,e)}setCurrentRouteName(e){return this.#e(i.PA,e)}interaction(e){return this.#e(i.dT,e)}wrapLogger(e,t,r){return this.#e(i.Wb,e,t,r)}measure(e,t){return this.#e(i.V1,e,t)}consent(e){return this.#e(i.Pv,e)}}},4261(e,t,r){"use strict";r.d(t,["BL",0,"finished","CH",0,"recordReplay","Dl",0,"setUserId","Fw",0,"setPageViewName","PA",0,"setCurrentRouteName","Pv",0,"consent","Tb",0,"pauseReplay","U2",0,"addToTrace","V1",0,"measure","Wb",0,"wrapLogger","bt",0,"setErrorHandler","cD",0,"setCustomAttribute","dT",0,"interaction","eY",0,"register","fF",0,"recordCustomEvent","hG",0,"addPageAction","k6",0,"addRelease","nb",0,"setApplicationVersion","o5",0,"noticeError"])},1738(e,t,r){"use strict";r.d(t,{U:()=>l,Y:()=>d});var n=r(3241),i=r(9908),a=r(1863),s=r(944),o=r(3969),c=r(8362),u=r(860);function d(e,t,r,a){const d=a||r;!d||d[e]&&d[e]!==c.d.prototype[e]||(d[e]=function(){(0,i.p)(o.xV,["API/"+e+"/called"],void 0,u.K7.metrics,r.ee),(0,n.W)({drained:!!r.runtime?.activatedFeatures,type:"data",name:"api",feature:"api-"+e,data:{}});try{return t.apply(this,arguments)}catch(e){(0,s.R)(23,e)}})}function l(e,t,r,n,s){const o=e.info;null===r?delete o.jsAttributes[t]:o.jsAttributes[t]=r,(s||null===r)&&(0,i.p)("api-"+n,[(0,a.t)(),t,r],void 0,"session",e.ee)}},8374(e,t,r){r.nc=(()=>{try{return document?.currentScript?.nonce}catch(e){}return""})()},860(e,t,r){"use strict";const n="events",i="jserrors",a="browser/blobs",s="browser/logs",o={ajax:"ajax",genericEvents:"generic_events",jserrors:i,logging:"logging",metrics:"metrics",pageAction:"page_action",pageViewEvent:"page_view_event",pageViewTiming:"page_view_timing",sessionReplay:"session_replay",sessionTrace:"session_trace",softNav:"soft_navigations"},c={[o.pageViewEvent]:1,[o.pageViewTiming]:2,[o.metrics]:3,[o.jserrors]:4,[o.softNav]:5,[o.ajax]:6,[o.sessionTrace]:7,[o.sessionReplay]:8,[o.logging]:9,[o.genericEvents]:10},u={[o.pageViewEvent]:"rum",[o.pageViewTiming]:n,[o.ajax]:n,[o.softNav]:n,[o.metrics]:i,[o.jserrors]:i,[o.sessionTrace]:a,[o.sessionReplay]:a,[o.logging]:s,[o.genericEvents]:"ins"};r.d(t,["$J",0,u,"K7",0,o,"P3",0,c,"XX",0,i,"Yy",0,s,"df",0,a,"hg",0,"connect"])}};const t={};function r(n){const i=t[n];if(void 0!==i)return i.exports;const a=t[n]={exports:{}};return e[n](a,a.exports,r),a.exports}r.m=e,r.d=(e,t)=>{if(Array.isArray(t))for(var n=0;n<t.length;){var i=t[n++],a=t[n++];r.o(e,i)?0===a&&n++:0===a?Object.defineProperty(e,i,{enumerable:!0,value:t[n++]}):Object.defineProperty(e,i,{enumerable:!0,get:a})}else for(var i in t)r.o(t,i)&&!r.o(e,i)&&Object.defineProperty(e,i,{enumerable:!0,get:t[i]})},r.f={},r.e=e=>Promise.all(Object.keys(r.f).reduce((t,n)=>(r.f[n](e,t),t),[])),r.u=e=>"nr-rum-1.324.1.min.js",r.o=(e,t)=>Object.prototype.hasOwnProperty.call(e,t),(()=>{const e={},t="NRBA-1.324.1.PROD:";r.l=(n,i,a,s)=>{if(e[n])return void e[n].push(i);let o,c;if(void 0!==a){const e=document.getElementsByTagName("script");for(var u=0;u<e.length;u++){const r=e[u];if(r.getAttribute("src")==n||r.getAttribute("data-webpack")==t+a){o=r;break}}}if(!o){c=!0;var d={296:"sha512-zuv39xzZ8AH/HwpVrtkixvcBuOFo2ydcFzMtXjx+3Iwr5g++inX+6YDH7J/8fOCAtBetz8aDyaYCRkGy2nnG/w=="};o=document.createElement("script"),o.charset="utf-8",r.nc&&o.setAttribute("nonce",r.nc),o.setAttribute("data-webpack",t+a),o.src=n,0!==o.src.indexOf(window.location.origin+"/")&&(o.crossOrigin="anonymous"),d[s]&&(o.integrity=d[s])}e[n]=[i];const l=(t,r)=>{o.onerror=o.onload=null,clearTimeout(f);const i=e[n];if(delete e[n],o.parentNode?.removeChild(o),i?.forEach(e=>e(r)),t)return t(r)},f=setTimeout(l.bind(null,void 0,{type:"timeout",target:o}),12e4);o.onerror=l.bind(null,o.onerror),o.onload=l.bind(null,o.onload),c&&document.head.appendChild(o)}})(),r.r=e=>{Symbol.toStringTag&&Object.defineProperty(e,Symbol.toStringTag,{value:"Module"}),Object.defineProperty(e,"__esModule",{value:!0})},r.p="https://js-agent.newrelic.com/",(()=>{const e={374:0,840:0};r.f.j=(t,n)=>{let i=r.o(e,t)?e[t]:void 0;if(0!==i)if(i)n.push(i[2]);else{const a=new Promise((r,n)=>i=e[t]=[r,n]);n.push(i[2]=a);const s=r.p+r.u(t),o=new Error,c=n=>{if(r.o(e,t)&&(i=e[t],0!==i&&(e[t]=void 0),i)){const e=n&&("load"===n.type?"missing":n.type),r=n&&n.target&&n.target.src;o.message="Loading chunk "+t+" failed: ("+e+": "+r+")",o.name="ChunkLoadError",o.type=e,o.request=r,i[1](o)}};r.l(s,c,"chunk-"+t,t)}};const t=(t,n)=>{let[i,a,s]=n;var o,c,u=0;if(i.some(t=>0!==e[t])){for(o in a)r.o(a,o)&&(r.m[o]=a[o]);if(s)s(r)}for(t&&t(n);u<i.length;u++)c=i[u],r.o(e,c)&&e[c]&&e[c][0](),e[c]=0},n=self["webpackChunk:NRBA-1.324.1.PROD"]=self["webpackChunk:NRBA-1.324.1.PROD"]||[];n.forEach(t.bind(null,0)),n.push=t.bind(null,n.push.bind(n))})(),(()=>{"use strict";r(8374);var e=r(8362),t=r(860);const n=Object.values(t.K7);var i=r(384),a=r(1741);var s=r(2555),o=r(981);t.K7.genericEvents,o.R.PA,o.R.UA,o.R.BP;const c={RESOURCES:"experimental.resources",REGISTER:"register"};var u=r(9300);const d=e=>{if(!e||"string"!=typeof e)return!1;try{document.createDocumentFragment().querySelector(e)}catch{return!1}return!0};var l=r(2614),f=r(944),g=r(8122);const p="[data-nr-mask]",m=e=>(0,g.a)(e,(()=>{const e={feature_flags:[],experimental:{register:!1,resources:!1,iframe_bridge:!1,iframe_domains:[]},mask_selector:"*",block_selector:"[data-nr-block]",mask_input_options:{color:!1,date:!1,"datetime-local":!1,email:!1,month:!1,number:!1,range:!1,search:!1,tel:!1,text:!1,time:!1,url:!1,week:!1,textarea:!1,select:!1,password:!0}};return{ajax:{deny_list:void 0,block_internal:!0,enabled:!0,autoStart:!0,capture_payloads:u.mo.NONE},api:{register:{get enabled(){return e.feature_flags.includes(c.REGISTER)||e.experimental.register},set enabled(t){e.experimental.register=t},duplicate_data_to_container:!1,get allow_iframe_bridge(){return e.feature_flags.includes(c.IFRAME_BRIDGE)||e.experimental.iframe_bridge},set allow_iframe_bridge(t){e.experimental.iframe_bridge=t},get iframe_domains(){return e.experimental.iframe_domains},set iframe_domains(t){Array.isArray(t)?e.experimental.iframe_domains=t:(0,f.R)(1,t)}}},browser_consent_mode:{enabled:!1},distributed_tracing:{enabled:void 0,exclude_newrelic_header:void 0,cors_use_newrelic_header:void 0,cors_use_tracecontext_headers:void 0,allowed_origins:void 0},get feature_flags(){return e.feature_flags},set feature_flags(t){e.feature_flags=t},generic_events:{enabled:!0,autoStart:!0},harvest:{interval:30},jserrors:{enabled:!0,autoStart:!0},logging:{enabled:!0,autoStart:!0},metrics:{enabled:!0,autoStart:!0},obfuscate:void 0,page_action:{enabled:!0},page_view_event:{enabled:!0,autoStart:!0},page_view_timing:{enabled:!0,autoStart:!0},performance:{capture_marks:!1,capture_measures:!1,capture_detail:!0,resources:{get enabled(){return e.feature_flags.includes(c.RESOURCES)||e.experimental.resources},set enabled(t){e.experimental.resources=t},asset_types:[],first_party_domains:[],ignore_newrelic:!0}},privacy:{cookies_enabled:!0},proxy:{assets:void 0,beacon:void 0},session:{expiresMs:l.wk,inactiveMs:l.BB},session_replay:{autoStart:!0,enabled:!1,preload:!1,collect_fonts:!1,inline_images:!1,fix_stylesheets:!0,mask_all_inputs:!0,get mask_text_selector(){return e.mask_selector},set mask_text_selector(t){d(t)?e.mask_selector="".concat(t,",").concat(p):""===t||null===t?e.mask_selector=p:(0,f.R)(5,t)},get block_class(){return"nr-block"},get ignore_class(){return"nr-ignore"},get mask_text_class(){return"nr-mask"},get block_selector(){return e.block_selector},set block_selector(t){d(t)?e.block_selector+=",".concat(t):""!==t&&(0,f.R)(6,t)},get mask_input_options(){return e.mask_input_options},set mask_input_options(t){t&&"object"==typeof t?e.mask_input_options={...t,password:!0}:(0,f.R)(7,t)}},session_trace:{enabled:!0,autoStart:!0},soft_navigations:{enabled:!0,autoStart:!0},ssl:void 0,user_actions:{enabled:!0,elementAttributes:["id","className","tagName","type"]},web_sockets:{enabled:!1}}})());var h=r(6154),v=r(9324);let b=0;const y={buildEnv:"PROD",distMethod:"CDN",version:v.xv,originTime:h.WN},_={consented:!1},w={activatedFeatures:void 0,appMetadata:{},configured:!1,get consented(){return this.session?.state?.consent||_.consented},set consented(e){_.consented=e},customTransaction:void 0,denyList:[],disabled:!1,drainRegistry:new Map,connector:void 0,harvester:void 0,v2Target:void 0,isolatedBacklog:!1,isRecording:!1,loaderType:void 0,maxBytes:3e4,obfuscator:void 0,onerror:void 0,ptid:void 0,releaseIds:{},session:void 0,timeKeeper:void 0,registeredEntities:[],jsAttributesMetadata:{bytes:0},get harvestCount(){return++b},listeningForIframeMessages:!1},R="BA";var A=r(7836),x=r(3241);const E={accountID:void 0,trustKey:void 0,agentID:void 0,licenseKey:void 0,applicationID:void 0,xpid:void 0};var S=r(9908);const k="newrelic-iframe-";function T(e,t={},n,o){let{init:c,info:u,loader_config:d,runtime:l={},exposed:f=!0}=t;if(!u){const e=(0,i.pV)();c=e.init,u=e.info,d=e.loader_config}var p;e.init=m(c||{}),e.loader_config=(p=d||{},(0,g.a)(p,E)),u.jsAttributes??={},h.bv&&(u.jsAttributes.isWorker=!0),e.info=(0,s.D)(u);const v=e.init;e.runtime??=(e=>{const t=(0,g.a)(e,w),r=Object.keys(y).reduce((e,t)=>(e[t]={value:y[t],writable:!1,configurable:!0,enumerable:!0},e),{});return Object.defineProperties(t,r)})(l),e.runtime.v2Target??={type:R,instance:e.agentIdentifier,get id(){return e.runtime.appMetadata?.agents?.[0]?.entityGuid},get attributes(){return{"entity.guid":this.id,appId:e.info.applicationID}}},v.proxy.assets&&(e=>{const t=e.startsWith("http");e+="/",r.p=t?e:"https://"+e})(v.proxy.assets),e.runtime.configured||(Object.defineProperty(e,"beacons",{get:()=>[e.info.beacon,e.info.errorBeacon,e.init.proxy.assets,e.init.proxy.beacon].filter(Boolean)}),Object.defineProperty(e.runtime,"denyList",{get:()=>[...e.init.ajax.deny_list||[],...e.init.ajax.block_internal?e.beacons:[]]}),e.runtime.ptid=e.agentIdentifier,function(e){const t=(0,i.pV)();Object.getOwnPropertyNames(a.W.prototype).forEach(r=>{const n=a.W.prototype[r];if("function"!=typeof n||"constructor"===n)return;let i=t[r];e[r]&&!1!==e.exposed&&"micro-agent"!==e.runtime?.loaderType&&(t[r]=(...t)=>{const n=e[r](...t);return i?i(...t):n})})}(e),e.runtime.loaderType=n,e.ee=A.ee.get(e.agentIdentifier),e.exposed=f,(0,x.W)({drained:!!e.runtime.activatedFeatures,type:"lifecycle",name:"initialize",feature:void 0,data:e.config}),e.init.api.register.allow_iframe_bridge&&h.gm.addEventListener("message",t=>{"string"==typeof t.data?.type&&t.data.type.startsWith(k)&&(0,S.p)("iframe-message",[t],void 0,"IFRAME",e.ee)}),e.runtime.configured=!0)}var j=r(1863),P=r(4261),N=r(1738);var O=r(1687),M=r(4234),I=r(5289),D=r(7767);function V(e){return!!(0,i.dV)().o.MO&&(0,D.V)(e)&&!0===e?.session_trace.enabled}var W=r(6389),B=r(7699);const C=new WeakSet,K=new WeakMap;class U extends M.W{constructor(e,t){super(e,t),this.abortHandler=void 0,this.featAggregate=void 0,this.loadedSuccessfully=void 0,this.onAggregateImported=new Promise(e=>{this.loadedSuccessfully=e}),this.deferred=Promise.resolve(),!1===e.init[this.featureName].autoStart?this.deferred=new Promise((t,r)=>{this.ee.on("manual-start-all",(0,W.J)(()=>{(0,O.Ak)(e,this.featureName),t()}))}):(0,O.Ak)(e,t)}importAggregator(e,t,n={}){if(this.featAggregate)return;const i=async()=>{if(await this.deferred,this.#t(e),!(0,s.f)(e.info))return(0,f.R)(43),e.ee.abort(),void this.loadedSuccessfully(!1);try{await async function(e,t,n){if(K.has(e))return K.get(e);const i=(async()=>{if((0,D.V)(e.init))try{const{setupAgentSession:t}=await r.e(296).then(r.bind(r,1768));t(e)}catch(e){(0,f.R)(20,e),t.emit("internal-error",[e]),(0,S.p)(B.qh,[e],void 0,n,t)}if(e.init.api.register.allow_iframe_bridge)try{const{setupIframeMFEMessageListener:t}=await Promise.resolve().then(function(){const e=new Error("Cannot find module '../../loaders/configure/iframe-message-handler'");throw e.code="MODULE_NOT_FOUND",e});t(e)}catch(e){(0,f.R)(23,e)}const[{Connector:i},{Harvester:a}]=await Promise.all([r.e(296).then(r.bind(r,6589)),r.e(296).then(r.bind(r,5237))]);e.runtime.connector=new i(e),e.runtime.harvester=new a(e);const s=Object.values(e.features).filter(t=>e.runtime.drainRegistry.has(t.featureName));Promise.all(s.map(e=>e.onAggregateImported)).then(()=>e.runtime.harvester.startTimer())})();K.set(e,i),await i}(e,this.ee,this.featureName)}catch(e){return(0,f.R)(79,e),this.ee.abort(),void this.loadedSuccessfully(!1)}try{if(!this.#r(this.featureName,e.runtime.session,e.init))return this.abortHandler?.(),(0,O.Ze)(this.agentRef,this.featureName),void this.loadedSuccessfully(!1);const{Aggregate:r}=await t();this.featAggregate=new r(e,n),e.runtime.harvester.initializedAggregates.push(this.featAggregate),this.loadedSuccessfully(!0)}catch(e){(0,f.R)(34,e),this.abortHandler?.(),(0,O.Ze)(this.agentRef,this.featureName,!0),this.loadedSuccessfully(!1)}};h.RI?(0,I.GG)(()=>i(),!0):i()}#r(e,r,n){if(this.blocked)return!1;switch(e){case t.K7.sessionReplay:return V(n)&&!!r;case t.K7.sessionTrace:return!!r;default:return!0}}#t(e){if(!C.has(e)&&(C.add(e),!(0,s.f)(e.info))){const t=(0,i.pV)();let r={...t.info?.jsAttributes};try{r={...r,...e.info?.jsAttributes}}catch(e){}T(e,{...t,info:{...t.info,jsAttributes:r},runtime:e.runtime},e.runtime.loaderType)}}}var L=r(6630);class F extends U{static featureName=L.T;constructor(e){var t;super(e,L.T),this.setupInspectionEvents(),t=e,(0,N.Y)(P.Fw,function(e,r){"string"==typeof e&&("/"!==e.charAt(0)&&(e="/"+e),t.runtime.customTransaction=(r||"http://custom.transaction")+e,(0,S.p)("api-"+P.Fw,[(0,j.t)()],void 0,void 0,t.ee))},t),this.importAggregator(e,()=>e.init.feature_flags.includes("rum_v2")?r.e(296).then(r.bind(r,908)):r.e(296).then(r.bind(r,7927)))}setupInspectionEvents(){const e=(e,t)=>{e&&(0,x.W)({timeStamp:e.timeStamp,loaded:"complete"===e.target.readyState,type:"window",name:t,data:e.target.location+""})};(0,I.sB)(t=>{e(t,"DOMContentLoaded")}),(0,I.GG)(t=>{e(t,"load")}),(0,I.Qr)(t=>{e(t,"navigate")}),this.ee.on(l.tS.UPDATE,(e,t)=>{(0,x.W)({type:"lifecycle",name:"session",data:t})})}}class G extends e.d{constructor(e){var t;(super(),h.gm)?(this.features={},(0,i.bQ)(this.agentIdentifier,this),this.desiredFeatures=new Set(e.features||[]),this.desiredFeatures.add(F),T(this,e,e.loaderType||"agent"),t=this,(0,N.Y)(P.cD,function(e,r,n=!1){if("string"==typeof e){if(["string","number","boolean"].includes(typeof r)||null===r)return(0,N.U)(t,e,r,P.cD,n);(0,f.R)(40,typeof r)}else(0,f.R)(39,typeof e)},t),function(e){(0,N.Y)(P.Dl,function(t,r=!1){if("string"!=typeof t&&null!==t)return void(0,f.R)(41,typeof t);const n=e.info.jsAttributes["enduser.id"];r&&null!=n&&n!==t?(0,S.p)("api-setUserIdAndResetSession",[t],void 0,"session",e.ee):(0,N.U)(e,"enduser.id",t,P.Dl,!0)},e)}(this),function(e){(0,N.Y)(P.nb,function(t){if("string"==typeof t||null===t)return(0,N.U)(e,"application.version",t,P.nb,!1);(0,f.R)(42,typeof t)},e)}(this),function(e){(0,N.Y)("start",function(){e.ee.emit("manual-start-all")},e)}(this),function(e){(0,N.Y)(P.Pv,function(t=!0){if("boolean"==typeof t){if((0,S.p)("api-"+P.Pv,[t],void 0,"session",e.ee),e.runtime.consented=t,t){const t=e.features.page_view_event;t.onAggregateImported.then(e=>{const r=t.featAggregate;e&&!r.sentRum&&r.sendRum?.()})}}else(0,f.R)(65,typeof t)},e)}(this),this.run()):(0,f.R)(21)}get config(){return{info:this.info,init:this.init,loader_config:this.loader_config,runtime:this.runtime}}get api(){return this}run(){try{const e=function(e){const t={};return n.forEach(r=>{t[r]=!!e[r]?.enabled}),t}(this.init),r=[...this.desiredFeatures],i=this.init.feature_flags.includes("rum_v2");r.sort((e,r)=>t.P3[e.featureName]-t.P3[r.featureName]),r.forEach(r=>{if(!e[r.featureName]&&(i||r.featureName!==t.K7.pageViewEvent))return;const n=function(e){switch(e){case t.K7.ajax:return[t.K7.jserrors];case t.K7.sessionTrace:return[t.K7.ajax,t.K7.pageViewEvent];case t.K7.sessionReplay:return[t.K7.sessionTrace];case t.K7.pageViewTiming:return[t.K7.pageViewEvent];default:return[]}}(r.featureName).filter(e=>!(e in this.features));n.length>0&&(0,f.R)(36,{targetFeature:r.featureName,missingDependencies:n}),this.features[r.featureName]=new r(this)})}catch(e){(0,f.R)(22,e);for(const e in this.features)this.features[e].abortHandler?.();const t=(0,i.Zm)();delete t.initializedAgents[this.agentIdentifier]?.features,delete this.sharedAggregator;return t.ee.get(this.agentIdentifier).abort(),!1}}}var H=r(2843),z=r(782);class Y extends U{static featureName=z.T;constructor(e){super(e,z.T),h.RI&&((0,H.u)(()=>(0,S.p)("docHidden",[(0,j.t)()],void 0,z.T,this.ee),!0),(0,H.G)(()=>(0,S.p)("winPagehide",[(0,j.t)()],void 0,z.T,this.ee)),this.importAggregator(e,()=>r.e(296).then(r.bind(r,9981))))}}var Z=r(3969);class q extends U{static featureName=Z.TZ;constructor(e){super(e,Z.TZ),this.importAggregator(e,()=>r.e(296).then(r.bind(r,9623)))}}new G({features:[F,Y,q],loaderType:"lite"})})()})();</script>
+<meta name="description" content="The new device could help provide vital navigation signals when GPS is either unavailable or has been jammed." />
+<link rel="shortlink" href="https://www.nist.gov/node/1922796" />
+<link rel="canonical" href="https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping" />
+<meta name="citation_title" content="New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security | NIST" />
+<meta property="og:site_name" content="NIST" />
+<meta property="og:type" content="Article" />
+<meta property="og:url" content="https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping" />
+<meta property="og:title" content="New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security" />
+<meta property="og:description" content="The new device could help provide vital navigation signals when GPS is either unavailable or has been jammed." />
+<meta property="og:image" content="https://www.nist.gov/sites/default/files/styles/social/public/images/2026/10/16/P9290629_whiteBG.jpeg?itok=2bzseI7P" />
+<meta property="og:image" content="https://www.nist.gov/themes/custom/nist_www/img/homepage/nist_mark.png" />
+<meta property="og:image:width" content="2400" />
+<meta property="og:image:height" content="1800" />
+<meta property="og:image:alt" content="Circular sheet holds hundreds of tiny metallic rectangles reflecting rainbow colors." />
+<meta property="article:published_time" content="2026-10-16T08:00-04:00" />
+<meta property="article:modified_time" content="2026-10-27T09:22-04:00" />
+<meta name="dcterms.title" content="New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security" />
+<meta name="dcterms.description" content="The new device could help provide vital navigation signals when GPS is either unavailable or has been jammed." />
+<meta name="dcterms.date" content="2026-10-16T08:00-04:00" />
+<meta name="dcterms.type" content="text" />
+<meta name="dcterms.format" content="text/html" />
+<meta name="dcterms.identifier" content="https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping" />
+<meta name="dcterms.source" content="NIST" />
+<meta name="dcterms.created" content="2026-10-16T08:00-04:00" />
+<meta name="dcterms.modified" content="2026-10-27T09:22-04:00" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:description" content="The new device could help provide vital navigation signals when GPS is either unavailable or has been jammed." />
+<meta name="twitter:title" content="New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security" />
+<meta name="twitter:site" content="NIST" />
+<meta name="google-site-verification" content="QMu0ODkER3rN5hLcMLqNVf7e3bkjYsNLTuhqfH48jCA" />
+<meta name="Generator" content="Drupal 10 (https://www.drupal.org)" />
+<meta name="MobileOptimized" content="width" />
+<meta name="HandheldFriendly" content="true" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="preconnect" href="https://challenges.cloudflare.com" />
+<meta name="nist_search_modified" class="elastic" content="2026-10-27T09:22:00-04:00" />
+<script type="application/ld+json">{
+    "@context": "https://schema.org",
+    "@graph": [
+        {
+            "@type": "Article",
+            "@id": "https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping",
+            "name": "New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security",
+            "headline": "New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security",
+            "description": "The new device could help provide vital navigation signals when GPS is either unavailable or has been jammed.",
+            "image": {
+                "@type": "ImageObject",
+                "url": "https://www.nist.gov/sites/default/files/styles/social/public/images/2026/10/16/P9290629_whiteBG.jpeg?itok=2bzseI7P",
+                "width": "2400",
+                "height": "1800"
+            },
+            "datePublished": "2026-10-16T08:00-04:00",
+            "dateModified": "2026-10-27T09:22-04:00",
+            "author": {
+                "@type": "Person",
+                "@id": "https://www.nist.gov/people/ron-cowen",
+                "name": "Ron Cowen",
+                "url": "https://www.nist.gov/people/ron-cowen"
+            },
+            "publisher": {
+                "@type": "Organization",
+                "@id": "https://www.nist.gov/",
+                "name": "National Institute of Standards and Technology",
+                "url": "https://www.nist.gov/"
+            }
+        }
+    ]
+}</script>
+<meta name="nist_search_bundle" class="elastic" content="article" />
+<link rel="icon" href="/themes/custom/nist_www/favicon.ico" type="image/vnd.microsoft.icon" />
+
+    <title>New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security | NIST</title>
+    <link rel="stylesheet" media="all" href="/sites/default/files/css/css_EwJGRdb3kaMQ_FiCd3htjeNuAibYD-CZKsIZXdChwpc.css?delta=0&amp;language=en&amp;theme=nist_www&amp;include=eJxtj1GOwyAMRC-EypEsx0xSbwFHmGy6t1-adqWs2h_kN7KYZ966EVe5WvPIJwgTy40Gd1vjaSYVq0GsIaa2rZwv_MX3f0FSzrYE3HvWevtLXxhmzR0tCq9dx09Vvccl28T5ORdeqs4qB9HKC2gG0kMhvkfPrX5FwbCzPHGjYikmdZ4y6Kg8dvZ9P_ccXFSauXYENxnWVDDkx7k--v3HO8oDEIZxoYYZDVVGUwPih4zEPXwrdo_HexkqW8YvpuaMCA" />
+<link rel="stylesheet" media="all" href="/sites/default/files/css/css_RpbtmXsl7oGQxv9QNBnvPuinCNE4QsmFKhDsc-ClaUc.css?delta=1&amp;language=en&amp;theme=nist_www&amp;include=eJxtj1GOwyAMRC-EypEsx0xSbwFHmGy6t1-adqWs2h_kN7KYZ966EVe5WvPIJwgTy40Gd1vjaSYVq0GsIaa2rZwv_MX3f0FSzrYE3HvWevtLXxhmzR0tCq9dx09Vvccl28T5ORdeqs4qB9HKC2gG0kMhvkfPrX5FwbCzPHGjYikmdZ4y6Kg8dvZ9P_ccXFSauXYENxnWVDDkx7k--v3HO8oDEIZxoYYZDVVGUwPih4zEPXwrdo_HexkqW8YvpuaMCA" />
+<link rel="stylesheet" media="print" href="/sites/default/files/css/css_LpHBc8EPEsDrEJSd96BC5X0OHJG9W5P68QT2eD_fJio.css?delta=2&amp;language=en&amp;theme=nist_www&amp;include=eJxtj1GOwyAMRC-EypEsx0xSbwFHmGy6t1-adqWs2h_kN7KYZ966EVe5WvPIJwgTy40Gd1vjaSYVq0GsIaa2rZwv_MX3f0FSzrYE3HvWevtLXxhmzR0tCq9dx09Vvccl28T5ORdeqs4qB9HKC2gG0kMhvkfPrX5FwbCzPHGjYikmdZ4y6Kg8dvZ9P_ccXFSauXYENxnWVDDkx7k--v3HO8oDEIZxoYYZDVVGUwPih4zEPXwrdo_HexkqW8YvpuaMCA" />
+<link rel="stylesheet" media="all" href="/sites/default/files/css/css_CDMw6SU1CV0Us3eEwyOndUEAnll_6K8ojr0ZmVlPJaM.css?delta=3&amp;language=en&amp;theme=nist_www&amp;include=eJxtj1GOwyAMRC-EypEsx0xSbwFHmGy6t1-adqWs2h_kN7KYZ966EVe5WvPIJwgTy40Gd1vjaSYVq0GsIaa2rZwv_MX3f0FSzrYE3HvWevtLXxhmzR0tCq9dx09Vvccl28T5ORdeqs4qB9HKC2gG0kMhvkfPrX5FwbCzPHGjYikmdZ4y6Kg8dvZ9P_ccXFSauXYENxnWVDDkx7k--v3HO8oDEIZxoYYZDVVGUwPih4zEPXwrdo_HexkqW8YvpuaMCA" />
+
+    <script type="application/json" data-drupal-selector="drupal-settings-json">{"path":{"baseUrl":"\/","pathPrefix":"","currentPath":"node\/1922796","currentPathIsAdmin":false,"isFront":false,"currentLanguage":"en"},"pluralDelimiter":"\u0003","suppressDeprecationErrors":true,"gtag":{"tagId":"","consentMode":false,"otherIds":[],"events":[],"additionalConfigInfo":[]},"ajaxPageState":{"libraries":"eJx1kOuSwyAIhV_IjY_EECWGViUjZtN9-6W23cne_iAfMJyDuHcBrGGVph5P4GYMVzDusvlTDhyk_tu8qKNbz1yvPrZ9wzw90S2cOzUfcOtsC5JIygQdk08WfvKEF7x9LxZXWbtPWWbM5_zNRAeuhJHaFxZMlRcOg8D0CaIcNQtG6M1Mc7W9-GhvmAgWoni_xv8uPab6SsX8iOQZGxSJPrLibJvHjWPmOI6zyRO_nI1S4dBEuZNTCYwZCkVG-0w1x_qhncodyNmvFWi0UKMaTLwR-T9qEFTdO9OhfsTJ3O2Z3EHzIq345zuZSJb0CTkBxHg","theme":"nist_www","theme_token":null},"ajaxTrustedUrl":[],"gtm":{"tagId":null,"settings":{"data_layer":"dataLayer","include_classes":false,"allowlist_classes":"","blocklist_classes":"","include_environment":false,"environment_id":"","environment_token":""},"tagIds":["GTM-54VSXXDF"]},"auto_anchors":{"show_automatic_anchor_links":true,"root_elements":".nist-page__region--content, .nist-content-row","anchor_elements":"h2:not(.tl-headline, .nist-subscribe-form__title), h3:not(.tl-headline-date)","link_content":"\u003Cimg src=\u0022\/libraries\/nist-component-library\/dist\/img\/link.svg\u0022 alt=\u0022permalink\u0022\u003E","exclude_admin_pages":true},"back_to_top":{"back_to_top_button_trigger":100,"back_to_top_speed":1200,"back_to_top_prevent_on_mobile":false,"back_to_top_prevent_in_admin":true,"back_to_top_button_type":"image","back_to_top_button_text":"Back to top"},"nist_map":{"mapbox_access_token":"pk.REMOVED-FROM-FIXTURE"},"nist_search":{"clickTracking":"search-report-click","isDebug":false,"clickTrackEnabled":true,"message":"NIST Search in debug mode. Check the browsers network inspector for Click Track reporting results..."},"webform":{"dialog":{"options":{"narrow":{"title":"Narrow","width":600},"normal":{"title":"Normal","width":800},"wide":{"title":"Wide","width":1000}},"entity_type":"node","entity_id":"1922796"}},"data":{"extlink":{"extTarget":false,"extTargetAppendNewWindowDisplay":true,"extTargetAppendNewWindowLabel":"","extTargetNoOverride":false,"extNofollow":false,"extTitleNoOverride":false,"extNoreferrer":false,"extFollowNoOverride":false,"extClass":"ext","extLabel":"(link is external)","extImgClass":false,"extSubdomains":true,"extExclude":"\\.gov\\\/|\\.mil\\\/|\\manufacturingusa\\.com\\\/","extInclude":"","extCssExclude":".ck-editor, .nist-video-thumbnail__lightbox-trigger, a.nist-icon--mail-blue","extCssInclude":"","extCssExplicit":"","extAlert":true,"extAlertText":"Thank you for visiting NIST. We hope your visit was informative. We have provided a link to this site because it has information that may be of interest to our users. NIST does not necessarily endorse the views expressed or the facts presented on this site. Further, NIST does not endorse any commercial products that may be advertised or available on this site. Click OK to be directed to your link.","extHideIcons":false,"mailtoClass":"0","telClass":"","mailtoLabel":"(link sends email)","telLabel":"(link is a phone number)","extUseFontAwesome":false,"extIconPlacement":"after","extPreventOrphan":false,"extFaLinkClasses":"fa fa-external-link","extFaMailtoClasses":"fa fa-envelope-o","extAdditionalLinkClasses":"","extAdditionalMailtoClasses":"","extAdditionalTelClasses":"","extFaTelClasses":"fa fa-phone","allowedDomains":[],"extExcludeNoreferrer":""}},"user":{"uid":0,"permissionsHash":"875e680e0313ee626581ae2795425dd5501fdff52b84168125ae1988c7b8b5e4"}}</script>
+<script src="/sites/default/files/js/js_VsFwLHYv-wG3D1HyjKAojmn4LmfeFkCqn2TMWbEdxtY.js?scope=header&amp;delta=0&amp;language=en&amp;theme=nist_www&amp;include=eJxlj2sSgyAMhC9E5UjMIgGpQBzAweOXotOx7Z8kXx47G-yVFdK8cC4SNxAa86o6V97krVbPIuiowadVmrxvCNOFwjG7QKrCSdfDL0944vhuRpF8qdIF1giPrjxwIRjKH4xwyVs_D1LW92vDLQWGUTV3Zz51LZzjDY6UJTJvy_K_dW7VhWL3wBw0sopspPEFuiuPR8ZOa-1mrJG2nKO88mQ8ArsXOZ57zg"></script>
+<script src="/modules/contrib/google_tag/js/gtag.js?to4k0o"></script>
+<script src="/modules/contrib/google_tag/js/gtm.js?to4k0o"></script>
+<script src="/sites/default/files/js/js_5WbAeKWaHF5M7ZGOm0J4MoiuVLINg4UjWTVpVV4wxTc.js?scope=header&amp;delta=3&amp;language=en&amp;theme=nist_www&amp;include=eJxlj2sSgyAMhC9E5UjMIgGpQBzAweOXotOx7Z8kXx47G-yVFdK8cC4SNxAa86o6V97krVbPIuiowadVmrxvCNOFwjG7QKrCSdfDL0944vhuRpF8qdIF1giPrjxwIRjKH4xwyVs_D1LW92vDLQWGUTV3Zz51LZzjDY6UJTJvy_K_dW7VhWL3wBw0sopspPEFuiuPR8ZOa-1mrJG2nKO88mQ8ArsXOZ57zg"></script>
+
+  </head>
+  <body class="node-1922796">
+        <a href="#main-content" class="visually-hidden focusable" data-elastic-exclude>
+      Skip to main content
+    </a>
+    <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-54VSXXDF"
+                  height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+
+      <div class="dialog-off-canvas-main-canvas" data-off-canvas-main-canvas>
+    
+  <!-- nist-index-ignore-start -->
+<section data-elastic-exclude class="usa-banner" aria-label="Official website of the United States government">
+  <div class="usa-accordion">
+    <header class="usa-banner__header">
+      <div class="usa-banner__inner">
+        <div class="grid-col-auto">
+          <img class="usa-banner__header-flag" src="/libraries/nist-component-library/dist/img/us_flag_small.png" alt="U.S. flag">
+        </div>
+        <div class="grid-col-fill tablet:grid-col-auto">
+          <p class="usa-banner__header-text">An official website of the United States government</p>
+          <p class="usa-banner__header-action" aria-hidden="true">Here’s how you know</p>
+        </div>
+        <button class="usa-accordion__button usa-banner__button" aria-expanded="false" aria-controls="gov-banner-default">
+          <span class="usa-banner__button-text">Here’s how you know</span>
+        </button>
+      </div>
+    </header>
+    <div class="usa-banner__content usa-accordion__content" id="gov-banner-default">
+      <div class="grid-row grid-gap-lg">
+        <div class="usa-banner__guidance tablet:grid-col-6">
+          <img class="usa-banner__icon usa-media-block__img" src="/libraries/nist-component-library/dist/img/icon-dot-gov.svg" role="img" alt="" aria-hidden="true">
+          <div class="usa-media-block__body">
+            <p>
+              <strong>Official websites use .gov</strong>
+              <br/>
+              A <strong>.gov</strong> website belongs to an official government organization in the United States.
+            </p>
+          </div>
+        </div>
+        <div class="usa-banner__guidance tablet:grid-col-6">
+          <img class="usa-banner__icon usa-media-block__img" src="/libraries/nist-component-library/dist/img/icon-https.svg" role="img" alt="" aria-hidden="true">
+          <div class="usa-media-block__body">
+            <p>
+              <strong>Secure .gov websites use HTTPS</strong>
+              <br/>
+              A <strong>lock</strong> (  <span class="icon-lock">
+    <svg xmlns="http://www.w3.org/2000/svg" width="52" height="64" viewbox="0 0 52 64" class="usa-banner__lock-image" role="img" aria-labelledby="banner-lock-title banner-lock-description" focusable="false">
+      <title id="banner-lock-title">Lock</title>
+      <desc id="banner-lock-description">A locked padlock</desc><path fill="#000000" fill-rule="evenodd" d="M26 0c10.493 0 19 8.507 19 19v9h3a4 4 0 0 1 4 4v28a4 4 0 0 1-4 4H4a4 4 0 0 1-4-4V32a4 4 0 0 1 4-4h3v-9C7 8.507 15.507 0 26 0zm0 8c-5.979 0-10.843 4.77-10.996 10.712L15 19v9h22v-9c0-6.075-4.925-11-11-11z"/></svg>
+  </span>
+) or <strong>https://</strong> means you’ve safely connected to the .gov website. Share sensitive information only on official, secure websites.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<!-- nist-index-ignore-end -->
+
+    
+    <div data-elastic-exclude>
+<!-- nist-index-ignore-start -->
+<div class="nist-print-header" style="display:none;">
+  <p class="nist-print-header__url">https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping</p>
+  <img class="nist-print-header__logo" width="289" height="38" src="/libraries/nist-component-library/dist/img/logo/nist_logo_sidestack.svg" alt="National Institute of Standards and Technology" />
+</div>
+
+
+<div class="usa-overlay"></div>
+<header class="usa-header nist-header--www nist-header--minimal" role="banner">
+      <div class="usa-navbar__outer">
+    <div class="usa-navbar">
+      <div class="usa-logo flex-fill">
+            <a href="/" title="National Institute of Standards and Technology" aria-label="Home">
+      <img src="/libraries/nist-component-library/dist/img/logo/logo.svg" alt="National Institute of Standards and Technology" width="300px" height="80px" />
+    </a>
+        </div>
+      <div class="usa-header__right grid-row flex-auto">
+                                  <div class="grid-col-fill nist-header__search-group">
+                      
+<form class="usa-search usa-search--small"
+  accept-charset="UTF-8"
+  action="/search"
+  id="search_form"
+  method="get"
+  role="search">
+  <label class="usa-sr-only" for="search-form">Search NIST</label>
+  <input class="usa-input" id="search-form" type="search" name="s" placeholder="Search NIST" required="" maxlength="128">
+  <button class="usa-button" type="submit"><img src="/libraries/nist-component-library/dist/img/usa-icons-bg/search--white.svg" class="usa-search__submit-icon" alt="Search"></button>
+</form>
+                  </div>
+                  <div class="grid-col-auto padding-left-1">
+            <button class="usa-menu-btn">Menu</button>
+          </div>
+              </div>
+    </div>
+  </div>
+
+      
+
+
+<nav aria-label="Primary navigation" class="usa-nav">
+  <div class="usa-nav__inner">
+    <button class="usa-nav__close">Close</button>
+    <ul class="usa-nav__primary usa-accordion">
+            <li class="usa-nav__primary-item">
+                <a class="usa-nav__link" href="/publications">Publications</a>
+              </li>
+            <li class="usa-nav__primary-item">
+                <button class="usa-accordion__button usa-nav__link" aria-expanded="false" aria-controls="primary_menu-2"><span>What We Do</span></button>
+        <div id="primary_menu-2" class="usa-nav__submenu usa-megamenu">
+          <div class="grid-row">
+                                                        <div class="tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/topics" class="usa-nav__link">All Topics</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/advanced-communications" class="usa-nav__link">Advanced communications</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/biotechnology" class="usa-nav__link">Bioscience</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/buildings-and-construction" class="usa-nav__link">Buildings and construction</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/chemistry" class="usa-nav__link">Chemistry</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/cybersecurity-and-privacy" class="usa-nav__link">Cybersecurity and Privacy</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/electronics" class="usa-nav__link">Electronics</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/energy" class="usa-nav__link">Energy</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/environment" class="usa-nav__link">Environment</a>
+                              </li>
+                                                          </ul></div><div class="column-break tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/fire" class="usa-nav__link">Fire</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/forensic-science" class="usa-nav__link">Forensic science</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/health" class="usa-nav__link">Health</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/information-technology" class="usa-nav__link">Information technology</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/infrastructure" class="usa-nav__link">Infrastructure</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/manufacturing" class="usa-nav__link">Manufacturing</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/materials" class="usa-nav__link">Materials</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/mathematics-and-statistics" class="usa-nav__link">Mathematics and statistics</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/metrology" class="usa-nav__link">Metrology</a>
+                              </li>
+                                                          </ul></div><div class="column-break tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/nanotechnology" class="usa-nav__link">Nanotechnology</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/neutron-research" class="usa-nav__link">Neutron research</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/performance-excellence" class="usa-nav__link">Performance excellence</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/physics" class="usa-nav__link">Physics</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/public-safety" class="usa-nav__link">Public safety</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/quantum-information-science" class="usa-nav__link">Quantum information science</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/resilience" class="usa-nav__link">Resilience</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/standards" class="usa-nav__link">Standards</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/super-intelligence" class="usa-nav__link">Super intelligence</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/transportation" class="usa-nav__link">Transportation</a>
+                              </li>
+                            </ul>
+            </div>
+          </div>
+        </div>
+              </li>
+            <li class="usa-nav__primary-item">
+                <button class="usa-accordion__button usa-nav__link" aria-expanded="false" aria-controls="primary_menu-3"><span>Labs &amp; Major Programs</span></button>
+        <div id="primary_menu-3" class="usa-nav__submenu usa-megamenu">
+          <div class="grid-row">
+                                                        <div class="tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/laboratories" class="usa-nav__link">Laboratories</a>
+                                <ul class="usa-nav__submenu-list">
+                                  <li>
+                    <a href="/ctl" class="usa-nav__link">Communications Technology Laboratory</a>
+                  </li>
+                                  <li>
+                    <a href="/el" class="usa-nav__link">Engineering Laboratory</a>
+                  </li>
+                                  <li>
+                    <a href="/itl" class="usa-nav__link">Information Technology Laboratory</a>
+                  </li>
+                                  <li>
+                    <a href="/mml" class="usa-nav__link">Material Measurement Laboratory</a>
+                  </li>
+                                  <li>
+                    <a href="/pml" class="usa-nav__link">Physical Measurement Laboratory</a>
+                  </li>
+                                </ul>
+                              </li>
+                                                          </ul></div><div class="column-break tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/user-facilities" class="usa-nav__link">User Facilities</a>
+                                <ul class="usa-nav__submenu-list">
+                                  <li>
+                    <a href="/ncnr" class="usa-nav__link">NIST Center for Neutron Research</a>
+                  </li>
+                                  <li>
+                    <a href="/cnst" class="usa-nav__link">CNST NanoFab</a>
+                  </li>
+                                </ul>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/research-test-beds" class="usa-nav__link">Research Test Beds</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/laboratories/projects-programs" class="usa-nav__link">Research Projects</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/laboratories/tools-instruments" class="usa-nav__link">Tools &amp; Instruments</a>
+                              </li>
+                                                          </ul></div><div class="column-break tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/major-programs" class="usa-nav__link">Major Programs</a>
+                                <ul class="usa-nav__submenu-list">
+                                  <li>
+                    <a href="/chips" class="usa-nav__link">CHIPS for America Initiative</a>
+                  </li>
+                                  <li>
+                    <a href="/cds" class="usa-nav__link">Congressionally Identified Project Program (CIPP)</a>
+                  </li>
+                                  <li>
+                    <a href="/mep" class="usa-nav__link">Manufacturing Extension Partnership (MEP)</a>
+                  </li>
+                                  <li>
+                    <a href="https://www.manufacturingusa.com/" class="usa-nav__link">Manufacturing USA</a>
+                  </li>
+                                  <li>
+                    <a href="/oam" class="usa-nav__link">Office of Advanced Manufacturing</a>
+                  </li>
+                                  <li>
+                    <a href="/tpo" class="usa-nav__link">Technology Partnerships Office</a>
+                  </li>
+                                </ul>
+                              </li>
+                            </ul>
+            </div>
+          </div>
+        </div>
+              </li>
+            <li class="usa-nav__primary-item">
+                <button class="usa-accordion__button usa-nav__link" aria-expanded="false" aria-controls="primary_menu-4"><span>Services &amp; Resources</span></button>
+        <div id="primary_menu-4" class="usa-nav__submenu usa-megamenu">
+          <div class="grid-row">
+                                                        <div class="tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/standards-measurements" class="usa-nav__link">Measurements and Standards</a>
+                                <ul class="usa-nav__submenu-list">
+                                  <li>
+                    <a href="/calibrations" class="usa-nav__link">Calibration Services</a>
+                  </li>
+                                  <li>
+                    <a href="/nvlap" class="usa-nav__link">Laboratory Accreditation (NVLAP)</a>
+                  </li>
+                                  <li>
+                    <a href="/nist-quality-system" class="usa-nav__link">Quality System</a>
+                  </li>
+                                  <li>
+                    <a href="/srm" class="usa-nav__link">Standard Reference Materials (SRMs)</a>
+                  </li>
+                                  <li>
+                    <a href="/sri" class="usa-nav__link">Standard Reference Instruments (SRIs)</a>
+                  </li>
+                                  <li>
+                    <a href="/standardsgov" class="usa-nav__link">Standards.gov</a>
+                  </li>
+                                  <li>
+                    <a href="/pml/time-and-frequency-division/time-services" class="usa-nav__link">Time Services</a>
+                  </li>
+                                  <li>
+                    <a href="/pml/owm" class="usa-nav__link">Office of Weights and Measures</a>
+                  </li>
+                                </ul>
+                              </li>
+                                                          </ul></div><div class="column-break tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/services-resources/software" class="usa-nav__link">Software</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/data" class="usa-nav__link">Data</a>
+                                <ul class="usa-nav__submenu-list">
+                                  <li>
+                    <a href="https://webbook.nist.gov/chemistry/" class="usa-nav__link">Chemistry WebBook</a>
+                  </li>
+                                  <li>
+                    <a href="https://nvd.nist.gov/" class="usa-nav__link">National Vulnerability Database</a>
+                  </li>
+                                  <li>
+                    <a href="/pml/productsservices/physical-reference-data" class="usa-nav__link">Physical Reference Data</a>
+                  </li>
+                                  <li>
+                    <a href="/srd" class="usa-nav__link">Standard Reference Data (SRD)</a>
+                  </li>
+                                </ul>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="https://shop.nist.gov/" class="usa-nav__link">Storefront</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/tpo" class="usa-nav__link">License &amp; Patents</a>
+                              </li>
+                                                          </ul></div><div class="column-break tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="https://csrc.nist.gov/" class="usa-nav__link">Computer Security Resource Center (CSRC)</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/nist-research-library" class="usa-nav__link">NIST Research Library</a>
+                              </li>
+                            </ul>
+            </div>
+          </div>
+        </div>
+              </li>
+            <li class="usa-nav__primary-item">
+                <button class="usa-accordion__button usa-nav__link" aria-expanded="false" aria-controls="primary_menu-5"><span>News &amp; Events</span></button>
+        <div id="primary_menu-5" class="usa-nav__submenu usa-megamenu">
+          <div class="grid-row">
+                                                        <div class="tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/news-events/news" class="usa-nav__link">News</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/news-events/events" class="usa-nav__link">Events</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/blogs" class="usa-nav__link">Blogs</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/nist-focus" class="usa-nav__link">NIST In Focus</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/feature-stories" class="usa-nav__link">Feature Stories</a>
+                              </li>
+                                                          </ul></div><div class="column-break tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/awards" class="usa-nav__link">Awards</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/video-gallery" class="usa-nav__link">Video Gallery</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/image-gallery" class="usa-nav__link">Image Gallery</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/comms/media-contacts" class="usa-nav__link">Media Contacts</a>
+                              </li>
+                            </ul>
+            </div>
+          </div>
+        </div>
+              </li>
+            <li class="usa-nav__primary-item">
+                <button class="usa-accordion__button usa-nav__link" aria-expanded="false" aria-controls="primary_menu-6"><span>About NIST</span></button>
+        <div id="primary_menu-6" class="usa-nav__submenu usa-megamenu">
+          <div class="grid-row">
+                                                        <div class="tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/about-nist" class="usa-nav__link">About Us</a>
+                                <ul class="usa-nav__submenu-list">
+                                  <li>
+                    <a href="/director/leadership" class="usa-nav__link">Leadership</a>
+                  </li>
+                                  <li>
+                    <a href="/director/nist-organization-structure" class="usa-nav__link">Organization Structure</a>
+                  </li>
+                                  <li>
+                    <a href="/about-nist/budget-planning" class="usa-nav__link">Budget &amp; Planning</a>
+                  </li>
+                                </ul>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/contact" class="usa-nav__link">Contact Us</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/about-nist/visit" class="usa-nav__link">Visit</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/careers" class="usa-nav__link">Careers</a>
+                                <ul class="usa-nav__submenu-list">
+                                  <li>
+                    <a href="/iaao/academic-affairs-office" class="usa-nav__link">Student programs</a>
+                  </li>
+                                </ul>
+                              </li>
+                                                          </ul></div><div class="column-break tablet:grid-col-fill"><ul class="usa-nav__submenu-list">
+                            <li class="usa-nav__submenu-item">
+                <a href="/about-nist/work-nist" class="usa-nav__link">Work with NIST</a>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/history" class="usa-nav__link">History</a>
+                                <ul class="usa-nav__submenu-list">
+                                  <li>
+                    <a href="http://nistdigitalarchives.contentdm.oclc.org/" class="usa-nav__link">NIST Digital Archives</a>
+                  </li>
+                                  <li>
+                    <a href="/nist-museum" class="usa-nav__link">NIST Museum</a>
+                  </li>
+                                  <li>
+                    <a href="/nist-and-nobel" class="usa-nav__link">NIST and the Nobel</a>
+                  </li>
+                                </ul>
+                              </li>
+                                                        <li class="usa-nav__submenu-item">
+                <a href="/education" class="usa-nav__link">Educational Resources</a>
+                              </li>
+                            </ul>
+            </div>
+          </div>
+        </div>
+              </li>
+          </ul>
+  </div>
+</nav>
+
+
+
+  
+</header>
+<!-- nist-index-ignore-end -->
+</div>
+  
+  <div class="grid-container">
+    
+
+
+
+  </div>
+
+
+
+    
+
+<div
+   id="block-nist-www-content" class="nist-block"
+>
+  
+    
+      
+
+
+
+
+
+        
+<section
+       class="nist-page__content usa-section clearfix"
+    >
+
+  <a id="main-content" tabindex="-1"></a>
+
+      
+        <div class="grid-container margin-top-4">
+      <div
+               class="nist-page__region nist-page__region--content-top"
+            >
+        
+<div
+   class="nist-block"
+>
+  
+    
+        <div>
+              <a class="usa-button usa-button--accent-cool" href="/news-events/news">NEWS</a>
+      </div>
+
+        
+  </div>
+
+<div
+   class="nist-block"
+>
+  
+    
+        <h1 class="nist-page__title">New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security</h1>
+
+        
+  </div>
+
+<div
+   class="nist-block"
+>
+  
+    
+        <div class="font-heading-md"><time datetime="2026-10-16T12:00:00Z">October 16, 2026</time>
+</div>
+
+        
+  </div>
+<div
+   class="nist-block nist-block--no-margin"
+>
+  
+    
+      <!-- nist-index-ignore-start -->
+<div data-elastic-exclude class="nist-block nist-social__wrapper">
+ <h2 class="nist-social__title">Share</h2>
+  <div class="social-media-sharing">
+    <div class="nist-social__wrapper--share">
+                      <div>
+                  <a    target="_blank"  rel="noopener"  href="https://www.facebook.com/share.php?u=https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping"
+            title="Facebook" class="nist-social nist-social--facebook-gray">
+            <span>Facebook</span>
+          </a>
+                                        </div>
+                      <div>
+                          <a    target="_blank"  rel="noopener"  href="https://www.linkedin.com/shareArticle?mini=true&amp;url=https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping&amp;source=https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping"
+            title="Linkedin" class="nist-social nist-social--linkedin-gray">
+            <span>Linkedin</span>
+          </a>
+                                </div>
+                      <div>
+                                  <a    target="_blank"  rel="noopener"  href="https://x.com/intent/tweet?url=https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping&amp;status=https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping"
+            title="X.com" class="nist-social nist-social--x-gray">
+            <span>X.com</span>
+          </a>
+                        </div>
+                      <div>
+                                          <a href="/cdn-cgi/l/email-protection#122d616770787771662f5c5b41463c757d6434737f6229707d766b2f517a777179327d676632667a7b6132617b6677327a66666261283d3d6565653c7c7b61663c757d643d7c7765613f7764777c66613d7c7765613d202220243d23223d7c77653f717a7b623f70736177763f667362773f7f7773616760773f7e7b757a663f717d677e763f6077647d7e67667b7d7c7b68773f7f7d707b7e773f667b7f77797777627b7c75" title="Email" class="nist-social nist-social--envelope-gray">
+            <span>Email</span>
+          </a>
+                </div>
+          </div>
+  </div>
+</div>
+<!-- nist-index-ignore-end -->
+
+        
+  </div>
+
+      </div>
+    </div>
+    
+  <div class="grid-container margin-top-4">
+    <div class="grid-row grid-gap-4">
+
+                  
+      <div class="grid-col-12">
+        <div class="grid-row grid-gap-4">
+
+          
+                    
+                    <div
+                       class="nist-page__region nist-page__region--content tablet-lg:grid-col-8"
+                    >
+            
+<div
+   class="nist-block"
+>
+  
+    
+      <div class="text-with-summary">
+  
+  
+      <div class="margin-left-4 margin-bottom-2 align-right">
+       
+    <figure class="nist-image--lightbox nist-image" data-download="https://www.nist.gov/sites/default/files/images/2026/10/16/P9290629_whiteBG.jpeg" data-lightbox="https://www.nist.gov/sites/default/files/styles/2800_x_2800_limit/public/images/2026/10/16/P9290629_whiteBG.jpeg.webp?itok=YGRJSIXU" data-media-id="770331">
+        
+    <img loading="lazy" src="/sites/default/files/styles/480_x_480_limit/public/images/2026/10/16/P9290629_whiteBG.jpeg.webp?itok=12BYSZwq" width="480" height="360" alt="Circular sheet holds hundreds of tiny metallic rectangles reflecting rainbow colors. " typeof="foaf:Image" />
+
+
+
+
+            <figcaption class="nist-image__caption">
+      <div data-caption-editable="true" class="nist-image__caption-content">
+        
+  <p>Microcombs, which act as miniature rulers for light, are fabricated on wafers like the one shown here. Each wafer contains more than 400 chips, with each chip housing up to 300 tiny ring-shaped resonators that form the heart of the new microcomb technology.&nbsp;</p>
+
+      </div>
+                                <div class="nist-image__credit">
+                    <span class="nist-image__credit-label">Credit:</span>
+            
+  Grégory Moille/JQI, NIST
+
+                                </div>
+          </figcaption>
+  </figure>
+
+
+    </div>
+  
+      <p>Researchers at the National Institute of Standards and Technology (NIST) and their colleagues have demonstrated a new way to generate a miniature tape measure for light. Unlike previous designs, it can make high-quality optical measurements without needing to be tethered to bulky laboratory equipment. The new device could help revolutionize ultraprecise mobile timekeeping, and in turn, provide vital navigation signals for drones, cars, submarines and other vehicles when GPS is either unavailable or has been jammed.</p><p>The miniature instruments, known as microchip frequency combs, generate a spectrum of precise, evenly spaced colors that act like tick marks on a ruler to measure the frequencies of light with extraordinary accuracy.</p> 
+      <figure role="group" class=" align-left nist-image--lightbox nist-image">
+<div data-download="https://www.nist.gov/sites/default/files/images/2026/10/16/P9290549.jpeg" data-lightbox="https://www.nist.gov/sites/default/files/styles/2800_x_2800_limit/public/images/2026/10/16/P9290549.jpeg.webp?itok=f61kLSpK" data-media-id="770336">
+      
+    <img alt="Tiny rectangular chip holds lines of even tinier rings and reflects a rainbow of colors. " height="165" loading="lazy" src="/sites/default/files/styles/220_x_220_limit/public/images/2026/10/16/P9290549.jpeg?itok=-WVH5L5S" typeof="foaf:Image" width="220">
+
+
+
+
+                                
+      
+    </div>
+<figcaption class="nist-image__caption">Close-up of a single chip that houses up to 300 tiny ring-shaped resonators that form the heart of the new microcomb technology.&nbsp;<div class="nist-image__credit">
+                    <span class="nist-image__credit-label">Credit:</span>
+            
+  Grégory Moille/JQI, NIST
+
+                                </div></figcaption>
+</figure>
+
+  <p>Frequency combs are essential components of <a href="/atomic-clocks/how-atomic-clocks-work/optical-clocks-future-time" data-entity-type="node" data-entity-uuid="52375fe1-369c-4f61-8a71-dde827572fe6" data-entity-substitution="canonical" title="Optical Clocks: The Future of Time">optical atomic clocks</a>, which produce extremely precise timing signals. Mobile optical clocks could be used for <a href="/atomic-clocks/atomic-clocks-technology-powerhouse" data-entity-type="node" data-entity-uuid="16eb6ecf-195d-458c-9140-22516dc08d5c" data-entity-substitution="canonical" title="Atomic Clocks: A Technology Powerhouse">many applications beyond timekeeping</a>, such as military navigation and oil, gas and mineral exploration.</p><p>In their approach, scientists at NIST and JQI, a research partnership between NIST and the University of Maryland, send light from two lasers around a tiny ring known as a microresonator. The light interacts with itself in such a way as to produce the evenly spaced “tick marks” of a comb. The technique avoids a problem associated with previous, single-laser methods, which required additional, power-hungry equipment to produce stable, high-quality tick marks.</p><div class="nist-callout"><p>Learn more in this JQI news story: <a href="https://jqi.umd.edu/news/new-chip-based-frequency-combs-demonstrate-potential-portable-atomic-clocks">New Chip-Based Frequency Combs Demonstrate Potential for Portable Atomic Clocks</a></p></div>
+  
+  </div>
+        
+  </div>
+  <div
+   class="nist-block"
+>
+  
+    
+      <!-- nist-index-ignore-start -->
+<div data-elastic-exclude="" class="nist-tags">
+<a href="/topic-terms/physics" hreflang="en">Physics</a>, <a href="/topic-terms/optical-physics-and-communications" hreflang="en">Optical physics and communications</a> and <a href="/topic-terms/time-and-frequency" hreflang="en">Time and frequency</a></div>
+<!-- nist-index-ignore-end -->
+
+        
+  </div>
+
+          </div>
+          
+                    <aside class="nist-page__region nist-page__region--sidebar-second tablet-lg:grid-col-4">
+
+                                                  <div>
+                <div
+   class="nist-block nist-block--no-margin"
+>
+  
+    
+      <!-- nist-index-ignore-start -->
+  
+
+
+  <div
+   about="/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping" typeof="schema:Article" data-elastic-exclude="" class="nist-block nist-block--contact"
+>
+  
+  <h2
+       class="nist-block__title"
+      >Media Contact</h2>
+        <span property="schema:name" content="New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security" class="hidden"></span>
+
+      
+
+<div class="nist-contact">
+        <ul class="nist-contact__items">
+  <li about="/people/ron-cowen" class="nist-contact__item">
+            <div class="nist-contact__name"><a href="/people/ron-cowen" title="View staff profile page">Ron Cowen</a></div>
+    
+      
+  <div>
+    <a href="/cdn-cgi/l/email-protection#23514c4d424f470d404c54464d634d4a50570d444c55"><span class="__cf_email__" data-cfemail="c6b4a9a8a7aaa2e8a5a9b1a3a886a8afb5b2e8a1a9b0">[email&#160;protected]</span></a>
+  </div>
+  <div>
+    (301) 975-4397
+  </div>
+
+
+
+  </li>
+</ul>
+  </div>
+
+        
+  </div>
+
+
+  <!-- nist-index-ignore-end -->
+
+        
+  </div>
+<!-- nist-index-ignore-start -->
+<div
+   data-elastic-exclude="" class="nist-block no-print nist-subscribe-form padding-2"
+>
+  
+  <h2
+       class="nist-block__title"
+      >NIST in your inbox</h2>
+      
+      <form action='https://public.govdelivery.com/accounts/USNIST/subscribers/qualify' method='post'>
+          <input type='hidden' name='topic_id' id='topic_id' value='USNIST' />
+          <div>Stay up to date with the latest news from NIST.</div>
+          <label class='usa-label usa-sr-only' for='email'>Enter Email Address</label>
+          <div class='grid-row grid-gap-1'>
+            <div class='grid-col'>
+              <input class='usa-input' id='email' name='email' onfocus='this.value='' title='email' type='text' placeholder='Enter email address' />
+            </div>
+            <div class='grid-col margin-top-1 flex-auto'>
+              <input class='usa-button usa-button--outline nist-subscribe-form__button' id='signupbutton' name='signupbutton' type='submit' value='Sign Up' />
+            </div>
+          </div>
+        </form>
+        
+  </div>
+<!-- nist-index-ignore-end -->
+<!-- nist-index-ignore-start -->
+  <div
+   class="views-element-container nist-block nist-block--org" data-elastic-exclude=""
+>
+  
+  <h2
+       class="nist-block__title"
+      >Organizations</h2>
+      
+      <div><div class="js-view-dom-id-6f7b4e44067e250669737419f281e428e3a2ed6f01192fe1074082cfbc9f639e">
+  
+  
+  
+
+  
+  
+  
+
+    <div class="nist-related-orgs"><div class="term-tree-list">
+  <ul class="term"><li><a href="/nist-organizations/nist-headquarters" class="selected" hreflang="en">NIST Headquarters</a></li><li><ul class="term"><li><a href="/nist-organizations/nist-headquarters/laboratory-programs" class="selected" hreflang="en">Laboratory Programs</a></li><li><ul class="term"><li><a href="/nist-organizations/nist-headquarters/laboratory-programs/physical-measurement-laboratory" class="selected" hreflang="en">Physical Measurement Laboratory</a></li><li><ul class="term"><li><a href="/nist-organizations/nist-headquarters/laboratory-programs/physical-measurement-laboratory-3" class="selected" hreflang="en">Microsystems and Nanotechnology Division</a></li><li><ul class="term"><li><a href="/nist-organizations/nist-headquarters/laboratory-programs/physical-measurement-laboratory-0" class="selected" hreflang="en">Photonics and Optomechanics Group</a></li></ul></li></ul></li></ul></li></ul></li></ul>
+</div>
+</div>
+  <div class="nist-related-orgs"></div>
+  <div class="nist-related-orgs"></div>
+  <div class="nist-related-orgs"></div>
+  <div class="nist-related-orgs"></div>
+
+    
+
+  
+  
+
+  
+  
+</div>
+</div>
+
+        
+  </div>
+<!-- nist-index-ignore-end -->
+
+              </div>
+                      </aside>
+                  </div>
+      </div>
+    </div>
+  </div>
+
+    
+    <div class="grid-container">
+
+          <div
+               class="nist-page__region nist-page__region--content-bottom"
+            >
+        
+<div
+   class="nist-block"
+>
+  
+    
+      <div class="text-italic font-sans-2xs">
+  Released October 16, 2026, Updated October 27, 2026
+</div>
+        
+  </div>
+
+      </div>
+    
+  </div>
+  
+</section>
+
+
+        
+  </div>
+
+
+  
+    
+<div class="nist-page-feedback__block">
+  <a
+    class="usa-button usa-button--outline webform-dialog webform-dialog-narrow nist-page-feedback__button"
+    href="/webform/page_feedback?page=https://www.nist.gov/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping&page_title=New Chip-Based ‘Tape Measure’ for Light Could Revolutionize Mobile Timekeeping and Enhance National Security&source_entity_type=node&source_entity_id=1922796"
+    data-dialog-options="{&quot;dialogClass&quot;:&quot;no-titlebar page-feedback&quot;}" rel="nofollow"
+  >
+    Was this page helpful?
+  </a>
+</div>
+
+<div data-elastic-exclude>
+<!-- nist-index-ignore-start -->
+
+<footer class="nist-footer padding-bottom-4">
+
+  
+    <div class="grid-container nist-footer__info">
+      <div class="grid-row">
+        <div class="tablet:grid-col-6">
+          <div class="nist-footer__logo">
+            <a href="/" title="National Institute of Standards and Technology" rel="home">
+              <img class="nist-footer__logo-img" src="/libraries/nist-component-library/dist/img/logo/NIST-Logo-Brand-White.svg" alt="National Institute of Standards and Technology logo" width="300px" height="42px" />
+            </a>
+          </div>
+          <div class="nist-footer__contact">
+            <h3 class="nist-footer__contact-heading">HEADQUARTERS</h3>
+            <address>
+              100 Bureau Drive<br>
+              Gaithersburg, MD 20899<br>
+              <a href="tel:301-975-2000">301-975-2000</a>
+            </address>
+            <p>
+              <a href="/cdn-cgi/l/email-protection#dfbbb0f2a8babdb2beacabbaad9fb1b6acabf1b8b0a9">Webmaster</a> | <a href="https://www.nist.gov/contact">Contact Us</a> | <a href="https://www.nist.gov/visit">Our Other Offices</a>
+            </p>
+          </div>
+        </div>
+        <div class="tablet:grid-col-6">
+          <div class="nist-footer__social-links">
+            
+<a class="nist-social nist-social--x-white" href=" https://x.com/NIST">
+  <span>X.com</span>
+</a>
+            
+<a class="nist-social nist-social--facebook-white" href=" https://www.facebook.com/NIST">
+  <span>Facebook</span>
+</a>
+            
+<a class="nist-social nist-social--linkedin-white" href=" https://www.linkedin.com/company/nist">
+  <span>LinkedIn</span>
+</a>
+            
+<a class="nist-social nist-social--instagram-white" href=" https://www.instagram.com/nist/">
+  <span>Instagram</span>
+</a>
+            
+<a class="nist-social nist-social--youtube-white" href=" https://www.youtube.com/NIST">
+  <span>YouTube</span>
+</a>
+            
+<a class="nist-social nist-social--giphy-white" href=" https://giphy.com/nist">
+  <span>Giphy</span>
+</a>
+            
+<a class="nist-social nist-social--rss-white" href=" https://www.nist.gov/news-events/nist-rss-feeds">
+  <span>RSS Feed</span>
+</a>
+            
+<a class="nist-social nist-social--envelope-white" href=" https://public.govdelivery.com/accounts/USNIST/subscriber/new">
+  <span>Mailing List</span>
+</a>
+          </div>
+                              <div class="nist-footer__feedback">How are we doing?
+                        <a class="usa-button webform-dialog webform-dialog-narrow"
+               href="/webform/nist_gov_feedback?page=/news-events/news/2026/10/new-chip-based-tape-measure-light-could-revolutionize-mobile-timekeeping"
+                title="Provide feedback" rel="nofollow" data-dialog-options="{&quot;dialogClass&quot;:&quot;no-titlebar page-feedback&quot;}">Feedback</a>
+          </div>
+                  </div>
+      </div>
+    </div>
+
+  
+  <div class="grid-container">
+    <div class="nist-footer__nav" role="navigation">
+      <ul>
+                              <li class="nist-footer__menu-item">
+              <a href="https://www.nist.gov/privacy-policy">Site Privacy</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.nist.gov/oism/accessibility">Accessibility</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.nist.gov/privacy">Privacy Program</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.nist.gov/copyrights-disclaimers">Copyright &amp; Disclaimers</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.commerce.gov/vulnerability-disclosure-policy">Vulnerability Disclosure</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.nist.gov/no-fear-act-policy">No Fear Act Policy</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.nist.gov/office-director/freedom-information-act">FOIA</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.nist.gov/environmental-policy-statement">Environmental Policy</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.nist.gov/summary-report-scientific-integrity">Scientific Integrity</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.nist.gov/nist-information-quality-standards">Information Quality Standards</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://www.commerce.gov/">Commerce.gov</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="http://www.science.gov/">Science.gov</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="http://www.usa.gov/">USA.gov</a>
+            </li>
+                      <li class="nist-footer__menu-item">
+              <a href="https://vote.gov/">Vote.gov</a>
+            </li>
+                        </ul>
+    </div>
+  </div>
+
+    
+</footer>
+<!-- nist-index-ignore-end -->
+</div>
+  
+  </div>
+
+    
+    
+  <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script src="/sites/default/files/js/js_OjCIZV4iuuEO5jYObSuUHLVtIfCD67Sz4QdqR4U7DK4.js?scope=footer&amp;delta=0&amp;language=en&amp;theme=nist_www&amp;include=eJxlj2sSgyAMhC9E5UjMIgGpQBzAweOXotOx7Z8kXx47G-yVFdK8cC4SNxAa86o6V97krVbPIuiowadVmrxvCNOFwjG7QKrCSdfDL0944vhuRpF8qdIF1giPrjxwIRjKH4xwyVs_D1LW92vDLQWGUTV3Zz51LZzjDY6UJTJvy_K_dW7VhWL3wBw0sopspPEFuiuPR8ZOa-1mrJG2nKO88mQ8ArsXOZ57zg"></script>
+<script type="text/javascript">window.NREUM||(NREUM={});NREUM.info={"beacon":"bam.nr-data.net","licenseKey":"37b7ccb661","applicationID":"1089704227","transactionName":"YFxUN0sADEdYVkBaClkWdwBNCA1aFkVVVABoWlcAUQQ=","queueTime":14,"applicationTime":32,"atts":"TBtDQQMaHxgbVBYJHkpE","errorBeacon":"bam.nr-data.net","agent":""}</script><script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a5701d40598edf13',t:'MTc5NDA5NDEwNQ=='};var l=window.parent.location,o;try{o=new URL(l.origin).origin}catch(e){try{o=new URL(new URL(l.href).origin).origin}catch(e){o=''}}var u='/cdn-cgi/challenge-platform/scripts/jsd/main.js?ray=a5701d40598edf13',a=document.createElement('script');a.src=o?new URL(u,o).href:u;document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

@@ -8,9 +8,15 @@ releases, or Stable promotion inputs.
 
 ## Add an app
 
-Copy `templates/app/` to `apps/<app-id>/`, rename the Cargo package to
-`kobo-<app-id>`, and make the runtime identity passed to `kobo_sdk::run` equal
-`<app-id>`.
+Create `apps/<app-id>/` with:
+
+- `cobalt-app.json`, copied from `templates/app/cobalt-app.json`;
+- a `Cargo.toml` like an existing app's (`apps/morse/Cargo.toml` is a small
+  one), with the package named `kobo-<app-id>`;
+- `src/main.rs`, where the runtime identity passed to `kobo_sdk::run` is
+  `<app-id>`. `kobo new` writes a starting point.
+
+Then add `"apps/<app-id>"` to `members` in the root `Cargo.toml`.
 
 The only Store metadata file is `apps/<app-id>/cobalt-app.json`:
 
@@ -37,12 +43,28 @@ capability policy in `tools/protocol-minimums.json`. An app may supply a newer
 version as an explicit compatibility floor; it can never lower the derived
 minimum.
 
+`glyph` names the mark the launcher and the Store draw for the app, such as
+`book`, `dice` or `map`. The names that can be published are the glyphs
+runtimes up to 0.3.33 draw and the marks listed in `MARKS` in
+`crates/kobo-app-store/src/model.rs`, each beside the glyph it stands in as.
+Pick a mark no other app wears: two apps with the same picture look like one
+app on the launcher.
+
+Runtimes up to 0.3.33 refuse a whole catalog over a glyph name they do not
+know, so every channel publishes two signed catalogs. Runtimes from 0.3.34
+read `cobalt-app-catalog-v2.json`, which names the mark. Older runtimes read
+`cobalt-app-catalog.json`, where the same entry wears the stand-in. Because
+those runtimes check a bundle against its entry byte for byte, an app may only
+wear a mark when its `minimum_cobalt_version` is 0.3.34 or later, and the
+publisher refuses the catalog otherwise. A new mark needs a stand-in in
+`MARKS`, a name in `crates/kobod/src/app_store.rs`, and a wire fallback below
+the protocol that added it.
+
 Optional `setup.steps` may describe account or self-hosting prerequisites.
 Use one to six short steps. Links must be absolute HTTPS URLs without embedded
 credentials. Setup text is website-only and never enters the signed package.
 
-New directories under `apps/` are workspace members automatically. The
-effective registry is assembled from Cobalt's built-in base entries and every
+The effective registry is assembled from Cobalt's built-in base entries and every
 source-adjacent `apps/*/cobalt-app.json` and
 `examples/*/cobalt-app.json`; duplicate IDs or packages fail closed.
 
@@ -78,23 +100,24 @@ That one command:
 2. downloads the current Beta provenance and determines whether this app
    actually needs a version/release-note change;
 3. derives the protocol and minimum compatible Cobalt release;
-4. runs workspace formatting plus the app's tests and strict clippy;
-5. cross-builds and verifies the static ARMv7 hard-float executable;
-6. builds a deterministic pathless `.cobalt-app` and signed Beta-shaped
-   catalog using the public test-only fixture key; and
-7. generates the install page/sitemap and writes hashes and derived values
-   under `target/app-contribute/<app-id>/`.
+4. regenerates the website pages from every manifest;
+5. runs workspace formatting plus the app's tests and strict clippy;
+6. cross-builds and verifies the static ARMv7 hard-float executable; and
+7. builds a deterministic pathless `.cobalt-app` and signed Beta-shaped
+   catalog using the public test-only fixture key, and writes hashes and
+   derived values under `target/app-contribute/<app-id>/`.
 
-Commit generated `docs/apps/<app-id>/` and `docs/sitemap.xml` changes produced
-by the command. They are automation output, not additional metadata to design
+Commit the generated changes it makes to `docs/apps/<app-id>/`,
+`docs/sitemap.xml`, `docs/index.html` and the app table in `README.md`. They are automation output, not additional metadata to design
 or maintain.
 
 The preview exercises the same bundle/catalog commands as publishing, but its
 key and `example.invalid` URL make it impossible to mistake for a release.
 There is intentionally no local publish mode.
 
-If the ARM compiler is missing, install `gcc-arm-linux-gnueabihf` on Debian or
-an equivalent `armv7-unknown-linux-musleabihf` compiler on macOS. Every failure
+If the ARM compiler is missing, install `gcc-arm-linux-gnueabihf` on Debian,
+or `brew install messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf`
+on macOS. Every failure
 names the failed command and the next corrective action.
 
 For interactive layout work:
@@ -153,22 +176,19 @@ hardware is never assumed by ordinary CI.
 ## Stable promotion
 
 Merge the tested Beta commit to `main`, then dispatch **Promote tested beta
-apps** with that commit. The `app-store-stable` GitHub environment supplies
-the human release approval. No digest, signature, seed, release upload, or
-confirmation phrase is entered manually.
+apps** from `main` with three inputs: the full 40-character tested commit, the
+SHA-256 of the tested Beta `cobalt-app-catalog.json`, and the confirmation
+`promote-apps-` followed by the commit's first 12 characters. No signature,
+seed or release upload is handled by hand.
 
-Promotion finds the archived Beta transaction whose provenance names the
-tested commit, verifies its catalog digest, downloads every package named by
-that catalog, and compares exact size/SHA-256. Stable package assets are copied
-byte-for-byte and never rebuilt. Only the signed Stable catalog pointer is
-regenerated to replace Beta asset URLs with Stable URLs; its provenance binds
-the tested Beta commit and source catalog digest.
+Promotion checks that the current Beta catalog has that digest and that its
+provenance names the tested commit, downloads every package the catalog names,
+and compares exact size and SHA-256. Stable package assets are copied byte for
+byte and never rebuilt. Only the signed Stable catalog is regenerated, to
+replace Beta asset URLs with Stable ones; its provenance records the tested
+Beta commit and source catalog digest, and a copy of it is archived per
+workflow run and attempt.
 
-Stable catalog, signature, and provenance are archived per workflow
-run/attempt before the fixed pointer changes. Those immutable transaction
-assets preserve audit history and provide a known-good rollback source.
-
-Repository/environment protection should require approval only for merging
-policy-sensitive app changes and for the Stable environment. Formatting,
-tests, builds, signing, publication, provenance checks, evidence collection,
-and byte copying are automation decisions.
+Human approval is for merging policy-sensitive app changes and for promotion.
+Formatting, tests, builds, signing, publication, provenance checks and byte
+copying are automated.

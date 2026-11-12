@@ -10,7 +10,7 @@ built from the SRD.
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/magic-items.png" alt="Magic items by category and rarity"><br>Magic items by category and rarity</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/party-member.png" alt="A party member's health and death saves"><br>A party member's health and death saves</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/party-member.png" alt="A party member at 0 hit points, with death saves and hit point steps"><br>A party member at 0 hit points, with death saves and hit point steps</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/spell-filters.png" alt="Spells filtered by class, level and school"><br>Spells filtered by class, level and school</td>
@@ -26,8 +26,12 @@ built from the SRD.
 - Filter spells by class, level, school, ritual and concentration. Filter
   monsters by challenge rating and type.
 - Stat blocks and rules open in the document reader, with abilities and
-  headings intact. Tables are written out row by row so they stay readable at
+  headings intact. A spell opens with its casting time, range, components
+  and duration; a monster with its armor class, hit points, speed, senses
+  and challenge rating. Tables are written out row by row so they stay readable at
   large text sizes.
+- **Dice**: roll a d20 with a modifier from -10 to +10, normally or with
+  advantage or disadvantage, which rolls two and keeps the higher or lower.
 - **Initiative**: add combatants by name or from the monster reference. A
   monster brings its hit points from its stat block; a typed name can be
   given some. It sorts the order, tracks the active turn and round, and

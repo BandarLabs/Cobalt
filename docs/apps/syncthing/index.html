@@ -15,13 +15,13 @@
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/syncthing.png">
 <meta property="og:image:width" content="1072">
 <meta property="og:image:height" content="1448">
-<meta property="og:image:alt" content="Sync folders: vault, frame and books receive, out sends.">
+<meta property="og:image:alt" content="Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it.">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Sync: Syncthing folder sync on Kobo | Cobalt">
 <meta name="twitter:description" content="Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/syncthing.png">
-<meta name="twitter:image:alt" content="Sync folders: vault, frame and books receive, out sends.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-vht7tZoDWZyfeXF34T3S2ZF3wgMxL5mlwcQkIAOFITY='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta name="twitter:image:alt" content="Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-TjfMb2KnXD22FwTbGZ0+fhh7rvjs0cUI6mYQ+7l+Jt8='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -35,12 +35,12 @@
         "url": "https://bandarlabs.github.io/Cobalt/media/site/apps/syncthing.png",
         "width": 1072,
         "height": 1448,
-        "caption": "Sync folders: vault, frame and books receive, out sends."
+        "caption": "Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."
       },
       "applicationSuite": "Cobalt",
       "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "0.3.6",
+      "softwareVersion": "0.3.10",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -75,7 +75,7 @@
     }
   ]
 }</script>
-<link rel="stylesheet" href="../install.css">
+<link rel="stylesheet" href="../../site.css">
 </head>
 <body>
 <header class="masthead">
@@ -83,46 +83,46 @@
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
+      <a href="../../install/">Install</a>
       <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
-      <a href="../../#store">Store</a>
-      <a href="../../#install">Install</a>
-      <a href="../../#contributing">Contributing</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="syncthing" data-minimum-cobalt-version="0.3.31">
-  <div class="app-hero">
-    <div class="app-copy">
-      <p class="eyebrow">Devices</p>
+<main data-app-id="syncthing" data-minimum-cobalt-version="0.3.34">
+  <div class="app-head wrap">
+    <div>
+      <p class="crumb"><a href="../../#apps">Apps</a> / <a href="../../#home-and-computer">Home and computer</a></p>
       <h1>Sync</h1>
-      <p class="summary">Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.</p>
+      <p class="lede">Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.</p>
+      <div class="actions">
+        <a class="btn primary" href="#setup-panel">Install on your Kobo</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/syncthing">Source code on GitHub</a>
+      </div>
       <dl class="facts">
-        <div><dt>Version</dt><dd>0.3.6</dd></div>
-        <div><dt>Permissions</dt><dd>scheduled-wake</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.31</dd></div>
+        <div><dt>Version</dt><dd>0.3.10</dd></div>
+        <div><dt>Needs</dt><dd>Cobalt 0.3.34 or newer</dd></div>
+        <div><dt>May use</dt><dd>Waking on a schedule</dd></div>
       </dl>
-      <a class="cta" href="#setup-panel">Install on your Kobo</a>
-      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/apps/syncthing">Source code on GitHub</a></p>
     </div>
-    <figure class="app-shot">
-      <img src="../../media/site/apps/syncthing.png" width="1072" height="1448" alt="Sync folders: vault, frame and books receive, out sends.">
+    <figure class="reader">
+      <div class="reader-body">
+        <div class="reader-screen">
+          <img src="../../media/site/apps/syncthing.png" width="1072" height="1448" alt="Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it.">
+        </div>
+      </div>
     </figure>
   </div>
-  <section class="gallery" aria-label="Sync screenshots">
+  <section class="gallery wrap" aria-label="Sync screenshots">
     <div class="strip">
-      <figure><img src="../../media/site/apps/syncthing/first-sync.png" width="1072" height="1448" loading="lazy" alt="Sync: The first sync, with what it imported"><figcaption>The first sync, with what it imported</figcaption></figure>
-      <figure><img src="../../media/site/apps/syncthing/running.png" width="1072" height="1448" loading="lazy" alt="Sync: A sync in progress"><figcaption>A sync in progress</figcaption></figure>
-      <figure><img src="../../media/site/apps/syncthing/conflict.png" width="1072" height="1448" loading="lazy" alt="Sync: A conflict, retried on the next sync"><figcaption>A conflict, retried on the next sync</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/syncthing/first-sync.png" width="1072" height="1448" loading="lazy" alt="Sync: The first sync, with what it imported"></span><figcaption>The first sync, with what it imported</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/syncthing/running.png" width="1072" height="1448" loading="lazy" alt="Sync: A sync in progress"></span><figcaption>A sync in progress</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/syncthing/conflict.png" width="1072" height="1448" loading="lazy" alt="Sync: A conflict, retried on the next sync"></span><figcaption>A conflict, retried on the next sync</figcaption></figure>
     </div>
   </section>
-  <section class="whats-new">
-    <h2>New in 0.3.6</h2>
-    <p>Sync is one switch at the top of the screen that says whether files are moving or paused, and the schedule is picked from a list. The status screen keeps every fact on the panel after a sync brings files in.</p>
-  </section>
-  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
-    <p class="eyebrow">App setup</p>
+  <div class="wrap">
+  <section class="section prerequisites" aria-labelledby="prerequisites-title">
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
       <li>Set up the reader once over USB, if you have not already. Sync also needs Syncthing on this computer, installed with its package manager.
@@ -131,24 +131,20 @@
         <code class="setup-command">kobo sync setup ~/Documents/notes --folder vault</code></li>
       <li>Start this computer's side of Sync and leave it running.
         <code class="setup-command">kobo sync run</code></li>
-      <li>On the reader, open Sync and tap Turn on Sync. The first sync starts at once and takes up to five minutes.</li>
+      <li>On the reader, open Sync and turn on the Sync switch. The first sync starts at once and takes up to five minutes.</li>
     </ol>
     <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
       <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
-  <section class="panel get-cobalt" id="setup-panel">
-    <div class="get-cobalt-copy">
-      <p class="eyebrow">New to Cobalt?</p>
-      <h2>Install Cobalt from your browser</h2>
-      <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
-      <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
-    </div>
-    <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
+  <section class="section" id="setup-panel">
+    <h2>New to Cobalt? Install it from your browser.</h2>
+    <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
+    <p class="quiet">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
+    <p><a class="btn" href="../../install/">Install Cobalt</a></p>
   </section>
-  <section class="panel" id="pair-panel">
-    <p class="eyebrow">Already have Cobalt?</p>
-    <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong>, tap the globe in the top bar and choose <strong>Link browser</strong>. Scan the QR code, or enter the pairing code and verification key.</p>
+  <section class="section" id="pair-panel">
+    <h2>Already have Cobalt? Link your Kobo.</h2>
+    <p>On your Kobo, open <strong>App Store</strong> and tap <strong>Link a browser</strong> in the top bar, then <strong>Link a browser</strong> again. Scan the QR code, or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>
@@ -162,7 +158,7 @@
     </form>
     <p class="status" id="pair-status" role="status" aria-live="polite"></p>
   </section>
-  <section class="panel" id="install-panel" hidden>
+  <section class="section" id="install-panel" hidden>
     <h2>Install on <span id="device-name">your Kobo</span></h2>
     <p>Your Kobo checks the app's signature before installing it.</p>
     <div class="actions">
@@ -171,17 +167,24 @@
     </div>
     <p class="status" id="install-status" role="status" aria-live="polite"></p>
   </section>
-  <aside class="community">
-    <strong>Want another Kobo app?</strong>
-    Request it, suggest a feature or report a bug in
-    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
-  </aside>
+  <section class="section whats-new">
+    <h2>New in 0.3.10</h2>
+    <p>Back from About now returns to the folders page, and the setup steps name the Sync switch as it appears on the reader.</p>
+  </section>
+  <section class="section">
+    <p class="after-index">Want another Kobo app? Request it, suggest a feature or report a bug in <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.</p>
+  </section>
+  </div>
 </main>
 <footer>
   <div class="wrap">
-    <span>Cobalt · AGPL-3.0</span>
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
+    </div>
     <nav aria-label="Footer navigation">
       <a href="../../">Home</a>
+      <a href="../../faq.html">FAQ</a>
       <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>

@@ -87,6 +87,9 @@ struct HomePanel {
     poll_failed: bool,
     /// The owner tapped Check again on setup and is owed an answer.
     checking: bool,
+    /// Home Assistant could not list its devices, so the picker says how to
+    /// add one by its entity ID instead.
+    entities_failed: bool,
 }
 
 impl Default for HomePanel {
@@ -115,6 +118,7 @@ impl Default for HomePanel {
             picker_page: 0,
             poll_failed: false,
             checking: false,
+            entities_failed: false,
         }
     }
 }
@@ -156,6 +160,39 @@ fn now_hhmm() -> String {
         .map_or_else(String::new, |(hour, minute)| {
             format!("{hour:02}:{minute:02}")
         })
+}
+
+/// When a reading was taken, as the panel says it: the time alone today,
+/// and with its day once it is older, so readings from last week do not pass
+/// for this morning's.
+fn reading_time(minutes: i64, hhmm: &str, now: Option<Snapshot>) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let Some(now) = now else {
+        return hhmm.to_owned();
+    };
+    let then = Snapshot {
+        unix_millis: u64::try_from(minutes.max(0))
+            .unwrap_or(0)
+            .saturating_mul(60_000),
+        ..now
+    };
+    let (Some(day), Some(today), Some(date), Some(this)) =
+        (then.local_day(), now.local_day(), then.date(), now.date())
+    else {
+        return hhmm.to_owned();
+    };
+    let month = MONTHS[usize::from(date.month.clamp(1, 12)) - 1];
+    if day == today {
+        hhmm.to_owned()
+    } else if day + 1 == today {
+        format!("yesterday at {hhmm}")
+    } else if date.year == this.year {
+        format!("{} {month} at {hhmm}", date.day)
+    } else {
+        format!("{} {month} {} at {hhmm}", date.day, date.year)
+    }
 }
 
 /// What a failed task means for the person holding the reader, in the
@@ -269,7 +306,8 @@ impl HomePanel {
             Some((minutes, hhmm)) => {
                 let stale = now_minutes().is_some_and(|now| now - minutes > STALE_AFTER_MINUTES);
                 if stale {
-                    Some(format!("Offline since {hhmm}. Readings may be stale."))
+                    let when = reading_time(*minutes, hhmm, reader_clock().now().ok());
+                    Some(format!("Offline since {when}. Readings may be stale."))
                 } else {
                     Some(format!("Updated {hhmm}."))
                 }
@@ -280,6 +318,15 @@ impl HomePanel {
     /// The banner's words, whatever its level.
     fn banner_text(&self) -> Option<&str> {
         self.banner.as_ref().map(|(_, text)| text.as_str())
+    }
+
+    /// The banner on Settings and Edit tiles: only an acknowledgement of a
+    /// change made there. An outage or a note about the grid is the grid's to
+    /// say, and it used to follow the owner into every screen of settings.
+    fn acknowledgement(&self) -> Option<&(BannerLevel, String)> {
+        self.banner
+            .as_ref()
+            .filter(|(level, _)| *level == BannerLevel::Success)
     }
 
     /// The banner on a screen, at its own level.
@@ -533,7 +580,7 @@ impl HomePanel {
         };
         Self::say(
             ScreenBuilder::new("homepanel-settings").top_bar("Settings"),
-            self.banner.as_ref(),
+            self.acknowledgement(),
         )
         .field("change-url", &self.base, "https://ha.example.net")
         .field_label("Home Assistant address")
@@ -566,7 +613,7 @@ impl HomePanel {
                 entity_glyph(&self.tiles[index]),
             )
         }));
-        s = Self::say(s, self.banner.as_ref());
+        s = Self::say(s, self.acknowledgement());
         if pages > 1 {
             s = s.button("more", format!("More tiles ({}/{pages})", page + 1));
         }
@@ -688,6 +735,26 @@ impl HomePanel {
             return screen.activity("Finding devices", None).build();
         }
         let rows = self.picker_rows();
+        if rows.is_empty() && self.entities_failed && self.query.is_empty() {
+            // The banner says why the list is missing. A device can still be
+            // added by its entity ID, which is the way on from here.
+            return screen
+                .splash(
+                    Some(Glyph::Search),
+                    "Add a device by its ID",
+                    "Tap Search and type its entity ID from Home Assistant, like light.kitchen.",
+                )
+                .build();
+        }
+        if rows.is_empty() && self.entities_failed {
+            return screen
+                .splash(
+                    Some(Glyph::Search),
+                    "No device with that ID",
+                    "An entity ID is written with a dot, like light.kitchen.",
+                )
+                .build();
+        }
         if rows.is_empty() {
             return screen
                 .splash(
@@ -791,6 +858,11 @@ impl HomePanel {
             self.test(context);
         } else {
             self.draft = text;
+            // The field now says what is wrong, so a banner saying no address
+            // has arrived is no longer the answer to anything.
+            if self.banner_text() == Some(NO_ADDRESS_YET) {
+                self.banner = None;
+            }
             self.address_error = Some("Use an https:// Home Assistant URL.".into());
             self.show(context);
         }
@@ -809,6 +881,7 @@ impl HomePanel {
         self.query.clear();
         self.picker_page = 0;
         self.banner = None;
+        self.entities_failed = false;
         if let Some(id) = context.spawn(ha::entities(&self.base)) {
             self.task = Some((id, "entities"));
         } else {
@@ -938,10 +1011,11 @@ impl HomePanel {
         } else if action == action_id("remove") {
             self.tiles.remove(index);
             self.save_tiles(context);
+            // No poll follows: nothing about the other tiles has changed, and
+            // a poll that failed here used to replace this note with an outage.
             self.banner = Some((BannerLevel::Success, format!("{} removed.", title(&id))));
             self.view = View::Edit;
             self.show(context);
-            self.fetch(context);
         }
     }
 
@@ -1115,13 +1189,7 @@ impl KoboApp for HomePanel {
             return;
         }
         if action == ActionId::BACK {
-            self.view = match &self.view {
-                View::Search => View::Add,
-                View::Tile(_) => View::Edit,
-                View::Edit => View::Settings,
-                _ => View::Grid,
-            };
-            self.show(context);
+            self.back(context);
             return;
         }
         if self.view == View::Setup && action == action_id(CHECK_AGAIN) {
@@ -1250,11 +1318,14 @@ impl KoboApp for HomePanel {
                         error,
                         None,
                     );
+                } else if self.view != View::Grid && self.acknowledgement().is_some() {
+                    // An outage is the grid's to say. Off the grid it would
+                    // replace the note about a change the owner just made.
                 } else {
-                    let tail = self
-                        .last_ok
-                        .as_ref()
-                        .map(|(_, hhmm)| format!("Showing readings from {hhmm}."));
+                    let tail = self.last_ok.as_ref().map(|(minutes, hhmm)| {
+                        let when = reading_time(*minutes, hhmm, reader_clock().now().ok());
+                        format!("Showing readings from {when}.")
+                    });
                     self.fail(None, error, tail);
                 }
                 self.show(context);
@@ -1272,8 +1343,10 @@ impl KoboApp for HomePanel {
                 self.show(context);
             }
             ("entities", TaskOutcome::Failed(error)) => {
+                // The picker stays open: an entity ID typed into Search can
+                // still be added, and going back to the grid hid that way.
+                self.entities_failed = true;
                 self.fail(None, error, None);
-                self.view = View::Grid;
                 self.show(context);
             }
             ("service", TaskOutcome::Completed(_)) => {
@@ -1314,6 +1387,21 @@ impl KoboApp for HomePanel {
 }
 
 impl HomePanel {
+    /// Back steps up one screen. Landing on the grid looks at Home Assistant
+    /// again, as the grid's own way back does.
+    fn back(&mut self, context: &mut Context) {
+        self.view = match &self.view {
+            View::Search => View::Add,
+            View::Tile(_) => View::Edit,
+            View::Edit => View::Settings,
+            _ => View::Grid,
+        };
+        self.show(context);
+        if self.view == View::Grid {
+            self.fetch(context);
+        }
+    }
+
     /// Coming back to the front: the grid refreshes, and setup looks for an
     /// address `kobo connect homepanel` may have written meanwhile.
     fn returned(&mut self, context: &mut Context) {
@@ -1393,7 +1481,11 @@ mod tests {
         assert!(fresh.starts_with("Updated "), "{fresh}");
         app.last_ok = Some((0, "22:18".to_owned()));
         let stale = app.freshness().expect("freshness");
-        assert!(stale.starts_with("Offline since 22:18"), "{stale}");
+        // A reading from another day names the day.
+        assert!(
+            stale.starts_with("Offline since 1 Jan 1970 at 22:18"),
+            "{stale}"
+        );
     }
 
     #[test]
@@ -1491,6 +1583,96 @@ mod tests {
         assert!(debug.contains("Add anyway"), "{debug}");
         assert!(valid_entity_id("light.kitchen"));
         assert!(!valid_entity_id("Kitchen light"));
+    }
+
+    #[test]
+    fn a_device_list_that_fails_leaves_the_picker_open_on_adding_by_id() {
+        let mut runner = kobo_sdk::AppRunner::new(panel());
+        runner.action(action_id(ADD));
+        let (task, _) = runner.app().task.expect("the device list was asked for");
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unauthorized));
+        assert!(runner.app().view == View::Add, "the picker closed");
+        let drawn = format!("{:?}", runner.app().add(&test_context()));
+        assert!(drawn.contains("entity ID"), "{drawn}");
+        runner.app_mut().query = "light.kitchen".into();
+        let drawn = format!("{:?}", runner.app().add(&test_context()));
+        assert!(drawn.contains("Add anyway"), "{drawn}");
+    }
+
+    #[test]
+    fn settings_and_edit_tiles_carry_only_a_note_about_a_change_made_there() {
+        let mut app = panel();
+        app.banner = Some((
+            BannerLevel::Attention,
+            "Home Assistant did not answer.".into(),
+        ));
+        assert!(!format!("{:?}", app.settings()).contains("did not answer"));
+        assert!(!format!("{:?}", app.edit()).contains("did not answer"));
+        app.banner = Some((BannerLevel::Success, "fan removed.".into()));
+        assert!(format!("{:?}", app.edit()).contains("fan removed."));
+    }
+
+    #[test]
+    fn a_removed_tile_is_still_acknowledged_when_a_poll_fails_off_the_grid() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            view: View::Tile(1),
+            ..panel()
+        });
+        let commands = runner.action(action_id("remove"));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command, kobo_sdk::Command::Spawn { .. })),
+            "removing a tile polled Home Assistant"
+        );
+        assert_eq!(runner.app().banner_text(), Some("fan removed."));
+        // A poll the grid started earlier fails while Edit tiles is showing.
+        let mut context = test_context();
+        runner.app_mut().fetch(&mut context);
+        let (task, _) = runner.app().task.expect("a poll is in flight");
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Unreachable));
+        assert_eq!(runner.app().banner_text(), Some("fan removed."));
+    }
+
+    #[test]
+    fn a_refused_address_takes_the_no_address_yet_banner_down() {
+        let mut runner = kobo_sdk::AppRunner::new(HomePanel {
+            view: View::Setup,
+            banner: Some((BannerLevel::Attention, NO_ADDRESS_YET.into())),
+            ..HomePanel::default()
+        });
+        runner.action(action_id(HOME_URL));
+        runner.type_text("http://ha.example.net");
+        assert_eq!(runner.app().banner_text(), None);
+        assert!(runner.app().address_error.is_some());
+    }
+
+    #[test]
+    fn an_old_reading_is_dated_and_a_reading_from_today_is_not() {
+        // 6 November 2026, 09:00 UTC.
+        let now = Snapshot {
+            unix_millis: 1_793_955_600_000,
+            monotonic_millis: 0,
+            utc_offset_minutes: 0,
+        };
+        let minutes = |unix_seconds: i64| unix_seconds / 60;
+        assert_eq!(
+            reading_time(minutes(1_793_948_400), "07:00", Some(now)),
+            "07:00"
+        );
+        assert_eq!(
+            reading_time(minutes(1_793_862_000), "07:00", Some(now)),
+            "yesterday at 07:00"
+        );
+        assert_eq!(
+            reading_time(minutes(1_788_244_800), "06:40", Some(now)),
+            "1 Sep at 06:40"
+        );
+        assert_eq!(
+            reading_time(minutes(1_756_708_800), "06:40", Some(now)),
+            "1 Sep 2025 at 06:40"
+        );
+        assert_eq!(reading_time(0, "06:40", None), "06:40");
     }
 }
 

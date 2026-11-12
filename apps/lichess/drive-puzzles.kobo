@@ -1,0 +1,87 @@
+# sweep: --bare --seed-root apps/lichess/fixtures/puzzles
+# Three downloaded puzzles, solved offline: one solved after a wrong try,
+# one failed, one skipped, with progress kept across a restart.
+expect Play the computer
+tap Puzzles
+wait-for 3 puzzles are waiting.
+expect Download 32 puzzles
+expect Resume puzzle
+clean
+shot puzzles-waiting
+tap Resume puzzle
+wait-for-id skip-puzzle
+expect White
+# Only the solving side's pieces can be picked up.
+tap-id square-a7
+expect Your piece
+tap-id square-e2
+expect White · e2 →
+# A rook cannot move diagonally: refused, and the rook stays picked up.
+tap-id square-d3
+expect Illegal
+expect White · e2 →
+# A legal move that is not the solution is a first miss, and the puzzle
+# goes on from the same position.
+tap-id square-e3
+expect Not it. Try again.
+expect-missing e2 →
+clean
+shot puzzle-first-miss
+# The right move plays the opponent's forced reply.
+tap-id square-e2
+tap-id square-e8
+wait-for Opponent replied Rxe8.
+clean
+shot puzzle-reply
+tap-id square-e1
+tap-id square-e8
+wait-for Solved
+expect Counted only on this reader.
+expect Next puzzle
+clean
+shot puzzle-solved
+tap Next puzzle
+wait-for-id skip-puzzle
+expect-missing Opponent replied
+# The solved puzzle stays solved after the app closes.
+restart
+wait-for Play the computer
+tap Puzzles
+wait-for 2 puzzles are waiting.
+tap Resume puzzle
+wait-for-id skip-puzzle
+# Two wrong moves end the puzzle and name the first move.
+tap-id square-a1
+tap-id square-a2
+expect Not it. Try again.
+tap-id square-a1
+tap-id square-a3
+wait-for Not solved
+expect The first move was R
+expect-missing a1a8
+clean
+shot puzzle-not-solved
+tap Next puzzle
+wait-for-id skip-puzzle
+# A puzzle for Black turns the board to Black's side. Whether the last
+# puzzle's verdict follows onto it is checked in drive-puzzle-verdict.kobo.
+expect Black
+clean
+shot puzzle-black
+tap-id square-b8
+expect Black · b8 →
+tap Skip puzzle
+wait-for Not solved
+expect The first move was R
+expect-missing b8b1
+tap Next puzzle
+# With every puzzle done, the list offers a new download and nothing to
+# resume.
+wait-for Download 32 puzzles
+expect Every downloaded puzzle is done.
+expect-missing No puzzles yet
+expect-missing Resume puzzle
+clean
+shot puzzles-done
+tap Back
+wait-for Play the computer

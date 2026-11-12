@@ -5,14 +5,14 @@ Follow websites and read their articles offline.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/articles.png" alt="Unread articles from a feed"><br>Unread articles from a feed</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading an article"><br>Reading an article</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="An article with its photo and caption"><br>An article with its photo and caption</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/browse-feeds.png" alt="Browsing suggested feeds"><br>Browsing suggested feeds</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/search-articles.png" alt="Searching saved articles"><br>Searching saved articles</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/import-opml.png" alt="Importing subscriptions from OPML"><br>Importing subscriptions from OPML</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/import-opml.png" alt="Choosing feeds to import from an OPML file"><br>Choosing feeds to import from an OPML file</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/save-articles.png" alt="Retrying a save that failed"><br>Retrying a save that failed</td>
 </tr>
 </table>
@@ -64,9 +64,9 @@ what you get. For a Miniflux account, use [Digest](../../apps/rss-miniflux/).
 
 ```sh
 cargo test -p kobo-rss
-kobo run --sim --app rss      # in the browser simulator
+(cd examples/rss && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py rss
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

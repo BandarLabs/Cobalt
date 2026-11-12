@@ -4,9 +4,9 @@
   "short_label": "Music",
   "summary": "Read music scores with setlists and half-page turns. Needs your computer.",
   "page_description": "A Kobo score reader with stable stand mode, setlists, and two-stage half-page turns.",
-  "version": "0.1.10",
-  "release_notes": "Zoom and the corner mark are switches in the reading menu, the last page reads as news rather than a fault, and the setlist's button is now Add from library.",
-  "glyph": "note",
+  "version": "0.1.15",
+  "release_notes": "Turning past the last page now says \"Last page.\" or \"End of the setlist.\" and keeps the page up. Staff width now makes the staves larger on every page, not only on large scans.",
+  "glyph": "music",
   "capabilities": [
     "keep-awake"
   ],

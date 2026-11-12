@@ -139,10 +139,9 @@ impl Problem {
     #[must_use]
     pub fn banner_shape(&self, sign_in: bool) -> BannerShape<'_> {
         let shape = BannerShape::new(self.level(), &self.message);
-        if self.banner_action(sign_in).is_some() {
-            shape.with_action()
-        } else {
-            shape
+        match self.banner_action(sign_in) {
+            Some(fix) => shape.with_labelled_action(fix.label()),
+            None => shape,
         }
     }
 
@@ -167,6 +166,19 @@ enum BannerFix {
     SignInAgain,
     SignIn,
     TryAgain,
+}
+
+impl BannerFix {
+    /// The words on the button, in one place, so the banner a paginator
+    /// measures carries the same label as the one drawn.
+    const fn label(self) -> &'static str {
+        match self {
+            Self::JoinWifi => "Join Wi-Fi",
+            Self::SignInAgain => "Sign in again",
+            Self::SignIn => "Sign in",
+            Self::TryAgain => "Try again",
+        }
+    }
 }
 
 /// Whether the server's words say the account has run out of credit.
@@ -327,7 +339,7 @@ impl<'a> Service<'a> {
                         seconds.div_ceil(60)
                     ),
                     Some(_) => format!("{name} asked this reader to slow down. Try again in a minute."),
-                    None => format!("{name} asked this reader to slow down. Try again later."),
+                    None => format!("{name} asked this reader to slow down. Wait a little, then try again."),
                 },
                 true,
                 StandardState::Error,
@@ -348,7 +360,8 @@ impl<'a> Service<'a> {
                 StandardState::Error,
             ),
             Cause::Unreachable => (
-                format!("{name} did not answer, or its certificate is not one this reader trusts. Try again later."),
+                // No "try again later" beside the Try again the banner carries.
+                format!("{name} did not answer, or its certificate is not one this reader trusts."),
                 true,
                 StandardState::Error,
             ),
@@ -440,12 +453,11 @@ impl ScreenBuilder {
         // One decision, shared with `Problem::banner_shape`, so the page a
         // list is measured for is the page it is drawn on.
         match (problem.banner_action(sign_in.is_some()), sign_in) {
-            (Some(BannerFix::JoinWifi), _) => screen.banner_action(JOIN_WIFI, "Join Wi-Fi"),
-            (Some(BannerFix::SignInAgain), Some(sign_in)) => {
-                screen.banner_action(sign_in, "Sign in again")
+            (Some(fix @ BannerFix::JoinWifi), _) => screen.banner_action(JOIN_WIFI, fix.label()),
+            (Some(fix @ (BannerFix::SignInAgain | BannerFix::SignIn)), Some(sign_in)) => {
+                screen.banner_action(sign_in, fix.label())
             }
-            (Some(BannerFix::SignIn), Some(sign_in)) => screen.banner_action(sign_in, "Sign in"),
-            (Some(BannerFix::TryAgain), _) => screen.banner_action(retry, "Try again"),
+            (Some(fix @ BannerFix::TryAgain), _) => screen.banner_action(retry, fix.label()),
             _ => screen,
         }
     }

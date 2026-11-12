@@ -342,8 +342,22 @@ fn legacy_write_device(
 ) -> Result<(), String> {
     let mut packed_notes: Vec<(String, String)> = Vec::new();
     for note in notes {
-        let body = fs::read_to_string(Path::new(folder).join(&note.path))
-            .map_err(|error| format!("read {}: {error}", note.path))?;
+        let body = match fs::read_to_string(Path::new(folder).join(&note.path)) {
+            Ok(body) => body,
+            // A push adds to what is already on the reader, so the shelf can
+            // hold notes from a folder pushed before this one. Their bodies
+            // are on the reader, not here. The push itself has already
+            // landed, and failing it here reported a transfer that worked as
+            // one that did not; the index is only for the old app, and is
+            // left as it was, as it is when it would be too large.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                println!(
+                    "Some notes on the reader came from another folder, so the old app's index was left as it was. The current app shows every note."
+                );
+                return Ok(());
+            }
+            Err(error) => return Err(format!("read {}: {error}", note.path)),
+        };
         packed_notes.push((note.path.clone(), body));
     }
     let Some(packed) = legacy_pack(&packed_notes) else {

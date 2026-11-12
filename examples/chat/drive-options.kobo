@@ -1,0 +1,69 @@
+# sweep: --bare --seed-root examples/chat/fixtures/options
+# The last reply offered answers to tap, and a placeholder openai key is
+# installed so each network failure gets its own words. Every send happens
+# under a failing scenario, so nothing leaves the simulator.
+wait-for Chat
+wait-for Tap an answer
+expect Something short
+expect A long novel
+expect Poetry
+expect Type something else
+clean
+shot options
+# Typing something else raises the keyboard, says where it goes, and Back
+# returns to the same answers.
+tap Type something else
+wait-for Type a message
+expect Goes to OpenAI.
+tap-id 4294967295
+wait-for Tap an answer
+# A tapped answer is sent as the reader's next message.
+scenario offline
+tap Poetry
+wait-for Try again
+expect This reader is not on Wi-Fi.
+expect Poetry
+expect-missing Tap an answer
+clean
+shot options-offline
+# Try again resends, and each failure says what it was.
+scenario host-down
+tap Try again
+wait-for OpenAI did not answer
+expect Try again
+clean
+shot options-host-down
+scenario network-timeout
+tap Try again
+wait-for OpenAI took too long to answer
+expect Try again
+# Save a copy with no room left says so and offers to try again.
+scenario storage-full
+tap more
+tap Save a copy
+wait-for There is not enough room left on this reader.
+expect Chat conversation
+clean
+shot export-no-room
+scenario normal
+tap Try again
+wait-for Ready for your computer.
+tap-id 4294967295
+wait-for Poetry
+# The conversation and the chosen service survive a restart.
+tap Service
+wait-for gemini-3.6-flash
+tap Google Gemini
+wait-for Poetry
+restart
+wait-for Poetry
+expect What should I read next?
+tap Type
+wait-for Goes to Google Gemini.
+tap-id 4294967295
+wait-for Poetry
+clean
+shot options-after-restart
+# The earlier reply was written by OpenAI, and its byline keeps saying so
+# after the service is changed.
+expect OpenAI

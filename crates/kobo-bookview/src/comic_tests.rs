@@ -79,6 +79,13 @@ fn controls_pages_numeric_jump_and_pan_fit_supported_profiles_and_scales() {
                 let screen = view.screen();
                 let chrome = kobo_ui::Chrome::for_screen(&screen, false, None);
                 let layout = screen.layout_with(&view.metrics, &chrome);
+                // Next is drawn as unavailable where one row holds every
+                // page, as it does on the wider panels.
+                if action == "comic-thumbs-next"
+                    && view.preview_start + view.thumbs() >= view.reader.comic().pages.len()
+                {
+                    continue;
+                }
                 let rect = layout
                     .rect_of_action(action_id(action))
                     .unwrap_or_else(|| panic!("{} {scale:?}: {action} is missing", profile.id));
@@ -188,4 +195,175 @@ fn every_control_the_comic_draws_is_one_it_answers() {
             probe.action(control);
         }
     }
+}
+
+#[test]
+fn the_reading_controls_set_the_fit_as_a_choice_and_the_zoom_as_a_number() {
+    let mut runner = AppRunner::new(App::default());
+    runner.start();
+    runner.action(action_id("comic-controls"));
+    let view = runner.app_mut().view.as_ref().unwrap();
+    let screen = view.screen();
+    let layout = screen.layout_with(&view.metrics, &kobo_ui::Chrome::default());
+    let kinds = |wanted: &str| {
+        layout.nodes.iter().find_map(|node| match node.kind {
+            kobo_ui::LayoutKind::Chip(action, selected) if action == action_id(wanted) => {
+                Some(Some(selected))
+            }
+            kobo_ui::LayoutKind::Button(action, ..) if action == action_id(wanted) => Some(None),
+            _ => None,
+        })
+    };
+    // The fit is a choice of two with the current one filled, not two
+    // commands that look like the rest.
+    assert_eq!(kinds("comic-fit-page"), Some(Some(true)));
+    assert_eq!(kinds("comic-fit-width"), Some(Some(false)));
+    assert!(format!("{screen:?}").contains("Zoom 100%"));
+    let buttons = layout
+        .nodes
+        .iter()
+        .filter(|node| {
+            matches!(node.kind, kobo_ui::LayoutKind::Button(action, ..)
+                if action != action_id("comic-read"))
+        })
+        .count();
+    assert_eq!(buttons, 4, "four commands besides the way back, not eight");
+    runner.action(action_id("comic-zoom-in"));
+    let screen = runner.app_mut().view.as_ref().unwrap().screen();
+    assert!(format!("{screen:?}").contains("Zoom 125%"));
+}
+
+/// A runner on the sample comic the Panels app offers, whose pages are a
+/// real size rather than a few pixels.
+fn garden(metrics: DisplayMetrics) -> AppRunner<Garden> {
+    kobo_text::install(metrics).unwrap();
+    let mut runner = AppRunner::with_metrics(Garden::default(), metrics);
+    runner.start();
+    runner
+}
+
+#[derive(Default)]
+struct Garden {
+    view: Option<ComicView>,
+}
+impl KoboApp for Garden {
+    fn on_start(&mut self, context: &mut Context) {
+        let view = ComicView::open(
+            context,
+            include_bytes!("../../../apps/panels/assets/a-small-garden.cbz").to_vec(),
+            "A small garden",
+        )
+        .unwrap();
+        context.set_screen(view.screen());
+        self.view = Some(view);
+    }
+    fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        let view = self.view.as_mut().unwrap();
+        view.act(context, action);
+        context.set_screen(view.screen());
+    }
+}
+
+fn serious(view: &ComicView) -> Vec<kobo_ui::LayoutIssue> {
+    let screen = view.screen();
+    screen
+        .diagnostics(&view.metrics, &measured_chrome(&screen))
+        .issues
+        .into_iter()
+        .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
+        .collect()
+}
+
+#[test]
+fn moving_a_zoomed_page_that_has_the_panel_to_itself_keeps_its_arrows_on_the_panel() {
+    for scale in kobo_ui::TextScale::STEPS {
+        let metrics = DisplayMetrics {
+            text_scale: scale,
+            ..kobo_ui::CLARA_BW_METRICS
+        };
+        let mut runner = garden(metrics);
+        runner
+            .app_mut()
+            .view
+            .as_mut()
+            .unwrap()
+            .reader
+            .memory_mut()
+            .full_page = true;
+        for action in [
+            "comic-controls",
+            "comic-fit-width",
+            "comic-zoom-in",
+            "comic-pan",
+        ] {
+            runner.action(action_id(action));
+        }
+        let view = runner.app().view.as_ref().unwrap();
+        assert_eq!(view.mode, Mode::Pan);
+        assert!(serious(view).is_empty(), "{scale:?}: {:?}", serious(view));
+    }
+}
+
+#[test]
+fn the_controls_of_a_rotated_page_fit_and_still_offer_the_way_to_turn_it_back() {
+    for scale in kobo_ui::TextScale::STEPS {
+        let metrics = DisplayMetrics {
+            text_scale: scale,
+            ..kobo_ui::CLARA_BW_METRICS
+        };
+        let mut runner = garden(metrics);
+        for action in [
+            "comic-controls",
+            "comic-options",
+            "comic-rotate",
+            "comic-controls",
+        ] {
+            runner.action(action_id(action));
+        }
+        let view = runner.app().view.as_ref().unwrap();
+        assert!(view.metrics.width > view.metrics.height);
+        assert!(serious(view).is_empty(), "{scale:?}: {:?}", serious(view));
+        let screen = view.screen();
+        let layout = screen.layout_with(&view.metrics, &measured_chrome(&screen));
+        for name in ["comic-pan", "comic-options", "comic-read"] {
+            assert!(
+                layout.rect_of_action(action_id(name)).is_some(),
+                "{scale:?}: {name} is not drawn"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_page_number_past_the_end_is_refused_on_the_keypad_it_was_typed_on() {
+    let mut runner = garden(kobo_ui::CLARA_BW_METRICS);
+    for action in ["comic-controls", "comic-jump", "comic-digit-9", "comic-go"] {
+        runner.action(action_id(action));
+    }
+    let view = runner.app().view.as_ref().unwrap();
+    assert_eq!(view.mode, Mode::Jump);
+    let words = format!("{:?}", view.screen());
+    assert!(words.contains("Choose a page from 1 to"), "{words}");
+    runner.action(action_id("comic-digit-2"));
+    let words = format!("{:?}", runner.app().view.as_ref().unwrap().screen());
+    assert!(!words.contains("Choose a page from 1 to"), "{words}");
+}
+
+#[test]
+fn the_page_list_offers_previous_only_where_there_is_a_page_before() {
+    let mut runner = garden(kobo_ui::CLARA_BW_METRICS);
+    for action in ["comic-controls", "comic-pages"] {
+        runner.action(action_id(action));
+    }
+    let view = runner.app().view.as_ref().unwrap();
+    let screen = view.screen();
+    let layout = screen.layout_with(&view.metrics, &measured_chrome(&screen));
+    assert!(
+        layout.nodes.iter().any(|node| matches!(
+            node.kind,
+            kobo_ui::LayoutKind::Button(action, kobo_ui::ControlState::Disabled, _)
+                if action == action_id("comic-thumbs-previous")
+        )),
+        "Previous answers on the first set"
+    );
 }

@@ -32,7 +32,7 @@ jobs:
           echo "This workflow publishes the beta app channel and only runs on refs/heads/beta." >&2
           echo "It was started on ${GITHUB_REF}; re-run it with the beta branch selected." >&2
           exit 1
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Collect the Store registry from the app manifests
@@ -150,7 +150,17 @@ jobs:
           then
             has_release=true
             catalog_present=false
-            catalog_asset_id="$(asset_id "$release_state" cobalt-app-catalog.json)"
+            # The catalog this tree is checked against is the one that names
+            # every application's mark. A channel last published before there
+            # were two catalogs has only the earlier one, and is republished so
+            # it carries both.
+            catalog_name=cobalt-app-catalog-v2.json
+            catalog_asset_id="$(asset_id "$release_state" "$catalog_name")"
+            if [ -z "$catalog_asset_id" ]; then
+              catalog_name=cobalt-app-catalog.json
+              catalog_asset_id="$(asset_id "$release_state" "$catalog_name")"
+              repair=true
+            fi
             if [ -n "$catalog_asset_id" ]; then
               api_download_asset published-app-catalog.json "$catalog_asset_id"
               catalog_present=true
@@ -313,17 +323,25 @@ jobs:
             # being correct, and this is the only run that ever looks. Verify
             # the signature readers verify, and that every bundle the catalog
             # sends them to is still on the release.
-            signature_asset_id="$(asset_id "$release_state" cobalt-app-catalog.json.sig)"
-            if [ -z "$signature_asset_id" ]; then
-              echo "$release_tag publishes a catalog with no signature beside it" >&2
-              exit 1
-            fi
-            api_download_asset published-app-catalog.json.sig "$signature_asset_id"
+            # Runtimes up to 0.3.33 read the earlier catalog, so it is verified
+            # as well: signed, and the same catalog but for stand-in glyphs.
+            for name in "$catalog_name" cobalt-app-catalog.json; do
+              for asset in "$name" "$name.sig"; do
+                published_asset_id="$(asset_id "$release_state" "$asset")"
+                if [ -z "$published_asset_id" ]; then
+                  echo "$release_tag publishes no $asset" >&2
+                  exit 1
+                fi
+                api_download_asset "published-$asset" "$published_asset_id"
+              done
+            done
             node tools/verify-published-catalog.mjs \
               --catalog published-app-catalog.json \
-              --signature published-app-catalog.json.sig \
+              --signature "published-$catalog_name.sig" \
               --registry generated-app-registry.json \
-              --release "$release_state"
+              --release "$release_state" \
+              --earlier-catalog published-cobalt-app-catalog.json \
+              --earlier-signature published-cobalt-app-catalog.json.sig
             # Having nothing to publish is not the same as Store inputs being
             # unchanged. The platform used to skip a release while crates/
             # moved; this is that gate for the catalog. apps/ and every
@@ -374,7 +392,7 @@ jobs:
           test -z "$(git status --porcelain -- docs/apps docs/sitemap.xml)"
       - name: Save the release tool
         if: steps.registry.outputs.publish == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: trusted-kobo
           path: target/debug/kobo
@@ -392,7 +410,7 @@ jobs:
       matrix:
         package: ${{ fromJSON(needs.trusted-tool.outputs.packages) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Collect the Store registry from the app manifests
         # Each app is described beside its source; apps/catalog.json is an
         # empty base, and a check handed it validates nothing and passes.
@@ -404,7 +422,7 @@ jobs:
       - name: Install the ring C cross-compiler
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - name: Load the release tool
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: trusted-kobo
           path: trusted
@@ -419,7 +437,7 @@ jobs:
             --package "${{ matrix.package }}" \
             --out dist/prebuilt
       - name: Save verified app binaries
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verified-app-${{ matrix.package }}
           path: dist/prebuilt/${{ matrix.package }}
@@ -498,7 +516,7 @@ jobs:
       contents: write
       actions: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Collect the Store registry from the app manifests
@@ -506,19 +524,19 @@ jobs:
         # empty base, and a check handed it validates nothing and passes.
         run: node tools/collect-app-registry.mjs --out generated-app-registry.json
       - name: Load the release tool
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: trusted-kobo
           path: trusted
       - name: Load verified app binaries
         if: needs.trusted-tool.outputs.packages != '[]'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: verified-app-*
           path: dist/current
       - name: Load unchanged binaries from the previous channel run
         if: needs.trusted-tool.outputs.previous-artifact == 'individual'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: verified-app-*
           path: dist/previous
@@ -526,15 +544,29 @@ jobs:
           github-token: ${{ github.token }}
       - name: Load the complete binary set from the previous publication
         if: needs.trusted-tool.outputs.previous-artifact == 'set'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ needs.trusted-tool.outputs.previous-set-name }}
           path: dist/previous
           run-id: ${{ needs.trusted-tool.outputs.previous-run }}
           github-token: ${{ github.token }}
       - name: Assemble the complete verified binary set
+        env:
+          BUILT: ${{ needs.trusted-tool.outputs.packages }}
         run: |
           mkdir -p dist/merged dist/artifacts
+          built="$(node -p 'JSON.parse(process.env.BUILT || "[]").join("\n")')"
+          # A pattern that matches one artifact downloads its files straight
+          # into the path, without the folder named after the artifact that it
+          # makes when several match. Left there, a lone app's new build sat
+          # beside the merge, and the previous publication's copy of that app
+          # was published under the new version. Put it back under its name.
+          if [ -d dist/current ] && [ "$(printf '%s\n' "$built" | grep -c .)" = 1 ] &&
+             [ ! -d "dist/current/verified-app-$built" ]; then
+            mv dist/current "dist/lone"
+            mkdir -p dist/current
+            mv dist/lone "dist/current/verified-app-$built"
+          fi
           if [ -d dist/previous ]; then
             cp -R dist/previous/. dist/merged/
           fi
@@ -550,8 +582,17 @@ jobs:
             test -d "dist/merged/$artifact"
             cp -R "dist/merged/$artifact" dist/artifacts/
           done
+          # Every app this run built is what ships, byte for byte. Anything
+          # else means an older copy was about to go out under a new version.
+          printf '%s\n' "$built" | while IFS= read -r package; do
+            [ -n "$package" ] || continue
+            if ! diff -r "dist/current/verified-app-$package" "dist/artifacts/verified-app-$package" > /dev/null; then
+              echo "::error::$package was built in this run, but the set to publish holds a different copy of it" >&2
+              exit 1
+            fi
+          done
       - name: Save the complete verified binary set
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verified-app-set-${{ github.run_attempt }}
           path: dist/artifacts
@@ -614,11 +655,14 @@ jobs:
           if api_get "$release_state" \
             "repos/${GITHUB_REPOSITORY}/releases/tags/${release_tag}"
           then
+            # The newer catalog when the channel has one, as in the check above.
             catalog_asset_id="$(
               node -e '
                 const fs = require("fs");
                 const release = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-                const matches = release.assets.filter(asset => asset.name === "cobalt-app-catalog.json");
+                const named = name => release.assets.filter(asset => asset.name === name);
+                let matches = named("cobalt-app-catalog-v2.json");
+                if (matches.length === 0) matches = named("cobalt-app-catalog.json");
                 if (matches.length !== 1 || !Number.isSafeInteger(matches[0].id)) {
                   throw new Error("existing app catalog release has no unique catalog asset");
                 }
@@ -663,7 +707,11 @@ jobs:
             --out dist/apps \
             --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}" \
             --artifact-dir dist/artifacts
-          catalog_sha256="$(sha256sum dist/apps/cobalt-app-catalog.json | cut -d' ' -f1)"
+          # catalog_sha256 is the catalog this tree describes, the one that
+          # names every mark; earlier_catalog_sha256 is its copy for runtimes
+          # up to 0.3.33.
+          catalog_sha256="$(sha256sum dist/apps/cobalt-app-catalog-v2.json | cut -d' ' -f1)"
+          earlier_catalog_sha256="$(sha256sum dist/apps/cobalt-app-catalog.json | cut -d' ' -f1)"
           # shellcheck disable=SC2016
           node -e '
             const fs = require("fs");
@@ -674,11 +722,13 @@ jobs:
               workflow_run_id: Number(process.argv[4]),
               workflow_run_attempt: Number(process.argv[5]),
               catalog_sha256: process.argv[6],
+              earlier_catalog_sha256: process.argv[7],
             };
             fs.writeFileSync(process.argv[1], `${JSON.stringify(value)}\n`);
           ' \
             dist/apps/cobalt-app-catalog-provenance.json \
-            "$release_tag" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$catalog_sha256"
+            "$release_tag" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$catalog_sha256" "$earlier_catalog_sha256"
           cp \
             dist/apps/cobalt-app-catalog-provenance.json \
             "dist/apps/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
@@ -796,9 +846,18 @@ jobs:
           # round, the signature is never newer than the catalog it covers: the
           # window holds the previous signature over the new catalog, which a
           # reader also rejects, but as the retryable state it is.
+          #
+          # The earlier catalog, which runtimes up to 0.3.33 read, goes first,
+          # then the newer one. A newer runtime that finds no newer catalog
+          # reads the earlier one, so until the newer one lands it reads the
+          # catalog just published rather than the one before it.
           gh release upload \
             "$release_tag" dist/apps/cobalt-app-catalog.json --clobber
           gh release upload \
             "$release_tag" dist/apps/cobalt-app-catalog.json.sig --clobber
+          gh release upload \
+            "$release_tag" dist/apps/cobalt-app-catalog-v2.json --clobber
+          gh release upload \
+            "$release_tag" dist/apps/cobalt-app-catalog-v2.json.sig --clobber
           gh release upload \
             "$release_tag" dist/apps/cobalt-app-catalog-provenance.json --clobber

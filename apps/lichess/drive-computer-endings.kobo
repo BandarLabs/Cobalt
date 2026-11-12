@@ -1,0 +1,119 @@
+# sweep: --bare
+# Every way a game against the computer moves and ends, on a board with
+# no clock, where Undo is offered.
+expect Play the computer
+tap-id play-computer
+wait-for Start game
+tap-id computer-side-white
+tap-id computer-clock-none
+tap-id start-computer
+wait-for Kobo
+expect White · Your move · Casual
+expect Undo
+# Nothing has been played, so there is nothing to take back.
+tap-id take-back
+expect Nothing to take back yet.
+# An empty square and the computer's pieces are not the owner's to move.
+tap-id square-e4
+expect Your piece
+tap-id square-e7
+expect Your piece
+expect-missing e7 →
+# A piece is picked up, and another of the owner's pieces replaces it.
+tap-id square-e2
+expect e2 →
+tap-id square-d2
+expect d2 →
+expect-missing e2 →
+# Tapping the picked piece again puts it down.
+tap-id square-d2
+expect-missing d2 →
+# A pawn cannot move three squares: the move is refused and the pawn
+# stays picked up so the owner can try another square.
+tap-id square-e2
+tap-id square-e5
+expect Illegal
+expect e2 →
+clean
+shot computer-illegal
+tap-id square-e4
+wait-for White · Your move · Casual · Nf6
+expect-missing Illegal
+clean
+shot computer-first-reply
+# Undo takes back the owner's move and the computer's reply together.
+tap-id take-back
+expect White · Your move · Casual
+expect-missing Nf6
+tap-id take-back
+expect Nothing to take back yet.
+# Before both sides have moved, the game can be aborted instead of resigned.
+tap-id game-menu
+expect Offer draw
+expect Resign
+expect Abort
+clean
+shot computer-menu-opening
+tap-id confirm-abort
+expect Abort?
+# The take-back nudge answered a board tap and does not follow into
+# the confirmation.
+expect-missing Nothing to take back yet.
+expect Opening only
+tap-id cancel-confirm
+expect-missing Abort?
+expect White · Your move
+tap-id game-menu
+tap-id confirm-abort
+tap-id abort
+wait-for Game aborted
+expect New game
+expect See the board
+clean
+shot computer-aborted
+tap-id computer-again
+wait-for Start game
+tap-id start-computer
+wait-for Kobo
+tap-id square-d2
+tap-id square-d4
+wait-for White · Your move
+# Once both sides have moved, abort is no longer offered.
+tap-id game-menu
+expect Offer draw
+expect-missing Abort
+# The computer accepts a draw at once.
+tap-id offer-draw
+wait-for Draw agreed
+clean
+shot computer-draw
+# See the board keeps the final position, with the next game where Undo was.
+tap-id dismiss-result
+expect-missing Draw agreed
+expect White · Finished · Casual
+expect New game
+expect-missing Undo
+clean
+shot computer-finished-board
+# A finished board ignores taps on pieces.
+tap-id square-e2
+expect-missing e2 →
+# New game in the finished game's corner goes back to the setup, and the
+# next game starts with its menu closed.
+tap-id computer-again
+wait-for Start game
+tap-id start-computer
+wait-for White · Your move · Casual
+expect-missing Offer draw
+expect-missing Draw agreed
+clean
+shot computer-next-game
+tap-id game-menu
+tap-id offer-draw
+wait-for Draw agreed
+tap-id dismiss-result
+# One Back leaves a finished game for the first screen, and the finished
+# game is not offered for resuming.
+tap Back
+wait-for Play the computer
+expect-missing Resume your game

@@ -119,6 +119,12 @@ fn every_device_request_round_trips() {
         },
         DeviceRequest::StopAudio,
         DeviceRequest::SetAudioVolume { percent: 65 },
+        DeviceRequest::LoadAudio {
+            source: AudioSource::Library("0/Audiobooks/The Quiet Shelf.m4b".to_owned()),
+        },
+        DeviceRequest::ListAudio,
+        DeviceRequest::ReadAudioDetail,
+        DeviceRequest::SetAudioSpeed { percent: 125 },
         DeviceRequest::ReadBatteryDetail,
         DeviceRequest::ReadCover,
         DeviceRequest::Update {
@@ -155,6 +161,13 @@ fn every_device_request_round_trips() {
         DeviceRequest::SetUpdateChannel {
             channel: UpdateChannel::Beta,
         },
+        DeviceRequest::ReadTimeZone,
+        DeviceRequest::SetTimeZone {
+            zone: "America/Argentina/Buenos_Aires".to_owned(),
+        },
+        DeviceRequest::SetTimeZone {
+            zone: String::new(),
+        },
         DeviceRequest::SetSecret {
             name: "lichess".to_owned(),
             value: SecretValue::new("token-value"),
@@ -162,6 +175,12 @@ fn every_device_request_round_trips() {
         DeviceRequest::ListLibrary,
         DeviceRequest::ReadLibrary {
             id: "0/Bleak-House.epub".to_owned(),
+        },
+        DeviceRequest::MarkNoticesRead,
+        DeviceRequest::ClearNotices,
+        DeviceRequest::OpenNotice { id: 7 },
+        DeviceRequest::RemoveArticle {
+            id: "0/Articles/River.epub".to_owned(),
         },
     ];
     for request in requests {
@@ -306,6 +325,44 @@ fn every_device_result_round_trips() {
             }],
             truncated: false,
         },
+        DeviceResult::AudioLibrary {
+            entries: vec![
+                AudioEntry {
+                    id: "0/Audiobooks/The Quiet Shelf.m4b".to_owned(),
+                    title: "The Quiet Shelf".to_owned(),
+                    kind: 2,
+                    parts: 1,
+                    bytes: 412_000_000,
+                },
+                AudioEntry {
+                    id: "0/Audiobooks/Dune".to_owned(),
+                    title: "Dune".to_owned(),
+                    kind: 1,
+                    parts: 42,
+                    bytes: 5_000_000_000,
+                },
+            ],
+            truncated: true,
+        },
+        DeviceResult::AudioDetail(AudioDetail {
+            title: "The Quiet Shelf".to_owned(),
+            author: "Ada Example".to_owned(),
+            narrator: String::new(),
+            album: "The Quiet Shelf".to_owned(),
+            format: "AAC 64 kbps, 22 kHz mono".to_owned(),
+            duration_ms: 29_000_000,
+            chapters: vec![
+                AudioChapter {
+                    start_ms: 0,
+                    title: "One".to_owned(),
+                },
+                AudioChapter {
+                    start_ms: 1_800_000,
+                    title: String::new(),
+                },
+            ],
+            cover: vec![0xff, 0xd8, 0xff],
+        }),
         DeviceResult::LibraryDocument {
             id: "0/notes.md".to_owned(),
             bytes: b"hello".to_vec(),
@@ -472,6 +529,50 @@ fn secret_presence_round_trips_and_stays_bounded() {
         };
         assert!(encode(&frame).is_err());
     }
+}
+
+#[test]
+fn a_time_zone_travels_both_ways_and_nothing_that_is_not_one_does() {
+    for message in [
+        Message::DeviceResult(DeviceResult::TimeZone {
+            zone: Some("Asia/Kolkata".to_owned()),
+            offset_minutes: 330,
+        }),
+        Message::DeviceResult(DeviceResult::TimeZone {
+            zone: None,
+            offset_minutes: -210,
+        }),
+    ] {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 9,
+            message,
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+    for zone in [
+        "../etc/passwd",
+        "Asia",
+        "/Asia/Kolkata",
+        "Asia//Kolkata",
+        "Asia/Kolkata\n",
+    ] {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 9,
+            message: Message::DeviceRequest(DeviceRequest::SetTimeZone {
+                zone: zone.to_owned(),
+            }),
+        };
+        assert!(encode(&frame).is_err(), "{zone}");
+    }
+    let old = Frame {
+        version: TIME_ZONE_VERSION - 1,
+        request_id: 9,
+        message: Message::DeviceRequest(DeviceRequest::ReadTimeZone),
+    };
+    assert!(encode(&old).is_err());
 }
 
 #[test]
@@ -1170,7 +1271,7 @@ fn pre_folio_screen_frames_keep_the_legacy_renderer() {
         let Message::SetScreen(decoded) = back.message else {
             panic!("expected screen");
         };
-        assert!(decoded.legacy_typography);
+        assert_eq!(decoded.typography, kobo_ui::Typography::Paperback);
         assert_eq!(decoded.nodes, nodes);
         assert!(decoded
             .layout()
@@ -1306,7 +1407,7 @@ fn version_12_folio_fields_round_trip() {
         panic!("expected screen");
     };
     assert_eq!(decoded, screen);
-    assert!(!decoded.legacy_typography);
+    assert_eq!(decoded.typography, kobo_ui::Typography::Fine);
 }
 
 #[test]
@@ -1454,4 +1555,419 @@ fn encoder_preflights_payload_limit() {
         }),
         Err(ProtocolError::FrameTooLarge)
     );
+}
+
+fn quoted_command() -> Screen {
+    Screen::new(
+        5,
+        vec![Node::Quote {
+            id: kobo_ui::NodeId(1),
+            depth: 0,
+            role: kobo_ui::QuoteRole::Command,
+            text: "kobo connect hn".to_owned(),
+            fold: None,
+        }],
+    )
+}
+
+fn decoded_at(version: u8, screen: Screen) -> Screen {
+    let frame = Frame {
+        version,
+        request_id: 1,
+        message: Message::SetScreen(screen),
+    };
+    let Message::SetScreen(decoded) = decode(&encode(&frame).expect("encodes"))
+        .expect("decodes")
+        .message
+    else {
+        panic!("expected screen");
+    };
+    decoded
+}
+
+#[test]
+fn a_command_travels_as_a_command_at_protocol_seventeen() {
+    let decoded = decoded_at(QUIET_TYPE_VERSION, quoted_command());
+    assert_eq!(
+        decoded,
+        quoted_command().with_typography(kobo_ui::Typography::Quiet)
+    );
+}
+
+/// A runtime without the command role reads an unknown role as prose, so a
+/// command written at an earlier protocol is the quotation that runtime always
+/// drew.
+#[test]
+fn a_command_written_at_protocol_sixteen_is_read_as_a_quotation() {
+    let decoded = decoded_at(QUIET_TYPE_VERSION - 1, quoted_command());
+    let [Node::Quote { role, text, .. }] = decoded.nodes.as_slice() else {
+        panic!("expected one quote");
+    };
+    assert_eq!(*role, kobo_ui::QuoteRole::Body);
+    assert_eq!(text, "kobo connect hn");
+}
+
+/// An application at protocol 16 fitted its text to Folio's sizes and gaps,
+/// so its screens are laid out in them; one at 17 fitted them to the quiet
+/// ones, and one at 18 measured its emphasis in the italic as well.
+#[test]
+fn each_protocol_is_laid_out_in_the_type_it_measured_with() {
+    let screen = Screen::new(5, Vec::new());
+    for (version, typography) in [
+        (LEGACY_VERSION, kobo_ui::Typography::Paperback),
+        (FOLIO_VERSION, kobo_ui::Typography::Folio),
+        (QUIET_TYPE_VERSION - 1, kobo_ui::Typography::Folio),
+        (QUIET_TYPE_VERSION, kobo_ui::Typography::Quiet),
+        (FINE_TYPE_VERSION - 1, kobo_ui::Typography::Quiet),
+        (FINE_TYPE_VERSION, kobo_ui::Typography::Fine),
+    ] {
+        assert_eq!(
+            decoded_at(version, screen.clone()).typography,
+            typography,
+            "protocol {version}"
+        );
+    }
+}
+
+fn verse_paragraph() -> Screen {
+    Screen::new(
+        5,
+        vec![Node::RichText {
+            id: kobo_ui::NodeId(1),
+            text: "That time of year thou mayst in me behold".to_owned(),
+            spans: Vec::new(),
+            links: Vec::new(),
+            presentation: kobo_ui::ParagraphPresentation {
+                start_indent_em: 340,
+                initial_lines: 3,
+                ..kobo_ui::ParagraphPresentation::default()
+            },
+            selection: None,
+            formulae: Vec::new(),
+        }],
+    )
+}
+
+fn paragraph_of(screen: &Screen) -> kobo_ui::ParagraphPresentation {
+    match screen.nodes.as_slice() {
+        [Node::RichText { presentation, .. }] => *presentation,
+        nodes => panic!("expected one paragraph, got {nodes:?}"),
+    }
+}
+
+/// A block indent and an initial reach a runtime that sets them, and an
+/// application at an older protocol never sends bytes its runtime would read
+/// as the paragraph's links.
+#[test]
+fn a_block_indent_and_an_initial_travel_from_protocol_eighteen() {
+    let fine = paragraph_of(&decoded_at(FINE_TYPE_VERSION, verse_paragraph()));
+    assert_eq!((fine.start_indent_em, fine.initial_lines), (340, 3));
+    let quiet = paragraph_of(&decoded_at(QUIET_TYPE_VERSION, verse_paragraph()));
+    assert_eq!((quiet.start_indent_em, quiet.initial_lines), (0, 0));
+}
+
+#[test]
+fn a_muted_run_keeps_its_tone_on_the_wire_alongside_every_other_style() {
+    let every = kobo_ui::TextPresentation {
+        strong: true,
+        emphasis: true,
+        underline: true,
+        superscript: true,
+        subscript: true,
+        highlighted: true,
+        muted: true,
+    };
+    for style in [
+        every,
+        kobo_ui::TextPresentation {
+            muted: true,
+            ..kobo_ui::TextPresentation::default()
+        },
+        kobo_ui::TextPresentation::default(),
+    ] {
+        assert_eq!(
+            text_presentation_from_byte(text_presentation_byte(style)),
+            Ok(style)
+        );
+    }
+    assert!(text_presentation_from_byte(0x80).is_err());
+}
+
+fn screen_with_dialog(dismiss: ActionId) -> Screen {
+    Screen::new(1, Vec::new()).with_overlay(kobo_ui::Overlay::dialog(
+        NodeId(2),
+        "Details",
+        dismiss,
+        vec![Node::Button {
+            id: NodeId(3),
+            action: ActionId(9),
+            label: "Close".into(),
+            state: kobo_ui::ControlState::Enabled,
+            emphasis: kobo_ui::Emphasis::Normal,
+        }],
+    ))
+}
+
+fn overlay_kind_after_the_wire(version: u8, screen: Screen) -> Option<kobo_ui::OverlayKind> {
+    let frame = Frame {
+        version,
+        request_id: 4,
+        message: Message::SetScreen(screen),
+    };
+    let back = decode(&encode(&frame).expect("encodes")).expect("decodes");
+    let Message::SetScreen(out) = back.message else {
+        panic!("wrong message");
+    };
+    out.overlay.map(|overlay| overlay.kind)
+}
+
+#[test]
+fn a_dialogue_keeps_its_way_out_on_the_wire_and_reaches_an_older_runtime_as_a_modal() {
+    assert_eq!(
+        overlay_kind_after_the_wire(VERSION, screen_with_dialog(ActionId(9))),
+        Some(kobo_ui::OverlayKind::Dialog {
+            dismiss: ActionId(9)
+        })
+    );
+    assert_eq!(
+        overlay_kind_after_the_wire(FINE_TYPE_VERSION - 1, screen_with_dialog(ActionId(9))),
+        Some(kobo_ui::OverlayKind::Modal)
+    );
+}
+
+#[test]
+fn a_dialogue_cannot_name_the_runtimes_own_back_as_its_way_out() {
+    let frame = Frame {
+        version: VERSION,
+        request_id: 4,
+        message: Message::SetScreen(screen_with_dialog(ActionId::BACK)),
+    };
+    assert!(encode(&frame).is_err());
+}
+
+fn marked_tiles(glyph: Glyph) -> Screen {
+    Screen::new(
+        6,
+        vec![Node::TileGrid {
+            id: kobo_ui::NodeId(1),
+            tiles: vec![kobo_ui::Tile::new(ActionId(7), "Backgammon", glyph)],
+            shape: kobo_ui::TileShape::Square,
+        }],
+    )
+}
+
+fn tile_glyph(screen: &Screen) -> Glyph {
+    let [Node::TileGrid { tiles, .. }] = screen.nodes.as_slice() else {
+        panic!("expected one tile grid");
+    };
+    tiles[0].glyph
+}
+
+fn app_marks() -> impl Iterator<Item = Glyph> {
+    Glyph::ALL.into_iter().filter(|glyph| is_app_mark(*glyph))
+}
+
+fn listed_at(version: u8, glyph: Glyph) -> Glyph {
+    let frame = Frame {
+        version,
+        request_id: 2,
+        message: Message::DeviceResult(DeviceResult::Apps {
+            entries: vec![AppInfo {
+                id: "backgammon".to_owned(),
+                title: "Backgammon".to_owned(),
+                label: "Backgammon".to_owned(),
+                summary: "Play backgammon.".to_owned(),
+                version: "0.1.17".to_owned(),
+                minimum_cobalt_version: "0.3.34".to_owned(),
+                glyph,
+                capabilities: Vec::new(),
+                installed_version: None,
+            }],
+        }),
+    };
+    let Message::DeviceResult(DeviceResult::Apps { entries }) =
+        decode(&encode(&frame).expect("encodes"))
+            .expect("decodes")
+            .message
+    else {
+        panic!("expected an application list");
+    };
+    entries[0].glyph
+}
+
+#[test]
+fn the_glyphs_added_with_protocol_eighteen_are_the_thirty_four_application_marks_and_the_bell() {
+    assert_eq!(app_marks().count(), 35);
+    assert!(app_marks().any(|glyph| glyph == Glyph::Bell));
+}
+
+#[test]
+fn every_application_mark_travels_as_itself_at_protocol_eighteen() {
+    for mark in app_marks() {
+        assert_eq!(
+            tile_glyph(&decoded_at(APP_MARK_VERSION, marked_tiles(mark))),
+            mark
+        );
+        assert_eq!(listed_at(APP_MARK_VERSION, mark), mark);
+    }
+}
+
+/// A runtime older than the marks refuses a frame over a glyph byte it cannot
+/// read, so a frame written for it carries the picture the application wore
+/// before instead.
+#[test]
+fn an_application_mark_written_below_protocol_eighteen_becomes_the_glyph_it_replaced() {
+    for version in [QUIET_TYPE_VERSION, CONTROLS_VERSION, SUSPEND_VERSION] {
+        for mark in app_marks() {
+            let earlier = earlier_glyph(mark);
+            assert_ne!(earlier, mark);
+            assert!(!is_app_mark(earlier), "{mark:?} falls back to another mark");
+            assert_eq!(
+                tile_glyph(&decoded_at(version, marked_tiles(mark))),
+                earlier
+            );
+            assert_eq!(listed_at(version, mark), earlier);
+        }
+    }
+    assert_eq!(earlier_glyph(Glyph::Dice), Glyph::Circle);
+    assert_eq!(earlier_glyph(Glyph::Grid), Glyph::Grid);
+}
+
+#[test]
+fn a_frame_below_protocol_eighteen_that_names_an_application_mark_is_refused() {
+    let at = |glyph| {
+        encode(&Frame {
+            version: QUIET_TYPE_VERSION,
+            request_id: 1,
+            message: Message::SetScreen(marked_tiles(glyph)),
+        })
+        .expect("encodes")
+    };
+    let grid = at(Glyph::Grid);
+    let circle = at(Glyph::Circle);
+    let differing: Vec<usize> = (0..grid.len()).filter(|&i| grid[i] != circle[i]).collect();
+    let [index] = differing.as_slice() else {
+        panic!("expected the two frames to differ in the glyph byte alone");
+    };
+    let mut forged = grid;
+    forged[*index] = encode_glyph(Glyph::Dice);
+    assert!(decode(&forged).is_err());
+    assert_eq!(
+        glyph_at(encode_glyph(Glyph::Dice), QUIET_TYPE_VERSION),
+        None
+    );
+    assert_eq!(
+        glyph_at(encode_glyph(Glyph::Dice), APP_MARK_VERSION),
+        Some(Glyph::Dice)
+    );
+}
+
+fn kept_notices(open: bool) -> crate::NoticeList {
+    crate::NoticeList {
+        entries: vec![
+            crate::Notice {
+                id: 2,
+                heading: "Article arrived".to_owned(),
+                title: "How the river found its way".to_owned(),
+                detail: "example.com".to_owned(),
+                glyph: kobo_ui::Glyph::Book,
+                at: 1_762_600_000_000,
+                unread: true,
+                target: crate::NoticeTarget::Ready,
+            },
+            crate::Notice {
+                id: 1,
+                heading: "Article arrived".to_owned(),
+                title: "A walk in the hills".to_owned(),
+                detail: String::new(),
+                glyph: kobo_ui::Glyph::Book,
+                at: 1_762_500_000_000,
+                unread: false,
+                target: crate::NoticeTarget::Gone,
+            },
+        ],
+        open,
+    }
+}
+
+#[test]
+fn the_notice_list_reaches_the_launcher_exactly_as_the_runtime_holds_it() {
+    for open in [false, true] {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 0,
+            message: Message::Notices(kept_notices(open)),
+        };
+        let bytes = encode(&frame).expect("encode");
+        assert_eq!(decode(&bytes).expect("decode"), frame);
+    }
+}
+
+#[test]
+fn books_is_asked_to_open_the_article_by_its_library_identifier() {
+    let frame = Frame {
+        version: VERSION,
+        request_id: 0,
+        message: Message::OpenDocument {
+            id: "0/Articles/River.epub".to_owned(),
+        },
+    };
+    assert_eq!(
+        decode(&encode(&frame).expect("encode")).expect("decode"),
+        frame
+    );
+}
+
+#[test]
+fn notices_cannot_be_sent_or_asked_for_at_a_protocol_from_before_them() {
+    let older = crate::QUIET_TYPE_VERSION;
+    for message in [
+        Message::OpenDocument {
+            id: "0/Articles/River.epub".to_owned(),
+        },
+        Message::Notices(kept_notices(false)),
+        Message::DeviceRequest(DeviceRequest::MarkNoticesRead),
+        Message::DeviceRequest(DeviceRequest::ClearNotices),
+        Message::DeviceRequest(DeviceRequest::OpenNotice { id: 1 }),
+        Message::DeviceRequest(DeviceRequest::RemoveArticle {
+            id: "0/Articles/River.epub".to_owned(),
+        }),
+    ] {
+        let frame = Frame {
+            version: older,
+            request_id: 0,
+            message,
+        };
+        assert!(encode(&frame).is_err(), "{frame:?} encoded at {older}");
+    }
+}
+
+#[test]
+fn an_article_removal_naming_no_library_document_is_refused_at_the_encoder() {
+    for id in [
+        "",
+        "/mnt/onboard/Articles/River.epub",
+        "0/Articles/\nRiver.epub",
+    ] {
+        let frame = Frame {
+            version: VERSION,
+            request_id: 0,
+            message: Message::DeviceRequest(DeviceRequest::RemoveArticle { id: id.to_owned() }),
+        };
+        assert!(encode(&frame).is_err(), "{id:?} was encoded");
+    }
+}
+
+#[test]
+fn a_notice_without_a_title_or_with_a_runaway_one_is_refused_at_both_ends() {
+    for title in [String::new(), "x".repeat(crate::MAX_NOTICE_TITLE_LEN + 1)] {
+        let mut list = kept_notices(false);
+        list.entries[0].title = title;
+        let frame = Frame {
+            version: VERSION,
+            request_id: 0,
+            message: Message::Notices(list),
+        };
+        assert!(encode(&frame).is_err());
+    }
 }

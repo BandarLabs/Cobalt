@@ -1,0 +1,13 @@
+# sweep: --bare
+# The Error page says it is built with a marked bottom action, and that
+# action, Report it, is drawn under the state and answers a tap.
+wait-for Type and tone
+tap States
+wait-for Nothing to show
+tap Error
+wait-for The catalogue came back malformed.
+expect Try again
+clean
+shot gallery-error-page
+tap Report it
+wait-for You pressed Report it.

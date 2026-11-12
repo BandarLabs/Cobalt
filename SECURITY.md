@@ -10,9 +10,10 @@ provide safely. Maintainers will acknowledge a report before discussing a
 public disclosure date.
 
 Only the latest commit on the default branch is supported during the initial
-public-development period. Device applications are treated as untrusted; the
-runtime, CLI, installation package and an explicitly enabled terminal/root SSH
-session are trusted components.
+public-development period. Device applications are treated as untrusted. The
+runtime, the CLI, the installation package, the built-in Terminal and the
+owner's SSH access (which `kobo setup` turns on unless given `--no-ssh`) are
+trusted components.
 
 Public Store applications use a pathless single-binary package. An Ed25519
 signature covers the canonical manifest, the manifest fixes the binary length
@@ -23,8 +24,8 @@ capability lookup and launch re-verifies that signature, the canonical
 manifest, and the installed binary. Public applications cannot claim built-in
 identities or request shell access.
 
-Store catalog refresh, app install and app removal are accepted only from the
-built-in `store` application. Full Cobalt replacement is a distinct
+Store catalog refresh, app install and removal, and browser install links are
+accepted only from the built-in `store` application. Full Cobalt replacement is a distinct
 Settings-only operation. The public signing seed is release infrastructure:
 only its public key belongs in the repository.
 
@@ -62,9 +63,9 @@ After either bootstrap starts, it verifies the signed versioned manifest before
 parsing it, then checks the selected host archive and device package against
 the manifest's exact byte lengths and SHA-256 digests. `kobo setup`
 independently verifies the raw detached manifest signature with its pinned
-public key before accepting a prebuilt device package. USB activation stages and verifies a complete managed directory, swaps whole
-directories with a previous-copy rollback, and recovers interrupted swaps
-before a rerun. OTA activation additionally syncs a direction journal and
+public key before accepting a prebuilt device package. USB activation stages
+and verifies a complete managed directory, swaps whole directories with a
+previous-copy rollback, and recovers interrupted swaps before a rerun. OTA activation additionally syncs a direction journal and
 holds mutable owner folders outside the versioned trees; normal daemon startup
 finishes an interrupted activation or rollback before runtime launch. Mutable
 owner folders are never accepted from a release.

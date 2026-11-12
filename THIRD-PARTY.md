@@ -17,10 +17,11 @@ cargo metadata --format-version 1 --all-features
 | Selected licence | Crates |
 | --- | --- |
 | Apache-2.0 | dependencies that offer Apache-2.0 as an alternative, including `image`, `http`, `rustls`, `libc`, `png`, `flate2`, `ttf-parser`, and their transitive dependencies |
-| MIT | `bytes`, `byteorder-lite`, `memchr`, `minimp3`, `minimp3-sys`, `pulldown-cmark`, `pulldown-cmark-escape`, `qrcodegen`, `simd-adler32`, `slice-ring-buffer`, `vt100`, `zip` |
+| MIT | `bytes`, `byteorder-lite`, `derive_more`, `dom_query`, `dom_smoothie`, `extended`, `gjson`, `html-escape`, `memchr`, `new_debug_unreachable`, `nom`, `phf`, `phf_shared`, `precomputed-hash`, `pulldown-cmark`, `pulldown-cmark-escape`, `qrcodegen`, `simd-adler32`, `vt100`, `zip` |
 | Apache-2.0 and ISC | `ring` |
 | ISC | `rustls-webpki`, `untrusted` |
-| BSD-3-Clause | `subtle` |
+| BSD-3-Clause | `rusty-opus`, `subtle` |
+| MPL-2.0 | `symphonia` and its `symphonia-*` crates; `cssparser`, `selectors`, `dtoa-short` |
 | CDLA-Permissive-2.0 | `webpki-roots` |
 | GPL-3.0-or-later | `shakmaty` |
 | Zlib | `foldhash` |
@@ -34,6 +35,18 @@ notices in `licenses/LICENSE-Rust-dependencies.txt`. That includes `ring`'s
 Apache-2.0 and ISC terms and the CDLA-Permissive-2.0 agreement for the Mozilla
 CA data bundled by `webpki-roots`. The GPL-3.0-or-later terms selected for
 `shakmaty` ship separately in `licenses/LICENSE-shakmaty.txt`.
+
+## Audio dependencies
+
+Audiobooks are decoded by `symphonia` 0.6.1 (MPL-2.0) and its format and
+codec crates: MP3, AAC-LC in MPEG-4, Ogg Vorbis, FLAC and WAV, all pure Rust.
+The MPL is a file-level copyleft: the crates are used unmodified, their source
+is public, and nothing here changes the terms a binary built from this tree is
+distributed under. Ogg Opus is decoded by `rusty-opus` 1.0.2 (BSD-3-Clause), a
+pure Rust port of libopus whose notice carries the Xiph.Org copyright; it is
+behind the `opus` feature of `kobo-audio`, on by default, so a build can leave
+it out. The `minimp3` C decoder, and the `slice-ring-buffer` advisory it
+carried, are gone.
 
 ## QR code dependency
 
@@ -58,6 +71,19 @@ CBR is deferred; no RAR decoder is linked or invoked.
 See [the shared comic decision](docs/quality/comic-reader-decision.md) for
 resource limits, remaining release checks and the dependency assessment.
 
+## Web article dependencies
+
+`kobo clip`, on the owner's computer, finds the article in a web page with
+`dom_smoothie` 0.19.0 (MIT), a reader-mode extractor, and the HTML parser and
+selector engine it is built on: `dom_query` 0.29.0 (MIT), `html5ever` and its
+`markup5ever`, `tendril`, `string_cache` and `web_atoms` crates (MIT or
+Apache-2.0), and `selectors`, `cssparser` and `dtoa-short` (MPL-2.0). The
+MPL-2.0 crates are used unmodified and their source is public, as with
+`symphonia` above. Only the `kobo-article` crate depends on them, and only
+`kobo-cli` depends on that, so no reader or app build links any of them;
+`cargo tree -i dom_smoothie --workspace` shows the one path. Their notices
+are in `licenses/LICENSE-Rust-dependencies.txt`.
+
 ## Bundled content
 
 | Application | Content | Terms |
@@ -73,6 +99,9 @@ application or distributed to readers.
 
 | Application | Fixture | Terms | Notice |
 | --- | --- | --- | --- |
+| `kobo-article` | "Common kingfisher" from English Wikipedia, revision 1379243991, saved as HTML (`crates/kobo-article/fixtures/wikipedia-common-kingfisher.html`) | Creative Commons Attribution-ShareAlike 4.0; authors are the page's contributors | Source, revision and attribution in `crates/kobo-article/fixtures/SOURCES.md` |
+| `kobo-article` | A NASA Science story and a NIST news release, saved as HTML | Public domain in the United States, as works of the US government | `crates/kobo-article/fixtures/SOURCES.md` |
+| `kobo-article` | "The Yellow Wallpaper", Project Gutenberg eBook 1952, saved as HTML | Public domain in the United States; the file keeps its Project Gutenberg licence | `crates/kobo-article/fixtures/SOURCES.md` |
 | `parser` | Compiled Lamplight story (`apps/parser/fixtures/lamplight.z3`), Z-machine version 3 release 1 serial 260919, from the original source in `apps/parser/fixtures/lamplight.inf` built with Inform 6 and the PunyInform library | MIT | `licenses/LICENSE-PunyInform.txt`; provenance in `licenses/SOURCE-Parser-Lamplight.md` |
 
 ## Icons
@@ -104,12 +133,12 @@ the artifacts that contain them.
 
 | Font | Licence | File |
 | --- | --- | --- |
-| Atkinson Hyperlegible (Regular and Bold) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt` |
-| DejaVu Sans | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
-| Literata (Regular and SemiBold, Latin subset) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-Literata.txt`; subset recipe in `licenses/SOURCE-Literata.md` |
+| Atkinson Hyperlegible (Regular and Bold, with a plain zero) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt`; the change in `licenses/SOURCE-AtkinsonHyperlegible.md` |
+| DejaVu Sans Mono | Bitstream Vera and Arev fonts licence | `crates/kobo-text/fonts/LICENSE-DejaVu.txt` |
+| Literata (Regular, SemiBold and Italic, Latin subset) | SIL Open Font License 1.1 | `crates/kobo-text/fonts/LICENSE-Literata.txt`; subset recipe in `licenses/SOURCE-Literata.md` |
 | Cobalt Japanese (derived Noto Sans CJK JP subset) | SIL Open Font License 1.1 | `licenses/LICENSE-Cobalt-Japanese-font.txt`; source and deterministic subset recipe in `licenses/SOURCE-Cobalt-Japanese-font.md` |
 
-Both permit embedding and redistribution. The OFL forbids selling the font on
+Both licences permit embedding and redistribution. The OFL forbids selling the font on
 its own and requires the reserved name to be kept, which embedding does not
 touch.
 
@@ -168,13 +197,15 @@ The example applications talk to services this project does not own.
 | --- | --- | --- |
 | `hn` | Hacker News Firebase API | Public, unauthenticated, no key |
 | `gutenbird` | Gutendex and Project Gutenberg | Public; Gutenberg texts are public domain in the US |
-| `lichess` | Lichess Board and puzzle APIs | Official HTTPS origin; Board API access uses a runtime-held personal token |
+| `lichess` | Lichess Board, puzzle and account APIs | Official HTTPS origin; public puzzle access, and an optional runtime-held personal token for the Board API and account features |
+| `arxiv` | arXiv API and HTML papers | Public, unauthenticated |
+| `zotero-reader` | Zotero web API | Owner's account, using a runtime-held API key |
+| `readeck` | Readeck API | Owner-supplied HTTPS service using a runtime-held token |
 | `rss` | Feedsearch | Public; the search screen carries the attribution its terms ask for |
 | `calibre-web` | calibre-web or calibre content-server OPDS | Owner-supplied HTTPS service; optional HTTP Basic credential |
 | `fanshelf` | Archive of Our Own public work pages | Public, unauthenticated lookups with an identifying user agent |
 | `homepanel` | Home Assistant API | Owner-supplied HTTPS service using a runtime-held long-lived token |
 | `kitchencard` | Mealie API | Owner-supplied service; Mealie is AGPL-3.0 |
-| `lichess` | Lichess API | Public puzzle access; optional personal access token for account features |
 | `needles` | Ravelry API | Account access through a runtime-held HTTP Basic credential |
 | `panels` | Komga OPDS | Optional owner-supplied service; Komga is MIT licensed |
 | `post` | Hermes gateway | Owner-supplied HTTPS gateway; Hermes Agent is MIT licensed |

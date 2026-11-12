@@ -1,0 +1,17 @@
+# sweep: --bare
+# A reader that has never been paired opens on the pairing steps.
+wait-for Pair with your computer
+expect kobo sidekick init
+expect kobo sidekick run
+expect Enter the address
+clean
+shot first-run
+# Pads pushed while Deck sits on this page show as a preview when it comes back.
+companion deck push --sim --home apps/deck/fixtures/two-pages
+lifecycle background
+lifecycle foreground
+wait-for Preview only. Pair to run commands.
+clean
+shot first-run-after-push
+wait-for Test
+expect Deploy

@@ -554,6 +554,7 @@ pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
         false,
         &cancel,
     )
+    .map(|fetched| fetched.body)
 }
 
 /// Fetches `url` starting `offset` bytes in, returning at most `max_bytes`.
@@ -624,6 +625,39 @@ pub fn fetch_from_controlled(
     fetch_checked(
         url, offset, max_bytes, credential, headers, options, false, cancel,
     )
+    .map(|fetched| fetched.body)
+}
+
+/// A body, and the address it was served from once redirects were followed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Fetched {
+    pub body: Vec<u8>,
+    pub address: String,
+}
+
+/// [`fetch_from_controlled`], also answering where the body finally came
+/// from.
+///
+/// A caller that resolves addresses written inside the body, as a web page's
+/// pictures and links are, needs the address after redirects: a page asked
+/// for at `/go` and served from `/articles/story/` names its `photo.jpg`
+/// relative to the second.
+///
+/// # Errors
+///
+/// The same failures as [`fetch_from_controlled`].
+pub fn fetch_from_controlled_at(
+    url: &str,
+    offset: u32,
+    max_bytes: u32,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Fetched, TaskError> {
+    fetch_checked(
+        url, offset, max_bytes, credential, headers, options, false, cancel,
+    )
 }
 
 /// [`fetch_from_controlled`], but a 4xx answer comes back as a [`Refusal`]
@@ -649,6 +683,7 @@ pub fn fetch_from_with_refusals(
     fetch_checked(
         url, offset, max_bytes, credential, headers, options, true, cancel,
     )
+    .map(|fetched| fetched.body)
 }
 
 #[allow(
@@ -665,7 +700,7 @@ fn fetch_checked(
     options: RequestOptions,
     refusals: bool,
     cancel: &AtomicBool,
-) -> Result<Vec<u8>, TaskError> {
+) -> Result<Fetched, TaskError> {
     // The last gate before the socket, and the same one `post` applies to its
     // own headers: both names and values may ultimately originate outside the
     // runtime, so grammar is checked here rather than trusted from upstream.
@@ -709,7 +744,7 @@ fn get(
     options: RequestOptions,
     refusals: bool,
     cancel: &AtomicBool,
-) -> Result<Vec<u8>, TaskError> {
+) -> Result<Fetched, TaskError> {
     let mut target = url.to_string();
     let mut forwarded = headers;
     for _ in 0..=MAX_REDIRECTS {
@@ -729,12 +764,18 @@ fn get(
             if let Some(refusal) =
                 Refusal::from_response(&response, &refusal::secrets_of(credential))?
             {
-                return Ok(refusal.envelope());
+                return Ok(Fetched {
+                    body: refusal.envelope(),
+                    address: target,
+                });
             }
         }
         if options.report_rate_limit {
             if let RateLimit::Limited(delay) = rate_limit(&response)? {
-                return Ok(rate_limit_envelope(delay));
+                return Ok(Fetched {
+                    body: rate_limit_envelope(delay),
+                    address: target,
+                });
             }
         }
         match split_response(&response, max_bytes)? {
@@ -742,7 +783,10 @@ fn get(
                 return if body.len() > max_bytes as usize {
                     Err(TaskError::TooLarge)
                 } else {
-                    Ok(body.to_vec())
+                    Ok(Fetched {
+                        body: body.to_vec(),
+                        address: target,
+                    })
                 };
             }
             Response::Redirect(location) => {

@@ -1,0 +1,24 @@
+# sweep: computer
+# A Sidekick helper runs on this computer and Books is paired with it.
+# Opening Books asks it quietly, and with nothing waiting nothing is said.
+# Two articles are then clipped for later on the computer, and Sync brings
+# them over: the shelf says how many arrived and lists them.
+wait-for Articles
+tap Articles
+wait-for No articles yet
+expect-missing Checking your computer
+expect-missing Nothing new
+companion clip crates/kobo-article/fixtures/synthetic-news.html --url https://news.example.org/harbour --no-pictures --later
+companion clip crates/kobo-article/fixtures/synthetic-blog.html --url https://blog.example.org/rivers --no-pictures --later
+tap Sync
+wait-for 2 articles arrived
+wait-for Harbour wall to be rebuilt after winter storms
+expect Measuring tide heights with a pressure sensor
+# The runtime's own card announces them too; it is let go first.
+wait 4500
+clean
+shot books-articles-synced
+tap Sync
+wait-for Nothing new
+clean
+shot books-articles-nothing-new

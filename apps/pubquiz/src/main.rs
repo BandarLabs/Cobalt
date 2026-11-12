@@ -317,15 +317,17 @@ impl Quiz {
             |origin| format!("Bundled and {origin}"),
         )
     }
+    /// A row's second line, so it ends without a full stop like the rest:
+    /// with one, the home row read "Not synced yet. · Needs Wi-Fi once".
     fn updated_label(&self) -> String {
         match (self.pack_origin.is_some(), self.pack_updated_min) {
-            (false, _) => "Not synced yet.".to_owned(),
-            (true, None) => "Synced earlier.".to_owned(),
+            (false, _) => "Not synced yet".to_owned(),
+            (true, None) => "Synced earlier".to_owned(),
             (true, Some(minutes)) => match now_minutes() {
                 Some(now) if now >= minutes => {
-                    format!("Synced {}.", age_label((now - minutes) * 60))
+                    format!("Synced {}", age_label((now - minutes) * 60))
                 }
-                _ => "Synced earlier.".to_owned(),
+                _ => "Synced earlier".to_owned(),
             },
         }
     }
@@ -483,6 +485,8 @@ impl Quiz {
         self.scores = saved.scores;
         self.answers = saved.answers;
         self.round_questions = saved.questions;
+        self.setup_category = saved.category;
+        self.setup_difficulty = saved.difficulty;
         self.confirm = None;
         self.menu.close();
         self.note = None;
@@ -2177,7 +2181,7 @@ mod tests {
         });
         assert_eq!(runner.app().pack_origin.as_deref(), Some("Open Trivia DB"));
         assert_eq!(runner.app().pack_updated_min, Some(31_556_000));
-        assert_eq!(runner.app().updated_label(), "Synced earlier.");
+        assert_eq!(runner.app().updated_label(), "Synced earlier");
 
         // States saved before freshness tracking still load, as bundled.
         let mut runner = kobo_sdk::AppRunner::new(Quiz::default());
@@ -2188,7 +2192,14 @@ mod tests {
         });
         assert_eq!(runner.app().pack_origin, None);
         assert_eq!(runner.app().source_label(), "Bundled");
-        assert_eq!(runner.app().updated_label(), "Not synced yet.");
+        assert_eq!(runner.app().updated_label(), "Not synced yet");
+    }
+
+    #[test]
+    fn the_sync_row_joins_its_two_facts_without_a_stray_full_stop() {
+        let home = format!("{:?}", screen(&Quiz::default()));
+        assert!(home.contains("Not synced yet · Needs Wi-Fi once"), "{home}");
+        assert!(!home.contains(". ·"), "{home}");
     }
 
     #[test]
@@ -2202,7 +2213,7 @@ mod tests {
         );
         assert!(bundled.contains("Source"));
         assert!(bundled.contains("Bundled"));
-        assert!(bundled.contains("Not synced yet."));
+        assert!(bundled.contains("Not synced yet"));
 
         let synced = Quiz {
             view: View::About,

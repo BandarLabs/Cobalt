@@ -50,7 +50,8 @@ use std::path::{Path, PathBuf};
 /// publish their shelves.
 pub const ROOTS: &[&str] = &["/mnt/onboard", "/mnt/onboard/.adds/cobalt/data", "/mnt/sd"];
 
-/// Directory names never descended into, matched at any depth.
+/// Directory names never descended into, matched at any depth, besides every
+/// hidden directory.
 ///
 /// The stock reader's state, our own program files, and the noise that
 /// desktop operating systems leave on removable media.
@@ -218,6 +219,50 @@ pub fn read(id: &str) -> Option<Vec<u8>> {
     read_in(&ROOTS.iter().map(PathBuf::from).collect::<Vec<_>>(), id)
 }
 
+/// Where the stock reader keeps its database, relative to the card.
+const STOCK_DATABASE: &str = ".kobo/KoboReader.sqlite";
+
+/// The documents under `roots`, plus the stock library a copy of the card
+/// holds at its first root.
+///
+/// The reader lists the stock reader's database from its card. A simulator's
+/// library folder stands in for the card, so a database kept where the card
+/// keeps one is read the same way, and the shelf of Kobo Store books can be
+/// seen and tried without a reader.
+#[must_use]
+pub fn list_with_stock_in(roots: &[PathBuf]) -> Listing {
+    let mut listing = list_in(roots);
+    if let Some(card) = roots.first() {
+        let database = card.join(STOCK_DATABASE);
+        if database.is_file() {
+            nickel::merge_from(&mut listing, &database, roots, Some(card));
+        }
+    }
+    listing
+}
+
+/// The bytes of a document [`list_with_stock_in`] listed.
+///
+/// A stock-library book is named by its path. On the reader that path comes
+/// from the reader's own database; here the database is a copy anybody could
+/// have written, so a book it names is read only from inside one of `roots`.
+#[must_use]
+pub fn read_with_stock_in(roots: &[PathBuf], id: &str) -> Option<Vec<u8>> {
+    let Some(path) = id.strip_prefix("n/") else {
+        return read_in(roots, id);
+    };
+    let real = Path::new(path).canonicalize().ok()?;
+    let inside = roots
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .any(|root| real.starts_with(root));
+    if inside {
+        nickel::read(id)
+    } else {
+        None
+    }
+}
+
 /// The wire form of one listing entry.
 #[must_use]
 pub fn to_wire(entry: Entry) -> kobo_protocol::LibraryEntry {
@@ -240,7 +285,7 @@ pub fn to_wire(entry: Entry) -> kobo_protocol::LibraryEntry {
 /// Truncates to the wire bound on a character boundary, never producing an
 /// empty title: the encoder refuses those, and one overlong Japanese title
 /// would otherwise drop the whole listing.
-fn clip_title(title: &str) -> String {
+pub(crate) fn clip_title(title: &str) -> String {
     let mut out = String::new();
     for ch in title.chars() {
         let mut buf = [0; 4];
@@ -299,7 +344,7 @@ fn walk(
             continue;
         };
         if kind.is_dir() {
-            if SKIPPED.contains(&name) {
+            if skipped_directory(name) {
                 continue;
             }
             walk(root, &path, root_index, depth + 1, listing, seen);
@@ -311,10 +356,13 @@ fn walk(
         if !kind.is_file() {
             continue;
         }
-        let Some(document) = Kind::from_name(name) else {
+        let named = Kind::from_name(name);
+        let Some(document) = named.or_else(|| is_unnamed_epub(&path, name).then_some(Kind::Epub))
+        else {
             continue;
         };
-        let bytes = entry.metadata().map_or(0, |data| data.len());
+        let metadata = entry.metadata().ok();
+        let bytes = metadata.as_ref().map_or(0, fs::Metadata::len);
         if bytes == 0 || bytes > MAX_DOCUMENT_BYTES {
             continue;
         }
@@ -324,9 +372,15 @@ fn walk(
         let Some(relative) = relative.to_str() else {
             continue;
         };
+        let title = if named.is_some() {
+            title_of(name)
+        } else {
+            let modified = metadata.and_then(|data| data.modified().ok());
+            unnamed_title(&path, bytes, modified).unwrap_or_else(|| name.to_owned())
+        };
         listing.entries.push(Entry {
             id: format!("{root_index}/{relative}"),
-            title: title_of(name),
+            title,
             kind: document,
             bytes,
             on_card: true,
@@ -355,6 +409,80 @@ fn title_of(name: &str) -> String {
     name.to_owned()
 }
 
+/// Whether a file with no extension is an EPUB, by its first bytes.
+///
+/// Cobalt applications keep what they download as shelf blobs named
+/// `book-1a2b3c4d`, with no suffix to list them by, so every book Gutenbird
+/// downloaded was invisible here. An EPUB says what it is in its first member:
+/// the format requires a `mimetype` file, stored uncompressed, holding
+/// `application/epub+zip`. Only names without a dot are opened to check, so a
+/// card of photos and archives is not read on the way past.
+fn is_unnamed_epub(path: &Path, name: &str) -> bool {
+    const SIGNATURE: &[u8] = b"application/epub+zip";
+    if name.contains('.') {
+        return false;
+    }
+    let mut head = [0_u8; 512];
+    let Ok(read) = fs::File::open(path).and_then(|mut file| {
+        use std::io::Read as _;
+        file.read(&mut head)
+    }) else {
+        return false;
+    };
+    let head = &head[..read];
+    let field = |at: usize| {
+        head.get(at..at + 2)
+            .map(|bytes| usize::from(u16::from_le_bytes([bytes[0], bytes[1]])))
+    };
+    let (Some(name_len), Some(extra_len)) = (field(26), field(28)) else {
+        return false;
+    };
+    head.starts_with(b"PK\x03\x04")
+        && head.get(30..30 + name_len) == Some(&b"mimetype"[..])
+        && head
+            .get(30 + name_len + extra_len..)
+            .is_some_and(|content| content.starts_with(SIGNATURE))
+}
+
+/// The most an unnamed EPUB is read in full to find its title.
+const MAX_TITLE_READ_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The title an unnamed EPUB gives itself, read once per version of the file.
+///
+/// A blob's name is a key, not a title, and a shelf of `book-1a2b3c4d` is not
+/// a shelf anybody can choose from. The title is in the book's package, which
+/// means reading the archive, so each answer is kept for as long as the
+/// runtime runs and asked again only when the file's size or time changes.
+fn unnamed_title(
+    path: &Path,
+    bytes: u64,
+    modified: Option<std::time::SystemTime>,
+) -> Option<String> {
+    use std::collections::BTreeMap;
+    use std::sync::{Mutex, PoisonError};
+    type Key = (PathBuf, u64, Option<std::time::SystemTime>);
+    static TITLES: Mutex<BTreeMap<Key, Option<String>>> = Mutex::new(BTreeMap::new());
+    let key = (path.to_path_buf(), bytes, modified);
+    if let Some(known) = TITLES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&key)
+    {
+        return known.clone();
+    }
+    let title = (bytes <= MAX_TITLE_READ_BYTES)
+        .then(|| fs::read(path).ok())
+        .flatten()
+        .and_then(|book| kobo_doc::epub::names(&book).ok())
+        .and_then(|description| description.title);
+    let mut titles = TITLES.lock().unwrap_or_else(PoisonError::into_inner);
+    if titles.len() >= MAX_ENTRIES {
+        titles.clear();
+    }
+    titles.insert(key, title.clone());
+    title
+}
+
 /// The path an identifier names, if it names one inside its own root.
 ///
 /// Every part of this is a refusal rather than a repair. An identifier that
@@ -379,10 +507,82 @@ pub fn resolve_in(roots: &[PathBuf], id: &str) -> Option<PathBuf> {
     let candidate = root.join(relative);
     let real = fs::canonicalize(&candidate).ok()?;
     let real_root = fs::canonicalize(root).ok()?;
-    if !real.starts_with(&real_root) || !real.is_file() {
+    if !real.is_file() {
         return None;
     }
-    Some(real)
+    // Only what a listing could have named. A root is a folder of books, but
+    // it is not only books: Cobalt's data root holds every application's own
+    // files, and a simulator's holds its secrets. Reading anything under the
+    // root handed any of those to any application allowed to read a book.
+    let mut parts = real
+        .strip_prefix(&real_root)
+        .ok()?
+        .components()
+        .map(|part| part.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()?;
+    let name = parts.pop()?;
+    if parts.iter().any(|part| skipped_directory(part)) {
+        return None;
+    }
+    (Kind::from_name(name).is_some() || is_unnamed_epub(&real, name)).then_some(real)
+}
+
+/// The folder on the card a computer delivers clipped articles into.
+///
+/// Visible, at the top of the card, because that is where the stock reader
+/// and Books both find books, and where an owner looking over USB expects
+/// them.
+pub const ARTICLES_FOLDER: &str = "Articles";
+
+/// Why an article could not be deleted.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Removal {
+    /// The identifier names nothing deletable: no such file, or a file
+    /// outside the articles folder.
+    NotAnArticle,
+    /// The file is there and the card would not let it go.
+    Refused,
+}
+
+/// Deletes one delivered article, the only write the library allows.
+///
+/// Only an EPUB directly inside [`ARTICLES_FOLDER`] on the first root, the
+/// card, and never through a link: the folder holds only what a computer
+/// delivered, so nothing the owner copied on can be reached by a mistake in
+/// Books or by an identifier somebody edited.
+///
+/// # Errors
+///
+/// [`Removal::NotAnArticle`] for anything else, [`Removal::Refused`] when
+/// the file system will not remove it.
+pub fn remove_article(roots: &[PathBuf], id: &str) -> Result<(), Removal> {
+    let card = roots.first().ok_or(Removal::NotAnArticle)?;
+    let name = id
+        .strip_prefix("0/")
+        .and_then(|relative| relative.strip_prefix(ARTICLES_FOLDER))
+        .and_then(|rest| rest.strip_prefix('/'))
+        .ok_or(Removal::NotAnArticle)?;
+    if name.is_empty()
+        || name.contains('/')
+        || name.starts_with('.')
+        || Kind::from_name(name) != Some(Kind::Epub)
+    {
+        return Err(Removal::NotAnArticle);
+    }
+    let folder = card.join(ARTICLES_FOLDER);
+    let path = folder.join(name);
+    let metadata = fs::symlink_metadata(&path).map_err(|_| Removal::NotAnArticle)?;
+    let folder_metadata = fs::symlink_metadata(&folder).map_err(|_| Removal::NotAnArticle)?;
+    if !metadata.file_type().is_file() || !folder_metadata.file_type().is_dir() {
+        return Err(Removal::NotAnArticle);
+    }
+    fs::remove_file(&path).map_err(|_| Removal::Refused)
+}
+
+/// Whether the walk leaves a directory alone: every hidden one, and the
+/// visible names in [`SKIPPED`].
+pub(crate) fn skipped_directory(name: &str) -> bool {
+    name.starts_with('.') || SKIPPED.contains(&name)
 }
 
 /// The path an identifier names under the compiled-in [`ROOTS`].
@@ -408,11 +608,28 @@ mod nickel {
 
     const DATABASE: &str = "/mnt/onboard/.kobo/KoboReader.sqlite";
 
+    /// Where the reader mounts its card, and so where the database's paths
+    /// begin.
+    const CARD: &str = "/mnt/onboard/";
+
     pub fn merge(listing: &mut Listing) {
-        merge_from(listing, Path::new(DATABASE));
+        let roots: Vec<PathBuf> = ROOTS.iter().map(PathBuf::from).collect();
+        merge_from(listing, Path::new(DATABASE), &roots, None);
     }
 
-    pub fn merge_from(listing: &mut Listing, database: &Path) {
+    /// Adds the stock library's titles to a walk of `roots`.
+    ///
+    /// `card` is where a copy of the card is kept, when the database came off
+    /// a reader: it names its files where the reader mounts the card, and in
+    /// the copy they are under `card` instead. Without that every sideloaded
+    /// book was listed twice, once by the walk and once as a Store title that
+    /// was not downloaded.
+    pub fn merge_from(
+        listing: &mut Listing,
+        database: &Path,
+        roots: &[PathBuf],
+        card: Option<&Path>,
+    ) {
         let Ok(connection) = rusqlite::Connection::open_with_flags(
             database,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -446,18 +663,33 @@ mod nickel {
             if mime.to_ascii_lowercase().contains("mp3") {
                 continue;
             }
-            let named = content_id.strip_prefix("file://").map(Path::new);
-            if named.is_some_and(skipped_internal) {
+            let named = content_id.strip_prefix("file://").map(|path| {
+                match (card, path.strip_prefix(CARD)) {
+                    (Some(card), Some(inside)) => card.join(inside),
+                    _ => PathBuf::from(path),
+                }
+            });
+            if named.as_deref().is_some_and(skipped_internal) {
                 continue;
             }
-            let path = named.filter(|path| path.is_file());
-            if path.is_some_and(|path| already_listed(listing, path)) {
+            let path = named.as_deref().filter(|path| path.is_file());
+            if let Some(listed) = path.and_then(|path| already_listed(listing, path, roots)) {
+                // The walk named it after its file. The stock reader read the
+                // book's own title when it was copied on, and a sideloaded
+                // `austen_pride_v2` is "Pride and Prejudice" there.
+                listing.entries[listed].title = clip_title(&title);
                 continue;
             }
             let on_card = downloaded && path.is_some();
             let Some(kind) = kind_of(&mime, path) else {
                 continue;
             };
+            // A sideloaded file the stock reader still remembers but that is
+            // gone from the card, such as an article deleted in Books, is not
+            // a title waiting to be downloaded: nothing could download it.
+            if named.is_some() && path.is_none() && kind != Kind::Kepub {
+                continue;
+            }
             let id = if let Some(path) = path.and_then(Path::to_str) {
                 format!("n/{path}")
             } else {
@@ -509,23 +741,14 @@ mod nickel {
         }
     }
 
-    fn already_listed(listing: &Listing, path: &Path) -> bool {
-        let Ok(real) = path.canonicalize() else {
-            return false;
-        };
-        ROOTS.iter().enumerate().any(|(index, root)| {
-            let Ok(root) = PathBuf::from(root).canonicalize() else {
-                return false;
-            };
-            real.strip_prefix(&root)
-                .ok()
-                .and_then(|relative| relative.to_str())
-                .is_some_and(|relative| {
-                    listing
-                        .entries
-                        .iter()
-                        .any(|entry| entry.id == format!("{index}/{relative}"))
-                })
+    /// Where the walk already listed this file, if it did.
+    fn already_listed(listing: &Listing, path: &Path, roots: &[PathBuf]) -> Option<usize> {
+        let real = path.canonicalize().ok()?;
+        roots.iter().enumerate().find_map(|(index, root)| {
+            let root = root.canonicalize().ok()?;
+            let relative = real.strip_prefix(&root).ok()?.to_str()?;
+            let id = format!("{index}/{relative}");
+            listing.entries.iter().position(|entry| entry.id == id)
         })
     }
 
@@ -784,6 +1007,281 @@ mod tests {
         )));
     }
 
+    fn a_book_called(title: &str) -> Vec<u8> {
+        kobo_doc::epub::write(
+            title,
+            Some("A. Writer"),
+            &[kobo_doc::epub::Chapter {
+                title: "One".to_owned(),
+                body: "Words.".to_owned(),
+            }],
+        )
+        .expect("a written book")
+    }
+
+    #[test]
+    fn a_book_an_application_kept_without_an_extension_is_listed_by_its_own_title() {
+        let root = scratch("unnamed");
+        let shelf = root.join("gutenbird");
+        fs::create_dir_all(&shelf).expect("an application's shelf");
+        fs::write(
+            shelf.join("book-1a2b3c4d"),
+            a_book_called("The Time Machine"),
+        )
+        .expect("a blob");
+        // A blob that is not a book, and one that only says it is.
+        fs::write(shelf.join("place-1a2b3c4d"), b"position 12").expect("a record");
+        fs::write(shelf.join("feed-cache"), b"PK\x03\x04 not an epub").expect("a zip");
+
+        let listing = list_in(std::slice::from_ref(&root));
+        let found: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.title.as_str(), entry.kind))
+            .collect();
+        assert_eq!(
+            found,
+            [("0/gutenbird/book-1a2b3c4d", "The Time Machine", Kind::Epub)]
+        );
+        assert!(read_in(&[root], "0/gutenbird/book-1a2b3c4d").is_some());
+    }
+
+    #[test]
+    fn only_what_a_listing_could_name_can_be_read() {
+        let root = scratch("readable");
+        let shelf = root.join("readlater");
+        let secrets = root.join(".secrets");
+        fs::create_dir_all(&shelf).expect("an application's folder");
+        fs::create_dir_all(&secrets).expect("a hidden folder");
+        fs::write(shelf.join("Notes.md"), b"# Notes").expect("a listed note");
+        fs::write(shelf.join("book-1a2b3c4d"), a_book_called("Kept")).expect("a kept book");
+        fs::write(shelf.join("articles.json"), b"{}").expect("an app's own file");
+        fs::write(shelf.join("token"), b"hunter2").expect("an app's own blob");
+        fs::write(secrets.join("lichess.epub"), b"not a book").expect("a secret");
+        let roots = [root];
+
+        let listed: Vec<_> = list_in(&roots)
+            .entries
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(
+            listed,
+            ["0/readlater/book-1a2b3c4d", "0/readlater/Notes.md"]
+        );
+        for id in &listed {
+            assert!(
+                read_in(&roots, id).is_some(),
+                "{id} was listed and not readable"
+            );
+        }
+        for id in [
+            "0/readlater/articles.json",
+            "0/readlater/token",
+            "0/.secrets/lichess.epub",
+        ] {
+            assert!(read_in(&roots, id).is_none(), "{id} was readable");
+        }
+    }
+
+    #[test]
+    fn a_sideloaded_book_takes_the_title_the_stock_reader_read_from_it() {
+        let root = scratch("titled");
+        let file = root.join("austen_pride_v2.epub");
+        fs::write(&file, a_book_called("Pride and Prejudice")).expect("a sideloaded book");
+        let database = scratch("titled-db").join("KoboReader.sqlite");
+        let connection = rusqlite::Connection::open(&database).expect("a scratch library");
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE content (ContentID TEXT, Title TEXT, MimeType TEXT,
+                    IsDownloaded TEXT, ___FileSize INTEGER, ContentType TEXT);
+                 INSERT INTO content VALUES ('file://{}', 'Pride and Prejudice',
+                    'application/epub+zip', 'true', 12, '6');",
+                file.canonicalize().expect("a real path").display()
+            ))
+            .expect("the row");
+        drop(connection);
+        let roots = [root];
+        let mut listing = list_in(&roots);
+        super::nickel::merge_from(&mut listing, &database, &roots, None);
+        let titles: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Pride and Prejudice"], "listed once, by its title");
+    }
+
+    #[test]
+    fn a_copy_of_the_card_lists_and_reads_its_stock_library_but_only_inside_the_roots() {
+        let card = scratch("stock-card");
+        let kepubs = card.join(".kobo").join("kepub");
+        fs::create_dir_all(&kepubs).expect("the stock reader's folders");
+        let kepub = kepubs.join("1f7e9c2a");
+        fs::write(&kepub, a_book_called("Piranesi")).expect("a store book");
+        let elsewhere = scratch("stock-elsewhere").join("secret.epub");
+        fs::write(&elsewhere, a_book_called("Not a card book")).expect("a file off the card");
+        let database = card.join(".kobo").join("KoboReader.sqlite");
+        let connection = rusqlite::Connection::open(&database).expect("a scratch library");
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE content (ContentID TEXT, Title TEXT, MimeType TEXT,
+                    IsDownloaded TEXT, ___FileSize INTEGER, ContentType TEXT);
+                 INSERT INTO content VALUES
+                    ('file://{}', 'Piranesi', 'application/x-kobo-epub+zip', 'true', 9, '6'),
+                    ('file://{}', 'Outside', 'application/epub+zip', 'true', 9, '6'),
+                    ('7a866127', 'Cloud Atlas', 'application/x-kobo-epub+zip', 'false', 0, '6');",
+                kepub.canonicalize().expect("a real path").display(),
+                elsewhere.canonicalize().expect("a real path").display(),
+            ))
+            .expect("the rows");
+        drop(connection);
+        let roots = [card];
+        let listing = super::list_with_stock_in(&roots);
+        let found: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| (entry.title.as_str(), entry.kind, entry.on_card))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("Cloud Atlas", Kind::Kepub, false),
+                ("Outside", Kind::Epub, true),
+                ("Piranesi", Kind::Kepub, true),
+            ]
+        );
+        let id = |title: &str| {
+            listing
+                .entries
+                .iter()
+                .find(|entry| entry.title == title)
+                .map(|entry| entry.id.clone())
+                .expect("listed")
+        };
+        assert!(super::read_with_stock_in(&roots, &id("Piranesi")).is_some());
+        assert!(
+            super::read_with_stock_in(&roots, &id("Outside")).is_none(),
+            "a copied database named a file outside the card and it was read"
+        );
+    }
+
+    #[test]
+    fn a_database_copied_off_a_reader_names_the_books_on_the_copy_of_its_card() {
+        let card = scratch("copied-card");
+        fs::write(
+            card.join("austen_pride_v2.epub"),
+            a_book_called("Pride and Prejudice"),
+        )
+        .expect("a sideloaded book");
+        let kepubs = card.join(".kobo").join("kepub");
+        fs::create_dir_all(&kepubs).expect("the stock reader's folders");
+        fs::write(kepubs.join("1f7e9c2a"), a_book_called("Piranesi")).expect("a store book");
+        let database = card.join(".kobo").join("KoboReader.sqlite");
+        let connection = rusqlite::Connection::open(&database).expect("a scratch library");
+        connection
+            .execute_batch(
+                "CREATE TABLE content (ContentID TEXT, Title TEXT, MimeType TEXT,
+                    IsDownloaded TEXT, ___FileSize INTEGER, ContentType TEXT);
+                 INSERT INTO content VALUES
+                    ('file:///mnt/onboard/austen_pride_v2.epub', 'Pride and Prejudice',
+                     'application/epub+zip', 'true', 9, '6'),
+                    ('file:///mnt/onboard/.kobo/kepub/1f7e9c2a', 'Piranesi',
+                     'application/x-kobo-epub+zip', 'true', 9, '6');",
+            )
+            .expect("the rows");
+        drop(connection);
+        let roots = [card];
+        let listing = super::list_with_stock_in(&roots);
+        let found: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| (entry.title.as_str(), entry.on_card))
+            .collect();
+        assert_eq!(found, [("Piranesi", true), ("Pride and Prejudice", true)]);
+        let piranesi = &listing.entries[0].id;
+        assert!(super::read_with_stock_in(&roots, piranesi).is_some());
+    }
+
+    #[test]
+    fn only_an_epub_directly_in_the_articles_folder_can_be_deleted() {
+        let card = scratch("articles");
+        let articles = card.join("Articles");
+        fs::create_dir_all(articles.join("Kept")).expect("the articles folder");
+        fs::write(articles.join("River.epub"), b"article").expect("an article");
+        fs::write(articles.join("notes.txt"), b"notes").expect("a note");
+        fs::write(articles.join("Kept").join("Deep.epub"), b"deeper").expect("a nested book");
+        fs::write(card.join("Bleak House.epub"), b"a book").expect("a book");
+        let roots = [card.clone()];
+        for id in [
+            "0/Bleak House.epub",
+            "0/Articles/notes.txt",
+            "0/Articles/Kept/Deep.epub",
+            "0/Articles/../Bleak House.epub",
+            "1/Articles/River.epub",
+            "0/Articles/Missing.epub",
+            "0/Articles/",
+        ] {
+            assert_eq!(
+                super::remove_article(&roots, id),
+                Err(super::Removal::NotAnArticle),
+                "{id}"
+            );
+        }
+        assert!(card.join("Bleak House.epub").exists());
+        assert!(articles.join("Kept").join("Deep.epub").exists());
+        assert_eq!(
+            super::remove_article(&roots, "0/Articles/River.epub"),
+            Ok(())
+        );
+        assert!(!articles.join("River.epub").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_article_that_is_a_link_to_a_book_elsewhere_is_not_followed() {
+        let card = scratch("articles-link");
+        fs::create_dir_all(card.join("Articles")).expect("the articles folder");
+        fs::write(card.join("Bleak House.epub"), b"a book").expect("a book");
+        std::os::unix::fs::symlink(
+            card.join("Bleak House.epub"),
+            card.join("Articles").join("Bleak House.epub"),
+        )
+        .expect("a link");
+        assert_eq!(
+            super::remove_article(&[card.clone()], "0/Articles/Bleak House.epub"),
+            Err(super::Removal::NotAnArticle)
+        );
+        assert!(card.join("Bleak House.epub").exists());
+    }
+
+    #[test]
+    fn a_sideloaded_book_gone_from_the_card_is_not_listed_as_waiting_to_download() {
+        let card = scratch("gone-card");
+        let database = card.join("KoboReader.sqlite");
+        let connection = rusqlite::Connection::open(&database).expect("a scratch library");
+        connection
+            .execute_batch(&format!(
+                "CREATE TABLE content (ContentID TEXT, Title TEXT, MimeType TEXT,
+                    IsDownloaded TEXT, ___FileSize INTEGER, ContentType TEXT);
+                 INSERT INTO content VALUES
+                    ('file://{}/Articles/River.epub', 'River', 'application/epub+zip',
+                     'true', 9, '6'),
+                    ('7a866127', 'Cloud Atlas', 'application/x-kobo-epub+zip', 'false', 0, '6');",
+                card.display()
+            ))
+            .expect("the rows");
+        drop(connection);
+        let mut listing = super::Listing::default();
+        super::nickel::merge_from(&mut listing, &database, &[card], None);
+        let titles: Vec<_> = listing
+            .entries
+            .iter()
+            .map(|entry| entry.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Cloud Atlas"]);
+    }
+
     #[test]
     fn the_stock_library_names_books_the_walk_cannot_see() {
         let database = scratch("nickel-db").join("KoboReader.sqlite");
@@ -811,7 +1309,7 @@ mod tests {
             .expect("the rows");
         drop(connection);
         let mut listing = super::Listing::default();
-        super::nickel::merge_from(&mut listing, &database);
+        super::nickel::merge_from(&mut listing, &database, &[], None);
         let titles: Vec<_> = listing
             .entries
             .iter()

@@ -153,6 +153,8 @@ fn every_measured_radio_row_targets_its_own_identity_on_later_pages() {
                     let _ = context.take_commands();
                     app.on_action(&mut context, action);
                     assert!(context.take_commands().iter().any(|command| matches!(command,Command::Device(DeviceRequest::ConnectBluetooth {address}) if address == &expected)));
+                    // The radio's answer frees the list for the next tap.
+                    app.bluetooth_busy = None;
                 }
             }
         }

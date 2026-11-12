@@ -25,6 +25,36 @@ pub enum Piece {
     },
 }
 
+/// The first page that holds `query`, ignoring case and line breaks.
+///
+/// A note opened from a search result goes to the words that were searched
+/// for. It used to open where it was last left, which is page one for a note
+/// never read, and the reader had to turn pages looking for the match.
+/// `None` when the words only exist in the note's markup, or run across a
+/// page break, and then the note opens where it was left.
+pub fn page_with(pages: &[Vec<Piece>], query: &str) -> Option<usize> {
+    let flat = |text: &str| {
+        text.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let query = flat(query);
+    if query.is_empty() {
+        return None;
+    }
+    pages.iter().position(|pieces| {
+        let text = pieces
+            .iter()
+            .map(|piece| match piece {
+                Piece::Heading { text, .. } | Piece::Body { text, .. } => text.as_str(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        flat(&text).contains(&query)
+    })
+}
+
 /// The fewest lines of a paragraph worth leaving alone at a page edge, the
 /// same rule the SDK's own paginator keeps.
 const MIN_KEEP_LINES: usize = 2;
@@ -51,15 +81,9 @@ struct Pager {
 
 impl Pager {
     fn new(metrics: DisplayMetrics) -> Self {
-        // The reading screen's own area: the bars above and below, the status
-        // band the runtime draws over everything, and the strip the page
-        // position takes, which is reserved whether or not one is drawn.
-        let mut area = metrics.prose_area_in(true, true, Face::Reading);
-        area.height = area
-            .height
-            .saturating_sub(metrics.status_band_height())
-            .saturating_sub(metrics.page_position_band())
-            .max(1);
+        // The whole panel: a note is drawn with no status band, its bar
+        // hidden until called back over the page, and nothing at its foot.
+        let area = metrics.prose_area_in(false, false, Face::Reading);
         Self {
             metrics,
             area,

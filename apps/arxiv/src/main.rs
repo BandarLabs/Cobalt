@@ -29,6 +29,7 @@ use atom::{Paper, Results};
 use kobo_bookview::offline::{Heard, Keeper, NO_ROOM};
 use kobo_bookview::{BookView, Step};
 use kobo_read::{Memory, Outcome};
+use kobo_sdk::clock::Snapshot;
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, RowLead, Screen, ScreenBuilder,
@@ -578,6 +579,9 @@ struct Arxiv {
     formulae_as_text: bool,
     task: Option<(TaskId, Awaiting)>,
     trouble: Option<String>,
+    /// Whether the last listing failed because the reader is off the
+    /// network, which is the one failure whose fix is on this device.
+    listing_offline: bool,
     /// How far back listings reach.
     window: Window,
     /// Set when Keep was pressed from an abstract, so that the fetch it
@@ -635,6 +639,10 @@ struct Arxiv {
     /// held until the reader can be given it.
     place: Option<Memory>,
 }
+
+/// Said when Keep fetched a paper longer than the reader fetches whole.
+const TOO_LONG_TO_KEEP: &str =
+    "This paper is too long to keep for offline reading. Full text shows its beginning.";
 
 /// The store key a paper's reading position is written under.
 fn place_key(id: &str) -> String {
@@ -852,6 +860,7 @@ impl Arxiv {
             query.expression(self.window, today())
         );
         self.trouble = None;
+        self.listing_offline = false;
         match context.spawn_retrying(Task::Fetch {
             url,
             offset: 0,
@@ -906,7 +915,11 @@ impl Arxiv {
     fn reflow_abstract(&mut self, context: &Context) {
         let Some(paper) = self.paper() else { return };
         let blocks = std::iter::once(AbstractBlock::Title(paper.title.clone()))
-            .chain(fact_lines(paper).into_iter().map(AbstractBlock::Fact))
+            .chain(
+                fact_lines(paper, now())
+                    .into_iter()
+                    .map(AbstractBlock::Fact),
+            )
             .chain(
                 paper
                     .summary
@@ -1208,7 +1221,13 @@ impl Arxiv {
         }
         // What is on the reader, said the way every reading application on
         // the device says it, above the papers it counts.
-        screen = screen.secondary(self.ready_offline());
+        // While removing, the line says what a tap on a row now does, since
+        // the trash beside each paper is the only other sign of it.
+        screen = screen.secondary(if self.managing {
+            "Tap a paper to remove it from this reader.".to_owned()
+        } else {
+            self.ready_offline()
+        });
         // Clamped here rather than left to the renderer: a real title runs
         // to two dozen words, and a row's text that does not fit is a screen
         // the renderer refuses outright. Two lines for the title, one for
@@ -1235,6 +1254,16 @@ impl Arxiv {
             .iter()
             .map(|(title, summary)| (title.as_str(), summary.as_str()))
             .collect();
+        // A kept paper opens straight into its text, which has no Remove of
+        // its own, so the library is where papers leave. The mark in the top
+        // bar turns every row into the removal of itself, as Manage does in
+        // Saved; the bar rather than the foot, because at the largest type a
+        // failure banner and a bottom control leave no room for a paper.
+        screen = if self.managing {
+            screen.top_bar_glyph(DONE, "Done", Glyph::Check)
+        } else {
+            screen.top_bar_glyph(MANAGE, "Remove papers", Glyph::Trash)
+        };
         let pages = context.paginate_rows_under(
             &borrowed,
             false,
@@ -1243,6 +1272,11 @@ impl Arxiv {
         );
         let page = self.library_page.min(pages.len().saturating_sub(1));
         let shown = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let lead = if self.managing {
+            Glyph::Trash
+        } else {
+            Glyph::Bookmark
+        };
         screen = screen.rows(shown.iter().filter_map(|index| {
             self.library
                 .get(*index)
@@ -1252,7 +1286,7 @@ impl Arxiv {
                         format!("{KEPT}{index}"),
                         title.clone(),
                         summary.clone(),
-                        RowLead::Icon(Glyph::Bookmark),
+                        RowLead::Icon(lead),
                     )
                 })
         }));
@@ -1345,35 +1379,33 @@ impl Arxiv {
             .map_or_else(|| "Preprints".to_owned(), Query::title);
         let mut screen = ScreenBuilder::new("arxiv-listing").top_bar(title);
         let failed = self.papers.is_empty() && self.trouble.is_some();
-        if let Some(trouble) = &self.trouble {
-            let level = if failed {
-                BannerLevel::Error
+        if failed && !self.waiting_for(Awaiting::Listing) {
+            // A listing that never arrived is not a listing with nothing in
+            // it, so it is drawn as the failure it is, with the way out of
+            // it. Off the network that is Join Wi-Fi beside Try again: the
+            // banner here used to say "Join Wi-Fi and try again" and offer
+            // only Try again, which fails the same way on a reader with no
+            // network. The date window is not offered either, since no date
+            // range brings a listing back that the network never sent.
+            return if self.listing_offline {
+                screen.failure_state(kobo_sdk::Failure::of(TaskError::Offline), RETRY_LISTING)
             } else {
-                BannerLevel::Attention
-            };
-            screen = screen.banner(level, trouble.clone());
+                screen
+                    .error_state(self.trouble.clone().unwrap_or_default())
+                    .primary_button(RETRY_LISTING, "Try again")
+            }
+            .build();
+        }
+        if let Some(trouble) = &self.trouble {
+            screen = screen.banner(BannerLevel::Attention, trouble.clone());
         }
         if self.waiting_for(Awaiting::Listing) {
             return placeholder(context, &screen);
-        }
-        if failed {
-            // The one thing that can change a listing that never arrived goes
-            // on the banner saying why, rather than in a button of its own
-            // under it.
-            screen = screen.banner_action(RETRY_LISTING, "Try again");
         }
         // The window control carries its own state as its label, so the
         // one button is both the way to change the reach of the listing and
         // the only place that says what the reach currently is.
         let narrowing = (WINDOW, self.window.label(), Glyph::Filter);
-        if failed {
-            // A listing that never arrived is not a listing with nothing in
-            // it. The banner says why and carries the retry, rather than
-            // advice about search words that were never the problem.
-            return screen
-                .bottom_action_marked(narrowing.0, narrowing.1, narrowing.2)
-                .build();
-        }
         if self.papers.is_empty() {
             return screen
                 .splash(
@@ -1645,14 +1677,24 @@ impl Arxiv {
             self.upgrading.insert(paper.id.clone());
         }
         if std::mem::take(&mut self.keep_when_fetched) {
+            // Keep was the errand, not reading, so the reader stays on the
+            // abstract it was tapped from. Opening the full text used to hide
+            // the one sentence saying a paper could not be kept.
             if self.fetched.is_some() {
                 self.keep_paper(context);
             } else {
                 // Half a paper is not worth a place in a library that exists
                 // to be read without a network.
-                self.trouble =
-                    Some("Only part of this paper arrived, so it was not kept.".to_owned());
+                self.trouble = Some(TOO_LONG_TO_KEEP.to_owned());
             }
+            // The book goes without its place being written: it was opened at
+            // that place and never read, and writing it would only repeat it.
+            self.book.close(context);
+            self.truncated = false;
+            self.formulae_as_text = false;
+            self.fetched = None;
+            self.view = View::Paper;
+            self.open_abstract(context);
         }
     }
 
@@ -1671,9 +1713,9 @@ impl Arxiv {
         // shows is a kept paper the reader cannot find again without
         // a network.
         if self.is_offline(&paper.id) {
-            format!("offline \u{b7} {}", row_summary(paper))
+            format!("offline \u{b7} {}", row_summary(paper, now()))
         } else {
-            row_summary(paper)
+            row_summary(paper, now())
         }
     }
 
@@ -1950,16 +1992,49 @@ fn paper_body(html: &str) -> &str {
         .map_or(body, |end| &body[..end + "</article>".len()])
 }
 
+/// The reader's clock, read once per screen.
+fn now() -> Option<Snapshot> {
+    use kobo_sdk::clock::Clock as _;
+    kobo_sdk::clock::SystemClock::reader().now().ok()
+}
+
+/// A calendar day as the reader would say it: "Today", "Yesterday", "5 Nov".
+///
+/// arXiv's day carries no time anybody wants, so it is placed at noon on the
+/// reader's own calendar before it is said. Midnight in Greenwich would be
+/// the evening before in California, and "Today" never needs a time.
+fn spoken_day(day: &str, now: Snapshot) -> Option<String> {
+    let midnight = kobo_sdk::when::stamp_millis(day.get(..10)?)?;
+    let noon = midnight
+        .checked_add(12 * 3_600_000)?
+        .checked_add_signed(-i64::from(now.utc_offset_minutes) * 60_000)?;
+    let said = kobo_sdk::when::spoken(noon, now)?;
+    Some(if said.starts_with("Today") {
+        "Today".to_owned()
+    } else {
+        said
+    })
+}
+
+/// "Today" and "Yesterday" lower-cased for the middle of a sentence.
+fn in_sentence(day: &str) -> String {
+    match day {
+        "Today" => "today".to_owned(),
+        "Yesterday" => "yesterday".to_owned(),
+        other => other.to_owned(),
+    }
+}
+
 /// The line under a paper's title in a list: who wrote it, when, and where it
 /// sits. Three facts, because a row has one line for them.
-fn row_summary(paper: &Paper) -> String {
+fn row_summary(paper: &Paper, now: Option<Snapshot>) -> String {
     let mut parts = Vec::new();
     let byline = paper.byline();
     if !byline.is_empty() {
         parts.push(byline);
     }
-    if !paper.published.is_empty() {
-        parts.push(paper.published.clone());
+    if let Some(day) = now.and_then(|now| spoken_day(&paper.published, now)) {
+        parts.push(day);
     }
     if let Some(primary) = paper.categories.first() {
         parts.push(primary.clone());
@@ -1970,7 +2045,7 @@ fn row_summary(paper: &Paper) -> String {
 /// The facts that decide whether a paper is worth reading, one per line, in
 /// the order a reader asks for them: who wrote it, where it sits, when it
 /// came, and anything the authors thought to add.
-fn fact_lines(paper: &Paper) -> Vec<String> {
+fn fact_lines(paper: &Paper, now: Option<Snapshot>) -> Vec<String> {
     let mut lines = Vec::new();
     let byline = paper.byline();
     if !byline.is_empty() {
@@ -1979,15 +2054,18 @@ fn fact_lines(paper: &Paper) -> Vec<String> {
     if !paper.categories.is_empty() {
         lines.push(paper.categories.join(", "));
     }
-    if !paper.published.is_empty() {
+    let said = |day: &str| {
+        now.and_then(|now| spoken_day(day, now))
+            .map(|day| in_sentence(&day))
+    };
+    if let Some(submitted) = said(&paper.published) {
         // Both dates, but only when they differ: a paper revised twice is a
         // different thing from the one first posted, and saying so costs a
         // line only for the papers where it is true.
         lines.push(
-            if paper.updated.is_empty() || paper.updated == paper.published {
-                format!("Submitted {}", paper.published)
-            } else {
-                format!("Submitted {}, revised {}", paper.published, paper.updated)
+            match said(&paper.updated).filter(|_| paper.updated != paper.published) {
+                Some(revised) => format!("Submitted {submitted}, revised {revised}"),
+                None => format!("Submitted {submitted}"),
             },
         );
     }
@@ -2037,6 +2115,12 @@ fn page_total(pages: usize) -> u16 {
 }
 
 impl KoboApp for Arxiv {
+    /// arXiv's wordmark is red. The bar takes the same colour so the reader
+    /// knows which archive this is.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Red)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(LIBRARY_KEY);
         context.store().load(SEARCHES_KEY);
@@ -2156,6 +2240,7 @@ impl KoboApp for Arxiv {
         if action == action_id(LIBRARY) {
             self.trouble = None;
             self.library_page = 0;
+            self.managing = false;
             self.view = View::Library;
             self.show(context);
             return;
@@ -2411,6 +2496,16 @@ impl KoboApp for Arxiv {
 
         for index in 0..self.library.len() {
             if action == action_id(&format!("{KEPT}{index}")) {
+                if self.managing {
+                    if let Some(id) = self.library.get(index).map(|kept| kept.id.clone()) {
+                        self.discard_paper(context, &id);
+                    }
+                    if self.library.is_empty() {
+                        self.managing = false;
+                    }
+                    self.show(context);
+                    return;
+                }
                 self.close_paper(context);
                 self.from_library = true;
                 self.open_kept(context, index);
@@ -2699,7 +2794,13 @@ impl Arxiv {
                 Awaiting::Listing => self.took_listing(&bytes),
                 Awaiting::FullText => self.took_full_text(context, &bytes),
             },
-            TaskOutcome::Failed(error) => self.trouble = Some(explain(error, awaiting)),
+            TaskOutcome::Failed(error) => {
+                // A keep whose fetch failed is over; the next Full text is
+                // for reading.
+                self.keep_when_fetched = false;
+                self.listing_offline = awaiting == Awaiting::Listing && error == TaskError::Offline;
+                self.trouble = Some(explain(error, awaiting));
+            }
             TaskOutcome::Cancelled => {}
         }
         self.show(context);
@@ -2741,19 +2842,31 @@ fn main() -> ExitCode {
 mod tests {
     use super::{
         blob_key, decode_library, decode_list, encode_library, encode_list, escape, escape_path,
-        fact_lines, kept_summary, paper_body, place_key, row_summary, stamp, Arxiv, Kept, Query,
-        View, Window, ABSTRACT, DISCARD, DONE, FOLLOW, FOLLOWED_KEY, FULL_TEXT, KEEP, LIBRARY_KEY,
-        MANAGE, MAX_SAVED, SAVED, SAVE_SEARCH, SEARCHES_KEY, SSEARCH, SUBJECTS, UNFOLLOW, WINDOW,
+        fact_lines, kept_summary, paper_body, place_key, row_summary, spoken_day, stamp, Arxiv,
+        Kept, Query, View, Window, ABSTRACT, DISCARD, DONE, FOLLOW, FOLLOWED_KEY, FULL_TEXT, KEEP,
+        LIBRARY_KEY, MANAGE, MAX_SAVED, SAVED, SAVE_SEARCH, SEARCHES_KEY, SSEARCH, SUBJECTS,
+        UNFOLLOW, WINDOW,
     };
     use super::{group_subjects, GROUP, GROUPS, LIBRARY, SUBJECT};
     use crate::atom::Paper;
     use kobo_bookview::offline::{Kept as KeptFile, INDEX_KEY};
     use kobo_read::Memory;
+    use kobo_sdk::clock::Snapshot;
     use kobo_sdk::StoreResult;
     use kobo_sdk::{
         action_id, is_valid_key, ActionId, AppRunner, Command, StoreRequest, Task, TaskError,
         TaskId, TaskOutcome,
     };
+
+    /// 1 June 2024, noon at Greenwich: a clock in the same year as
+    /// [`paper`], so its days are said without one.
+    fn june() -> Snapshot {
+        Snapshot {
+            unix_millis: kobo_sdk::when::stamp_millis("2024-06-01T12:00:00Z").expect("a stamp"),
+            monotonic_millis: 0,
+            utc_offset_minutes: 0,
+        }
+    }
 
     fn paper() -> Paper {
         Paper {
@@ -2889,7 +3002,7 @@ mod tests {
                 summary: summary.clone(),
                 ..paper()
             };
-            let facts = fact_lines(&paper).join(" ");
+            let facts = fact_lines(&paper, super::now()).join(" ");
             let mut app = Arxiv {
                 view: View::Paper,
                 open: Some(0),
@@ -3184,6 +3297,21 @@ mod tests {
         assert!(rendered.contains("not on a network"), "{rendered}");
         assert!(rendered.contains("Try again"), "{rendered}");
         assert!(!rendered.contains("No papers found"), "{rendered}");
+        let screen = runner.app().listing(&context);
+        let layout = screen.layout_with(
+            &kobo_sdk::CLARA_BW_METRICS,
+            &kobo_sdk::Chrome::measuring(true),
+        );
+        assert!(
+            layout
+                .rect_of_action(action_id(kobo_sdk::JOIN_WIFI))
+                .is_some(),
+            "offline, the way to join a network is offered beside Try again: {rendered}"
+        );
+        assert!(
+            layout.rect_of_action(action_id(WINDOW)).is_none(),
+            "no date range brings back a listing the network never sent: {rendered}"
+        );
         let commands = runner.action(action_id(super::RETRY_LISTING));
         assert!(commands.iter().any(|command| matches!(
             command,
@@ -3288,8 +3416,8 @@ mod tests {
         }
     }
 
-    /// A listing that never arrived says so with its retry on the banner,
-    /// and the banner, its action and the date window fit at every size.
+    /// A listing that never arrived says so with its retry, and both fit at
+    /// every size.
     #[test]
     fn a_listing_that_never_arrived_fits_its_retry_at_every_text_size() {
         for metrics in text_size_metrics() {
@@ -3394,13 +3522,13 @@ mod tests {
     /// it, so they have to be there and be right.
     #[test]
     fn an_abstract_is_set_under_the_facts_that_decide_whether_to_read_it() {
-        let lines = fact_lines(&paper());
+        let lines = fact_lines(&paper(), Some(june()));
         assert_eq!(
             lines,
             [
                 "Ada Lovelace, Alan Turing",
                 "cs.LG, cs.CL",
-                "Submitted 2024-01-01, revised 2024-01-09",
+                "Submitted 1 Jan, revised 9 Jan",
                 "12 pages",
             ]
         );
@@ -3451,8 +3579,8 @@ mod tests {
             updated: "2024-01-01".into(),
             ..paper()
         };
-        let lines = fact_lines(&never);
-        assert!(lines.iter().any(|line| line == "Submitted 2024-01-01"));
+        let lines = fact_lines(&never, Some(june()));
+        assert!(lines.iter().any(|line| line == "Submitted 1 Jan"));
         assert!(!lines.iter().any(|line| line.contains("revised")));
     }
 
@@ -3522,9 +3650,40 @@ mod tests {
     #[test]
     fn a_row_says_who_wrote_it_when_and_where_it_sits() {
         assert_eq!(
-            row_summary(&paper()),
-            "Ada Lovelace, Alan Turing \u{00b7} 2024-01-01 \u{00b7} cs.LG"
+            row_summary(&paper(), Some(june())),
+            "Ada Lovelace, Alan Turing \u{00b7} 1 Jan \u{00b7} cs.LG"
         );
+    }
+
+    /// A day is said against the reader's own calendar, and "Today" has no
+    /// time because arXiv never gave one.
+    #[test]
+    fn a_submission_day_is_said_the_way_the_reader_would_say_it() {
+        let at = |stamp: &str, offset: i16| Snapshot {
+            unix_millis: kobo_sdk::when::stamp_millis(stamp).expect("a stamp"),
+            monotonic_millis: 0,
+            utc_offset_minutes: offset,
+        };
+        let now = at("2026-11-06T09:30:00Z", 0);
+        assert_eq!(spoken_day("2026-11-06", now).as_deref(), Some("Today"));
+        assert_eq!(spoken_day("2026-11-05", now).as_deref(), Some("Yesterday"));
+        assert_eq!(spoken_day("2026-11-03", now).as_deref(), Some("3 Nov"));
+        assert_eq!(spoken_day("2025-11-03", now).as_deref(), Some("3 Nov 2025"));
+        // Early evening in California is still the 5th there, and a paper
+        // dated the 5th is today's.
+        let california = at("2026-11-06T01:00:00Z", -480);
+        assert_eq!(
+            spoken_day("2026-11-05", california).as_deref(),
+            Some("Today")
+        );
+        assert_eq!(spoken_day("", now), None);
+        let paper = Paper {
+            published: "2026-11-05".into(),
+            updated: "2026-11-06".into(),
+            ..paper()
+        };
+        assert!(fact_lines(&paper, Some(now))
+            .contains(&"Submitted yesterday, revised today".to_owned()));
     }
 
     #[test]
@@ -3533,7 +3692,7 @@ mod tests {
             title: "Untitled".into(),
             ..Paper::default()
         };
-        assert_eq!(row_summary(&bare), "");
+        assert_eq!(row_summary(&bare, Some(june())), "");
     }
 
     /// Back out of the full text lands on the abstract it was opened from, not
@@ -4507,6 +4666,11 @@ mod tests {
             "the fetch it started did not end in the library"
         );
         assert!(written(&commands).is_some(), "nothing reached the shelf");
+        assert_eq!(
+            runner.app().view,
+            View::Paper,
+            "keeping opened the paper instead of staying on the abstract"
+        );
     }
 
     /// A file the reader refuses takes the paper back out of the library
@@ -4544,6 +4708,54 @@ mod tests {
             !runner.app().is_kept(&paper().id),
             "half a paper was put in a library meant for reading offline"
         );
+    }
+
+    /// Keep is tapped on the abstract, so the answer is said there: a paper
+    /// too long to fetch whole used to open its text instead, which hid the
+    /// sentence saying nothing had been kept.
+    #[test]
+    fn keeping_a_paper_too_long_to_fetch_whole_says_so_on_the_abstract() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        runner.app_mut().papers = vec![paper()];
+        runner.app_mut().open = Some(0);
+        runner.app_mut().view = View::Paper;
+        runner.start();
+        keeper_ready(&mut runner);
+        runner.action(action_id(KEEP));
+        let task = runner.app().task.expect("no fetch").0;
+        runner.task_outcome(
+            task,
+            TaskOutcome::Completed(b"<article><p>Half of a pa".to_vec()),
+        );
+        assert_eq!(runner.app().view, View::Paper);
+        assert!(!runner.app().is_kept(&paper().id));
+        let screen = format!("{:?}", runner.app().reading());
+        assert!(screen.contains("too long to keep"), "{screen}");
+    }
+
+    /// A kept paper opens straight into its text, so the library has to be
+    /// able to let it go.
+    #[test]
+    fn manage_in_the_library_removes_a_kept_paper_and_its_file() {
+        let mut runner = AppRunner::new(Arxiv::default());
+        let _ = opened_on(&mut runner, "<article><p>Words.</p></article>");
+        keeper_ready(&mut runner);
+        let commands = runner.action(action_id(KEEP));
+        let (name, bytes) = written(&commands).expect("nothing was written");
+        let _ = acknowledge(&mut runner, &name, &bytes);
+        runner.action(ActionId::BACK);
+        runner.action(ActionId::BACK);
+        runner.action(action_id(LIBRARY));
+        assert_eq!(runner.app().view, View::Library);
+        runner.action(action_id(MANAGE));
+        let commands = runner.action(action_id("kept-0"));
+        assert!(runner.app().library.is_empty(), "the paper is still listed");
+        let removed = commands.iter().any(|command| {
+            matches!(command, Command::Store(StoreRequest::ShelfRemove { name: removed })
+                if *removed == name)
+        });
+        assert!(removed, "the paper's file stayed on the shelf");
+        assert!(!runner.app().managing, "an empty library is left managing");
     }
 
     /// Changing the window asks the question again rather than filtering what

@@ -18,10 +18,11 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
-            Self::TooLarge => {
-                "This saved item is too large to read. Keep a copy before replacing it."
-            }
-            Self::Corrupt => "This saved item could not be read. Keep a copy before replacing it.",
+            // Nothing on the reader can copy or replace a saved item, so the
+            // message says only what happened. Decoding never touches the
+            // source, and the apps that show this say it was kept.
+            Self::TooLarge => "This saved item is too large to read.",
+            Self::Corrupt => "This saved item could not be read.",
             Self::WrongSchema => "This saved item belongs to a different collection.",
             Self::NewerVersion => "Update the app to open this saved item.",
             Self::MigrationUnavailable => {

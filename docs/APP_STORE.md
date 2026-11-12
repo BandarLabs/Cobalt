@@ -13,11 +13,22 @@ Cobalt platform releases and Store app releases are separate:
 
 Readers on the default **Stable** update channel use:
 
-- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json`
-- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig`
+- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog-v2.json`
+- `https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog-v2.json.sig`
 
-Readers whose owner enables **Beta updates** use the isolated
-`app-catalog-beta` release instead. Its catalog and detached signature are
+Runtimes up to 0.3.33 read `cobalt-app-catalog.json` and its `.sig` from the
+same release instead. That file is the same catalog, signed separately, with
+each app's mark replaced by a glyph those runtimes draw, because they refuse a
+whole catalog over a glyph name they do not know. The replacement for each
+mark is fixed in `kobo_app_store` (`MARKS` in `model.rs`), and an entry may
+wear a mark only when it requires 0.3.34 or later, so those runtimes never try
+to install a bundle that differs from its entry. A runtime from 0.3.34 falls
+back to the earlier file only when the release has no `cobalt-app-catalog-v2.json`,
+and installs from it by accepting a bundle whose manifest differs from its
+entry in that stand-in glyph alone.
+
+Readers whose owner chooses **Beta** under **Settings ▸ Software update** use
+the isolated `app-catalog-beta` release instead. Its catalog and detached signature are
 cached separately from Stable, and both channels are verified with the same
 public Ed25519 release key. Switching back to Stable changes future refreshes
 only: installed apps are not removed or downgraded. A higher beta app version
@@ -29,7 +40,7 @@ Each catalog app also has a shareable page at
 `https://bandarlabs.github.io/Cobalt/apps/<app-id>/`. A reader can link a
 browser without creating an account:
 
-1. Open **App Store** on the Kobo and tap the globe in the top bar to reach **Install links**.
+1. Open **App Store** on the Kobo and tap **Link a browser** in the top bar.
 2. Scan the QR code, or open the displayed address and enter its pairing code
    and verification key.
 3. Choose **Install** on an app page.
@@ -65,9 +76,13 @@ kobo app-link unpair --device <reader-address>
 
 ## Registry
 
-Store apps are workspace packages declared in `apps/catalog.json`. The
-registry supplies public metadata; binary size and SHA-256 are calculated from
-the exact ARM release binary during publishing.
+Store apps are workspace packages, each declared by its own
+`apps/<app-id>/cobalt-app.json` (or `examples/<app-id>/cobalt-app.json` for an
+app bundled with Cobalt). `node tools/collect-app-registry.mjs --out PATH`
+assembles them, with the base entries in `apps/catalog.json`, into the
+registry the `kobo app-*` commands read. The registry supplies public
+metadata; binary size and SHA-256 are calculated from the exact ARM release
+binary during publishing.
 
 `tools/protocol-minimums.json` maps SDK protocols and newer capabilities to
 their first compatible Cobalt release. A future protocol cannot publish until
@@ -78,8 +93,10 @@ in `tools/protocol-minimums.json`, and the publishing check rejects a lower
 value. Newer runtimes keep accepting older protocols, so installed apps, their
 state and their secrets keep working after a Cobalt update.
 
-Apps bundled with Cobalt are registered too. They appear as installed in Store
-and can be updated, removed and reinstalled through the same signed channel.
+Apps bundled with Cobalt are registered too. They appear as installed in App
+Store and can be updated, removed and reinstalled through the same signed
+channel. Settings and Terminal are the exception: they are part of Cobalt and
+cannot be removed.
 
 See [CONTRIBUTING_APPS.md](CONTRIBUTING_APPS.md) for the contribution format.
 
@@ -117,8 +134,9 @@ fails if the seed does not derive the public key pinned in released runtimes.
 For local release validation:
 
 ```sh
+node tools/collect-app-registry.mjs --out target/app-registry.json
 kobo app-release \
-  --registry apps/catalog.json \
+  --registry target/app-registry.json \
   --seed /secure/cobalt-app-signing-seed \
   --out dist/apps \
   --base-url https://github.com/BandarLabs/Cobalt/releases/download/app-catalog
@@ -133,7 +151,7 @@ A local Clara BW can run the complete flow without a tagged Cobalt release:
 2. Build signed app assets with `kobo app-release`.
 3. Upload those assets to the fixed `app-catalog` release with
    `gh release upload app-catalog dist/apps/* --clobber`.
-4. On the reader, refresh Store and test install, update, uninstall, and
+4. On the reader, refresh App Store and test install, update, uninstall, and
    reinstall.
 
 This does not create a `v*` platform tag. Updating `app-catalog` affects every

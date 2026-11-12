@@ -1,0 +1,33 @@
+# The time zone is picked by region, then city, and the city picked is what
+# Settings shows from then on. With nothing chosen the network may suggest
+# a city above the regions, so the route taps regions by name.
+wait-for Settings
+wait-for Time zone
+expect Not set
+tap Time zone
+wait-for Africa
+expect Americas
+expect Europe
+expect-missing UTC
+shot time-zone-regions
+tap Africa
+wait-for Accra
+expect Abidjan
+expect-missing Kolkata
+shot time-zone-africa
+tap Accra
+wait-for Settings
+expect Accra
+shot time-zone-kept
+# The region names the city kept in it, and opens with it marked.
+tap Time zone
+wait-for Africa
+expect Accra
+expect-missing Suggested
+tap Africa
+wait-for Accra
+shot time-zone-chosen
+tap-id 4294967295
+wait-for Americas
+tap-id 4294967295
+wait-for Settings

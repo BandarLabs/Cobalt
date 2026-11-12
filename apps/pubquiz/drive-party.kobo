@@ -1,0 +1,164 @@
+# sweep: --bare
+# A pass-around round for three, played to the podium: renaming a player,
+# the names surviving a restart, each kind of verdict, a hand-over that
+# survives a restart without showing the last answer, and a shared win.
+wait-for Play with friends
+tap Play with friends
+expect Pass-around round
+tap Choose players
+expect How many
+tap 3
+expect Cleo
+# Renaming starts from the name already there.
+tap Bert
+expect Rename player
+expect Letters and digits, twelve characters or fewer.
+expect Bert
+clean
+shot party-rename
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+# Anything but letters and digits is left out of a name.
+type zed!
+tap-id kb.enter
+expect zed
+expect-missing Bert
+expect-missing zed!
+clean
+shot party-players
+# The player count and names are kept for the next table.
+restart
+wait-for Play with friends
+tap Play with friends
+tap Choose players
+expect zed
+expect Cleo
+expect-missing Bert
+tap Start round
+expect Ada's turn
+expect Science · Question 1 of 10
+clean
+shot party-question
+# Question 1: Ada and zed are right, Cleo is not.
+tap-id answer-0
+expect Pass to zed
+expect Ada has answered.
+expect-missing Mercury
+tap-id show-question
+expect zed's turn
+tap-id answer-0
+expect Pass to Cleo
+# The hand-over is kept through a restart and still hides the question.
+restart
+wait-for Pass to Cleo
+expect-missing Mercury
+expect-missing Which planet
+clean
+shot party-pass-restarted
+tap-id show-question
+expect Cleo's turn
+tap-id answer-1
+expect Ada and zed got it
+expect Right answer · Ada and zed
+expect Cleo
+expect Scores
+clean
+shot party-reveal-some
+tap Next question
+expect Question 2 of 10
+# Question 2: everyone is wrong.
+tap-id answer-0
+tap-id show-question
+tap-id answer-0
+tap-id show-question
+tap-id answer-0
+expect Nobody got it
+tap Next question
+# Question 3: everyone is right.
+tap-id answer-0
+tap-id show-question
+tap-id answer-0
+tap-id show-question
+tap-id answer-0
+expect Everyone got it
+clean
+shot party-reveal-everyone
+tap Next question
+# Question 4: Ada and zed right, Cleo wrong.
+expect Question 4 of 10
+tap-id answer-1
+tap-id show-question
+tap-id answer-1
+tap-id show-question
+tap-id answer-2
+expect Ada and zed got it
+tap Next question
+# Question 5: Ada and zed right, Cleo wrong.
+expect Question 5 of 10
+tap-id answer-2
+tap-id show-question
+tap-id answer-2
+tap-id show-question
+tap-id answer-3
+expect Ada and zed got it
+tap Next question
+# Question 6: Ada and zed right, Cleo wrong.
+expect Question 6 of 10
+tap-id answer-2
+tap-id show-question
+tap-id answer-2
+tap-id show-question
+tap-id answer-3
+expect Ada and zed got it
+tap Next question
+# Question 7: Ada and zed right, Cleo wrong.
+expect Question 7 of 10
+tap-id answer-1
+tap-id show-question
+tap-id answer-1
+tap-id show-question
+tap-id answer-2
+expect Ada and zed got it
+tap Next question
+# Question 8: Ada and zed right, Cleo wrong.
+expect Question 8 of 10
+tap-id answer-0
+tap-id show-question
+tap-id answer-0
+tap-id show-question
+tap-id answer-1
+expect Ada and zed got it
+tap Next question
+# Question 9: Ada and zed right, Cleo wrong.
+expect Question 9 of 10
+tap-id answer-2
+tap-id show-question
+tap-id answer-2
+tap-id show-question
+tap-id answer-3
+expect Ada and zed got it
+tap Next question
+# Question 10: Ada and zed right, Cleo wrong.
+expect Question 10 of 10
+tap-id answer-1
+tap-id show-question
+tap-id answer-1
+tap-id show-question
+tap-id answer-2
+expect Ada and zed got it
+tap See results
+# A tie at the top is a shared win, with tied players in the same place.
+expect Results
+expect Ada and zed share the win
+expect 9 points
+expect 1 point
+clean
+shot party-podium
+tap Done
+expect Ready when you are
+expect 1 round played
+restart
+wait-for 1 round played
+expect-missing Results

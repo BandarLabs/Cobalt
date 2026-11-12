@@ -1,0 +1,10 @@
+# sweep: --seed-root examples/audiobook/fixtures/formats
+# A file that is not audio says it could not be played, and does not offer
+# play, skip or volume controls that can do nothing for it.
+wait-for Audiobooks
+tap Broken Download
+wait-for could not be decoded
+clean
+shot audiobook-broken
+expect-missing Forward 30 sec
+expect-missing Louder

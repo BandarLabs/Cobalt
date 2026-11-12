@@ -1,32 +1,83 @@
+# The browser opens on Pictures, a page at a time.
 expect Nonograms
 expect Picture puzzles
+expect 18 puzzles
+expect House
+expect Not started · 5×5 · Easy
+expect 1 of 4
 expect-missing Earlier
+clean
+shot nonograms-browser
+tap-id next-page
+expect 2 of 4
+expect-missing House
+tap-id previous-page
+expect House
 tap Patterns
 wait-for Pattern puzzles
 expect 60 puzzles
+clean
+shot nonograms-patterns
 tap Photos
 wait-for No photo puzzles yet
 expect kobo nonograms push
 clean
 shot nonograms-photos-empty
+# Add photos explains the push command, and Back returns to the shelf.
+tap Add photos
+expect Send photos
+expect --size N
+clean
+shot nonograms-add-photos
+tap-id 4294967295
+expect No photo puzzles yet
 tap Pictures
 wait-for Picture puzzles
+# How to play runs over pages and comes back to the shelf.
 tap How to play
 expect Use the clues to fill the picture
 wait 250
 clean
 shot nonograms-help
+tap-id help-next
+expect-missing Use the clues to fill the picture
+clean
+shot nonograms-help-2
+tap-id help-previous
+expect Use the clues to fill the picture
 tap Back
+expect Picture puzzles
 tap House
 wait-for-id more
+wait-for-id board.cell.24
+expect 2 2
+# Undo stays greyed out until there is something to take back.
+expect 0/25
+# One tap fills, a second crosses out, a third clears.
 tap-id board.cell.2
 wait-idle
+expect Row 1, column 3, filled
+expect 1/25
+tap-id board.cell.0
+tap-id board.cell.0
+expect Row 1, column 1, crossed out
+tap-id board.cell.0
+expect Row 1, column 1, empty
+tap-id undo
+expect Row 1, column 1, crossed out
+tap-id undo
+tap-id undo
+expect Row 1, column 1, empty
+expect Row 1, column 3, filled
+# A clue opens whole on its own screen.
 tap-id board.column.2
 expect Column 3
 shot nonograms-clue
 tap-id resume
 tap-id more
 wait-for Guided
+expect Restart puzzle
+expect Puzzles
 clean
 shot nonograms-options
 tap Guided
@@ -34,6 +85,92 @@ tap Run entry
 wait-idle
 clean
 shot nonograms-options-on
-tap Resume
+tap Back
 wait-idle
+# Run entry is on, so two taps fill the whole third row.
+tap-id board.cell.10
+expect Tap the other end of the run
+tap-id board.cell.14
+wait-idle
+expect Row 3, column 5, filled
+expect 6/25
 shot nonograms-play
+# A run that turns a corner is refused.
+tap-id board.cell.15
+tap-id board.cell.21
+expect A run must stay in one row or column.
+expect Row 5, column 2, empty
+# Undo takes back a whole run at once.
+tap-id undo
+expect Row 3, column 1, empty
+expect 1/25
+tap-id board.cell.10
+tap-id board.cell.14
+expect 6/25
+# Guided names a line whose marks no longer fit its clues.
+tap-id board.cell.0
+tap-id board.cell.1
+expect Contradiction in row 1.
+clean
+shot nonograms-guided
+tap-id undo
+expect-missing Contradiction
+tap-id more
+tap Run entry
+tap Guided
+tap Back
+# With Guided off the same marks pass without a warning.
+tap-id board.cell.0
+expect-missing Contradiction
+tap-id undo
+# A picture this small is whole on the panel, so there is nothing to pan.
+expect-missing Left
+expect-missing Down
+# Restart asks first, and Resume keeps the marks.
+tap-id more
+tap Restart puzzle
+expect Restart puzzle?
+expect Clear every mark. You can undo this.
+clean
+shot nonograms-restart-confirm
+tap Resume
+expect 6/25
+tap-id more
+tap Restart puzzle
+tap-id confirm-reset
+expect 0/25
+tap-id undo
+expect 6/25
+# A failed save holds the marks and offers a retry.
+scenario storage-full
+tap-id board.cell.6
+wait-idle
+clean
+shot nonograms-save-failed-board
+expect Not saved · More to retry
+tap-id more
+expect Not saved
+expect Retry save
+clean
+shot nonograms-save-refused
+scenario normal
+tap Retry save
+wait-idle
+expect-missing Not saved
+expect Guided
+tap Back
+# Marks and their undo history survive closing the app.
+restart
+wait-for Nonograms
+tap-paged House
+wait-for-id more
+expect 7/25
+expect Row 2, column 2, filled
+tap-id undo
+expect 6/25
+tap-id more
+clean
+shot nonograms-resumed-options
+tap Back
+tap-id 4294967295
+expect Picture puzzles

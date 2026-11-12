@@ -5,7 +5,7 @@ Every Cobalt interface component on one device, for checking by eye.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/text.png" alt="Headings, text, rules and facts"><br>Headings, text, rules and facts</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/controls.png" alt="Buttons, from the one primary action down"><br>Buttons, from the one primary action down</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/controls.png" alt="A search field, filter chips and playback controls"><br>A search field, filter chips and playback controls</td>
 </tr>
 </table>
 
@@ -18,11 +18,11 @@ Every Cobalt interface component on one device, for checking by eye.
 - The App Store card on the Panel tab walks through one task end to end:
   choosing a book, confirming it, downloading it and opening it.
 - Pages are split by measurement, so every page fits every supported screen at
-  every text size. A test lays out every page on all eight supported screens
-  at all nine text sizes.
-- The gallery triggers two layout warnings on purpose: the tone budget on the
-  launcher-style shelf, and two primary actions on the buttons page. Any other
-  warning fails the tests.
+  every text size. A test lays out every page on every supported screen
+  profile at all nine text sizes.
+- The gallery triggers two layout warnings on purpose: the tone budget, on
+  every page with tiles, cards or an overlay, and two primary actions on the
+  buttons page. Any other warning fails the tests.
 
 `kobo drive` can tap through the tabs and capture each one, so a change to the
 layout engine can be compared as pictures.
@@ -35,9 +35,9 @@ layout engine can be compared as pictures.
 
 ```sh
 cargo test -p kobo-gallery
-kobo run --sim --app gallery      # in the browser simulator
+(cd examples/gallery && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py gallery
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

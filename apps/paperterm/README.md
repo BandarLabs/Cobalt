@@ -91,9 +91,10 @@ To stop sharing, press **Ctrl+]** in the computer's terminal. This ends the
 shared command and restores your terminal settings. Ctrl-C still goes to the
 shared program.
 
-The computer reports **waiting for a reader**, **Reader connected**,
-**waiting for the reader to reconnect** after 45 seconds without contact, and
-**command stopped**, when the final screen stays up for one minute.
+The computer reports **waiting for a reader to connect**, **reader
+connected**, **waiting for the reader to reconnect** after 45 seconds without
+contact, and **command stopped**, after which the final screen stays up for one
+minute.
 
 ## Permissions
 
@@ -107,4 +108,4 @@ python3 scripts/check-apps-sim.py paperterm
 ```
 
 The simulator check builds the app, opens it in a fresh simulator and plays
-`drive.kobo`. The screenshots come from a live check against a local session with private test certificates. Its `--pair-on-reader`, `--load-failure`, `--save-failure` and `--temporary-pairing` options cover pairing and recovery.
+`drive.kobo`. The screenshots come from `scripts/quality/check-paperterm-live.py`, a live check against a local session with private test certificates. Its `--pair-on-reader`, `--load-failure`, `--save-failure` and `--temporary-pairing` options cover pairing and recovery.

@@ -4,9 +4,9 @@
   "short_label": "Frame",
   "summary": "Show photos from your computer as a slideshow, with the screen on or waking on a schedule. Needs your computer.",
   "page_description": "Turn a Kobo into a low-power black-and-white photo frame. Send albums from your computer, then choose a slideshow that keeps the screen on or wakes the reader every few hours.",
-  "version": "1.2.6",
-  "release_notes": "Shuffle is now a switch in Settings, and Check for photos stays at the foot of an empty frame at every text size.",
-  "glyph": "app",
+  "version": "1.3.2",
+  "release_notes": "When no photo on the shelf can be opened, Frame now says so once and offers Check for photos, which tries them again after you push the album.",
+  "glyph": "photo",
   "capabilities": [
     "keep-awake",
     "scheduled-wake"

@@ -141,41 +141,178 @@ def paragraphs(*parts: str) -> str:
     return "".join(f"<p>{markup(part)}</p>" for part in parts if part)
 
 
+def fact(label: str, value: str) -> str:
+    """One line of a stat block: its label in bold, then what it says."""
+    return f"<p><strong>{label}</strong> {markup(value)}</p>" if value else ""
+
+
+def sentence_case(text: str) -> str:
+    return text[:1].upper() + text[1:]
+
+
 def spell(record: dict) -> tuple[str, str, str]:
     school = record.get("school", {}).get("name", "")
     classes = ", ".join(
         item.get("name", "") if isinstance(item, dict) else str(item)
         for item in record.get("classes", [])
     )
-    subtitle = f"{record.get('level', 0)} · {school} · {classes}"
+    level = record.get("level", 0)
+    subtitle = f"{'Cantrip' if level == 0 else f'Level {level}'} · {school} · {classes}"
+    # Casting time, range, components and duration are what a player asks
+    # before the description, so they come first, as a printed spell has them.
+    casting = clean(record.get("casting_time"))
+    if record.get("ritual"):
+        casting += " or ritual"
+    components = ", ".join(record.get("components", []))
+    material = clean(record.get("material")).rstrip(".")
+    if material:
+        components += f" ({material[:1].lower()}{material[1:]})"
+    duration = clean(record.get("duration"))
+    if record.get("concentration") and not duration.lower().startswith("concentration"):
+        duration = f"Concentration, {duration[:1].lower()}{duration[1:]}"
+    body = "".join([
+        fact("Casting time", casting),
+        fact("Range", clean(record.get("range"))),
+        fact("Components", components),
+        fact("Duration", duration),
+        document(prose(record.get("desc", []))),
+    ])
     higher = prose(record.get("higher_level"))
-    body = document("\n\n".join(filter(None, [prose(record.get("desc", [])), higher])))
-    return subtitle, body, ';'.join([f"class={classes}", f"level={record.get('level', 0)}", f"school={school}", f"ritual={int(bool(record.get('ritual')))}", f"concentration={int(bool(record.get('concentration')))}"])
+    if higher:
+        body += labelled("At higher levels", higher)
+    return subtitle, body, ';'.join([f"class={classes}", f"level={level}", f"school={school}", f"ritual={int(bool(record.get('ritual')))}", f"concentration={int(bool(record.get('concentration')))}"])
+
+
+def labelled(name: str, text: str) -> str:
+    """A named ability: its name in bold leading the first paragraph, and the
+    rest of its text as the paragraphs and lists it was written as. A
+    spellcaster's list of prepared spells is a list, not one long line."""
+    blocks = document(text)
+    lead = f"<strong>{markup(name)}.</strong> "
+    if blocks.startswith("<p>"):
+        return "<p>" + lead + blocks[3:]
+    return f"<p>{lead.strip()}</p>{blocks}"
+
+
+def challenge(rating: object) -> str:
+    """A challenge rating as the rules print it: 1/4, not 0.25."""
+    fractions = {0.125: "1/8", 0.25: "1/4", 0.5: "1/2"}
+    if rating in fractions:
+        return fractions[rating]
+    return str(int(rating)) if isinstance(rating, (int, float)) else clean(rating)
+
+
+def armor_class(entries: list) -> str:
+    """Every way a monster's armour class is reached, in words: "15 (leather
+    armor, shield)", "17 (natural armor)", "12, 15 with mage armor"."""
+    parts = []
+    for entry in entries:
+        value = str(entry.get("value", ""))
+        kind = entry.get("type")
+        if entry.get("desc"):
+            parts.append(f"{value} ({entry['desc']})")
+        elif kind == "armor" and entry.get("armor"):
+            worn = ", ".join(named(item).lower() for item in entry["armor"])
+            parts.append(f"{value} ({worn})")
+        elif kind == "natural":
+            parts.append(f"{value} (natural armor)")
+        elif kind == "spell" and entry.get("spell"):
+            parts.append(f"{value} with {named(entry['spell']).lower()}")
+        elif kind == "condition" and entry.get("condition"):
+            parts.append(f"{value} while {named(entry['condition']).lower()}")
+        else:
+            parts.append(value)
+    return ", ".join(parts)
+
+
+def speed(speeds: dict) -> str:
+    """Walking speed first and unlabelled, then the others by name."""
+    hover = speeds.get("hover") is True
+    parts = [str(speeds["walk"])] if "walk" in speeds else []
+    for mode, value in speeds.items():
+        if mode in ("walk", "hover"):
+            continue
+        parts.append(f"{mode} {value}" + (" (hover)" if mode == "fly" and hover else ""))
+    return ", ".join(parts)
+
+
+def modifier(score: int) -> str:
+    bonus = (score - 10) // 2
+    return f"+{bonus}" if bonus >= 0 else str(bonus)
+
+
+def bonuses(record: dict, prefix: str) -> str:
+    """Saving throw or skill bonuses, "Dex +4, Wis +2", from proficiencies
+    the source names "Saving Throw: DEX" and "Skill: Stealth"."""
+    found = []
+    for item in record.get("proficiencies", []):
+        name = named(item.get("proficiency"))
+        if name.startswith(prefix):
+            label = name[len(prefix):].strip()
+            if prefix.startswith("Saving"):
+                label = label.capitalize()
+            found.append(f"{label} +{item.get('value')}")
+    return ", ".join(found)
+
+
+def senses(record: dict) -> str:
+    known = record.get("senses") or {}
+    parts = [f"{name} {value}" for name, value in known.items() if name != "passive_perception"]
+    if "passive_perception" in known:
+        parts.append(f"passive Perception {known['passive_perception']}")
+    return ", ".join(parts)
+
+
+def usage(entry: dict) -> str:
+    """How often an ability can be used, as the name of the ability says it."""
+    use = entry.get("usage") or {}
+    if use.get("type") == "per day":
+        return f" ({use.get('times')}/Day)"
+    if use.get("type") == "recharge on roll":
+        low, high = use.get("min_value"), str(use.get("dice", "d6")).split("d")[-1]
+        return f" (Recharge {low}-{high})" if str(low) != high else f" (Recharge {low})"
+    if use.get("type") == "recharge after rest":
+        rests = " or ".join(use.get("rest_types", []))
+        return f" (Recharges after a {rests} rest)"
+    return ""
 
 
 def monster(record: dict) -> tuple[str, str, str]:
-    ac = clean(record.get("armor_class"))
-    speed = clean(record.get("speed"))
-    subtitle = f"{record.get('size')} {record.get('type')} · CR {record.get('challenge_rating')}"
+    rating = record.get("challenge_rating")
+    subtitle = f"{record.get('size')} {record.get('type')} · CR {challenge(rating)}"
     ability = "  ".join(
-        f"{label} {record.get(key, 0)}"
+        f"{label} {record.get(key, 0)} ({modifier(record.get(key, 10))})"
         for label, key in (("STR", "strength"), ("DEX", "dexterity"), ("CON", "constitution"),
                            ("INT", "intelligence"), ("WIS", "wisdom"), ("CHA", "charisma"))
     )
-    body = paragraphs(
-        f"AC {ac}  HP {record.get('hit_points')} ({record.get('hit_dice')})  Speed {speed}",
-        ability,
-    )
+    xp = record.get("xp")
+    body = "".join([
+        fact("Alignment", clean(record.get("alignment"))),
+        fact("Armor Class", armor_class(record.get("armor_class", []))),
+        fact("Hit Points", f"{record.get('hit_points')} ({record.get('hit_dice')})"),
+        fact("Speed", speed(record.get("speed") or {})),
+        paragraphs(ability),
+        fact("Saving Throws", bonuses(record, "Saving Throw:")),
+        fact("Skills", bonuses(record, "Skill:")),
+        fact("Damage Vulnerabilities", "; ".join(record.get("damage_vulnerabilities", []))),
+        fact("Damage Resistances", "; ".join(record.get("damage_resistances", []))),
+        fact("Damage Immunities", "; ".join(record.get("damage_immunities", []))),
+        fact("Condition Immunities", ", ".join(
+            named(item).lower() for item in record.get("condition_immunities", []))),
+        fact("Senses", senses(record)),
+        fact("Languages", clean(record.get("languages")) or "none"),
+        fact("Challenge", f"{challenge(rating)} ({xp:,} XP)" if isinstance(xp, int) else challenge(rating)),
+    ])
     for key, title in (("special_abilities", "Traits"), ("actions", "Actions"),
                        ("legendary_actions", "Legendary actions"), ("reactions", "Reactions")):
         entries = record.get(key, [])
         if entries:
             body += f"<h3>{title}</h3>" + "".join(
-                f"<p><strong>{markup(clean(entry.get('name')))}.</strong> "
-                f"{markup(prose(entry.get('desc')))}</p>"
+                labelled(clean(entry.get("name")) + usage(entry), prose(entry.get("desc")))
                 for entry in entries
             )
-    return subtitle, body, f"type={clean(record.get('type'))};cr={record.get('challenge_rating', '')}"
+    tags = f"type={clean(record.get('type'))};cr={rating if rating is not None else ''}"
+    return subtitle, body, f"{tags};hp={record.get('hit_points', '')}"
 
 
 def named(value: object) -> str:

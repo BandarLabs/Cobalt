@@ -9,6 +9,7 @@ use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
 mod boards;
 mod collection;
+mod recover;
 mod saved;
 
 const STATE: &str = "logicpack-state-v1";
@@ -141,6 +142,7 @@ struct Game {
     outcome: Outcome,
     loaded: bool,
     load_error: Option<String>,
+    set_aside: recover::SetAside,
     draft: Draft,
     active: Option<u64>,
     games: Vec<saved::Run>,
@@ -185,6 +187,7 @@ impl Game {
             outcome: Outcome::Playing,
             loaded: false,
             load_error: None,
+            set_aside: recover::SetAside::default(),
             draft: Draft::restored(Vec::new(), saved::LIMIT).expect("empty draft"),
             active: None,
             games: Vec::new(),
@@ -556,9 +559,7 @@ impl Game {
             context.set_screen(self.screen());
             return true;
         }
-        if (action == action_id("restart") || action == action_id("restart-field"))
-            && self.kind != Kind::Home
-        {
+        if action == action_id("restart") && self.kind != Kind::Home {
             self.view = View::Restart;
             context.set_screen(self.screen());
             return true;
@@ -647,21 +648,25 @@ impl Game {
             // directly under the reason, not a heading at the top and the fix
             // pinned to the foot with an empty panel between them.
             return if let Some(error) = &self.load_error {
-                failure_screen(
+                self.set_aside.screen(
                     head,
                     &self.metrics,
-                    "Cannot open progress",
-                    (
-                        &format!("{error} Your saved puzzles have been kept."),
-                        error,
-                    ),
-                    ("retry-load", "Try again"),
+                    error,
+                    &recover::Wording {
+                        title: "Cannot open progress",
+                        kept: "Your saved puzzles have been kept.",
+                        explain: "Your saved puzzles stay on the Kobo as a separate copy, and every puzzle starts again unsolved.",
+                    },
                 )
             } else {
                 head().text("Opening puzzles…").build()
             };
         }
-        if matches!(self.draft.status(), Status::Failed(_)) {
+        // A refused save on a puzzle is a line over the board, not a page
+        // in its place: the board stays in view, as Backgammon keeps its.
+        if matches!(self.draft.status(), Status::Failed(_))
+            && !(self.view == View::Puzzle && self.kind != Kind::Home)
+        {
             return failure_screen(
                 || ScreenBuilder::new("logicpack-save-failed").top_bar("Logic Pack"),
                 &self.metrics,
@@ -789,15 +794,16 @@ impl Game {
 
     /// A play screen: the shared top bar and foot around the game's board.
     ///
-    /// The foot's second place is the way taps work, for the two games that
-    /// have one, and becomes the obvious next step once a puzzle ends: the
-    /// next puzzle after a win, a restart after a mine.
+    /// Every game's foot is the same bar of two: Undo, then the way taps work
+    /// for the two games that have one, or Restart for the two that do not.
+    /// Once a puzzle ends the second place is the obvious next step: the next
+    /// puzzle after a win, a restart after a mine. Kakuro and Hashi used to get
+    /// Undo alone, which the runtime pins as a single outlined button, so two
+    /// games in the pack had a bar at the foot and two a button. A third entry
+    /// does not fit a six-inch panel at the larger text sizes.
     fn play(&self, board: impl FnOnce(ScreenBuilder) -> ScreenBuilder) -> Screen {
-        let saved = match self.draft.status() {
-            Status::Saved => "Saved",
-            Status::Saving | Status::Unsaved => "Saving…",
-            Status::Failed(_) => "Not saved",
-        };
+        // Saving is quiet when it works: "Saved" beside every move said
+        // nothing anybody needed, and a failure has its own line.
         let status = if self.kind == Kind::Mines {
             // A cleared field shows every mine as a flag, so it counts them so.
             let flags: usize = if self.outcome == Outcome::Solved {
@@ -808,25 +814,27 @@ impl Game {
                     .map(|c| usize::from(*c == 2))
                     .sum()
             };
-            format!("{flags} of {} flagged · {saved}", self.mines.count_ones())
+            format!("{flags} of {} flagged", self.mines.count_ones())
         } else {
-            saved.to_owned()
+            String::new()
         };
-        let verb = match (self.kind, self.outcome) {
-            (_, Outcome::Solved) => Some(("next-puzzle", "Next puzzle")),
-            (_, Outcome::Lost) => Some(("restart-field", "Restart")),
-            // A bar cannot hold a switch, so the entry names what the tap
-            // does. "Mode: Line" stated the current mode, which read as an
-            // order as easily as a report.
-            (Kind::Slither, _) if self.marking => Some(("line-mode", "Draw lines")),
-            (Kind::Slither, _) => Some(("line-mode", "Mark crosses")),
-            (Kind::Mines, _) if self.flagging => Some(("mine-mode", "Reveal squares")),
-            (Kind::Mines, _) => Some(("mine-mode", "Flag mines")),
-            _ => None,
+        // A bar cannot hold a switch, so the entry names what the tap does.
+        // "Mode: Line" stated the current mode, which read as an order as
+        // easily as a report. Once a puzzle has ended there is nothing left
+        // to tap on the board, so the mode leaves the bar.
+        let second = match (self.kind, self.outcome) {
+            (_, Outcome::Solved) => ("next-puzzle", "Next puzzle"),
+            (Kind::Slither, Outcome::Playing) if self.marking => ("line-mode", "Draw lines"),
+            (Kind::Slither, Outcome::Playing) => ("line-mode", "Mark crosses"),
+            (Kind::Mines, Outcome::Playing) if self.flagging => ("mine-mode", "Reveal squares"),
+            (Kind::Mines, Outcome::Playing) => ("mine-mode", "Flag mines"),
+            _ => ("restart", "Restart"),
         };
         // The notice and the save state share one line above the board, so
         // the largest field still fits a six-inch panel at the largest text.
         let notice = self.notice.clone();
+        let line_notice = notice.clone();
+        let has_status = !status.is_empty();
         let line: [(SlotWidth, Slot); 2] = [
             (
                 SlotWidth::Fill,
@@ -839,9 +847,20 @@ impl Game {
         ];
         let screen = ScreenBuilder::new("logicpack-play")
             .game_top_bar(self.kind.title(), self.menu, MORE)
-            .owns_back(true)
-            .band(BandAlign::Middle, line);
-        board(screen).game_actions(true, verb).build()
+            .owns_back(true);
+        let screen = if matches!(self.draft.status(), Status::Failed(_)) {
+            screen
+                .banner(
+                    kobo_sdk::BannerLevel::Error,
+                    "Progress is not saved. Moves wait until it is.",
+                )
+                .banner_action("retry-save", "Retry saving")
+        } else if has_status {
+            screen.band(BandAlign::Middle, line)
+        } else {
+            screen.secondary(line_notice)
+        };
+        board(screen).game_actions(true, [second]).build()
     }
 
     /// Hidden squares are drawn filled, as untouched tiles, and open ones
@@ -1098,6 +1117,8 @@ impl Game {
         self.first_reveal = flags[1];
         self.outcome = outcome;
         self.notice = match outcome {
+            // A cleared field says so in the same words whenever it is shown.
+            Outcome::Solved if kind == Kind::Mines => "Field cleared.",
             Outcome::Solved => "Solved.",
             Outcome::Lost => "Mine opened. Undo the last move or restart.",
             Outcome::Playing => "Continue your puzzle.",
@@ -1159,8 +1180,8 @@ impl KoboApp for Game {
         match result {
             StoreResult::Loaded {
                 value: Some(bytes), ..
-            } => match saved::decode(&bytes) {
-                Some((games, current)) => {
+            } => {
+                if let Some((games, current)) = saved::decode(&bytes) {
                     self.games = games;
                     self.fresh(Kind::Home);
                     if let Some(index) = current {
@@ -1169,9 +1190,11 @@ impl KoboApp for Game {
                     self.draft = Draft::restored(bytes, saved::LIMIT).expect("validated bytes");
                     self.loaded = true;
                     self.load_error = None;
+                } else {
+                    self.load_error = Some("This saved record could not be read.".into());
+                    self.set_aside.hold(bytes);
                 }
-                None => self.load_error = Some("This saved record could not be read.".into()),
-            },
+            }
             StoreResult::Loaded { value: None, .. } => {
                 self.loaded = true;
                 self.load_error = None;
@@ -1180,8 +1203,26 @@ impl KoboApp for Game {
         }
         context.set_screen(self.screen());
     }
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        self.metrics = context.metrics();
+        if self.set_aside.on_keys(context, STATE, result) {
+            context.set_screen(self.screen());
+        }
+    }
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
         self.metrics = context.metrics();
+        if let Some(kept) = self.set_aside.on_save(key, &result) {
+            // With the unreadable record copied, it is forgotten, so
+            // reopening finds the puzzles as on the first day rather than
+            // the same failure.
+            if kept {
+                self.loaded = true;
+                self.load_error = None;
+                context.store().forget(STATE);
+            }
+            context.set_screen(self.screen());
+            return;
+        }
         if key != STATE {
             return;
         }
@@ -1208,7 +1249,13 @@ impl KoboApp for Game {
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         self.metrics = context.metrics();
         if !self.loaded {
-            if action == action_id("retry-load") && self.load_error.take().is_some() {
+            if self.set_aside.action(context, action) {
+                context.set_screen(self.screen());
+            } else if action == action_id("retry-load")
+                && !self.set_aside.busy()
+                && self.load_error.take().is_some()
+            {
+                self.set_aside.clear();
                 context.store().load(STATE);
                 context.set_screen(self.screen());
             }
@@ -1419,6 +1466,101 @@ mod tests {
         assert!(!restored.restore(b"bad"));
     }
 
+    /// The labels in the bar at the foot of a play screen, or the one pinned
+    /// button's label where there is no bar.
+    fn foot(screen: &Screen) -> Vec<String> {
+        screen.nav_bar.as_ref().map_or_else(
+            || {
+                screen
+                    .bottom_action
+                    .iter()
+                    .map(|pinned| format!("button {}", pinned.action.label))
+                    .collect()
+            },
+            |bar| {
+                bar.destinations
+                    .iter()
+                    .map(|entry| entry.label.clone())
+                    .collect()
+            },
+        )
+    }
+
+    #[test]
+    fn the_mine_field_is_one_ruled_board_with_counts_in_the_interface_face_and_drawn_flags() {
+        let _fonts = fonts(CLARA_BW_METRICS);
+        let mut game = ready();
+        game.select(Kind::Mines);
+        game.cells[0] = 1;
+        game.cells[1] = 2;
+        let layout = game
+            .screen()
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let squares: Vec<_> = layout
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::Cell(_, kobo_ui::CellStyle::Field { .. }, _)
+                )
+            })
+            .collect();
+        assert_eq!(squares.len(), 16, "every square is a field square");
+        // The squares meet: no paper between one and the next.
+        assert_eq!(squares[0].rect.x + squares[0].rect.width, squares[1].rect.x);
+        assert_eq!(
+            squares[0].rect.y + squares[0].rect.height,
+            squares[4].rect.y
+        );
+        let count = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == kobo_ui::LayoutKind::FieldCount)
+            .expect("the opened square's count");
+        assert_eq!(count.text_lines, ["1"]);
+        assert!(layout.nodes.iter().any(|node| matches!(
+            node.kind,
+            kobo_ui::LayoutKind::FieldMark(kobo_ui::FieldMark::Flag, false)
+        )));
+        assert!(!layout
+            .nodes
+            .iter()
+            .any(|node| matches!(node.kind, kobo_ui::LayoutKind::CellLabel(_))));
+    }
+
+    #[test]
+    fn every_game_in_the_pack_has_the_same_bar_at_its_foot_from_start_to_finish() {
+        let _fonts = fonts(CLARA_BW_METRICS);
+        for kind in KINDS {
+            let mut game = ready();
+            game.select(kind);
+            let second = match kind {
+                Kind::Slither => "Mark crosses",
+                Kind::Mines => "Flag mines",
+                _ => "Restart",
+            };
+            assert_eq!(foot(&game.screen()), [game::UNDO_LABEL, second], "{kind:?}");
+            assert!(
+                game.screen()
+                    .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+                    .issues
+                    .is_empty(),
+                "{kind:?}"
+            );
+            game.outcome = Outcome::Solved;
+            assert_eq!(
+                foot(&game.screen()),
+                [game::UNDO_LABEL, "Next puzzle"],
+                "{kind:?}"
+            );
+        }
+        let mut mines = ready();
+        mines.select(Kind::Mines);
+        mines.outcome = Outcome::Lost;
+        assert_eq!(foot(&mines.screen()), [game::UNDO_LABEL, "Restart"]);
+    }
+
     #[test]
     fn every_play_screen_carries_rules_and_the_menu_on_top_and_undo_first_at_the_foot() {
         let _fonts = fonts(CLARA_BW_METRICS);
@@ -1564,6 +1706,55 @@ mod durable_tests {
     fn back(g: &mut Game) {
         g.on_action(&mut Context::default(), ActionId::BACK);
     }
+    #[test]
+    fn a_cleared_field_reads_field_cleared_when_it_is_shown_again() {
+        let mut g = ready();
+        g.select(Kind::Mines);
+        for at in 0..g.puzzle().cell_count() {
+            if !has_mine(g.mines, at) {
+                g.cells[at] = 1;
+            }
+        }
+        g.first_reveal = false;
+        g.outcome = Outcome::Solved;
+        let bytes = g.encode();
+        g.notice.clear();
+        assert!(g.restore(&bytes));
+        assert_eq!(g.notice, "Field cleared.");
+    }
+
+    #[test]
+    fn start_over_copies_an_unreadable_record_aside_before_forgetting_it() {
+        let mut runner = kobo_sdk::AppRunner::new(Game::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: Some(b"bad".to_vec()),
+        });
+        runner.action(action_id(recover::START_OVER));
+        let commands = runner.action(action_id(recover::CONFIRM));
+        assert!(commands
+            .iter()
+            .any(|c| matches!(c, kobo_sdk::Command::Store(kobo_sdk::StoreRequest::List))));
+        let commands = runner.store_result(StoreResult::Keys(vec![STATE.into()]));
+        let copy = format!("{STATE}-unreadable-1");
+        assert!(commands.iter().any(|c| matches!(
+            c,
+            kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Save { key, value })
+                if *key == copy && value == b"bad"
+        )));
+        assert!(
+            !runner.app().loaded,
+            "nothing is let go before the copy lands"
+        );
+        let commands = runner.store_result(StoreResult::Saved { key: copy });
+        assert!(runner.app().loaded);
+        assert!(commands.iter().any(|c| matches!(
+            c,
+            kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Forget { key }) if key == STATE
+        )));
+    }
+
     fn act(g: &mut Game, name: &str) {
         if ["slither", "hashi", "kakuro", "mines"].contains(&name) {
             g.view = View::Puzzle;
@@ -1927,11 +2118,11 @@ mod p16_tests {
         assert!(button.y >= reason.y + reason.height, "{metrics:?}");
     }
 
-    /// An unreadable record and a refused save each fill the screen, so each
-    /// is a splash with its one fix directly under the reason: Try again for
-    /// the read and Retry saving for the write.
+    /// An unreadable record leaves nothing to show, so it is a splash with
+    /// Try again directly under the reason. A refused save leaves the puzzle
+    /// in place, so it is a line over the board carrying Retry saving.
     #[test]
-    fn load_and_save_failures_are_splashes_with_their_fix_directly_under_them() {
+    fn a_failed_load_is_a_splash_and_a_failed_save_a_line_over_the_board() {
         for (width, height, ppi) in [(1072, 1448, 300), (758, 1024, 212)] {
             for text_scale in TextScale::STEPS {
                 let metrics = clara(width, height, ppi, text_scale);
@@ -1963,7 +2154,20 @@ mod p16_tests {
                 );
                 assert!(matches!(g.draft.status(), Status::Failed(_)));
                 g.metrics = metrics;
-                assert_failure_splash(&g.screen(), metrics, "retry-save", "Retry saving");
+                // A refused save on a puzzle keeps the board in view under a
+                // line that carries its retry, as Backgammon's does.
+                let screen = g.screen();
+                let chrome = Chrome::measuring(true);
+                assert!(
+                    !screen.diagnostics(&metrics, &chrome).has_errors(),
+                    "{metrics:?}"
+                );
+                let layout = screen.layout_with(&metrics, &chrome);
+                assert!(layout.rect_of_action(action_id("retry-save")).is_some());
+                assert!(
+                    layout.rect_of_action(action_id("route-0")).is_some(),
+                    "{metrics:?}: the board is hidden"
+                );
             }
         }
     }

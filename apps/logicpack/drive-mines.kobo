@@ -1,0 +1,91 @@
+# Minesweeper: revealing, flagging, opening a mine and clearing the field.
+expect Clear the field · 0 of 105 solved
+tap Minesweeper
+tap Small field
+wait-for-id game-more
+expect Starter · Small field
+expect 0 of 3 flagged
+expect Flag mines
+tap Rules
+expect Reveal every safe square
+tap Difficulty
+clean
+shot mines-difficulty
+tap Play
+wait-for-id game-more
+# The first reveal is always safe.
+tap-id mine-0
+expect Safe. Keep going.
+# Flag mode marks a square, and a second tap takes the flag off.
+tap-id mine-mode
+expect Flag mode. Tap a hidden square to mark it.
+expect Reveal squares
+tap-id mine-5
+expect 1 of 3 flagged
+tap-id mine-5
+expect 0 of 3 flagged
+tap-id mine-5
+expect 1 of 3 flagged
+clean
+shot mines-flagged
+# A flagged square is not opened by a reveal tap.
+tap-id mine-mode
+expect Reveal mode. Tap a hidden square to open it.
+tap-id mine-5
+expect 1 of 3 flagged
+expect-missing Mine opened
+tap-id mine-mode
+tap-id mine-5
+tap-id mine-mode
+# Opening a mine ends the round until Undo or Restart.
+tap-id mine-10
+expect Mine opened. Undo the last move or restart.
+expect Restart
+clean
+shot mines-lost
+tap-id mine-1
+expect Mine opened.
+tap-id game-undo
+expect Move undone.
+expect Flag mines
+tap-id mine-1
+tap-id mine-2
+tap-id mine-3
+tap-id mine-4
+tap-id mine-6
+tap-id mine-7
+tap-id mine-8
+tap-id mine-9
+tap-id mine-11
+tap-id mine-12
+tap-id mine-13
+tap-id mine-14
+expect Field cleared.
+expect 3 of 3 flagged
+expect Next puzzle
+clean
+shot mines-cleared
+tap-id game-more
+tap Puzzles
+expect 1 of
+expect Solved
+tap-id 4294967295
+expect Clear the field · 1 of 105 solved
+# Restart puzzle in More asks first, and Keep playing leaves the field as it was.
+tap Minesweeper
+tap Small field
+wait-for-id game-more
+tap-id game-more
+tap Restart puzzle
+expect Clear this puzzle?
+tap Keep playing
+expect Field cleared.
+expect-missing Solved.
+tap-id game-more
+tap Restart puzzle
+tap-id confirm-restart
+expect Starter · Small field
+expect 0 of 3 flagged
+tap-id game-undo
+expect Field cleared.
+expect-missing Solved.

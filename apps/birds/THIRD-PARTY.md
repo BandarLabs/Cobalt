@@ -1,6 +1,6 @@
 # Birds third-party notices
 
-Birds is explicitly inspired by the awesome [fugleramme](https://github.com/arnegiacomo/fugleramme) project by Arne Giacomo Munthe-Kaas. This credit is separate from, and in addition to, the license terms below.
+Birds is inspired by the [Fugleramme](https://github.com/arnegiacomo/fugleramme) project by Arne Giacomo Munthe-Kaas. This credit is separate from, and in addition to, the license terms below.
 
 The Cobalt Birds package contains no third-party code, model, artwork, or font.
 It interoperates over HTTP with separately installed Fugleramme and BirdNET-Go.

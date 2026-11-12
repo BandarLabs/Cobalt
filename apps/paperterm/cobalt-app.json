@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink. Needs your computer.",
-  "version": "0.1.14",
-  "glyph": "terminal",
+  "version": "0.1.18",
+  "glyph": "keyboard",
   "capabilities": [
     "network"
   ],
-  "release_notes": "The pairing address and code fields say what goes in them, a refused entry says why in place of the guidance, and a pairing that could not be saved offers Retry saving on its message.",
+  "release_notes": "A saved pairing whose computer is off now says so plainly, and the back arrow works on the help steps and the Pairing screen.",
   "setup": {
     "steps": [
       {

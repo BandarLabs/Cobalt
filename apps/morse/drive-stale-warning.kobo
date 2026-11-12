@@ -1,0 +1,37 @@
+# The warning about an empty send belongs to the empty message. Send with
+# nothing typed stays on the message, and once a letter is typed the
+# warning no longer describes what is in the box.
+wait 800
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap Send
+wait-for There is nothing here to send.
+expect-missing Stop
+expect one second of light
+type t
+expect 3 seconds to send.
+clean
+shot typed-after-empty
+expect-missing There is nothing here to send.
+# A character with no code is named while it is in the box, and the
+# warning goes with it.
+tap ?123
+wait 200
+type !
+expect Morse has no code for !
+tap-id kb.backspace
+expect-missing Morse has no code for
+# After a send, Edit returns to the message without the beacon's warning
+# about the character it left out, once that character is gone.
+type !
+tap Send
+wait-for so it was left out.
+tap Stop
+wait-for Send again
+tap Edit
+wait-for one second of light
+tap-id kb.backspace
+expect-missing Morse has no code for
+clean
+shot warning-gone

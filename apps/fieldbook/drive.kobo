@@ -18,7 +18,11 @@ tap Northern Flicker
 wait-for Colaptes auratus
 clean
 shot detail
+# Back from a species goes to the search that found it.
 tap Back
+wait-for Northern Flicker
+expect Search packs
+tap Today
 wait-for Fieldbook
 tap Start an outing
 wait-for Name this place
@@ -54,7 +58,10 @@ shot sightings-deleted
 tap Undo delete
 wait-for American Robin ×1
 expect-missing Sighting deleted.
-# Every species in the pack is one tap away, a page at a time.
+# Every species in the pack is one tap away, a page at a time. Back from
+# the review is the outing; Back again is Today, where it resumes.
+tap Back
+wait-for Review sightings
 tap Back
 wait-for Open outing
 tap Resume tally

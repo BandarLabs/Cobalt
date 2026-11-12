@@ -90,8 +90,10 @@ fn every_bookmark_is_reachable_and_reading_returns_to_the_same_page() {
             runner.page_turn(false);
         }
         assert_eq!(runner.app().bookmarks_page, 0);
+        // Bookmarks opens from a list, and Back returns to that list.
         tap(&mut runner, "back");
-        assert_eq!(runner.app().view, View::Home);
+        assert_eq!(runner.app().view, View::Compendium);
+        assert_eq!(runner.app().page, 3);
     }
 }
 
@@ -116,5 +118,5 @@ fn a_shortened_or_invalid_bookmark_list_stays_safe() {
     let shown = screen(&runner);
     assert!(format!("{shown:?}").contains("No bookmarks"));
     tap(&mut runner, "back");
-    assert_eq!(runner.app().view, View::Home);
+    assert_eq!(runner.app().view, View::Compendium);
 }

@@ -201,11 +201,17 @@ impl Stand {
                 }
                 _ => {
                     self.notice = Some((BannerLevel::Info, "End of the setlist.".to_owned()));
+                    return;
                 }
             }
         } else {
+            // The page on the stand stays, so nothing is fetched again: a
+            // fresh load would finish by clearing this notice before anyone
+            // could read it.
             self.notice = Some((BannerLevel::Info, "Last page.".to_owned()));
+            return;
         }
+        self.notice = None;
         self.save(context);
         self.page = None;
         self.page_key = None;
@@ -416,6 +422,9 @@ impl Stand {
         };
         let state = self.state_of(&score.id);
         let mut screen = match self.page {
+            // Inside the side margins rather than to the bezel: with Staff
+            // width on, the margins are cropped off the page and the staves
+            // would otherwise run into the frame of the reader.
             Some(picture) => screen.unframed_picture(picture, 500),
             None => screen.activity("Turning the page", None),
         };
@@ -464,7 +473,13 @@ impl Stand {
                     .button(LIBRARY, "Library")
             });
         }
-        screen.build().with_own_back(true)
+        // No clock or title over the staves. The title comes back with a
+        // touch at the top edge, and the middle opens the menu.
+        screen
+            .build()
+            .with_own_back(true)
+            .with_reading(true)
+            .with_auto_hidden_top_bar(true)
     }
 
     fn setlists(&self, context: &Context) -> (Screen, usize) {
@@ -801,7 +816,14 @@ impl Stand {
                             {
                                 let state = self.state_of(&id);
                                 let (x, y, width, height) = Self::crop_region(score, state);
-                                match picture.crop(x, y, width, height) {
+                                let panel = context.metrics().width;
+                                let cropped = picture.crop(x, y, width, height).and_then(|crop| {
+                                    match zoomed_size(state, crop.width(), crop.height(), panel) {
+                                        Some((wide, tall)) => crop.fit_enlarging(wide, tall),
+                                        None => Ok(crop),
+                                    }
+                                });
+                                match cropped {
                                     Ok(crop) => {
                                         self.page = context.put_picture(
                                             PAGE_HANDLE,
@@ -852,6 +874,22 @@ impl Stand {
             ShelfProgress::Elsewhere => false,
         }
     }
+}
+
+/// The size to draw a Staff width crop at, when it has to grow.
+///
+/// The renderer shrinks a page wider than the panel but never enlarges one,
+/// so on a page scanned no wider than the panel, cropping the margins drew
+/// the staves smaller than the whole page did. The crop is grown until it is
+/// as wide as the panel, by no more than the image crate allows. `None` when
+/// it is already wide enough or Staff width is off.
+fn zoomed_size(state: ScoreState, width: u32, height: u32, panel: i32) -> Option<(u32, u32)> {
+    let panel = u32::try_from(panel).ok()?;
+    if !state.zoomed || width == 0 || width >= panel {
+        return None;
+    }
+    let tall = u64::from(height) * u64::from(panel) / u64::from(width);
+    Some((panel, u32::try_from(tall).ok()?.max(1)))
 }
 
 impl KoboApp for Stand {
@@ -1241,6 +1279,8 @@ mod tests {
             ..Stand::default()
         };
         let screen = stand.stand();
+        // The page has the panel: no clock band, and no bar until asked for.
+        assert!(screen.reading && screen.auto_hide_top_bar);
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
         assert_eq!(
             layout.page_turns.declared().expect("page turns").next,

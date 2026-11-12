@@ -1,0 +1,15 @@
+# sweep: --bare --seed-root apps/birds/fixtures/damaged
+# A snapshot cut short says it could not be read and offers Refresh.
+wait-for The latest birds could not be read
+expect The file from your computer is damaged.
+expect-missing JSON
+expect Refresh
+clean
+shot birds-damaged
+# A good push followed by Refresh brings the art back.
+companion birds push scripts/fixtures/birds/older.json scripts/fixtures/birds/older.png --sim
+tap Refresh
+wait-idle
+expect-missing The latest birds could not be read
+tap-at 536,724
+wait-for Shed Pi

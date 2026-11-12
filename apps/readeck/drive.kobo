@@ -29,3 +29,29 @@ clean
 shot readeck-phone
 tap Back
 wait-for Account key
+# The token is typed hidden, counted, and Show reads it back once.
+tap-id credential.enter
+wait-idle
+type abc
+expect 3 characters entered
+expect-missing abc
+tap Show
+wait-for Hide
+expect abc
+clean
+shot readeck-token-shown
+# Saved, the first refresh goes to the server. The sweep has no Readeck at
+# that address, so the inbox says it did not answer instead of claiming the
+# inbox is empty, and offers Try again.
+tap Save
+wait 10000
+wait-for did not answer
+expect Try again
+expect-missing inbox is empty
+clean
+shot readeck-first-refresh-failed
+# The server is kept: after a restart the app opens on the inbox, not setup.
+restart
+wait 10000
+wait-for did not answer
+expect-missing Connect Readeck

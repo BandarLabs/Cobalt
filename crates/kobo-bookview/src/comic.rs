@@ -9,7 +9,10 @@ use kobo_sdk::{
 
 const PAGE: PictureHandle = PictureHandle(2000);
 const THUMB_BASE: u32 = 2001;
-const THUMBS: usize = 2;
+/// The zoom the viewport allows, in percent, so the stepper can say which
+/// end has nowhere further to go.
+const MIN_ZOOM: u16 = 100;
+const MAX_ZOOM: u16 = 400;
 
 #[cfg(test)]
 #[path = "comic_tests.rs"]
@@ -55,6 +58,9 @@ pub struct ComicView {
     number: String,
     orientation: kobo_ui::Orientation,
     notice: Option<String>,
+    /// Why the page number typed was refused, said on the keypad it was
+    /// typed on until the next key.
+    jump_refused: Option<String>,
     save_state: SaveState,
 }
 
@@ -83,6 +89,7 @@ impl ComicView {
             number: String::new(),
             orientation: kobo_ui::Orientation::Portrait,
             notice,
+            jump_refused: None,
             save_state: SaveState::Saved,
         };
         view.paint(context);
@@ -142,7 +149,7 @@ impl ComicView {
     pub fn close(&mut self, context: &mut Context) {
         context.set_orientation(kobo_ui::Orientation::Portrait);
         context.drop_picture(PAGE);
-        for index in 0..THUMBS {
+        for index in 0..4 {
             context.drop_picture(PictureHandle(
                 THUMB_BASE + u32::try_from(index).unwrap_or(0),
             ));
@@ -151,7 +158,8 @@ impl ComicView {
         self.previews.clear();
     }
 
-    fn page_header(&self) -> ScreenBuilder {
+    /// Where the reader is, and whether that has been kept.
+    fn position(&self) -> String {
         let visible = self.reader.visible_pages(self.target_without_header());
         let position = if visible.len() == 2 {
             format!(
@@ -167,17 +175,28 @@ impl ComicView {
                 self.reader.comic().pages.len()
             )
         };
-        let position = match self.save_state {
+        match self.save_state {
             SaveState::Saved => position,
             SaveState::Pending => format!("{position} · Saving"),
             SaveState::Failed => format!("{position} · Position not saved"),
-        };
-        ScreenBuilder::new("comic-page")
+        }
+    }
+
+    fn page_header(&self) -> ScreenBuilder {
+        let screen = ScreenBuilder::new("comic-page")
             .top_bar(&self.title)
             .top_bar_action("comic-controls", "Reading")
             .reading(true)
-            .owns_back(true)
-            .secondary(position)
+            .owns_back(true);
+        // On a page that has the panel the position moves to the controls,
+        // a tap in the middle away: a caption above the art pushed it down
+        // the panel. A position that could not be saved is still said here,
+        // because that is something the reader needs to know unasked.
+        if self.full_page() && self.save_state != SaveState::Failed {
+            screen
+        } else {
+            screen.secondary(self.position())
+        }
     }
     fn target_without_header(&self) -> (u32, u32) {
         (
@@ -199,7 +218,10 @@ impl ComicView {
         // under a header and then drawn without one is not bigger, it is the
         // same page with the header's height as white space beneath it: the
         // layout never scales a picture up to fill the room it is given.
-        if self.full_page() {
+        // Moving the page puts its controls under it whatever the page was
+        // asked for, so they are measured in; a full page sized for the
+        // whole panel pushed them off it.
+        if self.full_page() && self.mode != Mode::Pan {
             return self.target_without_header();
         }
         let mut header = self.page_header();
@@ -210,8 +232,7 @@ impl ComicView {
                 .bottom_action("comic-read", "Read");
         }
         let screen = header.build();
-        let chrome = kobo_ui::Chrome::for_screen(&screen, false, None);
-        let layout = screen.layout_with(&self.metrics, &chrome);
+        let layout = screen.layout_with(&self.metrics, &measured_chrome(&screen));
         (
             u32::try_from(layout.content.width.max(1)).unwrap_or(1),
             u32::try_from(
@@ -222,6 +243,93 @@ impl ComicView {
             )
             .unwrap_or(1),
         )
+    }
+
+    /// The reading controls, with the name of each group when `named`, and
+    /// the three groups side by side when `columns`.
+    fn controls(&self, named: bool, columns: bool) -> Screen {
+        let memory = self.reader.memory();
+        let zoom = memory.viewport.zoom();
+        let fit = usize::from(memory.viewport.fit != Fit::Page);
+        let section = move |screen: ScreenBuilder, name: &str| {
+            if named {
+                screen.section(name)
+            } else {
+                screen
+            }
+        };
+        let page_size = move |screen: ScreenBuilder| {
+            section(screen, "Page size")
+                .segmented(
+                    fit,
+                    [
+                        ("comic-fit-page", "Fit page"),
+                        ("comic-fit-width", "Fit width"),
+                    ],
+                )
+                .stepper(
+                    format!("Zoom {zoom}%"),
+                    "comic-zoom-out",
+                    Glyph::Minus,
+                    "comic-zoom-in",
+                    Glyph::Plus,
+                )
+                .stepper_ends(zoom > MIN_ZOOM, zoom < MAX_ZOOM)
+        };
+        let mut screen = ScreenBuilder::new("comic-controls")
+            .top_bar("Reading")
+            .owns_back(true)
+            .secondary(self.position());
+        if self.notice.is_some() {
+            screen = screen.top_bar_action("comic-details", "Details");
+        }
+        let screen = if columns {
+            // Held sideways the panel is too short for the groups one under
+            // another, and Move page and Reading options, the way to turn
+            // the page back, fell off its foot. Side by side they all fit.
+            type Slot = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>;
+            let slots: [(kobo_sdk::SlotWidth, Slot); 3] = [
+                (kobo_sdk::SlotWidth::Fill, Box::new(page_size)),
+                (
+                    kobo_sdk::SlotWidth::Fill,
+                    Box::new(move |slot| {
+                        section(slot, "Pages")
+                            .button("comic-pages", "All pages")
+                            .button("comic-jump", "Go to page")
+                    }),
+                ),
+                (
+                    kobo_sdk::SlotWidth::Fill,
+                    Box::new(move |slot| {
+                        section(slot, "View")
+                            .button("comic-pan", "Move page")
+                            .button("comic-options", "Reading options")
+                    }),
+                ),
+            ];
+            screen.band(kobo_sdk::BandAlign::Top, slots)
+        } else {
+            let screen = section(page_size(screen), "Pages")
+                .buttons([("comic-pages", "All pages"), ("comic-jump", "Go to page")]);
+            section(screen, "View").buttons([
+                ("comic-pan", "Move page"),
+                ("comic-options", "Reading options"),
+            ])
+        };
+        screen
+            .bottom_action(
+                if self.save_state == SaveState::Failed {
+                    "comic-save-retry"
+                } else {
+                    "comic-read"
+                },
+                if self.save_state == SaveState::Failed {
+                    "Retry saving"
+                } else {
+                    "Back to the page"
+                },
+            )
+            .build()
     }
 
     #[must_use]
@@ -242,7 +350,7 @@ impl ComicView {
                                 * 10),
                     )
                     .unwrap_or(u16::MAX);
-                    screen = if self.full_page() {
+                    screen = if self.full_page() && self.mode != Mode::Pan {
                         screen.full_bleed_picture(picture, max_mm)
                     } else {
                         screen.unframed_picture(picture, max_mm)
@@ -266,47 +374,30 @@ impl ComicView {
                 };
                 screen
                     .page_turns(previous, next)
+                    .reading_menu("comic-controls")
                     .build()
                     .with_auto_hidden_top_bar(self.full_page())
             }
+            // Grouped by what each control is for: how large the page is
+            // drawn, which page it is, and how the comic is read. Eight equal
+            // buttons in a block gave the fit, which is a choice of two, the
+            // look of two more commands, and the zoom, which is a number, the
+            // look of two places to go. Back to the page is the one thing
+            // set apart, at the foot. Where the panel is too short for the
+            // group names, held sideways at the larger text sizes, the groups
+            // keep their order and lose their names.
             Mode::Controls => {
-                let memory = self.reader.memory();
-                let mut screen = ScreenBuilder::new("comic-controls")
-                    .top_bar("Reading")
-                    .owns_back(true)
-                    .secondary(format!(
-                        "{} · {}%",
-                        if memory.viewport.fit == Fit::Page {
-                            "Fit page"
-                        } else {
-                            "Fit width"
-                        },
-                        memory.viewport.zoom()
-                    ));
-                if self.notice.is_some() {
-                    screen = screen.top_bar_action("comic-details", "Details");
-                }
-                screen
-                    .buttons([
-                        ("comic-fit-page", "Fit page"),
-                        ("comic-fit-width", "Fit width"),
-                    ])
-                    .buttons([("comic-zoom-out", "Zoom out"), ("comic-zoom-in", "Zoom in")])
-                    .buttons([("comic-pan", "Move page"), ("comic-options", "More")])
-                    .buttons([("comic-pages", "Pages"), ("comic-jump", "Go to page")])
-                    .bottom_action(
-                        if self.save_state == SaveState::Failed {
-                            "comic-save-retry"
-                        } else {
-                            "comic-read"
-                        },
-                        if self.save_state == SaveState::Failed {
-                            "Retry saving"
-                        } else {
-                            "Read"
-                        },
-                    )
-                    .build()
+                let shapes = [(true, false), (false, false), (true, true), (false, true)];
+                let fits = |screen: &Screen| {
+                    !screen
+                        .diagnostics(&self.metrics, &measured_chrome(screen))
+                        .has_errors()
+                };
+                shapes
+                    .iter()
+                    .map(|&(named, columns)| self.controls(named, columns))
+                    .find(fits)
+                    .unwrap_or_else(|| self.controls(false, true))
             }
             Mode::Details => ScreenBuilder::new("comic-details")
                 .top_bar("Comic details")
@@ -314,42 +405,41 @@ impl ComicView {
                 .text(self.notice.as_deref().unwrap_or("No further details."))
                 .bottom_action("comic-read", "Read")
                 .build(),
-            Mode::Options => ScreenBuilder::new("comic-options")
-                .top_bar("Reading options")
-                .owns_back(true)
-                .button(
-                    "comic-direction",
-                    if self.reader.memory().right_to_left {
-                        "Right to left"
-                    } else {
-                        "Left to right"
-                    },
-                )
-                .button(
-                    "comic-spreads",
-                    if self.reader.memory().spreads {
-                        "Two-page spreads"
-                    } else {
-                        "Single pages"
-                    },
-                )
-                .button(
-                    "comic-full-page",
-                    if self.reader.memory().full_page {
-                        "Page with a bar"
-                    } else {
-                        "Page on its own"
-                    },
-                )
-                .button("comic-rotate", "Rotate page")
-                .secondary("Spreads appear in landscape. Covers stay on their own.")
-                .bottom_action("comic-read", "Read")
-                .build(),
+            // Each setting is a switch that says what it is and shows
+            // whether it is on. Buttons named after the current state read as
+            // the thing a tap would do, which was the opposite.
+            Mode::Options => {
+                let memory = self.reader.memory();
+                ScreenBuilder::new("comic-options")
+                    .top_bar("Reading options")
+                    .owns_back(true)
+                    .toggle(
+                        "comic-direction",
+                        "Read right to left",
+                        "For manga and other comics drawn that way",
+                        memory.right_to_left,
+                    )
+                    .toggle(
+                        "comic-spreads",
+                        "Two-page spreads",
+                        "With the page turned sideways. Covers stay on their own.",
+                        memory.spreads,
+                    )
+                    .toggle(
+                        "comic-full-page",
+                        "Page on its own",
+                        "No bar over the page until you tap the top",
+                        memory.full_page,
+                    )
+                    .button("comic-rotate", "Rotate page")
+                    .bottom_action("comic-read", "Read")
+                    .build()
+            }
             Mode::Pages => ScreenBuilder::new("comic-pages")
                 .top_bar("Pages")
                 .owns_back(true)
                 .picture_tiles(
-                    TileShape::Square,
+                    TileShape::Portrait,
                     (0..self.previews.len()).map(|index| {
                         (
                             format!("comic-page-{index}"),
@@ -359,15 +449,41 @@ impl ComicView {
                         )
                     }),
                 )
-                .buttons([
-                    ("comic-thumbs-previous", "Previous"),
-                    ("comic-thumbs-next", "Next"),
-                ])
+                .band(
+                    kobo_sdk::BandAlign::Middle,
+                    [
+                        ("comic-thumbs-previous", "Previous", self.preview_start > 0),
+                        (
+                            "comic-thumbs-next",
+                            "Next",
+                            self.preview_start + self.thumbs() < self.reader.comic().pages.len(),
+                        ),
+                    ]
+                    .map(|(name, label, enabled)| {
+                        (kobo_sdk::SlotWidth::Fill, move |slot: ScreenBuilder| {
+                            slot.button_with_state(
+                                name,
+                                label,
+                                if enabled {
+                                    kobo_sdk::ControlState::Enabled
+                                } else {
+                                    kobo_sdk::ControlState::Disabled
+                                },
+                            )
+                        })
+                    }),
+                )
                 .bottom_action("comic-read", "Return to reading")
                 .build(),
             Mode::Jump => ScreenBuilder::new("comic-jump")
                 .top_bar("Go to page")
                 .owns_back(true)
+                .compose(|screen| match &self.jump_refused {
+                    Some(refused) => {
+                        screen.banner(kobo_sdk::BannerLevel::Attention, refused.clone())
+                    }
+                    None => screen,
+                })
                 .secondary(format!(
                     "Enter a page from 1 to {}",
                     self.reader.comic().pages.len()
@@ -413,17 +529,31 @@ impl ComicView {
             }
         }
     }
+    /// How many pages the page list shows at once: one row of portrait
+    /// tiles, as many as the panel fits across.
+    fn thumbs(&self) -> usize {
+        self.metrics.grid_columns(TileShape::Portrait).clamp(2, 4)
+    }
+
+    /// Each page in the list is drawn at the size of its tile. Fitted to a
+    /// fixed stamp, they came out a fraction of the tile on a Clara.
     fn preview(&mut self, context: &mut Context) {
+        for handle in 0..4 {
+            context.drop_picture(PictureHandle(THUMB_BASE + handle));
+        }
         self.previews.clear();
+        let thumbs = self.thumbs();
+        let across = u32::try_from(thumbs).unwrap_or(2);
+        let width = u32::try_from(self.metrics.content_width().max(1)).unwrap_or(1) / across;
+        let height = width.saturating_mul(3) / 2;
         for index in
-            self.preview_start..(self.preview_start + THUMBS).min(self.reader.comic().pages.len())
+            self.preview_start..(self.preview_start + thumbs).min(self.reader.comic().pages.len())
         {
             let handle =
                 PictureHandle(THUMB_BASE + u32::try_from(index - self.preview_start).unwrap_or(0));
-            context.drop_picture(handle);
             let preview = self
                 .reader
-                .thumbnail(index)
+                .thumbnail_within(index, width, height)
                 .ok()
                 .and_then(|p| put_page(context, handle, p));
             self.previews.push(preview);
@@ -459,15 +589,17 @@ impl ComicView {
                 self.notice = None;
                 self.paint(context);
             } else {
-                self.notice = Some(format!(
+                self.jump_refused = Some(format!(
                     "Choose a page from 1 to {}.",
                     self.reader.comic().pages.len()
                 ));
-                self.mode = Mode::Controls;
+                self.number.clear();
             }
+            return Outcome::Changed;
         } else {
             return Outcome::Elsewhere;
         }
+        self.jump_refused = None;
         Outcome::Changed
     }
 
@@ -547,12 +679,13 @@ impl ComicView {
             }
             "comic-pages" => {
                 self.mode = Mode::Pages;
-                self.preview_start = self.reader.memory().page / THUMBS * THUMBS;
+                self.preview_start = self.reader.memory().page / self.thumbs() * self.thumbs();
                 self.preview(context);
             }
             "comic-jump" => {
                 self.mode = Mode::Jump;
                 self.number.clear();
+                self.jump_refused = None;
             }
             "comic-fit-page" => self.reader.memory_mut().viewport.reset(Fit::Page),
             "comic-fit-width" => self.reader.memory_mut().viewport.reset(Fit::Width),
@@ -586,13 +719,13 @@ impl ComicView {
                 return Outcome::Changed;
             }
             "comic-thumbs-next"
-                if self.preview_start + THUMBS < self.reader.comic().pages.len() =>
+                if self.preview_start + self.thumbs() < self.reader.comic().pages.len() =>
             {
-                self.preview_start += THUMBS;
+                self.preview_start += self.thumbs();
                 self.preview(context);
             }
-            "comic-thumbs-previous" => {
-                self.preview_start = self.preview_start.saturating_sub(THUMBS);
+            "comic-thumbs-previous" if self.preview_start > 0 => {
+                self.preview_start = self.preview_start.saturating_sub(self.thumbs());
                 self.preview(context);
             }
             _ => {}
@@ -601,6 +734,18 @@ impl ComicView {
             self.paint(context);
         }
         Outcome::Changed
+    }
+}
+
+/// The frame the runtime draws around `screen`, measured with its status
+/// strip unless the screen is a reading page, which is drawn without one.
+/// Measured with no strip at all, the controls fitted here and ran off the
+/// panel on the reader.
+fn measured_chrome(screen: &Screen) -> kobo_ui::Chrome {
+    if screen.reading {
+        kobo_ui::Chrome::for_screen(screen, false, None)
+    } else {
+        kobo_ui::Chrome::measuring(true)
     }
 }
 

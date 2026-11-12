@@ -4,7 +4,7 @@ A news brief that keeps loading while you use other apps.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/brief.png" alt="The brief, with its source and fetch time"><br>The brief, with its source and fetch time</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/brief.png" alt="The brief, with its source, fetch time and what is ready offline"><br>The brief, with its source, fetch time and what is ready offline</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/sources.png" alt="Choosing the source list"><br>Choosing the source list</td>
 </tr>
 </table>
@@ -40,9 +40,9 @@ A news brief that keeps loading while you use other apps.
 
 ```sh
 cargo test -p kobo-brief
-kobo run --sim --app brief      # in the browser simulator
+(cd examples/brief && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py brief
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

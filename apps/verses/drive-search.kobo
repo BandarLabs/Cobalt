@@ -1,0 +1,86 @@
+# PoetryDB search, live: a suggested poet, results grouped by poet and paged,
+# a poem opened and turned, kept as a favourite, More by this poet, and a card
+# made from a searched poem. Assertions stay on what PoetryDB has held for
+# years: Keats's poems and their line counts.
+wait-for-id poem-menu
+wait-idle 3000
+tap Browse
+wait-for Poems
+tap Search
+wait-for Poets to start with
+tap John Keats
+wait-for poems for
+wait-idle
+expect John Keats
+expect A Thing of Beauty
+expect lines ·
+expect 1 of
+clean
+shot results
+tap-id list-next
+wait-for 2 of
+clean
+shot results-page-two
+tap-paged In Drear-Nighted December
+wait-for In drear-nighted December
+wait-idle
+expect John Keats
+clean
+shot searched-poem
+tap-id online-next
+wait-idle
+expect From PoetryDB
+clean
+shot searched-poem-last-page
+# A searched poem kept as a favourite is on the shelf, and opens from it.
+tap-id poem-menu
+wait-for Make a quote card
+tap Favorite
+wait-idle
+expect Remove favorite
+# The card of a searched poem says where its words came from.
+wait-for Make a quote card
+tap Make a quote card
+wait-for Saved for your computer
+expect In Drear-Nighted December, John Keats
+clean
+shot searched-card
+tap Back
+wait-idle
+tap More by this poet
+wait-for poems for
+wait-idle
+expect A Thing of Beauty
+tap Back
+wait-for Favorites
+expect In Drear-Nighted December
+clean
+shot browse-searched-favourite
+# Offline, the kept poem still opens, and a search says the reader is
+# offline rather than that nothing matched.
+scenario offline
+tap In Drear-Nighted December
+wait-for In drear-nighted December
+tap Back
+wait-for Favorites
+tap Search
+wait-for Poets to start with
+tap William Blake
+wait-for This reader is offline
+expect-missing No poems found
+clean
+shot search-offline
+scenario normal
+# A typed search that matches nothing says only that, with no error over it.
+tap Search
+wait-for Poets to start with
+tap-id scope-line
+expect Words from a line
+tap-id search-field
+wait-for Type here
+type qzxv
+tap Search
+wait-for No poems found
+clean
+shot no-matches
+expect-missing couldn't open

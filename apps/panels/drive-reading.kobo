@@ -1,0 +1,110 @@
+# The sample comic opens with the page to itself: no clock, no bar and no
+# position over the art. The middle opens the controls, which say the page.
+wait-for Try a sample comic
+tap Try a sample comic
+wait-for CBZ
+tap-at 536,1378
+wait-for Available on this reader
+tap Open
+wait-for-id comic-next
+wait-idle
+expect-missing Page 1 of
+expect-missing Reading
+clean
+shot reading
+tap-at 536,724
+wait-for Fit page
+expect Page 1 of 4
+clean
+shot controls
+# The controls are grouped: the page's size, its place, and how it is read,
+# with the way back to the page at the foot.
+expect Page size
+expect Zoom 100%
+expect Back to the page
+# Fit width and the zoom stepper change the page and say so.
+tap Fit width
+wait-idle
+tap-id comic-zoom-in
+wait-for Zoom 125%
+clean
+shot controls-zoomed
+tap Back to the page
+wait-idle
+expect-missing Fit page
+clean
+shot page-zoomed
+tap-at 536,724
+wait-for Zoom 125%
+tap Fit page
+wait-for Zoom 100%
+# The page keys turn the comic.
+tap Back to the page
+wait-idle
+tap-id comic-next
+wait-idle
+tap-at 536,724
+wait-for Page 2 of 4
+# All pages shows the pages a few at a time; a tile opens its page.
+tap All pages
+wait-for Page 1
+expect Page 2
+tap Next
+wait-for Page 4
+expect-missing Page 1
+clean
+shot all-pages
+tap Page 4
+wait-idle
+tap-at 536,724
+wait-for Page 4 of 4
+# Go to page takes a number on its own keypad.
+tap Go to page
+wait-for Enter a page from 1 to 4
+clean
+shot go-to-page
+tap-id comic-digit-3
+wait-for 3
+tap Go
+wait-idle
+tap-at 536,724
+wait-for Page 3 of 4
+# Reading options: each is a switch that says what it is and shows whether
+# it is on.
+tap Reading options
+wait-for Read right to left
+expect Two-page spreads
+expect Page on its own
+clean
+shot reading-options
+tap Read right to left
+wait-idle
+tap Read
+wait-idle
+# Back on the shelf, the comic says where it was left and how it is read.
+tap-id 4294967295
+wait-for On this reader
+expect Saved page 3 of 4
+expect right to left
+clean
+shot shelf-kept
+# The place and the direction survive Panels being closed.
+restart
+wait-for On this reader
+expect Saved page 3 of 4
+tap A small garden
+wait-for-id comic-next
+wait-idle
+tap-at 536,724
+wait-for Page 3 of 4
+tap Reading options
+wait-for Read right to left
+tap Read right to left
+wait-idle
+tap Read
+wait-idle
+# The shelf says how each comic is read, and says it as soon as it changes,
+# not only after the comic is opened again.
+tap-id 4294967295
+wait-for On this reader
+expect-missing right to left

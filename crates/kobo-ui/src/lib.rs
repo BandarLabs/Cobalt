@@ -12,6 +12,8 @@
 //! A small retained UI tree and grayscale rasterizer for the Kobo display.
 
 mod board;
+mod notice;
+pub use notice::notice_rect;
 pub mod keyboard;
 mod pencil;
 pub use board::{BoardCell, BoardClue, BoardMark, BoardSurface};
@@ -40,6 +42,11 @@ pub const MAX_CHOICE_OPTIONS: usize = 6;
 /// until the line has room to be one. Five millimetres is about a thumbnail's
 /// width and is the point at which it stops looking like a stray mark.
 pub const MIN_SECTION_RULE_TENTH_MM: i32 = 50;
+/// How close under the top bar's rule a [`Node::Section`] may begin and still
+/// count as the one opening the page, whose own hairline is then left out.
+/// The room below the bar and a section's lead together are five millimetres;
+/// six leaves a little over without reaching a section that follows content.
+pub const SECTION_UNDER_BAR_TENTH_MM: i32 = 60;
 /// Folio's physical composition scale.  Components use [`Space`] for their
 /// existing rhythm; these named values are available to new compositions that
 /// need to state their physical intent without inventing pixel gaps.
@@ -139,6 +146,15 @@ pub fn row_names_the_columns(cells: &[String]) -> bool {
 mod folio_tests;
 
 #[cfg(test)]
+mod fine_type_tests;
+#[cfg(test)]
+mod link_target_tests;
+#[cfg(test)]
+mod quiet_tests;
+
+#[cfg(test)]
+mod notice_tests;
+#[cfg(test)]
 mod responsive_profile_tests;
 
 /// A stacked cell written with the heading its column was under.
@@ -219,6 +235,16 @@ pub enum QuoteRole {
     Body,
     /// Who said it, and when. Smaller, and in the muted tone.
     Byline,
+    /// Something the owner types on a computer, exactly as written.
+    ///
+    /// Setup screens told the owner what to run with a quotation: a rule at
+    /// the left and the words in the interface face, which is how a reply to
+    /// a comment is drawn. A command is not a reply. It is set in the
+    /// fixed-pitch face on a grey panel the width of the column, with no rule
+    /// and no indent, which is how every manual and terminal the owner has
+    /// seen sets one. Protocol 17; an earlier runtime draws it as a
+    /// quotation.
+    Command,
 }
 
 impl QuoteRole {
@@ -229,7 +255,7 @@ impl QuoteRole {
     #[must_use]
     pub const fn size(self) -> FontSize {
         match self {
-            Self::Body => FontSize::Body,
+            Self::Body | Self::Command => FontSize::Body,
             Self::Byline => FontSize::Caption,
         }
     }
@@ -238,8 +264,17 @@ impl QuoteRole {
     #[must_use]
     pub const fn tone(self) -> u8 {
         match self {
-            Self::Body => tone::INK,
+            Self::Body | Self::Command => tone::INK,
             Self::Byline => tone::MUTED,
+        }
+    }
+
+    /// The face it is measured and drawn in, inside a column set in `prose`.
+    #[must_use]
+    pub fn face(self, prose: Face) -> Face {
+        match self {
+            Self::Body | Self::Byline => prose,
+            Self::Command => Face::Mono,
         }
     }
 }
@@ -807,11 +842,20 @@ pub const MIN_NAV_DESTINATIONS: usize = 2;
 /// and the distinction the fifth was carrying is invisible.
 pub const MAX_TONES_PER_SCREEN: usize = 4;
 
+/// The shortest bar marking the current destination of a [`NavBar`], in
+/// tenths of a millimetre. It is otherwise as wide as the destination's name.
+pub const NAV_SELECTION_MIN_TENTH_MM: i32 = 80;
+
 /// The most verbs an action bar will draw. See [`BarStyle::Actions`].
 pub const MAX_ACTION_BAR_ACTIONS: usize = 3;
 
+mod colour;
 mod environment;
 pub mod vector;
+
+pub use colour::{
+    Accent, Appearance, Paint, Palette, ScreenAccent, Shades, LOW_BATTERY_PERCENT, PANEL_LEVEL,
+};
 
 /// Grayscale values used by the built-in monochrome design system.
 ///
@@ -940,10 +984,17 @@ impl ActionId {
     /// `NickelMenu` ships a workaround for it.
     pub const BACK: Self = Self(u32::MAX);
 
+    /// The reserved identifier for a tap on the runtime's notice card.
+    ///
+    /// The runtime answers it itself and never forwards it: the card is the
+    /// runtime's, drawn over whatever the application drew, and what it
+    /// opens is the runtime's to decide. See [`Chrome::notice`].
+    pub const NOTICE: Self = Self(u32::MAX - 1);
+
     /// Whether this identifier belongs to the runtime rather than an app.
     #[must_use]
     pub const fn is_reserved(self) -> bool {
-        self.0 == Self::BACK.0
+        self.0 == Self::BACK.0 || self.0 == Self::NOTICE.0
     }
 }
 
@@ -961,6 +1012,31 @@ pub struct Chrome {
     /// `None` while reading and on any screen that has claimed the panel, so
     /// a book is a book and not a book with a clock on it.
     pub status: Option<Status>,
+    /// Whether the panel being painted can show colour.
+    ///
+    /// Known to the runtime from the device profile and to nothing else, so it
+    /// lives here with the rest of what an application cannot say about the
+    /// screen it is drawn on. Grey by default: a caller that does not know, or
+    /// is only measuring, gets the frame the grey design has always produced.
+    pub appearance: Appearance,
+    /// A notice the runtime is showing over this screen for a few seconds.
+    ///
+    /// Laid out last, so it is drawn over everything and hit-tested first,
+    /// as [`ActionId::NOTICE`]. It takes nothing else: every tap outside it
+    /// reaches the screen underneath exactly as it would have, so an
+    /// application never measures for it and never has to know it is there.
+    pub notice: Option<NoticeCard>,
+}
+
+/// What the runtime's notice card says. See [`Chrome::notice`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct NoticeCard {
+    /// The mark of the application the notice belongs to.
+    pub glyph: Glyph,
+    /// What happened: "Article arrived", "3 articles arrived".
+    pub heading: String,
+    /// What it happened to, on one line. Ellipsised to fit; may be empty.
+    pub line: String,
 }
 
 impl Chrome {
@@ -970,17 +1046,38 @@ impl Chrome {
         Self {
             back: !at_home || screen.owns_back,
             status: if screen.reading { None } else { status },
+            appearance: Appearance::Grey,
+            notice: None,
         }
     }
 
     #[must_use]
     pub const fn with_back(back: bool) -> Self {
-        Self { back, status: None }
+        Self {
+            back,
+            status: None,
+            appearance: Appearance::Grey,
+            notice: None,
+        }
+    }
+
+    /// The same, with the runtime's notice card over it.
+    #[must_use]
+    pub fn with_notice(mut self, notice: Option<NoticeCard>) -> Self {
+        self.notice = notice;
+        self
     }
 
     #[must_use]
     pub fn with_status(mut self, status: Status) -> Self {
         self.status = Some(status);
+        self
+    }
+
+    /// Says which kind of panel this chrome will be painted on.
+    #[must_use]
+    pub const fn with_appearance(mut self, appearance: Appearance) -> Self {
+        self.appearance = appearance;
         self
     }
 
@@ -1000,6 +1097,7 @@ impl Chrome {
     pub fn measuring(back: bool) -> Self {
         Self {
             back,
+            notice: None,
             // The busiest strip, so nothing measured against this comes out
             // narrower than the panel it will be drawn on.
             status: Some(Status::standard(
@@ -1009,6 +1107,7 @@ impl Chrome {
                 Signal::Strong,
                 true,
             )),
+            appearance: Appearance::Grey,
         }
     }
 }
@@ -1200,7 +1299,11 @@ pub fn ensure_way_back_revealed(
     // the bar and shifts it down, so hiding underneath one would put the way
     // back somewhere other than where the reader is told to reach for it.
     // Full-bleed art is a reading screen, and a reading screen has no band.
-    if screen.auto_hide_top_bar && state == TopBarState::Hidden && chrome.status.is_none() {
+    if screen.auto_hide_top_bar
+        && state == TopBarState::Hidden
+        && chrome.status.is_none()
+        && !bar_holds_open_panel(&screen)
+    {
         screen.top_bar = None;
         return screen;
     }
@@ -1208,6 +1311,24 @@ pub fn ensure_way_back_revealed(
         screen = screen.with_top_bar(TopBar::new(NodeId(0), name));
     }
     screen
+}
+
+/// Whether a panel hangs from one of the top bar's own controls.
+///
+/// Such a bar stays drawn while the panel is open, over the page as a
+/// called-back bar is: a panel pointing at a control that is out of sight
+/// points at nothing, and a bar pushed into the page while it is open moves
+/// the words the reader opened it to adjust.
+#[must_use]
+pub fn bar_holds_open_panel(screen: &Screen) -> bool {
+    let Some(OverlayKind::Popover { anchor }) = screen.overlay.as_ref().map(|overlay| overlay.kind)
+    else {
+        return false;
+    };
+    screen
+        .top_bar
+        .as_ref()
+        .is_some_and(|bar| bar.actions.iter().any(|action| action.action == anchor))
 }
 
 /// What a touch at `y` means for an auto-hiding top bar, if anything.
@@ -1226,7 +1347,7 @@ pub fn top_bar_touch(
 ) -> Option<TopBarState> {
     // The same condition the drawing side uses, so the band is only ever
     // claimed on a screen whose bar really is at the top of the panel.
-    if !screen.auto_hide_top_bar || chrome.status.is_some() {
+    if !screen.auto_hide_top_bar || chrome.status.is_some() || bar_holds_open_panel(screen) {
         return None;
     }
     let within_band = y >= 0 && y < metrics.top_bar_height();
@@ -1255,6 +1376,53 @@ pub struct BarAction {
     pub glyph: Option<Glyph>,
 }
 
+/// The field of a shaded tile. Mid-grey, an exact level of the panel's
+/// sixteen, so it is neither mistaken for paper nor for the solid square, and
+/// dark enough that ink letters on it stay the darkest thing in the square.
+const TILE_SHADE: u8 = 170;
+
+/// The letter on a faded tile. Light enough to step back from every letter in
+/// ink and still be read without leaning in.
+const TILE_FADED_INK: u8 = 136;
+
+/// What a mine field square shows besides a count.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FieldMark {
+    Flag,
+    Mine,
+}
+
+impl FieldMark {
+    /// The character an application sends for this mark. The runtime draws
+    /// its own picture in place of the character, because the typeface's
+    /// flag came out a few pixels tall in the middle of a square.
+    fn of(label: &str) -> Option<Self> {
+        match label {
+            "\u{2691}" => Some(Self::Flag),
+            "\u{2739}" => Some(Self::Mine),
+            _ => None,
+        }
+    }
+}
+
+/// Whether a square grid is a mine field: four to nine squares a side, each
+/// one blank, a count from 1 to 8, a flag or a mine, at least one of them
+/// still covered, and nothing else on it. Covered is the cell's selection.
+fn is_mine_field(square: bool, columns: i32, cells: &[Cell]) -> bool {
+    square
+        && (4..=9).contains(&columns)
+        && i32::try_from(cells.len()).is_ok_and(|count| count == columns * columns)
+        && cells.iter().any(|cell| cell.selected)
+        && cells.iter().all(|cell| {
+            cell.glyph.is_none()
+                && cell.corner.is_none()
+                && cell.tone == CellTone::Plain
+                && (cell.label.is_empty()
+                    || FieldMark::of(&cell.label).is_some()
+                    || matches!(cell.label.as_bytes(), [b'1'..=b'8']))
+        })
+}
+
 /// What a grid cell is: part of a board, or a key.
 ///
 /// A board is ruled squares, and the rules are the board. A keyboard is not:
@@ -1272,10 +1440,25 @@ pub enum CellStyle {
     Board,
     /// A shaded playable square on a conventional draughts board.
     BoardDark,
+    /// A light square on a chess or draughts board, where selection means
+    /// the square in hand and is shown as a tinted field. Kept apart from
+    /// [`Self::Board`] because a plain grid's selection means whatever its
+    /// application says it means, Minesweeper's covered squares among them,
+    /// and a field of colour under fifteen covered squares is not a mark.
+    BoardLight,
     /// A point on a conventional backgammon board, broad at the panel edge.
     BackgammonTop,
     /// A point on a conventional backgammon board, broad at the panel edge.
     BackgammonBottom,
+    /// A point on a backgammon board whose cells carry their numbers, which
+    /// the runtime lays out whole: inside the page margins, in a frame, with
+    /// a bar between its halves. Carries which way the point faces and
+    /// whether it is one of the shaded points, counted along its own row,
+    /// because its position on the panel no longer says.
+    BackgammonPoint {
+        from_top: bool,
+        dark: bool,
+    },
     Key,
     /// A cell that is nothing but the picture in it.
     ///
@@ -1297,6 +1480,37 @@ pub enum CellStyle {
     /// that did something, which is a panel mostly made of controls that do
     /// nothing.
     EmptyPad,
+    /// A pit of a sowing game: a round well with its count in it.
+    Pit,
+    /// A store at one end of a sowing game's board, as tall as both rows.
+    Store,
+    /// A square of a noughts and crosses board: it draws the rule on its
+    /// right and below it where another square follows, so the board is the
+    /// four rules of a # and nothing round it.
+    Hash {
+        right: bool,
+        bottom: bool,
+    },
+    /// A square of a joined board ruled in grey, a reversi board's: it
+    /// draws its top and left rules and the board draws the frame.
+    Ruled,
+    /// A square of a mine field. The squares meet and share their rules, as
+    /// on a printed board, with a heavier frame round the field: drawn as
+    /// separate tiles with paper between them, a field read as a keypad.
+    /// A covered square is grey and an opened one is paper; `struck` is the
+    /// mine that ended the game, set in ink so it is found at a glance. The
+    /// four edges say which sides of the field this square is on.
+    Field {
+        top: bool,
+        left: bool,
+        right: bool,
+        bottom: bool,
+        struck: bool,
+    },
+    /// A board square carrying one of the word-game tones.
+    Tile(CellTone),
+    /// A keyboard key carrying the tone its letter has on the board.
+    KeyTile(CellTone),
 }
 
 /// Whether a control can currently be activated.
@@ -1481,6 +1695,17 @@ pub enum OverlayKind {
     /// because "somewhere else" is not one of the choices and a reader who
     /// brushes the panel has not decided anything.
     Modal,
+    /// A modal whose own button named `dismiss` is the way out, so the frame
+    /// draws no cross of its own.
+    ///
+    /// A details sheet with a Close button, or a question with a Cancel, drew
+    /// both that button and the frame's cross, two controls a few centimetres
+    /// apart that do the same thing, and the reader has to wonder which one
+    /// is the real way out. If no button in the dialogue acts on `dismiss`,
+    /// the cross is drawn after all, because a dialogue with no way off it is
+    /// the one thing an overlay must never be. Protocol 18; an older runtime
+    /// is sent a plain modal.
+    Dialog { dismiss: ActionId },
 }
 
 impl Overlay {
@@ -1492,6 +1717,35 @@ impl Overlay {
             kind: OverlayKind::Popover { anchor },
             title: String::new(),
             nodes,
+        }
+    }
+
+    /// A modal whose button acting on `dismiss` is its way out, with no cross
+    /// in its frame. See [`OverlayKind::Dialog`].
+    #[must_use]
+    pub fn dialog(
+        id: NodeId,
+        title: impl Into<String>,
+        dismiss: ActionId,
+        nodes: Vec<Node>,
+    ) -> Self {
+        Self {
+            id,
+            kind: OverlayKind::Dialog { dismiss },
+            title: title.into(),
+            nodes,
+        }
+    }
+
+    /// Whether the frame needs a cross of its own to be left: always for a
+    /// modal, never for a popover, and for a dialogue only when none of its
+    /// buttons acts on the action it named as its way out.
+    #[must_use]
+    pub fn draws_a_cross(&self) -> bool {
+        match self.kind {
+            OverlayKind::Modal => true,
+            OverlayKind::Popover { .. } => false,
+            OverlayKind::Dialog { dismiss } => !offers(&self.nodes, dismiss),
         }
     }
 
@@ -1517,6 +1771,21 @@ impl Overlay {
     pub const fn dismissed_by_a_miss(&self) -> bool {
         matches!(self.kind, OverlayKind::Popover { .. })
     }
+}
+
+/// Whether a button among `nodes`, or in a band or a card among them, acts
+/// on `action`.
+fn offers(nodes: &[Node], action: ActionId) -> bool {
+    nodes.iter().any(|node| match node {
+        Node::Button {
+            action: own,
+            state: ControlState::Enabled,
+            ..
+        } => *own == action,
+        Node::Card { children, .. } => offers(children, action),
+        Node::Band { slots, .. } => slots.iter().any(|slot| offers(&slot.nodes, action)),
+        _ => false,
+    })
 }
 
 /// What a bottom bar is for.
@@ -1667,9 +1936,10 @@ pub struct Screen {
     /// the interface face is chosen so that a label glanced at once cannot be
     /// misread, which is a different job and a different answer.
     pub reading: bool,
-    /// Protocol-11 screens keep the Atkinson display metrics they measured
-    /// against. This is runtime-local compatibility state, never wire data.
-    pub legacy_typography: bool,
+    /// The type and spacing the application measured this screen against.
+    /// Runtime-local compatibility state, decided from the protocol version a
+    /// frame arrived in, never wire data. See [`Typography`].
+    pub typography: Typography,
 
     /// A publisher font already held by the runtime for this application.
     ///
@@ -1710,6 +1980,18 @@ pub struct Screen {
     /// carry two overlays, cannot bury one inside a card, and cannot place one
     /// halfway down the page.
     pub overlay: Option<Box<Overlay>>,
+
+    /// The screen's colour, when it has one. See [`Accent`] and
+    /// [`ScreenAccent`].
+    ///
+    /// Carried by the screen rather than agreed once per session, so the
+    /// runtime can draw a screen it is holding for a background application
+    /// without remembering anything else about it, and so a reading page can
+    /// leave its accent off while the list that opened it keeps one. On a
+    /// greyscale panel it changes nothing at all. A screen made with
+    /// [`Screen::new`] is plain; the SDK's builder leaves the choice to the
+    /// application unless the screen makes one.
+    pub accent: ScreenAccent,
 }
 
 /// What paging means on a laid-out screen right now.
@@ -1799,9 +2081,14 @@ impl PageTurns {
     }
 
     /// The position to draw, once nonsense has been discarded.
+    ///
+    /// "1 of 1" is nonsense too. It says there is nowhere to turn to in a
+    /// strip that also takes a line from the foot of the screen, and Panels,
+    /// with one comic on its shelf, drew it under a list of one. A screen of
+    /// one page draws no strip and gets the line back.
     const fn drawable_position(self) -> Option<(u16, u16)> {
         match self.position {
-            Some((page, of)) if of > 0 && page >= 1 && page <= of => Some((page, of)),
+            Some((page, of)) if of > 1 && page >= 1 && page <= of => Some((page, of)),
             _ => None,
         }
     }
@@ -1843,12 +2130,22 @@ impl Screen {
             page_turns: None,
             owns_back: false,
             reading: false,
-            legacy_typography: false,
+            typography: Typography::CURRENT,
             reading_font: None,
             text_scale: None,
             hold: None,
             overlay: None,
+            accent: ScreenAccent::Plain,
         }
+    }
+
+    /// Decides this screen's colour: an accent of its own, or none at all.
+    /// See [`Accent`]. Either answer is final, where a screen from the SDK's
+    /// builder that has not made one inherits its application's.
+    #[must_use]
+    pub const fn with_accent(mut self, accent: Option<Accent>) -> Self {
+        self.accent = ScreenAccent::decided(accent);
+        self
     }
 
     /// Sends `action` when a finger is held still on the content area.
@@ -1884,7 +2181,18 @@ impl Screen {
     /// Uses the pre-Folio Atkinson display cuts for a decoded legacy frame.
     #[must_use]
     pub const fn with_legacy_typography(mut self, legacy: bool) -> Self {
-        self.legacy_typography = legacy;
+        self.typography = if legacy {
+            Typography::Paperback
+        } else {
+            Typography::CURRENT
+        };
+        self
+    }
+
+    /// Lays the screen out in the type an older application measured with.
+    #[must_use]
+    pub const fn with_typography(mut self, typography: Typography) -> Self {
+        self.typography = typography;
         self
     }
 
@@ -1962,14 +2270,68 @@ impl Screen {
     #[must_use]
     pub fn layout_with(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
         let _environment = environment::TextEnvironment::enter(self, metrics);
-        with_legacy_typography(self.legacy_typography, || {
+        with_typography(self.typography, || {
             with_reading_font(self.reading_font, || {
                 self.layout_with_selected_font(metrics, chrome)
             })
         })
     }
 
+    /// Lays the screen out, giving back the quiet edition's extra room when
+    /// the screen does not fit with it.
+    ///
+    /// Space is the first thing a full screen gives up. The room protocol 17
+    /// adds under the bar, above a section and above a button is a few
+    /// millimetres, and at the largest text sizes a screen that Folio fitted
+    /// exactly no longer did: the paragraph above two commands lost every
+    /// line. So the screen is laid out once with the room and, only if
+    /// something was cut short, again with Folio's one-millimetre gaps and
+    /// secondary lines at caption size. Both passes run in the application
+    /// and in the runtime alike, so the two still agree on what was drawn.
     fn layout_with_selected_font(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        if typography() < Typography::Quiet {
+            return self.layout_once(metrics, chrome);
+        }
+        if room_given_up() {
+            return self.layout_without_room(metrics, chrome);
+        }
+        // A board is sized to every millimetre it is given, so room above it
+        // is taken out of its squares, and the number in the corner of a
+        // crossword square is the first thing that stops fitting. A screen
+        // built round one keeps Folio's gaps rather than learning that a
+        // square at a time.
+        if self.nodes.iter().any(fills_the_room) {
+            return self.layout_without_room(metrics, chrome);
+        }
+        let outer = CUT_SHORT.with(|cut| cut.replace(false));
+        let spaced = self.layout_once(metrics, chrome);
+        let cut = CUT_SHORT.with(|slot| slot.replace(outer));
+        if !cut {
+            return spaced;
+        }
+        self.layout_without_room(metrics, chrome)
+    }
+
+    /// Lays the screen out with the room given back, keeping the room beside
+    /// the bars where that still fits; see [`bar_room_given_up`].
+    fn layout_without_room(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
+        if typography() < Typography::Fine || BAR_ROOM_GIVEN_UP.with(std::cell::Cell::get) {
+            let mut layout = with_room_given_up(|| self.layout_once(metrics, chrome));
+            layout.room_given_up = true;
+            return layout;
+        }
+        let outer = CUT_SHORT.with(|cut| cut.replace(false));
+        let mut layout = with_room_given_up(|| self.layout_once(metrics, chrome));
+        let cut = CUT_SHORT.with(|slot| slot.replace(outer));
+        if cut {
+            layout =
+                with_room_given_up(|| with_bar_room_given_up(|| self.layout_once(metrics, chrome)));
+        }
+        layout.room_given_up = true;
+        layout
+    }
+
+    fn layout_once(&self, metrics: &DisplayMetrics, chrome: &Chrome) -> Layout {
         let margin = metrics.screen_margin();
         let gap = metrics.space(Space::Tight);
         let prose = if self.reading {
@@ -1992,9 +2354,16 @@ impl Screen {
             .as_ref()
             .map_or(0, |status| layout_status_band(status, metrics, &mut layout));
         cursor = cursor.saturating_add(band);
-        if let Some(top_bar) = &self.top_bar {
+        // A bar the reader called back over a screen that hides it is drawn
+        // over the page, as the stock reader draws its own, rather than above
+        // it. The shell only leaves such a bar in place while it is shown, so
+        // its presence is the reveal. Pushed down, the page under it moved a
+        // bar's height for as long as the bar was up, and a page measured for
+        // the whole panel lost its last lines under the foot.
+        let bar_over_content = self.auto_hide_top_bar && band == 0;
+        if let Some(top_bar) = self.top_bar.as_ref().filter(|_| !bar_over_content) {
             cursor = layout_top_bar(top_bar, chrome, metrics, band, &mut layout);
-            cursor = cursor.saturating_add(gap);
+            cursor = cursor.saturating_add(metrics.below_top_bar(prose));
         }
         let content_top = cursor;
 
@@ -2031,7 +2400,7 @@ impl Screen {
         // A rail belongs to the collection it precedes, not to the whole
         // screen. Reserve its gutter from every following flow node so it
         // cannot be painted through by an unrelated card or row.
-        let rail_reserved = if !self.legacy_typography
+        let rail_reserved = if self.typography != Typography::Paperback
             && self
                 .nodes
                 .iter()
@@ -2042,11 +2411,31 @@ impl Screen {
             0
         };
         let flow_width = metrics.width - 2 * margin - rail_reserved;
+        // What a fill or a splash pushes to the foot stops this far short of
+        // a bottom bar; see [`DisplayMetrics::above_bottom_bar`].
+        let foot = if self.nav_bar.is_some() || self.bottom_action.is_some() {
+            metrics.above_bottom_bar(prose)
+        } else {
+            0
+        };
 
+        // Every block of facts set straight on the page shares one label
+        // column, so the values of two blocks under two sections start at the
+        // same place rather than wherever each block's longest label ended.
+        let shared_facts = SharedFactLabel::enter(shared_fact_label(&self.nodes));
+        let mut placed: Vec<PlacedFlowNode> = Vec::new();
         for (position, node) in self.nodes.iter().enumerate() {
             if layout.nodes.len() >= MAX_LAYOUT_NODES || cursor >= content_bottom {
+                if self.nodes[position..]
+                    .iter()
+                    .any(|node| !matches!(node, Node::Flex { .. }))
+                {
+                    note_cut_short();
+                }
                 break;
             }
+            let previous = position.checked_sub(1).map(|before| &self.nodes[before]);
+            cursor = cursor.saturating_add(space_before(previous, node, metrics, prose));
             // A splash centres itself in the band it is handed, and the band
             // it is handed is everything that is left. That is right when it
             // is the last thing on the screen and wrong the moment a recovery
@@ -2065,6 +2454,7 @@ impl Screen {
                     metrics,
                     prose,
                     gap,
+                    Some(node),
                 );
                 // Fills share the room between them, so content set between
                 // two of them is centred on the page: a twelve line poem in
@@ -2076,6 +2466,7 @@ impl Screen {
                     .filter(|node| matches!(node, Node::Flex { .. }))
                     .count();
                 let free = content_bottom
+                    .saturating_sub(foot)
                     .saturating_sub(trailing)
                     .saturating_sub(cursor);
                 let share = free / (i32::try_from(later).unwrap_or(0) + 1);
@@ -2088,11 +2479,18 @@ impl Screen {
                 &self.nodes[position + 1..],
                 margin,
                 flow_width,
-                content_bottom,
+                if matches!(node, Node::Splash { .. }) {
+                    content_bottom - foot
+                } else {
+                    content_bottom
+                },
                 metrics,
                 prose,
                 gap,
+                true,
             );
+            let first = layout.nodes.len();
+            let top = cursor;
             cursor = with_flow_height_bound(bottom < content_bottom, || {
                 layout_flow_node(
                     node,
@@ -2106,10 +2504,27 @@ impl Screen {
                     &mut layout,
                 )
             });
+            placed.push(PlacedFlowNode {
+                position,
+                nodes: first..layout.nodes.len(),
+                top,
+                end: cursor,
+                bottom,
+                bounded: bottom < content_bottom,
+            });
             layout.flow_height = cursor.saturating_sub(content_top).max(0);
+            if cursor > content_bottom {
+                note_cut_short();
+            }
             cursor = cursor.saturating_add(gap);
         }
+        align_bands_with_boards(&self.nodes, &placed, margin, metrics, prose, &mut layout);
+        drop(shared_facts);
 
+        if let Some(top_bar) = self.top_bar.as_ref().filter(|_| bar_over_content) {
+            // Last, so it is drawn over the page and a tap on it is the bar's.
+            layout_top_bar(top_bar, chrome, metrics, band, &mut layout);
+        }
         if let Some(nav_bar) = &self.nav_bar {
             layout_nav_bar(nav_bar, metrics, &mut layout);
         }
@@ -2201,7 +2616,13 @@ impl Screen {
         // popover hanging off a top-bar control has to cover to be readable --
         // and so hit testing, which walks the list backwards, reaches it first.
         if let Some(overlay) = &self.overlay {
-            layout_overlay(overlay, metrics, prose, &mut layout);
+            layout_overlay(
+                overlay,
+                metrics,
+                prose,
+                (content_top, content_bottom),
+                &mut layout,
+            );
             // A popover cannot also be a page turn: the zones are whatever is
             // left of the content area, and "left over" must not include the
             // thing drawn over it. Said as suppression rather than absence, so
@@ -2209,6 +2630,11 @@ impl Screen {
             layout.page_turns = PagingState::SuppressedByOverlay;
             layout.hold = None;
             layout.context_actions.clear();
+        }
+        // Over even an overlay, though the runtime holds a card back while
+        // one is up; and deliberately not a scrim, so it covers only itself.
+        if let Some(card) = &chrome.notice {
+            notice::layout(card, metrics, band, &mut layout);
         }
         layout
     }
@@ -2224,10 +2650,23 @@ impl Screen {
 /// Everything here is measured against what is already in `layout`, because a
 /// popover's position is a fact about where its anchor ended up and cannot be
 /// known before the screen has been laid out.
-fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layout: &mut Layout) {
+fn layout_overlay(
+    overlay: &Overlay,
+    metrics: &DisplayMetrics,
+    prose: Face,
+    content: (i32, i32),
+    layout: &mut Layout,
+) {
     let margin = metrics.screen_margin();
     let padding = metrics.space(Space::Small);
     let gap = metrics.space(Space::Tight);
+    if let OverlayKind::Popover { anchor } = overlay.kind {
+        layout.popover_anchor = Some(anchor);
+    }
+    layout.overlay_exit = Some(match overlay.kind {
+        OverlayKind::Dialog { dismiss } if !overlay.draws_a_cross() => dismiss,
+        _ => ActionId::BACK,
+    });
     // Never the full width. An overlay that reaches both margins is
     // indistinguishable from a new screen, which is the thing it exists not to
     // be: the reader has to be able to see that what they were looking at is
@@ -2245,7 +2684,16 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     // like a mark was pressed. Bounded below so a one word menu is still a
     // comfortable target and still has room for its caret.
     let width = match overlay.kind {
-        OverlayKind::Modal => widest,
+        // From Fine, the width of the page's own column of words, centred as
+        // it is, so the dialogue's edges are the column's edges. Narrower,
+        // it left the ends of the lines behind it showing at its sides, three
+        // letters of a word on either edge, which reads as the page breaking
+        // through rather than lying under.
+        OverlayKind::Modal | OverlayKind::Dialog { .. } if typography() >= Typography::Fine => max(
+            1,
+            (metrics.width - 2 * margin).min(metrics.readable_width()),
+        ),
+        OverlayKind::Modal | OverlayKind::Dialog { .. } => widest,
         OverlayKind::Popover { .. } => {
             let narrowest = min(widest, 3 * metrics.touch_target_default());
             let title = if overlay.title.is_empty() {
@@ -2275,7 +2723,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
     // remember to put in a row, because the one that forgets has drawn a
     // screen with no way off it. A popover needs none -- a miss puts it away,
     // and a second cross beside the control that opened it is noise.
-    let closes = matches!(overlay.kind, OverlayKind::Modal);
+    let closes = overlay.draws_a_cross();
     let close = if closes {
         metrics.touch_target_default()
     } else {
@@ -2295,7 +2743,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         wrap_text_in(&overlay.title, title_width, FontSize::Title, prose)
             .into_iter()
             .take(match overlay.kind {
-                OverlayKind::Modal => 2,
+                OverlayKind::Modal | OverlayKind::Dialog { .. } => 2,
                 OverlayKind::Popover { .. } => 1,
             })
             .collect()
@@ -2315,6 +2763,8 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         if scratch.nodes.len() >= MAX_LAYOUT_NODES {
             break;
         }
+        let previous = position.checked_sub(1).map(|before| &overlay.nodes[before]);
+        cursor = cursor.saturating_add(space_before(previous, node, metrics, prose));
         let bottom = flow_node_bottom(
             node,
             &overlay.nodes[position + 1..],
@@ -2324,6 +2774,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
             metrics,
             prose,
             gap,
+            true,
         );
         cursor = with_flow_height_bound(bottom < overlay_bottom, || {
             layout_flow_node(
@@ -2341,14 +2792,22 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         cursor = cursor.saturating_add(gap);
     }
     let height = min(cursor - gap + padding, metrics.height - 2 * margin);
+    if matches!(overlay.kind, OverlayKind::Popover { .. }) {
+        set_as_menu(&overlay.nodes, &mut scratch, padding, inner, metrics);
+    }
 
     let caret = metrics.space(Space::Small);
     let (x, y, side) = match overlay.kind {
-        OverlayKind::Modal => (
-            (metrics.width - width) / 2,
-            (metrics.height - height) / 2,
-            None,
-        ),
+        OverlayKind::Modal | OverlayKind::Dialog { .. } => {
+            let x = (metrics.width - width) / 2;
+            let y = if typography() >= Typography::Fine {
+                clear_dialog_top(layout, content, x, width, height)
+                    .unwrap_or((metrics.height - height) / 2)
+            } else {
+                (metrics.height - height) / 2
+            };
+            (x, y, None)
+        }
         OverlayKind::Popover { anchor } => {
             let target = layout
                 .nodes
@@ -2367,6 +2826,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
                     },
                     metrics,
                     prose,
+                    content,
                     layout,
                 );
             };
@@ -2491,6 +2951,7 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         node.rect.x += x;
         node.rect.y += y;
         if node.rect.y + node.rect.height > bottom {
+            note_cut_short();
             continue;
         }
         if layout.nodes.len() >= MAX_LAYOUT_NODES {
@@ -2498,6 +2959,160 @@ fn layout_overlay(overlay: &Overlay, metrics: &DisplayMetrics, prose: Face, layo
         }
         layout.nodes.push(node);
     }
+}
+
+/// Sets a popover that is nothing but ordinary buttons as a menu: each
+/// button a row with its label at the leading edge, and a hairline between
+/// rows. Every row runs the width of the popover, its label at the same
+/// margin a title would take, rather than each button being as wide as its
+/// own label and centred under the one above it.
+///
+/// A popover's frame is already a box. Outlining every choice inside it drew
+/// a stack of boxes in a box, which read as a form rather than a menu, and
+/// every other menu on the system is rows. Only the drawing changes: each row
+/// takes the rectangle its button was measured into and the hairline sits in
+/// the gap between them, so a popover is exactly as tall as an application at
+/// any protocol measured it. A popover with a filled or a disabled button
+/// keeps its buttons, because a row has no way to show either.
+fn set_as_menu(
+    nodes: &[Node],
+    scratch: &mut Layout,
+    left: i32,
+    width: i32,
+    metrics: &DisplayMetrics,
+) {
+    let plain = !nodes.is_empty()
+        && nodes.iter().all(|node| {
+            matches!(
+                node,
+                Node::Button {
+                    state: ControlState::Enabled,
+                    emphasis: Emphasis::Normal,
+                    ..
+                }
+            )
+        });
+    if !plain
+        || !scratch
+            .nodes
+            .iter()
+            .all(|node| matches!(node.kind, LayoutKind::Button(..)))
+    {
+        return;
+    }
+    let rule = metrics.rule_thickness();
+    let buttons = std::mem::take(&mut scratch.nodes);
+    let mut previous_bottom = None;
+    for button in buttons {
+        let LayoutKind::Button(action, ..) = button.kind else {
+            continue;
+        };
+        let rect = Rect {
+            x: left,
+            width,
+            ..button.rect
+        };
+        if let Some(bottom) = previous_bottom {
+            scratch.nodes.push(LayoutNode {
+                id: button.id,
+                rect: Rect {
+                    x: rect.x,
+                    y: bottom + (rect.y - bottom - rule) / 2,
+                    width: rect.width,
+                    height: rule,
+                },
+                kind: LayoutKind::RowRule,
+                text_lines: Vec::new(),
+            });
+        }
+        previous_bottom = Some(rect.y + rect.height);
+        let lines = button.text_lines.len().max(1);
+        let words = i32::try_from(lines)
+            .unwrap_or(1)
+            .saturating_mul(FontSize::Body.line_height());
+        scratch.nodes.push(LayoutNode {
+            id: button.id,
+            rect,
+            kind: LayoutKind::Row(action),
+            text_lines: Vec::new(),
+        });
+        scratch.nodes.push(LayoutNode {
+            id: button.id,
+            rect: Rect {
+                x: rect.x,
+                y: rect.y + (rect.height - words) / 2,
+                width: rect.width,
+                height: words,
+            },
+            kind: LayoutKind::RowTitle,
+            text_lines: button.text_lines,
+        });
+    }
+}
+
+/// Where a dialogue `height` tall and `width` wide at `x` goes, from
+/// [`Typography::Fine`]: centred in the content area between the bars, then
+/// moved the least distance that puts both its edges in clear space.
+///
+/// Centred on the whole panel, a dialogue's top edge fell wherever the panel's
+/// middle happened to be, and on the store's app page that was through the
+/// middle of the app's icon: half a glyph sticking out above a box reads as
+/// something broken, not as something behind. Nothing behind is moved; the
+/// dialogue is. `None` when it is taller than the content area, which keeps
+/// the old centring on the panel.
+fn clear_dialog_top(
+    layout: &Layout,
+    content: (i32, i32),
+    x: i32,
+    width: i32,
+    height: i32,
+) -> Option<i32> {
+    let (top, bottom) = content;
+    let room = bottom.saturating_sub(top).saturating_sub(height);
+    if room < 0 {
+        return None;
+    }
+    // What a reader sees as a thing: words, marks and pictures. Bars, bands,
+    // spacers and a row's own tap target are the ground they stand on, and
+    // an edge across those is an edge across paper.
+    let marks: Vec<Rect> = layout
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.rect.x < x + width
+                && node.rect.x + node.rect.width > x
+                && (layout_text_style(node).is_some_and(|_| !node.text_lines.is_empty())
+                    || matches!(
+                        node.kind,
+                        LayoutKind::SplashGlyph(_)
+                            | LayoutKind::TileGlyph(_)
+                            | LayoutKind::TileGlyphMuted(_)
+                            | LayoutKind::InlineGlyph(..)
+                            | LayoutKind::HeldGlyph(_)
+                            | LayoutKind::RowLead(_)
+                            | LayoutKind::Picture(_)
+                            | LayoutKind::FramedPicture(_)
+                            | LayoutKind::Button(..)
+                            | LayoutKind::BannerWords(..)
+                    ))
+        })
+        .map(|node| node.rect)
+        .collect();
+    let cuts = |edge: i32| {
+        marks
+            .iter()
+            .any(|rect| rect.y < edge && rect.y + rect.height > edge)
+    };
+    let centred = top + room / 2;
+    let clear = |y: i32| !cuts(y) && !cuts(y + height);
+    for step in 0..=room {
+        for y in [centred - step, centred + step] {
+            if (top..=top + room).contains(&y) && clear(y) {
+                return Some(y);
+            }
+        }
+    }
+    Some(centred)
 }
 
 /// Lays out the strip carrying the clock, the radio and the battery.
@@ -2852,17 +3467,29 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
         text_lines: Vec::new(),
     });
 
-    let count = visible.len() as i32;
-    let slot = metrics.width / count;
+    let widths = nav_slot_widths(visible, metrics);
+    let mut x: i32 = 0;
     for (index, destination) in visible.iter().enumerate() {
-        let x = slot * index as i32;
-        // The last slot absorbs the division remainder so the bar always spans
-        // the full panel and never leaves a dead strip on the right edge.
-        let width = if index + 1 == visible.len() {
-            metrics.width - x
-        } else {
-            slot
-        };
+        let width = widths[index];
+        // A short upright hairline between two verbs, so a row of words
+        // reads as separate buttons rather than one caption. Inset top and
+        // bottom so it divides the words without dividing the bar. Drawing
+        // only: the verbs keep the slots they had.
+        if index > 0 && nav_bar.style == BarStyle::Actions && !legacy_typography() {
+            let inset = height / 4;
+            let thickness = metrics.rule_thickness();
+            layout.nodes.push(LayoutNode {
+                id: nav_bar.id,
+                rect: Rect {
+                    x: x.saturating_sub(thickness / 2),
+                    y: top + inset,
+                    width: thickness,
+                    height: height - inset * 2,
+                },
+                kind: LayoutKind::RowRule,
+                text_lines: Vec::new(),
+            });
+        }
         layout.nodes.push(LayoutNode {
             id: nav_bar.id,
             rect: Rect {
@@ -2871,14 +3498,83 @@ fn layout_nav_bar(nav_bar: &NavBar, metrics: &DisplayMetrics, layout: &mut Layou
                 width,
                 height,
             },
-            kind: if nav_bar.style == BarStyle::Navigation && nav_bar.selected == Some(index) {
-                LayoutKind::NavDestinationSelected(destination.action, destination.glyph)
-            } else {
-                LayoutKind::NavDestination(destination.action, destination.glyph)
+            kind: match nav_bar.style {
+                BarStyle::Navigation if nav_bar.selected == Some(index) => {
+                    LayoutKind::NavDestinationSelected(destination.action, destination.glyph)
+                }
+                BarStyle::Navigation => {
+                    LayoutKind::NavDestination(destination.action, destination.glyph)
+                }
+                BarStyle::Actions => {
+                    LayoutKind::ActionBarEntry(destination.action, destination.glyph)
+                }
             },
             text_lines: vec![destination.label.clone()],
         });
+        x = x.saturating_add(width);
     }
+}
+
+/// How wide each slot of the bar at the foot is.
+///
+/// Equal wherever every word fits its share with a margin each side. At the
+/// largest text sizes a long word such as "Kobo reader" filled its quarter
+/// and ran to the panel's edge, so a word that needs more takes it from the
+/// slots whose words are short, and the rest stay equal. The last slot
+/// absorbs the division remainder so the bar spans the panel exactly.
+fn nav_slot_widths(visible: &[BarAction], metrics: &DisplayMetrics) -> Vec<i32> {
+    let count = visible.len().max(1);
+    let total = metrics.width;
+    let margin = metrics.space(Space::Small);
+    let needed: Vec<i32> = visible
+        .iter()
+        .map(|entry| {
+            measure_text(&entry.label, FontSize::Caption)
+                .0
+                .saturating_add(2 * margin)
+        })
+        .collect();
+    let mut fixed = vec![false; count];
+    let mut widths = vec![total / count as i32; count];
+    // Each pass fixes the slots whose word is wider than the share left for
+    // the others; at most one pass per slot.
+    for _ in 0..count {
+        let free = total
+            - (0..count)
+                .filter(|&i| fixed[i])
+                .map(|i| widths[i])
+                .sum::<i32>();
+        let open = (0..count).filter(|&i| !fixed[i]).count() as i32;
+        if open == 0 {
+            break;
+        }
+        let share = free / open;
+        let mut changed = false;
+        for i in 0..count {
+            if !fixed[i] && needed[i] > share {
+                fixed[i] = true;
+                widths[i] = needed[i];
+                changed = true;
+            }
+        }
+        if !changed {
+            for i in 0..count {
+                if !fixed[i] {
+                    widths[i] = share;
+                }
+            }
+            break;
+        }
+    }
+    // Words that cannot all fit get equal slots, as they always had.
+    if widths.iter().sum::<i32>() > total || widths.iter().any(|width| *width <= 0) {
+        widths = vec![total / count as i32; count];
+    }
+    let drawn: i32 = widths.iter().sum();
+    if let Some(last) = widths.last_mut() {
+        *last += total - drawn;
+    }
+    widths
 }
 
 /// A run of characters inside a paragraph that goes somewhere.
@@ -2923,6 +3619,12 @@ pub struct TextPresentation {
     /// A reader annotation behind this exact run, rendered as a light ink
     /// wash that remains distinct from selection focus in grayscale.
     pub highlighted: bool,
+    /// Set in the muted tone: words that stand in for something not yet
+    /// there, such as the prompt in an empty field. Drawn the colour of a
+    /// placeholder everywhere else in the interface, so "Type here" is not
+    /// read as something already typed. Changes no width: the run is the
+    /// same face at the same size.
+    pub muted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -3078,17 +3780,38 @@ pub struct ParagraphPresentation {
     pub margin_before_em: u16,
     pub margin_after_em: u16,
     pub first_line_indent_em: i16,
+    /// How far every line stands in from the start edge, in hundredths of an
+    /// em: a quotation set off from the text, or a poem centred as a block
+    /// with its lines still flush with one another. Protocol 18.
+    pub start_indent_em: u16,
+    /// How many lines the paragraph's first letter is set down into, as a
+    /// printed chapter or poem opens: none below two, at most four. The
+    /// letter's top is level with the capitals of the first line and its foot
+    /// sits on the last of them; those lines are set beside it. Protocol 18,
+    /// and only where the typesetter can draw at that size (see
+    /// [`Typesetter::cap_height`]); elsewhere the paragraph opens as usual.
+    pub initial_lines: u8,
+}
+
+impl ParagraphPresentation {
+    /// A paragraph as prose sets one: start aligned, the face's own leading,
+    /// no margins, no indent and no initial. A constant so that a constant
+    /// can be written as this plus what it changes, which `Default` cannot
+    /// give it.
+    pub const PLAIN: Self = Self {
+        alignment: ParagraphAlignment::Start,
+        line_height_percent: 100,
+        margin_before_em: 0,
+        margin_after_em: 0,
+        first_line_indent_em: 0,
+        start_indent_em: 0,
+        initial_lines: 0,
+    };
 }
 
 impl Default for ParagraphPresentation {
     fn default() -> Self {
-        Self {
-            alignment: ParagraphAlignment::Start,
-            line_height_percent: 100,
-            margin_before_em: 0,
-            margin_after_em: 0,
-            first_line_indent_em: 0,
-        }
+        Self::PLAIN
     }
 }
 
@@ -4060,6 +4783,63 @@ pub struct Cell {
     pub selected: bool,
     /// Small crossword clue number in the upper-left corner (1–99).
     pub corner: Option<u8>,
+    /// How strongly the square is marked, for a game whose tiles report
+    /// three things at once. Plain unless the application says otherwise.
+    pub tone: CellTone,
+}
+
+/// The three marks a word game prints on a tile, and on the key for the same
+/// letter.
+///
+/// A printed word puzzle shows a letter in its right place as a solid black
+/// square, a letter that is in the word elsewhere as a grey square with a
+/// heavy rule round it, and a letter that is not in the word at all as a
+/// faint letter on plain paper. Each is a different amount of ink, so the
+/// three can be told apart at arm's length on sixteen greys without reading a
+/// single letter, which brackets and crosses typed beside the letter could
+/// not do.
+///
+/// Sent from protocol 17 in the byte that says whether a cell is selected. A
+/// runtime that has no reading for a tone refuses the screen rather than
+/// drawing every tile alike, so an application that uses one asks the Store
+/// for the release that draws them.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum CellTone {
+    /// Drawn as the cell always was.
+    #[default]
+    Plain,
+    /// Solid ink with the label in paper: the letter is in its place.
+    Solid,
+    /// A mid-grey field inside a heavy rule: the letter is in the word, but
+    /// somewhere else.
+    Shaded,
+    /// A faint label on paper: the letter has been tried and is not used.
+    Faded,
+}
+
+impl CellTone {
+    /// The tone's number on the wire, from zero for plain.
+    #[must_use]
+    pub const fn code(self) -> u8 {
+        match self {
+            Self::Plain => 0,
+            Self::Solid => 1,
+            Self::Shaded => 2,
+            Self::Faded => 3,
+        }
+    }
+
+    /// The tone a wire number names, if any.
+    #[must_use]
+    pub const fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(Self::Plain),
+            1 => Some(Self::Solid),
+            2 => Some(Self::Shaded),
+            3 => Some(Self::Faded),
+            _ => None,
+        }
+    }
 }
 
 impl Cell {
@@ -4071,7 +4851,15 @@ impl Cell {
             glyph: None,
             selected: false,
             corner: None,
+            tone: CellTone::Plain,
         }
+    }
+
+    /// Marks the cell with one of the word-game tones.
+    #[must_use]
+    pub const fn with_tone(mut self, tone: CellTone) -> Self {
+        self.tone = tone;
+        self
     }
 
     /// Gives this cell a picture to sit above its label.
@@ -4583,6 +5371,94 @@ pub enum Glyph {
     /// before this existed, and a single dot the width of a full stop is not
     /// an emblem anyone reads at arm's length.
     Mill,
+    // The marks below exist so that every application on the launcher can be
+    // told from its neighbours by its picture as well as its name. Seven
+    // games once shared one four-square grid and six readers one book, which
+    // made a page of tiles look like a placeholder. They arrived with protocol
+    // 18; an older frame carries the mark each application wore before.
+    /// Nine cells with two of them blacked out: a crossword, whose answers run
+    /// between the black squares.
+    CrosswordGrid,
+    /// Nine boxes with a nine in the middle one: a number puzzle played one
+    /// figure to a cell.
+    CellGrid,
+    /// A letter with a tick beside it: a word guessed and checked letter by
+    /// letter.
+    LetterCheck,
+    /// A nought and a cross: the two marks of noughts and crosses, without
+    /// the board, which is a grid like every other puzzle's.
+    NoughtsCrosses,
+    /// Nine cells with four filled as a shape and the clues counted off above
+    /// the columns: a nonogram.
+    CluedGrid,
+    /// A jigsaw piece: a logic puzzle, or a pack of them.
+    Puzzle,
+    /// A handheld remote with a pad and buttons: this reader controlling
+    /// another machine.
+    Remote,
+    /// A die showing five: a game of chance, or one with dice in it.
+    Dice,
+    /// A board of four squares with a black piece and a white one: the old
+    /// board games, whose pieces are discs whatever the board.
+    BoardPieces,
+    /// A question mark in a ring: a quiz, a round of questions.
+    Question,
+    /// Two crossed swords: tabletop combat and the reference books that go
+    /// with it.
+    Swords,
+    /// A folded map: finding a way, which is most of what a text adventure
+    /// asks of its player.
+    Map,
+    /// Books standing on a shelf: a library rather than one book.
+    Books,
+    /// A book with an arrow leaving it: books fetched for reading offline.
+    BookDownload,
+    /// Three layers in a pile: a stack of papers, a collection.
+    Stack,
+    /// A laboratory flask: a research paper, before or after review.
+    Flask,
+    /// A paperclip: an article clipped from the web to read properly later.
+    Paperclip,
+    /// Two cards fanned: a deck of flashcards.
+    Cards,
+    /// A ball of yarn: knitting and the patterns for it.
+    Yarn,
+    /// Two notes joined by a beam: music, or the scores it is read from.
+    Music,
+    /// A padlock: a vault, a private collection kept on another machine.
+    Lock,
+    /// A pair of quotation marks: words someone else wrote, such as a poem.
+    Quote,
+    /// A feather: birds, drawn by the one part of a bird that is a line.
+    Feather,
+    /// A pair of binoculars: looking for birds out of doors and noting them
+    /// down.
+    Binoculars,
+    /// An envelope: a letter, sent or received.
+    Mail,
+    /// A calendar page with a tick: something done today, and on the days
+    /// before.
+    CalendarCheck,
+    /// Three ticks beside three lines: a list of things to do.
+    Checklist,
+    /// A house with a door: home, and the things in it.
+    House,
+    /// A fork and a knife: cooking and the recipes for it.
+    Cutlery,
+    /// A page cut into panels of unequal size, one gutter at a slant: a comic.
+    ComicPanels,
+    /// An inbox tray: unread items gathered from somewhere else, waiting to
+    /// be read and cleared.
+    Inbox,
+    /// A framed landscape: a photograph.
+    Photo,
+    /// A keyboard: typing into a machine somewhere else, told apart from the
+    /// runtime's own Terminal, which keeps the framed prompt.
+    Keyboard,
+    /// The sun coming up over the horizon: a briefing to read in the morning.
+    Sunrise,
+    /// A bell: the runtime's notices, and the list that keeps them.
+    Bell,
 }
 
 impl Glyph {
@@ -4593,7 +5469,7 @@ impl Glyph {
     /// the set was twenty-one: `Light` and `Close` were authored, shipped, and
     /// covered by none of the tests that walk every glyph. A glyph nobody
     /// rasterises in a test is a blank space beside a label on the panel.
-    pub const ALL: [Self; 69] = [
+    pub const ALL: [Self; 104] = [
         Self::App,
         Self::Book,
         Self::Note,
@@ -4663,6 +5539,41 @@ impl Glyph {
         Self::Backspace,
         Self::Shift,
         Self::Mill,
+        Self::CrosswordGrid,
+        Self::CellGrid,
+        Self::LetterCheck,
+        Self::NoughtsCrosses,
+        Self::CluedGrid,
+        Self::Puzzle,
+        Self::Remote,
+        Self::Dice,
+        Self::BoardPieces,
+        Self::Question,
+        Self::Swords,
+        Self::Map,
+        Self::Books,
+        Self::BookDownload,
+        Self::Stack,
+        Self::Flask,
+        Self::Paperclip,
+        Self::Cards,
+        Self::Yarn,
+        Self::Music,
+        Self::Lock,
+        Self::Quote,
+        Self::Feather,
+        Self::Binoculars,
+        Self::Mail,
+        Self::CalendarCheck,
+        Self::Checklist,
+        Self::House,
+        Self::Cutlery,
+        Self::ComicPanels,
+        Self::Inbox,
+        Self::Photo,
+        Self::Keyboard,
+        Self::Sunrise,
+        Self::Bell,
     ];
 }
 
@@ -4812,6 +5723,14 @@ pub enum LayoutKind {
     QuoteFold(ActionId, bool),
     /// The card an overlay is drawn on.
     Overlay,
+    /// The runtime's notice card, which acts as [`ActionId::NOTICE`].
+    Notice,
+    /// The mark leading a notice card.
+    NoticeMark(Glyph),
+    /// What happened, at the head of a notice card.
+    NoticeHeading,
+    /// What it happened to, under the heading.
+    NoticeLine,
     /// The title inside an overlay.
     OverlayTitle,
     /// The cross that shuts a modal. Answers with [`ActionId::BACK`], which is
@@ -4841,12 +5760,25 @@ pub enum LayoutKind {
     Heading(u8),
     Text,
     RichText(TextPresentation),
+    /// A paragraph's first letter set down into its opening lines, its
+    /// capitals `cap` pixels tall and standing on a baseline `baseline`
+    /// pixels below the top of the node. Relative, so a paragraph moved after
+    /// layout, in a dialog or a band, takes its initial with it.
+    Initial {
+        cap: i32,
+        baseline: i32,
+    },
     /// A run inside a paragraph that goes somewhere.
     ///
     /// Drawn as an underline under words the paragraph node has already set,
     /// and hit-tested ahead of the page turn beneath it because it is pushed
     /// after the paragraph. One of these per line the run covers.
     InlineLink(ActionId),
+    /// A link in a paragraph that is mostly links, such as a story whose
+    /// every word can be tapped. Tapped exactly as a link is, and drawn as
+    /// the words alone: a rule under every word turned the page into a
+    /// ruled form and drowned the story.
+    QuietLink(ActionId),
     /// A line of metadata: smaller than the body, and in the muted tone.
     Secondary,
     /// The name of a group, with a hairline to the right margin and an
@@ -4862,7 +5794,27 @@ pub enum LayoutKind {
     Button(ActionId, ControlState, Emphasis),
     /// A checker stack on a backgammon point. `from_top` pins its base to the
     /// matching board edge so a five-checker point reads as one familiar pile.
+    /// A point's checkers: their colour, how many there are and whether they
+    /// stack down from the top of the board. Five are drawn, and a point
+    /// holding more carries its count on the fifth.
     BackgammonStack(Glyph, u8, bool),
+    /// The frame and bar of a numbered backgammon board.
+    BackgammonFrame,
+    /// The outline of a sowing game's board.
+    MancalaBoard,
+    /// Whose store it is, under the board below the store.
+    StoreLabel,
+    /// The ink frame round a joined board whose squares draw their own
+    /// inner rules, a reversi board's.
+    RuledBoard,
+    /// The thin ink frame round a chess or draughts board. It follows the
+    /// squares rather than leading them, because a dark square on the edge
+    /// fills to its own edge and would paint over a frame drawn first.
+    CheckeredFrame,
+    /// A point's number, printed above or below it on a numbered backgammon
+    /// board. Solid is printed in a black box, shaded in an open box, faded
+    /// in grey.
+    PointNumber(CellTone),
     /// The enclosing field and central bar of a backgammon board.
     BackgammonBoard,
     Card,
@@ -4874,8 +5826,10 @@ pub enum LayoutKind {
     /// A row's overflow mark: a finger-wide target against the right edge,
     /// hit-tested ahead of the row it sits in because it is pushed after it.
     RowMenu(ActionId),
-    /// A text field's border and its tap target.
-    Field(ActionId),
+    /// A text field's border and its tap target, and whether its value was
+    /// refused, which a colour panel shows as a tinted field under the note
+    /// that says why.
+    Field(ActionId, bool),
     /// What is in the field, or its placeholder when it is empty. The bool is
     /// which, because the two are drawn in different tones and the drawing
     /// pass must not have to consult the tree to find out.
@@ -4941,6 +5895,11 @@ pub enum LayoutKind {
     /// screen.
     NavDestination(ActionId, Option<Glyph>),
     NavDestinationSelected(ActionId, Option<Glyph>),
+    /// One verb in an action bar. Drawn in ink like a selected destination
+    /// and never marked: drawn as an unselected destination instead, every
+    /// working action in the bar was the grey of a tab one is not on, and
+    /// Undo, Notes and Add comic all read as switched off.
+    ActionBarEntry(ActionId, Option<Glyph>),
     Row(ActionId),
     Cell(ActionId, CellStyle, bool),
     /// A grid cell's label. Carries whether the cell is a board mark (an X,
@@ -4950,8 +5909,17 @@ pub enum LayoutKind {
     /// columns for its cells to turn taller than they are wide, so the size
     /// this label draws at cannot be read off its own rectangle.
     CellLabel(bool),
+    /// The label of a toned tile or key, set in the ink its tone asks for:
+    /// paper on a solid square, ink on a shaded one, a faint grey on a faded
+    /// one. Carries whether it is a board mark, as [`Self::CellLabel`] does.
+    ToneLabel(CellTone, bool),
     /// Explicit board ink; selection is an outline independent of the mark.
     BoardMark(BoardMark, bool),
+    /// A flag or a mine on a mine field, drawn rather than typed. Carries
+    /// whether it sits on ink, where it is drawn in paper.
+    FieldMark(FieldMark, bool),
+    /// The count on an opened mine field square, in the interface face.
+    FieldCount,
     BoardClue,
     /// The chip marking the selected square's row and column clues. Drawn
     /// behind the clue's numbers and sized to them, never to the gutter: the
@@ -4961,8 +5929,18 @@ pub enum LayoutKind {
     PencilMark(PencilMarkKind, bool, bool, u8),
     PencilEdge(u8, bool),
     PencilNumber(bool),
+    /// A pencilled candidate in its ninth of a square: set in the caption
+    /// size whenever the digit's own shape fits its ninth, which its line
+    /// height, with the room above and below a digit, never does. Measured
+    /// that way it fell to a size a reader had to lean in for.
+    PencilNote(bool),
+    /// A digit the solver entered rather than one the puzzle gave: the same
+    /// size, in grey, the way a pencilled answer sits beside a printed clue.
+    PencilEntry(bool),
     /// The three nested squares and four connectors behind a Morris board.
     MorrisBoard,
+    /// A ring around a selected cell that draws no ground of its own.
+    SelectionRing,
     /// The rule around a crossword grid. Its squares draw the lines they share
     /// with the neighbours above and to the left of them; this closes the two
     /// sides nothing else has drawn.
@@ -5010,6 +5988,10 @@ pub enum LayoutKind {
     /// inversion both belong to the thing underneath it. A glyph that was its
     /// own target would invert a square in the middle of a button.
     InlineGlyph(Glyph, bool),
+    /// An inline mark drawn "on": filled rather than outlined. For a row of
+    /// controls whose cell is selected, such as a bookmarked page, where the
+    /// picture alone has to say which state the reader is in.
+    HeldGlyph(Glyph),
     /// A picture, already placed. `rect` is where it goes; the renderer scales
     /// it to fit only if the application handed over something larger.
     Picture(PictureHandle),
@@ -5031,6 +6013,9 @@ pub enum LayoutKind {
     ChoiceOption(ActionId, bool),
     ChoiceFreeform(ActionId),
     Banner(BannerLevel),
+    /// A banner's words, from [`Typography::Fine`], with the level's mark
+    /// ahead of them when the bool says the banner had room for it.
+    BannerWords(BannerLevel, bool),
     Skeleton,
     ActivityLabel,
     ActivityProgress,
@@ -5110,8 +6095,9 @@ impl LayoutKind {
             | Self::BarGlyph(action, _)
             | Self::NavDestination(action, ..)
             | Self::NavDestinationSelected(action, ..)
+            | Self::ActionBarEntry(action, ..)
             | Self::Tile(action, ControlState::Enabled)
-            | Self::Field(action)
+            | Self::Field(action, _)
             | Self::FieldClear(action)
             | Self::Chip(action, _)
             | Self::Tab(action, _)
@@ -5124,6 +6110,7 @@ impl LayoutKind {
             | Self::QuoteFold(action, _)
             | Self::PagePrevious(action)
             | Self::InlineLink(action)
+            | Self::QuietLink(action)
             | Self::SectionLink(action)
             | Self::PageNext(action)
             | Self::Toggle(action, ControlState::Enabled)
@@ -5132,6 +6119,7 @@ impl LayoutKind {
             | Self::SelectionAction(action)
             | Self::OptionRow(action, _) => Some(action),
             Self::Back | Self::OverlayClose => Some(ActionId::BACK),
+            Self::Notice => Some(ActionId::NOTICE),
             _ => None,
         }
     }
@@ -5171,6 +6159,28 @@ pub struct Layout {
     /// text wrapped in one face and drawn in another does not end where the
     /// wrapping said it would.
     pub prose_face: Face,
+    /// Whether the quiet edition's extra room was given back to fit this
+    /// screen. Painting and checking it have to be done in the same sizes it
+    /// was laid out in, and a secondary line is a step smaller without the
+    /// room; see [`Typography::Quiet`].
+    pub room_given_up: bool,
+    /// What the back arrow in the top bar does while an overlay covers it:
+    /// the overlay's own way out. The arrow is still drawn, and a drawn
+    /// arrow that did nothing under a question with a Cancel read as broken.
+    pub overlay_exit: Option<ActionId>,
+    /// The control a popover hangs off. A tap on it still puts the popover
+    /// away; a tap on the bar's other controls is theirs.
+    pub popover_anchor: Option<ActionId>,
+}
+
+/// Runs `body` in the sizes a layout was made in, with the quiet edition's
+/// room or without it.
+fn in_room<T>(given_up: bool, body: impl FnOnce() -> T) -> T {
+    if given_up {
+        with_room_given_up(body)
+    } else {
+        body()
+    }
 }
 
 /// How urgently a screen diagnostic should be treated.
@@ -5338,7 +6348,8 @@ impl std::fmt::Display for LayoutIssue {
             ),
             LayoutIssueKind::StateInLabel => write!(
                 formatter,
-                "{node}: state is written into the label;                  use the node's own state field so the renderer decides how it looks"
+                "{node}: state is written into the label; \
+                 use the node's own state field so the renderer decides how it looks"
             ),
             LayoutIssueKind::AmbiguousBack => write!(
                 formatter,
@@ -5346,7 +6357,8 @@ impl std::fmt::Display for LayoutIssue {
             ),
             LayoutIssueKind::MultiplePrimaryActions => write!(
                 formatter,
-                "{node}: more than one primary action;                  if two are equally important then neither is primary"
+                "{node}: more than one primary action; \
+                 if two are equally important then neither is primary"
             ),
             LayoutIssueKind::OrphanedSection => write!(
                 formatter,
@@ -5358,7 +6370,8 @@ impl std::fmt::Display for LayoutIssue {
             ),
             LayoutIssueKind::ToneBudget { used } => write!(
                 formatter,
-                "{node}: {used} of the five inks on one screen;                  the panel does not resolve that many"
+                "{node}: {used} of the five inks on one screen; \
+                 the panel does not resolve that many"
             ),
         }
     }
@@ -5411,11 +6424,12 @@ impl Layout {
                         | LayoutKind::BarGlyph(..)
                         | LayoutKind::NavDestination(..)
                         | LayoutKind::NavDestinationSelected(..)
+                        | LayoutKind::ActionBarEntry(..)
                         | LayoutKind::Row(_)
                         | LayoutKind::RowMenu(_)
                         | LayoutKind::Cell(..)
                         | LayoutKind::Tile(_, ControlState::Enabled)
-                        | LayoutKind::Field(_)
+                        | LayoutKind::Field(..)
                         | LayoutKind::FieldClear(_)
                         | LayoutKind::Chip(_, _)
                         | LayoutKind::Tab(_, _)
@@ -5432,7 +6446,24 @@ impl Layout {
             .min_by_key(|node| {
                 i64::from(node.rect.width.max(0)) * i64::from(node.rect.height.max(0))
             })
-            .map(|node| node.rect)
+            .map(|node| match node.kind {
+                // A row sets its words from its very edge, and the press is
+                // drawn as a patch inset from the edge on every side. On a
+                // switch row the patch began past the first letter of the
+                // label and of the line under it, and the pressed row read as
+                // a black bar with two letters hanging off it. These are
+                // widened into the margin by at least the inset, so the patch
+                // still covers what is on the row.
+                LayoutKind::Row(_) | LayoutKind::Toggle(..) | LayoutKind::OptionRow(..) => {
+                    let spare = min(node.rect.x, node.rect.height / 8).max(0);
+                    Rect {
+                        x: node.rect.x - spare,
+                        width: node.rect.width + 2 * spare,
+                        ..node.rect
+                    }
+                }
+                _ => node.rect,
+            })
     }
 
     /// How much of the band between the bars is already spoken for.
@@ -5544,8 +6575,37 @@ impl Layout {
                 // as "put it away", which is what Back already means to an
                 // application that owns its own history.
                 LayoutKind::Scrim { dismisses } => {
+                    let on_back = self
+                        .nodes
+                        .iter()
+                        .any(|node| node.kind == LayoutKind::Back && node.rect.contains(x, y));
+                    if on_back {
+                        return self.overlay_exit;
+                    }
+                    // A popover leaves the top bar's other controls working.
+                    // The reader's type panel hangs off Aa in the bar, and a
+                    // tap on the light beside it was taken as a miss and read
+                    // as Back. A tap on Aa itself still puts the panel away.
+                    if dismisses {
+                        let bar = self.nodes.iter().rev().find(|node| {
+                            matches!(
+                                node.kind,
+                                LayoutKind::BarAction(_) | LayoutKind::BarGlyph(..)
+                            ) && node.rect.contains(x, y)
+                        });
+                        if let Some(action) = bar
+                            .and_then(|node| node.kind.acts_on())
+                            .filter(|action| Some(*action) != self.popover_anchor)
+                        {
+                            return Some(action);
+                        }
+                    }
                     return dismisses.then_some(ActionId::BACK);
                 }
+                // A tap inside the panel that missed its controls is not a
+                // miss of the panel. Reported as Back, a tap on a stepper's
+                // track closed the book in an app that reads Back as leave.
+                LayoutKind::Overlay => return None,
                 kind => match kind.acts_on() {
                     Some(action) => action,
                     None => continue,
@@ -5724,7 +6784,7 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
             measure_text(text, FontSize::for_heading_level(*level)).0
         }
         Node::Text { text, .. } => measure_text_in(text, FontSize::Body, prose).0,
-        Node::Secondary { text, .. } => measure_text(text, FontSize::Caption).0,
+        Node::Secondary { text, .. } => measure_text(text, FontSize::Note).0,
         // The same padding the button lays itself out with, not a smaller one
         // that looks similar. A menu measured with two millimetres a side and
         // drawn with four is two words wide and four millimetres short, which
@@ -5767,6 +6827,28 @@ fn intrinsic_width(node: &Node, available: i32, metrics: &DisplayMetrics, prose:
             })
             .max()
             .unwrap_or(available),
+        // As wide as the run is on one line, so a clock or a single command
+        // in a natural slot sits against the band's far edge. Without an
+        // answer here a run of chips asked for the whole band, which stacked
+        // it under the text it was meant to sit beside. Two or more are
+        // measured as the segmented control a band slot draws them as: every
+        // segment as wide as the widest label.
+        Node::Chips { chips, .. } => {
+            let pad = metrics.space(Space::Small);
+            let widths: Vec<i32> = chips
+                .iter()
+                .take(MAX_CHIPS)
+                .map(|chip| chip_label_width(&chip.label) + pad * 2)
+                .collect();
+            let count = widths.len() as i32;
+            let run = if (2..=MAX_SEGMENTS).contains(&widths.len()) {
+                let widest = widths.iter().copied().max().unwrap_or(0);
+                widest * count + metrics.space(Space::Small) * (count - 1)
+            } else {
+                widths.iter().sum::<i32>() + metrics.space(Space::Tight) * max(0, count - 1)
+            };
+            min(available, run)
+        }
         Node::Picture {
             source,
             max_height_tenths_mm,
@@ -5987,6 +7069,366 @@ fn rich_run_at(start: usize, line_end: usize, spans: &[RichTextSpan]) -> (usize,
     (line_end.max(start + 1), TextPresentation::default())
 }
 
+/// How many keys across a command deck with `keys` keys is laid out.
+///
+/// A deck asks for five across, the shape of the fifteen-key hardware it
+/// stands in for, and a full one is drawn that way. A deck with two keys
+/// drawn five across was two small squares in the top corner of an empty
+/// panel. Fewer keys take fewer columns, so they are larger and the deck
+/// fills the width, and each count takes the columns that leave the fewest
+/// gaps: two and four keys two across, three, six and nine three across,
+/// seven, eight, eleven and twelve four across, and five and ten five across
+/// as they always were. The count is decided here rather than by the
+/// application because a square grid of two to four columns is also a game
+/// board, and those are never drawn as keys.
+fn pad_deck_columns(keys: usize, requested: i32) -> i32 {
+    let columns = match keys {
+        0..=2 | 4 => 2,
+        3 | 6 | 9 => 3,
+        7 | 8 | 11 | 12 => 4,
+        _ => 5,
+    };
+    columns.min(requested)
+}
+
+/// Whether emphasis in `face` is set in a real italic here.
+///
+/// Only in [`Typography::Fine`]: an application at an older protocol measured
+/// its emphasis upright, and setting it in a narrower italic would draw its
+/// lines shorter than the lines it fitted to the page.
+fn sets_true_italic(face: Face) -> bool {
+    typography() >= Typography::Fine
+        && with_typesetter(face, |typesetter| typesetter.has_italic(face)).unwrap_or(false)
+}
+
+/// The width of one run of a paragraph, in the cut its style is drawn in.
+fn measure_run_in(run: &str, size: FontSize, face: Face, styled: TextPresentation) -> i32 {
+    if styled.emphasis && sets_true_italic(face) {
+        with_typesetter(face, |typesetter| {
+            typesetter.measure_italic(run, size, face).0
+        })
+        .unwrap_or_else(|| measure_text_in(run, size, face).0)
+    } else {
+        measure_text_in(run, size, face).0
+    }
+}
+
+/// The width of `text[from..to]` as a styled paragraph sets it: each run in
+/// its own cut, a formula as its picture.
+///
+/// The same as [`measure_range_in`] wherever no run is set in an italic,
+/// which is every paragraph before [`Typography::Fine`].
+#[allow(clippy::too_many_arguments)]
+fn measure_rich_range(
+    text: &str,
+    from: usize,
+    to: usize,
+    size: FontSize,
+    face: Face,
+    spans: &[RichTextSpan],
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> i32 {
+    let italic_inside = spans
+        .iter()
+        .take(MAX_RICH_TEXT_SPANS)
+        .any(|span| span.presentation.emphasis && span.start < to && span.end > from);
+    if !italic_inside || !sets_true_italic(face) {
+        return measure_range_in(text, from, to, size, face, formulae, line_height);
+    }
+    let mut total = 0i32;
+    let mut cursor = from;
+    while cursor < to {
+        let (mut end, styled) = rich_run_at(cursor, to, spans);
+        if end <= cursor || end > to || !text.is_char_boundary(end) {
+            end = text[cursor..to]
+                .char_indices()
+                .nth(1)
+                .map_or(to, |(offset, _)| cursor + offset);
+        }
+        total = total.saturating_add(if styled.emphasis {
+            measure_italic_range(text, cursor, end, size, face, formulae, line_height)
+        } else {
+            measure_range_in(text, cursor, end, size, face, formulae, line_height)
+        });
+        cursor = end;
+    }
+    total
+}
+
+/// One run of a line of rich text as it was placed on the panel.
+struct PlacedRun {
+    start: usize,
+    end: usize,
+    x: i32,
+    width: i32,
+    /// The run's style, or `None` for a formula drawn as a picture.
+    styled: Option<TextPresentation>,
+}
+
+/// Where `offset` falls on a line whose runs were placed as `placed`.
+///
+/// Inside a run, the run's own words up to the offset are measured in the
+/// cut they are drawn in, which is the only measurement that agrees with the
+/// letters on the panel. Inside a formula, which has no letters to stop
+/// between, it is the picture's leading edge.
+fn placed_x(text: &str, placed: &[PlacedRun], line_x: i32, offset: usize, face: Face) -> i32 {
+    let Some(run) = placed.iter().find(|run| offset < run.end) else {
+        return placed
+            .last()
+            .map_or(line_x, |run| run.x.saturating_add(run.width));
+    };
+    if offset <= run.start {
+        return run.x;
+    }
+    match run.styled {
+        Some(styled) if text.is_char_boundary(run.start) && text.is_char_boundary(offset) => {
+            run.x.saturating_add(measure_run_in(
+                &text[run.start..offset],
+                FontSize::Body,
+                face,
+                styled,
+            ))
+        }
+        _ => run.x,
+    }
+}
+
+/// A paragraph's first letter, set down into its opening lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InitialLetter {
+    /// Where the letter ends and the paragraph's text resumes.
+    end: usize,
+    /// How many lines are set beside it.
+    lines: usize,
+    /// The height of its capitals.
+    cap: i32,
+    /// The room it takes from the lines beside it, its own gap included.
+    width: i32,
+    /// From the top of a line to its baseline, for the lines beside it.
+    ascent: i32,
+}
+
+/// Opening punctuation that travels with the letter it opens, so a poem that
+/// begins with a quotation mark drops the mark and its letter together.
+const fn opens_a_word(character: char) -> bool {
+    matches!(
+        character,
+        '"' | '\'' | '\u{2018}' | '\u{201c}' | '(' | '[' | '\u{ab}'
+    )
+}
+
+/// The initial a paragraph asks for, if it asks for one and it can be set.
+fn initial_letter(
+    text: &str,
+    presentation: ParagraphPresentation,
+    prose: Face,
+    line_height: i32,
+    formulae: &[InlineFormula],
+) -> Option<InitialLetter> {
+    if presentation.initial_lines < 2 || typography() < Typography::Fine || !formulae.is_empty() {
+        return None;
+    }
+    let lines = usize::from(presentation.initial_lines.min(4));
+    // Whole graphemes, so a letter written with a combining accent keeps its
+    // accent at the letter's size instead of leaving it beside the initial.
+    let mut graphemes = text.grapheme_indices(true);
+    let (_, first) = graphemes.next()?;
+    let opening = first.chars().next().is_some_and(opens_a_word);
+    let (at, letter) = if opening {
+        graphemes.next()?
+    } else {
+        (0, first)
+    };
+    if !letter.chars().next().is_some_and(char::is_alphanumeric) {
+        return None;
+    }
+    let end = at + letter.len();
+    let letter = &text[..end];
+    let (body_cap, ascent) = with_typesetter(prose, |typesetter| {
+        Some((
+            typesetter.cap_height(FontSize::Body, prose)?,
+            typesetter.ascent(FontSize::Body, prose)?,
+        ))
+    })??;
+    let cap = line_height
+        .saturating_mul(i32::try_from(lines - 1).unwrap_or(0))
+        .saturating_add(body_cap);
+    let advance = with_typesetter(prose, |typesetter| {
+        typesetter.measure_initial(letter, prose, cap)
+    })??;
+    // A word space after it, so the letter reads as the start of its word
+    // and not as a picture beside the text.
+    let gap = measure_text_in(" ", FontSize::Body, prose).0.max(1);
+    Some(InitialLetter {
+        end,
+        lines,
+        cap,
+        width: advance.saturating_add(gap),
+        ascent,
+    })
+}
+
+/// How a paragraph breaks into lines in a column `width` wide, and the
+/// initial it opens with: the one answer layout and the overflow check both
+/// read, so the two cannot disagree about how many lines it takes.
+#[allow(clippy::too_many_arguments)]
+fn rich_text_lines(
+    text: &str,
+    spans: &[RichTextSpan],
+    formulae: &[InlineFormula],
+    presentation: ParagraphPresentation,
+    width: i32,
+    prose: Face,
+    line_height: i32,
+    indent: i32,
+) -> (Vec<(usize, usize)>, Option<InitialLetter>) {
+    let block = block_indent(presentation, prose);
+    let initial = initial_letter(text, presentation, prose, line_height, formulae);
+    let ranges = match initial {
+        Some(initial) => wrap_ranges_from(
+            text,
+            initial.end,
+            &|line| {
+                let beside = if line < initial.lines {
+                    initial.width
+                } else {
+                    0
+                };
+                width.saturating_sub(block).saturating_sub(beside).max(1)
+            },
+            FontSize::Body,
+            prose,
+            spans,
+            formulae,
+            line_height,
+        ),
+        None => wrap_ranges_with(
+            text,
+            width
+                .saturating_sub(block)
+                .saturating_sub(indent.max(0))
+                .max(1),
+            FontSize::Body,
+            prose,
+            spans,
+            formulae,
+            line_height,
+        ),
+    };
+    (ranges, initial)
+}
+
+/// The block indent, in hundredths of an em, that centres a poem in a column
+/// `column` pixels wide: its longest line sits in the middle and every other
+/// line keeps its own ragged end, as a poem is set in a printed anthology.
+///
+/// `stanzas` are the poem's stanzas, line by line; `presentation` is how each
+/// is set, and when it asks for an initial the first stanza's opening lines
+/// are measured with the room the letter takes. Zero when a line would not
+/// fit the column whole: a poem whose lines wrap is set from the margin, so
+/// the wrapped lines have every pixel there is.
+#[must_use]
+pub fn verse_indent(
+    stanzas: &[&[&str]],
+    column: i32,
+    presentation: ParagraphPresentation,
+    prose: Face,
+) -> u16 {
+    let (line_height, ..) = rich_text_spacing(presentation, prose);
+    let opening = stanzas
+        .first()
+        .map(|stanza| stanza.join("\n"))
+        .unwrap_or_default();
+    let initial = initial_letter(&opening, presentation, prose, line_height, &[]);
+    let mut longest = 0i32;
+    for (index, stanza) in stanzas.iter().enumerate() {
+        for (row, line) in stanza.iter().enumerate() {
+            let (text, beside) = match initial {
+                Some(initial) if index == 0 && row < initial.lines => {
+                    let text = if row == 0 {
+                        line.get(initial.end..).unwrap_or_default()
+                    } else {
+                        line
+                    };
+                    (text, initial.width)
+                }
+                _ => (*line, 0),
+            };
+            let width = measure_text_in(text, FontSize::Body, prose)
+                .0
+                .saturating_add(beside);
+            longest = longest.max(width);
+        }
+    }
+    let em = measure_text_in("M", FontSize::Body, prose).0.max(1);
+    if longest == 0 || longest > column {
+        return 0;
+    }
+    // Rounded down, so the indent never pushes the longest line past the
+    // column it was measured to fit.
+    u16::try_from((column - longest) / 2 * 100 / em)
+        .unwrap_or(0)
+        .min(2_000)
+}
+
+/// How far every line of a paragraph stands in, in pixels.
+fn block_indent(presentation: ParagraphPresentation, prose: Face) -> i32 {
+    measure_text_in("M", FontSize::Body, prose)
+        .0
+        .saturating_mul(i32::from(presentation.start_indent_em.min(2000)))
+        / 100
+}
+
+/// The width of `text[from..to]` set in the italic, with any formula in it
+/// as its picture: the words between formulas in the italic, as layout draws
+/// them, and each formula at the width of what stands for it.
+fn measure_italic_range(
+    text: &str,
+    from: usize,
+    to: usize,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> i32 {
+    let italic = TextPresentation {
+        emphasis: true,
+        ..TextPresentation::default()
+    };
+    let mut total = 0i32;
+    let mut cursor = from;
+    while cursor < to {
+        if let Some(formula) = formula_at(cursor, formulae) {
+            let end = formula.end.min(to).max(cursor + 1);
+            total = total.saturating_add(measure_range_in(
+                text,
+                cursor,
+                end,
+                size,
+                face,
+                formulae,
+                line_height,
+            ));
+            cursor = end;
+            continue;
+        }
+        let next = formulae
+            .iter()
+            .take(MAX_INLINE_FORMULAE)
+            .map(|formula| formula.start)
+            .filter(|start| *start > cursor)
+            .min()
+            .unwrap_or(to)
+            .min(to);
+        if text.is_char_boundary(cursor) && text.is_char_boundary(next) {
+            total = total.saturating_add(measure_run_in(&text[cursor..next], size, face, italic));
+        }
+        cursor = next.max(cursor + 1);
+    }
+    total
+}
+
 fn rich_text_spacing(presentation: ParagraphPresentation, prose: Face) -> (i32, i32, i32, i32) {
     let natural = FontSize::Body.line_height_in(prose).max(1);
     let line_height =
@@ -6105,10 +7547,11 @@ fn layout_node(
             } else {
                 usize::try_from(max(0, bottom.saturating_sub(y)) / line_height).unwrap_or(0)
             };
-            let ranges = wrap_ranges(text, width, FontSize::Body, prose)
-                .into_iter()
-                .take(visible_lines)
-                .collect::<Vec<_>>();
+            let mut ranges = wrap_ranges(text, width, FontSize::Body, prose);
+            if ranges.len() > visible_lines {
+                note_cut_short();
+                ranges.truncate(visible_lines);
+            }
             let lines: Vec<String> = if ranges.is_empty() {
                 if text.is_empty() && visible_lines > 0 {
                     vec![String::new()]
@@ -6184,9 +7627,17 @@ fn layout_node(
             // on one line from wrapped lines discarded at the height bound.
             let rich_text_limit = MAX_LAYOUT_NODES.saturating_sub(1);
             let (line_height, before, after, indent) = rich_text_spacing(*presentation, prose);
-            let measure = width.saturating_sub(indent.max(0)).max(1);
-            let ranges =
-                wrap_ranges_with(text, measure, FontSize::Body, prose, formulae, line_height);
+            let block = block_indent(*presentation, prose);
+            let (ranges, initial) = rich_text_lines(
+                text,
+                spans,
+                formulae,
+                *presentation,
+                width,
+                prose,
+                line_height,
+                indent,
+            );
             let visible_lines = if legacy_typography() && !flow_height_bound() {
                 usize::MAX
             } else {
@@ -6201,15 +7652,101 @@ fn layout_node(
                 )
                 .unwrap_or(0)
             };
+            if ranges.len() > visible_lines {
+                note_cut_short();
+            }
             let mut line_y = y.saturating_add(before);
+            // Most of the paragraph up to its last link is links: every word
+            // is a way in, and none is singled out by being underlined.
+            let quiet = {
+                let shown = &links[..links.len().min(MAX_TEXT_LINKS)];
+                let reach = shown.iter().map(|link| link.end).max().unwrap_or(0);
+                let linked: usize = shown
+                    .iter()
+                    .map(|link| link.end.saturating_sub(link.start))
+                    .sum();
+                let letters = text.get(..reach.min(text.len())).map_or(0, |head| {
+                    head.chars().filter(|c| !c.is_whitespace()).count()
+                });
+                shown.len() >= 8 && linked * 3 >= letters * 2
+            };
+            let initial_rect = initial.filter(|_| visible_lines > 0).map(|initial| Rect {
+                x: x.saturating_add(block),
+                y: line_y,
+                width: initial.width,
+                height: line_height.saturating_mul(i32::try_from(initial.lines).unwrap_or(1)),
+            });
+            if let (Some(initial), Some(rect)) = (initial, initial_rect) {
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect,
+                    kind: LayoutKind::Initial {
+                        cap: initial.cap,
+                        baseline: line_height
+                            .saturating_mul(i32::try_from(initial.lines).unwrap_or(1) - 1)
+                            .saturating_add(initial.ascent),
+                    },
+                    text_lines: vec![text[..initial.end].to_owned()],
+                });
+                // The letter is still the start of the text: a link that
+                // begins with it can be followed from it, and a word that is
+                // the letter alone can be held to select it. A word the
+                // letter only begins is selected from the first line below.
+                for link in links.iter().take(MAX_TEXT_LINKS) {
+                    if link.start < initial.end && layout.nodes.len() < rich_text_limit {
+                        layout.nodes.push(LayoutNode {
+                            id: *id,
+                            rect,
+                            kind: LayoutKind::InlineLink(link.action),
+                            text_lines: Vec::new(),
+                        });
+                    }
+                }
+                let standalone = !text[initial.end..]
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_alphanumeric);
+                if let (Some(selection), true) = (selection, standalone) {
+                    if layout.text_hits.len() < MAX_TEXT_HITS {
+                        layout.text_hits.push((
+                            rect,
+                            TextHit {
+                                context: selection.context,
+                                start: selection.offset,
+                                end: selection
+                                    .offset
+                                    .saturating_add(u32::try_from(initial.end).unwrap_or(0)),
+                            },
+                        ));
+                    }
+                }
+            }
             for (line_index, &(from, to)) in ranges.iter().take(visible_lines).enumerate() {
                 if layout.nodes.len() >= rich_text_limit {
                     break;
                 }
                 let line = &text[from..to];
-                let line_width =
-                    measure_range_in(text, from, to, FontSize::Body, prose, formulae, line_height);
-                let first_indent = if line_index == 0 { indent } else { 0 };
+                let line_width = measure_rich_range(
+                    text,
+                    from,
+                    to,
+                    FontSize::Body,
+                    prose,
+                    spans,
+                    formulae,
+                    line_height,
+                );
+                // An initial stands in for the first-line indent: the letter
+                // is what marks the paragraph's start.
+                let first_indent = if line_index == 0 && initial.is_none() {
+                    indent
+                } else {
+                    0
+                };
+                let beside = initial
+                    .filter(|initial| line_index < initial.lines)
+                    .map_or(0, |initial| initial.width);
+                let first_indent = first_indent.saturating_add(block).saturating_add(beside);
                 let available = width.saturating_sub(first_indent.max(0));
                 let aligned = match presentation.alignment {
                     ParagraphAlignment::Center => (available - line_width).max(0) / 2,
@@ -6219,6 +7756,13 @@ fn layout_node(
                 let line_x = x.saturating_add(first_indent).saturating_add(aligned);
                 let mut cursor = from;
                 let mut run_x = line_x;
+                // Where each run of this line went, so a link or a word held
+                // to select it is found where its letters were drawn. Each
+                // run is drawn on its own, so the space a face kerns across a
+                // run boundary when it measures the whole line is not on the
+                // panel, and a target measured over the whole line drifted off
+                // its word by that much for every run before it.
+                let mut placed: Vec<PlacedRun> = Vec::new();
                 while cursor < to {
                     // Every slice below is by byte, and a paper is full of
                     // characters that take more than one of them. An offset
@@ -6265,6 +7809,13 @@ fn layout_node(
                                 kind: LayoutKind::Picture(formula.handle),
                                 text_lines: Vec::new(),
                             });
+                            placed.push(PlacedRun {
+                                start: cursor,
+                                end,
+                                x: run_x,
+                                width: drawn_width,
+                                styled: None,
+                            });
                             run_x = run_x.saturating_add(drawn_width);
                         }
                         cursor = end;
@@ -6300,7 +7851,7 @@ fn layout_node(
                         styled = TextPresentation::default();
                     }
                     let run = &text[cursor..end];
-                    let run_width = measure_text_in(run, FontSize::Body, prose).0;
+                    let run_width = measure_run_in(run, FontSize::Body, prose, styled);
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
@@ -6312,9 +7863,17 @@ fn layout_node(
                         kind: LayoutKind::RichText(styled),
                         text_lines: vec![run.to_owned()],
                     });
+                    placed.push(PlacedRun {
+                        start: cursor,
+                        end,
+                        x: run_x,
+                        width: run_width,
+                        styled: Some(styled),
+                    });
                     run_x = run_x.saturating_add(run_width);
                     cursor = end;
                 }
+                let x_at = |offset: usize| placed_x(text, &placed, line_x, offset, prose);
                 for link in links.iter().take(MAX_TEXT_LINKS) {
                     if layout.nodes.len() >= rich_text_limit {
                         break;
@@ -6322,76 +7881,57 @@ fn layout_node(
                     let start = max(from, link.start);
                     let end = min(to, link.end);
                     if start < end && text.is_char_boundary(start) && text.is_char_boundary(end) {
-                        // Measured the way the line is set, not the way it was
+                        // Found the way the line is set, not the way it was
                         // written: a formula earlier on the line takes the width
                         // of its picture, and measuring the words it stands for
                         // instead puts every target after it in the wrong place.
-                        let before = measure_range_in(
-                            text,
-                            from,
-                            start,
-                            FontSize::Body,
-                            prose,
-                            formulae,
-                            line_height,
-                        );
-                        let through = measure_range_in(
-                            text,
-                            from,
-                            end,
-                            FontSize::Body,
-                            prose,
-                            formulae,
-                            line_height,
-                        );
+                        let left = x_at(start);
+                        let right = x_at(end);
                         layout.nodes.push(LayoutNode {
                             id: *id,
                             rect: Rect {
-                                x: line_x.saturating_add(before),
+                                x: left,
                                 y: line_y,
-                                width: through.saturating_sub(before),
+                                width: right.saturating_sub(left),
                                 height: line_height,
                             },
-                            kind: LayoutKind::InlineLink(link.action),
+                            kind: if quiet {
+                                LayoutKind::QuietLink(link.action)
+                            } else {
+                                LayoutKind::InlineLink(link.action)
+                            },
                             text_lines: Vec::new(),
                         });
                     }
                 }
                 if let Some(selection) = selection {
+                    // The word the initial begins, on the first line beside
+                    // it: held, it selects the whole word, initial included.
+                    let continued = initial_rect.filter(|_| {
+                        line_index == 0 && initial.is_some_and(|initial| initial.end == from)
+                    });
                     for (relative, word) in line.unicode_word_indices() {
                         if layout.text_hits.len() >= MAX_TEXT_HITS {
                             break;
                         }
-                        let start = from.saturating_add(relative);
-                        let end = start.saturating_add(word.len());
+                        let joined = continued.filter(|_| relative == 0);
+                        let start = if joined.is_some() {
+                            0
+                        } else {
+                            from.saturating_add(relative)
+                        };
+                        let end = from.saturating_add(relative).saturating_add(word.len());
                         let (Ok(start_offset), Ok(end_offset)) =
                             (u32::try_from(start), u32::try_from(end))
                         else {
                             continue;
                         };
-                        let before = measure_range_in(
-                            text,
-                            from,
-                            start,
-                            FontSize::Body,
-                            prose,
-                            formulae,
-                            line_height,
-                        );
-                        let through = measure_range_in(
-                            text,
-                            from,
-                            end,
-                            FontSize::Body,
-                            prose,
-                            formulae,
-                            line_height,
-                        );
+                        let left = joined.map_or_else(|| x_at(start.max(from)), |rect| rect.x);
                         layout.text_hits.push((
                             Rect {
-                                x: line_x.saturating_add(before),
+                                x: left,
                                 y: line_y,
-                                width: through.saturating_sub(before).max(1),
+                                width: x_at(end).saturating_sub(left).max(1),
                                 height: line_height,
                             },
                             TextHit {
@@ -6403,6 +7943,15 @@ fn layout_node(
                     }
                 }
                 line_y = line_y.saturating_add(line_height);
+            }
+            // A paragraph shorter than its initial still makes room for all of
+            // the letter, or the next paragraph would be set over its foot.
+            if let Some(initial) = initial.filter(|_| visible_lines > 0) {
+                let lines = i32::try_from(initial.lines.min(visible_lines)).unwrap_or(1);
+                line_y = line_y.max(
+                    y.saturating_add(before)
+                        .saturating_add(line_height.saturating_mul(lines)),
+                );
             }
             let end = if legacy_typography() && !flow_height_bound() {
                 line_y.saturating_add(after)
@@ -6427,8 +7976,8 @@ fn layout_node(
             // in MIN_TEXT_HEIGHT is there so a control is never smaller than a
             // finger; metadata is not touched, and applying it puts a blank
             // line between a caption and the thing it captions.
-            let lines = wrap_text(text, width, FontSize::Caption);
-            let height = lines.len() as i32 * FontSize::Caption.line_height();
+            let lines = wrap_text(text, width, FontSize::Note);
+            let height = lines.len() as i32 * FontSize::Note.line_height();
             layout.nodes.push(LayoutNode {
                 id: *id,
                 rect: Rect {
@@ -6535,28 +8084,44 @@ fn layout_node(
             text,
             fold,
         } => {
-            let depth = (*depth).min(MAX_QUOTE_DEPTH);
+            // A command answers nothing, so it has no depth to show.
+            let depth = if *role == QuoteRole::Command {
+                0
+            } else {
+                (*depth).min(MAX_QUOTE_DEPTH)
+            };
             let (offset, full_width) = quote_offsets(metrics, width, depth);
             let text_x = x.saturating_add(offset);
             let size = role.size();
+            let face = role.face(prose);
             // Only a byline folds, and only a byline gives up room for the
             // mark. A body that shortened its measure to leave space for a
             // control it does not have would ragged the whole comment.
             let fold = match role {
                 QuoteRole::Byline => *fold,
-                QuoteRole::Body => None,
+                QuoteRole::Body | QuoteRole::Command => None,
             };
             let mark = fold.map_or(0, |_| fold_mark_width(metrics));
-            let text_width = max(1, full_width - mark);
-            let lines = wrap_text_in(text, text_width, size, prose);
+            let inset = if *role == QuoteRole::Command {
+                command_inset(metrics).0
+            } else {
+                0
+            };
+            let text_width = max(1, full_width - mark - 2 * inset);
+            let lines = if *role == QuoteRole::Command {
+                wrap_command(text, text_width, size)
+            } else {
+                wrap_text_in(text, text_width, size, face)
+            };
             // A byline is one short line and is allowed to be shorter than a
             // finger: it is not a control, and forcing it to the minimum text
             // height is what put a comment's author a whole blank line away
             // from the comment.
-            let measured = lines.len() as i32 * size.line_height_in(prose);
+            let measured = lines.len() as i32 * size.line_height_in(face);
             let height = match role {
                 QuoteRole::Body => max(MIN_TEXT_HEIGHT, measured),
                 QuoteRole::Byline => byline_height(measured, metrics),
+                QuoteRole::Command => command_height(measured, metrics),
             };
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -6622,27 +8187,16 @@ fn layout_node(
             } else {
                 metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM)
             };
-            let desired = measure_text(label, FontSize::Body)
-                .0
-                .saturating_add(padding.saturating_mul(2))
-                .max(metrics.touch_target_minimum());
-            // A primary control is deliberately dominant. Ordinary controls
-            // stay content-width unless their label would leave too little
-            // surrounding paper to read as a deliberate target.
-            let button_width = if legacy
-                || *emphasis == Emphasis::Primary
-                || in_band_slot()
-                || desired >= width * 4 / 5
-            {
-                width
-            } else {
-                desired.min(width)
-            };
-            let button_x = if button_width == width {
-                x
-            } else {
-                x.saturating_add((width - button_width) / 2)
-            };
+            // Every button takes the width of the column, as a primary and a
+            // pair in a band already did. A button the width of its label was
+            // centred under a full-width one, the one control on the screen
+            // not set from the margin, and a lone one between two pairs (Start
+            // section again, between Needles' pairs) read as a mistake. The
+            // emphasis is the fill, not the width. Wider only ever wraps the
+            // label onto fewer lines, so nothing measured narrow is drawn
+            // taller.
+            let button_width = width;
+            let button_x = x;
             let lines = wrap_text(
                 label,
                 if legacy {
@@ -6719,7 +8273,7 @@ fn layout_node(
                     width,
                     height,
                 },
-                kind: LayoutKind::Field(*action),
+                kind: LayoutKind::Field(*action, error.is_some()),
                 text_lines: Vec::new(),
             });
             // The cross is a control in its own right and must clear a finger,
@@ -6851,9 +8405,10 @@ fn layout_node(
                 let count = shown as i32;
                 let each = width.saturating_sub(gap * (count - 1)) / count;
                 let fits = each >= metrics.touch_target_minimum()
-                    && chips.iter().take(shown).all(|chip| {
-                        measure_text(&chip.label, FontSize::Caption).0 + pad * 2 <= each
-                    });
+                    && chips
+                        .iter()
+                        .take(shown)
+                        .all(|chip| chip_label_width(&chip.label) + pad * 2 <= each);
                 if fits {
                     for (position, chip) in chips.iter().take(shown).enumerate() {
                         if layout.nodes.len() >= MAX_LAYOUT_NODES {
@@ -6891,7 +8446,7 @@ fn layout_node(
                     break;
                 }
                 let label = one_line(&chip.label, max_i32(1, width - pad * 2), FontSize::Caption);
-                let chip_width = (measure_text(&label, FontSize::Caption).0 + pad * 2).min(width);
+                let chip_width = (chip_label_width(&label) + pad * 2).min(width);
                 // Wrapped by the renderer, which is the whole point: an
                 // application that had to place these itself would be choosing
                 // coordinates, and a subject cloud is exactly the content whose
@@ -7002,6 +8557,7 @@ fn layout_node(
                     metrics,
                     prose,
                     inner_gap,
+                    false,
                 );
                 cursor = with_flow_height_bound(child_bottom < bottom, || {
                     layout_flow_node(
@@ -7116,6 +8672,7 @@ fn layout_node(
                             metrics,
                             prose,
                             gap,
+                            false,
                         );
                         cursor = with_flow_height_bound(node_bottom < bottom, || {
                             with_band_slot(|| {
@@ -7156,6 +8713,7 @@ fn layout_node(
                             metrics,
                             prose,
                             gap,
+                            false,
                         );
                         end = with_flow_height_bound(node_bottom < bottom, || {
                             with_band_slot(|| {
@@ -7363,13 +8921,31 @@ fn layout_node(
                 .map(|(label, _)| measure_text(label, label_size).0)
                 .max()
                 .unwrap_or(0);
+            // A block on the page itself takes the column every block there
+            // shares; one inside a band, card or dialog keeps its own.
+            let widest = if depth == 0 && !in_band_slot() {
+                max(widest, SHARED_FACT_LABEL.with(std::cell::Cell::get))
+            } else {
+                widest
+            };
             let column = min(widest, width * FACTS_LABEL_LIMIT_EIGHTHS / 8);
             let value_x = x.saturating_add(column).saturating_add(gap);
             let value_width = max(0, width.saturating_sub(column).saturating_sub(gap));
             // The label rides down to sit on the first line of its value, so a
             // caption beside body text shares a baseline rather than floating
-            // above it.
-            let baseline = max(0, value_size.line_height() - label_size.line_height());
+            // above it. By the faces' own ascents where the typesetter can
+            // give them: lowering the label by the difference in line heights
+            // aligned the foot of the two line boxes, and a caption's box
+            // carries proportionally more room under its baseline than body
+            // text's, so every label sat a few pixels below its value.
+            let baseline = with_typesetter(Face::Text, |typesetter| {
+                label_drop(
+                    typesetter.ascent(value_size, Face::Text),
+                    typesetter.ascent(label_size, Face::Text),
+                    value_size.line_height() - label_size.line_height(),
+                )
+            })
+            .unwrap_or_else(|| max(0, value_size.line_height() - label_size.line_height()));
             let mut cursor = y;
             for (label, value) in entries {
                 if layout.nodes.len() + 2 > MAX_LAYOUT_NODES {
@@ -7383,6 +8959,7 @@ fn layout_node(
                 // What every node does when it runs out of panel: the facts
                 // that cannot fit whole are dropped, never drawn half-cut.
                 if cursor.saturating_add(height) > bottom {
+                    note_cut_short();
                     break;
                 }
                 layout.nodes.push(LayoutNode {
@@ -7409,7 +8986,15 @@ fn layout_node(
                 });
                 cursor = cursor.saturating_add(height).saturating_add(gap / 2);
             }
-            cursor
+            // The half gap is between two facts, not after the last. Counted
+            // after it too, a list whose last fact fitted ran its node past
+            // the bound it was fitted to by those few pixels, and a band
+            // holding it was clipped at the foot of the panel.
+            if typography() >= Typography::Quiet && cursor > y {
+                cursor.saturating_sub(gap / 2)
+            } else {
+                cursor
+            }
         }
         // Nothing is drawn and nothing is reserved. The screen loop has
         // already moved the cursor down; anywhere else -- inside a card, an
@@ -7471,13 +9056,16 @@ fn layout_node(
             } else {
                 usize::try_from(max(0, bottom.saturating_sub(y)) / line_height).unwrap_or(0)
             };
-            let lines = items
+            let mut lines = items
                 .iter()
                 .skip(start)
                 .take(per_page)
                 .flat_map(|item| wrap_text(item, width, FontSize::Body))
-                .take(visible_lines)
                 .collect::<Vec<_>>();
+            if lines.len() > visible_lines {
+                note_cut_short();
+                lines.truncate(visible_lines);
+            }
             let natural_height = max(MIN_TEXT_HEIGHT, lines.len() as i32 * line_height);
             let height = if legacy_typography() && !flow_height_bound() {
                 natural_height
@@ -7533,7 +9121,70 @@ fn layout_node(
                 && requested == 12
                 && cells.len() == 24
                 && cells.iter().all(|cell| cell.label.starts_with("Point "));
-            let pad_deck = *square && requested == 5 && cells.len() <= 15;
+            // A board whose points carry their numbers is laid out whole here.
+            // One without them came from an application that draws its own
+            // numbers in pictures matched to the old columns, and keeps them.
+            if backgammon_board
+                && !legacy_typography()
+                && cells.iter().any(|cell| cell.corner.is_some())
+            {
+                return layout_numbered_backgammon(*id, cells, x, y, width, metrics, layout);
+            }
+            // Two rows of six pits between two stores, as a sowing game's
+            // board is carved: eight squares a row, with a store at each end
+            // of the row that holds it and nothing in the other row's place.
+            if is_mancala(*square, *columns, cells) {
+                return layout_mancala(
+                    *id,
+                    cells,
+                    Rect {
+                        x,
+                        y,
+                        width,
+                        height: bottom.saturating_sub(y),
+                    },
+                    metrics,
+                    layout,
+                );
+            }
+            // A row of word-game tiles is five squares too, and is a board.
+            let pad_deck = *square
+                && requested == 5
+                && cells.len() <= 15
+                && cells.iter().all(|cell| cell.tone == CellTone::Plain);
+            // Draughts and reversi are joined boards, like a chess board: the
+            // squares meet, and the board is ruled rather than tiled.
+            let draughts_squares = *square
+                && matches!(requested, 8 | 10)
+                && cells.iter().any(|cell| {
+                    matches!(
+                        cell.glyph,
+                        Some(
+                            Glyph::BlackDraughtsMan
+                                | Glyph::WhiteDraughtsMan
+                                | Glyph::BlackDraughtsKing
+                                | Glyph::WhiteDraughtsKing
+                        )
+                    )
+                });
+            let reversi_board = *square
+                && requested == 8
+                && cells.len() == 64
+                && !draughts_squares
+                && cells
+                    .iter()
+                    .any(|cell| matches!(cell.glyph, Some(Glyph::BlackDisc | Glyph::WhiteDisc)));
+            // Noughts and crosses is drawn as the # it is played on: three by
+            // three squares that meet, with only the four rules between them.
+            let hash_board = *square
+                && requested == 3
+                && cells.len() == 9
+                && cells.iter().all(|cell| {
+                    cell.corner.is_none()
+                        && cell.tone == CellTone::Plain
+                        && matches!(cell.glyph, None | Some(Glyph::Circle | Glyph::Close))
+                });
+            let mine_field = is_mine_field(*square, requested, cells);
             let chess_board = *square
                 && requested == 8
                 && cells.len() == 64
@@ -7558,7 +9209,9 @@ fn layout_node(
                 });
             // A board's column count is the board, so narrowing it to the touch
             // target would deal a different game. Only free-form grids shrink.
-            let columns = if legacy_typography() || *square {
+            let columns = if pad_deck && !legacy_typography() {
+                pad_deck_columns(cells.len(), requested)
+            } else if legacy_typography() || *square {
                 requested
             } else {
                 let fits = width
@@ -7570,13 +9223,23 @@ fn layout_node(
             };
             let (mut x, mut width, gutter) = if backgammon_board {
                 (0, metrics.width, 0)
-            } else if chess_board || (*square && cells.iter().any(|cell| cell.corner.is_some())) {
+            } else if chess_board
+                || mine_field
+                || hash_board
+                || draughts_squares
+                || reversi_board
+                || (*square && cells.iter().any(|cell| cell.corner.is_some()))
+            {
                 (x, width, 0)
             } else if pad_deck {
                 (x, width, metrics.space(Space::Small))
             } else {
                 (x, width, tight)
             };
+            // The size of one key five across, measured before a smaller deck
+            // is centred, so a deck of larger keys can keep its marks close to
+            // that size.
+            let five_across = (width - gutter * 4) / 5;
             let crossword_squares = *square && cells.iter().any(|cell| cell.corner.is_some());
             let block_extra =
                 if *square && columns == 9 && cells.len() >= 27 && cells.len() % 27 == 0 {
@@ -7650,6 +9313,8 @@ fn layout_node(
                 },
                 kind: if backgammon_board {
                     LayoutKind::BackgammonBoard
+                } else if reversi_board {
+                    LayoutKind::RuledBoard
                 } else if morris_board {
                     LayoutKind::MorrisBoard
                 } else if crossword_board {
@@ -7692,8 +9357,25 @@ fn layout_node(
                     CellStyle::Crossword
                 } else if morris_board {
                     CellStyle::Plain
+                } else if reversi_board {
+                    CellStyle::Ruled
+                } else if mine_field {
+                    CellStyle::Field {
+                        top: row == 0,
+                        left: column == 0,
+                        right: column == columns - 1,
+                        bottom: (position + columns) >= i32::try_from(cells.len()).unwrap_or(0),
+                        struck: FieldMark::of(&cell.label) == Some(FieldMark::Mine),
+                    }
+                } else if hash_board {
+                    CellStyle::Hash {
+                        right: column < 2,
+                        bottom: row < 2,
+                    }
                 } else if (draughts_board || chess_board) && (row + column) % 2 == 1 {
                     CellStyle::BoardDark
+                } else if draughts_board || chess_board {
+                    CellStyle::BoardLight
                 } else {
                     style
                 };
@@ -7711,6 +9393,15 @@ fn layout_node(
                     && cell.label.trim().is_empty()
                 {
                     CellStyle::EmptyPad
+                } else if cell.tone != CellTone::Plain && cell.glyph.is_none() {
+                    // Only a plain square or a key takes a tone. The other
+                    // boards already say what their squares are with the
+                    // colour of the square itself.
+                    match style {
+                        CellStyle::Board => CellStyle::Tile(cell.tone),
+                        CellStyle::Key => CellStyle::KeyTile(cell.tone),
+                        other => other,
+                    }
                 } else {
                     style
                 };
@@ -7736,7 +9427,7 @@ fn layout_node(
                             .nth(3)
                             .and_then(|count| count.parse::<u8>().ok())
                             .unwrap_or(1)
-                            .clamp(1, 5);
+                            .clamp(1, 15);
                         layout.nodes.push(LayoutNode {
                             id: *id,
                             rect,
@@ -7751,13 +9442,34 @@ fn layout_node(
                 } else {
                     match cell.glyph {
                         Some(glyph) if style == CellStyle::Pad => {
-                            let inset = metrics.tenth_mm(PAD_BORDER_TENTH_MM);
+                            let inset = metrics.tenth_mm(pad_border_tenth_mm());
                             let mark = min(cell_height, cell_width) * 2 / 5;
+                            // A key larger than five across keeps close to
+                            // the mark a five-across key has, and sets the
+                            // mark and its word together in the middle of the
+                            // key. Grown with the key, two keys on a page
+                            // carried pictures a third of the panel wide and
+                            // read as a toy.
+                            let (mark, mark_top, label_top, label_bottom) = if columns < 5 {
+                                let mark = mark.min(five_across * 3 / 5);
+                                let line = FontSize::Body.line_height() + inset;
+                                let group = mark + inset + line;
+                                let top = rect.y + (cell_height - group).max(0) / 2;
+                                let label_top = top + mark + inset;
+                                (mark, top, label_top, label_top + line)
+                            } else {
+                                (
+                                    mark,
+                                    rect.y.saturating_add(inset + cell_height / 8),
+                                    rect.y + cell_height * 3 / 5,
+                                    rect.y + cell_height - inset,
+                                )
+                            };
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: Rect {
                                     x: rect.x.saturating_add((cell_width - mark).max(0) / 2),
-                                    y: rect.y.saturating_add(inset + cell_height / 8),
+                                    y: mark_top,
                                     width: mark,
                                     height: mark,
                                 },
@@ -7774,14 +9486,13 @@ fn layout_node(
                                 text_lines: vec![cell.label.clone()],
                             });
                             if !cell.label.is_empty() {
-                                let label_top = rect.y + cell_height * 3 / 5;
                                 layout.nodes.push(LayoutNode {
                                     id: *id,
                                     rect: Rect {
                                         x: rect.x + inset,
                                         y: label_top,
                                         width: (cell_width - inset * 2).max(1),
-                                        height: (rect.y + cell_height - inset - label_top).max(1),
+                                        height: (label_bottom - label_top).max(1),
                                     },
                                     kind: LayoutKind::CellLabel(false),
                                     text_lines: vec![cell.label.clone()],
@@ -7789,7 +9500,40 @@ fn layout_node(
                             }
                         }
                         Some(glyph) => {
-                            let mark = min(cell_height, cell_width) * 3 / 5;
+                            // A piece nearly fills its square, as on a real
+                            // board; a mark on an empty square stays small.
+                            let piece = matches!(
+                                glyph,
+                                Glyph::BlackDisc
+                                    | Glyph::WhiteDisc
+                                    | Glyph::BlackDraughtsMan
+                                    | Glyph::WhiteDraughtsMan
+                                    | Glyph::BlackDraughtsKing
+                                    | Glyph::WhiteDraughtsKing
+                            ) && *square;
+                            let mark = min(cell_height, cell_width) * if piece { 9 } else { 3 }
+                                / if piece { 10 } else { 5 };
+                            // A plain cell has no ground to fill, so a
+                            // selected one is ringed: the last move on a
+                            // Morris board, the piece being slid. Drawn
+                            // first, so the piece sits inside its ring.
+                            if cell.selected
+                                && style == CellStyle::Plain
+                                && vector::held(glyph).is_none()
+                            {
+                                let side = min(cell_height, cell_width);
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x.saturating_add((cell_width - side) / 2),
+                                        y: rect.y.saturating_add((cell_height - side) / 2),
+                                        width: side,
+                                        height: side,
+                                    },
+                                    kind: LayoutKind::SelectionRing,
+                                    text_lines: Vec::new(),
+                                });
+                            }
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: Rect {
@@ -7803,13 +9547,51 @@ fn layout_node(
                                 // filled with paper or the surface tone, and a
                                 // paper glyph on either of those is a mark
                                 // nobody can see: a won line of noughts came
-                                // out as three empty squares.
-                                kind: LayoutKind::InlineGlyph(
-                                    glyph,
-                                    cell.selected && style == CellStyle::CrosswordBlock,
-                                ),
+                                // out as three empty squares. A selected
+                                // control whose mark has a filled form shows
+                                // it, since its cell draws no ground at all.
+                                kind: if cell.selected
+                                    && style == CellStyle::Plain
+                                    && vector::held(glyph).is_some()
+                                {
+                                    LayoutKind::HeldGlyph(glyph)
+                                } else {
+                                    LayoutKind::InlineGlyph(
+                                        glyph,
+                                        cell.selected && style == CellStyle::CrosswordBlock,
+                                    )
+                                },
                                 text_lines: vec![cell.label.clone()],
                             });
+                        }
+                        // A count is set in the interface face, about half
+                        // the height of its square; see `field_count_style`.
+                        // A flag or a mine is drawn, not typed.
+                        None if matches!(style, CellStyle::Field { .. }) => {
+                            if let Some(mark) = FieldMark::of(&cell.label) {
+                                let size = min(cell_height, cell_width) * 2 / 3;
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect: Rect {
+                                        x: rect.x.saturating_add((cell_width - size) / 2),
+                                        y: rect.y.saturating_add((cell_height - size) / 2),
+                                        width: size,
+                                        height: size,
+                                    },
+                                    kind: LayoutKind::FieldMark(
+                                        mark,
+                                        matches!(style, CellStyle::Field { struck: true, .. }),
+                                    ),
+                                    text_lines: vec![cell.label.clone()],
+                                });
+                            } else if !cell.label.is_empty() {
+                                layout.nodes.push(LayoutNode {
+                                    id: *id,
+                                    rect,
+                                    kind: LayoutKind::FieldCount,
+                                    text_lines: vec![cell.label.clone()],
+                                });
+                            }
                         }
                         None if style == CellStyle::CrosswordBlock => (),
                         None => {
@@ -7819,13 +9601,34 @@ fn layout_node(
                             // whole square it took the largest size that fit,
                             // which is a headline in a box and left the grid
                             // looking like a toy rather than a puzzle.
+                            // The corner number keeps the top fifth; the
+                            // letter has the rest but a tenth at the foot, so
+                            // it is set as large as a filled-in letter is
+                            // written, a little below the middle.
                             let letter = if style == CellStyle::Crossword {
                                 let inset = rect.height / 5;
                                 Rect {
                                     x: rect.x,
                                     y: rect.y.saturating_add(inset),
                                     width: rect.width,
-                                    height: rect.height.saturating_sub(inset * 2).max(1),
+                                    height: rect
+                                        .height
+                                        .saturating_sub(inset + rect.height / 10)
+                                        .max(1),
+                                }
+                            } else if matches!(style, CellStyle::Key | CellStyle::KeyTile(_))
+                                && cell_width >= 2 * metrics.touch_target_default()
+                            {
+                                // A key as wide as a button is set like one,
+                                // with the button's padding each side. Without
+                                // it a long label ran from edge to edge of the
+                                // key. Keyboard keys are narrower than this and
+                                // keep every pixel for their letter.
+                                let pad = metrics.tenth_mm(BUTTON_HORIZONTAL_PADDING_TENTH_MM);
+                                Rect {
+                                    x: rect.x.saturating_add(pad),
+                                    width: rect.width.saturating_sub(2 * pad).max(1),
+                                    ..rect
                                 }
                             } else {
                                 rect
@@ -7833,10 +9636,16 @@ fn layout_node(
                             layout.nodes.push(LayoutNode {
                                 id: *id,
                                 rect: letter,
-                                kind: LayoutKind::CellLabel(matches!(
-                                    style,
-                                    CellStyle::Board | CellStyle::BoardDark | CellStyle::Crossword
-                                )),
+                                kind: match style {
+                                    CellStyle::Tile(tone) => LayoutKind::ToneLabel(tone, true),
+                                    CellStyle::KeyTile(tone) => LayoutKind::ToneLabel(tone, false),
+                                    _ => LayoutKind::CellLabel(matches!(
+                                        style,
+                                        CellStyle::Board
+                                            | CellStyle::BoardDark
+                                            | CellStyle::Crossword
+                                    )),
+                                },
                                 text_lines: vec![cell.label.clone()],
                             });
                             if let Some(number) = cell.corner.filter(|n| (1..=99).contains(n)) {
@@ -7871,6 +9680,17 @@ fn layout_node(
                 rows * cell_height + (rows - 1) * gutter + block_gaps
             };
             layout.nodes[index].rect.height = height;
+            // A chess or draughts board is its squares, light and dark edge to
+            // edge, inside one thin frame. Nothing is ruled between squares:
+            // a rule round every square turned the board into a grid of tiles.
+            if (chess_board || draughts_board) && layout.nodes.len() < MAX_LAYOUT_NODES {
+                layout.nodes.push(LayoutNode {
+                    id: *id,
+                    rect: layout.nodes[index].rect,
+                    kind: LayoutKind::CheckeredFrame,
+                    text_lines: Vec::new(),
+                });
+            }
             y.saturating_add(height)
         }
         Node::Rows { id, rows } => {
@@ -8211,7 +10031,16 @@ fn layout_node(
             };
             let title_lines = tiles
                 .iter()
-                .map(|tile| wrap_text(&tile.label, title_width, title_size).len())
+                .map(|tile| {
+                    let width = tile_label_width(
+                        &tile.label,
+                        title_width.saturating_add(label_inset * 2),
+                        label_inset,
+                        title_size,
+                        *shape == TileShape::Card,
+                    );
+                    tile_label_lines(&tile.label, width, title_size, 2).len()
+                })
                 .max()
                 .unwrap_or(1)
                 .clamp(1, 2) as i32;
@@ -8273,6 +10102,7 @@ fn layout_node(
                 // fit them. When it cannot, the grid stops rather than drawing
                 // over whatever the band was reserved for.
                 if cell_y.saturating_add(cell_height) > bottom {
+                    note_cut_short();
                     break;
                 }
                 rows = row + 1;
@@ -8379,16 +10209,13 @@ fn layout_node(
                 // Inset by the same tight step the label sits below the mark,
                 // so a name that fills its tile is ellipsised with a margin
                 // rather than run flush into the cell border.
-                let label_width = max_i32(1, cell - inset * 2);
-                let label = wrap_text(
-                    &clamp_lines(&tile.label, label_width, title_size, title_lines as usize),
-                    label_width,
-                    title_size,
-                );
+                let label_width = tile_label_width(&tile.label, cell, inset, title_size, outlined);
+                let label =
+                    tile_label_lines(&tile.label, label_width, title_size, title_lines as usize);
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
-                        x: cell_x + inset,
+                        x: cell_x + (cell - label_width) / 2,
                         y: group_y.saturating_add(mark_height).saturating_add(inset),
                         width: label_width,
                         // Keep the reserved band above, but describe the
@@ -8407,7 +10234,7 @@ fn layout_node(
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
-                            x: cell_x + inset,
+                            x: cell_x + (cell - label_width) / 2,
                             y: group_y
                                 .saturating_add(mark_height)
                                 .saturating_add(inset)
@@ -8423,7 +10250,7 @@ fn layout_node(
                     layout.nodes.push(LayoutNode {
                         id: *id,
                         rect: Rect {
-                            x: cell_x + inset,
+                            x: cell_x + (cell - label_width) / 2,
                             y: group_y
                                 .saturating_add(mark_height)
                                 .saturating_add(inset)
@@ -8648,29 +10475,39 @@ fn layout_node(
             text,
             action,
         } => {
+            let plan = plan_banner(
+                text,
+                *level,
+                action.as_ref().map(|action| action.label.as_str()),
+                width,
+                metrics,
+            );
             let padding = metrics.space(Space::Small);
-            let mark = banner_mark_column(*level, metrics);
-            let lines = wrap_text(text, width - 2 * padding - mark, FontSize::Body);
-            let words = banner_height_for_lines(lines.len(), metrics);
-            // The action is a line of its own rather than a button beside the
-            // words, so the words keep the banner's whole measure. Beside
-            // them, "Sign in again" at the largest text size left the reason
-            // three words a line.
-            let button = action.as_ref().map(|action| {
-                let finger = banner_action_height(metrics);
-                let inner = max(1, width - 2 * padding);
-                let label = one_line(&action.label, max(1, inner - 2 * padding), FontSize::Body);
-                let wide = measure_text(&label, FontSize::Body)
-                    .0
-                    .saturating_add(2 * padding)
-                    .max(metrics.touch_target_minimum())
-                    .min(inner);
-                (action.action, label, wide, finger)
-            });
-            let height = button.as_ref().map_or(words, |(.., finger)| {
-                words
-                    .saturating_add(*finger)
-                    .saturating_add(metrics.space(Space::Tight))
+            let fine = typography() >= Typography::Fine;
+            let count = plan.lines.len();
+            // From Fine the words are a node of their own, set in the middle
+            // of the band they own: the whole banner when the action is
+            // beside them or there is none, the part above the action when
+            // it is under them. The banner is then only its surface.
+            let words = fine.then(|| {
+                let band = match &plan.action {
+                    Some(button) if !button.beside => banner_height_for_lines(count, metrics),
+                    _ => plan.height,
+                };
+                let tall = i32::try_from(count)
+                    .unwrap_or(0)
+                    .saturating_mul(FontSize::Body.line_height());
+                LayoutNode {
+                    id: *id,
+                    rect: Rect {
+                        x: x.saturating_add(padding),
+                        y: y.saturating_add((band - tall) / 2),
+                        width: max(1, width - 2 * padding),
+                        height: tall,
+                    },
+                    kind: LayoutKind::BannerWords(*level, plan.marked),
+                    text_lines: Vec::new(),
+                }
             });
             layout.nodes.push(LayoutNode {
                 id: *id,
@@ -8678,27 +10515,36 @@ fn layout_node(
                     x,
                     y,
                     width,
-                    height,
+                    height: plan.height,
                 },
                 kind: LayoutKind::Banner(*level),
-                text_lines: lines,
+                text_lines: if fine { Vec::new() } else { plan.lines.clone() },
             });
-            if let Some((action, label, wide, finger)) = button {
+            if let Some(mut words) = words {
+                words.text_lines = plan.lines;
+                layout.nodes.push(words);
+            }
+            if let (Some(action), Some(button)) = (action, plan.action) {
                 layout.nodes.push(LayoutNode {
                     id: *id,
                     rect: Rect {
-                        x: x.saturating_add(width).saturating_sub(padding + wide),
-                        y: y.saturating_add(height)
-                            .saturating_sub(padding)
-                            .saturating_sub(finger),
-                        width: wide,
-                        height: finger,
+                        x: x.saturating_add(width)
+                            .saturating_sub(padding + button.width),
+                        y: if button.beside {
+                            y.saturating_add((plan.height - button.height) / 2)
+                        } else {
+                            y.saturating_add(plan.height)
+                                .saturating_sub(padding)
+                                .saturating_sub(button.height)
+                        },
+                        width: button.width,
+                        height: button.height,
                     },
-                    kind: LayoutKind::BannerAction(action),
-                    text_lines: vec![label],
+                    kind: LayoutKind::BannerAction(action.action),
+                    text_lines: vec![button.label],
                 });
             }
-            y.saturating_add(height)
+            y.saturating_add(plan.height)
         }
         Node::Splash {
             id,
@@ -9288,7 +11134,7 @@ fn options_per_page_at_current_scale(metrics: &DisplayMetrics, summaries: bool) 
             .status_band_height()
             .saturating_add(metrics.top_bar_height())
             .saturating_add(metrics.rule_thickness())
-            .saturating_add(gap)
+            .saturating_add(metrics.below_top_bar(Face::Text))
             .saturating_add(metrics.nav_bar_height());
         let prompt = FontSize::Body
             .line_height()
@@ -9584,15 +11430,160 @@ fn banner_action_height(metrics: &DisplayMetrics) -> i32 {
     max(metrics.touch_target_default(), FontSize::Body.line_height())
 }
 
-/// The column a success or an error banner gives its mark ahead of the words.
-/// Info and attention give none, so their banners are laid out exactly as
-/// they always were.
+/// The column a banner's mark takes ahead of its words.
+fn notice_column(metrics: &DisplayMetrics) -> i32 {
+    FontSize::Body
+        .line_height()
+        .saturating_add(metrics.space(Space::Tight))
+}
+
+/// The column a banner laid out before [`Typography::Fine`] gives its mark:
+/// a success and an error had one, info and attention none.
 fn banner_mark_column(level: BannerLevel, metrics: &DisplayMetrics) -> i32 {
     match level {
         BannerLevel::Info | BannerLevel::Attention => 0,
-        BannerLevel::Success | BannerLevel::Error => FontSize::Body
-            .line_height()
-            .saturating_add(metrics.space(Space::Tight)),
+        BannerLevel::Success | BannerLevel::Error => notice_column(metrics),
+    }
+}
+
+/// The mark a banner sets ahead of its words.
+fn banner_mark(level: BannerLevel) -> Vec<vector::Shape> {
+    match level {
+        BannerLevel::Info => vector::notice(vector::NoticeMark::Note),
+        BannerLevel::Attention => vector::notice(vector::NoticeMark::Caution),
+        BannerLevel::Success => vector::shapes(Glyph::Check),
+        BannerLevel::Error => vector::notice(vector::NoticeMark::Fault),
+    }
+}
+
+/// How a banner is laid out: its words, its height, and where its action
+/// goes.
+struct BannerPlan {
+    lines: Vec<String>,
+    height: i32,
+    action: Option<BannerButton>,
+    /// Whether the words stand in from a column holding the level's mark.
+    marked: bool,
+}
+
+struct BannerButton {
+    label: String,
+    width: i32,
+    height: i32,
+    /// At the end of the words rather than on a line under them.
+    beside: bool,
+}
+
+/// Lays out a banner `width` wide, with an action labelled `label` if it has
+/// one.
+///
+/// In [`Typography::Fine`] the action goes at the end of the words when they
+/// still fit in two lines beside it, the way a notice on any other system
+/// carries its one button. On a line of its own it made a grey slab twice the
+/// height of a one-line notice, with a button floating in its far corner.
+/// Words that need more than two lines beside it, or more than half the
+/// banner's measure, keep the whole measure and the action goes under them:
+/// "Sign in again" at the largest text size would otherwise leave the reason
+/// three words a line.
+fn plan_banner(
+    text: &str,
+    level: BannerLevel,
+    label: Option<&str>,
+    width: i32,
+    metrics: &DisplayMetrics,
+) -> BannerPlan {
+    if typography() < Typography::Fine {
+        return plan_banner_with(
+            text,
+            label,
+            width,
+            banner_mark_column(level, metrics),
+            false,
+            metrics,
+        );
+    }
+    let column = notice_column(metrics);
+    let marked = plan_banner_with(text, label, width, column, true, metrics);
+    // A success and an error always carried their mark. Info and attention
+    // gained one in Fine, and take it only where it costs no height: on a
+    // small panel at the largest size, a column for the mark put the notice
+    // a line taller and pushed the last row of a page off it.
+    if matches!(level, BannerLevel::Info | BannerLevel::Attention) {
+        let plain = plan_banner_with(text, label, width, 0, true, metrics);
+        if plain.height < marked.height {
+            return plain;
+        }
+    }
+    marked
+}
+
+/// [`plan_banner`] with the mark's column decided: `column` wide, or none.
+/// `beside` allows the action at the end of the words.
+fn plan_banner_with(
+    text: &str,
+    label: Option<&str>,
+    width: i32,
+    column: i32,
+    beside: bool,
+    metrics: &DisplayMetrics,
+) -> BannerPlan {
+    let padding = metrics.space(Space::Small);
+    let tight = metrics.space(Space::Tight);
+    let measure = max(1, width - 2 * padding - column);
+    let button = label.map(|label| {
+        let inner = max(1, width - 2 * padding);
+        let label = one_line(label, max(1, inner - 2 * padding), FontSize::Body);
+        let wide = measure_text(&label, FontSize::Body)
+            .0
+            .saturating_add(2 * padding)
+            .max(metrics.touch_target_minimum())
+            .min(inner);
+        (label, wide)
+    });
+    if let Some((label, wide)) = button.as_ref() {
+        let room = measure - padding - wide;
+        if beside && room * 2 >= measure {
+            let lines = wrap_text(text, room, FontSize::Body);
+            if lines.len() <= 2 {
+                let words = banner_height_for_lines(lines.len(), metrics);
+                // As tall as the words leave room for, so the button sits
+                // inside the banner with the same margin above and below it,
+                // and never shorter than a fingertip.
+                let finger = words
+                    .saturating_sub(2 * tight)
+                    .max(metrics.touch_target_minimum())
+                    .min(banner_action_height(metrics));
+                return BannerPlan {
+                    lines,
+                    height: max(words, finger.saturating_add(2 * tight)),
+                    action: Some(BannerButton {
+                        label: label.clone(),
+                        width: *wide,
+                        height: finger,
+                        beside: true,
+                    }),
+                    marked: column > 0,
+                };
+            }
+        }
+    }
+    let lines = wrap_text(text, measure, FontSize::Body);
+    let words = banner_height_for_lines(lines.len(), metrics);
+    let finger = banner_action_height(metrics);
+    BannerPlan {
+        lines,
+        height: if button.is_some() {
+            words.saturating_add(finger).saturating_add(tight)
+        } else {
+            words
+        },
+        action: button.map(|(label, width)| BannerButton {
+            label,
+            width,
+            height: finger,
+            beside: false,
+        }),
+        marked: column > 0,
     }
 }
 
@@ -9659,6 +11650,11 @@ pub enum FontSize {
     /// Dense monospace terminal text; interface labels retain their usual sizes.
     Terminal,
     Caption,
+    /// A line about the content set beside it: [`Node::Secondary`], which
+    /// applications use for metadata and for the sentence telling the owner
+    /// what to do. The caption's size until protocol 17, and a step above it
+    /// since; see [`FontSize::tenth_mm`].
+    Note,
     Body,
     Title,
     Heading,
@@ -9697,14 +11693,36 @@ impl FontSize {
     /// one did at 6.8 mm, and takes a third less of the panel doing it. The
     /// weight is chosen inside the typesetter from the size, so nothing here
     /// and nothing in an application asks for it.
+    ///
+    /// Protocol 17 took the top of the scale down again and the bottom up. A
+    /// 5.4 mm bold serif under a 3.1 mm bar title gave most screens two titles,
+    /// and the larger one was the page's least important line: "Pair with
+    /// your computer" over the two commands that actually pair it. At 4.6 mm
+    /// it still leads the page and no longer competes with the bar. Caption
+    /// went the other way for a secondary line, from 2.4 to 2.7 mm, because
+    /// applications set their instructions in one ("Tick the sightings to
+    /// remove.") and at caption size in the muted tone those read as
+    /// footnotes. Captions proper stay where they were: a tab, a chip, a
+    /// destination's name and the number in the corner of a crossword square
+    /// are fitted to the room they have, and are read at a glance. Body is
+    /// unchanged: it is the size every line of every list is set in, and it
+    /// was never the problem. A secondary line goes back to caption size on a
+    /// screen that has to give room back (see [`Typography::Quiet`]), which
+    /// is every screen built round a board: there the step was taken out of
+    /// the squares. Screens measured against the earlier sizes keep them; see
+    /// [`Typography`].
     #[must_use]
-    pub const fn tenth_mm(self) -> i32 {
-        match self {
-            Self::Terminal => 18,
-            Self::Caption => 24,
-            Self::Body => 31,
-            Self::Title => 42,
-            Self::Heading => 54,
+    pub fn tenth_mm(self) -> i32 {
+        match (self, typography()) {
+            (Self::Terminal, _) => 18,
+            (Self::Caption, _) => 24,
+            (Self::Note, Typography::Quiet | Typography::Fine) if !room_given_up() => 27,
+            (Self::Note, _) => 24,
+            (Self::Body, _) => 31,
+            (Self::Title, Typography::Quiet | Typography::Fine) => 38,
+            (Self::Title, _) => 42,
+            (Self::Heading, Typography::Quiet | Typography::Fine) => 46,
+            (Self::Heading, _) => 54,
         }
     }
 
@@ -9729,7 +11747,7 @@ impl FontSize {
     #[must_use]
     pub const fn scale(self) -> i32 {
         match self {
-            Self::Terminal | Self::Caption => 2,
+            Self::Terminal | Self::Caption | Self::Note => 2,
             Self::Body => 3,
             Self::Title => 4,
             Self::Heading => 5,
@@ -9786,7 +11804,7 @@ impl FontSize {
 
     const fn unscaled_fallback_line_height(self) -> i32 {
         match self {
-            Self::Terminal | Self::Caption => 18,
+            Self::Terminal | Self::Caption | Self::Note => 18,
             Self::Body => 27,
             Self::Title => 36,
             Self::Heading => 45,
@@ -9872,6 +11890,66 @@ pub trait Typesetter: Send + Sync {
         true
     }
 
+    /// Whether `face` has an italic cut to set emphasis in.
+    ///
+    /// The default is `false`, and then emphasis is the upright letters
+    /// leant over as they are drawn, measured as the upright ones. A
+    /// typesetter that says `true` measures and draws emphasis with
+    /// [`Self::measure_italic`] and [`Self::draw_italic`] instead, in screens
+    /// laid out in [`Typography::Fine`].
+    fn has_italic(&self, _face: Face) -> bool {
+        false
+    }
+
+    /// The width and height of `text` in the italic of `face`.
+    fn measure_italic(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
+        self.measure(text, size, face)
+    }
+
+    /// The height of a capital letter at `size`, when the typesetter can say.
+    ///
+    /// `None`, the default, means it cannot set a letter at an arbitrary
+    /// size, and a paragraph asking for an initial opens as usual instead.
+    fn cap_height(&self, _size: FontSize, _face: Face) -> Option<i32> {
+        None
+    }
+
+    /// The distance from the top of a line to its baseline at `size`.
+    fn ascent(&self, _size: FontSize, _face: Face) -> Option<i32> {
+        None
+    }
+
+    /// The advance of `text` set with its capitals `cap` pixels tall.
+    fn measure_initial(&self, _text: &str, _face: Face, _cap: i32) -> Option<i32> {
+        None
+    }
+
+    /// Draws `text` with its capitals `cap` pixels tall, standing on
+    /// `baseline`.
+    fn draw_initial(
+        &self,
+        _text: &str,
+        _x: i32,
+        _baseline: i32,
+        _face: Face,
+        _cap: i32,
+        _plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+    }
+
+    /// Draws `text` in the italic of `face`, as [`Self::draw`] does upright.
+    fn draw_italic(
+        &self,
+        text: &str,
+        x: i32,
+        y: i32,
+        size: FontSize,
+        face: Face,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        self.draw(text, x, y, size, face, plot);
+    }
+
     /// Unicode byte offsets after which a line may or must end.
     fn line_breaks(&self, text: &str) -> Vec<(usize, BreakOpportunity)> {
         fallback_line_breaks(text)
@@ -9924,8 +12002,49 @@ static BOOK_TYPESETTERS: OnceLock<Mutex<BTreeMap<FontHandle, Box<dyn Typesetter>
     OnceLock::new();
 
 thread_local! {
+    static SHARED_FACT_LABEL: std::cell::Cell<i32> = const { std::cell::Cell::new(0) };
+}
+
+/// The widest label of every block of facts set straight on a page, when
+/// there are at least two such blocks; nothing otherwise.
+fn shared_fact_label(nodes: &[Node]) -> i32 {
+    let blocks = nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Facts { entries, .. } => Some(entries),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if blocks.len() < 2 {
+        return 0;
+    }
+    blocks
+        .iter()
+        .flat_map(|entries| entries.iter().take(MAX_FACTS))
+        .map(|(label, _)| measure_text(label, FontSize::Caption).0)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Holds the page's shared fact label width while its flow is laid out.
+struct SharedFactLabel(i32);
+impl SharedFactLabel {
+    fn enter(width: i32) -> Self {
+        Self(SHARED_FACT_LABEL.with(|slot| slot.replace(width)))
+    }
+}
+impl Drop for SharedFactLabel {
+    fn drop(&mut self) {
+        SHARED_FACT_LABEL.with(|slot| slot.set(self.0));
+    }
+}
+
+thread_local! {
     static READING_FONT: std::cell::Cell<Option<FontHandle>> = const { std::cell::Cell::new(None) };
-    static LEGACY_TYPOGRAPHY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static TYPOGRAPHY: std::cell::Cell<Typography> = const { std::cell::Cell::new(Typography::CURRENT) };
+    static CUT_SHORT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ROOM_GIVEN_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static BAR_ROOM_GIVEN_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FLOW_HEIGHT_BOUND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static IN_BAND_SLOT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -9973,31 +12092,152 @@ fn flow_height_bound() -> bool {
     FLOW_HEIGHT_BOUND.with(std::cell::Cell::get)
 }
 
-/// Runs layout or painting with pre-Folio interface typography selected.
+/// The generation of interface type and spacing a screen was measured in.
 ///
-/// Only the protocol decoder uses this for version-11 screens. Keeping the
-/// choice scoped to one frame prevents an old app's local text measurements
-/// from drifting when a 0.3.5 runtime also renders Folio screens.
-pub fn with_legacy_typography<T>(legacy: bool, body: impl FnOnce() -> T) -> T {
-    struct Restore(bool);
+/// An application lays its screens out in its own process, with the kobo-ui it
+/// was built against, and the runtime refuses a screen whose text it would
+/// draw past the space the application fitted it to. So the runtime cannot
+/// draw every screen in its newest type: a line an older application measured
+/// at one size would be drawn at another, and its last line would land under
+/// the button below it. Each edition is kept for the applications that
+/// measured against it, and the protocol decoder chooses one from the version
+/// a frame arrived in.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum Typography {
+    /// Protocol 11 and older: the Atkinson display cuts, and a scale set
+    /// against a printed paperback.
+    Paperback,
+    /// Protocols 12 to 16: the Folio scale, with every block one millimetre
+    /// from the next.
+    Folio,
+    /// Protocol 17: headings a step quieter, secondary lines large enough to
+    /// carry an instruction, and room under the top bar, above a section and
+    /// above a button. A screen that does not fit with that room is laid out
+    /// again without it, the secondary lines back at caption size, before a
+    /// line of it is lost; a screen built round a board always is. See
+    /// [`FontSize::tenth_mm`] and [`DisplayMetrics::below_top_bar`].
+    Quiet,
+    /// Protocol 18: Quiet, with emphasis in prose set in the reading face's
+    /// own italic where the typesetter has one, measured as it is drawn.
+    /// See [`Typesetter::has_italic`].
+    Fine,
+}
+
+impl Typography {
+    /// The edition applications built against this crate measure in.
+    pub const CURRENT: Self = Self::Fine;
+}
+
+impl Default for Typography {
+    fn default() -> Self {
+        Self::CURRENT
+    }
+}
+
+/// Runs layout or painting in one edition of the interface type.
+///
+/// The protocol decoder chooses it for a decoded frame. Keeping the choice
+/// scoped to one frame prevents an old app's local text measurements from
+/// drifting when the runtime also renders screens of its own in the current
+/// edition.
+pub fn with_typography<T>(typography: Typography, body: impl FnOnce() -> T) -> T {
+    struct Restore(Typography);
     impl Drop for Restore {
         fn drop(&mut self) {
-            LEGACY_TYPOGRAPHY.with(|slot| slot.set(self.0));
+            TYPOGRAPHY.with(|slot| slot.set(self.0));
         }
     }
-    let previous = LEGACY_TYPOGRAPHY.with(|slot| {
-        let previous = slot.get();
-        slot.set(legacy);
-        previous
-    });
+    let previous = TYPOGRAPHY.with(|slot| slot.replace(typography));
     let _restore = Restore(previous);
     body()
+}
+
+/// The edition the frame being laid out or drawn was measured in.
+#[must_use]
+pub fn typography() -> Typography {
+    TYPOGRAPHY.with(std::cell::Cell::get)
+}
+
+/// Runs layout or painting with pre-Folio interface typography selected, or
+/// with the current edition when `legacy` is false.
+pub fn with_legacy_typography<T>(legacy: bool, body: impl FnOnce() -> T) -> T {
+    with_typography(
+        if legacy {
+            Typography::Paperback
+        } else {
+            Typography::CURRENT
+        },
+        body,
+    )
 }
 
 /// Whether the currently laid-out frame must use protocol-11 type metrics.
 #[must_use]
 pub fn legacy_typography() -> bool {
-    LEGACY_TYPOGRAPHY.with(std::cell::Cell::get)
+    typography() == Typography::Paperback
+}
+
+/// Records that the frame being laid out did not hold everything it was
+/// given: a paragraph lost lines at its bound, or a node found no room.
+fn note_cut_short() {
+    CUT_SHORT.with(|cut| cut.set(true));
+}
+
+/// Whether the quiet edition's extra room has been given back for this frame.
+fn room_given_up() -> bool {
+    ROOM_GIVEN_UP.with(std::cell::Cell::get)
+}
+
+/// Whether the room beside the bars has been given back for this frame.
+///
+/// Before [`Typography::Fine`] it went with the rest of the room. That moved
+/// everything under the top bar up three millimetres on any screen that was
+/// full, so of two pages behind one row of tabs, the crowded one had its tabs
+/// a step higher than its neighbour's, and a reader turning between them saw
+/// the strip jump. From Fine it is the last room a screen gives back: only
+/// when the screen still does not fit with every other gap closed.
+fn bar_room_given_up() -> bool {
+    if typography() >= Typography::Fine {
+        BAR_ROOM_GIVEN_UP.with(std::cell::Cell::get)
+    } else {
+        room_given_up()
+    }
+}
+
+/// Runs `body` with the room the quiet edition adds taken back out: the space
+/// under the top bar, above a section and above a button, and the step a
+/// secondary line is set above caption size.
+///
+/// Layout does this by itself for a screen that does not fit with the room,
+/// and for any screen built round a board. It is public for an application
+/// that measures part of such a screen before it builds the rest: the
+/// controls under a puzzle, laid out without the board to find how much of
+/// the panel the board can have. Measured with the room, they claim more of
+/// the panel than they will take, and the board is fitted smaller than the
+/// screen it is drawn on.
+pub fn with_room_given_up<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            ROOM_GIVEN_UP.with(|slot| slot.set(self.0));
+        }
+    }
+    let previous = ROOM_GIVEN_UP.with(|slot| slot.replace(true));
+    let _restore = Restore(previous);
+    body()
+}
+
+/// Runs `body` with the room beside the bars given back as well.
+fn with_bar_room_given_up<T>(body: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BAR_ROOM_GIVEN_UP.with(|slot| slot.set(self.0));
+        }
+    }
+    let previous = BAR_ROOM_GIVEN_UP.with(|slot| slot.replace(true));
+    let _restore = Restore(previous);
+    body()
 }
 
 /// Installs or replaces one bounded publisher face.
@@ -10224,6 +12464,44 @@ pub fn undrawable_in(text: &str, face: Face) -> Option<char> {
     })?
 }
 
+/// `text` with every character the installed face cannot draw put as a box
+/// the face can.
+///
+/// For words that belong to someone else: a chapter title, a passage quoted
+/// back from a book, a name on a shelf. [`undrawable_in`] is right to refuse a
+/// symbol an application chose, but nobody here chose the Hebrew in Moby-Dick's
+/// Etymology, and refusing the list that quotes it closes the book over a
+/// letter. The page draws such a letter as the font's own empty box; this
+/// draws the same box on purpose, so the list agrees with the page and the
+/// check that guards an application's own labels stays on for everything else.
+///
+/// A white square where the face has one, and a question mark where it has
+/// not. Unchanged, and not copied, when everything in it can be drawn.
+#[must_use]
+pub fn drawable_in(text: &str, face: Face) -> std::borrow::Cow<'_, str> {
+    let replaced = with_typesetter(face, |typesetter| {
+        let lacks =
+            |character: char| !character.is_whitespace() && !typesetter.has_glyph(character, face);
+        if !text.chars().any(lacks) {
+            return None;
+        }
+        let stand_in = if lacks('\u{25a1}') { '?' } else { '\u{25a1}' };
+        Some(
+            text.chars()
+                .map(|character| {
+                    if lacks(character) {
+                        stand_in
+                    } else {
+                        character
+                    }
+                })
+                .collect::<String>(),
+        )
+    })
+    .flatten();
+    replaced.map_or(std::borrow::Cow::Borrowed(text), std::borrow::Cow::Owned)
+}
+
 /// The size of one monospace cell: what a character grid is built from.
 ///
 /// Returns width and height together because a caller that needs one always
@@ -10333,11 +12611,50 @@ impl DisplayMetrics {
     /// text can flow through.
     #[must_use]
     pub fn prose_area(&self, top_bar: bool, nav_bar: bool) -> ProseArea {
+        self.prose_area_in(top_bar, nav_bar, Face::Text)
+    }
+
+    /// The room between the top bar's rule and the first thing under it.
+    ///
+    /// One millimetre until protocol 17, the same gap as between any two
+    /// blocks, which is what made content look jammed under the bar: a
+    /// heading's ascenders sat closer to the rule than to the line under
+    /// them. Three millimetres now, except on a page of a book, where every
+    /// line the bar takes from the page is a line the reader turns for.
+    #[must_use]
+    pub fn below_top_bar(&self, face: Face) -> i32 {
+        if typography() >= Typography::Quiet && face != Face::Reading && !bar_room_given_up() {
+            self.tenth_mm(30)
+        } else {
+            self.space(Space::Tight)
+        }
+    }
+
+    /// The room a fill leaves between what it pushes to the foot of a screen
+    /// and the rule of the bottom bar under it.
+    ///
+    /// None until [`Typography::Fine`]: a fill pushed its button or command
+    /// all the way down to the bar's rule, which reads as something wedged
+    /// into the bar rather than resting above it. Two millimetres now, taken
+    /// only from the room the fill was handing out, so a screen holds as much
+    /// as it always did; given back with the room under the top bar, and
+    /// never on a page of a book, for the reason [`Self::below_top_bar`]
+    /// gives.
+    #[must_use]
+    pub fn above_bottom_bar(&self, face: Face) -> i32 {
+        if typography() >= Typography::Fine && face != Face::Reading && !bar_room_given_up() {
+            self.space(Space::Small)
+        } else {
+            0
+        }
+    }
+
+    fn prose_area_with_face(&self, top_bar: bool, nav_bar: bool, face: Face) -> ProseArea {
         let margin = self.screen_margin();
         let gap = self.space(Space::Tight);
         let mut top = margin;
         if top_bar {
-            top = self.top_bar_height() + self.rule_thickness() + gap;
+            top = self.top_bar_height() + self.rule_thickness() + self.below_top_bar(face);
         }
         let bottom = if nav_bar {
             self.height - self.nav_bar_height()
@@ -10352,7 +12669,7 @@ impl DisplayMetrics {
             },
             height: max_i32(0, bottom - top),
             gap,
-            face: Face::Text,
+            face,
         }
     }
 
@@ -10381,10 +12698,7 @@ impl DisplayMetrics {
     /// last lines off the bottom.
     #[must_use]
     pub fn prose_area_in(&self, top_bar: bool, nav_bar: bool, face: Face) -> ProseArea {
-        ProseArea {
-            face,
-            ..self.prose_area(top_bar, nav_bar)
-        }
+        self.prose_area_with_face(top_bar, nav_bar, face)
     }
 }
 
@@ -10514,7 +12828,13 @@ pub fn paginate_tagged_below(
     for (tag, depth, role, paragraph) in paragraphs {
         let tag = *tag;
         let depth = (*depth).min(MAX_QUOTE_DEPTH);
-        let role = *role;
+        // A thread is paginated a line at a time, and a command split across
+        // two pages is two commands. One reaching a thread is set as what was
+        // said, which is all it is there.
+        let role = match *role {
+            QuoteRole::Command => QuoteRole::Body,
+            role => role,
+        };
         let size = role.size();
         let line_height = size.line_height_in(area.face);
         let (_, width) = quote_offsets(metrics, area.width, depth);
@@ -10555,6 +12875,7 @@ pub fn paginate_tagged_below(
                     + match role {
                         QuoteRole::Body => max_i32(MIN_TEXT_HEIGHT, measured),
                         QuoteRole::Byline => byline_height(measured, metrics),
+                        QuoteRole::Command => command_height(measured, metrics),
                     };
                 page.push((tag, depth, role, lines.join(" ")));
                 break;
@@ -10946,6 +13267,17 @@ fn stamp_format_badge_on(surface: &mut Surface, badge: &str) {
     );
 }
 
+/// How far a smaller label is lowered to stand on the baseline of the larger
+/// value beside it: the difference in their ascents when the faces give them,
+/// and the difference in line heights, `boxes`, when they do not.
+fn label_drop(value_ascent: Option<i32>, label_ascent: Option<i32>, boxes: i32) -> i32 {
+    match (value_ascent, label_ascent) {
+        (Some(value), Some(label)) => value.saturating_sub(label),
+        _ => boxes,
+    }
+    .max(0)
+}
+
 /// The height a [`Node::Section`] header occupies, lead and trail included.
 ///
 /// Public because pagination happens in the application, one layer above the
@@ -10967,11 +13299,16 @@ pub fn banner_height(text: &str, width: i32, metrics: &DisplayMetrics) -> i32 {
 
 /// The same, for a banner of any level and with or without its action.
 ///
-/// A success or an error banner gives a column to its mark, so its words wrap
-/// narrower than an info banner's, and an action takes a line of its own
-/// under the words. A paginator that measured only the words reserved a line
-/// too little for each, and the last row of the page went under the bar,
-/// which is why retries were kept off the banners they answer.
+/// A banner gives a column to its mark, so its words wrap narrower than the
+/// page, and an action may take a line of its own under the words. A
+/// paginator that measured only the words reserved a line too little for
+/// each, and the last row of the page went under the bar, which is why
+/// retries were kept off the banners they answer.
+///
+/// Without the action's label this cannot tell whether the action fits at
+/// the end of the words, so it answers with the height of an action on a line
+/// of its own: the most the banner can take, which never puts a row under the
+/// bar. [`banner_height_labelled`] gives the exact height.
 #[must_use]
 pub fn banner_height_with(
     text: &str,
@@ -10986,13 +13323,7 @@ pub fn banner_height_with(
         } else {
             width.min(metrics.readable_width())
         };
-        let padding = metrics.space(Space::Small);
-        let lines = wrap_text(
-            text,
-            width - 2 * padding - banner_mark_column(level, metrics),
-            FontSize::Body,
-        );
-        let words = banner_height_for_lines(lines.len(), metrics);
+        let words = plan_banner(text, level, None, width, metrics).height;
         if action {
             words
                 .saturating_add(banner_action_height(metrics))
@@ -11000,6 +13331,26 @@ pub fn banner_height_with(
         } else {
             words
         }
+    })
+}
+
+/// The height a banner takes with an action labelled `action`, or with none,
+/// exactly as it is drawn.
+#[must_use]
+pub fn banner_height_labelled(
+    text: &str,
+    level: BannerLevel,
+    action: Option<&str>,
+    width: i32,
+    metrics: &DisplayMetrics,
+) -> i32 {
+    with_text_scale(metrics.text_scale, || {
+        let width = if legacy_typography() {
+            width
+        } else {
+            width.min(metrics.readable_width())
+        };
+        plan_banner(text, level, action, width, metrics).height
     })
 }
 
@@ -11028,6 +13379,24 @@ pub fn paginate_rows_in_sections(
     metrics: &DisplayMetrics,
     area: ProseArea,
 ) -> Vec<Vec<usize>> {
+    let rows: Vec<_> = rows
+        .iter()
+        .map(|&(section, title, summary)| (section, title, summary, ""))
+        .collect();
+    paginate_rows_in_sections_with_trailing(&rows, metrics, area)
+}
+
+/// The same, for sectioned rows that carry a value at their trailing edge.
+///
+/// The value keeps its column and the title and summary wrap in what is
+/// left, so a list drawn with values and paginated without them counts
+/// lines the rows will not have, and its last row lands under the footer.
+#[must_use]
+pub fn paginate_rows_in_sections_with_trailing(
+    rows: &[(Option<&str>, &str, &str, &str)],
+    metrics: &DisplayMetrics,
+    area: ProseArea,
+) -> Vec<Vec<usize>> {
     // A gap, the divider drawn inside it, then another gap: the engine
     // advances by the row's height and a gap, then leaves a second gap after
     // the rule it draws before the next row. The rule's own thickness is not
@@ -11040,7 +13409,7 @@ pub fn paginate_rows_in_sections(
     let mut page: Vec<usize> = Vec::new();
     let mut used = 0;
 
-    for (index, (section, title, summary)) in rows.iter().enumerate() {
+    for (index, (section, title, summary, trailing)) in rows.iter().enumerate() {
         // The header and the row it introduces are measured as one block, so
         // the break can only ever fall before the header or after the row.
         let height = measured_row_height(
@@ -11048,7 +13417,7 @@ pub fn paginate_rows_in_sections(
             area,
             title,
             summary,
-            "",
+            trailing,
             false,
             row_mark_column(metrics),
         ) + if section.is_some() { header } else { 0 };
@@ -11252,6 +13621,152 @@ pub fn paginate_rows_with_edges(
 /// same wrapping and spacing the layout engine uses, so a page that fits here
 /// is a page that will be drawn whole.
 #[must_use]
+/// Whether a node sizes itself to all the room it is handed: a board, a grid
+/// of squares or a terminal, here or in a band beside other things.
+fn fills_the_room(node: &Node) -> bool {
+    match node {
+        Node::Grid { square: true, .. }
+        | Node::Board { .. }
+        | Node::PencilBoard { .. }
+        | Node::Terminal { .. } => true,
+        Node::Band { slots, .. } => slots
+            .iter()
+            .any(|slot| slot.nodes.iter().any(fills_the_room)),
+        _ => false,
+    }
+}
+
+/// Room left above `node` beyond the gap every block gets, given the block
+/// laid out before it.
+///
+/// Folio set every block one millimetre from the next. A heading opening a
+/// second section sat as close to the paragraph above it, which it ends, as to
+/// the one under it, which it introduces, and a button sat on the last line of
+/// the sentence explaining it. Protocol 17 groups by space instead: a heading
+/// that follows anything is set four millimetres below it, and the first
+/// button after anything that is not a button two. A run of buttons stays one
+/// millimetre apart, because a stack of them is one group. A page of a book is
+/// left alone, for the reason [`DisplayMetrics::below_top_bar`] gives.
+fn space_before(
+    previous: Option<&Node>,
+    node: &Node,
+    metrics: &DisplayMetrics,
+    prose: Face,
+) -> i32 {
+    if typography() < Typography::Quiet || prose == Face::Reading || room_given_up() {
+        return 0;
+    }
+    let Some(previous) = previous else {
+        return 0;
+    };
+    // A fill or a spacer has already said how far apart the two should be.
+    if matches!(previous, Node::Flex { .. } | Node::Spacer { .. }) {
+        return 0;
+    }
+    let action = |node: &Node| matches!(node, Node::Button { .. } | Node::Band { .. });
+    let wanted = match node {
+        Node::Heading { .. } if !matches!(previous, Node::Heading { .. }) => Space::Medium,
+        _ if action(node) && !action(previous) => Space::Small,
+        _ => return 0,
+    };
+    metrics
+        .space(wanted)
+        .saturating_sub(metrics.space(Space::Tight))
+}
+
+/// Where one root flow node landed: which layout nodes it produced, and the
+/// room it was laid out in.
+struct PlacedFlowNode {
+    position: usize,
+    nodes: std::ops::Range<usize>,
+    top: i32,
+    end: i32,
+    bottom: i32,
+    bounded: bool,
+}
+
+/// Sets a band that sits directly above or below a chess or draughts board
+/// to the board's own width.
+///
+/// A board is as large as the height left for it allows, and so is often a
+/// little narrower than the page and centred on it. The bars round it, a
+/// player's name and clock, were set to the page instead, so the clock stood
+/// a few pixels past the board's right edge and the name a few pixels before
+/// its left one. Laying the band out again at the board's width lines both
+/// up with the squares. A band that would come out a different height at
+/// that width keeps the place it had, since everything under it is already
+/// set.
+fn align_bands_with_boards(
+    nodes: &[Node],
+    placed: &[PlacedFlowNode],
+    margin: i32,
+    metrics: &DisplayMetrics,
+    prose: Face,
+    layout: &mut Layout,
+) {
+    let mut replacements: Vec<(std::ops::Range<usize>, Vec<LayoutNode>)> = Vec::new();
+    for (index, board) in placed.iter().enumerate() {
+        let squares = layout.nodes[board.nodes.clone()].iter().filter(|node| {
+            matches!(
+                node.kind,
+                LayoutKind::Cell(_, CellStyle::BoardLight | CellStyle::BoardDark, _)
+            )
+        });
+        let Some((left, right)) = squares.fold(None, |edges: Option<(i32, i32)>, node| {
+            let (left, right) = (node.rect.x, node.rect.x + node.rect.width);
+            Some(edges.map_or((left, right), |(l, r)| (l.min(left), r.max(right))))
+        }) else {
+            continue;
+        };
+        let neighbours = [index.checked_sub(1), Some(index + 1)];
+        for band in neighbours
+            .into_iter()
+            .flatten()
+            .filter_map(|at| placed.get(at))
+        {
+            if band.position.abs_diff(board.position) != 1
+                || !matches!(nodes[band.position], Node::Band { .. })
+                || replacements.iter().any(|(range, _)| *range == band.nodes)
+            {
+                continue;
+            }
+            let was = &layout.nodes[band.nodes.clone()];
+            let band_left = was.iter().map(|node| node.rect.x).min().unwrap_or(margin);
+            let band_right = was
+                .iter()
+                .map(|node| node.rect.x + node.rect.width)
+                .max()
+                .unwrap_or(left);
+            if band_left >= left && band_right <= right {
+                continue;
+            }
+            let mut scratch = Layout {
+                prose_face: layout.prose_face,
+                ..Layout::default()
+            };
+            let end = with_flow_height_bound(band.bounded, || {
+                layout_flow_node(
+                    &nodes[band.position],
+                    left,
+                    band.top,
+                    right - left,
+                    band.bottom,
+                    0,
+                    metrics,
+                    prose,
+                    &mut scratch,
+                )
+            });
+            if end == band.end && scratch.nodes.len() == band.nodes.len() {
+                replacements.push((band.nodes.clone(), scratch.nodes));
+            }
+        }
+    }
+    for (range, replacement) in replacements {
+        layout.nodes.splice(range, replacement);
+    }
+}
+
 /// How much room trailing nodes need, so flexible content can leave it.
 ///
 /// Measured by laying them out into a layout that is thrown away, which is the
@@ -11266,6 +13781,7 @@ fn flow_node_bottom(
     metrics: &DisplayMetrics,
     prose: Face,
     gap: i32,
+    rhythm: bool,
 ) -> i32 {
     let flexible = matches!(
         node,
@@ -11279,13 +13795,24 @@ fn flow_node_bottom(
     let protects_interaction = following.iter().any(node_has_enabled_interaction);
     if matches!(node, Node::Splash { .. }) || (flexible && protects_interaction) {
         bottom.saturating_sub(trailing_height(
-            following, margin, width, bottom, metrics, prose, gap,
+            following,
+            margin,
+            width,
+            bottom,
+            metrics,
+            prose,
+            gap,
+            rhythm.then_some(node),
         ))
     } else {
         bottom
     }
 }
 
+///
+/// `after` is the node the trailing ones follow, in a flow spaced by
+/// [`space_before`], and `None` in one that is not, so this pays for exactly
+/// the space the flow will leave.
 #[allow(clippy::too_many_arguments)]
 fn trailing_height(
     nodes: &[Node],
@@ -11295,15 +13822,24 @@ fn trailing_height(
     metrics: &DisplayMetrics,
     prose: Face,
     gap: i32,
+    after: Option<&Node>,
 ) -> i32 {
     if nodes.is_empty() {
         return 0;
     }
+    // A scratch pass measures; it is not the frame. What it cuts short says
+    // nothing about whether the frame fits.
+    let outer = CUT_SHORT.with(std::cell::Cell::get);
     let mut scratch = Layout::default();
-    let mut cursor = 0;
+    let mut cursor: i32 = 0;
+    let mut previous = after;
     for node in nodes {
         if scratch.nodes.len() >= MAX_LAYOUT_NODES {
             break;
+        }
+        if after.is_some() {
+            cursor = cursor.saturating_add(space_before(previous, node, metrics, prose));
+            previous = Some(node);
         }
         cursor = layout_flow_node(
             node,
@@ -11318,6 +13854,7 @@ fn trailing_height(
         );
         cursor = cursor.saturating_add(gap);
     }
+    CUT_SHORT.with(|cut| cut.set(outer));
     cursor
 }
 
@@ -11625,7 +14162,22 @@ pub fn wrap_text_with_formulae(
     formulae: &[InlineFormula],
     line_height: i32,
 ) -> Vec<String> {
-    let lines = wrap_ranges_with(text, max_width, size, face, formulae, line_height);
+    wrap_rich_text(text, &[], max_width, size, face, formulae, line_height)
+}
+
+/// The same, for a styled paragraph: a run set in an italic is measured in
+/// it, so a page counted here breaks where the drawn paragraph does.
+#[must_use]
+pub fn wrap_rich_text(
+    text: &str,
+    spans: &[RichTextSpan],
+    max_width: i32,
+    size: FontSize,
+    face: Face,
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> Vec<String> {
+    let lines = wrap_ranges_with(text, max_width, size, face, spans, formulae, line_height);
     if lines.is_empty() {
         return vec![String::new()];
     }
@@ -11646,7 +14198,7 @@ pub fn wrap_text_with_formulae(
 /// Empty for text that wraps to nothing, which [`wrap_text_in`] turns back into
 /// the single empty line every caller downstream expects.
 fn wrap_ranges(text: &str, max_width: i32, size: FontSize, face: Face) -> Vec<(usize, usize)> {
-    wrap_ranges_with(text, max_width, size, face, &[], 0)
+    wrap_ranges_with(text, max_width, size, face, &[], &[], 0)
 }
 
 /// The same, for a paragraph with formulas set into it.
@@ -11660,14 +14212,48 @@ fn wrap_ranges_with(
     max_width: i32,
     size: FontSize,
     face: Face,
+    spans: &[RichTextSpan],
     formulae: &[InlineFormula],
     line_height: i32,
 ) -> Vec<(usize, usize)> {
-    if text.is_empty() || max_width <= 0 {
+    if max_width <= 0 {
         return Vec::new();
     }
-    let opportunities = with_typesetter(face, |typesetter| typesetter.line_breaks(text))
+    wrap_ranges_from(
+        text,
+        0,
+        &|_| max_width,
+        size,
+        face,
+        spans,
+        formulae,
+        line_height,
+    )
+}
+
+/// The same, from byte `from` on, with each line as wide as `widths` says for
+/// its index: the lines set beside an initial are narrower than the rest.
+#[allow(clippy::too_many_arguments)]
+fn wrap_ranges_from(
+    text: &str,
+    from: usize,
+    widths: &dyn Fn(usize) -> i32,
+    size: FontSize,
+    face: Face,
+    spans: &[RichTextSpan],
+    formulae: &[InlineFormula],
+    line_height: i32,
+) -> Vec<(usize, usize)> {
+    if text.is_empty() || from >= text.len() || !text.is_char_boundary(from) {
+        return Vec::new();
+    }
+    let mut opportunities = with_typesetter(face, |typesetter| typesetter.line_breaks(text))
         .unwrap_or_else(|| fallback_line_breaks(text));
+    if typography() >= Typography::Fine {
+        opportunities.retain(|&(end, opportunity)| {
+            opportunity == BreakOpportunity::Mandatory || !strands_a_fragment(text, end)
+        });
+    }
     let graphemes = with_typesetter(face, |typesetter| typesetter.grapheme_boundaries(text))
         .unwrap_or_else(|| {
             text.char_indices()
@@ -11675,8 +14261,9 @@ fn wrap_ranges_with(
                 .collect()
         });
     let mut lines: Vec<(usize, usize)> = Vec::new();
-    let mut start = 0;
+    let mut start = from;
     while start < text.len() {
+        let max_width = widths(lines.len()).max(1);
         start = skip_soft_whitespace(text, start);
         if start == text.len() {
             break;
@@ -11692,12 +14279,13 @@ fn wrap_ranges_with(
             };
             let candidate = text[start..visible_end].trim_end_matches(char::is_whitespace);
             let candidate_end = start + candidate.len();
-            if measure_range_in(
+            if measure_rich_range(
                 text,
                 start,
                 candidate_end,
                 size,
                 face,
+                spans,
                 formulae,
                 line_height,
             ) <= max_width
@@ -11733,6 +14321,41 @@ fn wrap_ranges_with(
         }
     }
     lines
+}
+
+/// Whether breaking a line at `end`, just after a hyphen, would leave two
+/// letters or fewer on either side of it.
+///
+/// A short hyphenated word is read as one word: "Wi-" at the end of a line
+/// and "Fi" at the start of the next is a word nobody recognises until they
+/// have read both, and in a banner set beside its button it happened in the
+/// commonest sentence there is, the one telling the reader to check their
+/// Wi-Fi. A long compound still breaks at its hyphen, which is what the
+/// hyphen is for. Only in [`Typography::Fine`]: an application at an older
+/// protocol wrapped its lines at every hyphen.
+fn strands_a_fragment(text: &str, end: usize) -> bool {
+    let Some(before) = text.get(..end) else {
+        return false;
+    };
+    let Some(hyphen) = before.chars().last() else {
+        return false;
+    };
+    if !matches!(hyphen, '-' | '\u{2010}') {
+        return false;
+    }
+    let head = before[..before.len() - hyphen.len_utf8()]
+        .chars()
+        .rev()
+        .take_while(|character| !character.is_whitespace())
+        .count();
+    let tail = text[end..]
+        .chars()
+        .take_while(|character| {
+            !character.is_whitespace() && !matches!(character, '-' | '\u{2010}')
+        })
+        .filter(|character| character.is_alphanumeric())
+        .count();
+    head < 3 || tail < 3
 }
 
 fn skip_soft_whitespace(text: &str, mut offset: usize) -> usize {
@@ -11800,9 +14423,24 @@ pub const BUTTON_RADIUS_TENTH_MM: i32 = 10;
 /// Corner radius of a command-deck pad. Larger than a keyboard key so a
 /// fifteen-key grid reads as recessed hardware rather than a ruled board.
 pub const PAD_RADIUS_TENTH_MM: i32 = 28;
-/// Bezel of a command-deck pad, in tenths of a millimetre. Heavier than a
-/// rule so the key sits in a dark frame the way a Stream Deck key does.
+/// Bezel of a command-deck pad, in tenths of a millimetre, for screens
+/// measured in Folio. Heavier than a rule so the key sits in a dark frame the
+/// way a Stream Deck key does.
 pub const PAD_BORDER_TENTH_MM: i32 = 12;
+
+/// The bezel a pad is drawn with in the edition being laid out.
+///
+/// Half a millimetre from protocol 17. At 1.2 mm two keys on a page were the
+/// heaviest ink on the panel, heavier than the bar and every button, and a
+/// label as long as "Example" ran into the frame. A pad is still a rounded
+/// square in ink, which is what separates it from a ruled board.
+fn pad_border_tenth_mm() -> i32 {
+    if typography() >= Typography::Quiet {
+        5
+    } else {
+        PAD_BORDER_TENTH_MM
+    }
+}
 
 /// How far a press mark sits inside the control it acknowledges, in tenths of
 /// a millimetre. Enough to clear a row separator and the screen margin, not so
@@ -11977,6 +14615,48 @@ impl Surface {
             if let Some(colour) = chroma.get_mut(index * 3..index * 3 + 3) {
                 for channel in colour {
                     *channel = u8::MAX - *channel;
+                }
+            }
+        }
+    }
+
+    /// [`Self::fill_rect`] in a [`Paint`]: a grey lands in both planes as it
+    /// always has, and a colour brings the colour plane into being and keeps
+    /// the grey plane at the colour's luminance, as [`Self::blend_colour`]
+    /// does for one pixel.
+    pub fn fill_rect_paint(&mut self, rect: Rect, paint: Paint) {
+        match paint {
+            Paint::Grey(value) => self.fill_rect(rect, value),
+            Paint::Colour(colour) => {
+                let bounds = Rect {
+                    x: 0,
+                    y: 0,
+                    width: i32::try_from(self.width).unwrap_or(i32::MAX),
+                    height: i32::try_from(self.height).unwrap_or(i32::MAX),
+                };
+                let Some(clipped) = rect.intersection(bounds) else {
+                    return;
+                };
+                let grey = luma(colour);
+                let width = self.width;
+                let chroma = self.chroma_mut();
+                for y in clipped.y..clipped.y + clipped.height {
+                    let row = usize::try_from(y).unwrap_or(0).saturating_mul(width);
+                    for x in clipped.x..clipped.x + clipped.width {
+                        let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
+                        if let Some(target) = chroma.get_mut(index * 3..index * 3 + 3) {
+                            target.copy_from_slice(&colour);
+                        }
+                    }
+                }
+                for y in clipped.y..clipped.y + clipped.height {
+                    let row = usize::try_from(y).unwrap_or(0).saturating_mul(width);
+                    for x in clipped.x..clipped.x + clipped.width {
+                        let index = row.saturating_add(usize::try_from(x).unwrap_or(0));
+                        if let Some(pixel) = self.pixels.get_mut(index) {
+                            *pixel = grey;
+                        }
+                    }
                 }
             }
         }
@@ -12619,8 +15299,14 @@ fn diagnose_screen(
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
     let _environment = environment::TextEnvironment::enter(screen, metrics);
-    with_reading_font(screen.reading_font, || {
-        diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
+    // In the type the screen was measured in, as layout and painting are. A
+    // screen from an application built against Folio checked against the
+    // current edition's sizes would be reported as overflowing type it was
+    // never drawn in.
+    with_typography(screen.typography, || {
+        with_reading_font(screen.reading_font, || {
+            diagnose_screen_with_selected_font(screen, metrics, chrome, pictures)
+        })
     })
 }
 
@@ -12631,6 +15317,17 @@ fn diagnose_screen_with_selected_font(
     pictures: Option<&dyn Pictures>,
 ) -> LayoutDiagnostics {
     let layout = screen.layout_with_selected_font(metrics, chrome);
+    in_room(layout.room_given_up, || {
+        diagnose_layout(screen, layout, metrics, pictures)
+    })
+}
+
+fn diagnose_layout(
+    screen: &Screen,
+    layout: Layout,
+    metrics: &DisplayMetrics,
+    pictures: Option<&dyn Pictures>,
+) -> LayoutDiagnostics {
     let mut issues = Vec::new();
     let mut nodes = Vec::new();
     collect_nodes(&screen.nodes, 0, &mut nodes, &mut issues);
@@ -12677,6 +15374,18 @@ fn diagnose_screen_with_selected_font(
     validate_content_bounds(&nodes, &layout, metrics, &mut issues);
     validate_layout_nodes(&layout, metrics, &mut issues);
     validate_composition(screen, &nodes, &layout, &mut issues);
+    // A reading screen's words are a book's, and a letter no installed face
+    // carries is the author's choice, not the application's mistake. It is
+    // drawn as the empty box every reader draws for one, so it is worth
+    // knowing about and not worth failing a check over: failing it made the
+    // Etymology page of Moby-Dick a defect in every application that reads.
+    if screen.reading {
+        for issue in &mut issues {
+            if matches!(issue.kind, LayoutIssueKind::UnsupportedCharacter { .. }) {
+                issue.severity = DiagnosticSeverity::Warning;
+            }
+        }
+    }
     LayoutDiagnostics { layout, issues }
 }
 
@@ -12753,7 +15462,7 @@ fn validate_composition(
         });
     }
 
-    if let Some(id) = orphaned_section(layout) {
+    if let Some(id) = orphaned_section(layout, nodes) {
         issues.push(LayoutIssue {
             severity: DiagnosticSeverity::Warning,
             node: Some(id),
@@ -12826,10 +15535,18 @@ fn going_back(node: &Node) -> Option<&str> {
 }
 
 /// A section header drawn with nothing of its own below it.
-fn orphaned_section(layout: &Layout) -> Option<NodeId> {
+fn orphaned_section(layout: &Layout, screen: &[&Node]) -> Option<NodeId> {
+    // A header that carries its own value, such as "Cobalt 0.3.34" closing
+    // a page, is a whole statement and needs nothing under it.
+    let complete = |id: NodeId| {
+        screen.iter().any(|node| {
+            matches!(node, Node::Section { id: own, value: Some(value), .. }
+                if *own == id && !value.is_empty())
+        })
+    };
     let mut nodes = layout.nodes.iter().peekable();
     while let Some(node) = nodes.next() {
-        if !matches!(node.kind, LayoutKind::Section) {
+        if !matches!(node.kind, LayoutKind::Section) || complete(node.id) {
             continue;
         }
         match nodes.peek() {
@@ -12867,17 +15584,20 @@ fn tones_used(layout: &Layout) -> usize {
             | LayoutKind::ActivityBytes
             | LayoutKind::ActivityFailure
             | LayoutKind::FieldNote(false) => muted = true,
-            LayoutKind::Card
-            | LayoutKind::Tile(..)
-            | LayoutKind::Overlay
-            | LayoutKind::SelectionBar => surface = true,
+            LayoutKind::Card | LayoutKind::Overlay | LayoutKind::SelectionBar => surface = true,
             LayoutKind::Toggle(..) => {}
             LayoutKind::Banner(BannerLevel::Attention)
             | LayoutKind::NavDestinationSelected(..)
             | LayoutKind::Chip(_, true)
             | LayoutKind::Button(_, ControlState::Enabled, Emphasis::Primary) => inverted = true,
             // Spacers and the scrim draw nothing at all, so they spend no ink.
-            LayoutKind::Spacer | LayoutKind::Scrim { .. } | LayoutKind::Band => {}
+            // Nor does a tile's own cell: its mark, name and outline are
+            // counted as what they are. Counted as a surface, every launcher
+            // page past the first was warned of a fifth ink it never drew.
+            LayoutKind::Spacer
+            | LayoutKind::Scrim { .. }
+            | LayoutKind::Band
+            | LayoutKind::Tile(..) => {}
             _ => ink = true,
         }
     }
@@ -12914,7 +15634,12 @@ fn collect_nodes<'a>(
             // A slot's contents are a node like any other and must be checked
             // like one. Walking only cards would let an undrawable glyph or a
             // missing picture ride into a band unexamined.
-            Node::Band { slots, .. } => {
+            Node::Band { id, slots, .. } => {
+                // Slots past the cap are not drawn, so a fourth button was
+                // lost without a word. Said here so a check catches it.
+                if slots.len() > MAX_BAND_SLOTS {
+                    issues.push(limit_issue(*id, "band slots", slots.len(), MAX_BAND_SLOTS));
+                }
                 for slot in slots.iter().take(MAX_BAND_SLOTS) {
                     collect_nodes(&slot.nodes, depth + 1, collected, issues);
                 }
@@ -13403,6 +16128,7 @@ fn validate_content_bounds(
             } else if let Node::RichText {
                 text,
                 presentation,
+                spans,
                 formulae,
                 ..
             } = node
@@ -13413,16 +16139,17 @@ fn validate_content_bounds(
                 }) {
                     let (line_height, before, after, indent) =
                         rich_text_spacing(*presentation, layout.prose_face);
-                    let measure = text_layout.rect.width.saturating_sub(indent.max(0)).max(1);
-                    let required = wrap_ranges_with(
+                    let (ranges, initial) = rich_text_lines(
                         text,
-                        measure,
-                        FontSize::Body,
-                        layout.prose_face,
+                        spans,
                         formulae,
+                        *presentation,
+                        text_layout.rect.width,
+                        layout.prose_face,
                         line_height,
-                    )
-                    .len();
+                        indent,
+                    );
+                    let required = ranges.len().max(initial.map_or(0, |initial| initial.lines));
                     let rendered = usize::try_from(
                         text_layout
                             .rect
@@ -13500,11 +16227,18 @@ fn node_enabled_interaction_count(node: &Node) -> usize {
         Node::Field { clear, .. } => 1 + usize::from(clear.is_some()),
         Node::Chips { chips, .. } | Node::Tabs { tabs: chips, .. } => chips.len(),
         Node::Card { .. } | Node::Band { .. } => 0,
-        Node::Grid { cells, square, .. } => {
+        Node::Grid {
+            cells,
+            square,
+            columns,
+            ..
+        } => {
             let crossword = *square && cells.iter().any(|cell| cell.corner.is_some());
+            let mancala = is_mancala(*square, *columns, cells);
             cells
                 .iter()
                 .filter(|cell| !crossword || cell.label != "#")
+                .filter(|cell| !mancala || !cell.label.is_empty())
                 .count()
         }
         Node::PencilBoard { board, .. } => board.action_count(),
@@ -13573,6 +16307,7 @@ const fn interaction_uses_panel_bounds(kind: LayoutKind) -> bool {
             | LayoutKind::BarGlyph(..)
             | LayoutKind::NavDestination(..)
             | LayoutKind::NavDestinationSelected(..)
+            | LayoutKind::ActionBarEntry(..)
             | LayoutKind::PagePrevious(_)
             | LayoutKind::PageNext(_)
     )
@@ -13590,17 +16325,28 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             });
         }
         let style = match node.kind {
-            LayoutKind::Quote(_, role) => Some((role.size(), layout.prose_face)),
+            LayoutKind::Quote(_, role) => Some((role.size(), role.face(layout.prose_face))),
             _ => layout_text_style(node),
         };
         let Some((size, face)) = style else {
             continue;
         };
-        let scale = if matches!(node.kind, LayoutKind::PencilNumber(_)) {
+        let scale = if matches!(
+            node.kind,
+            LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_)
+        ) {
             pencil::label_style(node).1
-        } else if matches!(node.kind, LayoutKind::CellLabel(true)) {
+        } else if matches!(
+            node.kind,
+            LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true)
+        ) {
             board_label_style(node).1
-        } else if matches!(node.kind, LayoutKind::CellLabel(false)) {
+        } else if node.kind == LayoutKind::FieldCount {
+            field_count_style(node).1
+        } else if matches!(
+            node.kind,
+            LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false)
+        ) {
             key_label_style(node).1
         } else {
             text_scale()
@@ -13621,9 +16367,12 @@ fn validate_layout_nodes(layout: &Layout, metrics: &DisplayMetrics, issues: &mut
             };
             // A lone pencil number is its glyph, not its leading: the box may
             // clip a hair of line height the same way it clips a hairline.
-            let leading_allowance = if rows == 1 && matches!(node.kind, LayoutKind::PencilNumber(_))
-            {
-                metrics.rule_thickness() * 2
+            let leading_allowance = if rows == 1
+                && matches!(
+                    node.kind,
+                    LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_)
+                ) {
+                (metrics.rule_thickness() * 2).max(node.rect.height / 6)
             } else {
                 0
             };
@@ -13659,11 +16408,12 @@ const fn is_tappable(kind: LayoutKind) -> bool {
             | LayoutKind::BarGlyph(..)
             | LayoutKind::NavDestination(..)
             | LayoutKind::NavDestinationSelected(..)
+            | LayoutKind::ActionBarEntry(..)
             | LayoutKind::Row(_)
             | LayoutKind::RowMenu(_)
             | LayoutKind::Cell(..)
             | LayoutKind::Tile(..)
-            | LayoutKind::Field(_)
+            | LayoutKind::Field(..)
             | LayoutKind::FieldClear(_)
             | LayoutKind::Chip(_, _)
             | LayoutKind::Tab(_, _)
@@ -13726,6 +16476,33 @@ fn board_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
     }
     (FontSize::Caption, scale)
 }
+/// The size of a count on a mine field square: body type, at the largest
+/// step of the scale whose line is no more than half the square.
+///
+/// Body because it is the interface face. Title and heading are set in the
+/// display cut, whose figures have serifs, and a board of serif ones read as
+/// a page of chapter numbers. The step is the square's, not the reader's
+/// text size, because the count is the content of the square the way a
+/// printed field's numbers are, and a body-sized digit sat lost in the
+/// middle of a two-centimetre square.
+fn field_count_style(node: &LayoutNode) -> (FontSize, TextScale) {
+    let fits = |scale: TextScale| {
+        with_text_scale(scale, || {
+            FontSize::Body.line_height() * 2 <= node.rect.height
+                && node
+                    .text_lines
+                    .iter()
+                    .all(|line| measure_text(line, FontSize::Body).0 * 2 <= node.rect.width)
+        })
+    };
+    let scale = TextScale::STEPS
+        .into_iter()
+        .rev()
+        .find(|scale| fits(*scale))
+        .unwrap_or(TextScale::STEPS[0]);
+    (FontSize::Body, scale)
+}
+
 fn board_label_size(node: &LayoutNode) -> FontSize {
     board_label_style(node).0
 }
@@ -13764,9 +16541,10 @@ fn key_label_style(node: &LayoutNode) -> (FontSize, TextScale) {
 fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
     let size = match node.kind {
         LayoutKind::Heading(level) => FontSize::for_heading_level(level),
-        LayoutKind::CellLabel(true) => board_label_size(node),
-        LayoutKind::PencilNumber(_) => pencil::label_style(node).0,
-        LayoutKind::CellLabel(false) => key_label_style(node).0,
+        LayoutKind::CellLabel(true) | LayoutKind::ToneLabel(_, true) => board_label_size(node),
+        LayoutKind::PencilNumber(_) | LayoutKind::PencilEntry(_) => pencil::label_style(node).0,
+        LayoutKind::FieldCount => field_count_style(node).0,
+        LayoutKind::CellLabel(false) | LayoutKind::ToneLabel(_, false) => key_label_style(node).0,
         LayoutKind::TopBarTitle => BAR_TITLE,
         LayoutKind::BarAction(_) => {
             if FontSize::Body.line_height() <= node.rect.height {
@@ -13776,8 +16554,10 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
             }
         }
         LayoutKind::OverlayTitle => FontSize::Title,
+        LayoutKind::NoticeHeading => notice::HEADING,
+        LayoutKind::NoticeLine => notice::LINE,
+        LayoutKind::Secondary => FontSize::Note,
         LayoutKind::BoardClue
-        | LayoutKind::Secondary
         | LayoutKind::Section
         | LayoutKind::TableHeaderCell
         | LayoutKind::FactLabel
@@ -13794,6 +16574,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::ActivityFailure
         | LayoutKind::NavDestination(..)
         | LayoutKind::NavDestinationSelected(..)
+        | LayoutKind::ActionBarEntry(..)
         | LayoutKind::RowBadge
         | LayoutKind::FieldLabel
         | LayoutKind::FieldNote(_)
@@ -13813,6 +16594,7 @@ fn layout_text_style(node: &LayoutNode) -> Option<(FontSize, Face)> {
         | LayoutKind::StepperValue
         | LayoutKind::ChoiceFreeform(_)
         | LayoutKind::Banner(_)
+        | LayoutKind::BannerWords(..)
         | LayoutKind::ActivityLabel
         | LayoutKind::ToggleLabel(_)
         | LayoutKind::RowButton(_)
@@ -14341,7 +17123,7 @@ pub fn render_all(
     dirty: Option<Rect>,
 ) {
     let _environment = environment::TextEnvironment::enter(screen, metrics);
-    with_legacy_typography(screen.legacy_typography, || {
+    with_typography(screen.typography, || {
         with_reading_font(screen.reading_font, || {
             render_all_with_selected_font(screen, metrics, chrome, pictures, surface, dirty);
         });
@@ -14364,9 +17146,71 @@ fn render_all_with_selected_font(
     });
     surface.fill_rect(clip, tone::PAPER);
     let layout = screen.layout_with(metrics, chrome);
+    in_room(layout.room_given_up, || {
+        paint_layout(screen, layout, metrics, chrome, pictures, surface, clip);
+    });
+}
+
+#[allow(clippy::too_many_lines)]
+fn paint_layout(
+    screen: &Screen,
+    layout: Layout,
+    metrics: &DisplayMetrics,
+    chrome: &Chrome,
+    pictures: &dyn Pictures,
+    surface: &mut Surface,
+    clip: Rect,
+) {
+    let palette = Palette::new(chrome.appearance, screen.accent.chosen());
     let prose = layout.prose_face;
-    for node in layout.nodes {
-        if node.rect.intersection(clip).is_none() {
+    // Where the bar's own closing rule is, so a section that opens the page
+    // straight under it does not draw a second line a few millimetres below
+    // the first.
+    let bar_foot = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::TopBar))
+        .map(|bar| bar.rect.y.saturating_add(bar.rect.height));
+    // For each quote that carries its rules up through the gap above it,
+    // where that gap begins and how deep the quote above is. A thread is drawn
+    // as paragraphs with air between them, and a depth rule that stopped at
+    // each paragraph's edge came out as a dashed line down the page, broken at
+    // every byline. Never across more than the space between two blocks, so a
+    // thread split by anything else stays split.
+    let mut quote_join = vec![None; layout.nodes.len()];
+    let mut last_quote: Option<(i32, u8)> = None;
+    for (index, node) in layout.nodes.iter().enumerate() {
+        if let LayoutKind::Quote(depth, _) = node.kind {
+            quote_join[index] = last_quote.filter(|(bottom, _)| {
+                node.rect.y >= *bottom
+                    && node.rect.y.saturating_sub(*bottom) <= metrics.space(Space::Medium)
+            });
+            last_quote = Some((node.rect.y.saturating_add(node.rect.height), depth));
+        }
+    }
+    for (index, node) in layout.nodes.into_iter().enumerate() {
+        // A quote draws its depth rules left of its own rectangle, and a
+        // joined one up into the gap above it too. A repaint of only that
+        // column or that gap clears it to paper first, so it has to reach the
+        // quote or nothing puts the rule back.
+        let reach = match node.kind {
+            LayoutKind::Quote(depth, _) => {
+                let left = metrics.space(Space::Small) * i32::from(depth);
+                let top = quote_join[index].map_or(node.rect.y, |(top, _)| top);
+                Rect {
+                    x: node.rect.x.saturating_sub(left),
+                    y: top,
+                    width: node.rect.width.saturating_add(left),
+                    height: node
+                        .rect
+                        .y
+                        .saturating_add(node.rect.height)
+                        .saturating_sub(top),
+                }
+            }
+            _ => node.rect,
+        };
+        if reach.intersection(clip).is_none() {
             continue;
         }
         match node.kind {
@@ -14382,13 +17226,21 @@ fn render_all_with_selected_font(
             // The border is the whole control: a field with only a baseline
             // under it reads as an underlined word, and one with a fill reads
             // as a button that has already been pressed.
-            LayoutKind::Field(_) => stroke_clipped(
-                surface,
-                node.rect,
-                tone::RULE,
-                metrics.rule_thickness(),
-                clip,
-            ),
+            // Rounded like the buttons and chips beside it.
+            LayoutKind::Field(_, error) => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+                if error {
+                    fill_rounded_clipped(surface, node.rect, radius, palette.field_error(), clip);
+                }
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    radius,
+                    tone::RULE,
+                    metrics.rule_thickness(),
+                    clip,
+                );
+            }
             LayoutKind::FieldValue(empty) => draw_lines(
                 surface,
                 &node.text_lines,
@@ -14416,26 +17268,40 @@ fn render_all_with_selected_font(
             // Inverted when on. With two usable tones there is no third state
             // available, and an outline-versus-heavier-outline distinction is
             // not one anybody reads at arm's length on a reflective panel.
+            // Rounded like a button. A chip or a segment with square corners
+            // beside a rounded button read as a part from a different kit.
             LayoutKind::Chip(_, selected) => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
                 if selected {
-                    fill_clipped(surface, node.rect, tone::INK, clip);
+                    fill_rounded_clipped(surface, node.rect, radius, palette.emphasis(), clip);
                 } else {
-                    stroke_clipped(
+                    stroke_rounded_clipped(
                         surface,
                         node.rect,
+                        radius,
                         tone::RULE,
                         metrics.rule_thickness(),
                         clip,
                     );
                 }
-                draw_centered(
-                    surface,
-                    &node.text_lines,
-                    node.rect,
-                    FontSize::Caption,
-                    if selected { tone::PAPER } else { tone::INK },
-                    clip,
-                );
+                let ink = if selected { tone::PAPER } else { tone::INK };
+                match node.text_lines.as_slice() {
+                    [label] if ticking_figure(label) => {
+                        let size = FontSize::Caption;
+                        let width = figures_width(label, size, Face::Text);
+                        draw_figures(
+                            surface,
+                            label,
+                            node.rect.x + (node.rect.width - width) / 2,
+                            node.rect.y + (node.rect.height - size.line_height()) / 2,
+                            size,
+                            Face::Text,
+                            ink,
+                            clip,
+                        );
+                    }
+                    lines => draw_centered(surface, lines, node.rect, FontSize::Caption, ink, clip),
+                }
             }
             // Underlined rather than inverted. A tab strip sits directly above
             // the content it filters, and a filled tab there reads as a heading
@@ -14459,7 +17325,7 @@ fn render_all_with_selected_font(
                             width: node.rect.width,
                             height: thickness,
                         },
-                        tone::INK,
+                        palette.emphasis(),
                         clip,
                     );
                 }
@@ -14562,31 +17428,38 @@ fn render_all_with_selected_font(
             // round every menu and question. The shadow is drawn inside the
             // overlay's own rectangle, so the refresh that clears the overlay
             // clears it too and the panel keeps no grey residue.
-            LayoutKind::Overlay => {
-                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
-                let lift = max(2, metrics.rule_thickness() * 3);
-                let sheet = Rect {
-                    width: node.rect.width - lift,
-                    height: node.rect.height - lift,
-                    ..node.rect
-                };
-                let shadow = Rect {
-                    x: node.rect.x + lift,
-                    y: node.rect.y + lift,
-                    ..sheet
-                };
-                fill_clipped(surface, node.rect, tone::PAPER, clip);
-                fill_rounded_clipped(surface, shadow, radius, tone::RULE, clip);
-                fill_rounded_clipped(surface, sheet, radius, tone::PAPER, clip);
-                stroke_rounded_clipped(
+            // The notice is the same sheet as a dialogue, so it reads as the
+            // runtime speaking rather than as part of the page.
+            LayoutKind::Overlay | LayoutKind::Notice => {
+                draw_sheet(surface, node.rect, metrics, clip);
+            }
+            LayoutKind::NoticeMark(glyph) => {
+                draw_vector(
                     surface,
-                    sheet,
-                    radius,
-                    tone::INK,
-                    metrics.rule_thickness(),
+                    &vector::shapes(glyph),
+                    bar_mark(node.rect),
                     clip,
+                    tone::INK,
                 );
             }
+            LayoutKind::NoticeHeading => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                notice::HEADING,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::NoticeLine => draw_lines(
+                surface,
+                &node.text_lines,
+                node.rect.x,
+                node.rect.y,
+                notice::LINE,
+                tone::INK,
+                clip,
+            ),
             // A plus or a minus at the trailing edge of the byline, and, when
             // shut, how much is behind it. Two strokes and one stroke: nothing
             // here needs a font, and a glyph at this size would be softer than
@@ -14652,10 +17525,12 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::Card => {
-                fill_clipped(surface, node.rect, tone::SURFACE, clip);
-                stroke_clipped(
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+                fill_rounded_clipped(surface, node.rect, radius, tone::SURFACE, clip);
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
+                    radius,
                     tone::RULE,
                     metrics.rule_thickness(),
                     clip,
@@ -14669,7 +17544,7 @@ fn render_all_with_selected_font(
                     surface,
                     node.rect,
                     metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
-                    tone::INK,
+                    palette.emphasis(),
                     clip,
                 );
                 draw_centered(
@@ -14729,7 +17604,7 @@ fn render_all_with_selected_font(
             // looks like a mistake.
             LayoutKind::Cell(_, CellStyle::Crossword, selected) => {
                 if selected {
-                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
                 }
                 // Two edges rather than four. Crossword squares are drawn
                 // touching, so a box around each one puts two rules along
@@ -14767,8 +17642,215 @@ fn render_all_with_selected_font(
                     clip,
                 );
             }
+            // A reversi board is one ruled grid, like the board itself: each
+            // square draws the two rules no neighbour above or to its left
+            // has, and the board draws the frame. The square of the last move
+            // takes the selection field.
+            LayoutKind::Cell(_, CellStyle::Ruled, selected) => {
+                if selected {
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
+                }
+                let rule = metrics.rule_thickness();
+                for edge in [
+                    Rect {
+                        height: rule,
+                        ..node.rect
+                    },
+                    Rect {
+                        width: rule,
+                        ..node.rect
+                    },
+                ] {
+                    fill_clipped(surface, edge, tone::RULE, clip);
+                }
+            }
+            LayoutKind::MancalaBoard => {
+                let radius = node.rect.height / 4;
+                fill_rounded_clipped(surface, node.rect, radius, tone::PAPER, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    node.rect,
+                    radius,
+                    tone::INK,
+                    metrics.rule_thickness() * 2,
+                    clip,
+                );
+            }
+            // A well, not a key: a round hollow in light grey with a rule
+            // round it, and a heavy ink rule round the pits just sown from.
+            LayoutKind::Cell(_, CellStyle::Pit | CellStyle::Store, selected) => {
+                let inset = node.rect.width / 12;
+                let well = Rect {
+                    x: node.rect.x + inset,
+                    y: node.rect.y + inset,
+                    width: node.rect.width - inset * 2,
+                    height: node.rect.height - inset * 2,
+                };
+                let radius = well.width / 2;
+                fill_rounded_clipped(surface, well, radius, tone::SURFACE, clip);
+                stroke_rounded_clipped(
+                    surface,
+                    well,
+                    radius,
+                    if selected { tone::INK } else { tone::RULE },
+                    metrics.rule_thickness() * if selected { 2 } else { 1 },
+                    clip,
+                );
+            }
+            LayoutKind::StoreLabel => draw_centered(
+                surface,
+                &node.text_lines,
+                node.rect,
+                FontSize::Caption,
+                tone::MUTED,
+                clip,
+            ),
+            LayoutKind::Cell(_, CellStyle::Hash { right, bottom }, selected) => {
+                if selected {
+                    fill_clipped(surface, node.rect, palette.selection_field(), clip);
+                }
+                let rule = metrics.rule_thickness() * 2;
+                if right {
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            x: node.rect.x + node.rect.width - rule,
+                            width: rule,
+                            ..node.rect
+                        },
+                        tone::INK,
+                        clip,
+                    );
+                }
+                if bottom {
+                    fill_clipped(
+                        surface,
+                        Rect {
+                            y: node.rect.y + node.rect.height - rule,
+                            height: rule,
+                            ..node.rect
+                        },
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
+            LayoutKind::Cell(
+                _,
+                CellStyle::Field {
+                    top,
+                    left,
+                    right,
+                    bottom,
+                    struck,
+                },
+                covered,
+            ) => {
+                let r = node.rect;
+                if struck {
+                    fill_clipped(surface, r, tone::INK, clip);
+                } else if covered {
+                    fill_clipped(surface, r, tone::SURFACE, clip);
+                }
+                // Each square rules its own top and left, and the squares on
+                // the far edges their right and bottom too, so every rule
+                // between two squares is drawn once and the field is one
+                // ruled board. Its outer edge is the frame, in ink.
+                let rule = metrics.rule_thickness();
+                let frame = rule * 2;
+                let sides = [
+                    (
+                        true,
+                        top,
+                        Rect {
+                            height: if top { frame } else { rule },
+                            ..r
+                        },
+                    ),
+                    (
+                        true,
+                        left,
+                        Rect {
+                            width: if left { frame } else { rule },
+                            ..r
+                        },
+                    ),
+                    (
+                        right,
+                        true,
+                        Rect {
+                            x: r.x + r.width - frame,
+                            width: frame,
+                            ..r
+                        },
+                    ),
+                    (
+                        bottom,
+                        true,
+                        Rect {
+                            y: r.y + r.height - frame,
+                            height: frame,
+                            ..r
+                        },
+                    ),
+                ];
+                for (drawn, edge, side) in sides {
+                    if drawn {
+                        fill_clipped(
+                            surface,
+                            side,
+                            if edge { tone::INK } else { tone::RULE },
+                            clip,
+                        );
+                    }
+                }
+            }
+            LayoutKind::FieldCount => {
+                let (size, scale) = field_count_style(&node);
+                with_text_scale(scale, || {
+                    draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
+                });
+            }
+            LayoutKind::FieldMark(mark, on_ink) => {
+                let shapes = match mark {
+                    FieldMark::Flag => vector::flag(),
+                    FieldMark::Mine => vector::mine(),
+                };
+                draw_vector(
+                    surface,
+                    &shapes,
+                    node.rect,
+                    clip,
+                    if on_ink { tone::PAPER } else { tone::INK },
+                );
+            }
+            LayoutKind::RuledBoard => {
+                stroke_clipped(
+                    surface,
+                    node.rect,
+                    tone::INK,
+                    metrics.rule_thickness() * 2,
+                    clip,
+                );
+            }
             LayoutKind::Cell(_, CellStyle::CrosswordBlock, _) => {
                 fill_clipped(surface, node.rect, tone::INK, clip);
+            }
+            // A chess or draughts square is its field and nothing else, so the
+            // squares meet edge to edge the way a printed board's do and the
+            // board's own frame is the only line. A marked square, the one in
+            // hand or either end of the last move, keeps its own field and
+            // takes a heavy ink outline inside its edges, so the mark reads on
+            // light and dark squares alike and never spills onto a neighbour.
+            // On a colour panel a marked light square also takes the accent's
+            // tint.
+            LayoutKind::Cell(_, CellStyle::BoardLight, selected) => {
+                let field = if selected {
+                    palette.square_selected()
+                } else {
+                    Paint::Grey(tone::PAPER)
+                };
+                draw_square(surface, node.rect, field, selected, metrics, clip);
             }
             LayoutKind::Cell(_, CellStyle::Board, true) => {
                 fill_clipped(surface, node.rect, tone::SURFACE, clip);
@@ -14787,27 +17869,117 @@ fn render_all_with_selected_font(
                 metrics.rule_thickness(),
                 clip,
             ),
+            // A word game's tiles, printed the way a puzzle page prints them:
+            // the right letter in the right place is a black square, a letter
+            // in the word elsewhere is a grey square in a heavy rule, and a
+            // letter that is not in the word sits faintly on paper inside a
+            // lighter rule than an untried square, so it steps back.
+            LayoutKind::Cell(_, CellStyle::Tile(cell_tone), selected) => {
+                let rule = metrics.rule_thickness();
+                match cell_tone {
+                    CellTone::Solid => fill_clipped(surface, node.rect, tone::INK, clip),
+                    CellTone::Shaded => {
+                        fill_clipped(surface, node.rect, TILE_SHADE, clip);
+                        stroke_clipped(surface, node.rect, tone::INK, rule * 2, clip);
+                    }
+                    CellTone::Faded => {
+                        stroke_clipped(surface, node.rect, tone::RULE_LIGHT, rule, clip);
+                    }
+                    CellTone::Plain => stroke_clipped(surface, node.rect, tone::RULE, rule, clip),
+                }
+                if selected && cell_tone != CellTone::Solid {
+                    stroke_clipped(surface, node.rect, tone::INK, rule * 2, clip);
+                }
+            }
+            // The key for a letter says what the board has learned about it,
+            // in the same three amounts of ink, so the next guess can be
+            // chosen from the keys alone. A letter that is not in the word
+            // loses its field and keeps a hairline, so it still reads as a key
+            // and can still be typed.
+            LayoutKind::Cell(_, CellStyle::KeyTile(cell_tone), _) => {
+                let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+                match cell_tone {
+                    CellTone::Solid => {
+                        fill_rounded_clipped(surface, node.rect, radius, tone::INK, clip);
+                    }
+                    CellTone::Shaded => {
+                        fill_rounded_clipped(surface, node.rect, radius, TILE_SHADE, clip);
+                        stroke_rounded_clipped(
+                            surface,
+                            node.rect,
+                            radius,
+                            tone::INK,
+                            metrics.rule_thickness() * 2,
+                            clip,
+                        );
+                    }
+                    CellTone::Faded => stroke_rounded_clipped(
+                        surface,
+                        node.rect,
+                        radius,
+                        tone::RULE_LIGHT,
+                        metrics.rule_thickness(),
+                        clip,
+                    ),
+                    CellTone::Plain => {
+                        fill_rounded_clipped(surface, node.rect, radius, tone::SURFACE, clip);
+                    }
+                }
+            }
             LayoutKind::Cell(_, CellStyle::BoardDark, selected) => {
-                fill_clipped(surface, node.rect, tone::SURFACE, clip);
+                draw_square(
+                    surface,
+                    node.rect,
+                    palette.square_dark(),
+                    selected,
+                    metrics,
+                    clip,
+                );
+            }
+            LayoutKind::CheckeredFrame => {
                 stroke_clipped(
                     surface,
                     node.rect,
-                    if selected { tone::INK } else { tone::RULE },
-                    metrics.rule_thickness() * if selected { 2 } else { 1 },
+                    tone::INK,
+                    metrics.rule_thickness(),
                     clip,
                 );
             }
             LayoutKind::Cell(_, CellStyle::BackgammonTop, _) => {
-                draw_backgammon_point(surface, node.rect, true, metrics, clip);
+                draw_backgammon_point(surface, node.rect, true, metrics, palette, clip);
             }
             LayoutKind::Cell(_, CellStyle::BackgammonBottom, _) => {
-                draw_backgammon_point(surface, node.rect, false, metrics, clip);
+                draw_backgammon_point(surface, node.rect, false, metrics, palette, clip);
             }
+            LayoutKind::Cell(_, CellStyle::BackgammonPoint { from_top, dark }, _) => {
+                draw_point_triangle(
+                    surface,
+                    node.rect,
+                    from_top,
+                    if dark {
+                        palette.board_dark()
+                    } else {
+                        Paint::Grey(tone::PAPER)
+                    },
+                    metrics,
+                    clip,
+                );
+            }
+            LayoutKind::BackgammonFrame => draw_backgammon_frame(surface, node.rect, metrics, clip),
+            LayoutKind::PointNumber(mark) => draw_point_number(surface, &node, mark, metrics, clip),
             LayoutKind::BackgammonStack(glyph, count, from_top) => {
                 draw_backgammon_stack(surface, glyph, count, from_top, node.rect, clip);
             }
             LayoutKind::BackgammonBoard => draw_backgammon_board(surface, node.rect, metrics, clip),
             LayoutKind::MorrisBoard => draw_morris_board(surface, node.rect, metrics, clip),
+            LayoutKind::SelectionRing => stroke_rounded_clipped(
+                surface,
+                node.rect,
+                node.rect.width / 2,
+                palette.emphasis(),
+                metrics.rule_thickness() * 2,
+                clip,
+            ),
             // A key is the field it is printed on, with no rule at all. The
             // gaps between the keys separate them, which is how a keyboard has
             // always been read, and it takes forty-five outlines off the panel.
@@ -14844,9 +18016,40 @@ fn render_all_with_selected_font(
                     } else {
                         tone::RULE
                     },
-                    metrics.tenth_mm(PAD_BORDER_TENTH_MM),
+                    metrics.tenth_mm(pad_border_tenth_mm()),
                     clip,
                 );
+            }
+            LayoutKind::PencilNote(inverted) => {
+                let size = [FontSize::Caption, FontSize::Terminal]
+                    .into_iter()
+                    .find(|size| size.line_height() * 2 / 3 <= node.rect.height)
+                    .unwrap_or(FontSize::Terminal);
+                draw_centered(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    size,
+                    if inverted { tone::PAPER } else { tone::INK },
+                    clip,
+                );
+            }
+            LayoutKind::PencilEntry(inverted) => {
+                let (size, scale) = pencil::label_style(&node);
+                with_text_scale(scale, || {
+                    draw_centered(
+                        surface,
+                        &node.text_lines,
+                        node.rect,
+                        size,
+                        if inverted {
+                            tone::RULE_LIGHT
+                        } else {
+                            tone::MUTED
+                        },
+                        clip,
+                    );
+                });
             }
             LayoutKind::PencilNumber(inverted) => {
                 let (size, scale) = pencil::label_style(&node);
@@ -14872,6 +18075,7 @@ fn render_all_with_selected_font(
                         box_mask,
                     },
                     metrics,
+                    palette,
                     clip,
                 );
             }
@@ -14930,35 +18134,49 @@ fn render_all_with_selected_font(
                     draw_centered(surface, &node.text_lines, node.rect, size, tone::INK, clip);
                 });
             }
+            LayoutKind::ToneLabel(cell_tone, board) => {
+                let (size, scale) = if board {
+                    board_label_style(&node)
+                } else {
+                    key_label_style(&node)
+                };
+                let ink = match cell_tone {
+                    CellTone::Solid => tone::PAPER,
+                    CellTone::Faded => TILE_FADED_INK,
+                    CellTone::Plain | CellTone::Shaded => tone::INK,
+                };
+                with_text_scale(scale, || {
+                    draw_centered(surface, &node.text_lines, node.rect, size, ink, clip);
+                });
+            }
             LayoutKind::Divider => fill_clipped(surface, node.rect, tone::RULE, clip),
             LayoutKind::RowRule => fill_clipped(surface, node.rect, tone::RULE_LIGHT, clip),
+            // A grey track with the done part in ink, both a millimetre tall
+            // and centred in the bar's two. It was a black outline the width of
+            // the page with the fill butted against it, which on the panel was
+            // a heavy black box louder than the title it sat under, and at a
+            // few per cent read as an empty box rather than as progress.
             LayoutKind::Progress => {
-                stroke_clipped(
-                    surface,
-                    node.rect,
-                    tone::INK,
-                    metrics.rule_thickness(),
-                    clip,
-                );
                 let value = node
                     .text_lines
                     .first()
                     .and_then(|value| value.parse::<i32>().ok())
                     .unwrap_or(0);
+                let thickness = min(node.rect.height, metrics.tenth_mm(10));
+                let track = Rect {
+                    x: node.rect.x,
+                    y: node.rect.y + (node.rect.height - thickness) / 2,
+                    width: node.rect.width,
+                    height: thickness,
+                };
+                fill_clipped(surface, track, tone::RULE, clip);
                 fill_clipped(
                     surface,
                     Rect {
-                        x: node.rect.x + 2,
-                        y: node.rect.y + 2,
-                        width: node
-                            .rect
-                            .width
-                            .saturating_sub(4)
-                            .saturating_mul(min(100, value))
-                            / 100,
-                        height: max(0, node.rect.height - 4),
+                        width: track.width.saturating_mul(value.clamp(0, 100)) / 100,
+                        ..track
                     },
-                    tone::INK,
+                    palette.emphasis(),
                     clip,
                 );
             }
@@ -14980,46 +18198,66 @@ fn render_all_with_selected_font(
                 // Depth becomes something to count rather than to measure.
                 let step = metrics.space(Space::Small);
                 let thickness = metrics.rule_thickness();
+                // A level the quote above also had carries on through the gap
+                // between them; a level that starts here starts at this
+                // quote's own top.
+                let joined = quote_join[index];
                 for back in 1..=i32::from(depth) {
+                    // `back` counts outwards from this quote's own rule, so
+                    // the level it draws, counted from the outermost, is
+                    // depth - back + 1.
+                    let level = i32::from(depth) - back + 1;
+                    let top = match joined {
+                        Some((bottom, above)) if i32::from(above) >= level => bottom,
+                        _ => node.rect.y,
+                    };
                     fill_clipped(
                         surface,
                         Rect {
                             x: node.rect.x - step * back,
-                            y: node.rect.y,
+                            y: top,
                             width: thickness,
-                            height: node.rect.height,
+                            height: node
+                                .rect
+                                .y
+                                .saturating_add(node.rect.height)
+                                .saturating_sub(top),
                         },
                         tone::RULE,
                         clip,
                     );
                 }
-                // A byline sits on a tinted strip. Without it, "user 3 hours
-                // ago" is one more line of text in a column of lines of text,
-                // and on a page of nested replies the reader has to re-read
-                // the first line of every comment to work out whether it is
-                // the comment or the name of whoever wrote it. Tone alone did
-                // not do it: muted grey text at caption size reads as a quiet
-                // sentence, not as a label.
-                //
-                // The strip runs the width of the column and is inset only by
-                // the padding, so it also draws the left edge of the comment
-                // for the eye to run down.
-                let top = if role == QuoteRole::Byline {
-                    // Exactly the rectangle, because the height already
-                    // includes the air. Painting outside it would run into the
-                    // paragraph underneath.
-                    fill_clipped(surface, node.rect, tone::SURFACE, clip);
-                    metrics.space(Space::Tight)
-                } else {
-                    0
+                // A byline is quiet type with air above it, not a tinted
+                // strip. Strips under every comment's name turned a thread
+                // into a stack of grey bands, the heaviest thing on the page
+                // marking the least important line of each comment. What
+                // tells the name from the comment is that it is set smaller
+                // and lighter, after a gap, which is how a printed letters
+                // page sets who wrote each letter.
+                let (left, top) = match role {
+                    QuoteRole::Byline => (0, metrics.space(Space::Tight)),
+                    // The same grey as a key on the keyboard, and the same
+                    // corners as a button, so the panel reads as part of this
+                    // interface rather than as a picture of a terminal.
+                    QuoteRole::Command => {
+                        fill_rounded_clipped(
+                            surface,
+                            node.rect,
+                            metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                            tone::SURFACE,
+                            clip,
+                        );
+                        command_inset(metrics)
+                    }
+                    QuoteRole::Body => (0, 0),
                 };
                 draw_lines_in(
                     surface,
                     &node.text_lines,
-                    node.rect.x,
+                    node.rect.x + left,
                     node.rect.y + top,
                     role.size(),
-                    prose,
+                    role.face(prose),
                     role.tone(),
                     clip,
                 );
@@ -15034,7 +18272,7 @@ fn render_all_with_selected_font(
                 &node.text_lines,
                 node.rect.x,
                 node.rect.y,
-                FontSize::Caption,
+                FontSize::Note,
                 tone::MUTED,
                 clip,
             ),
@@ -15077,7 +18315,17 @@ fn render_all_with_selected_font(
                 // type belongs. Sitting it on the baseline turns the title into
                 // something underlined.
                 let rule_start = node.rect.x.saturating_add(title_width).saturating_add(gap);
-                if rule_end > rule_start {
+                // Two parallel hairlines a few millimetres apart read as a
+                // printing fault, not as structure: the bar's rule already
+                // says where the page begins, so the first section under it
+                // is set off by its title alone. Sections further down keep
+                // theirs. Drawing only; the section keeps its room.
+                let opens_page = !legacy_typography()
+                    && bar_foot.is_some_and(|foot| {
+                        node.rect.y.saturating_sub(foot)
+                            <= metrics.tenth_mm(SECTION_UNDER_BAR_TENTH_MM)
+                    });
+                if rule_end > rule_start && !opens_page {
                     fill_clipped(
                         surface,
                         Rect {
@@ -15100,6 +18348,7 @@ fn render_all_with_selected_font(
             // somewhere" since long before anybody put it on a screen. Set
             // clear of the descenders rather than through them, and a rule
             // thick, because a single pixel at this density is not there.
+            LayoutKind::QuietLink(_) => {}
             LayoutKind::InlineLink(_) => {
                 let thickness = metrics.rule_thickness();
                 let baseline = node
@@ -15129,6 +18378,24 @@ fn render_all_with_selected_font(
                 tone::INK,
                 clip,
             ),
+            LayoutKind::Initial { cap, baseline } => {
+                if let Some(text) = node.text_lines.first() {
+                    with_typesetter(prose, |typesetter| {
+                        typesetter.draw_initial(
+                            text,
+                            node.rect.x,
+                            node.rect.y.saturating_add(baseline),
+                            prose,
+                            cap,
+                            &mut |x, y, coverage| {
+                                if coverage > 0 && clip.contains(x, y) {
+                                    surface.blend(x, y, tone::INK, coverage);
+                                }
+                            },
+                        );
+                    });
+                }
+            }
             LayoutKind::RichText(presentation) => {
                 if let Some(text) = node.text_lines.first() {
                     if presentation.highlighted {
@@ -15140,7 +18407,11 @@ fn render_all_with_selected_font(
                         node.rect,
                         prose,
                         presentation,
-                        tone::INK,
+                        if presentation.muted {
+                            tone::MUTED
+                        } else {
+                            tone::INK
+                        },
                         clip,
                     );
                 }
@@ -15148,9 +18419,13 @@ fn render_all_with_selected_font(
             // The bars themselves are only a background. Drawing them as
             // separate nodes is what lets a tab switch repaint the content
             // area and two small bands instead of the entire panel.
-            LayoutKind::TopBar | LayoutKind::NavBar => {
-                fill_clipped(surface, node.rect, tone::PAPER, clip);
-            }
+            // The bar wears the application's colour on a panel that has
+            // one, with its title and controls still in ink on it; the bottom
+            // bar stays paper, because two coloured bands would frame every
+            // screen in the same colour and the content between them would
+            // be the quietest thing on the panel.
+            LayoutKind::TopBar => fill_clipped(surface, node.rect, palette.bar(), clip),
+            LayoutKind::NavBar => fill_clipped(surface, node.rect, tone::PAPER, clip),
             // Paper, not surface. The band is the quietest thing on the panel
             // and a tinted strip across the top of every screen is a permanent
             // horizontal line the eye has to learn to ignore.
@@ -15166,7 +18441,7 @@ fn render_all_with_selected_font(
                 clip,
             ),
             LayoutKind::StatusMark(mark) => {
-                draw_status_mark(surface, mark, node.rect, metrics, clip);
+                draw_status_mark(surface, mark, node.rect, metrics, palette, clip);
             }
             LayoutKind::TopBarTitle => draw_lines(
                 surface,
@@ -15246,8 +18521,9 @@ fn render_all_with_selected_font(
                     &node.text_lines,
                     node.rect,
                     metrics,
-                    false,
+                    NavLabel::Destination,
                     glyph,
+                    palette,
                     clip,
                 );
             }
@@ -15257,8 +18533,21 @@ fn render_all_with_selected_font(
                     &node.text_lines,
                     node.rect,
                     metrics,
-                    true,
+                    NavLabel::Selected,
                     glyph,
+                    palette,
+                    clip,
+                );
+            }
+            LayoutKind::ActionBarEntry(_, glyph) => {
+                draw_nav_label(
+                    surface,
+                    &node.text_lines,
+                    node.rect,
+                    metrics,
+                    NavLabel::Action,
+                    glyph,
+                    palette,
                     clip,
                 );
             }
@@ -15331,11 +18620,23 @@ fn render_all_with_selected_font(
                     tone::MUTED,
                 );
             }
+            LayoutKind::InlineGlyph(Glyph::LegalPoint, _) => {
+                draw_glyph_icon_in(surface, Glyph::LegalPoint, node.rect, clip, tone::MUTED);
+            }
+            LayoutKind::TileGlyph(Glyph::BlackDraughtsKing)
+            | LayoutKind::InlineGlyph(Glyph::BlackDraughtsKing, false) => {
+                draw_glyph_icon(surface, Glyph::BlackDraughtsKing, node.rect, clip);
+                draw_vector(surface, &vector::king_inlay(), node.rect, clip, tone::PAPER);
+            }
             LayoutKind::TileGlyph(glyph) | LayoutKind::InlineGlyph(glyph, false) => {
                 draw_glyph_icon(surface, glyph, node.rect, clip);
             }
             LayoutKind::InlineGlyph(glyph, true) => {
                 draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::PAPER);
+            }
+            LayoutKind::HeldGlyph(glyph) => {
+                let shapes = vector::held(glyph).unwrap_or_else(|| vector::shapes(glyph));
+                draw_vector(surface, &shapes, node.rect, clip, tone::INK);
             }
             LayoutKind::TileGlyphMuted(glyph) => {
                 draw_glyph_icon_in(surface, glyph, node.rect, clip, tone::MUTED);
@@ -15548,9 +18849,10 @@ fn render_all_with_selected_font(
                 );
             }
             LayoutKind::ChoiceOption(_, chosen) => {
-                stroke_clipped(
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
                     tone::INK,
                     metrics.rule_thickness(),
                     clip,
@@ -15586,9 +18888,10 @@ fn render_all_with_selected_font(
             // Outlined in a lighter tone and set in muted ink, so the escape
             // hatch reads as secondary to the options above it.
             LayoutKind::ChoiceFreeform(_) => {
-                stroke_clipped(
+                stroke_rounded_clipped(
                     surface,
                     node.rect,
+                    metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
                     tone::RULE,
                     metrics.rule_thickness(),
                     clip,
@@ -15606,62 +18909,91 @@ fn render_all_with_selected_font(
             }
             LayoutKind::Banner(level) => {
                 let padding = metrics.space(Space::Small);
-                // Both levels sit on the same quiet surface. An attention
-                // banner used to be reversed out of solid black across the
-                // full width of the panel, which on E Ink is a slab that has
-                // to be cleared before anything near it can be redrawn, and
-                // which shouted louder than the content it was warning about.
-                // What separates the two levels now is a heavy bar down the
-                // leading edge, the same mark a printed page uses to flag a
-                // paragraph, readable at a glance and cheap to draw.
-                fill_clipped(surface, node.rect, tone::SURFACE, clip);
-                let mut text_x = node.rect.x + padding;
-                // A success and an error carry a mark ahead of the words, in a
-                // column the layout set aside for it, so the level can be told
-                // without reading. An error is also ruled round in ink: it is
-                // the one banner that asks the reader to do something.
+                let line = FontSize::Body.line_height();
                 let mark = banner_mark_column(level, metrics);
-                if mark > 0 {
-                    let side = FontSize::Body.line_height();
-                    draw_glyph_icon_in(
+                if typography() >= Typography::Fine {
+                    // One shape for every level: the quiet surface, rounded
+                    // like the buttons beside it, with the level's mark ahead
+                    // of the words in [`LayoutKind::BannerWords`]. The levels
+                    // used to be three different objects, a black bar down
+                    // one edge, a box ruled in ink and a plain grey field,
+                    // which on one panel read as three components rather than
+                    // one speaking at three volumes.
+                    fill_rounded_clipped(
                         surface,
-                        if level == BannerLevel::Error {
-                            Glyph::Close
-                        } else {
-                            Glyph::Check
-                        },
+                        node.rect,
+                        metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM),
+                        palette.banner(level),
+                        clip,
+                    );
+                } else {
+                    // As an application at an older protocol measured it: no
+                    // mark column for info or attention, so attention keeps
+                    // the bar down its leading edge that tells it from info.
+                    fill_clipped(surface, node.rect, palette.banner(level), clip);
+                    let mut text_x = node.rect.x + padding;
+                    if mark > 0 {
+                        draw_vector(
+                            surface,
+                            &banner_mark(level),
+                            Rect {
+                                x: text_x,
+                                y: node.rect.y + padding,
+                                width: line,
+                                height: line,
+                            },
+                            clip,
+                            tone::INK,
+                        );
+                        text_x = text_x.saturating_add(mark);
+                    }
+                    if level == BannerLevel::Attention {
+                        let bar = metrics.rule_thickness() * 3;
+                        fill_clipped(
+                            surface,
+                            Rect {
+                                width: bar,
+                                ..node.rect
+                            },
+                            palette.banner_edge(),
+                            clip,
+                        );
+                        text_x = text_x.saturating_add(bar);
+                    }
+                    draw_lines(
+                        surface,
+                        &node.text_lines,
+                        text_x,
+                        node.rect.y + padding,
+                        FontSize::Body,
+                        tone::INK,
+                        clip,
+                    );
+                }
+            }
+            LayoutKind::BannerWords(level, marked) => {
+                let line = FontSize::Body.line_height();
+                let mut text_x = node.rect.x;
+                if marked {
+                    draw_vector(
+                        surface,
+                        &banner_mark(level),
                         Rect {
                             x: text_x,
-                            y: node.rect.y + padding,
-                            width: side,
-                            height: side,
+                            y: node.rect.y,
+                            width: line,
+                            height: line,
                         },
                         clip,
                         tone::INK,
                     );
-                    text_x = text_x.saturating_add(mark);
-                }
-                if level == BannerLevel::Error {
-                    stroke_clipped(surface, node.rect, tone::INK, metrics.button_border(), clip);
-                }
-                if level == BannerLevel::Attention {
-                    let bar = metrics.rule_thickness() * 3;
-                    fill_clipped(
-                        surface,
-                        Rect {
-                            width: bar,
-                            ..node.rect
-                        },
-                        tone::INK,
-                        clip,
-                    );
-                    text_x = text_x.saturating_add(bar);
+                    text_x = text_x.saturating_add(notice_column(metrics));
                 }
                 draw_lines(
                     surface,
                     &node.text_lines,
                     text_x,
-                    node.rect.y + padding,
+                    node.rect.y,
                     FontSize::Body,
                     tone::INK,
                     clip,
@@ -15819,10 +19151,13 @@ fn render_all_with_selected_font(
                     on,
                     state,
                     metrics,
+                    palette,
                     clip,
                 );
             }
-            LayoutKind::RowCheck(state) => draw_check_box(surface, node.rect, state, metrics, clip),
+            LayoutKind::RowCheck(state) => {
+                draw_check_box(surface, node.rect, state, metrics, palette, clip);
+            }
             // An outline the height of a line of type and its air, centred in
             // the finger-high target, so the row keeps one quiet button rather
             // than a slab as tall as the row.
@@ -16002,7 +19337,7 @@ fn render_all_with_selected_font(
                             height: inner,
                         },
                         inner / 2,
-                        tone::INK,
+                        palette.emphasis(),
                         clip,
                     );
                 }
@@ -16045,7 +19380,7 @@ fn render_all_with_selected_font(
                     tone::INK,
                     clip,
                 );
-                draw_step_marks(surface, node.rect, current, total, metrics, clip);
+                draw_step_marks(surface, node.rect, current, total, metrics, palette, clip);
             }
         }
     }
@@ -16064,12 +19399,21 @@ fn draw_toggle_switch(
     on: bool,
     state: ControlState,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let ink = if state.is_enabled() {
         tone::INK
     } else {
         tone::RULE
+    };
+    // Only the filled track takes the accent. Off is drawn in ink whatever
+    // the panel, so the two states differ in colour as well as in shape and
+    // a switch is never a coloured ring with a coloured knob.
+    let on_track = if state.is_enabled() {
+        palette.emphasis()
+    } else {
+        Paint::Grey(tone::RULE)
     };
     let radius = track.height / 2;
     let border = metrics.button_border();
@@ -16087,7 +19431,7 @@ fn draw_toggle_switch(
         height: knob,
     };
     if on {
-        fill_rounded_clipped(surface, track, radius, ink, clip);
+        fill_rounded_clipped(surface, track, radius, on_track, clip);
         fill_rounded_clipped(surface, knob, knob.height / 2, tone::PAPER, clip);
     } else {
         stroke_rounded_clipped(surface, track, radius, ink, border, clip);
@@ -16106,6 +19450,7 @@ fn draw_check_box(
     rect: Rect,
     state: RowState,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let side = min(rect.width, rect.height);
@@ -16119,7 +19464,7 @@ fn draw_check_box(
     let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM).min(side / 4);
     match state {
         RowState::Checked => {
-            fill_rounded_clipped(surface, rect, radius, tone::INK, clip);
+            fill_rounded_clipped(surface, rect, radius, palette.emphasis(), clip);
             // Whole pixels of paper rather than a blended tick, so the box
             // turning over is a two-level change the panel's fast waveform
             // can make.
@@ -16245,12 +19590,14 @@ fn draw_code(surface: &mut Surface, rect: Rect, payload: &str, clip: Rect) {
 
 /// The marks at a step indicator's trailing edge: filled for the steps done,
 /// a heavy ring for the one the reader is on, and a light ring for the rest.
+#[allow(clippy::too_many_arguments)]
 fn draw_step_marks(
     surface: &mut Surface,
     rect: Rect,
     current: u8,
     total: u8,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let (mark, gap) = steps_mark(metrics);
@@ -16265,10 +19612,17 @@ fn draw_step_marks(
         };
         match step.cmp(&current) {
             std::cmp::Ordering::Less => {
-                fill_rounded_clipped(surface, dot, mark / 2, tone::INK, clip);
+                fill_rounded_clipped(surface, dot, mark / 2, palette.emphasis(), clip);
             }
             std::cmp::Ordering::Equal => {
-                stroke_rounded_clipped(surface, dot, mark / 2, tone::INK, max(2, mark / 4), clip);
+                stroke_rounded_clipped(
+                    surface,
+                    dot,
+                    mark / 2,
+                    palette.emphasis(),
+                    max(2, mark / 4),
+                    clip,
+                );
             }
             std::cmp::Ordering::Greater => stroke_rounded_clipped(
                 surface,
@@ -16281,6 +19635,44 @@ fn draw_step_marks(
         }
         x += mark + gap;
     }
+}
+
+/// How wide a tile's name may be set.
+///
+/// Inset from the cell's edges, so a name is not run into its neighbour's.
+/// A tile with no outline has no edge to keep clear of, though, and a single
+/// word too wide for the inset width, such as "Backgammon" at the largest
+/// text sizes, may use the whole cell rather than be broken.
+fn tile_label_width(label: &str, cell: i32, inset: i32, size: FontSize, outlined: bool) -> i32 {
+    let inner = max_i32(1, cell - inset * 2);
+    if outlined {
+        return inner;
+    }
+    let widest = label
+        .split_whitespace()
+        .map(|word| measure_text(word, size).0)
+        .max()
+        .unwrap_or(0);
+    if widest > inner {
+        max_i32(1, cell)
+    } else {
+        inner
+    }
+}
+
+/// A tile's name in at most `lines` lines, broken only between words.
+///
+/// A name with a word wider than the tile is shortened on one line with an
+/// ellipsis rather than split part way through the word, which read as two
+/// words on the launcher.
+fn tile_label_lines(label: &str, width: i32, size: FontSize, lines: usize) -> Vec<String> {
+    let breaks_a_word = label
+        .split_whitespace()
+        .any(|word| measure_text(word, size).0 > width);
+    if breaks_a_word {
+        return vec![one_line(label, width, size)];
+    }
+    wrap_text(&clamp_lines(label, width, size, lines), width, size)
 }
 
 /// The size a tile's name is drawn at, which has to be the size it was wrapped
@@ -16326,13 +19718,26 @@ fn draw_centered(
     }
 }
 
+/// How one entry in the bar at the foot is drawn.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NavLabel {
+    /// A place the reader is not on: muted.
+    Destination,
+    /// The place the reader is on: ink, and marked.
+    Selected,
+    /// A verb: ink, and never marked, since it is not a place.
+    Action,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn draw_nav_label(
     surface: &mut Surface,
     lines: &[String],
     rect: Rect,
     metrics: &DisplayMetrics,
-    selected: bool,
+    label: NavLabel,
     glyph: Option<Glyph>,
+    palette: Palette,
     clip: Rect,
 ) {
     // A mark sits above the word rather than instead of it. This band is a
@@ -16341,7 +19746,8 @@ fn draw_nav_label(
     // foot of the slot to make space, which is the shape both phone platforms
     // draw a bottom bar in.
     let mut text = rect;
-    let mark_tone = if selected || legacy_typography() {
+    let selected = label == NavLabel::Selected;
+    let mark_tone = if label != NavLabel::Destination || legacy_typography() {
         tone::INK
     } else {
         tone::MUTED
@@ -16385,7 +19791,7 @@ fn draw_nav_label(
         lines,
         text,
         FontSize::Caption,
-        if selected || legacy_typography() {
+        if label != NavLabel::Destination || legacy_typography() {
             tone::INK
         } else {
             tone::MUTED
@@ -16397,10 +19803,18 @@ fn draw_nav_label(
     // dominate the content it is meant to be subordinate to.
     if selected {
         let thickness = metrics.rule_thickness() * 2;
+        // As wide as the word it marks, and never shorter than a fingertip.
+        // Two millimetres was the size of a hyphen at this density: on the
+        // panel it read as a mark on the glass rather than as the answer to
+        // "where am I".
         let width = if legacy_typography() {
             rect.width.saturating_sub(2 * metrics.space(Space::Medium))
         } else {
-            metrics.tenth_mm(20)
+            let word = lines
+                .first()
+                .map_or(0, |line| measure_text(line, FontSize::Caption).0);
+            max(word, metrics.tenth_mm(NAV_SELECTION_MIN_TENTH_MM))
+                .min(rect.width.saturating_sub(2 * metrics.space(Space::Small)))
         };
         fill_clipped(
             surface,
@@ -16414,7 +19828,7 @@ fn draw_nav_label(
                 width: width.min(rect.width),
                 height: thickness,
             },
-            tone::INK,
+            palette.emphasis(),
             clip,
         );
     }
@@ -16443,6 +19857,34 @@ fn draw_back_arrow(surface: &mut Surface, rect: Rect, clip: Rect) {
 }
 
 /// The square a mark occupies inside a bar control's touch target.
+/// A sheet of paper lying over the page: a ruled, rounded card with a grey
+/// lift along two edges, inside `rect`.
+fn draw_sheet(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
+    let radius = metrics.tenth_mm(BUTTON_RADIUS_TENTH_MM);
+    let lift = max(2, metrics.rule_thickness() * 3);
+    let sheet = Rect {
+        width: rect.width - lift,
+        height: rect.height - lift,
+        ..rect
+    };
+    let shadow = Rect {
+        x: rect.x + lift,
+        y: rect.y + lift,
+        ..sheet
+    };
+    fill_clipped(surface, rect, tone::PAPER, clip);
+    fill_rounded_clipped(surface, shadow, radius, tone::RULE, clip);
+    fill_rounded_clipped(surface, sheet, radius, tone::PAPER, clip);
+    stroke_rounded_clipped(
+        surface,
+        sheet,
+        radius,
+        tone::INK,
+        metrics.rule_thickness(),
+        clip,
+    );
+}
+
 fn bar_mark(rect: Rect) -> Rect {
     let side = min(rect.width, rect.height) * 3 / 5;
     Rect {
@@ -16502,6 +19944,9 @@ fn draw_row_lead(
 }
 
 fn draw_glyph_icon(surface: &mut Surface, glyph: Glyph, rect: Rect, clip: Rect) {
+    if let Some(ground) = vector::piece_ground(glyph) {
+        draw_vector(surface, &ground, rect, clip, tone::PAPER);
+    }
     draw_vector(surface, &vector::shapes(glyph), rect, clip, tone::INK);
 }
 
@@ -16566,6 +20011,7 @@ fn draw_status_mark(
     mark: StatusMark,
     rect: Rect,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let size = rect.height * 7 / 10;
@@ -16577,7 +20023,14 @@ fn draw_status_mark(
     };
     match mark {
         StatusMark::Signal(strength) => {
-            blit_vector_crisp(surface, &vector::wifi(strength), size, square, clip);
+            blit_vector_crisp_in(
+                surface,
+                &vector::wifi(strength),
+                size,
+                square,
+                clip,
+                palette.signal(strength),
+            );
         }
         StatusMark::Bluetooth => {
             blit_vector_crisp(
@@ -16599,7 +20052,14 @@ fn draw_status_mark(
                 ..square
             };
             let shapes = vector::battery(level, charging);
-            blit_vector_crisp(surface, &shapes, glyph.width, glyph, clip);
+            blit_vector_crisp_in(
+                surface,
+                &shapes,
+                glyph.width,
+                glyph,
+                clip,
+                palette.battery(level, charging),
+            );
             // Set against the battery, so a short number leaves its spare room
             // on the side away from the glyph rather than between them.
             let text = format!("{}%", level.get());
@@ -16694,11 +20154,12 @@ fn blit_vector_crisp_in(
     size: i32,
     rect: Rect,
     clip: Rect,
-    tone: u8,
+    paint: impl Into<Paint>,
 ) {
     if size <= 0 {
         return;
     }
+    let paint = paint.into();
     let coverage = vector::render(shapes, size);
     let origin_x = rect.x + (rect.width - size) / 2;
     let origin_y = rect.y + (rect.height - size) / 2;
@@ -16711,7 +20172,10 @@ fn blit_vector_crisp_in(
             if x < clip.x || y < clip.y || x >= clip.x + clip.width || y >= clip.y + clip.height {
                 continue;
             }
-            surface.blend(x, y, tone, 255);
+            match paint {
+                Paint::Grey(tone) => surface.blend(x, y, tone, 255),
+                Paint::Colour(colour) => surface.blend_colour(x, y, colour, 255),
+            }
         }
     }
 }
@@ -16742,6 +20206,115 @@ fn blit_vector_crisp_in(
 /// keeps a byline shorter than a paragraph, which is the thing being claimed.
 fn byline_height(measured: i32, _metrics: &DisplayMetrics) -> i32 {
     measured + 2 * (measured / 6)
+}
+
+/// The paper between a command's panel and its words: beside them, and
+/// above and below them.
+///
+/// Two millimetres at the sides, the padding of a list row, so a command's
+/// words start where a row's title would and the eye does not have to find a
+/// new margin. One above and below, because a line of type already carries
+/// its own leading and a panel twice that height read as a button. The one
+/// above and below goes with the rest of the room when a screen has to give it
+/// back, and the leading alone keeps the words off the panel's edges.
+fn command_inset(metrics: &DisplayMetrics) -> (i32, i32) {
+    let above = if room_given_up() {
+        0
+    } else {
+        metrics.space(Space::Tight)
+    };
+    (metrics.space(Space::Small), above)
+}
+
+/// Breaks a command into lines at its spaces and nowhere else.
+///
+/// The line breaker is written for prose, and in prose a slash or a hyphen is
+/// a fair place to break. In a command it is not: "~/" at the end of one line
+/// and "Pictures" at the start of the next is a path nobody can type back,
+/// and joining characters to stop it each take a column of their own in a
+/// fixed-pitch face. A word wider than the column is the one exception, and it
+/// is broken between two characters, the way a terminal wraps it, so every
+/// character is still drawn; the words after it start a fresh line.
+///
+/// Everything else is kept as written. The spaces inside a line are the
+/// command's own, and two of them inside quotes are an argument, so only the
+/// run a line breaks at is dropped. A line break the application wrote is a
+/// line break here too.
+fn wrap_command(text: &str, width: i32, size: FontSize) -> Vec<String> {
+    let fits = |line: &str| measure_text_in(line, size, Face::Mono).0 <= width;
+    let mut lines = Vec::new();
+    for written in text.split('\n') {
+        let mut line = String::new();
+        // Whether this written line has been broken yet. Spaces leading the
+        // line are its indent; spaces a break fell at belong to no line.
+        let mut broken = false;
+        let mut rest = written.trim_end();
+        while !rest.is_empty() {
+            let after_gap = rest.trim_start();
+            let gap = if broken && line.is_empty() {
+                ""
+            } else {
+                &rest[..rest.len() - after_gap.len()]
+            };
+            let word_end = after_gap
+                .find(char::is_whitespace)
+                .unwrap_or(after_gap.len());
+            let word = &after_gap[..word_end];
+            rest = &after_gap[word_end..];
+            let joined = format!("{line}{gap}{word}");
+            if fits(&joined) {
+                line = joined;
+                continue;
+            }
+            broken = true;
+            if !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+            }
+            if fits(word) {
+                line = word.to_owned();
+                continue;
+            }
+            let mut piece = word;
+            while !piece.is_empty() && !fits(piece) {
+                // The longest run of whole characters that fits, and never
+                // less than one, so a column narrower than a letter still ends.
+                let mut end = piece.chars().next().map_or(piece.len(), char::len_utf8);
+                for (index, character) in piece.char_indices().skip(1) {
+                    let next = index + character.len_utf8();
+                    if !fits(&piece[..next]) {
+                        break;
+                    }
+                    end = next;
+                }
+                lines.push(piece[..end].to_owned());
+                piece = &piece[end..];
+            }
+            // The end of a broken word stands alone, so the words after it
+            // start a line of their own and "-- /bin/sh" is not split from
+            // its "--".
+            if !piece.is_empty() {
+                lines.push(piece.to_owned());
+            }
+        }
+        if !line.is_empty() || written.trim().is_empty() {
+            lines.push(line);
+        }
+    }
+    // A blank line between two commands is the application's; one before the
+    // first or after the last is a stray line break.
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    let leading = lines.iter().take_while(|line| line.is_empty()).count();
+    lines.drain(..leading);
+    lines
+}
+
+/// How tall a command's panel is, given its lines: the lines and the inset
+/// above and below them, with the floor a paragraph has.
+fn command_height(measured: i32, metrics: &DisplayMetrics) -> i32 {
+    let (_, above) = command_inset(metrics);
+    max(MIN_TEXT_HEIGHT, measured.saturating_add(2 * above))
 }
 
 fn fold_mark_width(metrics: &DisplayMetrics) -> i32 {
@@ -16789,9 +20362,9 @@ fn draw_caret(surface: &mut Surface, rect: Rect, side: Side, clip: Rect) {
     }
 }
 
-fn fill_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
+fn fill_clipped(surface: &mut Surface, rect: Rect, paint: impl Into<Paint>, clip: Rect) {
     if let Some(rect) = rect.intersection(clip) {
-        surface.fill_rect(rect, tone);
+        surface.fill_rect_paint(rect, paint.into());
     }
 }
 
@@ -16803,7 +20376,14 @@ fn fill_clipped(surface: &mut Surface, rect: Rect, tone: u8, clip: Rect) {
 /// every ruled box looked washed out while dividers, which have always used
 /// the real rule thickness, looked correct. Both now come from the same
 /// physical measurement.
-fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, clip: Rect) {
+fn stroke_clipped(
+    surface: &mut Surface,
+    rect: Rect,
+    paint: impl Into<Paint>,
+    thickness: i32,
+    clip: Rect,
+) {
+    let paint = paint.into();
     // A border cannot be thicker than half the thing it surrounds, or the two
     // opposite edges overlap and the box fills in.
     let thickness = thickness
@@ -16836,7 +20416,7 @@ fn stroke_clipped(surface: &mut Surface, rect: Rect, tone: u8, thickness: i32, c
             height: rect.height,
         },
     ] {
-        fill_clipped(surface, edge, tone, clip);
+        fill_clipped(surface, edge, paint, clip);
     }
 }
 
@@ -16882,29 +20462,77 @@ fn draw_morris_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics
     line(point(4, 3), point(6, 3));
 }
 
+/// One square of a chess or draughts board: its field, and the heavy ink
+/// outline of a marked square drawn inside its edges.
+fn draw_square(
+    surface: &mut Surface,
+    rect: Rect,
+    field: Paint,
+    marked: bool,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    fill_clipped(surface, rect, field, clip);
+    if marked {
+        stroke_clipped(surface, rect, tone::INK, metrics.rule_thickness() * 2, clip);
+    }
+}
+
+/// One point of the older backgammon board, whose cells are a twelfth of the
+/// panel each with nothing between them.
 fn draw_backgammon_point(
     surface: &mut Surface,
     rect: Rect,
     from_top: bool,
     metrics: &DisplayMetrics,
+    palette: Palette,
     clip: Rect,
 ) {
     let paper_point = (rect.x / rect.width.max(1)).rem_euclid(2) == 0;
     let fill = if paper_point {
-        tone::SURFACE
+        palette.board_dark()
     } else {
-        tone::PAPER
+        Paint::Grey(tone::PAPER)
     };
-    let height = rect.height.max(1);
-    let centre = rect.x + rect.width / 2;
+    draw_point_triangle(surface, rect, from_top, fill, metrics, clip);
+}
+
+/// A backgammon point: a long triangle standing on the edge of the board.
+///
+/// It is drawn a little narrower than its cell, so neighbouring points do not
+/// touch at their bases and the bar has a strip of its own, and four fifths
+/// of its height, so the tips of opposing points stop short of each other
+/// across the middle of the board, as they do on a real one. The cell is
+/// still the whole target for a finger.
+fn draw_point_triangle(
+    surface: &mut Surface,
+    rect: Rect,
+    from_top: bool,
+    fill: Paint,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let inset = (rect.width / 10).max(1);
+    let base = Rect {
+        x: rect.x + inset,
+        width: (rect.width - inset * 2).max(1),
+        ..rect
+    };
+    let height = (rect.height * 4 / 5).max(1);
+    let centre = base.x + base.width / 2;
     for row in 0..height {
         let depth = if from_top { row } else { height - 1 - row };
-        let half = (rect.width * (height - depth) / (2 * height)).max(1);
+        let half = (base.width * (height - depth) / (2 * height)).max(1);
+        let y = if from_top {
+            rect.y + row
+        } else {
+            rect.y + rect.height - height + row
+        };
         fill_clipped(
             surface,
             Rect {
                 x: centre - half,
-                y: rect.y + row,
+                y,
                 width: half * 2,
                 height: 1,
             },
@@ -16929,20 +20557,17 @@ fn draw_backgammon_point(
             );
         }
     };
-    let apex = if from_top {
-        (centre, rect.y + height - 1)
+    let (base_y, apex_y) = if from_top {
+        (rect.y, rect.y + height - 1)
     } else {
-        (centre, rect.y)
+        (rect.y + rect.height - 1, rect.y + rect.height - height)
     };
-    let base_y = if from_top {
-        rect.y
-    } else {
-        rect.y + height - 1
-    };
-    edge(rect.x, base_y, apex.0, apex.1);
-    edge(rect.x + rect.width - 1, base_y, apex.0, apex.1);
+    edge(base.x, base_y, centre, apex_y);
+    edge(base.x + base.width - rule, base_y, centre, apex_y);
 }
 
+/// The older board's ground: paper inside a rule, and a straight bar down the
+/// middle in the strip the narrowed points leave between the two halves.
 fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
     fill_clipped(surface, rect, tone::PAPER, clip);
     stroke_clipped(
@@ -16952,7 +20577,8 @@ fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMet
         metrics.rule_thickness() * 2,
         clip,
     );
-    let bar_width = (rect.width / 28).max(metrics.rule_thickness() * 3);
+    let point = (rect.width / 12).max(1);
+    let bar_width = ((point / 10).max(1) * 2 - 2).max(metrics.rule_thickness());
     fill_clipped(
         surface,
         Rect {
@@ -16964,26 +20590,284 @@ fn draw_backgammon_board(surface: &mut Surface, rect: Rect, metrics: &DisplayMet
         tone::MUTED,
         clip,
     );
-    for (x, width) in [
-        (rect.x, (rect.width / 24).max(1)),
-        (
-            rect.x + rect.width - (rect.width / 24).max(1),
-            (rect.width / 24).max(1),
-        ),
-    ] {
-        stroke_clipped(
-            surface,
-            Rect {
-                x,
-                y: rect.y + rect.height / 8,
-                width,
-                height: rect.height * 3 / 4,
-            },
-            tone::MUTED,
-            metrics.rule_thickness(),
-            clip,
-        );
+}
+
+/// A numbered board's frame, or its bar: paper inside a heavy ink rule, the
+/// way a printed diagram of the board draws both.
+fn draw_backgammon_frame(surface: &mut Surface, rect: Rect, metrics: &DisplayMetrics, clip: Rect) {
+    fill_clipped(surface, rect, tone::PAPER, clip);
+    stroke_clipped(surface, rect, tone::INK, metrics.rule_thickness() * 2, clip);
+}
+
+/// A point's number. A plain number is grey, so twenty-four of them do not
+/// outweigh the checkers; a marked one is in ink, in an open box for a point
+/// that may be played and a solid one for the point in hand.
+fn draw_point_number(
+    surface: &mut Surface,
+    node: &LayoutNode,
+    mark: CellTone,
+    metrics: &DisplayMetrics,
+    clip: Rect,
+) {
+    let size = FontSize::Caption;
+    let text = node.text_lines.first().map_or("", String::as_str);
+    let pad = metrics.space(Space::Tight);
+    let box_height = (size.line_height() + pad).min(node.rect.height);
+    let box_width = (measure_text(text, size).0 + pad * 2)
+        .max(box_height)
+        .min(node.rect.width);
+    let field = Rect {
+        x: node.rect.x + (node.rect.width - box_width) / 2,
+        y: node.rect.y + (node.rect.height - box_height) / 2,
+        width: box_width,
+        height: box_height,
+    };
+    let ink = match mark {
+        CellTone::Solid => {
+            fill_clipped(surface, field, tone::INK, clip);
+            tone::PAPER
+        }
+        CellTone::Shaded => {
+            stroke_clipped(surface, field, tone::INK, metrics.rule_thickness(), clip);
+            tone::INK
+        }
+        CellTone::Faded => tone::RULE,
+        CellTone::Plain => tone::MUTED,
+    };
+    draw_centered(surface, &node.text_lines, field, size, ink, clip);
+}
+
+/// Whether a grid is a sowing game's board: two rows of eight squares with a
+/// store among them. The empty cells in its end columns are the places the
+/// stores fill, and are neither drawn nor tapped.
+fn is_mancala(square: bool, columns: u8, cells: &[Cell]) -> bool {
+    square
+        && columns == 8
+        && cells.len() == 16
+        && cells.iter().any(|cell| cell.label.starts_with("Store "))
+}
+
+/// Lays out a sowing game's board: two rows of six round pits between two
+/// tall stores, inside a rounded outline the width of the page.
+///
+/// A store is the cell whose label starts "Store ", followed by whose store
+/// it is and then its count; it stands in its own end column through both
+/// rows. A pit's label is its count. A cell in an end column that is not a
+/// store is the place the other row's store fills, and is not laid out.
+fn layout_mancala(
+    id: NodeId,
+    cells: &[Cell],
+    area: Rect,
+    metrics: &DisplayMetrics,
+    layout: &mut Layout,
+) -> i32 {
+    let Rect { x, y, width, .. } = area;
+    let pad = metrics.space(Space::Small);
+    // As wide as the page allows, and no taller than the room under it,
+    // except that a pit is never smaller than a fingertip.
+    let tall = (area.height - pad * 3 - FontSize::Caption.line_height()) / 2;
+    let column = ((width - pad * 2) / 8)
+        .min(tall.max(metrics.touch_target_minimum()))
+        .max(1);
+    let board = Rect {
+        x: x + (width - column * 8 - pad * 2).max(0) / 2,
+        y,
+        width: column * 8 + pad * 2,
+        height: column * 2 + pad * 2,
+    };
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: board,
+        kind: LayoutKind::MancalaBoard,
+        text_lines: Vec::new(),
+    });
+    for (position, cell) in cells.iter().take(16).enumerate() {
+        if layout.nodes.len() + 2 > MAX_LAYOUT_NODES {
+            break;
+        }
+        let position = i32::try_from(position).unwrap_or(0);
+        let (row, col) = (position / 8, position % 8);
+        let end = col == 0 || col == 7;
+        let store = cell.label.strip_prefix("Store ");
+        if end && store.is_none() {
+            continue;
+        }
+        let rect = Rect {
+            x: board.x + pad + col * column,
+            y: board.y + pad + if end { 0 } else { row * column },
+            width: column,
+            height: if end { column * 2 } else { column },
+        };
+        layout.nodes.push(LayoutNode {
+            id,
+            rect,
+            kind: LayoutKind::Cell(
+                cell.action,
+                if end {
+                    CellStyle::Store
+                } else {
+                    CellStyle::Pit
+                },
+                cell.selected,
+            ),
+            text_lines: Vec::new(),
+        });
+        match store.and_then(|rest| rest.rsplit_once(' ')) {
+            // A store's count is in it; whose store it is goes under the
+            // board below it, where the name has the width of the page
+            // rather than of a store.
+            Some((owner, count)) => {
+                layout.nodes.push(LayoutNode {
+                    id,
+                    rect,
+                    kind: LayoutKind::CellLabel(true),
+                    text_lines: vec![count.to_owned()],
+                });
+                let caption = FontSize::Caption.line_height();
+                let name = measure_text(owner, FontSize::Caption).0 + pad * 2;
+                let centre = rect.x + rect.width / 2;
+                let left = (centre - name / 2).clamp(board.x, board.x + board.width - name);
+                layout.nodes.push(LayoutNode {
+                    id,
+                    rect: Rect {
+                        x: left,
+                        y: board.y + board.height,
+                        width: name,
+                        height: caption + pad,
+                    },
+                    kind: LayoutKind::StoreLabel,
+                    text_lines: vec![owner.to_owned()],
+                });
+            }
+            None => layout.nodes.push(LayoutNode {
+                id,
+                rect,
+                kind: LayoutKind::CellLabel(true),
+                text_lines: vec![cell.label.clone()],
+            }),
+        }
     }
+    board.y + board.height + FontSize::Caption.line_height() + pad
+}
+
+/// Lays out a backgammon board whose points carry their numbers.
+///
+/// The board sits inside the page margins in a heavy frame, with a bar
+/// between its two halves as wide as a checker is tall, and each point's
+/// number printed above or below it in the interface face. The older board
+/// ran to the edges of the panel with no bar of its own, and its numbers
+/// were pictures an application drew to match columns it could only guess.
+fn layout_numbered_backgammon(
+    id: NodeId,
+    cells: &[Cell],
+    x: i32,
+    y: i32,
+    width: i32,
+    metrics: &DisplayMetrics,
+    layout: &mut Layout,
+) -> i32 {
+    let frame = metrics.rule_thickness() * 2;
+    let numbers = FontSize::Caption.line_height() + metrics.space(Space::Tight) * 2;
+    let inner = (width - frame * 2).max(12);
+    let wanted_bar = (inner / 14).max(metrics.rule_thickness() * 4);
+    // A point is a target for a finger and is never narrower than one. On a
+    // panel whose page is narrower than twelve of those, the board takes
+    // some of the margin, narrows its bar first, and stays centred on the
+    // panel with a sliver of paper either side of its frame.
+    let point = ((inner - wanted_bar) / 12).max(metrics.touch_target_minimum());
+    let room = metrics.width - frame * 2 - point * 12 - metrics.space(Space::Tight) * 2;
+    let bar = wanted_bar.min(room).max(metrics.rule_thickness() * 4);
+    let point_height = point * 10 / 3;
+    let board_width = point * 12 + bar + frame * 2;
+    let left = if board_width <= width {
+        x + (width - board_width) / 2
+    } else {
+        (metrics.width - board_width) / 2
+    };
+    let top = y + numbers;
+    let board_height = point_height * 2 + frame * 2;
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x: left,
+            y: top,
+            width: board_width,
+            height: board_height,
+        },
+        kind: LayoutKind::BackgammonFrame,
+        text_lines: Vec::new(),
+    });
+    layout.nodes.push(LayoutNode {
+        id,
+        rect: Rect {
+            x: left + frame + point * 6,
+            y: top,
+            width: bar,
+            height: board_height,
+        },
+        kind: LayoutKind::BackgammonFrame,
+        text_lines: Vec::new(),
+    });
+    for (position, cell) in cells.iter().take(24).enumerate() {
+        if layout.nodes.len() + 3 > MAX_LAYOUT_NODES {
+            break;
+        }
+        let position = i32::try_from(position).unwrap_or(0);
+        let column = position % 12;
+        let from_top = position < 12;
+        let rect = Rect {
+            x: left + frame + column * point + if column >= 6 { bar } else { 0 },
+            y: if from_top {
+                top + frame
+            } else {
+                top + frame + point_height
+            },
+            width: point,
+            height: point_height,
+        };
+        // Neighbouring points alternate, and so do the two points facing
+        // each other across the board.
+        let dark = (column % 2 == 0) == from_top;
+        layout.nodes.push(LayoutNode {
+            id,
+            rect,
+            kind: LayoutKind::Cell(
+                cell.action,
+                CellStyle::BackgammonPoint { from_top, dark },
+                cell.selected,
+            ),
+            text_lines: Vec::new(),
+        });
+        if let Some(glyph) = cell.glyph {
+            let count = cell
+                .label
+                .split_whitespace()
+                .nth(3)
+                .and_then(|count| count.parse::<u8>().ok())
+                .unwrap_or(1)
+                .clamp(1, 15);
+            layout.nodes.push(LayoutNode {
+                id,
+                rect,
+                kind: LayoutKind::BackgammonStack(glyph, count, from_top),
+                text_lines: vec![cell.label.clone()],
+            });
+        }
+        if let Some(number) = cell.corner {
+            layout.nodes.push(LayoutNode {
+                id,
+                rect: Rect {
+                    x: rect.x,
+                    y: if from_top { y } else { top + board_height },
+                    width: point,
+                    height: numbers,
+                },
+                kind: LayoutKind::PointNumber(cell.tone),
+                text_lines: vec![number.to_string()],
+            });
+        }
+    }
+    y + board_height + numbers * 2
 }
 
 fn draw_backgammon_stack(
@@ -16996,24 +20880,49 @@ fn draw_backgammon_stack(
 ) {
     let side = (rect.width * 7 / 10).max(1);
     let step = (side * 2 / 3).max(1);
-    for index in 0..i32::from(count) {
+    let drawn = count.min(5);
+    for index in 0..i32::from(drawn) {
         let y = if from_top {
             rect.y + 4 + index * step
         } else {
             rect.y + rect.height - side - 4 - index * step
         };
-        draw_vector(
-            surface,
-            &vector::shapes(glyph),
-            Rect {
-                x: rect.x + (rect.width - side) / 2,
-                y,
-                width: side,
-                height: side,
-            },
-            clip,
-            tone::INK,
-        );
+        let disc = Rect {
+            x: rect.x + (rect.width - side) / 2,
+            y,
+            width: side,
+            height: side,
+        };
+        let ink = if glyph == Glyph::LegalPoint {
+            tone::MUTED
+        } else {
+            tone::INK
+        };
+        if let Some(ground) = vector::piece_ground(glyph) {
+            draw_vector(surface, &ground, disc, clip, tone::PAPER);
+        }
+        draw_vector(surface, &vector::shapes(glyph), disc, clip, ink);
+        if glyph == Glyph::BlackDraughtsKing {
+            draw_vector(surface, &vector::king_inlay(), disc, clip, tone::PAPER);
+        }
+        // Past five the stack would run into the middle of the board, so the
+        // fifth checker carries how many there are, the way a printed
+        // diagram writes the count on the outermost checker.
+        if count > 5 && index == 4 {
+            let ink = if glyph == Glyph::BlackDisc {
+                tone::PAPER
+            } else {
+                tone::INK
+            };
+            draw_centered(
+                surface,
+                &[count.to_string()],
+                disc,
+                FontSize::Caption,
+                ink,
+                clip,
+            );
+        }
     }
 }
 
@@ -17035,10 +20944,17 @@ fn rounded_row(rect: Rect, radius: i32, row: i32) -> Option<Rect> {
 }
 
 /// Fills a rectangle whose corners have been taken off.
-fn fill_rounded_clipped(surface: &mut Surface, rect: Rect, radius: i32, tone: u8, clip: Rect) {
+fn fill_rounded_clipped(
+    surface: &mut Surface,
+    rect: Rect,
+    radius: i32,
+    paint: impl Into<Paint>,
+    clip: Rect,
+) {
+    let paint = paint.into();
     for row in 0..rect.height {
         if let Some(span) = rounded_row(rect, radius, row) {
-            fill_clipped(surface, span, tone, clip);
+            fill_clipped(surface, span, paint, clip);
         }
     }
 }
@@ -17053,10 +20969,11 @@ fn stroke_rounded_clipped(
     surface: &mut Surface,
     rect: Rect,
     radius: i32,
-    tone: u8,
+    paint: impl Into<Paint>,
     thickness: i32,
     clip: Rect,
 ) {
+    let paint = paint.into();
     let thickness = thickness
         .max(1)
         .min(rect.width.max(1) / 2)
@@ -17079,7 +20996,7 @@ fn stroke_rounded_clipped(
                         width: hole.x - outer.x,
                         ..outer
                     },
-                    tone,
+                    paint,
                     clip,
                 );
                 let right = hole.x.saturating_add(hole.width);
@@ -17090,11 +21007,11 @@ fn stroke_rounded_clipped(
                         width: outer.x + outer.width - right,
                         ..outer
                     },
-                    tone,
+                    paint,
                     clip,
                 );
             }
-            None => fill_clipped(surface, outer, tone, clip),
+            None => fill_clipped(surface, outer, paint, clip),
         }
     }
 }
@@ -17204,6 +21121,30 @@ fn digit_cell(size: FontSize, face: Face) -> i32 {
         .unwrap_or(0)
 }
 
+/// Whether a chip's label is a figure that counts down while the screen
+/// around it stays, a game clock's minutes and seconds.
+///
+/// A clock in a chip was set like any word, so its digits took their own
+/// widths and the figure shifted every time one changed, beside a status band
+/// clock that holds still. Set on a fixed advance it holds still too.
+fn ticking_figure(label: &str) -> bool {
+    label.contains(':')
+        && label.starts_with(|character: char| character.is_ascii_digit())
+        && label
+            .chars()
+            .all(|character| character.is_ascii_digit() || matches!(character, ':' | '.'))
+}
+
+/// How wide a chip's label is set. A clock is measured on its fixed advance,
+/// so its chip keeps one width while it runs.
+fn chip_label_width(label: &str) -> i32 {
+    if ticking_figure(label) {
+        figures_width(label, FontSize::Caption, Face::Text)
+    } else {
+        measure_text(label, FontSize::Caption).0
+    }
+}
+
 /// The width `draw_figures` will take, which does not depend on which digits
 /// these are.
 fn figures_width(text: &str, size: FontSize, face: Face) -> i32 {
@@ -17286,6 +21227,20 @@ fn draw_text_in(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// How far a pixel of an emphasised run moves sideways, `down` pixels below
+/// the top of a line `line` pixels tall.
+///
+/// The upright glyphs are leaned about the middle of the line, the top a
+/// fourteenth of a line right and the foot as far left, rather than about
+/// the foot. Leaned about the foot, the top of the last letter went a whole
+/// seventh of a line into the space after the word, and "very remarkable"
+/// read as one word. The run keeps the advance it was measured with, so
+/// wrapping, links and selection all stay where they were.
+fn emphasis_skew(line: i32, down: i32) -> i32 {
+    let line = line.max(1);
+    (line / 2 - down.clamp(0, line)) / 7
+}
+
 fn draw_rich_text(
     surface: &mut Surface,
     text: &str,
@@ -17304,28 +21259,29 @@ fn draw_rich_text(
         0
     };
     let y = rect.y.saturating_add(vertical);
+    // A real italic is already slanted; leaning it again would set it at
+    // twice the angle its designer drew.
+    let italic = presentation.emphasis && sets_true_italic(face);
     if with_typesetter(face, |typesetter| {
-        typesetter.draw(
-            text,
-            rect.x,
-            y,
-            FontSize::Body,
-            face,
-            &mut |pixel_x, pixel_y, coverage| {
-                let skew = if presentation.emphasis {
-                    (line - (pixel_y - y)).clamp(0, line) / 7
-                } else {
-                    0
-                };
-                let x = pixel_x.saturating_add(skew);
-                if coverage > 0 && clip.contains(x, pixel_y) {
-                    surface.blend(x, pixel_y, tone, coverage);
-                    if presentation.strong && clip.contains(x + 1, pixel_y) {
-                        surface.blend(x + 1, pixel_y, tone, coverage);
-                    }
+        let mut plot = |pixel_x: i32, pixel_y: i32, coverage: u8| {
+            let skew = if presentation.emphasis && !italic {
+                emphasis_skew(line, pixel_y - y)
+            } else {
+                0
+            };
+            let x = pixel_x.saturating_add(skew);
+            if coverage > 0 && clip.contains(x, pixel_y) {
+                surface.blend(x, pixel_y, tone, coverage);
+                if presentation.strong && clip.contains(x + 1, pixel_y) {
+                    surface.blend(x + 1, pixel_y, tone, coverage);
                 }
-            },
-        );
+            }
+        };
+        if italic {
+            typesetter.draw_italic(text, rect.x, y, FontSize::Body, face, &mut plot);
+        } else {
+            typesetter.draw(text, rect.x, y, FontSize::Body, face, &mut plot);
+        }
     })
     .is_none()
     {
@@ -17545,3 +21501,6 @@ mod figure_tests;
 #[cfg(test)]
 #[path = "colour_orientation_tests.rs"]
 mod colour_orientation_tests;
+
+#[cfg(test)]
+mod colour_tests;

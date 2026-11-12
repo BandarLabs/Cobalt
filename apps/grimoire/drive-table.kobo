@@ -1,0 +1,184 @@
+# sweep: --bare
+# The table tools: the order of battle from empty to ended, a party member's
+# health, saves and slots, and both surviving a restart.
+wait-for Grimoire
+tap Initiative
+expect No combatants
+expect Add a name and an initiative, or add a monster from its reference.
+clean
+shot initiative-empty
+tap Add combatant
+type ana
+tap-id kb.enter
+type 15
+tap-id kb.enter
+type 30
+tap-id kb.enter
+wait-for ana
+expect Initiative 15 · HP 30/30 · taking this turn
+tap Add
+type bo
+tap-id kb.enter
+type 8
+tap-id kb.enter
+wait-for Hit points, or leave blank
+type 12
+tap-id kb.enter
+wait-for bo
+tap Add
+type cy
+tap-id kb.enter
+type 20
+tap-id kb.enter
+# Putting the keyboard away empty asks which was meant; Type hit points
+# opens the digits again.
+tap-id kb.enter
+tap Type hit points
+expect Hit points, or leave blank
+tap-id kb.enter
+tap Leave hit points blank
+# The list is sorted by initiative and the turn stays with whoever had it.
+wait-for cy
+expect Round 1 · turn 2 of 3
+expect Initiative 15 · HP 30/30 · taking this turn
+clean
+shot initiative-three
+tap Next turn
+expect Round 1 · turn 3 of 3
+tap Next turn
+expect Round 2 · turn 1 of 3
+# Previous from the first combatant takes the round back with it.
+tap Previous
+expect Round 1 · turn 3 of 3
+# A combatant's own screen: damage, taking the turn, a fixed roll, removal.
+tap bo
+expect Combatant
+expect HP
+expect 12/12
+tap-id hp-down-10
+expect 2/12
+tap-id hp-down-5
+expect 0/12
+tap-id hp-up
+expect 1/12
+clean
+shot combatant-hurt
+tap Take the turn
+expect Initiative 8 · HP 1/12 · taking this turn
+tap bo
+tap Edit
+expect Name
+tap-id kb.enter
+expect Initiative
+tap-id kb.backspace
+type 25
+tap-id kb.enter
+# The same maximum keeps the damage taken.
+tap-id kb.enter
+wait-for Round 1
+expect Initiative 25 · HP 1/12 · taking this turn
+tap cy
+expect-missing HP
+tap Remove
+expect-missing cy
+expect turn 1 of 2
+# Initiative is saved after every change.
+restart
+wait-for Grimoire
+tap Initiative
+expect Initiative 25 · HP 1/12 · taking this turn
+expect ana
+expect turn 1 of 2
+clean
+shot initiative-restarted
+tap End combat
+expect No combatants
+tap-id 4294967295
+# A party member: hit points in steps, death saves and spell slots.
+tap Party
+expect No party members
+expect Tap Add to enter a name, AC, and hit points.
+tap Add member
+type moss
+tap-id kb.enter
+type 14
+tap-id kb.enter
+type 20
+tap-id kb.enter
+type 20
+tap-id kb.enter
+wait-for moss
+tap Add member
+type fern
+tap-id kb.enter
+type 12
+tap-id kb.enter
+type 30
+tap-id kb.enter
+type 25
+tap-id kb.enter
+wait-for fern
+expect AC 12 · HP 25/30
+clean
+shot party-two
+tap moss
+expect Party member
+tap-id hp-down-10
+tap-id hp-down-10
+tap-id hp-down
+expect 0/20
+tap-id hp-up-10
+expect 10/20
+tap Success
+tap Success
+tap Failure
+expect 2 success · 1 failure
+clean
+shot member-saves
+# The slots are on the member's second page.
+tap-id next
+tap Set up
+expect After 4 it goes back to none.
+tap-id slot-1
+tap-id slot-1
+tap-id slot-1
+expect 2nd · 3 of 3 left
+tap Spend
+tap-id slot-1
+tap-id slot-1
+expect 2nd · 1 of 3 left
+tap Regain
+tap-id slot-1
+expect 2nd · 2 of 3 left
+clean
+shot member-slots
+tap-id previous
+expect 10/20
+# Edit keeps what is not retyped.
+tap Edit
+tap-id kb.enter
+tap-id kb.backspace
+tap-id kb.backspace
+type 16
+tap-id kb.enter
+tap-id kb.enter
+tap-id kb.enter
+wait-for AC 16 · HP 10/20
+restart
+wait-for Grimoire
+tap Party
+expect AC 16 · HP 10/20
+tap moss
+expect 2 success · 1 failure
+tap-id next
+expect 2nd · 2 of 3 left
+tap Party
+# Each member opens their own page, whichever was opened before.
+tap fern
+expect Party member
+expect 25/30
+clean
+shot member-second
+tap Remove
+expect-missing fern
+expect moss

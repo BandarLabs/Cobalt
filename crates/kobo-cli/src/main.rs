@@ -16,6 +16,10 @@ mod authorize;
 mod beta_store_smoke;
 mod birds;
 mod bootstrap;
+mod clip;
+mod clip_delivery;
+mod clip_host;
+mod clip_install;
 mod connect;
 mod console;
 mod deck;
@@ -1155,6 +1159,7 @@ fn run_command(arguments: &[String]) -> Result<(), String> {
         "readlater" => readlater::command(&arguments[1..]),
         "connect" => account::command(&arguments[1..]),
         "birds" => birds::command(&arguments[1..]),
+        "clip" => clip::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
@@ -2324,7 +2329,7 @@ fn app_catalog_verify(arguments: &[String]) -> Result<(), String> {
         .iter()
         .find(|entry| entry.manifest().id() == parsed.manifest().id())
         .ok_or("Verified catalog does not contain the supplied package")?;
-    if entry.manifest().to_canonical_bytes() != parsed.manifest().to_canonical_bytes()
+    if !parsed.manifest().is_offered_as(entry.manifest())
         || entry.package_bytes() != package.len() as u64
         || entry.package_sha256().as_str() != kobo_net::sha256::hex_digest(&package)
     {
@@ -2335,15 +2340,17 @@ fn app_catalog_verify(arguments: &[String]) -> Result<(), String> {
 }
 
 fn app_catalog(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo app-catalog --seed PATH --out PATH --signature PATH \
-                         --entry PACKAGE HTTPS_URL [--entry PACKAGE HTTPS_URL ...]";
+    const USAGE: &str = "usage: kobo app-catalog --seed PATH --out PATH --earlier-out PATH \
+                         --entry PACKAGE HTTPS_URL [--entry PACKAGE HTTPS_URL ...]\n\
+                         Each catalog is signed beside itself as PATH.sig; --earlier-out is \
+                         the one runtimes up to 0.3.33 read.";
     let seed_path = single_path_flag(arguments, "--seed", USAGE)?;
     let output = single_path_flag(arguments, "--out", USAGE)?;
-    let signature_output = single_path_flag(arguments, "--signature", USAGE)?;
+    let earlier_output = single_path_flag(arguments, "--earlier-out", USAGE)?;
     let entries = paired_flag(arguments, "--entry", USAGE)?;
     ensure_only_flags(
         arguments,
-        &["--seed", "--out", "--signature", "--entry"],
+        &["--seed", "--out", "--earlier-out", "--entry"],
         USAGE,
     )?;
     if entries.is_empty() {
@@ -2373,15 +2380,7 @@ fn app_catalog(arguments: &[String]) -> Result<(), String> {
     }
     let catalog = kobo_app_store::Catalog::new(catalog_entries)
         .map_err(|error| format!("invalid app catalog: {error}"))?;
-    let bytes = catalog.to_canonical_bytes();
-    let signature =
-        kobo_app_store::sign(&bytes, &seed).map_err(|error| format!("sign catalog: {error}"))?;
-    fs::write(&output, &bytes).map_err(|error| format!("write {}: {error}", output.display()))?;
-    fs::write(&signature_output, format!("{signature}\n"))
-        .map_err(|error| format!("write {}: {error}", signature_output.display()))?;
-    println!("created {}", output.display());
-    println!("created {}", signature_output.display());
-    Ok(())
+    write_signed_catalogs(&catalog, &seed, &output, &earlier_output)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -2537,18 +2536,51 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
 
     let catalog = kobo_app_store::Catalog::new(entries)
         .map_err(|error| format!("build app catalog: {error}"))?;
-    let catalog_bytes = catalog.to_canonical_bytes();
-    let signature =
-        kobo_app_store::sign(&catalog_bytes, &seed).map_err(|error| error.to_string())?;
-    let catalog_path = output.join("cobalt-app-catalog.json");
-    let signature_path = output.join("cobalt-app-catalog.json.sig");
-    fs::write(&catalog_path, catalog_bytes)
-        .map_err(|error| format!("write {}: {error}", catalog_path.display()))?;
-    fs::write(&signature_path, format!("{signature}\n"))
-        .map_err(|error| format!("write {}: {error}", signature_path.display()))?;
-    println!("created {}", catalog_path.display());
-    println!("created {}", signature_path.display());
+    write_signed_catalogs(
+        &catalog,
+        &seed,
+        &output.join(kobo_app_store::CATALOG_FILE),
+        &output.join(kobo_app_store::EARLIER_CATALOG_FILE),
+    )
+}
+
+/// Signs and writes the catalog and the same catalog for runtimes up to
+/// 0.3.33, each with its signature beside it under the same name and `.sig`.
+///
+/// Both are built and checked before either is written, so a publication
+/// that cannot give earlier runtimes a catalog they read gives nobody a new
+/// one.
+fn write_signed_catalogs(
+    catalog: &kobo_app_store::Catalog,
+    seed: &[u8; 32],
+    catalog_path: &Path,
+    earlier_path: &Path,
+) -> Result<(), String> {
+    let earlier = catalog
+        .for_earlier_runtimes()
+        .map_err(|error| format!("build the catalog for runtimes up to 0.3.33: {error}"))?;
+    let mut signed = Vec::with_capacity(2);
+    for (catalog, path) in [(catalog, catalog_path), (&earlier, earlier_path)] {
+        let bytes = catalog.to_canonical_bytes();
+        let signature =
+            kobo_app_store::sign(&bytes, seed).map_err(|error| format!("sign catalog: {error}"))?;
+        signed.push((path, bytes, signature));
+    }
+    for (path, bytes, signature) in signed {
+        let signature_path = signature_path_for(path);
+        fs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))?;
+        fs::write(&signature_path, format!("{signature}\n"))
+            .map_err(|error| format!("write {}: {error}", signature_path.display()))?;
+        println!("created {}", path.display());
+        println!("created {}", signature_path.display());
+    }
     Ok(())
+}
+
+fn signature_path_for(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".sig");
+    PathBuf::from(name)
 }
 
 fn build_release_binary(app: &ReleaseApp) -> Result<Vec<u8>, String> {
@@ -5168,6 +5200,13 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
         include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt"),
         false,
     ));
+    // The interface face is modified in one glyph, and the Open Font License
+    // asks that a modified copy say how; the note travels with the binaries.
+    members.push(text_member(
+        "licenses/SOURCE-AtkinsonHyperlegible.md",
+        include_str!("../../../licenses/SOURCE-AtkinsonHyperlegible.md"),
+        false,
+    ));
     members.push(text_member(
         "licenses/LICENSE-DejaVu.txt",
         include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt"),
@@ -5606,19 +5645,21 @@ fn reader_still_connected(expected: &setup::Mounted) -> Result<(), String> {
 fn confirmed_setup(
     options: &SetupOptions,
     reader: &setup::Mounted,
-    profile: &kobo_profile::DeviceProfile,
+    identified: &setup::Identified,
     payload: &SetupPayload,
 ) -> Result<bool, String> {
+    let tested = match identified.untested(reader) {
+        Some(note) if options.mode != SetupMode::Undo => format!("  Tested: {note}\n"),
+        _ => String::new(),
+    };
     println!(
-        "\nReady to {}:\n  Model: {} (device code {}, profile {})\n  Firmware: {}\n  Mount: {}\n  Release: {}\n  Changes: {}\n",
+        "\nReady to {}:\n  Model: {}\n  Firmware: {}\n{tested}  Mount: {}\n  Release: {}\n  Changes: {}\n",
         if options.mode == SetupMode::Undo {
             "remove Cobalt"
         } else {
             "install Cobalt"
         },
-        profile.model,
-        profile.device_code,
-        profile.id,
+        identified.describe(reader),
         reader.firmware,
         reader.volume.display(),
         payload.description(),
@@ -5704,14 +5745,14 @@ fn setup_device_with_confirmation(
     confirm: impl FnOnce(
         &SetupOptions,
         &setup::Mounted,
-        &kobo_profile::DeviceProfile,
+        &setup::Identified,
         &SetupPayload,
     ) -> Result<bool, String>,
 ) -> Result<(), String> {
     let options = parse_setup(arguments)?;
     let reader = wait_for_mounted_reader(options.volume.as_deref(), options.wait_for_reader)?;
-    let profile = if options.mode == SetupMode::Undo {
-        setup::undo_profile(&reader)?
+    let identified = if options.mode == SetupMode::Undo {
+        setup::undo_profile(&reader)
     } else {
         setup::install_profile(&reader)?
     };
@@ -5720,15 +5761,7 @@ fn setup_device_with_confirmation(
     } else {
         setup_payload(&options)?
     };
-    println!(
-        "found {} ({}, profile {}, device code {}) at {} · firmware {}",
-        profile.model,
-        reader.model_code(),
-        profile.id,
-        profile.device_code,
-        reader.volume.display(),
-        reader.firmware
-    );
+    println!("{}", identified.found(&reader));
 
     if options.dry_run {
         println!(
@@ -5736,9 +5769,15 @@ fn setup_device_with_confirmation(
             dry_run_plan(&options, &reader),
             payload.description()
         );
+        if let Some(note) = identified
+            .untested(&reader)
+            .filter(|_| options.mode != SetupMode::Undo)
+        {
+            println!("tested: {note}");
+        }
         return Ok(());
     }
-    if !confirm(&options, &reader, profile, &payload)? {
+    if !confirm(&options, &reader, &identified, &payload)? {
         println!("Declined; nothing was written.");
         return Ok(());
     }
@@ -7300,17 +7339,25 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
         index += 1;
     }
     let mut capture_metadata = None;
-    let (width, height, grey) = if let Some(host) = host {
+    let (width, height, pixels, rgb) = if let Some(host) = host {
         let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::capture())?;
-        drive::decode_capture(&transcript)?
+        let (width, height, grey) = drive::decode_capture(&transcript)?;
+        (width, height, grey, false)
     } else {
         let driver = drive::Driver::new(&address, Path::new(".")).ideal(ideal);
         let capture = driver.capture()?;
         capture_metadata = Some(capture.metadata);
-        (capture.width, capture.height, capture.grey)
+        (capture.width, capture.height, capture.pixels, capture.rgb)
     };
-    let png = kobo_image::encode_png_grey(width, height, &grey)
-        .map_err(|error| format!("encode the panel: {error}"))?;
+    // A simulated colour panel's capture arrives in colour and is kept that
+    // way, so a shot of a Clara Colour shows the bar and controls that reader
+    // would show rather than their luminance.
+    let png = if rgb {
+        kobo_image::encode_png_rgb(width, height, &pixels)
+    } else {
+        kobo_image::encode_png_grey(width, height, &pixels)
+    }
+    .map_err(|error| format!("encode the panel: {error}"))?;
     fs::write(&output, png).map_err(|error| format!("write {}: {error}", output.display()))?;
     if let Some(metadata) = capture_metadata {
         let sidecar = output.with_extension("json");
@@ -7452,7 +7499,11 @@ fn pull_recording(host: &str) -> Result<Vec<u8>, String> {
 /// One recorded frame: when it appeared, and what was on the panel.
 struct RecordedFrame {
     millis: u32,
-    grey: Vec<u8>,
+    /// Grey, one byte a pixel, or colour at three when `rgb` is set. A
+    /// device recording is always grey; a filmed simulated colour panel is
+    /// not.
+    pixels: Vec<u8>,
+    rgb: bool,
 }
 
 /// Reads the device's recording format.
@@ -7479,7 +7530,8 @@ fn decode_recording(raw: &[u8]) -> Result<(u32, u32, Vec<RecordedFrame>), String
         let millis = u32::from_le_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]]);
         frames.push(RecordedFrame {
             millis,
-            grey: raw[at + 4..at + 4 + pixels].to_vec(),
+            pixels: raw[at + 4..at + 4 + pixels].to_vec(),
+            rgb: false,
         });
         at += 4 + pixels;
     }
@@ -7509,8 +7561,12 @@ fn write_recording(
     fs::create_dir_all(directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     for (index, frame) in frames.iter().enumerate() {
-        let png = kobo_image::encode_png_grey(*width, *height, &frame.grey)
-            .map_err(|error| format!("encode frame {index}: {error}"))?;
+        let png = if frame.rgb {
+            kobo_image::encode_png_rgb(*width, *height, &frame.pixels)
+        } else {
+            kobo_image::encode_png_grey(*width, *height, &frame.pixels)
+        }
+        .map_err(|error| format!("encode frame {index}: {error}"))?;
         let path = directory.join(format!("frame-{index:04}.png"));
         fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
     }
@@ -7658,6 +7714,7 @@ const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR]
                            steps: tap LABEL | tap-id ACTION | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
                            \u{20}       expect-missing TEXT | wait-for TEXT | wait-for-id ACTION | clean | dump\n\
                            \u{20}       lifecycle foreground|background | scenario NAME | wait MS | wait-idle [MS]\n\
+                           \u{20}       notice TITLE (an article arriving, as a companion announces one)\n\
                            expect-state ENDPOINT#JSON_POINTER JSON_VALUE checks typed state.\n\
                            tap-id and wait-for-id accept numeric IDs or stable action names.\n\
                            Transition steps also check for serious layout diagnostics.\n\
@@ -8485,6 +8542,10 @@ Send things to your apps. These go to the reader kobo setup saved; add
   sidekick init | setup | run | status | stop | sample | test  The Sidekick helper
   stream init | stream -- COMMAND  Pair Paperterm, then serve it a terminal
 
+Send a web article to the reader:
+  clip URL | clip PAGE.html --url URL [--out FILE.epub] [--colour]  Send it, or save it with --out
+  clip sync | install --browser NAME | uninstall  Send what waits; add Send to Kobo to a browser
+
 Credentials an app asks for by name:
   connect APP            Connect an account app: asks for the server and
                          token, checks them, and sets the app up on the reader
@@ -8545,6 +8606,7 @@ Publish to the Store:
 const ANSWERS_ITS_OWN_HELP: &[&str] = &[
     "apps",
     "birds",
+    "clip",
     "deck",
     "export",
     "feeds",

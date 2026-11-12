@@ -18,6 +18,8 @@ Run `kobo` in a terminal to choose an owner task by number:
 5. Open the developer and release command reference.
 6. Read an app setup guide. Choose an app by number to see its setup steps,
    links and the reader capabilities it requests.
+7. Send a file. Enter a file or folder path, then choose the saved reader,
+   another saved reader, an address or the simulator.
 
 Choose **0** or press Enter at a blank prompt to cancel. Paths can contain
 spaces; enter the path itself without shell quotes. The menu passes it
@@ -48,14 +50,84 @@ and keeps looking for a minute.
 
 ## Sending a file
 
-`kobo send FILE` sends a file to the app that opens it and says which app
-received it: photos to Frame, OPML lists to Feeds, CBZ comics to Panels and
-story files to Parser. A PDF could be a score for Music Stand or a pattern for
+`kobo send FILE` sends a file or folder to the app that opens it and says
+which app received it: photos to Frame, Markdown notes to Vault, OPML lists to
+Feeds, CBZ comics to Panels, story files to Parser, and Anki APKG or COLPKG
+decks to Flashcards, which imports them first. A folder of PDF scores goes to
+Music Stand. A single PDF could be a score for Music Stand or a pattern for
 Needles, so you are asked which, or you name it with `--to musicstand` or
-`--to needles`. A Markdown note belongs to Vault, which takes a whole notes
-folder with `kobo vault push FOLDER`. Needles keeps one pattern and Panels one
-comic, so a send to either asks before it replaces what is there; `--replace`
-answers yes in a script.
+`--to needles`. Panels keeps one comic, so a send to it asks before it
+replaces the one there; `--replace` answers yes in a script.
+`kobo send --preview FILE --out DIR` checks or renders the file on this
+computer without sending it, and `kobo send --retry` repeats the last send
+that failed.
+
+## Sending a web article
+
+`kobo clip URL` fetches a web page, makes its article into an EPUB, as a
+browser's reader mode shows it, and sends it to your Kobo: the text,
+headings, lists, quotes, code, tables, and figures with their captions,
+without the menus, advertisements, share buttons, cookie notices and lists
+of other stories. The first page names the site, the author and the date,
+and gives the page's address.
+
+For a page you saved from the browser, such as one you had to sign in to
+read, give the file and the address it came from:
+`kobo clip page.html --url https://...`.
+
+Pictures are fitted to the reader's screen and turned grey. `--colour`
+keeps their colour and `--no-pictures` leaves them out. At most 40 pictures
+are fetched and a book that goes to the reader is kept under the 4 MB Books
+opens; pictures past either limit are left out, and the command says how
+many. A page with no article on it is refused with the reason.
+
+The article goes to the reader `kobo setup` saved, or to `--reader NAME`,
+`--device IP` or `--sim`, over the connection `kobo send` uses, into the
+card's `Articles` folder, and the reader shows a notice for it. The command
+says `Landed on your Kobo`. A reader that is asleep or away keeps nobody
+waiting: the article stays on this computer, in
+`~/.config/kobo/clip/queue`, and goes with `kobo clip sync`, with Sync on the
+reader, or with the next clip that finds the reader awake. `--later` keeps it
+without trying now. `--out FILE.epub` or `--out FOLDER` saves the book on
+this computer instead and sends nothing.
+
+In Books, articles have a shelf of their own, unread first, with the site
+and the day each arrived. An article read to its end counts as read, and
+each one's menu marks it, archives it or deletes it.
+
+Sync on that shelf asks this computer for anything waiting. It reaches the
+Sidekick helper over the pairing `kobo sidekick init` writes onto the
+reader, so run that once and keep `kobo sidekick run` going; the helper then
+sends the waiting articles back to the address the reader asked from. Books
+also asks, without a word unless something arrives, each time it opens.
+
+### From the browser
+
+`kobo clip install --browser chrome` (or `edge`, `brave`, `chromium`,
+`firefox`, `safari`, or `--all` for every one found here) adds Send page to
+Kobo, Send link to Kobo and Send selection to Kobo to the browser's
+right-click menu. The extension sends the page as you see it, so a page you
+signed in to read clips as it reads, and a notification says Sending to
+your Kobo, then Landed on your Kobo or Waiting for your Kobo.
+
+Install writes the small manifest each browser reads to find `kobo` (in your
+own profile folders, or under `HKEY_CURRENT_USER` on Windows) and copies the
+extension to `~/.config/kobo/clip/extension`, then says the one step left:
+
+- Chrome, Edge, Brave and Chromium: open the browser's extensions page, turn
+  on Developer mode, choose Load unpacked and pick that folder.
+- Firefox: open `about:debugging#/runtime/this-firefox`, choose Load
+  Temporary Add-on and pick `manifest.json` in that folder. Firefox forgets
+  it when it restarts, so load it again after a restart.
+- Safari: there is no extension, which would need a signed Mac app. Install
+  adds a Send to Kobo Quick Action instead: right-click a link and choose
+  Services, then Send to Kobo. It fetches the page itself, so it cannot read
+  pages you are signed in to, and says how it went in a notification.
+
+`kobo clip uninstall` takes all of it away again, or `--browser NAME` for
+one. Articles still waiting stay in the queue. The extension has no network
+access of its own and keeps no record of what it sent; see
+`extensions/clip/README.md`.
 
 ## Companion commands by app
 
@@ -68,23 +140,27 @@ unless you name another target.
 | [Birds](../apps/birds/README.md) | `kobo birds listen`, `status`, `stop`, `push` | Sends Fugleramme collages to the reader |
 | [Deck](../apps/deck/README.md) | `kobo deck init`, `set`, `ls`, `show`, `push` | Builds and sends the pad layout |
 | [Feeds](../examples/rss/README.md) | `kobo feeds check`, `push` | Checks and sends an OPML subscription list |
-| [Fieldbook](../apps/fieldbook/README.md) | `kobo fieldbook inspect`, `photos`, `push`, `ls`, `export` | Prepares field packs and fetches checklists |
-| [Flashcards](../apps/flashcards/README.md) | `kobo flashcards import`, `verify`, `preview`, `stage`, `export-review-log` | Converts Anki packages and copies them over USB |
+| [Fieldbook](../apps/fieldbook/README.md) | `kobo fieldbook new`, `inspect`, `photos`, `push`, `ls`, `export` | Prepares field packs and fetches checklists |
+| [Flashcards](../apps/flashcards/README.md) | `kobo flashcards import`, `verify`, `preview`, `push`, `stage`, `status`, `export-review-log` | Converts Anki packages and sends them over Wi-Fi or USB |
 | [Frame](../apps/frame/README.md) | `kobo frame preview`, `init`, `plan`, `push`, `restore`, `ls`, `rm` | Prepares and sends photo albums |
 | [Music Stand](../apps/musicstand/README.md) | `kobo musicstand init`, `plan`, `push`, `ls`, `rm` | Sends scores from PDF or images |
-| [Needles](../apps/needles/README.md) | `kobo needles setup`, `preview`, `prepare`, `push` | Converts and sends knitting patterns |
+| [Needles](../apps/needles/README.md) | `kobo needles setup`, `converter`, `preview`, `prepare`, `push` | Converts and sends knitting patterns |
 | [Nonograms](../apps/nonograms/README.md) | `kobo nonograms preview`, `push` | Turns photos into puzzles |
 | [Panels](../apps/panels/README.md) | `kobo panels inspect`, `preview`, `push` | Checks and sends CBZ comics |
 | [Paperterm](../apps/paperterm/README.md) | `kobo stream init`, `demo`, `pairing`, `terminal`, `monitor` | Shares a terminal session with the reader |
 | [Parser](../apps/parser/README.md) | `kobo parser inspect`, `push` | Checks and sends story files |
 | [Post](../apps/post/README.md) | `kobo post login` | Connects Post to a Hermes gateway |
 | [Read Later](../apps/readlater/README.md) | `kobo readlater login` | Signs in to Wallabag |
-| [Sidekick](../examples/sidekick/README.md) | `kobo-sidekickd init`, `setup`, `run`, `sample` | Runs the daemon that forwards agent prompts |
+| [Sidekick](../examples/sidekick/README.md) | `kobo sidekick init`, `setup`, `run`, `status`, `stop`, `sample`, `test` | Runs the helper that forwards agent prompts |
 | [Sync](../apps/syncthing/README.md) | `kobo sync setup`, `run`, `plan`, `status`, `publish`, `pause`, `resume`, `stop` | Runs a private Syncthing peer |
 | [Vault](../apps/vault/README.md) | `kobo vault init`, `plan`, `push`, `ingest`, `preview`, `ls`, `rm` | Sends notes from a folder |
 
 Commands every app can use:
 
+- `kobo connect APP` connects an account app (Readeck, Library, Digest, Read
+  Later, Kitchen Card, Home Panel, Stacks, Post). It asks for the server and
+  token, checks them against the server, installs the token on the reader and
+  saves the server in the app, so nothing is typed on the reader.
 - `kobo secret set NAME --from FILE` installs an API key or
   token. The runtime attaches it to the app's requests, and the app never sees
   it. It replaces any value of that name typed into an app on the reader.
@@ -99,7 +175,8 @@ Commands every app can use:
 
 ### Server-bound accounts
 
-For approved app/account pairs, the CLI can bind a token to an HTTPS server:
+`kobo connect` is the usual way to do this. To bind a token to an HTTPS server
+yourself, for an approved app and account pair:
 
 ```sh
 kobo secret set readeck --app readeck --server https://readeck.example \
@@ -167,7 +244,8 @@ still return an error.
 
 With no destination these go to the saved reader. To choose one, give
 exactly one of `--reader NAME` or `--device ADDRESS` for a reader over the
-network, or `--volume PATH` for its mounted USB volume. Repeated or mixed
+network, `--volume PATH` for its mounted USB volume, or `--sim` for the
+simulator. Repeated or mixed
 destinations are refused. Use `--from PATH` once with `set`; it is not accepted
 with `list` or `remove`. Credential values belong in a private file, not in the
 command line. For the app's required token scope and provider link, open its
@@ -183,15 +261,20 @@ recovery on a physical reader.
 
 ## Sidekick integrations
 
-Run `kobo-sidekickd setup` in a terminal to see supported integrations and
-choose one by number. Enter or **0** cancels. Redirected input displays status
+`kobo sidekick init` pairs the reader, `kobo sidekick setup [AGENT]` connects
+an agent, and `kobo sidekick run`, `status` and `stop` manage the helper in the
+background. With the helper running, `kobo sidekick test` sends the reader a
+harmless question and prints the answer.
+
+For the full list of integrations, run `kobo-sidekickd setup` in a terminal
+and choose one by number. Enter or **0** cancels. Redirected input displays status
 and explicit commands without configuring anything. Use
 `kobo-sidekickd setup AGENT --dry-run` to preview a selected integration, or
 `--print` to obtain configuration for manual setup. Read the
 [Sidekick companion guide](../crates/kobo-sidekickd/README.md) for pairing and
 listener setup.
 
-After pairing Sidekick, try `kobo-sidekickd sample` with the normal daemon
+After pairing Sidekick, try `kobo sidekick sample` with the helper
 stopped. It sends a built-in connection-check question to the reader. Choose
 **Received** to confirm delivery to the computer; press Ctrl-C to stop.
 No agent setup or command execution is involved.

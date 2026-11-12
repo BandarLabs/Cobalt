@@ -1,19 +1,34 @@
-use super::PROFILE;
+use super::{kaleido, PROFILE};
 use kobo_frame_plan::{FramePlanner, FrameTransition, PanelWaveform};
 use kobo_ui::Surface;
 use std::{io, time::Instant};
 
 /// The panel's visible state, including a deliberately labelled approximation
 /// of residue left by non-cleaning updates.
+/// How the next frame is planned. See [`PanelPreview::clean_next`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NextFrame {
+    Planned,
+    Cleaning,
+}
+
 #[derive(Debug)]
 pub(super) struct PanelPreview {
     pub planner: FramePlanner,
     ideal: Vec<u8>,
     visible: Vec<u8>,
+    /// What the panel shows in colour, three bytes a pixel, with the same
+    /// residue model as `visible` applied to each channel. Kept only for a
+    /// profile with a colour filter, so a greyscale reader's preview costs
+    /// exactly what it did before and can never show a colour.
+    visible_rgb: Option<Vec<u8>>,
     pub last: Option<FrameTransition>,
     desired: Option<Surface>,
     pending: Option<Pending>,
     held: bool,
+    /// How the next frame is planned: cleaning what it repaints, as the
+    /// device's does when the runtime takes its notice card away, or not.
+    next: NextFrame,
     /// Synthetic model: a pending frame finishes only when the fixture clock advances.
     delay_ms: u64,
     fixture_ms: u64,
@@ -37,10 +52,14 @@ impl PanelPreview {
             planner: FramePlanner::new(width, height),
             ideal: vec![kobo_ui::tone::PAPER; pixels],
             visible: vec![kobo_ui::tone::INK; pixels],
+            visible_rgb: PROFILE
+                .colour_panel
+                .then(|| vec![kobo_ui::tone::INK; pixels.saturating_mul(3)]),
             last: None,
             desired: None,
             pending: None,
             held: false,
+            next: NextFrame::Planned,
             delay_ms: 0,
             fixture_ms: 0,
             due_ms: None,
@@ -53,6 +72,11 @@ impl PanelPreview {
             submitted_at: None,
             finished_at: None,
         }
+    }
+
+    /// Asks the next frame to clean every region it repaints.
+    pub fn clean_next(&mut self) {
+        self.next = NextFrame::Cleaning;
     }
 
     pub fn update(&mut self, surface: &Surface) {
@@ -68,10 +92,16 @@ impl PanelPreview {
     }
 
     fn submit_latest(&mut self) {
+        let clean = std::mem::replace(&mut self.next, NextFrame::Planned) == NextFrame::Cleaning;
         let Some(surface) = &self.desired else {
             return;
         };
-        let Some(transition) = self.planner.plan(surface) else {
+        let planned = if clean {
+            self.planner.plan_clean(surface)
+        } else {
+            self.planner.plan(surface)
+        };
+        let Some(transition) = planned else {
             self.last = None;
             return;
         };
@@ -102,6 +132,9 @@ impl PanelPreview {
         }
         if pending.transition.full {
             self.visible.clone_from(&pending.surface.pixels);
+            if let Some(rgb) = &mut self.visible_rgb {
+                *rgb = surface_rgb(&pending.surface);
+            }
         } else {
             self.apply_partial(&pending.surface, &pending.transition);
         }
@@ -253,25 +286,47 @@ impl PanelPreview {
                     let Some(visible) = self.visible.get_mut(index) else {
                         continue;
                     };
-                    let target = match update.waveform {
+                    // A two-level update is the mono layer alone, so it lands
+                    // as ink or paper in every channel; the others carry the
+                    // colour the frame holds, or its grey when it holds none.
+                    let (target, target_rgb) = match update.waveform {
                         PanelWaveform::Du => {
-                            if target < 128 {
+                            let level = if target < 128 {
                                 kobo_ui::tone::INK
                             } else {
                                 kobo_ui::tone::PAPER
-                            }
+                            };
+                            (level, [level; 3])
                         }
-                        // The residue preview represents luminance. Ideal RGB
-                        // inspection is separate and has no calibrated filter model.
-                        PanelWaveform::Gl16 | PanelWaveform::Gc16 | PanelWaveform::Colour => target,
+                        PanelWaveform::Gl16 | PanelWaveform::Gc16 | PanelWaveform::Colour => {
+                            (target, surface.rgb_at(index).unwrap_or([target; 3]))
+                        }
                     };
                     // An LCD cannot reproduce electrophoretic residue. Retaining
                     // one sixteenth of the previous displayed value makes stale
                     // edges visible without claiming hardware-measured physics.
-                    *visible = u8::try_from((u16::from(target) * 15 + u16::from(*visible)) / 16)
-                        .unwrap_or(target);
+                    *visible = retain(target, *visible);
+                    if let Some(rgb) = &mut self.visible_rgb {
+                        for (channel, target) in target_rgb.iter().enumerate() {
+                            if let Some(shown) = rgb.get_mut(index * 3 + channel) {
+                                *shown = retain(*target, *shown);
+                            }
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    /// What a colour panel shows, three bytes a pixel, with the residue of
+    /// `visible` and the filter's own rendering on top: see [`kaleido`].
+    /// Luminance in every channel for a profile without a colour filter.
+    pub fn panel_rgb(&self) -> Vec<u8> {
+        let width = PROFILE.width as usize;
+        let height = PROFILE.height as usize;
+        match &self.visible_rgb {
+            Some(rgb) => kaleido::appearance(width, height, rgb, &self.visible),
+            None => self.visible.iter().flat_map(|grey| [*grey; 3]).collect(),
         }
     }
 
@@ -303,6 +358,20 @@ impl PanelPreview {
 struct Pending {
     surface: Surface,
     transition: FrameTransition,
+}
+
+/// One sixteenth of what was there before, kept under what is drawn now.
+fn retain(target: u8, shown: u8) -> u8 {
+    u8::try_from((u16::from(target) * 15 + u16::from(shown)) / 16).unwrap_or(target)
+}
+
+/// A frame's colour plane, or its grey plane in every channel when it has
+/// never been drawn in colour.
+fn surface_rgb(surface: &Surface) -> Vec<u8> {
+    surface
+        .chroma
+        .clone()
+        .unwrap_or_else(|| surface.pixels.iter().flat_map(|grey| [*grey; 3]).collect())
 }
 
 #[cfg(test)]

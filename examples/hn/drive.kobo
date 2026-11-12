@@ -9,8 +9,9 @@ wait-for Nothing here yet
 expect Its article is kept on this reader
 clean
 shot hn-saved
-# Save fetches the story's article and keeps it on the reader. The control
-# reads Saving while it comes down and Saved once it is stored or has failed.
+# Save keeps a story on the Saved list whether or not its own site lets the
+# article be fetched; reading that article offline is in drive-live-article.kobo,
+# because story sites rate-limit shared CI runners.
 tap Top
 wait-for 1 of
 tap-id story-0
@@ -18,11 +19,109 @@ wait-for Save
 clean
 shot hn-thread
 tap Save
+# The article comes from the story's own site, which can take well over ten
+# seconds on a shared runner; Saved shows once it is stored or has failed.
+wait-idle 60000
 wait-for Saved
 tap Back
 wait-for 1 of
 tap Saved
 expect-missing Nothing saved yet.
-expect eady offline
+wait-for-id saved-menu-0
 clean
-shot hn-saved-offline
+shot hn-saved-list
+# The Saved list is on the reader, not in memory, so it survives a restart.
+restart
+wait-for 1 of
+tap Saved
+wait-for-id saved-menu-0
+clean
+shot hn-saved-after-restart
+tap Top
+wait-for 1 of
+scenario offline
+# A live tab with no network says so as the whole screen, with Try again.
+tap New
+wait 9000
+wait-for You're offline
+expect Try again
+clean
+shot hn-new-offline
+scenario normal
+tap Try again
+wait-for 1 of
+# Page turns on a list go forward and back, and the bar says which page.
+tap-id list-next
+wait-for 2 of
+clean
+shot hn-new-page-2
+tap-id list-back
+wait-for 1 of
+# Ask HN stories have no link, so the discussion offers no article.
+tap Ask
+wait-for 1 of
+tap-id story-0
+wait-for Discussion
+expect-missing Read the article
+expect Save
+clean
+shot hn-ask-thread
+tap Back
+wait-for 1 of
+tap Show
+wait-for 1 of
+clean
+shot hn-show
+# A discussion folds a comment with its replies and opens it again, and its
+# own pages turn.
+tap Top
+wait-for 1 of
+tap-id story-0
+wait-for Discussion
+wait-idle 30000
+# The live top story may have no replies to fold or only one page of
+# comments, so these steps act only when the thread has them.
+maybe-tap-id fold-0
+wait-idle
+clean
+shot hn-thread-folded
+maybe-tap-id fold-0
+wait-idle
+maybe-tap-id thread-next
+wait-idle
+clean
+shot hn-thread-page-2
+maybe-tap-id thread-back
+wait-idle
+wait-for Discussion
+# Tapping Saved in the discussion takes it off the list again.
+expect Saved
+tap Saved
+wait-for Save
+tap Back
+wait-for 1 of
+tap Saved
+wait-for Nothing saved yet
+clean
+shot hn-saved-emptied
+# Taking a story off from its row menu, the other way to remove one.
+tap Top
+wait-for 1 of
+tap-id story-1
+wait-for Save
+tap Save
+# The article comes from the story's own site, which can take well over ten
+# seconds on a shared runner; Saved shows once it is stored or has failed.
+wait-idle 60000
+wait-for Saved
+tap Back
+wait-for 1 of
+tap Saved
+wait-for-id saved-menu-0
+tap-id saved-menu-0
+wait-for Take off this list
+clean
+shot hn-saved-row-menu
+tap Take off this list
+wait-for Nothing saved yet
+clean

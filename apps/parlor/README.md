@@ -8,8 +8,8 @@ Four classic board games against the computer, or for two players passing one Ko
 <td width="50%" valign="top"><img width="300" src="screenshots/reversi.png" alt="Reversi against the computer, its last move marked"><br>Reversi against the computer, its last move marked</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/draughts.png" alt="Draughts, with the computer's reply marked"><br>Draughts, with the computer's reply marked</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/morris.png" alt="Nine Men's Morris"><br>Nine Men's Morris</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/draughts.png" alt="Draughts, with the computer's capture marked along the squares it jumped"><br>Draughts, with the computer's capture marked along the squares it jumped</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/morris.png" alt="Nine Men's Morris while placing pieces, with the computer's last piece marked"><br>Nine Men's Morris while placing pieces, with the computer's last piece marked</td>
 </tr>
 </table>
 
@@ -20,7 +20,7 @@ Four classic board games against the computer, or for two players passing one Ko
   chains.
 - **Nine Men's Morris**: placing, mills, protected pieces, moving and flying
   with three pieces.
-- **Kalah 6,4**: sowing, captures, extra turns and endgame collection.
+- **Kalah**: sowing, captures, extra turns and endgame collection.
 
 ## Features
 
@@ -38,7 +38,9 @@ Four classic board games against the computer, or for two players passing one Ko
   move it is; the choice is kept until Use portrait.
 - The setup screen is a form: nothing changes until Start game, and Back
   leaves the game in progress as it was.
-- Legal destinations are marked with hollow rings.
+- Legal destinations are marked with grey dots.
+- A match is the best of three rounds; **Next round** plays on. **Moves**
+  lists every move so far.
 - Every move is saved, and reopening offers to resume the exact position.
 
 ## Rules references

@@ -13,3 +13,15 @@ tap Suggested feeds
 expect Suggested feeds
 clean
 shot rss-miniflux-directory
+# Choosing a feed before there is an account goes to the address, the one
+# setting the reader can take without the computer.
+tap NASA Science
+wait-for Server address
+expect kobo connect rss-miniflux
+expect Suggested feeds
+clean
+shot rss-miniflux-settings-unconfigured
+tap Back
+wait-idle
+tap Back
+wait-for Connect Miniflux

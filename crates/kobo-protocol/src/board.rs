@@ -221,21 +221,29 @@ mod tests {
         let mut frame = Frame {
             version: SELECTED_GRID_VERSION,
             request_id: 10,
-            message: Message::SetScreen(Screen::new(
-                1,
-                vec![Node::Grid {
-                    id: NodeId(7),
-                    columns: 1,
-                    square: true,
-                    cells: vec![Cell::new(ActionId(9), "7").with_selected(true)],
-                }],
-            )),
+            // Measured in the type its protocol was laid out in, which is
+            // what the decoder will say it was.
+            message: Message::SetScreen(
+                Screen::new(
+                    1,
+                    vec![Node::Grid {
+                        id: NodeId(7),
+                        columns: 1,
+                        square: true,
+                        cells: vec![Cell::new(ActionId(9), "7").with_selected(true)],
+                    }],
+                )
+                .with_typography(kobo_ui::Typography::Folio),
+            ),
         };
         let old = encode(&frame).unwrap();
         assert_eq!(decode(&old).unwrap(), frame);
         frame.version = VERSION;
         let current = encode(&frame).unwrap();
-        assert_eq!(old[HEADER_LEN..], current[HEADER_LEN..]);
+        // The current protocol ends every screen with its accent byte, zero
+        // here; everything before it is the version-13 payload untouched.
+        assert_eq!(old[HEADER_LEN..], current[HEADER_LEN..current.len() - 1]);
+        assert_eq!(current.last(), Some(&0));
         frame.version = FOLIO_VERSION;
         let decoded = decode(&encode(&frame).unwrap()).unwrap();
         let Message::SetScreen(screen) = decoded.message else {

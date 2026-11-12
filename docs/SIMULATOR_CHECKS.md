@@ -18,13 +18,24 @@ To check selected apps:
 python3 scripts/check-apps-sim.py inkling pubquiz --out target/sim-check-games
 ```
 
+The runner passes `KOBO_SIM_PROFILE` through, so the same sweep can be run as
+a colour reader sees it:
+
+```sh
+KOBO_SIM_PROFILE=clara-colour-393 python3 scripts/check-apps-sim.py launcher hn --out target/sim-check-colour
+```
+
+Shots taken under a colour profile are in colour. Layout is identical on
+every profile of the same geometry, so a colour sweep checks how the accents
+and pictures read, not whether anything fits.
+
 `results.json` records the source commit, whether the checkout was dirty, and
 each app's launch and route result. The output directory also contains logs
 and route artifacts. CI runs the complete sweep with `--all-routes` (see
 Extra routes below) and uploads the evidence.
 
-The current catalog contains 46 apps, and every one has a committed route.
-With the extra routes the complete sweep is 65 runs. A successful sweep
+Every app in the catalog has a committed route (`drive.kobo` or `drive.txt`),
+and `--all-routes` adds one run per extra route. A successful sweep
 verifies the committed simulator scenarios; it does not certify every app
 feature, external account integration, or physical Kobo behavior.
 
@@ -59,6 +70,10 @@ the developer's today. Set the variable before `kobo dev` to pin another zone,
 for example `KOBO_UTC_OFFSET_MINUTES=600` to check that an evening check-in in
 Sydney lands on the right day. The value is fixed for the life of the app
 process, as it is on a reader.
+
+On a reader the offset comes from the time zone picked in Settings, then from
+the firmware's `TZ` or zone file, then UTC. A zone picked in the simulator's
+Settings is kept only for that run and does not move the simulator's clock.
 
 `KOBO_SIM_CLOCK_MILLIS` starts the simulator's clock at a chosen moment, and
 an application that reads the time through `SystemClock::reader()` starts
@@ -158,12 +173,14 @@ puzzles, switches between independent progress records, undoes moves after
 reopening, retries a full-store failure, and confirms and undoes a restart.
 It also checks first-mine relocation and loss undo, the committed drive route,
 both single-game and four-game legacy migrations, direct Kakuro digit entry,
-paged collections, difficulty guides and preservation of future-version records. The default is
-Clara BW at Extra-large; `--profile` and `--scale` select another supported
+paged collections, difficulty guides and preservation of future-version
+records. The default is Clara BW at Extra-large; `--profile` and `--scale` select another supported
 profile or text size. Captures include layout and source/font provenance and
 assert zero fetch/post effects. The route also checks shared pencil-board nodes
-for connected loops, circular islands and attached diagonal sum clues. The original generator separately verifies unique loop, bridge and cross-sum
-solutions and deterministic reproduction with `make-logicpack-collection.py --check`.
+for connected loops, circular islands and attached diagonal sum clues. The
+original generator separately verifies unique loop, bridge and cross-sum
+solutions and deterministic reproduction with
+`scripts/quality/make-logicpack-collection.py --check`.
 Mines difficulty describes field size and density; guess-free play is not promised.
 
 
@@ -188,7 +205,7 @@ server, credentials or device storage is used.
 ## Explicit HTTP updates
 
 The simulator handles `Task::Update` through the same policy and transport as
-Kobo. Offline, host-down, permission-denied, missing-secret and timeout scenarios
+the reader. Offline, host-down, permission-denied, missing-secret and timeout scenarios
 apply to PUT/PATCH as they do to other network tasks. Activity JSON reports
 separate `effects.put` and `effects.patch` counters; `effects.post` remains POST
 only. All update tasks participate in active-work and callback/idle accounting.
@@ -196,8 +213,7 @@ Counters never contain URLs, account names or bodies. Include all four network
 counters (`fetch`, `post`, `put`, `patch`) when asserting that a journey is offline.
 
 Rebuild `kobo-cli` after SDK, protocol, policy or simulator changes before running
-app fixtures. Protocol 14 task tag 4 requires a matching beta runtime. A server
-receiving a request is not proof that the app received its acknowledgement; test
+app fixtures. A server receiving a request is not proof that the app received its acknowledgement; test
 lost responses and reconciliation before calling a sync feature complete.
 
 ## Offline HTTP stream fixtures

@@ -2,10 +2,16 @@
 # Unseeded store still shows the empty splash; this script requires notes.
 wait 500
 expect Vault
-expect notes
+expect 3 notes
+expect About Vault
+expect-missing did not import
+clean
+shot home
 tap Browse
 expect Welcome
 expect Alpha
+expect Projects
+expect 1 note
 clean
 shot browse
 tap Welcome
@@ -16,8 +22,145 @@ shot note
 # heading is set as a heading above them.
 expect Alpha
 expect-missing [[
-tap Back
+tap-id 4294967295
 wait-for Welcome
-tap Back
-wait-for notes
+# A folder opens in place, its path in the bar, and Back climbs out of it.
+tap Projects
+wait-for Browse / Projects
+expect Projects/Beta.md · pushed
+expect-missing Welcome.md
+clean
+shot browse-folder
+# A long note is a book: the sides turn its pages and the last page holds
+# its last line.
+tap Beta
+wait-for A long planning note
+expect-missing [[Nowhere]]
+clean
+shot long-note
+tap-id next-page
+wait-idle
+expect-missing A long planning note
+clean
+shot long-note-page-2
+tap-id next-page
+tap-id next-page
+tap-id next-page
+tap-id next-page
+tap-id next-page
+wait-for The last line of Beta.
+tap-id previous-page
+wait-idle
+expect-missing The last line of Beta.
+tap-id next-page
+wait-for The last line of Beta.
+tap-id 4294967295
+wait-for Browse / Projects
+# The page a note was left on is where it opens again, even after Vault
+# has been closed.
+restart
+wait-for 3 notes
+tap Browse
+wait-for Projects
+tap Projects
+wait-for Beta
+tap Beta
+wait-for The last line of Beta.
+tap-id previous-page
+tap-id previous-page
+tap-id previous-page
+tap-id previous-page
+tap-id previous-page
+tap-id previous-page
+wait-for A long planning note
+# A link to a note on this reader opens it; a link to a note that was
+# never written stays words. Back returns to the note the link was in.
+tap-id wiki-2
+wait-for home note of the fixture
+clean
+shot followed-link
+# The bar comes back with a touch at the top and counts the notes that
+# link here.
+tap Links (2)
+wait-for Links to Welcome
+expect Alpha
+expect Beta
+clean
+shot backlinks
+tap Alpha
+wait-for A project note linked back
+tap-id 4294967295
+wait-for home note of the fixture
+tap-id 4294967295
+wait-for A long planning note
+tap-id 4294967295
+wait-for Browse / Projects
+tap-id 4294967295
+wait-for Browse
+expect Welcome
+tap-id 4294967295
+wait-for 3 notes
+# Tags gather notes from every folder; a tag lists the notes carrying it.
+tap Tags
+wait-for #project
+expect 2 notes
+expect #garden
+clean
+shot tags
+tap #project
+wait-for Alpha
+expect Projects/Beta.md
+expect-missing Welcome.md
+clean
+shot tag-notes
+tap-id 4294967295
+wait-for #garden
+tap-id 4294967295
+wait-for 3 notes
+tap Recent
+wait-for Recent
+expect Welcome
+expect Alpha
+expect Beta
+clean
+shot recent
+tap-id 4294967295
+wait-for 3 notes
+# Search loads every note and finds text in the body, not only titles.
+tap Search
+wait-for Find text
+type hinge
+tap Search
+wait-for Beta
+expect gate hinge
+clean
+shot search-results
+expect Searched for "hinge"
+# A result opens its note at the page that holds the words, not where the
+# note was last left.
+tap Beta
+wait-for Beta
+expect Work on the gate hinge
+clean
+shot search-opened
+tap-id 4294967295
+wait-for gate hinge
+tap-id 4294967295
+wait-for 3 notes
+tap Search
+wait-for Find text
+type zzqx
+tap Search
+wait-for Nothing in this vault matches.
+expect Searched for "zzqx"
+clean
+shot search-none
+tap Search again
+wait-for Find text
+expect Type here
+# Back puts the keyboard away over the last answer, and Back again goes home.
+tap-id 4294967295
+wait-for Nothing in this vault matches.
+tap-id 4294967295
+wait-for 3 notes
 expect-missing kobo vault init

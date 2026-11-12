@@ -1,6 +1,6 @@
 # An empty stand points at the companion push command.
 wait-for Music Stand
-expect Your stand is empty
+wait-for Your stand is empty
 clean
 shot musicstand-empty
 # The empty stand names only the push: setup and pairing are the setup steps.
@@ -10,3 +10,26 @@ expect-missing kobo pair
 expect Check for scores
 tap Check for scores
 wait-for Your stand is empty
+expect-missing Library
+# A score sent while the stand is open shows up when the owner comes back to
+# Music Stand, as the about page promises, with no Check needed.
+companion musicstand push scripts/fixtures/musicstand/Minuet --sim
+lifecycle background
+lifecycle foreground
+wait-for Library
+expect Minuet
+expect 2 pages
+expect-missing Your stand is empty
+clean
+shot musicstand-arrived
+# A push that fails on one file still adds the rest, and the library says
+# which file did not import and why.
+companion musicstand push scripts/fixtures/musicstand/Gavotte scripts/fixtures/musicstand/generate.py --sim
+lifecycle background
+lifecycle foreground
+wait-for Gavotte
+expect did not import
+expect not a PDF or a PNG/JPEG image
+expect Minuet
+clean
+shot musicstand-import-failed

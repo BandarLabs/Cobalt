@@ -34,7 +34,14 @@ const MAX_EPUB: usize = 12 * 1024 * 1024;
 const UA: &str = "kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)";
 const LOCKED: &str =
     "Locked to AO3 members. Fanshelf has no account sign-in, so it cannot download this work.";
-const REMOVED: &str = "removed from the archive";
+/// The mark on a row for a work AO3 no longer has.
+const REMOVED: &str = "removed from AO3";
+/// What the work's own page says about it, as a sentence. Only a work with a
+/// copy on the reader is ever marked removed.
+const GONE: &str = "AO3 no longer has this work. The copy on this reader still opens.";
+/// A work AO3 does not have, looked up or checked without a copy here.
+const NOT_FOUND: &str = "AO3 has no work at that number. It may have been taken down.";
+const OFFLINE: &str = "This reader is not on Wi-Fi. Join Wi-Fi, then try again.";
 const SLOW_DOWN: &str = "AO3 asked Fanshelf to slow down. It waits, then carries on by itself.";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -87,6 +94,19 @@ struct Sweep {
     /// Works with new chapters this pass is downloading.
     found: BTreeSet<usize>,
     saved: usize,
+    /// Whether a request in this pass failed because the reader was off
+    /// Wi-Fi. Without it the pass ended on "could not be checked" and
+    /// never said why.
+    offline: bool,
+}
+
+/// What a removal is waiting on the owner to confirm.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Confirming {
+    /// Taking the open work off the shelf.
+    Work,
+    /// Unfollowing the open tag.
+    Tag,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -150,6 +170,16 @@ struct Fanshelf {
     confirm_remove: bool,
     /// Whether the work page's menu is open.
     work_menu: bool,
+    /// Whether the tag feed's menu is open.
+    feed_menu: bool,
+    confirming: Option<Confirming>,
+    /// The work last looked up, so a lookup that failed can be tried again.
+    lookup: Option<(String, bool)>,
+    /// Why that lookup failed, when it failed on the way to AO3.
+    lookup_failed: Option<TaskError>,
+    /// Whether the open work was reached from a tag feed, which is then
+    /// where Back goes.
+    from_feed: bool,
     /// Which page of the whole summary is showing.
     summary_page: usize,
     works_loaded: bool,
@@ -197,6 +227,11 @@ impl Default for Fanshelf {
             fandom_page: 0,
             confirm_remove: false,
             work_menu: false,
+            feed_menu: false,
+            confirming: None,
+            lookup: None,
+            lookup_failed: None,
+            from_feed: false,
             summary_page: 0,
             works_loaded: false,
             tags_loaded: false,
@@ -263,23 +298,46 @@ fn now_seconds() -> u64 {
         .map_or(0, |snapshot| snapshot.unix_millis / 1000)
 }
 
-/// A short month-day stamp for update-check lines; the year is omitted
-/// because checks are always recent.
-fn format_checked(epoch: u64) -> String {
-    let Some(date) = reader_clock().now().ok().and_then(|reader| {
-        kobo_sdk::clock::Snapshot {
-            unix_millis: epoch.checked_mul(1000)?,
-            monotonic_millis: 0,
-            utc_offset_minutes: reader.utc_offset_minutes,
+fn reader_now() -> Option<kobo_sdk::clock::Snapshot> {
+    reader_clock().now().ok()
+}
+
+/// A moment in seconds since 1970, said the way a person would say it, to
+/// sit inside a sentence: "today, 08:13", "yesterday", "17 Sep".
+fn said_moment(seconds: u64, now: Option<kobo_sdk::clock::Snapshot>) -> Option<String> {
+    let said = kobo_sdk::when::spoken(seconds.checked_mul(1000)?, now?)?;
+    Some(inside_sentence(&said))
+}
+
+/// A date with no time, such as AO3's "2026-09-01", said the way a person
+/// would say it: "Today", "Yesterday", "1 Sep". Text that is not a date is
+/// handed back as it came rather than dropped.
+///
+/// The date is taken at noon on the reader's own calendar, so it stays the
+/// same day whatever their offset from UTC, and "today" carries no time,
+/// because AO3 never said one.
+fn said_day(date: &str, now: Option<kobo_sdk::clock::Snapshot>) -> String {
+    let spoken = now.and_then(|now| {
+        let midnight = kobo_sdk::when::stamp_millis(date)?;
+        let noon = i64::try_from(midnight).ok()? + 12 * 3_600_000
+            - i64::from(now.utc_offset_minutes) * 60_000;
+        kobo_sdk::when::spoken(u64::try_from(noon).ok()?, now)
+    });
+    match spoken {
+        Some(said) if said.starts_with("Today") => "Today".to_owned(),
+        Some(said) => said,
+        None => date.to_owned(),
+    }
+}
+
+/// "Today" and "Yesterday" start a sentence; inside one they are lower case.
+fn inside_sentence(said: &str) -> String {
+    for word in ["Today", "Yesterday"] {
+        if let Some(rest) = said.strip_prefix(word) {
+            return format!("{}{rest}", word.to_lowercase());
         }
-        .date()
-    }) else {
-        return "unknown".to_owned();
-    };
-    let month = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ][usize::from(date.month.saturating_sub(1)) % 12];
-    format!("{month} {}", date.day)
+    }
+    said.to_owned()
 }
 
 /// One line naming the update state: never checked, current as of the last
@@ -287,21 +345,29 @@ fn format_checked(epoch: u64) -> String {
 ///
 /// `fresh` is the last of those. Without it, a check that had just downloaded
 /// new chapters read "No new chapters as of" under a banner announcing them,
-/// because the copy on the reader was, by then, current.
-fn update_label(work: &Work, fresh: bool) -> String {
-    if work.download == DownloadState::UpdateAvailable {
-        format!("New chapters found {}", format_checked(work.last_checked))
+/// because the copy on the reader was, by then, current. A work AO3 has
+/// taken down says so: "no new chapters" was true, and beside the point.
+fn update_label(work: &Work, fresh: bool, now: Option<kobo_sdk::clock::Snapshot>) -> String {
+    let checked = said_moment(work.last_checked, now);
+    let on = |verb: &str| match &checked {
+        Some(when) if when.starts_with(|c: char| c.is_ascii_digit()) => {
+            format!("{verb} on {when}")
+        }
+        Some(when) => format!("{verb} {when}"),
+        None => verb.to_owned(),
+    };
+    if work.download == DownloadState::Removed {
+        "Removed from AO3".to_owned()
+    } else if work.download == DownloadState::UpdateAvailable {
+        on("New chapters found")
     } else if work.last_checked == 0 {
         "Updates never checked".to_owned()
     } else if fresh {
-        format!(
-            "New chapters downloaded {}",
-            format_checked(work.last_checked)
-        )
+        on("New chapters downloaded")
     } else {
-        format!(
-            "No new chapters as of {}",
-            format_checked(work.last_checked)
+        checked.map_or_else(
+            || "No new chapters at the last check".to_owned(),
+            |when| format!("No new chapters as of {when}"),
         )
     }
 }
@@ -473,7 +539,7 @@ impl Fanshelf {
         match work.download {
             DownloadState::UpdateAvailable => " · update waiting",
             DownloadState::Downloaded if fresh.contains(&work.id) => " · new chapters",
-            DownloadState::Removed => " · removed from the archive",
+            DownloadState::Removed => " · removed from AO3",
             _ if !work.complete && work.last_checked == 0 => " · updates unchecked",
             DownloadState::Downloaded if reading.contains(&work.id) => " · reading",
             DownloadState::Downloaded => " · offline",
@@ -731,8 +797,17 @@ impl Fanshelf {
     /// author wrote is out of reach at any size.
     fn work_screen(&self, context: &Context) -> Screen {
         let Some(work) = self.current() else {
-            return ScreenBuilder::new("fs-work")
-                .top_bar("Work")
+            let screen = ScreenBuilder::new("fs-work").top_bar("Work");
+            // A lookup that could not reach AO3 says why, with the control
+            // that fixes it, rather than a line of text and only Back.
+            if let (Some(error), None) = (self.lookup_failed, &self.task) {
+                let problem = kobo_sdk::failure::Service::new("AO3").explain(error);
+                return screen
+                    .problem_state(&problem, "lookup-retry")
+                    .owns_back(true)
+                    .build();
+            }
+            return screen
                 .secondary(self.message.as_deref().unwrap_or("Looking up work…"))
                 .owns_back(true)
                 .build();
@@ -774,6 +849,11 @@ impl Fanshelf {
         if cut {
             menu.push(("summary", "Whole summary"));
         }
+        // Offered only while nothing is fetching or saving: those refer to
+        // works by their place on the shelf, which a removal would shift.
+        if self.idle() {
+            menu.push(("remove-work", "Remove from shelf"));
+        }
         let mut screen = ScreenBuilder::new("fs-work")
             .top_bar("Work")
             .top_bar_overflow("more", self.work_menu, menu)
@@ -787,28 +867,35 @@ impl Fanshelf {
         if !summary.is_empty() && summary != "…" {
             screen = screen.text(summary);
         }
+        let now = reader_now();
+        let updated = if work.updated.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " · Updated {}",
+                inside_sentence(&said_day(&work.updated, now))
+            )
+        };
         screen = screen
             .text(format!("Rating: {}", display(&work.rating, 90)))
             .text(format!("Warnings: {}", display(&work.warnings, 180)))
             .secondary(format!(
-                "Chapters {} · Updated {} · {}",
+                "Chapters {}{updated} · {}",
                 work.chapters_label(),
-                if work.updated.is_empty() {
-                    "unknown"
-                } else {
-                    &work.updated
-                },
-                update_label(work, self.fresh.contains(&work.id))
+                update_label(work, self.fresh.contains(&work.id), now)
             ));
-        if work.download == DownloadState::Removed {
-            screen = screen.banner(BannerLevel::Attention, REMOVED);
-        } else if self.task.is_some() || self.upload.is_some() || self.loading.is_some() {
+        // What the last tap came to goes first, so opening or checking a
+        // removed work is not hidden under the standing note that it was
+        // removed.
+        if self.task.is_some() || self.upload.is_some() || self.loading.is_some() {
             screen = screen.banner(
                 BannerLevel::Info,
                 self.message.as_deref().unwrap_or("Working…"),
             );
         } else if let Some(message) = &self.message {
             screen = screen.banner(BannerLevel::Info, message);
+        } else if work.download == DownloadState::Removed {
+            screen = screen.banner(BannerLevel::Attention, GONE);
         }
         // Pinned to the foot of the panel, where they stay whatever the page
         // above them holds: stacked under the facts they were the first thing
@@ -820,6 +907,19 @@ impl Fanshelf {
         } else {
             screen.bottom_action("download", "Download EPUB")
         };
+        if self.confirming == Some(Confirming::Work) {
+            let copy = if work.downloaded() {
+                "Its downloaded copy and reading place are deleted too."
+            } else {
+                "You can add it again from its AO3 address."
+            };
+            screen = screen.confirm(
+                "Remove from shelf?",
+                format!("{} leaves the shelf. {copy}", display(&work.title, 80)),
+                ("remove-work-confirm", "Remove"),
+                ("confirm-cancel", "Keep"),
+            );
+        }
         screen.owns_back(true).build()
     }
 
@@ -829,10 +929,7 @@ impl Fanshelf {
         let page = self.summary_page.min(pages.len().saturating_sub(1));
         let mut screen = self.summary_head(page == 0);
         for (_, depth, role, paragraph) in pages.get(page).into_iter().flatten() {
-            screen = match role {
-                QuoteRole::Body => screen.quote(*depth, paragraph),
-                QuoteRole::Byline => screen.byline(*depth, paragraph),
-            };
+            screen = screen.quote_as(*depth, *role, paragraph);
         }
         if pages.len() > 1 {
             screen = screen
@@ -906,10 +1003,18 @@ impl Fanshelf {
             .open_tag
             .and_then(|index| self.tags.get(index))
             .map_or("Tag feed", |tag| tag.name.as_str());
-        let mut screen = ScreenBuilder::new("fs-feed")
-            .top_bar(display(title, 54))
+        let mut screen = ScreenBuilder::new("fs-feed").top_bar(display(title, 54));
+        if self.open_tag.is_some() && self.idle() {
+            screen = screen.top_bar_overflow(
+                "feed-more",
+                self.feed_menu,
+                [("unfollow", "Unfollow tag")],
+            );
+        }
+        screen = screen
             .top_bar_action("shelf", "Shelf")
             .secondary("Newest works in this tag on AO3");
+        let now = reader_now();
         if self.task.is_some() && self.feed.is_empty() {
             screen = screen.skeleton(6);
         } else if self.feed.is_empty() {
@@ -932,13 +1037,24 @@ impl Fanshelf {
                         format!(
                             "{} · {}",
                             display(&work.author, 44),
-                            display(&work.updated, 24)
+                            display(&said_day(&work.updated, now), 24)
                         ),
                         Glyph::Book,
                     )
                 })
                 .collect();
             screen = Self::paged(context, screen, self.feed_page, rows);
+        }
+        if self.confirming == Some(Confirming::Tag) {
+            screen = screen.confirm(
+                "Unfollow this tag?",
+                format!(
+                    "{} leaves your followed tags. Works on the shelf stay.",
+                    display(title, 80)
+                ),
+                ("unfollow-confirm", "Unfollow"),
+                ("confirm-cancel", "Keep"),
+            );
         }
         screen.owns_back(true).build()
     }
@@ -1058,9 +1174,78 @@ impl Fanshelf {
 
     fn begin_lookup(&mut self, context: &mut Context, id: String, adult: bool) {
         self.view = View::Work;
+        self.lookup = Some((id.clone(), adult));
+        self.lookup_failed = None;
         self.message = Some("Looking up metadata…".into());
         self.open = self.works.iter().position(|work| work.id == id);
         self.enqueue(context, Request::Lookup { id, adult });
+    }
+
+    /// Whether nothing is fetching, waiting, downloading, saving or opening.
+    fn idle(&self) -> bool {
+        self.task.is_none()
+            && self.queued.is_empty()
+            && self.downloads.is_empty()
+            && self.downloading.is_none()
+            && self.upload.is_none()
+            && self.loading.is_none()
+            && self.sweep.is_none()
+    }
+
+    /// Takes the open work off the shelf, with its copy and reading place.
+    fn remove_work(&mut self, context: &mut Context) {
+        let Some(index) = self
+            .open
+            .filter(|&index| index < self.works.len() && self.idle())
+        else {
+            return;
+        };
+        let work = self.works.remove(index);
+        if work.downloaded() {
+            context.shelf().remove(shelf_name(&work.id));
+            context.shelf().list();
+        }
+        context.store().forget(place_key(&work.id));
+        if self.reading.remove(&work.id) {
+            context
+                .store()
+                .save(READING_KEY, encode_reading(&self.reading));
+        }
+        if self.fresh.remove(&work.id) {
+            context.store().save(FRESH_KEY, encode_reading(&self.fresh));
+        }
+        self.save_works(context);
+        if self
+            .filter
+            .as_ref()
+            .is_some_and(|fandom| !self.works.iter().any(|work| work.fandom == *fandom))
+        {
+            self.filter = None;
+        }
+        self.open = None;
+        self.shelf_page = 0;
+        self.view = View::Shelf;
+        self.message = Some(format!(
+            "Removed {} from the shelf.",
+            display(&work.title, 60)
+        ));
+    }
+
+    /// Stops following the open tag.
+    fn unfollow(&mut self, context: &mut Context) {
+        let Some(index) = self
+            .open_tag
+            .filter(|&index| index < self.tags.len() && self.idle())
+        else {
+            return;
+        };
+        let tag = self.tags.remove(index);
+        self.save_tags(context);
+        self.open_tag = None;
+        self.feed.clear();
+        self.tag_page = 0;
+        self.view = View::Follow;
+        self.message = Some(format!("Unfollowed {}.", display(&tag.name, 60)));
     }
 
     /// Asks for a work's EPUB, after whatever download is already running.
@@ -1148,6 +1333,12 @@ impl Fanshelf {
         if !sweep.pending.is_empty() || downloading {
             return;
         }
+        if sweep.offline && sweep.checked == 0 && sweep.saved == 0 {
+            self.message =
+                Some("This reader is not on Wi-Fi. Join Wi-Fi, then tap Update all again.".into());
+            self.sweep = None;
+            return;
+        }
         let mut said = if sweep.checked == 0 {
             String::new()
         } else {
@@ -1165,6 +1356,9 @@ impl Fanshelf {
         });
         if sweep.failed > 0 {
             let _ = write!(said, " {} could not be checked.", plural(sweep.failed));
+        }
+        if sweep.offline {
+            said.push_str(" The reader went off Wi-Fi before the rest.");
         }
         self.message = Some(said);
         self.sweep = None;
@@ -1210,7 +1404,7 @@ impl Fanshelf {
                 self.message = None;
             }
             ParsedWork::Locked => self.message = Some(LOCKED.into()),
-            ParsedWork::Missing => self.message = Some(REMOVED.into()),
+            ParsedWork::Missing => self.message = Some(NOT_FOUND.into()),
             ParsedWork::Malformed => {
                 self.message =
                     Some("Couldn't read AO3's answer. Nothing on the shelf changed.".into());
@@ -1258,16 +1452,24 @@ impl Fanshelf {
             }
             ParsedWork::Locked => self.message = Some(LOCKED.into()),
             ParsedWork::Missing => {
-                if existing.downloaded() {
-                    self.works[index].download = DownloadState::Removed;
-                    self.save_works(context);
-                }
-                self.message = Some(REMOVED.into());
+                self.message = Some(self.taken_down(context, index).into());
             }
             ParsedWork::Malformed => {
                 self.message =
                     Some("Couldn't read AO3's answer. Nothing on the shelf changed.".into());
             }
+        }
+    }
+
+    /// AO3 no longer has the work at `index`. One with a copy on the reader
+    /// is marked, because the copy is now the only place it can be read.
+    fn taken_down(&mut self, context: &mut Context, index: usize) -> &'static str {
+        if self.works.get(index).is_some_and(Work::downloaded) {
+            self.works[index].download = DownloadState::Removed;
+            self.save_works(context);
+            GONE
+        } else {
+            "AO3 no longer has this work."
         }
     }
 
@@ -1662,14 +1864,43 @@ impl KoboApp for Fanshelf {
             self.show(context);
             return;
         }
-        // A tap outside the open menu arrives as Back, and only closes it.
-        if self.work_menu && action == ActionId::BACK {
+        if self.view == View::Feed && action == action_id("feed-more") {
+            self.feed_menu = true;
+            self.show(context);
+            return;
+        }
+        // A tap outside the open menu or question arrives as Back, and only
+        // closes it.
+        if (self.work_menu || self.feed_menu || self.confirming.is_some())
+            && action == ActionId::BACK
+        {
             self.work_menu = false;
+            self.feed_menu = false;
+            self.confirming = None;
             self.show(context);
             return;
         }
         self.work_menu = false;
-        if action == action_id("summary") {
+        self.feed_menu = false;
+        if action == action_id("remove-work") {
+            self.confirming = Some(Confirming::Work);
+            self.message = None;
+        } else if action == action_id("unfollow") {
+            self.confirming = Some(Confirming::Tag);
+            self.message = None;
+        } else if action == action_id("confirm-cancel") {
+            self.confirming = None;
+        } else if action == action_id("remove-work-confirm") {
+            self.confirming = None;
+            self.remove_work(context);
+        } else if action == action_id("unfollow-confirm") {
+            self.confirming = None;
+            self.unfollow(context);
+        } else if action == action_id("lookup-retry") {
+            if let Some((id, adult)) = self.lookup.clone() {
+                self.begin_lookup(context, id, adult);
+            }
+        } else if action == action_id("summary") {
             self.summary_page = 0;
             self.view = View::Summary;
         } else if action == action_id("summary-previous") {
@@ -1678,6 +1909,7 @@ impl KoboApp for Fanshelf {
             let last = self.summary_pages(context).len().saturating_sub(1);
             self.summary_page = self.summary_page.saturating_add(1).min(last);
         } else if action == action_id("add") {
+            self.from_feed = false;
             self.work_entry.open();
             self.view = View::Add;
             self.message = None;
@@ -1762,6 +1994,7 @@ impl KoboApp for Fanshelf {
         {
             self.open = Some(index);
             self.view = View::Work;
+            self.from_feed = false;
             self.message = None;
         } else if let Some(index) =
             (0..self.tags.len()).find(|index| action == action_id(&format!("tag-{index}")))
@@ -1780,6 +2013,7 @@ impl KoboApp for Fanshelf {
             (0..self.feed.len()).find(|index| action == action_id(&format!("feed-{index}")))
         {
             if let Some(item) = self.feed.get(index) {
+                self.from_feed = true;
                 self.begin_lookup(context, item.id.clone(), false);
             }
         } else if let Some(index) =
@@ -1787,6 +2021,7 @@ impl KoboApp for Fanshelf {
         {
             self.open = Some(index);
             self.view = View::Work;
+            self.from_feed = false;
             let adult = self.works[index].adult;
             self.enqueue(context, Request::Update { work: index, adult });
         } else if action == action_id("update-all") {
@@ -1835,6 +2070,9 @@ impl KoboApp for Fanshelf {
             }
         } else if action == ActionId::BACK {
             match self.view {
+                View::Work if self.from_feed && self.open_tag.is_some() => {
+                    self.view = View::Feed;
+                }
                 View::Work
                 | View::Follow
                 | View::Updates
@@ -1895,19 +2133,24 @@ impl KoboApp for Fanshelf {
                     self.start_next(context);
                 }
                 TaskOutcome::Failed(TaskError::NotFound) => {
-                    if let Request::Update { work, .. } = request {
-                        if self.works.get(work).is_some_and(Work::downloaded) {
-                            self.works[work].download = DownloadState::Removed;
-                            self.save_works(context);
-                        }
-                    }
-                    self.message = Some(REMOVED.into());
+                    self.message = Some(match request {
+                        Request::Update { work, .. } => self.taken_down(context, work).into(),
+                        _ => NOT_FOUND.into(),
+                    });
                     self.request_failed(context, &request);
                     self.start_next(context);
                 }
                 TaskOutcome::Failed(error) => {
+                    if matches!(request, Request::Lookup { .. }) {
+                        self.lookup_failed = Some(error);
+                    }
+                    if error == TaskError::Offline {
+                        if let Some(sweep) = &mut self.sweep {
+                            sweep.offline = true;
+                        }
+                    }
                     self.message = Some(match error {
-                        TaskError::Offline => "Join Wi-Fi, then try again.".into(),
+                        TaskError::Offline => OFFLINE.into(),
                         TaskError::TooLarge => {
                             "AO3 returned more data than Fanshelf's safety limit.".into()
                         }
@@ -2526,15 +2769,201 @@ mod tests {
         }
     }
 
+    /// Whether `screen` draws a control for `name` on the Clara.
+    fn offers(screen: &Screen, name: &str) -> bool {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .rect_of_action(action_id(name))
+            .is_some()
+    }
+
+    /// 7 November 2026, 09:30 at the reader's own offset.
+    fn reader_at(utc_offset_minutes: i16) -> Option<kobo_sdk::clock::Snapshot> {
+        Some(kobo_sdk::clock::Snapshot {
+            unix_millis: kobo_sdk::when::stamp_millis("2026-11-07T09:30:00Z")?,
+            monotonic_millis: 0,
+            utc_offset_minutes,
+        })
+    }
+
     #[test]
-    fn update_label_distinguishes_never_checked_current_and_waiting() {
+    fn update_label_distinguishes_never_checked_current_waiting_and_removed() {
+        let now = reader_at(0);
         let mut work = work();
-        assert_eq!(update_label(&work, false), "Updates never checked");
+        assert_eq!(update_label(&work, false, now), "Updates never checked");
+        // 17 September 2026, 04:00 UTC.
         work.last_checked = 1_789_617_600;
-        assert!(update_label(&work, false).starts_with("No new chapters as of "));
-        assert!(update_label(&work, true).starts_with("New chapters downloaded "));
+        assert_eq!(
+            update_label(&work, false, now),
+            "No new chapters as of 17 Sep"
+        );
+        assert_eq!(
+            update_label(&work, true, now),
+            "New chapters downloaded on 17 Sep"
+        );
+        work.last_checked = 1_794_036_600;
+        assert_eq!(
+            update_label(&work, false, now),
+            "No new chapters as of today, 07:30"
+        );
         work.download = DownloadState::UpdateAvailable;
-        assert!(update_label(&work, false).starts_with("New chapters found "));
+        assert_eq!(
+            update_label(&work, false, now),
+            "New chapters found today, 07:30"
+        );
+        work.download = DownloadState::Removed;
+        assert_eq!(update_label(&work, false, now), "Removed from AO3");
+    }
+
+    #[test]
+    fn ao3_dates_are_said_as_days_on_the_readers_own_calendar() {
+        assert_eq!(said_day("2026-09-01", reader_at(0)), "1 Sep");
+        assert_eq!(said_day("2026-11-07", reader_at(0)), "Today");
+        assert_eq!(said_day("2026-11-06", reader_at(0)), "Yesterday");
+        assert_eq!(said_day("2025-12-24", reader_at(0)), "24 Dec 2025");
+        // Far from Greenwich the date is still the date AO3 printed, set
+        // against the reader's own day: at 09:30 UTC it is still the 6th in
+        // Hawaii and already the 7th in Tonga.
+        assert_eq!(said_day("2026-11-06", reader_at(-600)), "Today");
+        assert_eq!(said_day("2026-11-07", reader_at(-600)), "7 Nov");
+        assert_eq!(said_day("2026-11-07", reader_at(780)), "Today");
+        // Anything that is not a date is shown as AO3 sent it.
+        assert_eq!(said_day("soon", reader_at(0)), "soon");
+        assert_eq!(said_day("2026-09-01", None), "2026-09-01");
+    }
+
+    #[test]
+    fn a_work_is_removed_from_the_shelf_with_its_copy_and_reading_place_after_a_confirmation() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        let mut kept = work();
+        kept.download = DownloadState::Downloaded;
+        let mut other = work();
+        other.id = "43".into();
+        runner.app_mut().works = vec![kept, other];
+        runner.app_mut().reading.insert("42".into());
+        runner.app_mut().open = Some(0);
+        runner.app_mut().view = View::Work;
+        runner.action(action_id("more"));
+        let menu = runner.app().screen(&runner.context());
+        assert!(offers(&menu, "remove-work"));
+        runner.action(action_id("remove-work"));
+        assert_eq!(runner.app().confirming, Some(Confirming::Work));
+        assert_eq!(runner.app().works.len(), 2, "removed before the answer");
+        runner.action(action_id("confirm-cancel"));
+        assert_eq!(runner.app().works.len(), 2);
+        runner.action(action_id("more"));
+        runner.action(action_id("remove-work"));
+        let commands = runner.action(action_id("remove-work-confirm"));
+        let app = runner.app();
+        assert_eq!(app.works.len(), 1);
+        assert_eq!(app.works[0].id, "43");
+        assert_eq!(app.view, View::Shelf);
+        assert!(!app.reading.contains("42"));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(StoreRequest::ShelfRemove { name }) if *name == shelf_name("42")
+        )));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(StoreRequest::Forget { key }) if *key == place_key("42")
+        )));
+    }
+
+    #[test]
+    fn removal_is_not_offered_while_a_request_refers_to_works_by_their_place() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        runner.app_mut().works = vec![work()];
+        runner.app_mut().open = Some(0);
+        runner.app_mut().view = View::Work;
+        runner.action(action_id("check"));
+        runner.action(action_id("more"));
+        let menu = runner.app().screen(&runner.context());
+        assert!(!offers(&menu, "remove-work"));
+    }
+
+    #[test]
+    fn a_followed_tag_is_unfollowed_from_its_feed_after_a_confirmation() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        runner.app_mut().tags = vec![
+            parse_tag("Public Domain Tales").expect("a tag"),
+            parse_tag("opera").expect("a tag"),
+        ];
+        runner.app_mut().open_tag = Some(1);
+        runner.app_mut().view = View::Feed;
+        runner.action(action_id("feed-more"));
+        runner.action(action_id("unfollow"));
+        assert_eq!(runner.app().confirming, Some(Confirming::Tag));
+        runner.action(action_id("unfollow-confirm"));
+        let app = runner.app();
+        assert_eq!(app.view, View::Follow);
+        assert_eq!(app.tags.len(), 1);
+        assert_eq!(app.tags[0].name, "Public Domain Tales");
+        assert_eq!(app.message.as_deref(), Some("Unfollowed opera."));
+    }
+
+    #[test]
+    fn a_lookup_from_a_tag_feed_that_cannot_reach_ao3_offers_wifi_and_another_try_and_back_returns_to_the_feed(
+    ) {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        runner.app_mut().tags = vec![parse_tag("opera").expect("a tag")];
+        runner.app_mut().open_tag = Some(0);
+        runner.app_mut().feed = vec![FeedWork {
+            id: "77".into(),
+            title: "A feed work".into(),
+            author: "Someone".into(),
+            updated: "2026-09-02".into(),
+        }];
+        runner.app_mut().view = View::Feed;
+        runner.action(action_id("feed-0"));
+        let task = runner.app().task.as_ref().unwrap().0;
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Offline));
+        let screen = runner.app().screen(&runner.context());
+        assert!(offers(&screen, kobo_sdk::JOIN_WIFI));
+        assert!(offers(&screen, "lookup-retry"));
+        runner.action(action_id("lookup-retry"));
+        assert!(matches!(
+            runner.app().task,
+            Some((
+                _,
+                Active::Spacing(Request::Lookup { .. }) | Active::Fetching(Request::Lookup { .. })
+            ))
+        ));
+        runner.app_mut().task = None;
+        runner.app_mut().queued.clear();
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Feed);
+    }
+
+    #[test]
+    fn update_all_without_wifi_says_the_reader_is_off_wifi() {
+        let mut runner = AppRunner::new(Fanshelf::default());
+        runner.start();
+        let mut waiting = work();
+        waiting.download = DownloadState::UpdateAvailable;
+        let mut unchecked = work();
+        unchecked.id = "43".into();
+        runner.app_mut().works = vec![waiting, unchecked];
+        runner.app_mut().view = View::Updates;
+        runner.action(action_id("update-all"));
+        for _ in 0..8 {
+            let Some((task, active)) = runner.app().task.clone() else {
+                break;
+            };
+            let outcome = match active {
+                Active::Fetching(_) => TaskOutcome::Failed(TaskError::Offline),
+                _ => TaskOutcome::Completed(Vec::new()),
+            };
+            runner.task_outcome(task, outcome);
+        }
+        assert_eq!(runner.app().sweep, None);
+        assert_eq!(
+            runner.app().message.as_deref(),
+            Some("This reader is not on Wi-Fi. Join Wi-Fi, then tap Update all again.")
+        );
     }
 
     #[test]
@@ -2564,7 +2993,11 @@ mod tests {
             LOCKED,
             "Locked to AO3 members. Fanshelf has no account sign-in, so it cannot download this work."
         );
-        assert_eq!(REMOVED, "removed from the archive");
+        assert_eq!(REMOVED, "removed from AO3");
+        assert_eq!(
+            GONE,
+            "AO3 no longer has this work. The copy on this reader still opens."
+        );
     }
 
     #[test]

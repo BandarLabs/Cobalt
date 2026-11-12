@@ -4,7 +4,7 @@ Browse your Zotero collections and read papers on your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading a paper with its Zotero details"><br>Reading a paper with its Zotero details</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading the indexed text of a book from a Zotero library"><br>Reading the indexed text of a book from a Zotero library</td>
 </tr>
 </table>
 
@@ -13,8 +13,9 @@ Browse your Zotero collections and read papers on your Kobo.
 - Browse several collections. **Collections** in the header switches between
   them.
 - Read each paper's details, abstract and Zotero's indexed full text.
-- Search locally, keep papers available offline, and keep your reading
-  position and annotations.
+- **Search** looks through the papers already on the reader. **Keep offline**
+  saves a paper for reading without Wi-Fi. Your reading position and
+  annotations are kept.
 - Read-only. Stacks never changes your Zotero library.
 
 ## Setup
@@ -44,14 +45,6 @@ The app never sees it.
 Zotero's indexed full text is plain text, so the original PDF layout, tables,
 figures and formulas are lost.
 
-For structured papers with headings, tables, figures and formulas, a
-self-hosted conversion service exists at
-[andreclerigo/cobalt-zotero-reader](https://github.com/andreclerigo/cobalt-zotero-reader).
-It needs a custom build of Cobalt, because the Store build only sends
-credentials to Zotero. See its
-[setup guide](https://andreclerigo.github.io/cobalt-zotero-reader/setup.html)
-and [self-hosting guide](https://andreclerigo.github.io/cobalt-zotero-reader/self-hosting.html).
-
 ## Permissions
 
 - `network`: reads your Zotero library.
@@ -61,10 +54,13 @@ and [self-hosting guide](https://andreclerigo.github.io/cobalt-zotero-reader/sel
 
 ```sh
 cargo test -p kobo-zotero-reader
-cargo run -p kobo-cli -- run --sim --app zotero-reader
+python3 scripts/check-apps-sim.py zotero-reader
 ```
 
-The test fixtures are synthetic and contain no account data.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. To try it by hand in the browser simulator, run `kobo dev` in
+`apps/zotero-reader`. The test fixtures are synthetic and contain no account
+data.
 
 ## Credits
 

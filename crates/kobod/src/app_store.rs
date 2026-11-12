@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 
 use kobo_app_store::{
-    parse_public_bundle, verify, Catalog, DetachedSignature, Ed25519PublicKey, Manifest,
+    parse_installable_bundle, verify, Catalog, DetachedSignature, Ed25519PublicKey, Manifest,
 };
 use kobo_protocol::{AppInfo, DeviceError, RemoteInstallOutcome, UpdateChannel};
 use kobo_ui::Glyph;
@@ -11,13 +11,26 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+// Each channel publishes two signed catalogs. This runtime reads the one that
+// names every application's own mark, `kobo_app_store::CATALOG_FILE`. The
+// other, `kobo_app_store::EARLIER_CATALOG_FILE`, is what runtimes up to 0.3.33
+// read; this one reads it only when the channel has no newer file, which is a
+// channel last published before there were two.
 pub const CATALOG_URL: &str =
-    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json";
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog-v2.json";
 pub const CATALOG_SIGNATURE_URL: &str =
-    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig";
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog-v2.json.sig";
 pub const BETA_CATALOG_URL: &str =
-    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog.json";
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog-v2.json";
 pub const BETA_CATALOG_SIGNATURE_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog-v2.json.sig";
+pub const EARLIER_CATALOG_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json";
+pub const EARLIER_CATALOG_SIGNATURE_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig";
+pub const EARLIER_BETA_CATALOG_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog.json";
+pub const EARLIER_BETA_CATALOG_SIGNATURE_URL: &str =
     "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog.json.sig";
 
 const CATALOG_LIMIT: u32 = 512 * 1024;
@@ -57,13 +70,13 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         label: "Daily Brief",
         summary: "Collects the day's stories while you read something else.",
         version: "1.0.0",
-        glyph: Glyph::Clock,
+        glyph: Glyph::Sunrise,
         capabilities: &["network"],
     },
     BuiltinApp {
         id: "chat",
-        title: "AI Command Center",
-        label: "AI Chat",
+        title: "Chat",
+        label: "Chat",
         summary: "Ask a question and tap the answer, rather than typing one.",
         version: "1.0.0",
         glyph: Glyph::Chat,
@@ -84,7 +97,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         label: "Gutenbird",
         summary: "Sixty thousand free books from Project Gutenberg.",
         version: "1.0.0",
-        glyph: Glyph::Book,
+        glyph: Glyph::BookDownload,
         capabilities: &["network", "frontlight-control"],
     },
     BuiltinApp {
@@ -129,7 +142,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         label: "Tic-tac-toe",
         summary: "Two players, one panel. Nought goes first.",
         version: "1.0.0",
-        glyph: Glyph::Grid,
+        glyph: Glyph::NoughtsCrosses,
         capabilities: &[],
     },
     BuiltinApp {
@@ -138,7 +151,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         label: "Todo",
         summary: "A list that remembers itself. Tap an item to finish it.",
         version: "1.0.0",
-        glyph: Glyph::Check,
+        glyph: Glyph::Checklist,
         capabilities: &[],
     },
 ];
@@ -151,7 +164,9 @@ const SYSTEM_APPS: &[BuiltinApp] = &[
         summary: "The documents already on this device.",
         version: env!("CARGO_PKG_VERSION"),
         glyph: Glyph::Book,
-        capabilities: &["library"],
+        // The network is for Sync on the Articles shelf, which asks the
+        // computer paired with this reader for articles waiting there.
+        capabilities: &["library", "network"],
     },
     BuiltinApp {
         id: "settings",
@@ -269,7 +284,7 @@ fn installed_with_key(
     let mut entries = installed_manifests_checked(root, key, check)?
         .into_iter()
         .map(|manifest| manifest_info(&manifest, Some(manifest.version())))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     let installed_ids = entries
         .iter()
         .map(|entry| entry.id.clone())
@@ -338,9 +353,7 @@ fn prepare_remote_install_channel_with(
     if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
         return Err(DeviceError::InvalidInput);
     }
-    let source = catalog_source(channel);
-    let json = fetch(source.url, CATALOG_LIMIT)?;
-    let signature = fetch(source.signature_url, SIGNATURE_LIMIT)?;
+    let (json, signature) = fetch_catalog(channel, &mut fetch)?;
     let catalog = verify_catalog(&json, &signature, key)?;
     write_channel_catalog_cache(root, channel, &json, &signature)?;
     let Some(entry) = catalog
@@ -387,7 +400,7 @@ fn prepare_remote_install_channel_with(
         && !manifest_info(
             entry.manifest(),
             current.and_then(|candidate| candidate.installed_version.as_deref()),
-        )?
+        )
         .has_update()
     {
         return Ok(RemoteInstallPlan {
@@ -684,9 +697,7 @@ pub fn refresh_using_fault(
     mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
     fault: Option<AppWriteFault>,
 ) -> Result<Vec<AppInfo>, DeviceError> {
-    let source = catalog_source(channel);
-    let json = fetch(source.url, CATALOG_LIMIT)?;
-    let signature = fetch(source.signature_url, SIGNATURE_LIMIT)?;
+    let (json, signature) = fetch_catalog(channel, &mut fetch)?;
     let catalog = verify_catalog(&json, &signature, key)?;
     if fault.is_some() {
         return Err(DeviceError::Backend);
@@ -762,7 +773,7 @@ pub fn install_using_fault(
         return Err(DeviceError::InvalidInput);
     }
     if let Some(installed) = installed_version(root, id, key)? {
-        let candidate = manifest_info(entry.manifest(), Some(&installed))?;
+        let candidate = manifest_info(entry.manifest(), Some(&installed));
         if installed != entry.manifest().version() && !candidate.has_update() {
             return Ok(());
         }
@@ -774,8 +785,10 @@ pub fn install_using_fault(
     {
         return Err(DeviceError::Integrity);
     }
-    let bundle = parse_public_bundle(&package, key).map_err(|_| DeviceError::Integrity)?;
-    if bundle.manifest() != entry.manifest() {
+    let bundle = parse_installable_bundle(&package, key).map_err(|_| DeviceError::Integrity)?;
+    // The entry is the bundle's own manifest, or the same manifest with the
+    // stand-in glyph when the entry came from the earlier catalog.
+    if !bundle.manifest().is_offered_as(entry.manifest()) {
         return Err(DeviceError::Integrity);
     }
     if fault.is_some() {
@@ -801,6 +814,29 @@ pub fn install_using(
     install_channel_with(root, id, channel, key, fetch)
 }
 
+/// Fetches a channel's catalog and its signature.
+///
+/// Only a missing catalog sends the fetch to the earlier file. Any other
+/// failure, and a catalog whose signature is missing, is the newer file's
+/// failure, because answering it with a different file would hide a broken
+/// publication behind one that looks fine.
+fn fetch_catalog(
+    channel: UpdateChannel,
+    fetch: &mut impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<(Vec<u8>, Vec<u8>), DeviceError> {
+    let source = catalog_source(channel);
+    let (json, signature_url) = match fetch(source.url, CATALOG_LIMIT) {
+        Ok(json) => (json, source.signature_url),
+        Err(DeviceError::NotFound) => (
+            fetch(source.earlier_url, CATALOG_LIMIT)?,
+            source.earlier_signature_url,
+        ),
+        Err(error) => return Err(error),
+    };
+    let signature = fetch(signature_url, SIGNATURE_LIMIT)?;
+    Ok((json, signature))
+}
+
 fn verify_catalog(
     json: &[u8],
     signature: &[u8],
@@ -811,12 +847,9 @@ fn verify_catalog(
         .trim_end_matches(['\r', '\n']);
     let signature = DetachedSignature::from_hex(signature).map_err(|_| DeviceError::Integrity)?;
     verify(json, &signature, key).map_err(|_| DeviceError::Integrity)?;
-    let catalog = Catalog::parse_public(json).map_err(|_| DeviceError::InvalidInput)?;
+    let catalog = Catalog::parse_installable(json).map_err(|_| DeviceError::InvalidInput)?;
     if catalog.to_canonical_bytes() != json {
         return Err(DeviceError::Integrity);
-    }
-    for entry in catalog.entries() {
-        glyph(entry.manifest().glyph()).ok_or(DeviceError::InvalidInput)?;
     }
     Ok(catalog)
 }
@@ -868,7 +901,7 @@ fn catalog_info(
                 .and_then(|installed| installed.installed_version.as_deref());
             manifest_info(entry.manifest(), version)
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     for installed in installed {
         if !catalog
             .entries()
@@ -933,21 +966,18 @@ fn is_uninstalled(root: &Path, id: &str) -> Result<bool, DeviceError> {
     safe_regular_file(&apps_root(root).join(format!("{id}.{UNINSTALLED_SUFFIX}")))
 }
 
-fn manifest_info(
-    manifest: &Manifest,
-    installed_version: Option<&str>,
-) -> Result<AppInfo, DeviceError> {
-    Ok(AppInfo {
+fn manifest_info(manifest: &Manifest, installed_version: Option<&str>) -> AppInfo {
+    AppInfo {
         id: manifest.id().to_owned(),
         title: manifest.display_name().to_owned(),
         label: manifest.short_label().to_owned(),
         summary: manifest.summary().to_owned(),
         version: manifest.version().to_owned(),
         minimum_cobalt_version: manifest.minimum_cobalt_version().to_owned(),
-        glyph: glyph(manifest.glyph()).ok_or(DeviceError::InvalidInput)?,
+        glyph: launcher_glyph(manifest.glyph()),
         capabilities: manifest.capabilities().map(str::to_owned).collect(),
         installed_version: installed_version.map(str::to_owned),
-    })
+    }
 }
 
 fn sort_info(entries: &mut [AppInfo]) {
@@ -1105,7 +1135,7 @@ fn read_signed_manifest(
             DeviceError::Backend
         }
     })?;
-    let manifest = Manifest::parse_public(&bytes).map_err(|_| DeviceError::Integrity)?;
+    let manifest = Manifest::parse_installable(&bytes).map_err(|_| DeviceError::Integrity)?;
     if manifest.id() != id || manifest.to_canonical_bytes() != bytes {
         return Err(DeviceError::Integrity);
     }
@@ -1382,6 +1412,8 @@ fn catalog_cache(root: &Path, channel: UpdateChannel) -> PathBuf {
 struct CatalogSource {
     url: &'static str,
     signature_url: &'static str,
+    earlier_url: &'static str,
+    earlier_signature_url: &'static str,
     cache_name: &'static str,
 }
 
@@ -1390,11 +1422,15 @@ const fn catalog_source(channel: UpdateChannel) -> CatalogSource {
         UpdateChannel::Stable => CatalogSource {
             url: CATALOG_URL,
             signature_url: CATALOG_SIGNATURE_URL,
+            earlier_url: EARLIER_CATALOG_URL,
+            earlier_signature_url: EARLIER_CATALOG_SIGNATURE_URL,
             cache_name: "catalog",
         },
         UpdateChannel::Beta => CatalogSource {
             url: BETA_CATALOG_URL,
             signature_url: BETA_CATALOG_SIGNATURE_URL,
+            earlier_url: EARLIER_BETA_CATALOG_URL,
+            earlier_signature_url: EARLIER_BETA_CATALOG_SIGNATURE_URL,
             cache_name: "catalog-beta",
         },
     }
@@ -1426,6 +1462,16 @@ fn network_error(error: kobo_protocol::TaskError) -> DeviceError {
         }
         kobo_protocol::TaskError::RateLimited(_) => DeviceError::Unreachable,
     }
+}
+
+/// The picture the launcher and the Store draw for a manifest's glyph name.
+///
+/// A name this runtime does not know is drawn as the generic application mark
+/// rather than refused. Refusing it is what runtimes up to 0.3.33 did, and it
+/// cost the owner the whole Store over one entry's picture, which is why no
+/// glyph can be added to the catalog while those runtimes still read it.
+fn launcher_glyph(name: &str) -> Glyph {
+    glyph(name).unwrap_or(Glyph::App)
 }
 
 fn glyph(name: &str) -> Option<Glyph> {
@@ -1488,6 +1534,40 @@ fn glyph(name: &str) -> Option<Glyph> {
         "chess-black-bishop" => Glyph::ChessBlackBishop,
         "chess-black-knight" => Glyph::ChessBlackKnight,
         "chess-black-pawn" => Glyph::ChessBlackPawn,
+        "crossword-grid" => Glyph::CrosswordGrid,
+        "cell-grid" => Glyph::CellGrid,
+        "letter-check" => Glyph::LetterCheck,
+        "noughts-crosses" => Glyph::NoughtsCrosses,
+        "clued-grid" => Glyph::CluedGrid,
+        "puzzle" => Glyph::Puzzle,
+        "remote" => Glyph::Remote,
+        "dice" => Glyph::Dice,
+        "board-pieces" => Glyph::BoardPieces,
+        "question" => Glyph::Question,
+        "swords" => Glyph::Swords,
+        "map" => Glyph::Map,
+        "books" => Glyph::Books,
+        "book-download" => Glyph::BookDownload,
+        "stack" => Glyph::Stack,
+        "flask" => Glyph::Flask,
+        "paperclip" => Glyph::Paperclip,
+        "cards" => Glyph::Cards,
+        "yarn" => Glyph::Yarn,
+        "music" => Glyph::Music,
+        "lock" => Glyph::Lock,
+        "quote" => Glyph::Quote,
+        "feather" => Glyph::Feather,
+        "binoculars" => Glyph::Binoculars,
+        "mail" => Glyph::Mail,
+        "calendar-check" => Glyph::CalendarCheck,
+        "checklist" => Glyph::Checklist,
+        "house" => Glyph::House,
+        "cutlery" => Glyph::Cutlery,
+        "comic-panels" => Glyph::ComicPanels,
+        "inbox" => Glyph::Inbox,
+        "photo" => Glyph::Photo,
+        "keyboard" => Glyph::Keyboard,
+        "sunrise" => Glyph::Sunrise,
         _ => return None,
     })
 }
@@ -1523,19 +1603,32 @@ mod tests {
         version: &str,
         minimum_cobalt_version: &str,
     ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        release_marked(seed, id, version, minimum_cobalt_version, "note")
+    }
+
+    fn release_marked(
+        seed: &[u8; 32],
+        id: &str,
+        version: &str,
+        minimum_cobalt_version: &str,
+        glyph: &str,
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let binary = format!("{id} app binary").into_bytes();
-        let manifest = Manifest::new_public(ManifestInput {
-            id: id.to_owned(),
-            display_name: format!("{id} application"),
-            short_label: id.to_owned(),
-            summary: format!("The {id} test application."),
-            version: version.to_owned(),
-            minimum_cobalt_version: minimum_cobalt_version.to_owned(),
-            glyph: "note".to_owned(),
-            capabilities: Vec::new(),
-            binary_sha256: kobo_net::sha256::hex_digest(&binary),
-            binary_bytes: binary.len() as u64,
-        })
+        let manifest = Manifest::new(
+            ManifestInput {
+                id: id.to_owned(),
+                display_name: format!("{id} application"),
+                short_label: id.to_owned(),
+                summary: format!("The {id} test application."),
+                version: version.to_owned(),
+                minimum_cobalt_version: minimum_cobalt_version.to_owned(),
+                glyph: glyph.to_owned(),
+                capabilities: Vec::new(),
+                binary_sha256: kobo_net::sha256::hex_digest(&binary),
+                binary_bytes: binary.len() as u64,
+            },
+            kobo_app_store::public_reserved_app_ids(),
+        )
         .expect("manifest");
         let package = build_bundle(&manifest, &binary, seed).expect("bundle");
         let catalog = Catalog::new(vec![CatalogEntry::new(CatalogEntryInput {
@@ -1668,6 +1761,231 @@ mod tests {
             .join(format!("word-count.{UNINSTALLED_SUFFIX}"))
             .exists());
         let _ignored = fs::remove_dir_all(root);
+    }
+
+    /// The catalog `json` signed by `seed`, rebuilt as runtimes up to 0.3.33
+    /// are given it, with `glyph` in place of every entry's own.
+    fn signed_with_glyph(seed: &[u8; 32], json: &[u8], glyph: &str) -> (Vec<u8>, Vec<u8>) {
+        let catalog = Catalog::parse_installable(json).expect("catalog");
+        let entries = catalog
+            .entries()
+            .iter()
+            .map(|entry| {
+                let manifest = entry.manifest();
+                CatalogEntry::new(CatalogEntryInput {
+                    manifest: Manifest::new(
+                        ManifestInput {
+                            id: manifest.id().to_owned(),
+                            display_name: manifest.display_name().to_owned(),
+                            short_label: manifest.short_label().to_owned(),
+                            summary: manifest.summary().to_owned(),
+                            version: manifest.version().to_owned(),
+                            minimum_cobalt_version: manifest.minimum_cobalt_version().to_owned(),
+                            glyph: glyph.to_owned(),
+                            capabilities: manifest.capabilities().map(str::to_owned).collect(),
+                            binary_sha256: manifest.binary_sha256().to_string(),
+                            binary_bytes: manifest.binary_bytes(),
+                        },
+                        kobo_app_store::public_reserved_app_ids(),
+                    )
+                    .expect("manifest"),
+                    package_url: entry.package_url().to_owned(),
+                    package_sha256: entry.package_sha256().to_string(),
+                    package_bytes: entry.package_bytes(),
+                })
+                .expect("entry")
+            })
+            .collect();
+        let json = Catalog::new(entries).expect("catalog").to_canonical_bytes();
+        let signature = format!("{}\n", sign(&json, seed).expect("signature")).into_bytes();
+        (json, signature)
+    }
+
+    /// A channel last published before there were two catalogs has only the
+    /// earlier one, and a reader on this runtime still gets its Store.
+    #[test]
+    fn a_channel_without_the_newer_catalog_is_read_from_the_earlier_one() {
+        let root = root();
+        let seed = [12_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release(&seed);
+        let mut asked = Vec::new();
+        let listed = refresh_with(&root, &key, |url: &str, _: u32| {
+            asked.push(url.to_owned());
+            match url {
+                EARLIER_CATALOG_URL => Ok(json.clone()),
+                EARLIER_CATALOG_SIGNATURE_URL => Ok(signature.clone()),
+                _ => Err(DeviceError::NotFound),
+            }
+        })
+        .expect("refresh");
+        assert_eq!(
+            asked,
+            [
+                CATALOG_URL,
+                EARLIER_CATALOG_URL,
+                EARLIER_CATALOG_SIGNATURE_URL
+            ]
+        );
+        assert_eq!(listed.len(), 1);
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
+        assert_eq!(installed_using(&root, &key).expect("installed").len(), 1);
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    /// Only a missing catalog is answered with the earlier file. A newer
+    /// catalog that times out, or that arrives without its signature, is a
+    /// failed publication or a failed network, and the earlier file would
+    /// paper over either.
+    #[test]
+    fn the_earlier_catalog_is_not_read_when_the_newer_one_fails_any_other_way() {
+        let root = root();
+        let seed = [13_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, _) = release(&seed);
+        let earlier = |url: &str| match url {
+            EARLIER_CATALOG_URL => Some(Ok(json.clone())),
+            EARLIER_CATALOG_SIGNATURE_URL => Some(Ok(signature.clone())),
+            _ => None,
+        };
+        let timed_out = refresh_with(&root, &key, |url: &str, _: u32| {
+            earlier(url).unwrap_or(Err(DeviceError::TimedOut))
+        });
+        assert_eq!(timed_out, Err(DeviceError::TimedOut));
+        let unsigned = refresh_with(&root, &key, |url: &str, _: u32| match url {
+            CATALOG_URL => Ok(json.clone()),
+            _ => earlier(url).unwrap_or(Err(DeviceError::NotFound)),
+        });
+        assert_eq!(unsigned, Err(DeviceError::NotFound));
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    /// The earlier catalog offers a marked application under the glyph it
+    /// wore before, while its bundle is signed with the mark. That one
+    /// difference is allowed and no other.
+    #[test]
+    fn an_application_installs_from_the_earlier_catalog_under_its_stand_in_glyph() {
+        for (offered, installs) in [("circle", true), ("grid", false), ("dice", true)] {
+            let root = root();
+            let seed = [14_u8; 32];
+            let key = derive_public_key(&seed).expect("key");
+            let (json, _, package) = release_marked(
+                &seed,
+                "backgammon",
+                "0.1.17",
+                env!("CARGO_PKG_VERSION"),
+                "dice",
+            );
+            let (earlier, earlier_signature) = signed_with_glyph(&seed, &json, offered);
+            let listed = refresh_with(&root, &key, |url: &str, _: u32| match url {
+                EARLIER_CATALOG_URL => Ok(earlier.clone()),
+                EARLIER_CATALOG_SIGNATURE_URL => Ok(earlier_signature.clone()),
+                _ => Err(DeviceError::NotFound),
+            })
+            .expect("refresh");
+            assert_eq!(listed[0].glyph, launcher_glyph(offered));
+            let installed = install_with(&root, "backgammon", &key, |_, _| Ok(package.clone()));
+            if installs {
+                installed.expect("install");
+                let apps = installed_using(&root, &key).expect("installed apps");
+                let app = apps.iter().find(|app| app.id == "backgammon").expect("app");
+                assert_eq!(
+                    app.glyph,
+                    Glyph::Dice,
+                    "the installed manifest is the bundle's"
+                );
+            } else {
+                assert_eq!(
+                    installed,
+                    Err(DeviceError::Integrity),
+                    "offered as {offered}"
+                );
+            }
+            let _ignored = fs::remove_dir_all(root);
+        }
+    }
+
+    /// Every mark the publisher accepts is one this runtime draws, and the
+    /// glyph the earlier catalog shows in its place is the one a frame below
+    /// protocol 18 carries in its place, so an application looks the same to
+    /// an older reader whichever way the picture reaches it.
+    #[test]
+    fn each_mark_stands_in_as_the_same_glyph_in_the_earlier_catalog_and_on_the_wire() {
+        use kobo_protocol::{decode, encode, Frame, Message, QUIET_TYPE_VERSION};
+        use kobo_ui::{ActionId, Node, NodeId, Screen, Tile, TileShape};
+        let below_eighteen = |glyph: Glyph| {
+            let frame = Frame {
+                version: QUIET_TYPE_VERSION,
+                request_id: 1,
+                message: Message::SetScreen(Screen::new(
+                    1,
+                    vec![Node::TileGrid {
+                        id: NodeId(1),
+                        tiles: vec![Tile::new(ActionId(1), "App", glyph)],
+                        shape: TileShape::Square,
+                    }],
+                )),
+            };
+            let Message::SetScreen(screen) = decode(&encode(&frame).expect("encodes"))
+                .expect("decodes")
+                .message
+            else {
+                panic!("expected a screen");
+            };
+            let [Node::TileGrid { tiles, .. }] = screen.nodes.as_slice() else {
+                panic!("expected one tile grid");
+            };
+            tiles[0].glyph
+        };
+        let mut marks = 0;
+        for name in kobo_app_store::mark_names() {
+            let drawn = glyph(name).unwrap_or_else(|| panic!("{name} is published but not drawn"));
+            let earlier = kobo_app_store::earlier_glyph(name).expect("stand-in");
+            let wire = below_eighteen(drawn);
+            // Two marks were glyphs before protocol 18 and travel as
+            // themselves; every other one has to stand in identically.
+            if wire != drawn {
+                marks += 1;
+                assert_eq!(glyph(earlier), Some(wire), "{name}");
+            }
+        }
+        assert_eq!(marks, 34);
+    }
+
+    /// A glyph name this runtime has never heard of costs the application its
+    /// picture rather than costing the owner the Store, which is what a
+    /// runtime that refused it would do to every reader the day a later
+    /// release gave some application a new mark.
+    #[test]
+    fn an_application_whose_glyph_this_runtime_cannot_draw_is_listed_and_installed_as_an_app() {
+        for (name, drawn) in [("a-later-mark", Glyph::App), ("dice", Glyph::Dice)] {
+            let root = root();
+            let seed = [11_u8; 32];
+            let key = derive_public_key(&seed).expect("key");
+            let (json, signature, package) = release_marked(
+                &seed,
+                "backgammon",
+                "0.1.17",
+                env!("CARGO_PKG_VERSION"),
+                name,
+            );
+            let listed = refresh_with(&root, &key, |url: &str, _: u32| match url {
+                CATALOG_URL => Ok(json.clone()),
+                CATALOG_SIGNATURE_URL => Ok(signature.clone()),
+                _ => Err(DeviceError::NotFound),
+            })
+            .expect("refresh");
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].glyph, drawn);
+            install_with(&root, "backgammon", &key, |_, _| Ok(package.clone())).expect("install");
+            let installed = installed_using(&root, &key).expect("installed apps");
+            let entry = installed
+                .iter()
+                .find(|app| app.id == "backgammon")
+                .expect("installed backgammon");
+            assert_eq!(entry.glyph, drawn);
+            let _ignored = fs::remove_dir_all(root);
+        }
     }
 
     #[test]
@@ -2310,6 +2628,7 @@ mod tests {
     #[test]
     fn unknown_glyphs_and_incompatible_versions_are_refused() {
         assert_eq!(glyph("not-a-glyph"), None);
+        assert_eq!(launcher_glyph("not-a-glyph"), Glyph::App);
         assert!(kobo_app_store::cobalt_version_at_least("0.2.0", "0.1.9"));
         assert!(!kobo_app_store::cobalt_version_at_least("0.1.8", "0.1.9"));
         assert!(!kobo_app_store::cobalt_version_at_least("nightly", "0.1.9"));

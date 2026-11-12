@@ -20,6 +20,7 @@
 //! token so a neighbour on the network cannot answer for you.
 
 mod agents;
+mod articles;
 mod board;
 mod deck;
 mod hooks;

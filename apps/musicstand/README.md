@@ -5,7 +5,7 @@ turns.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/stand.png" alt="A full page at reading size"><br>A full page at reading size</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/stand.png" alt="The top half of a page at reading size"><br>The top half of a page at reading size</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/half-turn.png" alt="A half-page turn keeps the current line in view"><br>A half-page turn keeps the current line in view</td>
 </tr>
 <tr>
@@ -17,10 +17,14 @@ turns.
 ## Features
 
 - Keeps the screen on while you play.
+- The score has the whole panel. Touch the top edge for the title, or the
+  middle of the page for the menu.
 - Turn pages with the page buttons or by tapping the screen.
 - Half-page turns: each page is split into two overlapping halves, so the line
   you are reading stays in view after a turn.
-- Staff-width zoom for dense passages.
+- **Staff width** in the menu crops the margins so the staves are larger,
+  for dense passages.
+- **Corner mark** flags a score in your library.
 - Each score remembers its page, zoom and corner mark.
 - Setlists keep rehearsal order and continue from one piece's last page to the
   next piece. Add scores from your library, move them up or down, or take them

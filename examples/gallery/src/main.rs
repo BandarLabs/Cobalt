@@ -223,14 +223,19 @@ struct Part {
 }
 
 impl Part {
-    /// The line set under the sample, such as "Built with `.grid()`".
+    /// The line set under the sample, such as "Built with `grid()`".
+    ///
+    /// Without a leading dot on each call: a line may not break before a
+    /// full stop, so "`.primary_button() .buttons()`" was one unbreakable
+    /// run that wrapped after "Built" and cut a bracket onto a line of its
+    /// own.
     fn caption(self) -> String {
         let calls = self
             .calls
             .split(", ")
-            .map(|call| format!(".{call}()"))
+            .map(|call| format!("{call}()"))
             .collect::<Vec<_>>()
-            .join(" ");
+            .join(", ");
         format!("Built with {calls}")
     }
 }
@@ -269,7 +274,11 @@ enum Move {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Floating {
     Menu,
-    FolioMenu,
+    /// The Reader card's menu, and whether the Featured link raised it
+    /// rather than the card's own mark, so it hangs from what was tapped.
+    FolioMenu {
+        from_link: bool,
+    },
     Sheet,
     Confirm,
     /// The menu behind one row's overflow mark, by position in the list.
@@ -312,10 +321,39 @@ const SPECIMENS: &[(&str, &str)] = &[
     ("store-birds", "You pressed Field guide to birds."),
     ("store-birds-update", "You pressed Update."),
     ("store-moths", "You pressed Moths."),
-    ("store-moths-open", "You pressed Open."),
+    ("store-moths-page", "You pressed the mark beside Moths."),
     ("species-delete", "You pressed Delete."),
     ("token-field", "You tapped the token field."),
+    ("control-back", "You pressed Back 30 sec."),
+    ("control-play", "You pressed Play."),
+    ("control-forward", "You pressed Forward 30 sec."),
+    ("inline-yes", "You pressed Delete."),
+    ("inline-no", "You pressed Keep."),
+    ("bar-search", "You pressed Search."),
+    (
+        kobo_sdk::JOIN_WIFI,
+        "You pressed Join Wi-Fi. In an app, Cobalt opens Wi-Fi.",
+    ),
+    ("link-rich", "You followed the link in the rich text."),
+    (
+        "link-selectable",
+        "You followed the link in the paragraph you can mark.",
+    ),
+    ("link-target", "You followed the link to somewhere else."),
+    ("row-one", "You pressed Mrs Dalloway."),
+    ("row-two", "You pressed Ulysses."),
+    ("row-three", "You pressed The Waves."),
+    ("long-row", "You pressed the row with the long title."),
+    ("folio-settings", "You pressed Settings."),
+    ("folio-terminal", "You pressed Terminal."),
+    ("ghost-a", "You pressed Ink state."),
+    ("ghost-b", "You pressed Paper state."),
 ];
+
+/// What any other sample says when it is pressed: the boards, the pads, the
+/// icon sheets and the tiles, which have no job in a reference but must not
+/// feel dead either.
+const ANY_SPECIMEN: &str = "The app got that tap. This sample does nothing more.";
 
 #[allow(
     clippy::struct_excessive_bools,
@@ -339,6 +377,10 @@ struct Gallery {
     swatch: Option<TilePicture>,
     entry: TextEntry,
     answer: Option<String>,
+    /// The search field on the Fields page, typed on its own keyboard.
+    search: TextEntry,
+    /// What was searched for, which only the search field shows.
+    query: String,
     /// What the last pressed specimen said, so no enabled control feels dead.
     pressed: Option<&'static str>,
     /// Which page of the icon sheet is showing.
@@ -354,6 +396,15 @@ struct Gallery {
     ticked: [bool; 2],
     /// Which filter chip is on.
     chip: usize,
+    /// The size the stepper and the segments set. Apart from `chip`, so a
+    /// specimen on one page never changes one on another.
+    size: usize,
+    /// Whether the long-labelled chip is on.
+    long_chip: bool,
+    /// Whether the folded replies on the Marks page are open.
+    replies_open: bool,
+    /// Whether the bookmark among the Fields page's controls is on.
+    bookmarked: bool,
     /// Which of [`SORTS`] the sort picker says the list is in.
     sort: usize,
     /// Whether the keep-awake setting is on.
@@ -404,11 +455,17 @@ impl Default for Gallery {
             // when it sees it.
             entry: TextEntry::new().opened_by("file-other"),
             answer: None,
+            search: TextEntry::new().opened_by("field-open"),
+            query: String::new(),
             pressed: None,
             icon_page: 0,
             shown: 0,
             ticked: [true, false],
             chip: 0,
+            size: 0,
+            long_chip: false,
+            replies_open: false,
+            bookmarked: false,
             sort: 0,
             keep_awake: false,
             detail: false,
@@ -543,6 +600,10 @@ impl Gallery {
                     calls: "crossword_board",
                 },
                 Part {
+                    draw: Gallery::marked_boards_page,
+                    calls: "board_with_tones, numbered_board",
+                },
+                Part {
                     draw: Gallery::pencil_page,
                     calls: "pencil_board, terminal",
                 },
@@ -578,7 +639,7 @@ impl Gallery {
             (Tab::Input, 2) => &[
                 Part {
                     draw: Gallery::input_page,
-                    calls: "field, chips, controls, confirm",
+                    calls: "field, chips, controls, control_on, confirm",
                 },
                 Part {
                     draw: Gallery::asking_page,
@@ -625,7 +686,7 @@ impl Gallery {
             ],
             (Tab::States, _) => &[Part {
                 draw: Gallery::trouble_page,
-                calls: "standard_state, bottom_action_marked",
+                calls: "standard_state, buttons",
             }],
             (Tab::Panel, 0) => &[
                 Part {
@@ -675,6 +736,12 @@ impl Gallery {
     /// the reference out or drawing half of it through the navigation bar.
     fn panels(&self, metrics: DisplayMetrics, page: usize) -> Vec<Vec<Part>> {
         let parts = Self::parts(self.tab, page);
+        // A standard state is a splash, and a splash centres itself in all
+        // that is left. Two of them dealt onto one panel because they happen
+        // to fit read as two half-pages, so each state has a panel of its own.
+        if self.tab == Tab::States {
+            return parts.iter().map(|part| vec![*part]).collect();
+        }
         let mut panels: Vec<Vec<Part>> = Vec::new();
         let mut current: Vec<Part> = Vec::new();
         for part in parts {
@@ -824,7 +891,9 @@ impl Gallery {
                     "1.1 MB",
                 )])
                 .secondary("Nothing has been downloaded yet.")
-                .button("flow-ask", "Download it")
+                // Pinned to the foot: the one thing this screen is for, on a
+                // screen with no navigation bar to share the band with.
+                .bottom_action_marked("flow-ask", "Download it", Glyph::Download)
                 .compose(|screen| {
                     if step == Step::Asked {
                         screen.confirm(
@@ -856,7 +925,7 @@ impl Gallery {
                     RowLead::from(Glyph::Book),
                     "1.1 MB",
                 )])
-                .button("flow-open", "Open it"),
+                .action_bar([("flow-open", "Open it"), ("flow-remove", "Remove")]),
             Step::Reading => Self::reading_demonstration(screen),
         };
         screen.build()
@@ -871,6 +940,14 @@ impl Gallery {
     fn show(&self, context: &mut Context) {
         // A raised keyboard is modal: it covers the panel, so nothing else is
         // drawn under it, including the tab bar.
+        if self.search.is_open() {
+            context.set_screen(
+                ScreenBuilder::new("gallery")
+                    .text_entry(&self.search, "Search the catalogue", "Search")
+                    .build(),
+            );
+            return;
+        }
         if self.entry.is_open() {
             context.set_screen(
                 ScreenBuilder::new("gallery")
@@ -935,12 +1012,33 @@ impl Gallery {
 
     /// The marks a document makes: heading levels, bylines, quoted roles, a
     /// table and text that carries links.
-    fn marks_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
-        screen
+    fn marks_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let screen = screen
             .heading_at_level(2, "A second-level heading")
             .heading_at_level(3, "and a third under it")
             .byline(0, "Set by the byline, which is who said this and when")
-            .folding_byline(0, "Three replies, folded away", "fold-replies", true, 3)
+            .folding_byline(
+                0,
+                if self.replies_open {
+                    "Three replies"
+                } else {
+                    "Three replies, folded away"
+                },
+                "fold-replies",
+                !self.replies_open,
+                3,
+            );
+        if self.replies_open {
+            screen
+                .quote(1, "The first reply.")
+                .quote(1, "The second.")
+                .quote(
+                    1,
+                    "And the third, which a tap on the byline folds away again.",
+                )
+        } else {
+            screen
+        }
     }
 
     /// A quotation with its own byline, and the table under it.
@@ -986,7 +1084,7 @@ impl Gallery {
                     },
                 }],
                 ParagraphPresentation::default(),
-                [("link-rich", 27, 31)],
+                [("link-rich", 27, 34)],
             )
             .selectable_rich_text_linking(
                 "A paragraph the reader can hold to mark.",
@@ -1010,7 +1108,7 @@ impl Gallery {
             )
             .text_linking(
                 "Plain text can carry a link to somewhere else in the same document.",
-                [("link-target", 32, 41)],
+                [("link-target", 31, 40)],
             )
             .spacer(Space::Small)
             // A hold is not drawn; it is the gesture that opens the marking
@@ -1079,6 +1177,47 @@ impl Gallery {
                 ("cw-c", 'T', None, false),
             ],
         )
+    }
+
+    /// The boards that mark their squares: a word game's guess in its three
+    /// tones, and a board whose squares carry printed numbers.
+    ///
+    /// Both need the release that draws tones, so an application using
+    /// either names that release as its minimum.
+    fn marked_boards_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+        screen
+            .section("A word game's guess, in its three tones")
+            .board_with_tones(
+                3,
+                [
+                    ("tone-a", "C", kobo_sdk::CellTone::Solid),
+                    ("tone-b", "A", kobo_sdk::CellTone::Shaded),
+                    ("tone-c", "T", kobo_sdk::CellTone::Faded),
+                ],
+            )
+            .section("A board with numbered squares")
+            .numbered_board(
+                3,
+                [
+                    (
+                        "numbered-a",
+                        " ",
+                        Some(Glyph::BlackDisc),
+                        1,
+                        kobo_sdk::CellTone::Plain,
+                        false,
+                    ),
+                    ("numbered-b", " ", None, 2, kobo_sdk::CellTone::Plain, true),
+                    (
+                        "numbered-c",
+                        " ",
+                        Some(Glyph::WhiteDisc),
+                        3,
+                        kobo_sdk::CellTone::Plain,
+                        false,
+                    ),
+                ],
+            )
     }
 
     /// The grids that carry their own meaning: a pencilled square and a
@@ -1176,24 +1315,24 @@ impl Gallery {
         screen
             .section("A stepper, which is one number and two ends")
             .stepper(
-                format!("Brightness {}", self.chip),
+                format!("Brightness {}", self.size),
                 "step-less",
                 Glyph::Minus,
                 "step-more",
                 Glyph::Plus,
             )
-            .stepper_ends(self.chip > 0, self.chip < 2)
-            .stepper_track(u8::try_from(self.chip * 50).unwrap_or(100))
+            .stepper_ends(self.size > 0, self.size < 2)
+            .stepper_track(u8::try_from(self.size * 50).unwrap_or(100))
             .section("One value of a few, all in view")
-            // The same value the stepper steps and the filter chips choose, so
-            // each segment is the chip that names it. A segment is a tap that
-            // names its value outright, and the chip handlers already do that.
+            // The same value the stepper steps, named outright. Not the
+            // filter chips' value: sharing it made Large select Downloaded on
+            // another page.
             .segmented(
-                self.chip,
+                self.size,
                 [
-                    ("chip-0", "Small"),
-                    ("chip-1", "Medium"),
-                    ("chip-2", "Large"),
+                    ("size-0", "Small"),
+                    ("size-1", "Medium"),
+                    ("size-2", "Large"),
                 ],
             )
             .picker(
@@ -1211,7 +1350,6 @@ impl Gallery {
                 Glyph::Light,
                 self.keep_awake,
             )])
-            .action_bar([("bar-one", "First"), ("bar-two", "Second")])
     }
 
     /// Settings drawn by the runtime as switches, one of which cannot change
@@ -1300,8 +1438,8 @@ impl Gallery {
             .banner(BannerLevel::Info, "An informational banner.")
             .banner(
                 BannerLevel::Attention,
-                "An attention banner, drawn inverted. This is what replaces flashing \
-                 the frontlight.",
+                "An attention banner, for something worth seeing to before it \
+                 goes wrong.",
             )
     }
 
@@ -1389,13 +1527,22 @@ impl Gallery {
 
     /// Folio's visual acceptance surface: display hierarchy, feature cards,
     /// a section destination, page rail and the selected navigation notch.
-    fn folio_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
-        screen
+    fn folio_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        let screen = screen
             .heading("COBALT")
             .secondary("Tuesday, September 1 · Folio")
             .divider()
             .section("Featured")
-            .section_link("folio-details", "Reader details")
+            .section_link("folio-details", "Reader details");
+        // Raised from the link, the menu hangs from the link. The card it
+        // belongs to is often on the next panel, where a menu raised from
+        // here was drawn out of sight.
+        let screen = if self.floating == Some(Floating::FolioMenu { from_link: true }) {
+            screen.popover("folio-details", Self::folio_menu)
+        } else {
+            screen
+        };
+        screen
             .button("folio-button", "Content-width action")
             .page_rail(0, 3)
     }
@@ -1416,7 +1563,7 @@ impl Gallery {
                     (|tile: Tile| {
                         tile.with_caption("Left open")
                             .with_value("Now")
-                            .with_menu(action_id("folio-details"))
+                            .with_menu(action_id("folio-card-menu"))
                     }) as fn(Tile) -> Tile,
                 ),
                 (
@@ -1439,26 +1586,29 @@ impl Gallery {
                 ),
             ],
         );
-        if self.floating == Some(Floating::FolioMenu) {
-            screen.popover("grp-one", |menu| {
-                menu.rows([
-                    (
-                        "grp-one",
-                        "Open Reader",
-                        "Return to the selected item",
-                        Glyph::Reader,
-                    ),
-                    (
-                        "folio-close-menu",
-                        "Keep reading",
-                        "Dismiss this menu",
-                        Glyph::Check,
-                    ),
-                ])
-            })
+        if self.floating == Some(Floating::FolioMenu { from_link: false }) {
+            screen.popover("grp-one", Self::folio_menu)
         } else {
             screen
         }
+    }
+
+    /// What the Reader card's menu offers, wherever it hangs from.
+    fn folio_menu(menu: ScreenBuilder) -> ScreenBuilder {
+        menu.rows([
+            (
+                "grp-one",
+                "Open Reader",
+                "Return to the selected item",
+                Glyph::Reader,
+            ),
+            (
+                "folio-close-menu",
+                "Keep reading",
+                "Dismiss this menu",
+                Glyph::Check,
+            ),
+        ])
     }
 
     /// Alternating state marks make retained-image residue visible during a
@@ -1520,7 +1670,7 @@ impl Gallery {
 
     /// Text entry, filters, and the two-button question.
     fn input_page(&self, screen: ScreenBuilder) -> ScreenBuilder {
-        let typed = self.answer.clone().unwrap_or_default();
+        let typed = self.query.clone();
         let screen =
             screen
                 .section("A field")
@@ -1540,13 +1690,16 @@ impl Gallery {
             )
             .section("Controls that have a picture everybody knows")
             .controls(
-                3,
+                4,
                 [
                     ("control-back", "Back 30 sec", Glyph::Rewind30),
                     ("control-play", "Play", Glyph::Play),
                     ("control-forward", "Forward 30 sec", Glyph::Forward30),
+                    ("control-bookmark", "Bookmark", Glyph::Bookmark),
                 ],
             )
+            // A control whose state is the point of it is drawn filled when on.
+            .control_on("control-bookmark", self.bookmarked)
             .button("open-confirm", "Delete this shelf")
             .compose(|screen| {
                 // A confirmation is an overlay, so it is drawn only while it
@@ -1608,7 +1761,7 @@ impl Gallery {
     /// value; a tile wraps under its picture; a chip keeps its whole word.
     /// None of them is allowed to push anything off the panel, which is what
     /// the sweep across every panel and text size actually checks.
-    fn long_labels_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
+    fn long_labels_page(gallery: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
             .section("Labels longer than the panel")
             .rows_with_trailing([(
@@ -1621,7 +1774,7 @@ impl Gallery {
             .chips([(
                 "long-chip".to_owned(),
                 "Everything downloaded and not yet read",
-                false,
+                gallery.long_chip,
             )])
     }
 
@@ -1662,10 +1815,11 @@ impl Gallery {
             )
     }
 
-    /// A row with a button of its own and a count, which is a Store row.
+    /// A row with a button of its own and a count, and a row that opens
+    /// what it names with a mark for the rest, which are Store rows.
     fn row_extras_page(_: &Self, screen: ScreenBuilder) -> ScreenBuilder {
         screen
-            .section("Rows with a button and a count")
+            .section("Rows with a button, a count and a mark")
             .rows([
                 (
                     "store-birds",
@@ -1677,7 +1831,7 @@ impl Gallery {
             ])
             .row_button("store-birds", "store-birds-update", "Update")
             .row_badge("store-birds", 3)
-            .row_button("store-moths", "store-moths-open", "Open")
+            .row_menu("store-moths", "store-moths-page")
     }
 
     /// A checklist, which is a row whose value is whether it is done.
@@ -1966,7 +2120,7 @@ impl Gallery {
             )])
             .button("open-sheet", "Open a modal");
         if self.floating == Some(Floating::Sheet) {
-            screen.modal("Details", |sheet| {
+            screen.dialog("Details", "sheet-close", |sheet| {
                 sheet
                     .facts([("Format", "EPUB"), ("Size", "1.1 MB")])
                     .button("sheet-close", "Close")
@@ -1984,7 +2138,7 @@ impl Gallery {
                 .transfer("Mrs Dalloway", self.received, Some(2_400_000));
         if self.stalled {
             screen
-                .transfer_failed("the connection dropped", true)
+                .transfer_failed("The connection dropped.", true)
                 .transfer_retry("xfer-retry", "Resume")
         } else {
             screen
@@ -2088,8 +2242,11 @@ impl Gallery {
                 kobo_sdk::StandardState::Error,
                 "The catalogue came back malformed. Nothing was changed.",
             )
-            .button("state-retry", "Try again")
-            .bottom_action_marked("state-report", "Report it", Glyph::Note)
+            // Side by side rather than Report it in the bottom band: this
+            // frame's bottom band is the navigation bar, and a screen has one
+            // band, so a bottom action here was never drawn. The worked
+            // download shows a bottom action on a screen of its own.
+            .buttons([("state-retry", "Try again"), ("state-report", "Report it")])
     }
 
     /// Raises and lowers the two things that float above a screen.
@@ -2099,7 +2256,9 @@ impl Gallery {
         let floating = if action == action_id("bar-more") {
             Some(Floating::Menu)
         } else if action == action_id("folio-details") {
-            Some(Floating::FolioMenu)
+            Some(Floating::FolioMenu { from_link: true })
+        } else if action == action_id("folio-card-menu") {
+            Some(Floating::FolioMenu { from_link: false })
         } else if action == action_id("menu-one-more") {
             Some(Floating::RowMenu(0))
         } else if action == action_id("open-sheet") {
@@ -2135,14 +2294,24 @@ impl Gallery {
     /// Returns whether it took the tap.
     fn settings(&mut self, context: &mut Context, action: ActionId) -> bool {
         if let Some(index) = (0..3).find(|index| action == action_id(&format!("chip-{index}"))) {
-            // A chip and a segment both name their value outright.
             self.chip = index;
+        } else if let Some(index) =
+            (0..3).find(|index| action == action_id(&format!("size-{index}")))
+        {
+            // A segment names its value outright, as a chip does.
+            self.size = index;
         } else if action == action_id("step-less") {
             // The ends stop at the ends, which the stepper draws as
             // unavailable rather than as a tap that quietly does nothing.
-            self.chip = self.chip.saturating_sub(1);
+            self.size = self.size.saturating_sub(1);
         } else if action == action_id("step-more") {
-            self.chip = (self.chip + 1).min(2);
+            self.size = (self.size + 1).min(2);
+        } else if action == action_id("long-chip") {
+            self.long_chip = !self.long_chip;
+        } else if action == action_id("control-bookmark") {
+            self.bookmarked = !self.bookmarked;
+        } else if action == action_id("fold-replies") {
+            self.replies_open = !self.replies_open;
         } else if action == action_id("toggle-sleep") {
             self.keep_awake = !self.keep_awake;
         } else if action == action_id("toggle-night") {
@@ -2183,14 +2352,18 @@ impl Gallery {
     ///
     /// Returns whether it took the tap.
     fn transfers(&mut self, context: &mut Context, action: ActionId) -> bool {
-        let stalled = if action == action_id("xfer-fail") {
-            true
-        } else if action == action_id("xfer-retry") || action == action_id("xfer-cancel") {
-            false
+        if action == action_id("xfer-fail") {
+            self.stalled = true;
+        } else if action == action_id("xfer-retry") {
+            self.stalled = false;
+        } else if action == action_id("xfer-cancel") {
+            // A cancelled download keeps nothing of what arrived.
+            self.stalled = false;
+            self.received = 0;
+            self.pressed = Some("You cancelled the download.");
         } else {
             return false;
-        };
-        self.stalled = stalled;
+        }
         self.show(context);
         true
     }
@@ -2226,6 +2399,7 @@ impl Gallery {
             ("flow-finish", Step::Arrived),
             ("flow-open", Step::Reading),
             ("flow-cancel", Step::Chosen),
+            ("flow-remove", Step::Chosen),
         ] {
             if action == action_id(name) {
                 return Some(Move::To(next));
@@ -2255,6 +2429,9 @@ impl Gallery {
                 // Back to the first panel: the page that was open two pages
                 // ago has no third panel to be on.
                 self.shown = 0;
+                // What was pressed, and any menu, belong to the page left.
+                self.pressed = None;
+                self.floating = None;
                 self.show(context);
                 return true;
             }
@@ -2269,6 +2446,8 @@ impl Gallery {
             } else {
                 panel.saturating_sub(1)
             };
+            self.pressed = None;
+            self.floating = None;
             self.show(context);
             return true;
         }
@@ -2314,6 +2493,22 @@ impl Gallery {
             // closes it as well as making it.
             self.zone = index;
             self.zones = None;
+        } else {
+            return false;
+        }
+        self.show(context);
+        true
+    }
+
+    /// The search field on the Fields page: its keyboard, and its clear
+    /// mark. Returns whether it took the tap.
+    fn searched(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if let Some(event) = self.search.handle(action) {
+            if let Typing::Submitted(text) = event {
+                self.query = text;
+            }
+        } else if action == action_id("field-clear") {
+            self.query.clear();
         } else {
             return false;
         }
@@ -2385,6 +2580,9 @@ impl KoboApp for Gallery {
         // owns the panel. This is what makes the free-text row actually raise
         // a keyboard rather than answer for the reader, which is what it used
         // to do.
+        if self.searched(context, action) {
+            return;
+        }
         if let Some(event) = self.entry.handle(action) {
             if let Typing::Submitted(text) = event {
                 self.answer = Some(text);
@@ -2453,6 +2651,8 @@ impl KoboApp for Gallery {
         }
 
         context.log(LogLevel::Info, format!("unhandled tap: {action:?}"));
+        self.pressed = Some(ANY_SPECIMEN);
+        self.show(context);
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
@@ -2495,7 +2695,10 @@ mod tests {
         for (tab, _, _) in Tab::ALL {
             for page in 0..tab.pages().len() {
                 for part in Gallery::parts(tab, page) {
-                    assert!(part.caption().starts_with("Built with ."), "{tab:?} {page}");
+                    assert!(
+                        part.caption().starts_with("Built with ") && part.caption().ends_with("()"),
+                        "{tab:?} {page}"
+                    );
                 }
             }
         }
@@ -2507,7 +2710,7 @@ mod tests {
         let screen = painted(&gallery, CLARA_BW_METRICS);
         assert!(screen.nodes.iter().any(|node| matches!(
             node,
-            Node::Secondary { text, .. } if text.contains(".board_with_selection()")
+            Node::Secondary { text, .. } if text.contains("board_with_selection()")
         )));
     }
 
@@ -3136,17 +3339,71 @@ mod tests {
         let (mut gallery, mut context) = on_the_buttons_page();
         assert_eq!(
             filled_segments(&settings_panel(&runner, &mut gallery)),
-            [action_id("chip-0")]
+            [action_id("size-0")]
         );
-        gallery.on_action(&mut context, action_id("chip-2"));
-        assert_eq!(gallery.chip, 2);
+        gallery.on_action(&mut context, action_id("size-2"));
+        assert_eq!(gallery.size, 2);
         assert_eq!(
             filled_segments(&settings_panel(&runner, &mut gallery)),
-            [action_id("chip-2")],
+            [action_id("size-2")],
             "the segment tapped is not the one filled"
         );
         gallery.on_action(&mut context, action_id("step-less"));
-        assert_eq!(gallery.chip, 1, "the stepper does not move the same value");
+        assert_eq!(gallery.size, 1, "the stepper does not move the same value");
+    }
+
+    /// Each specimen holds its own value. The size segments shared one with
+    /// the filter chips on the Fields page, so Large selected Downloaded.
+    #[test]
+    fn choosing_a_size_leaves_the_filter_chips_where_they_were() {
+        let (mut gallery, mut context) = on_the_buttons_page();
+        gallery.on_action(&mut context, action_id("size-2"));
+        assert_eq!(gallery.chip, 0, "a size moved the filter");
+        gallery.on_action(&mut context, action_id("chip-1"));
+        assert_eq!(gallery.size, 2, "a filter moved the size");
+    }
+
+    /// What a sample said when pressed belongs to the page it is on, and is
+    /// gone once another page of the strip is opened.
+    #[test]
+    fn what_was_pressed_is_not_carried_to_the_next_page() {
+        let (mut gallery, mut context) = on_the_buttons_page();
+        gallery.on_action(&mut context, action_id("button-primary"));
+        assert!(gallery.pressed.is_some());
+        gallery.on_action(&mut context, action_id("page-input"));
+        assert_eq!(gallery.pressed, None);
+    }
+
+    /// Reader details is a link on one panel and the card it opens the menu
+    /// of is often on the next, so the menu hangs from whatever raised it.
+    #[test]
+    fn reader_details_raises_its_menu_on_the_panel_it_was_tapped_on() {
+        let mut gallery = Gallery::default();
+        let mut context = Context::default();
+        gallery.on_start(&mut context);
+        gallery.on_action(&mut context, action_id("tab-panel"));
+        gallery.on_action(&mut context, action_id("folio-details"));
+        let screen = painted(&gallery, CLARA_BW_METRICS);
+        assert!(
+            matches!(
+                screen.overlay.as_ref().map(|overlay| &overlay.kind),
+                Some(kobo_ui::OverlayKind::Popover { anchor }) if *anchor == action_id("folio-details")
+            ),
+            "{:?}",
+            screen.overlay
+        );
+    }
+
+    /// A state takes the panel to itself, so the Denied page's three states
+    /// are three panels rather than two of them stacked on one.
+    #[test]
+    fn each_state_has_a_panel_of_its_own() {
+        let gallery = Gallery {
+            tab: Tab::States,
+            page: [0, 0, 0, 2, 0],
+            ..Gallery::default()
+        };
+        assert_eq!(gallery.panels(CLARA_BW_METRICS, 2).len(), 3);
     }
 
     /// The picker opens from its chip, takes a choice, says it, and closes,
@@ -3196,7 +3453,7 @@ mod tests {
             keep_awake(&settings_panel(&runner, &mut gallery)).as_deref(),
             Some("On")
         );
-        gallery.on_action(&mut context, action_id("chip-0"));
+        gallery.on_action(&mut context, action_id("size-0"));
         assert!(
             gallery.keep_awake,
             "choosing a segment turned the switch off"
@@ -3347,7 +3604,7 @@ mod tests {
         const BUILDER: &str = include_str!("../../../crates/kobo-sdk/src/builder.rs");
         // Not controls: they build, inspect or arrange, and there is nothing
         // for an eye to check.
-        const NOT_DRAWN: [(&str, &str); 8] = [
+        const NOT_DRAWN: [(&str, &str); 9] = [
             ("new", "starts a screen"),
             ("build", "ends one"),
             (
@@ -3362,6 +3619,11 @@ mod tests {
                 "attaches typeset mathematics to text already shown",
             ),
             ("text_scale", "sets the size of prose already shown"),
+            (
+                "modal",
+                "shown as the dialog on the overlays page, the same frame with its own Close \
+                 in place of the cross",
+            ),
         ];
         let drawn: String = SOURCE
             .lines()
@@ -3389,5 +3651,77 @@ mod tests {
             missing.len(),
             missing.join(", ")
         );
+    }
+
+    /// The gallery is where people learn what each control does, so every
+    /// enabled one answers a tap: it changes what is drawn, or says it was
+    /// pressed. A chip or an option already chosen is the one exception,
+    /// because choosing it again is correctly nothing.
+    #[test]
+    fn every_enabled_sample_on_every_panel_answers_a_tap() {
+        let runner = kobo_sdk::AppRunner::with_metrics(Gallery::default(), CLARA_BW_METRICS);
+        let opened = |tab: Tab, page: usize, panel: usize| {
+            let mut gallery = Gallery {
+                tab,
+                shown: panel,
+                ..Gallery::default()
+            };
+            gallery.page[tab.index()] = page;
+            gallery.on_start(&mut runner.context());
+            gallery
+        };
+        let mut silent = Vec::new();
+        for (tab, _, _) in Tab::ALL {
+            for (page, (name, _)) in tab.pages().iter().enumerate() {
+                let panels = opened(tab, page, 0).panels(CLARA_BW_METRICS, page).len();
+                for panel in 0..panels {
+                    let before = painted(&opened(tab, page, panel), CLARA_BW_METRICS);
+                    let layout = before.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(false));
+                    for node in &layout.nodes {
+                        let Some(action) = node.kind.acts_on() else {
+                            continue;
+                        };
+                        // Moving about the reference is checked elsewhere,
+                        // and a choice already made is rightly a no-op.
+                        if action == kobo_sdk::ActionId::BACK
+                            || matches!(
+                                node.kind,
+                                kobo_ui::LayoutKind::NavDestination(..)
+                                    | kobo_ui::LayoutKind::NavDestinationSelected(..)
+                                    | kobo_ui::LayoutKind::Tab(..)
+                                    | kobo_ui::LayoutKind::PageNext(..)
+                                    | kobo_ui::LayoutKind::PagePrevious(..)
+                                    | kobo_ui::LayoutKind::Chip(_, true)
+                                    | kobo_ui::LayoutKind::OptionRow(_, true)
+                            )
+                        {
+                            continue;
+                        }
+                        let mut gallery = opened(tab, page, panel);
+                        let mut context = runner.context();
+                        gallery.on_action(&mut context, action);
+                        let asked = context.take_commands().iter().any(|command| {
+                            !matches!(command, Command::SetScreen(_) | Command::Log { .. })
+                        });
+                        let opened_elsewhere = gallery.entry.is_open()
+                            || gallery.search.is_open()
+                            || gallery.step.is_some()
+                            || gallery.detail
+                            || gallery.zones.is_some();
+                        if !asked
+                            && !opened_elsewhere
+                            && painted(&gallery, CLARA_BW_METRICS) == before
+                        {
+                            silent.push(format!(
+                                "{name} panel {panel}: {:?} {:?}",
+                                node.kind,
+                                node.text_lines.first()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(silent.is_empty(), "{silent:#?}");
     }
 }

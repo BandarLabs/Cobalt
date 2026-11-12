@@ -1,8 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
+  CATALOG_FILE,
+  EARLIER_CATALOG_FILE,
+  EARLIER_GLYPHS,
   catalogSignatureIsValid,
+  earlierCatalogFailures,
   publishedCatalogFailures
 } from "./verify-published-catalog.mjs";
 
@@ -134,4 +139,71 @@ test("capability order is not a difference but capability content is", () => {
   assert.deepEqual(publishedCatalogFailures(values.catalog, values.registry, values.assets), [
     "notes: published capabilities are not the registered ones"
   ]);
+});
+
+function marked(id, glyph, minimum) {
+  return {
+    manifest: {
+      format_version: 1,
+      id,
+      display_name: id,
+      short_label: id,
+      summary: `The ${id} application.`,
+      version: "1.0.0",
+      minimum_cobalt_version: minimum,
+      glyph,
+      capabilities: [],
+      binary_sha256: "a".repeat(64),
+      binary_bytes: 1
+    },
+    package_url: `https://example.test/${id}.cobalt-app`,
+    package_sha256: "b".repeat(64),
+    package_bytes: 2
+  };
+}
+
+const offeredAs = (entry, glyph) => ({ ...entry, manifest: { ...entry.manifest, glyph } });
+
+test("the earlier catalog is the catalog with stand-in glyphs on entries older runtimes cannot install", () => {
+  const brief = marked("brief", "clock", "0.1.9");
+  const backgammon = marked("backgammon", "dice", "0.3.34");
+  const catalog = { format_version: 1, entries: [brief, backgammon] };
+  const earlier = { format_version: 1, entries: [brief, offeredAs(backgammon, "circle")] };
+  assert.deepEqual(earlierCatalogFailures(earlier, catalog), []);
+
+  // A glyph 0.3.33 refuses, left in the file it reads, costs it the Store.
+  const leaked = { format_version: 1, entries: [brief, backgammon] };
+  assert.match(earlierCatalogFailures(leaked, catalog)[0], /backgammon: offered .* "dice"/);
+
+  // Anything but the glyph differing is a different catalog.
+  const moved = {
+    format_version: 1,
+    entries: [brief, { ...offeredAs(backgammon, "circle"), package_bytes: 3 }]
+  };
+  assert.match(earlierCatalogFailures(moved, catalog)[0], /more than its glyph/);
+
+  // An older runtime would install this one and then refuse the bundle.
+  const early = marked("backgammon", "dice", "0.3.33");
+  assert.match(
+    earlierCatalogFailures(
+      { format_version: 1, entries: [brief, offeredAs(early, "circle")] },
+      { format_version: 1, entries: [brief, early] }
+    )[0],
+    /would still install it/
+  );
+  assert.match(
+    earlierCatalogFailures({ format_version: 1, entries: [brief] }, catalog)[0],
+    /1 entries and the catalog 2/
+  );
+});
+
+test("the tools name the catalogs and the glyphs 0.3.33 draws as the Rust publisher does", () => {
+  const library = readFileSync(new URL("../crates/kobo-app-store/src/lib.rs", import.meta.url), "utf8");
+  assert.match(library, new RegExp(`CATALOG_FILE: &str = "${CATALOG_FILE}"`));
+  assert.match(library, new RegExp(`EARLIER_CATALOG_FILE: &str = "${EARLIER_CATALOG_FILE}"`));
+  const model = readFileSync(new URL("../crates/kobo-app-store/src/model.rs", import.meta.url), "utf8");
+  const body = model.slice(model.indexOf("pub fn is_earlier_glyph"));
+  const list = body.slice(0, body.indexOf("\n}\n"));
+  const names = [...list.matchAll(/"([a-z0-9-]+)"/g)].map(match => match[1]);
+  assert.deepEqual([...names].sort(), [...EARLIER_GLYPHS].sort());
 });

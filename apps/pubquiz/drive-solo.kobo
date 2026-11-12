@@ -1,0 +1,112 @@
+# sweep: --bare
+# A solo round narrowed to one difficulty and one category, played to the
+# results: a wrong answer, a right one, the round surviving a restart, the
+# asides that return to it, a refused scorecard and Play again.
+wait-for Play solo
+expect 0 rounds played
+tap Play solo
+expect Solo round
+expect 414 questions match
+tap Hard
+expect 138 questions match
+# The categories run onto a second page; the last one is found by turning.
+tap-paged Sport & Games
+expect 23 questions match
+clean
+shot solo-setup-filtered
+tap Start round
+expect Sport & Games · Question 1 of 10
+expect What is the maximum break in snooker
+clean
+shot solo-question
+# A wrong answer says so and still marks the right one.
+tap 120
+expect Not this time
+expect Your answer
+expect Right answer
+expect 0 of 1
+clean
+shot solo-wrong
+tap Next question
+expect Question 2 of 10
+tap Judo
+expect Correct
+expect Right answer · Your answer
+expect 1 of 2
+tap Next question
+expect Question 3 of 10
+# The round is saved as it is played, so a restart opens on the same question.
+restart
+wait-for Question 3 of 10
+expect empty hand
+expect-missing Play with friends
+clean
+shot solo-restarted
+# Rules and About from the round lead back to it, not to Home.
+tap Rules
+expect A round is saved if the reader sleeps.
+tap Back to the round
+expect Question 3 of 10
+tap-id game-more
+expect New game
+tap About the questions
+expect opentdb.com
+expect Back to the round
+clean
+shot solo-about-from-round
+tap Back to the round
+expect Question 3 of 10
+# Back mid-round asks before the scores are thrown away.
+tap-id 4294967295
+expect Leave this round?
+expect The scores so far will be lost.
+clean
+shot solo-leave-prompt
+tap Keep playing
+expect-missing Leave this round?
+expect Question 3 of 10
+tap-id answer-1
+tap Next question
+tap-id answer-1
+tap Next question
+tap-id answer-1
+tap Next question
+tap-id answer-1
+tap Next question
+tap-id answer-1
+tap Next question
+tap-id answer-1
+tap Next question
+tap-id answer-1
+tap Next question
+tap-id answer-1
+expect Question 10 of 10
+expect See results
+tap See results
+expect Results
+expect Round 1 · 10 questions
+expect 5 of 10
+expect Save scores
+clean
+shot solo-results
+# A scorecard the reader cannot store is said, with the retry on the banner.
+scenario storage-full
+tap Save scores
+wait-for Scores could not be saved
+expect Retry saving
+clean
+shot solo-scorecard-refused
+scenario normal
+tap Retry saving
+wait-for Saved
+expect-missing Scores could not be saved
+tap Play again
+expect Question 1 of 10
+expect-missing snooker
+# Play again deals from the same mix. The round above was resumed after a
+# restart, and the mix it was dealt from has to survive that too.
+expect Sport & Games · Question 1 of 10
+tap-id 4294967295
+tap Leave round
+expect Ready when you are
+expect 1 round played

@@ -16,15 +16,16 @@ Turn a Kobo into a low-power black-and-white photo frame.
     open.
   - **Slow slideshow** wakes the reader every 1, 6 or 24 hours to change the
     photo, and lets it sleep in between.
-- Shuffle or date order. Choose the mode, the interval and the order from
-  **Settings** in the top bar. Settings and the current position are
-  remembered.
+- The photo fills the screen inside a narrow white mat, with nothing over it.
+- Shuffle or date order. Tap the top edge for the bar, then the gear for
+  **Settings**: the mode, the interval and the order. Settings and the current
+  position are remembered.
 - Tap either side to move between photos. Tap the centre for the photo's file,
   album, date and transfer state.
 - New photos appear on their own: Frame looks at its shelf again whenever it
   changes photo, wakes, or you come back to it.
 - Every photo is checked against the digest recorded when it was sent.
-  Changed or damaged photos are skipped and listed on the home screen.
+  Changed or damaged photos are skipped, and the centre tap says so.
 - Each photo change uses a full-quality screen refresh.
 
 Frame does not replace the Kobo's own sleep screen.
@@ -45,8 +46,10 @@ Commands use the reader `kobo setup` saved. Add `--device IP` for another
 reader, or `--sim` to try a command on the simulator.
 
 - JPEG, PNG, GIF and WebP are accepted, and camera orientation is applied.
-- Photos are cropped to fill the screen by default. `--fit pad` keeps the
-  whole photo with white borders.
+- On a Clara Colour or Libra Colour, photos keep their colour. On other
+  readers they are reduced to grey on the computer before they are sent.
+- Photos are cropped to fill the mat by default. `--fit pad` keeps the whole
+  photo, and the mat widens on its short sides.
 - Each push adds to the frame. `--album NAME` names the album; otherwise the
   folder name is used. Photos already on the reader are not sent again.
 - `--replace` makes the frame hold only this push, and removes every other
@@ -84,7 +87,6 @@ from the reader and checking every photo.
 - Up to 500 photos and 150 MB of prepared images.
 - Source files up to 32 MB and 50 million pixels.
 - HEIC and HEIF are not supported. Convert them to JPEG first.
-- Photos are shown in greyscale.
 - Cobalt cannot yet keep a reader awake for Frame mode or wake it for the
   slow slideshow, and Frame says so in **Settings**. Until it can, keep the
   reader on its charger in Frame mode: a charging reader does not go back to
@@ -109,4 +111,6 @@ The simulator check builds the app, opens it in a fresh simulator and plays
 
 Images are prepared and decoded with the `image` crate (MIT or Apache-2.0).
 The sample photograph is [Blue Marble](https://svs.gsfc.nasa.gov/30613) by the
-NASA Johnson Space Center Earth Science and Remote Sensing Unit.
+NASA Johnson Space Center Earth Science and Remote Sensing Unit. The screenshots
+show Ansel Adams's The Tetons and the Snake River (1942), a public-domain
+photograph from the U.S. National Archives.

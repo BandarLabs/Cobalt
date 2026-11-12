@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 mod activity;
 mod app_store;
@@ -20,6 +21,7 @@ mod clock;
 mod facts;
 mod hardware;
 mod input;
+pub mod kaleido;
 mod panel;
 mod radio;
 pub mod runtime;
@@ -179,6 +181,35 @@ static POSE: LazyLock<PanelPose<'static>> = LazyLock::new(|| {
 #[must_use]
 pub fn selected_profile() -> &'static DeviceProfile {
     *PROFILE
+}
+
+/// The pixels one capture carries, and whether they are three bytes a pixel.
+///
+/// A colour panel's captures are in colour, because that is what the panel
+/// shows: the ideal view is the renderer's own RGB, and the panel view is what
+/// the filter makes of the last committed frame, residue and all, by the
+/// model in [`kaleido`]. A greyscale panel's captures are the grey they have
+/// always been. Renderer colour asked for by name, on `/colour-capture`,
+/// answers three bytes a pixel on every profile, luminance in each channel on
+/// a greyscale one, so a script that asks the same question of every profile
+/// gets the same shape back.
+fn panel_capture(panel: &PanelPreview, ideal: bool, renderer_rgb: bool) -> (Vec<u8>, bool) {
+    if renderer_rgb || (ideal && PROFILE.colour_panel) {
+        (panel.ideal_rgb(PROFILE.colour_panel), true)
+    } else if PROFILE.colour_panel {
+        (panel.panel_rgb(), true)
+    } else {
+        (panel.frame(ideal).to_vec(), false)
+    }
+}
+
+/// What the painter is told about the selected reader's panel.
+fn profile_appearance() -> kobo_ui::Appearance {
+    if PROFILE.colour_panel {
+        kobo_ui::Appearance::Colour
+    } else {
+        kobo_ui::Appearance::Grey
+    }
 }
 
 fn profile_metrics() -> DisplayMetrics {
@@ -351,8 +382,8 @@ impl Simulator {
         self.panel.frame(ideal).to_vec()
     }
 
-    fn capture(&self, ideal: bool, rgb: bool) -> io::Result<Vec<u8>> {
-        let colour = rgb.then(|| self.panel.ideal_rgb(PROFILE.colour_panel));
+    fn capture(&self, ideal: bool, renderer_rgb: bool) -> io::Result<Vec<u8>> {
+        let (frame, rgb) = panel_capture(&self.panel, ideal, renderer_rgb);
         capture::View {
             app: "counter",
             mode: "counter-demo",
@@ -361,7 +392,7 @@ impl Simulator {
             paints: u64::from(self.counter),
             orientation: kobo_ui::Orientation::Portrait,
             simulation: self.simulation_json(),
-            frame: colour.as_deref().unwrap_or_else(|| self.panel.frame(ideal)),
+            frame: &frame,
             ideal,
             rgb,
         }
@@ -373,7 +404,7 @@ impl Simulator {
         kobo_ui::render_with(
             &self.screen,
             &profile_metrics(),
-            &kobo_ui::Chrome::default(),
+            &kobo_ui::Chrome::default().with_appearance(profile_appearance()),
             &mut surface,
             None,
         );
@@ -786,6 +817,7 @@ impl AppServer {
                     height: u16::try_from(PROFILE.height).unwrap_or(u16::MAX),
                     pixels_per_inch: PROFILE.pixels_per_inch,
                     text_scale: profile_metrics().text_scale,
+                    colour_panel: PROFILE.colour_panel,
                 },
             },
         )?;
@@ -801,7 +833,8 @@ impl AppServer {
             kobo_policy::PowerPolicy::DEFAULT,
             kobo_policy::Backends::with(configured_backends()?.iter()),
         )
-        .with_library_roots(vec![simulated_library_root()]);
+        .with_library_roots(simulated_library_roots())
+        .with_audio_opener(simulated_audio_opener(&name));
         initial.hardware.magnet_present =
             matches!(std::env::var("KOBO_MAGNET").as_deref(), Ok("1" | "present"));
         initial.observe_hardware();
@@ -889,6 +922,9 @@ impl AppServer {
     ///
     /// Returns an error when the listener itself stops accepting.
     pub fn try_serve_one(&self, session: &AppSession) -> io::Result<bool> {
+        if let Err(error) = session.tend_notices() {
+            report_dropped_request(&error);
+        }
         match self.http.accept() {
             Ok((stream, _)) => {
                 stream.set_nonblocking(false)?;
@@ -1144,6 +1180,27 @@ struct AppState {
     /// The same field the device draws, from the same module, so a script
     /// that types here taps the keys a reader would.
     typing: Option<(u32, kobod::text_entry::Field)>,
+    /// The runtime's notices, the same module and the same rules the device
+    /// uses, over the simulator's own inbox. Opened on first use, so a
+    /// session that never sees one never touches the folder.
+    notices: Option<kobod::notices::Notices>,
+    /// The card up now: when it goes, what a tap on it opens, and what it says.
+    notice: Option<(Instant, kobod::notices::Opens, kobo_ui::NoticeCard)>,
+    notice_chores: NoticeChores,
+}
+
+/// The bookkeeping behind the simulator's notices, kept together so the
+/// session state reads as what it is rather than as a row of flags.
+#[derive(Debug, Default)]
+struct NoticeChores {
+    /// When the inbox was last read.
+    read_at: Option<Instant>,
+    /// Whether the launcher has been sent the list since it connected.
+    told: bool,
+    /// Whether the reader has slept since the last card.
+    slept: bool,
+    /// Lists to send once the answer that changed them has gone.
+    to_tell: Vec<Message>,
 }
 
 impl Default for AppState {
@@ -1204,6 +1261,9 @@ impl AppState {
             terminal_open: false,
             page_keys: profile_facts().page_keys,
             typing: None,
+            notices: None,
+            notice: None,
+            notice_chores: NoticeChores::default(),
         }
     }
 }
@@ -1552,13 +1612,23 @@ impl AppState {
             )),
             self.hardware.charging,
             signal,
-            true,
+            // A reader draws the headphones only while something is
+            // connected over Bluetooth, and nothing ever connects to the
+            // simulator, so every capture showing them was wrong.
+            false,
         );
-        self.chrome = kobo_ui::Chrome::for_screen(
-            &self.base_screen(),
-            self.app_name == "launcher",
-            Some(status),
-        );
+        let base = self.base_screen();
+        let notice = self
+            .notice
+            .as_ref()
+            .map(|(_, _, card)| card.clone())
+            .filter(|_| {
+                kobod::notices::room_on(Some(&base), self.typing.is_some())
+                    == kobod::notices::Room::Show
+            });
+        self.chrome = kobo_ui::Chrome::for_screen(&base, self.app_name == "launcher", Some(status))
+            .with_appearance(profile_appearance())
+            .with_notice(notice);
     }
 
     /// What the shell draws its chrome around: the open text field, if the
@@ -1591,6 +1661,157 @@ impl AppState {
         self.compose_chrome();
         self.paints = self.paints.saturating_add(1);
         self.commit_frame();
+    }
+
+    /// Reads the inbox, puts up or takes down the card, and returns what the
+    /// application has to be told: the list, to the launcher, when it changed.
+    ///
+    /// The device's rules exactly, on the simulator's clock: the inbox is read
+    /// four times a second rather than every two, so a route that raises a
+    /// notice sees it at once, and the card stays its full four seconds.
+    fn tend_notices(&mut self, now: Instant) -> Vec<Message> {
+        let mut told = std::mem::take(&mut self.notice_chores.to_tell);
+        if self.power_state != kobod::power::State::Awake {
+            self.notice_chores.slept = true;
+        }
+        let library = simulated_library_root();
+        let launcher = self.app_name == "launcher";
+        let notices = self
+            .notices
+            .get_or_insert_with(|| kobod::notices::Notices::open(&simulated_notices_folder()));
+        if self
+            .notice_chores
+            .read_at
+            .is_none_or(|at| now.saturating_duration_since(at) >= NOTICE_POLL)
+        {
+            self.notice_chores.read_at = Some(now);
+            let (arrived, discarded) = notices.collect(kobod::notices::now_millis());
+            if arrived + discarded > 0 {
+                self.logs
+                    .push(format!("notices: {arrived} arrived, {discarded} discarded"));
+            }
+            if arrived > 0 && launcher && self.notice_chores.told {
+                told.push(Message::Notices(notices.list(
+                    &library,
+                    false,
+                    kobod::notices::builtin_mark,
+                )));
+            }
+        }
+        if launcher && !self.notice_chores.told && self.paints > 0 {
+            self.notice_chores.told = true;
+            told.push(Message::Notices(notices.list(
+                &library,
+                false,
+                kobod::notices::builtin_mark,
+            )));
+        }
+        let room = if self.power_state == kobod::power::State::Awake
+            && self.lifecycle == Lifecycle::Foreground
+        {
+            kobod::notices::room_on(Some(&self.drawn_screen), self.typing.is_some())
+        } else {
+            kobod::notices::Room::Hold
+        };
+        let expired = self
+            .notice
+            .as_ref()
+            .is_some_and(|(until, _, _)| now >= *until);
+        if self.notice.is_some() && (expired || room != kobod::notices::Room::Show) {
+            self.notice = None;
+            notices.card_gone();
+            self.record("notice: gone".into());
+            self.panel.clean_next();
+            self.repaint_field();
+        } else if notices.waiting() {
+            match room {
+                kobod::notices::Room::Quiet => notices.keep_quiet(),
+                kobod::notices::Room::Hold => {}
+                kobod::notices::Room::Show => {
+                    if let Some(shown) =
+                        notices.announce(self.notice_chores.slept, kobod::notices::builtin_mark)
+                    {
+                        self.notice_chores.slept = false;
+                        self.notice = Some((
+                            now + Duration::from_millis(kobod::notices::SHOWN_FOR_MS),
+                            shown.opens,
+                            shown.card,
+                        ));
+                        self.record("notice: shown".into());
+                        self.repaint_field();
+                    }
+                }
+            }
+        }
+        told
+    }
+
+    /// Answers one of the launcher's notice requests, as the device does.
+    fn notice_request(
+        &mut self,
+        request: &kobo_protocol::DeviceRequest,
+    ) -> kobo_protocol::DeviceResult {
+        use kobo_protocol::{DeviceError, DeviceRequest, DeviceResult};
+        let library = simulated_library_root();
+        let notices = self
+            .notices
+            .get_or_insert_with(|| kobod::notices::Notices::open(&simulated_notices_folder()));
+        let (result, changed) = match request {
+            DeviceRequest::MarkNoticesRead => (DeviceResult::Done, notices.mark_read()),
+            DeviceRequest::ClearNotices => {
+                notices.clear();
+                (DeviceResult::Done, true)
+            }
+            DeviceRequest::OpenNotice { id } => match notices.target(*id, &library) {
+                Some((app, document)) => {
+                    let note = format!("notice: open {document} in {app}");
+                    self.record(note);
+                    return DeviceResult::Done;
+                }
+                None => (DeviceResult::Failed(DeviceError::NotFound), false),
+            },
+            _ => (DeviceResult::Failed(DeviceError::InvalidInput), false),
+        };
+        if changed {
+            let list = notices.list(&library, false, kobod::notices::builtin_mark);
+            self.notice_chores.to_tell.push(Message::Notices(list));
+        }
+        result
+    }
+
+    /// Answers a tap on the card. The simulator hosts one application, so an
+    /// article's opening is noted rather than performed; the list opens in
+    /// the launcher as it does on the device.
+    fn notice_tapped(&mut self) -> Vec<Message> {
+        let Some((_, opens, _)) = self.notice.take() else {
+            return Vec::new();
+        };
+        if let Some(notices) = self.notices.as_mut() {
+            notices.card_gone();
+        }
+        self.panel.clean_next();
+        self.repaint_field();
+        let library = simulated_library_root();
+        let Some(notices) = self.notices.as_ref() else {
+            return Vec::new();
+        };
+        if let kobod::notices::Opens::One(id) = opens {
+            if let Some((app, document)) = notices.target(id, &library) {
+                self.record(format!("notice: open {document} in {app}"));
+                return Vec::new();
+            }
+        }
+        let told = if self.app_name == "launcher" {
+            vec![Message::Notices(notices.list(
+                &library,
+                true,
+                kobod::notices::builtin_mark,
+            ))]
+        } else {
+            Vec::new()
+        };
+        self.record("notice: open the list".into());
+        told
     }
 
     /// Notes a page press on a reader that has no page-turn buttons.
@@ -1849,7 +2070,7 @@ impl AppSession {
             messages
         };
         for message in messages {
-            if self.type_into(&message)? || !self.route_input(&message)? {
+            if self.taken_by_the_runtime(&message)? {
                 continue;
             }
             write_shared(
@@ -2018,6 +2239,97 @@ impl AppSession {
         Ok(())
     }
 
+    /// Reads the notices inbox and moves the card on, telling the
+    /// application anything it has to hear. Cheap when nothing changed, so
+    /// the server calls it between requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the application cannot be written to.
+    pub fn tend_notices(&self) -> io::Result<()> {
+        let told = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .tend_notices(Instant::now());
+        self.tell(told)
+    }
+
+    /// Whether the runtime answers `message` itself rather than passing it
+    /// on: a tap on its notice card, a key on its keyboard, or its way back.
+    fn taken_by_the_runtime(&self, message: &Message) -> io::Result<bool> {
+        Ok(self.notice_tapped(message)?
+            || self.type_into(message)?
+            || !self.route_input(message)?)
+    }
+
+    /// Answers a tap on the runtime's notice card, which never reaches the
+    /// application. True when `message` was that tap.
+    fn notice_tapped(&self, message: &Message) -> io::Result<bool> {
+        if !matches!(message, Message::Action { action } if *action == ActionId::NOTICE) {
+            return Ok(false);
+        }
+        let told = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .notice_tapped();
+        self.tell(told)?;
+        Ok(true)
+    }
+
+    fn tell(&self, messages: Vec<Message>) -> io::Result<()> {
+        if !self.writer.connected() {
+            return Ok(());
+        }
+        for message in messages {
+            write_shared(
+                &self.writer,
+                &Frame {
+                    version: kobo_protocol::VERSION,
+                    request_id: 0,
+                    message,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Drops a notice into the inbox the way a companion does, and reads the
+    /// inbox at once, so a route that raises one can expect it on the next
+    /// step.
+    fn raise_notice(&self, title: &str) -> io::Result<()> {
+        let title = title.trim();
+        if title.is_empty() || title.len() > kobo_protocol::MAX_NOTICE_TITLE_LEN {
+            return Err(io::Error::other("a notice needs a title of 1 to 256 bytes"));
+        }
+        let inbox = simulated_notices_folder().join(kobod::notices::INBOX);
+        fs::create_dir_all(&inbox)?;
+        let record = kobo_json::ObjectBuilder::new()
+            .set("kind", "article")
+            .set("title", title)
+            .set("source", "example.com")
+            .set("app", "books")
+            .build()
+            .to_json();
+        let name = format!("{}.json", kobod::notices::now_millis());
+        let mut unique = inbox.join(&name);
+        let mut count = 0;
+        while unique.exists() {
+            count += 1;
+            unique = inbox.join(format!("{count}-{name}"));
+        }
+        let part = unique.with_extension("part");
+        fs::write(&part, record)?;
+        fs::rename(&part, &unique)?;
+        self.state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .notice_chores
+            .read_at = None;
+        self.tend_notices()
+    }
+
     fn send_lifecycle(&self, lifecycle: Lifecycle) -> io::Result<()> {
         write_shared(
             &self.writer,
@@ -2118,8 +2430,8 @@ impl AppSession {
                         .lock()
                         .map_err(|_| io::Error::other("app state lock poisoned"))?;
                     let ideal = request.path != "/capture";
-                    let rgb = request.path == "/colour-capture";
-                    let colour = rgb.then(|| state.panel.ideal_rgb(PROFILE.colour_panel));
+                    let (frame, rgb) =
+                        panel_capture(&state.panel, ideal, request.path == "/colour-capture");
                     capture::View {
                         app: &state.app_name,
                         mode: if state.runtime_navigation {
@@ -2132,9 +2444,7 @@ impl AppSession {
                         paints: state.paints,
                         orientation: state.orientation,
                         simulation: state.simulation_json(),
-                        frame: colour
-                            .as_deref()
-                            .unwrap_or_else(|| state.panel.frame(ideal)),
+                        frame: &frame,
                         ideal,
                         rgb,
                     }
@@ -2471,6 +2781,17 @@ impl AppSession {
                     }
                 }
             }
+            ("POST", "/notice") => {
+                let raised = std::str::from_utf8(&request.body)
+                    .map_err(io::Error::other)
+                    .and_then(|title| self.raise_notice(title));
+                match raised {
+                    Ok(()) => write_response(&mut stream, 204, "text/plain; charset=utf-8", b""),
+                    Err(error) => {
+                        write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
+                    }
+                }
+            }
             ("POST", "/scenario") => match Scenario::parse(&request.body) {
                 Some(scenario) => match self.set_scenario(scenario) {
                     Ok(()) => write_response(&mut stream, 204, "text/plain; charset=utf-8", b""),
@@ -2731,10 +3052,18 @@ fn layout_json_with_chrome(
     // action names, which differ from app to app.
     let content = physical_rect(orientation, layout.content);
     let page_turns = match layout.page_turns.declared() {
-        Some(turns) => format!(
-            "{{\"previous\":{},\"next\":{}}}",
-            turns.previous.0, turns.next.0
-        ),
+        // The middle of the page too, when it opens something: it is as
+        // much a control as the sides are, and as invisible.
+        Some(turns) => match turns.menu {
+            Some(menu) => format!(
+                "{{\"previous\":{},\"next\":{},\"menu\":{}}}",
+                turns.previous.0, turns.next.0, menu.0
+            ),
+            None => format!(
+                "{{\"previous\":{},\"next\":{}}}",
+                turns.previous.0, turns.next.0
+            ),
+        },
         None => "null".to_owned(),
     };
     let mut json = format!(
@@ -3660,7 +3989,28 @@ fn simulated_app_request(
     if let Some(result) = simulated_credential_request(state, caller, scenario, request)? {
         return Ok(Some(result));
     }
+    if matches!(
+        request,
+        DeviceRequest::MarkNoticesRead
+            | DeviceRequest::ClearNotices
+            | DeviceRequest::OpenNotice { .. }
+    ) {
+        if caller != "launcher" {
+            return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+        }
+        return Ok(Some(
+            state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?
+                .notice_request(request),
+        ));
+    }
 
+    // Deleting an article is the one library write, and Books the one
+    // application the runtime lets make it.
+    if matches!(request, DeviceRequest::RemoveArticle { .. }) && caller != "books" {
+        return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+    }
     let authorized = match request {
         DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
         DeviceRequest::ReadAppCatalog
@@ -4009,6 +4359,16 @@ fn simulated_folder(temporary: &str, chosen: &str) -> std::path::PathBuf {
     }
 }
 
+/// Where the simulator's notices arrive and are kept: the device's
+/// `state/notices`, in a folder no application id can name.
+#[must_use]
+pub fn simulated_notices_folder() -> std::path::PathBuf {
+    simulated_folder("cobalt-sim-state", ".state").join(".notices")
+}
+
+/// How often the simulator reads its notices inbox.
+const NOTICE_POLL: Duration = Duration::from_millis(250);
+
 /// The folder the simulator's library reads documents from.
 ///
 /// Books, Fanshelf and the other library readers list what is in here, so a
@@ -4017,6 +4377,54 @@ fn simulated_folder(temporary: &str, chosen: &str) -> std::path::PathBuf {
 #[must_use]
 pub fn simulated_library_root() -> std::path::PathBuf {
     simulated_data_root("library")
+}
+
+/// How the simulator opens an audio source: the real file, read the way the
+/// reader reads it, so a load under the simulator has the length, chapters
+/// and cover the device would show. A shelf name is looked up in the
+/// application's simulated shelf and a library identifier in the simulated
+/// library; a stream is left to the half-hour stand-in.
+fn simulated_audio_opener(app: &str) -> kobo_policy::services::AudioOpener {
+    let shelf = simulated_data_root(app);
+    let roots = simulated_library_roots();
+    kobo_policy::services::AudioOpener(std::sync::Arc::new(move |source| {
+        let book = match source {
+            kobo_protocol::AudioSource::Shelf(name) => kobo_audio::Book::open(&shelf.join(name)),
+            kobo_protocol::AudioSource::Library(id) => {
+                match kobo_policy::audio_library::resolve_in(&roots, id)? {
+                    kobo_policy::audio_library::Location::File(path) => {
+                        kobo_audio::Book::open(&path)
+                    }
+                    kobo_policy::audio_library::Location::Parts { title, paths } => {
+                        kobo_audio::Book::open_parts(&title, &paths)
+                    }
+                }
+            }
+            kobo_protocol::AudioSource::Stream(_) => return None,
+        };
+        Some(
+            book.map(|book| kobo_policy::services::SimulatedBook {
+                duration_ms: book.duration_ms(),
+                detail: book.description().to_wire(),
+            })
+            .map_err(|fault| match fault {
+                kobo_audio::Fault::Unreadable => kobo_protocol::DeviceError::NotFound,
+                kobo_audio::Fault::Unsupported => kobo_protocol::DeviceError::InvalidInput,
+                kobo_audio::Fault::Damaged => kobo_protocol::DeviceError::Backend,
+            }),
+        )
+    }))
+}
+
+/// Every folder the simulator's library is listed from, in the reader's order.
+///
+/// The reader lists its card and then Cobalt's data folder, where each
+/// application keeps its shelf. Listing only the library folder here meant a
+/// book Gutenbird downloaded in the simulator never reached Books, so the one
+/// path an owner takes most often could not be tried without a reader.
+#[must_use]
+pub fn simulated_library_roots() -> Vec<std::path::PathBuf> {
+    vec![simulated_library_root(), simulated_data_root("")]
 }
 
 /// The offset from UTC an application under the simulator should be told.
@@ -6148,6 +6556,7 @@ mod tests {
                     height: u16::try_from(PROFILE.height).expect("profile height"),
                     pixels_per_inch: PROFILE.pixels_per_inch,
                     text_scale: kobo_ui::TextScale::Default,
+                    colour_panel: PROFILE.colour_panel,
                 }
             );
             write_protocol_frame(

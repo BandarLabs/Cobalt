@@ -1,0 +1,52 @@
+# Hashi: a gap cycles through one bridge, two and none, and moves survive a restart.
+expect Connect islands · 0 of 105 solved
+tap Hashi
+tap Five islands
+wait-for-id game-more
+expect Starter · Five islands
+expect Undo
+expect Restart
+tap Rules
+expect Join islands with one or two straight bridges that never cross.
+tap Difficulty
+expect-missing Join islands
+tap Play
+wait-for-id game-more
+tap-id route-0
+expect Vertical 1,3 to 3,3: single
+tap-id route-0
+expect Vertical 1,3 to 3,3: double
+clean
+shot hashi-double
+tap-id route-0
+expect Vertical 1,3 to 3,3: blank
+tap-id route-1
+expect Horizontal 3,1 to 3,3: single
+# Undo history is kept with the puzzle when the app closes.
+restart
+wait-for Starter · Five islands
+expect Horizontal 3,1 to 3,3: single
+tap-id game-undo
+expect Horizontal 3,1 to 3,3: blank
+expect Move undone.
+tap-id game-undo
+expect Vertical 1,3 to 3,3: double
+# New game in More opens the next unsolved Hashi puzzle and keeps this one.
+tap-id game-more
+expect New game
+expect Restart puzzle
+expect Puzzles
+clean
+shot hashi-more
+tap New game
+wait-for-id game-more
+expect-missing Five islands
+expect Starter · Puzzle 2
+tap-id game-more
+tap Puzzles
+expect In progress
+clean
+shot hashi-list
+tap Five islands
+wait-for-id game-more
+expect Vertical 1,3 to 3,3: double

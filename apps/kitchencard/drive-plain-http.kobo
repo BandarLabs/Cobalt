@@ -1,0 +1,20 @@
+# sweep: --bare
+# An address typed with plain http is refused, and the owner is told why
+# rather than seeing the field quietly go back to empty.
+wait-for Connect Mealie
+tap Type the address here
+wait-for Kitchen Card settings
+tap https://mealie.example
+expect https://
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type ://mealie.invalid
+expect http://mealie.invalid
+tap Save
+wait-for Kitchen Card settings
+expect-missing http://mealie.invalid
+wait-for Kitchen Card does not use plain http.
+clean
+shot kitchen-settings-plain-http

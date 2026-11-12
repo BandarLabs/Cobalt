@@ -1,0 +1,7 @@
+# Every tile name is whole on the first page at every text size: a name too
+# long for its cell is shortened, never broken in the middle of a word.
+wait-for Cobalt
+wait-for 1 of
+shot launcher-labels
+expect Backgammon
+expect Audiobooks

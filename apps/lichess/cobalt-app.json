@@ -3,9 +3,9 @@
   "display_name": "Lichess",
   "short_label": "Lichess",
   "summary": "Play Lichess games, challenge players, solve puzzles, or play offline.",
-  "version": "1.0.19",
-  "release_notes": "Your token is typed on Cobalt's own keyboard and saved by the reader, never the app, and a QR code opens the Lichess token page on a phone. Rated or Casual, side and clock are each one row of segments.",
-  "glyph": "grid",
+  "version": "1.0.26",
+  "release_notes": "A game against the computer now names you as You on the board, rather than showing your Lichess username.",
+  "glyph": "chess-white-knight",
   "capabilities": [
     "network",
     "hold-wifi",
@@ -21,7 +21,7 @@
         }
       },
       {
-        "text": "On the reader, open Lichess, tap Account/Games, then Connect Lichess, and type the token."
+        "text": "On the reader, open Lichess, tap Your games, then Connect Lichess, and type the token."
       },
       {
         "text": "Or install the token from a computer. Set up the reader once over USB, if you have not already.",

@@ -8,7 +8,7 @@ use kobo_sdk::failure::Problem;
 use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, Context, Credential, KoboApp, Position, Screen, ScreenBuilder,
-    StoreResult, Task, TaskId, TaskOutcome,
+    StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 const REGISTRY: &str = "catalog";
@@ -262,7 +262,7 @@ impl Calibre {
                         // the reason under its prompt.
                         self.address.open_with(url);
                         self.notice =
-                            "Use an HTTPS OPDS address without a username or password.".into();
+                            "Use an address that starts with https:// and has no username or password in it.".into();
                     }
                 }
                 Some(Typing::Cancelled) => {
@@ -379,9 +379,20 @@ impl Calibre {
         }
         match self.view {
             View::Libraries => {
-                let mut s = ScreenBuilder::new("calibre-libraries")
-                    .top_bar("Libraries")
-                    .top_bar_action("add", "Add");
+                let mut s = ScreenBuilder::new("calibre-libraries").top_bar("Libraries");
+                // With no library yet, Add library is the screen's one
+                // button, so the bar carries Check again instead of a second
+                // Add: it is how a library set up from a computer shows up
+                // while this screen is open.
+                // Settings that could not be read carry their own retry on the
+                // banner, so the bar offers nothing beside it.
+                s = if self.settings.state == settings::State::Blocked {
+                    s
+                } else if self.loaded && self.url.is_empty() {
+                    s.top_bar_action("check-again", "Check again")
+                } else {
+                    s.top_bar_action("add", "Add")
+                };
                 if !self.loaded {
                     s = s.secondary("Loading libraries…");
                 } else if self.settings.state == settings::State::Blocked {
@@ -396,10 +407,9 @@ impl Calibre {
                         .splash(
                             Some(kobo_sdk::Glyph::Book),
                             "No libraries",
-                            "Run kobo connect calibre-web on your computer, or add the HTTPS address of your calibre-web library here.",
+                            "Add the address you open calibre-web at, or run kobo connect calibre-web on your computer.",
                         )
-                        .primary_button("add", "Add library")
-                        .button("check-again", "Check again");
+                        .primary_button("add", "Add library");
                 } else {
                     s = s.rows([(
                         "library",
@@ -424,7 +434,7 @@ impl Calibre {
                     &self.address,
                     "Library address",
                     if self.notice.is_empty() {
-                        "Enter the HTTPS OPDS address of your library."
+                        "The address you open calibre-web at, starting with https://."
                     } else {
                         &self.notice
                     },
@@ -723,6 +733,19 @@ impl KoboApp for Calibre {
                     }
                 }
                 TaskOutcome::Failed(error) => {
+                    // A library that is only out of reach for now is still
+                    // the owner's library. It used to be listed until the app
+                    // closed and then lost without a word, because only a
+                    // catalog that answered was saved.
+                    if matches!(
+                        error,
+                        TaskError::Offline
+                            | TaskError::Unreachable
+                            | TaskError::TimedOut
+                            | TaskError::RateLimited(_)
+                    ) {
+                        self.settings.verified(c);
+                    }
                     let problem = catalog::problem(&self.url, error);
                     self.notice.clone_from(&problem.message);
                     self.failure = Some(problem);
@@ -999,6 +1022,42 @@ mod tests {
         )));
     }
     #[test]
+    fn a_public_library_whose_catalog_is_out_of_reach_is_still_saved() {
+        let mut app = Calibre {
+            loaded: true,
+            url: "https://library.test/opds".into(),
+            view: View::Credential,
+            ..Calibre::default()
+        };
+        app.settings.state = settings::State::Ready;
+        let mut c = Context::default();
+        app.on_action(&mut c, action_id("public-library"));
+        let task = app.task.expect("the catalog was not asked for");
+        app.on_task(&mut c, task, TaskOutcome::Failed(TaskError::Unreachable));
+        assert!(
+            app.settings.state == settings::State::Saving,
+            "the library was not saved"
+        );
+        assert!(c.commands().iter().any(|command| matches!(
+            command,
+            kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == REGISTRY
+        )));
+    }
+
+    #[test]
+    fn unreadable_settings_offer_one_retry_rather_than_two() {
+        let mut app = Calibre {
+            loaded: true,
+            view: View::Libraries,
+            ..Calibre::default()
+        };
+        app.settings.state = settings::State::Blocked;
+        let screen = app.screen(&Context::default());
+        let bar = format!("{:?}", screen.top_bar);
+        assert!(!bar.contains("Check again"), "{bar}");
+    }
+
+    #[test]
     fn setup_save_retry_and_unreadable_settings_guard() {
         let mut app = loaded_catalog();
         let mut c = Context::default();
@@ -1062,7 +1121,7 @@ mod tests {
             commands.iter().any(|c| matches!(
                 c,
                 kobo_sdk::Command::Device(kobo_sdk::DeviceRequest::TypeText { initial, hint, .. })
-                    if initial == "http://library.test/opds" && hint.contains("HTTPS OPDS")
+                    if initial == "http://library.test/opds" && hint.contains("starts with https://")
             )),
             "a refused address comes back to mend with the reason: {commands:?}"
         );
@@ -1114,6 +1173,35 @@ mod tests {
             !format!("{:?}", app.screen(&c)).contains("Steps {"),
             "signing in again is not the add-a-library flow"
         );
+    }
+    #[test]
+    fn an_empty_library_list_offers_add_once_and_keeps_check_again_in_the_bar() {
+        let mut runner = kobo_sdk::AppRunner::new(Calibre::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: REGISTRY.into(),
+            value: None,
+        });
+        let screen = runner.app().screen(&Context::default());
+        let drawn = format!("{screen:?}");
+        let bar = screen.top_bar.as_ref().expect("a top bar");
+        assert_eq!(
+            bar.actions
+                .iter()
+                .map(|action| action.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Check again"]
+        );
+        let buttons = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Button { label, .. } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(buttons, ["Add library", "Downloaded books"], "{drawn}");
+        assert!(!drawn.contains("OPDS"), "{drawn}");
     }
     #[test]
     fn library_add_fits() {

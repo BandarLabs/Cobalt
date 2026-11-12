@@ -15,7 +15,7 @@ Find the magnet sensor behind your Kobo's bezel and watch it respond.
    and move it slowly along.
 2. When the sensor responds, the screen says so and a ring appears on that
    edge.
-3. **Sweep the next edge** moves to the next one.
+3. **Sweep the right edge** (or whichever edge is next) moves on to it.
 
 The edge that responded is remembered, so next time the app opens on it and
 says where it was found.
@@ -34,6 +34,15 @@ fn on_start(&mut self, context: &mut Context) {
     context.device().read_cover();
 }
 
+fn on_device_result(&mut self, context: &mut Context, request: DeviceRequest, result: DeviceResult) {
+    if let (DeviceRequest::ReadCover, DeviceResult::Cover { available: true, magnet_present }) =
+        (request, result)
+    {
+        self.present = magnet_present;
+        context.set_screen(self.screen());
+    }
+}
+
 fn on_cover_change(&mut self, context: &mut Context, magnet_present: bool) {
     self.present = magnet_present;
     context.set_screen(self.screen());
@@ -41,7 +50,8 @@ fn on_cover_change(&mut self, context: &mut Context, magnet_present: bool) {
 ```
 
 - Call `read_cover` once at the start. A magnet already in place produces no
-  change event.
+  change event, so the starting state comes back through `on_device_result`.
+  `available` is false on a reader without the sensor.
 - Only the app in the foreground receives changes. Ask again when your app
   returns to the foreground.
 
@@ -53,9 +63,9 @@ fn on_cover_change(&mut self, context: &mut Context, magnet_present: bool) {
 
 ```sh
 cargo test -p kobo-magnet
-kobo run --sim --app magnet      # in the browser simulator
+(cd examples/magnet && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py magnet
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

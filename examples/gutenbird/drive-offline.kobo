@@ -35,5 +35,70 @@ tap Books on this device
 wait-for-id device-1
 tap-id device-1
 wait-for An Older Book
-# The reading bar shortens a long title with an ellipsis at large text sizes.
+# The reading bar stays hidden until the top of the page is touched, and it
+# shortens a long title with an ellipsis at large text sizes.
+expect-missing Book downloaded
+tap-at 536,12
+wait-idle
 expect Book downloaded
+# Back from the book is the device list again. In the first book a
+# bookmark is kept and listed under Notes.
+tap-id 4294967295
+wait-for On this device
+tap-id device-0
+wait-for-id reader-forward
+tap-id reader-controls
+wait-for Page 1 of
+tap-id reader-bookmark
+wait-for Bookmarked
+tap-id reader-highlights
+wait-for Bookmarks
+expect Remove bookmark
+clean
+shot gutenbird-offline-notes
+# Back to the book is the page, ready to read, with the panel put away.
+tap Back to the book
+wait-for-id reader-forward
+wait-idle
+expect-missing Page 1 of
+clean
+shot gutenbird-offline-back-to-book
+# Read it to the end.
+tap-id reader-forward
+tap-id reader-forward
+tap-id reader-forward
+tap-id reader-forward
+tap-id reader-forward
+tap-id reader-forward
+tap-id reader-forward
+wait-for This is the end
+clean
+shot gutenbird-offline-end
+# Removing a book asks first; Keep it keeps it, Remove takes it off.
+# Back leaves the book, and the first Back puts the message away.
+tap-id 4294967295
+wait-for On this device
+tap-id device-menu-0
+wait-for Remove from this device
+tap Remove from this device
+wait-for from this device?
+expect Your place in it is kept
+clean
+shot gutenbird-offline-remove-ask
+tap Keep it
+wait-for-id device-1
+expect A Lamp for the Ledger
+tap-id device-menu-0
+tap Remove from this device
+wait-for from this device?
+tap-id remove-confirm
+wait-for On this device
+expect-missing A Lamp for the Ledger
+expect Book downloaded earlier
+clean
+shot gutenbird-offline-removed
+# The removal outlives the app.
+restart
+wait-idle
+tap-id catalogs
+wait-for Ready offline: 1 book

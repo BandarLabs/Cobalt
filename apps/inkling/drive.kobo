@@ -1,22 +1,33 @@
-# Simulator recorders pin this day; the answer is gravy.
+# Simulator recorders pin this day; the answer is gravy, and the day
+# before it, which the archive opens, is dizzy.
 wait-for Inkling
 expect-missing Shapes, not color
 expect-missing Enter guess
 tap Rules
-expect Filled: right spot
+expect Black: right spot.
 expect Hard mode
 expect Guesses can leave out letters found.
 clean
 shot inkling-help
+# Hard mode is a switch on the rules, applied on the tap.
+tap Hard mode
+expect Each guess must use the letters found.
+clean
+shot inkling-hard-on
 tap Play
 # The board stays in view while typing, and a refused word stays typed.
 # Where the keys and the board do not fit together, as at the largest text
 # size, Type a guess opens the keys on a screen of their own.
 maybe-tap-id enter
+type abc
+tap Guess
+expect Use five letters.
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
 type zzzzz
 tap Guess
 expect Not in the word list
-maybe-tap-id enter
 tap-id kb.backspace
 tap-id kb.backspace
 tap-id kb.backspace
@@ -25,29 +36,126 @@ tap-id kb.backspace
 type crane
 tap Guess
 expect 1 of 6
-expect Right spot: _RA__
+expect-missing Right spot
 clean
 shot inkling-knowledge
+# CRANE found R and A in place, so hard mode refuses a guess that drops them.
+maybe-tap-id enter
+type stone
+tap Guess
+expect Hard mode: use every letter you have found
+clean
+shot inkling-hard-refused
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+maybe-tap-id cancel
+# The day's guesses and the switch are saved, so a relaunch keeps both.
+restart
+wait-for Saved game restored.
+clean
+shot inkling-restored
+tap Rules
+expect Each guess must use the letters found.
+tap Hard mode
+expect Guesses can leave out letters found.
+tap Play
 tap-id game-more
 expect New game
 expect-missing Hard mode
 tap Statistics
-expect Played 0. Won 0.
+expect Played
+expect Best streak
 tap Play
+maybe-tap-id enter
+type rival
+tap Guess
+expect 2 of 6
 maybe-tap-id enter
 type gravy
 tap Guess
 expect Solved
+expect Play an earlier day
 clean
 shot inkling-solved
 tap Statistics
-expect Played 1. Won 1.
+expect 100%
 clean
 shot inkling-stats
+# Export writes a file a computer can fetch; a refused write says so and
+# carries its retry.
+tap Export results
+wait-for Saved as export-result.txt
+scenario storage-full
+tap Export results
+wait-for Results could not be saved. Check storage.
+expect Try again
+clean
+shot inkling-export-refused
+scenario normal
+tap Try again
+wait-for Saved as export-result.txt
+clean
+shot inkling-export-saved
+tap Play
+# A solved day and its statistics survive a relaunch.
+restart
+wait-for Solved
+expect Play an earlier day
+tap Statistics
+expect 100%
 tap Play
 tap Play an earlier day
+expect Archive games do not change statistics
 expect August 31, 2026
+expect Earlier puzzles
+clean
+shot inkling-archive
+tap Earlier puzzles
+expect August 26, 2026
+expect-missing August 31, 2026
+clean
+shot inkling-archive-earlier
+# Back retraces the earlier page before it leaves the archive.
+tap Back
+expect August 31, 2026
+expect Earlier puzzles
 tap August 31, 2026
 expect Archive puzzle
 clean
-shot inkling-archive
+shot inkling-archive-day
+# Six misses end an archive game with the answer, and leave the daily
+# statistics as they were.
+maybe-tap-id enter
+type crane
+tap Guess
+maybe-tap-id enter
+type stone
+tap Guess
+maybe-tap-id enter
+type rival
+tap Guess
+maybe-tap-id enter
+type mount
+tap Guess
+maybe-tap-id enter
+type plumb
+tap Guess
+expect 5 of 6
+maybe-tap-id enter
+type gravy
+tap Guess
+expect Answer: DIZZY
+expect Today's puzzle
+clean
+shot inkling-archive-lost
+tap Statistics
+expect 100%
+tap Play
+tap Today's puzzle
+expect Solved
+expect Play an earlier day
+clean
+shot inkling-back-to-today

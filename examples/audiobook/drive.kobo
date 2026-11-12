@@ -1,22 +1,84 @@
-# The free sample is made and saved on the reader: the shelf starts empty,
-# Now playing names the sample with the honest firmware note where the sim
-# has no audio backend, and the shelf keeps it afterwards.
+# The reader's audiobooks: a book as one file and a book as a folder of
+# parts, seeded by scripts/check-apps-sim.py. A tap opens the book; with no
+# headphones connected the player switches Bluetooth on, finds the simulated
+# pair, and plays, with its chapters, speed and sleep timer a tap away.
 wait-for Audiobooks
-expect Nothing here yet
-clean
-shot audiobook-empty
-tap-id sample
-wait-for Now playing
 expect The Quiet Shelf
-expect Saved on this reader
+expect Two Tones
+expect M4B
+expect 2 parts
+expect-missing No audiobooks yet
+clean
+shot audiobook-library
+tap The Quiet Shelf
+wait-for Now playing
+wait 1500
+expect The Quiet Shelf
+expect Ada Example
+expect Chapter
+expect 1 of 3
+expect Simulated headphones
+expect Pause
+expect Chapters
+expect Sleep
 clean
 shot audiobook-playing
+tap Bluetooth audio output
+wait-for Bluetooth audio
+expect Simulated headphones
+expect Connected
+clean
+shot audiobook-headphones
+tap back
+wait-for Now playing
+tap Chapters
+wait-for Chapters
+expect One. A Familiar Light
+expect Two. A Slow History
+expect Three. A Quiet Future
+clean
+shot audiobook-chapters
+tap Two. A Slow History
+wait-for Now playing
+expect 2 of 3
+tap-id audio-speed
+wait-for Speed
+expect 1.0×
+tap 1.5×
+expect 1.5×
+clean
+shot audiobook-speed
+tap back
+wait-for Now playing
+expect 1.5×
+tap Sleep
+wait-for Sleep timer
+expect At the end of this chapter
+clean
+shot audiobook-sleep
+tap In 30 minutes
+wait-for Now playing
+expect Pauses in 30 min
+tap Pause
+wait-for Play
+clean
+shot audiobook-paused
 tap back
 wait-for Audiobooks
-expect The Quiet Shelf
-expect-missing Nothing here yet
+# The book playing is listed once, by its own row, which says it is paused.
+expect Paused
+expect-missing Now playing
 clean
-shot audiobook-shelf
+shot audiobook-library-playing
+tap Two Tones
+wait-for Now playing
+wait 1500
+expect Two Tones
+expect 1 of 2
+clean
+shot audiobook-folder-book
+tap back
+wait-for Audiobooks
 # With no keys on the reader, Create names the exact command for each key,
 # keeps the topic, and checks again rather than throwing the topic away.
 tap Create
@@ -30,7 +92,6 @@ expect kobo secret set openai
 expect kobo secret set elevenlabs
 expect Nothing has been spent
 expect-missing Try another topic
-expect-missing Permission needed
 clean
 shot audiobook-keys
 tap Check again

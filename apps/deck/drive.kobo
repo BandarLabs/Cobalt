@@ -28,7 +28,11 @@ expect-missing kobo trust set sidekick
 clean
 shot pairing
 tap-id enter-address
-type 192.168.1.20
+# Loopback, where nothing listens, rather than a made-up LAN address. A
+# restart opens in the normal scenario, so its first look is a real
+# connection: one to nowhere hung for the whole connect timeout on a CI
+# runner, and one refused here fails at once on every machine.
+type 127.0.0.1
 # The address opens on the keys the runtime keeps for addresses, with where
 # the address comes from under the prompt.
 shot address-field
@@ -52,6 +56,9 @@ type abc234
 tap-id kb.enter
 wait-for This reader is not on Wi-Fi.
 expect-missing Check that Sidekick is open
+# The banner says why; the line under it names the computer rather than
+# saying the same thing again.
+expect Paired with 127.0.0.1:9331.
 clean
 shot offline
 # Pairing in the top bar is the way out of a pairing gone wrong, and the
@@ -59,10 +66,39 @@ shot offline
 tap-id repair
 wait-for Pair with your computer
 tap-id enter-address
-expect 192.168.1.20:9331
+expect 127.0.0.1:9331
 # Back on the reader's keyboard puts it away; the second leaves pairing.
 tap Back
 tap back
 wait-for This reader is not on Wi-Fi.
 clean
 shot back-to-deck
+# Refresh in the bar asks again, and each way the computer can fail is said
+# in its own words.
+scenario host-down
+tap Refresh
+wait-for Your computer is not answering.
+expect Paired with 127.0.0.1:9331.
+clean
+shot host-down
+scenario network-timeout
+tap Refresh
+wait-for Your computer took too long to answer.
+clean
+shot slow
+# A pad pressed while the computer is away says so, and is not left running.
+scenario host-down
+tap Todo
+wait-for Your computer is not answering.
+expect-missing Still running
+# Nothing of the press is left running when the app starts again.
+wait-idle
+# The pairing is kept when the app starts again.
+restart
+wait-for Todo
+expect Pairing
+expect-missing Preview only
+expect-missing Pair with your computer
+wait-for Paired with 127.0.0.1:9331.
+clean
+shot paired-after-restart

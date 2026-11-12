@@ -10,3 +10,13 @@ wait-for No sign-in has arrived
 expect-missing Off the air
 clean
 shot readlater-check-again
+# Before a sign-in arrives there is no list, no Sync and no Settings to
+# reach: the computer step is the only way forward.
+expect-missing Sync
+expect-missing Unread
+# The check is made again whenever the app comes back to the front.
+lifecycle background
+lifecycle foreground
+wait-idle
+expect Connect Wallabag
+expect kobo connect readlater
