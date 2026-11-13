@@ -20,6 +20,7 @@ mod clip;
 mod clip_delivery;
 mod clip_host;
 mod clip_install;
+mod clippings;
 mod connect;
 mod console;
 mod deck;
@@ -1140,6 +1141,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
 }
 
 /// [`run`], once a request for help has been answered.
+#[allow(clippy::too_many_lines)]
 fn run_command(arguments: &[String]) -> Result<(), String> {
     let filled = with_default_reader(arguments)?;
     let arguments = filled.as_slice();
@@ -1161,6 +1163,7 @@ fn run_command(arguments: &[String]) -> Result<(), String> {
         "birds" => birds::command(&arguments[1..]),
         "clip" => clip::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
+        "clippings" => clippings::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
         "export" => exports::command(&arguments[1..]),
@@ -8526,6 +8529,7 @@ Send things to your apps. These go to the reader kobo setup saved; add
   frame init | push PHOTOS [--fit crop|pad] | plan | restore | ls | rm ID   Photos for Frame
   musicstand init | push SCORE.pdf | plan | ls | rm ID  Scores for Music Stand
   vault init | push NOTES_DIR | plan | ingest DIR | ls | rm ID  Markdown notes for Vault
+  clippings push DIR     Web Clipper notes and read state for Clippings
   flashcards --help      Import Anki decks and stage them for Flashcards
   fieldbook --help       Field packs in, eBird checklists out
   panels push COMIC.cbz  A comic for Panels
