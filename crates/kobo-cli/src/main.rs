@@ -1141,6 +1141,7 @@ fn run(arguments: &[String]) -> Result<(), String> {
 }
 
 /// [`run`], once a request for help has been answered.
+#[allow(clippy::too_many_lines)]
 fn run_command(arguments: &[String]) -> Result<(), String> {
     let filled = with_default_reader(arguments)?;
     let arguments = filled.as_slice();
