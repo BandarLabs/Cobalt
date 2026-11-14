@@ -753,7 +753,7 @@ fn locate_syncthing() -> Result<PathBuf, String> {
         }
     }
     Err(
-        "no safe host 'syncthing' executable was found on PATH. Install it with your OS package manager (macOS: 'brew install syncthing'; Debian/Ubuntu: 'sudo apt install syncthing'; Fedora: 'sudo dnf install syncthing'), then rerun setup. Cobalt never downloads or executes a release binary for you."
+        "no safe host 'syncthing' executable was found on PATH. Install it with your OS package manager (macOS: 'brew install syncthing'; Debian/Ubuntu: 'sudo apt install syncthing'; Fedora: 'sudo dnf install syncthing'; Windows: 'winget install Syncthing.Syncthing'), then rerun setup. Cobalt never downloads or executes a release binary for you."
             .to_owned(),
     )
 }
