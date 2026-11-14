@@ -366,10 +366,7 @@ fn walk(
         if bytes == 0 || bytes > MAX_DOCUMENT_BYTES {
             continue;
         }
-        let Ok(relative) = path.strip_prefix(root) else {
-            continue;
-        };
-        let Some(relative) = relative.to_str() else {
+        let Some(relative) = wire_path(root, &path) else {
             continue;
         };
         let title = if named.is_some() {
@@ -577,6 +574,20 @@ pub fn remove_article(roots: &[PathBuf], id: &str) -> Result<(), Removal> {
         return Err(Removal::NotAnArticle);
     }
     fs::remove_file(&path).map_err(|_| Removal::Refused)
+}
+
+/// A path under a root as an identifier carries it: its parts joined by `/`
+/// whatever the host's separator, so a listing made on Windows names the
+/// same book as one made on the reader, and nothing for a name that is not
+/// UTF-8.
+pub(crate) fn wire_path(root: &Path, path: &Path) -> Option<String> {
+    let parts = path
+        .strip_prefix(root)
+        .ok()?
+        .components()
+        .map(|part| part.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()?;
+    Some(parts.join("/"))
 }
 
 /// Whether the walk leaves a directory alone: every hidden one, and the

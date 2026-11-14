@@ -662,9 +662,11 @@ mod tests {
         PathBuf::from("/home/ada/.config/kobo")
     }
 
+    /// The manifest's path with `/` between its parts, so the Mac and Linux
+    /// layouts read the same when the tests run on Windows.
     fn file(browser: Browser, os: Os) -> String {
         match registration(browser, os, &home(), &config()) {
-            Some(Registration::File(path)) => path.to_string_lossy().into_owned(),
+            Some(Registration::File(path)) => path.to_string_lossy().replace('\\', "/"),
             other => panic!("expected a file for {browser:?} on {os:?}, got {other:?}"),
         }
     }
