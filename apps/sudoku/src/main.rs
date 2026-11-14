@@ -1,17 +1,39 @@
 //! Offline Sudoku with acknowledged saves, optional checking and reversible edits.
 mod game;
+mod recover;
 mod saved;
 #[cfg(test)]
 mod tests;
 use game::{Game, Level, Puzzle, CELLS};
 use kobo_sdk::game::{self as chrome, Menu, Tap};
 use kobo_sdk::{
-    action_id, ActionId, BandAlign, Context, DialogAction, Glyph, KoboApp, PencilBoard, PencilMark,
+    action_id, ActionId, BandAlign, Context, DialogAction, KoboApp, PencilBoard, PencilMark,
     PencilMarkKind, Screen, ScreenBuilder, SlotWidth, StoreResult,
 };
 use kobo_state::draft::{Draft, Status};
 use std::process::ExitCode;
 type BuildSlot<'a> = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder + 'a>;
+
+/// Where to put the digit keys so they sit under the board's nine columns:
+/// how far in from the page's edge they start, and how wide they are, both in
+/// tenths of a millimetre. `None` when the board is too narrow for nine keys
+/// a finger can hit, and the keys keep the page's width.
+fn keypad_under_board(probe: &Screen, metrics: &kobo_sdk::DisplayMetrics) -> Option<(u16, u16)> {
+    let layout = probe.layout_with(metrics, &kobo_sdk::Chrome::measuring(true));
+    let left = layout.rect_of_action(action_id(&cell_name(0)))?.x;
+    let last = layout.rect_of_action(action_id(&cell_name(8)))?;
+    let right = last.x + last.width;
+    let page = layout.rect_of_action(action_id(&digit_name(1)))?.x;
+    let gap = metrics.space(kobo_sdk::Space::Small);
+    let tight = metrics.space(kobo_sdk::Space::Tight);
+    let width = right - left;
+    if width < metrics.touch_target_minimum() * 9 + tight * 8 || left - page < gap {
+        return None;
+    }
+    // Rounded down, so the keys never run a pixel past the board.
+    let tenths = |pixels: i32| u16::try_from(pixels * 254 / metrics.pixels_per_inch.max(1)).ok();
+    Some((tenths(left - page - gap)?, tenths(width)?))
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum View {
@@ -31,6 +53,7 @@ struct Sudoku {
     active: Option<u64>,
     loaded: bool,
     load_error: Option<String>,
+    set_aside: recover::SetAside,
     notice: Option<String>,
     help_page: usize,
     sent_orientation: Option<kobo_sdk::Orientation>,
@@ -47,6 +70,7 @@ impl Default for Sudoku {
             active: None,
             loaded: false,
             load_error: None,
+            set_aside: recover::SetAside::default(),
             notice: None,
             help_page: 0,
             sent_orientation: None,
@@ -85,19 +109,35 @@ impl Sudoku {
         let puzzle = &self.puzzles[self.game.puzzle];
         format!("Sudoku · {} {}", puzzle.level.name(), puzzle.number)
     }
+    #[cfg(test)]
     fn status(&self) -> String {
+        self.status_line(false)
+    }
+    /// The line over the board. `brief` drops the pointer to More where the
+    /// whole sentence would take a second line and push the digit keys off
+    /// a small panel at the largest text.
+    fn status_line(&self, brief: bool) -> String {
         if self.save_failed() {
-            return "Not saved · Retry saving in More.".into();
+            return if brief {
+                "Not saved · See More.".into()
+            } else {
+                "Not saved · Retry saving in More.".into()
+            };
         }
         if self.game.solved(&self.puzzles) {
             // The hint count used to live on a menu screen that no longer
             // exists, and the end of a puzzle is the one moment it matters.
             // The way on is named too, since the board is otherwise a dead
             // end: the digits and Notes do nothing once it is full.
-            return match self.game.position.hints {
-                0 => "Puzzle complete. New game is in More.".into(),
-                1 => "Puzzle complete with 1 hint. New game is in More.".into(),
-                hints => format!("Puzzle complete with {hints} hints. New game is in More."),
+            let done = match self.game.position.hints {
+                0 => "Puzzle complete.".to_owned(),
+                1 => "Puzzle complete with 1 hint.".to_owned(),
+                hints => format!("Puzzle complete with {hints} hints."),
+            };
+            return if brief {
+                done
+            } else {
+                format!("{done} New game is in More.")
             };
         }
         if let Some(notice) = &self.notice {
@@ -225,12 +265,15 @@ impl Sudoku {
             // other whole-screen failure takes. The heading and the Retry at
             // the foot of the panel left an empty page between the two.
             return if let Some(error) = &self.load_error {
-                failure_screen(
+                self.set_aside.screen(
                     head,
                     &context.metrics(),
-                    "Cannot open game",
-                    (&format!("{error} Your saved game has been kept."), error),
-                    ("retry-load", "Try again"),
+                    error,
+                    &recover::Wording {
+                        title: "Cannot open game",
+                        kept: "Your saved game has been kept.",
+                        explain: "Your saved game stays on the Kobo as a separate copy, and Sudoku starts again on a new Easy puzzle.",
+                    },
                 )
             } else {
                 head().text("Opening your game…").build()
@@ -240,11 +283,30 @@ impl Sudoku {
         // plain bar and Back returns to the board.
         let away = |title| ScreenBuilder::new("sudoku").top_bar(title).owns_back(true);
         match self.view {
-            View::Play => self.play_screen(ScreenBuilder::new("sudoku").game_top_bar(
-                self.title(),
-                self.menu,
-                self.more_items(),
-            )),
+            View::Play => {
+                let head = || {
+                    ScreenBuilder::new("sudoku").game_top_bar(
+                        self.title(),
+                        self.menu,
+                        self.more_items(),
+                    )
+                };
+                // The keys are laid out the board's width when it is wide
+                // enough for nine keys a finger can hit, which is measured
+                // against a screen whose keys run the page's width.
+                let metrics = context.metrics().oriented(self.orientation());
+                let probe = self.play_screen(head(), None, false);
+                let keypad = keypad_under_board(&probe, &metrics);
+                let full = self.play_screen(head(), keypad, false);
+                if full
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+                {
+                    self.play_screen(head(), keypad, true)
+                } else {
+                    full
+                }
+            }
             View::New => self.new_game_screen(context),
             View::Restart => away("Sudoku")
                 .confirmation(
@@ -331,32 +393,68 @@ impl Sudoku {
             stacked
         }
     }
-    fn play_screen(&self, builder: ScreenBuilder) -> Screen {
-        let builder = if self.game.landscape {
-            // The status line and a keypad of three rows sit beside the
-            // board, so the board keeps every line of height the foot bar
-            // leaves it: at the largest text a status line above it cost
-            // the squares their last pixel of touch target.
+    fn play_screen(
+        &self,
+        builder: ScreenBuilder,
+        keypad: Option<(u16, u16)>,
+        brief: bool,
+    ) -> Screen {
+        if self.game.landscape {
+            // The status line, the keypad and the three verbs sit in a column
+            // beside the board, so the board keeps the whole height under the
+            // top bar. With the verbs in a bar along the foot, a Clara turned
+            // on its side had squares a few pixels under a finger's width.
             let slots: [(SlotWidth, BuildSlot<'_>); 2] = [
                 (SlotWidth::Fill, Box::new(|b| self.board(b))),
                 (
                     SlotWidth::Fixed(392),
-                    Box::new(|b| self.digits(b.secondary(self.status()), 3)),
+                    Box::new(|b| self.verbs(self.digits(b.secondary(self.status_line(brief)), 3))),
                 ),
             ];
-            builder.band(BandAlign::Top, slots)
-        } else {
-            self.digits(self.board(builder.secondary(self.status())), 9)
+            return builder.band(BandAlign::Top, slots).build();
+        }
+        let builder = self.board(builder.secondary(self.status_line(brief)));
+        let builder = match keypad {
+            // The keys are the board's width and under its columns, so
+            // the row of digits reads as part of the puzzle rather than
+            // a row of buttons running past both of its edges.
+            Some((indent, width)) => {
+                let slots: [(SlotWidth, BuildSlot<'_>); 2] = [
+                    (SlotWidth::Fixed(indent), Box::new(|b| b)),
+                    (SlotWidth::Fixed(width), Box::new(|b| self.digits(b, 9))),
+                ];
+                builder.band(BandAlign::Top, slots)
+            }
+            None => self.digits(builder, 9),
         };
+        // Notes is a switch that keeps its name, with a tick over it while it
+        // is on. It used to change its word to Digits, so the bar named the
+        // mode the player was not in, and read as either an order or a state.
         builder
-            .game_actions(
-                true,
-                [
-                    ("pencil", if self.game.pencil { "Digits" } else { "Notes" }),
-                    ("erase", "Erase"),
-                ],
-            )
+            .action_bar_marked([
+                (chrome::UNDO, chrome::UNDO_LABEL, None),
+                (
+                    "pencil",
+                    "Notes",
+                    self.game.pencil.then_some(kobo_sdk::Glyph::Check),
+                ),
+                ("erase", "Erase", None),
+            ])
             .build()
+    }
+    /// Undo, Notes and Erase as keys under the digits, in the order the
+    /// foot bar has them upright. Notes is outlined while it is on, as a
+    /// digit key is while its note is set.
+    fn verbs(&self, builder: ScreenBuilder) -> ScreenBuilder {
+        builder.grid_with_selection(
+            3,
+            false,
+            [
+                (chrome::UNDO, chrome::UNDO_LABEL, false),
+                ("pencil", "Notes", self.game.pencil),
+                ("erase", "Erase", false),
+            ],
+        )
     }
     /// Whether starting another puzzle would throw anything away.
     fn has_progress(&self) -> bool {
@@ -365,6 +463,7 @@ impl Sudoku {
     /// Why Erase did nothing, since the bar has no greyed-out state to show it.
     fn cannot_erase(&self) -> &'static str {
         match self.game.position.selected {
+            _ if self.game.solved(&self.puzzles) => "The puzzle is complete.",
             None => "Choose a square to erase.",
             Some(cell) if !self.game.editable(cell, &self.puzzles) => {
                 "Given numbers cannot change."
@@ -389,7 +488,7 @@ impl Sudoku {
         let each = self.puzzles.len() / Level::ALL.len();
         context.paginate_oriented(&format!("Use 1–9 once in each row, column and 3×3 box. The shaded cross follows your selection; a bracketed number or small square marks your target. Given numbers cannot change.
 
-Tap Notes, then numbers to add or remove notes. A dot marks a square with notes; its selected numbers have outlined keys. Tap Digits to enter answers. Erase clears the selected square, so notes can go where an answer was.
+Tap Notes, then numbers to add or remove notes; a tick over Notes shows they are on. Each note sits in its own place in the square, and the selected square's notes have outlined keys. Tap Notes again to enter answers, which are grey beside the printed numbers. Erase clears the selected square, so notes can go where an answer was.
 
 Mistakes are hidden at first. Show mistakes in More marks a wrong answer in the selected square without removing it, and Hide mistakes turns that off again. Reveal square in More fills the selected square after asking, and counts as a hint.
 
@@ -474,7 +573,10 @@ impl KoboApp for Sudoku {
                     self.loaded = true;
                     self.load_error = None;
                 }
-                Err(error) => self.load_error = Some(error.to_string()),
+                Err(error) => {
+                    self.load_error = Some(error.to_string());
+                    self.set_aside.hold(bytes);
+                }
             },
             StoreResult::Loaded { value: None, .. } => {
                 self.loaded = true;
@@ -485,7 +587,23 @@ impl KoboApp for Sudoku {
         }
         self.show(context);
     }
+    fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if self.set_aside.on_keys(context, saved::KEY, result) {
+            self.show(context);
+        }
+    }
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if let Some(kept) = self.set_aside.on_save(key, &result) {
+            // With the unreadable game copied, the fresh one is written at
+            // once, so reopening finds it rather than the same failure.
+            if kept {
+                self.loaded = true;
+                self.load_error = None;
+                self.save(context);
+            }
+            self.show(context);
+            return;
+        }
         if key != saved::KEY {
             return;
         }
@@ -511,7 +629,11 @@ impl KoboApp for Sudoku {
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         let is = |name: &str| action == action_id(name);
         if !self.loaded {
-            if is("retry-load") && self.load_error.take().is_some() {
+            if self.set_aside.action(context, action) {
+                self.show(context);
+            } else if is("retry-load") && !self.set_aside.busy() && self.load_error.take().is_some()
+            {
+                self.set_aside.clear();
                 context.store().load(saved::KEY);
                 self.show(context);
             }
@@ -570,33 +692,6 @@ impl KoboApp for Sudoku {
         }
         self.show(context);
     }
-}
-/// A whole-screen failure: a splash saying why, then its one fix directly
-/// under it. On a small panel at the largest text sizes the mark gives way
-/// first and then the longer sentence, so the reason and the fix are always
-/// on the panel together.
-fn failure_screen(
-    head: impl Fn() -> ScreenBuilder,
-    metrics: &kobo_sdk::DisplayMetrics,
-    title: &str,
-    (full, short): (&str, &str),
-    (retry, label): (&str, &str),
-) -> Screen {
-    let build = |glyph, summary: &str| {
-        head()
-            .splash(glyph, title, summary)
-            .primary_button(retry, label)
-            .build()
-    };
-    [(Some(Glyph::Close), full), (None, full), (None, short)]
-        .into_iter()
-        .map(|(glyph, summary)| build(glyph, summary))
-        .find(|screen| {
-            !screen
-                .diagnostics(metrics, &kobo_sdk::Chrome::measuring(true))
-                .has_errors()
-        })
-        .unwrap_or_else(|| build(None, short))
 }
 fn main() -> ExitCode {
     match kobo_sdk::run("sudoku", Sudoku::default()) {

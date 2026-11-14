@@ -1,0 +1,30 @@
+# sweep: --seed-root scripts/fixtures/crossword/unreadable-save
+# A save the app cannot read is kept and explained, never silently replaced.
+wait-for Cannot open progress
+expect Your saved game has been kept.
+expect Try again
+expect-missing Odds and ends
+clean
+shot crossword-unreadable
+# Trying again reads the same file and keeps refusing rather than starting over.
+tap Try again
+wait-for Cannot open progress
+expect-missing Odds and ends
+# Start over is the way past it: it asks first, keeps a copy of the
+# unreadable progress, and the fresh shelf is what a restart finds.
+expect Start over
+tap Start over
+wait-for Start over?
+expect Your saved progress stays on the Kobo as a separate copy
+clean
+shot crossword-unreadable-start-over
+tap Go back
+wait-for Cannot open progress
+tap Start over
+wait-for Start over?
+tap-id confirm-start-over
+wait-for Odds and ends
+expect 0/21 squares
+restart
+wait-for Odds and ends
+expect-missing Cannot open progress

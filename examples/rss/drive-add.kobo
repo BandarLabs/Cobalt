@@ -1,0 +1,117 @@
+# sweep: --bare
+# Every way in: a website name looked up, a feed address previewed, an
+# address with no feed, a lookup with no network, and an OPML file sent from
+# the computer. A feed comes off the shelf from its row's menu.
+wait-for No feeds yet
+tap Add a feed
+wait-for Import OPML
+tap Website or HTTPS feed address
+wait-for Feed search powered by feedsearch.dev
+type xkcd.com
+tap Search
+wait-idle 30000
+wait-for Feeds via feedsearch.dev
+expect articles
+clean
+shot feedsearch-results
+tap xkcd.com
+wait-idle 30000
+wait-for unread of
+clean
+shot xkcd-articles
+tap Back
+wait-for Ready offline
+expect xkcd.com
+# An address that is not a feed says so and offers to change it.
+tap Add a feed
+wait-for Import OPML
+tap Website or HTTPS feed address
+wait-for Feed search powered by feedsearch.dev
+type https://example.com
+tap Search
+wait-idle 30000
+wait-for did not return a feed
+expect Change address
+clean
+shot not-a-feed
+tap Change address
+wait-idle
+tap Back
+wait-idle
+tap Back
+wait-idle
+# A feed address goes to a preview, not to feedsearch.dev.
+tap Add a feed
+wait-for Import OPML
+tap Website or HTTPS feed address
+wait-for Feed search powered by feedsearch.dev
+type https://science.nasa.gov/feed/
+tap Search
+wait-idle 30000
+wait-for Feed preview
+wait-for Select to add
+clean
+shot feed-preview
+tap NASA Science
+wait-for unread of
+tap Back
+wait-for NASA Science
+# A name looked up with no network says what is wrong.
+scenario offline
+tap Add a feed
+wait-for Import OPML
+tap Website or HTTPS feed address
+wait-for Feed search powered by feedsearch.dev
+type theconversation.com
+tap Search
+wait-idle 30000
+wait 5000
+wait-for Wi-Fi
+clean
+shot search-offline
+scenario normal
+tap Back
+wait-idle
+tap Back
+wait-idle
+tap Back
+wait-idle
+# Delete from the row's menu takes one feed off and leaves the rest.
+expect xkcd.com
+tap-id feed-menu-0
+wait-for Delete
+clean
+shot row-menu
+tap Delete
+wait-idle
+expect-missing xkcd.com
+expect NASA Science
+# OPML: the duplicate is skipped, a feed can be left out and put back.
+companion feeds push scripts/fixtures/rss/subscriptions.opml --sim
+tap Add a feed
+wait-for Import OPML
+tap Import OPML
+wait-for subscriptions.opml
+tap subscriptions.opml
+wait-for Choose feeds
+expect 1 new feed. 1 duplicate or unsupported entry skipped.
+expect 1 selected
+clean
+shot import-choose
+tap xkcd
+wait-for None selected
+expect-missing Add
+tap xkcd
+wait-for 1 selected
+tap Add
+wait-idle 30000
+wait-for xkcd
+expect NASA Science
+clean
+shot imported
+restart
+wait-for xkcd
+expect NASA Science
+# The shelf's refresh time reads as a time of day, not a database stamp.
+expect Updated
+expect-missing Updated 20

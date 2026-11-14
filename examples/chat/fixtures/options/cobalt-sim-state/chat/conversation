@@ -1,0 +1,1 @@
+{"v":"1","turns":[{"role":"user","text":"What should I read next?"},{"role":"assistant","text":"That depends on the mood you are in.\n{\"options\":[\"Something short\",\"A long novel\",\"Poetry\"]}"}]}

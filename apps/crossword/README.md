@@ -8,11 +8,11 @@ Sixty-one offline crosswords, each with its own saved progress.
 <td width="50%" valign="top"><img width="300" src="screenshots/clue-entry.png" alt="Entering an answer below its clue"><br>Entering an answer below its clue</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/crossword-midi.png" alt="A 7 by 7 crossword"><br>A 7 by 7 crossword</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/crossword-midi.png" alt="The puzzle list, where 7 by 7 Midi puzzles sit among the minis"><br>The puzzle list, where 7 by 7 Midi puzzles sit among the minis</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/crossword-menu.png" alt="New game, checking and revealing under More"><br>New game, checking and revealing under More</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/completed.png" alt="A completed puzzle"><br>A completed puzzle</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/completed.png" alt="A completed puzzle with its check and reveal counts"><br>A completed puzzle with its check and reveal counts</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/save-recovery.png" alt="Retrying a save that failed"><br>Retrying a save that failed</td>
 </tr>
 </table>
@@ -20,10 +20,9 @@ Sixty-one offline crosswords, each with its own saved progress.
 ## Puzzles
 
 - **Odds and ends**: a 5×5 crossword with black corners.
-- Three word squares at Starter, Easy and Medium difficulty. Difficulty is an
-  editorial guide, not a measured solving time.
-- **Heart of the matter**: the earlier 5×5 word square, with its saved letters
-  kept.
+- Three word squares, where each answer reads the same across and down:
+  **Small beginnings** (3×3), **In the square** (4×4) and **Heart of the
+  matter** (5×5).
 - **Mini 1 to 46**: 5×5 crosswords.
 - **Midi 1 to 11**: 7×7 crosswords, one after every four minis.
 
@@ -35,7 +34,8 @@ written for Cobalt.
 ## Playing
 
 Tap a square, or choose a clue from **Clues**. The active word is shaded and
-its clue is above the grid. While you type, the full clue stays above the word
+its clue is above the grid. When the grid leaves room, as a 5×5 puzzle does,
+every clue is printed under it, Across beside Down. While you type, the full clue stays above the word
 and keyboard. Type one letter to move through the word, or the whole word to
 fill it from the first square. **Back** cancels text you have not entered.
 
@@ -61,7 +61,9 @@ stays marked Completed once solved, even after a restart.
 Progress is marked saved only once storage confirms it. If storage is full,
 keep the app open, free some space and choose **Retry saving**. Your latest
 letters stay in memory, and the reader will not suspend until they are saved.
-Saves that cannot be read are left untouched.
+Saves that cannot be read are left untouched: **Try again** reads them once
+more, and **Start over** keeps a copy on the reader before every puzzle
+starts again empty.
 
 ## Limits
 

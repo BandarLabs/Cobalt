@@ -6,133 +6,25 @@
 <title>Install Cobalt on your Kobo from the browser</title>
 <meta name="description" content="Install Cobalt and NickelMenu on a Kobo plugged into your computer, straight from the browser. No terminal, nothing uploaded.">
 <link rel="icon" href="../logo.svg" type="image/svg+xml">
-<style>
-:root {
-  --paper: #f6f2ea; --paper-deep: #eee8db; --ink: #1b1813; --ink-soft: #5a5347;
-  --rule: #d9d1c0; --cobalt: #1a41a8; --cobalt-deep: #143283;
-  --serif: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
-  --mono: "SF Mono", "Menlo", "Consolas", monospace;
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0; background: var(--paper); color: var(--ink);
-  font-family: var(--serif); font-size: 18px; line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-}
-.wrap { width: min(760px, calc(100% - 48px)); margin: 0 auto; }
-a { color: var(--cobalt); text-decoration: none; }
-a:hover { text-decoration: underline; }
-code, kbd { font-family: var(--mono); font-size: .88em; }
-
-.masthead { border-bottom: 1.5px solid var(--ink); background: var(--paper); }
-.masthead .wrap { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; }
-.masthead img { display: block; }
-.masthead nav a { color: var(--ink); font-size: 16px; margin-left: 20px; }
-
-h1 { font-size: 40px; line-height: 1.1; margin: 40px 0 10px; letter-spacing: -.01em; }
-.lede { color: var(--ink-soft); margin: 0 0 8px; }
-
-/* Steps */
-ol.steps { list-style: none; counter-reset: step; margin: 34px 0 0; padding: 0; }
-ol.steps[aria-disabled="true"] { opacity: .4; }
-ol.steps > li { counter-increment: step; display: grid; grid-template-columns: 46px 1fr; gap: 18px; padding: 26px 0; border-top: 1px solid var(--rule); }
-ol.steps > li::before {
-  content: counter(step); font-family: var(--mono); font-size: 22px; line-height: 1;
-  color: var(--cobalt); border: 1.5px solid var(--cobalt); border-radius: 2px;
-  width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;
-}
-ol.steps h2 { font-size: 21px; margin: 4px 0 6px; }
-ol.steps p { margin: 0 0 12px; color: var(--ink-soft); }
-li[data-state="done"]::before { background: var(--cobalt); color: #fff; }
-li[aria-disabled="true"] { opacity: .45; }
-
-.btn {
-  display: inline-flex; align-items: center; gap: 9px; padding: 11px 20px; font-size: 17px;
-  font-family: var(--serif); border: 1.5px solid var(--ink); border-radius: 2px;
-  background: transparent; color: var(--ink); cursor: pointer;
-}
-.btn:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
-.btn.primary { background: var(--cobalt); border-color: var(--cobalt); color: #fff; }
-.btn.primary:hover:not(:disabled) { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
-.btn:disabled { cursor: not-allowed; opacity: .4; }
-
-.note { font-size: 15px; color: var(--ink-soft); margin: 10px 0 0; }
-.ok { color: var(--cobalt); }
-.bad { color: #8a2b1e; }
-
-.banner { border: 1.5px solid #8a2b1e; background: #f7e9e5; padding: 14px 18px; margin: 26px 0 0; }
-.banner strong { display: block; margin-bottom: 3px; }
-.banner p { margin: 0; font-size: 16px; }
-[hidden] { display: none !important; }
-
-
-.progress { height: 5px; background: var(--paper-deep); border: 1px solid var(--rule); margin: 14px 0 0; }
-.progress > i { display: block; height: 100%; width: 0; background: var(--cobalt); transition: width .2s; }
-
-.optional { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
-  color: var(--ink-soft); border: 1px solid var(--rule); padding: 2px 6px; vertical-align: 3px; }
-#app-search {
-  width: 100%; padding: 9px 12px; font-family: var(--serif); font-size: 16px;
-  border: 1.5px solid var(--rule); background: var(--paper); color: var(--ink); border-radius: 2px;
-}
-#app-search:focus { outline: none; border-color: var(--cobalt); }
-/* Bounded so a full catalogue does not push the remaining steps off the page. */
-.applist { max-height: 320px; overflow-y: auto; border: 1px solid var(--rule); border-top: none; margin-top: 10px; }
-.applist:empty { display: none; }
-.app { display: grid; grid-template-columns: 22px 1fr auto; gap: 11px; align-items: baseline;
-  padding: 10px 13px; border-top: 1px solid var(--rule); cursor: pointer; }
-.app:hover { background: var(--paper-deep); }
-.app input { margin: 0; accent-color: var(--cobalt); width: 16px; height: 16px; }
-.app .app-name { font-weight: 600; color: var(--ink); }
-.app .app-name:hover { color: var(--cobalt); }
-.app span { display: block; font-size: 14px; color: var(--ink-soft); }
-.app em { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); font-style: normal; white-space: nowrap; }
-.app[hidden] { display: none; }
-
-#remove { margin: 14px 0 0; }
-#remove > summary { cursor: pointer; padding: 11px 0; font-size: 16px; color: var(--ink-soft); }
-#remove > div { padding: 4px 0 14px; }
-#remove .btn { margin-top: 6px; }
-#by-hand { margin: 26px 0 0; border: 1px solid var(--rule); background: var(--paper-deep); }
-#by-hand > summary { cursor: pointer; padding: 13px 18px; font-size: 17px; }
-#by-hand > summary::marker { color: var(--cobalt); }
-#by-hand > div { padding: 0 18px 16px; border-top: 1px solid var(--rule); }
-#by-hand[open] > summary { font-weight: 600; }
-#by-hand ol { padding-left: 22px; }
-.way { padding: 16px 0; }
-.way + .way { border-top: 1px solid var(--rule); }
-.way h3 { font-size: 18px; margin: 0 0 8px; display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-.tag { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
-  color: var(--cobalt); border: 1px solid var(--cobalt); padding: 2px 7px; font-weight: 400; }
-#by-hand li { margin: 7px 0; }
-#by-hand pre {
-  font-family: var(--mono); font-size: 13px; line-height: 1.5; background: var(--paper);
-  border: 1px solid var(--rule); padding: 11px 13px; overflow-x: auto; white-space: pre; margin: 8px 0;
-}
-.aside { text-align: right; margin: 30px 0 60px; font-size: 15px; border-top: 1px solid var(--rule); padding-top: 14px; }
-.shot { margin: 12px 0 0; }
-.shot img { display: block; max-width: 100%; height: auto; border: 1px solid var(--rule); background: var(--paper-deep); }
-.shot figcaption { font-size: 14px; color: var(--ink-soft); margin-top: 7px; }
-.consent { display: block; margin-top: 9px; font-size: 15px; color: var(--ink); }
-.consent input { margin-right: 7px; accent-color: var(--cobalt); }
-kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; background: var(--paper); }
-@media (max-width: 600px) {
-  h1 { font-size: 30px; }
-  ol.steps > li { grid-template-columns: 34px 1fr; gap: 13px; }
-  ol.steps > li::before { width: 30px; height: 30px; font-size: 17px; }
-}
-</style>
+<link rel="stylesheet" href="../site.css">
+<link rel="stylesheet" href="install.css">
 </head>
 <body>
 
 <header class="masthead">
   <div class="wrap">
-    <a href="../"><img src="../logo.svg" alt="Cobalt" width="81" height="34"></a>
-    <nav><a href="../">Home</a><a href="https://github.com/BandarLabs/Cobalt">GitHub</a></nav>
+    <a class="brand" href="../"><img src="../logo.svg" alt="Cobalt" width="81" height="34"></a>
+    <nav class="top" aria-label="Main navigation">
+      <a href="../#apps">Apps</a>
+      <a href="../install/" aria-current="page">Install</a>
+      <a href="../developers.html">Developers</a>
+      <a href="../faq.html">FAQ</a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
+    </nav>
   </div>
 </header>
 
-<main class="wrap">
+<main class="wrap tool">
   <h1>Install Cobalt directly from your browser</h1>
   <p class="lede">Writes Cobalt and NickelMenu to a Kobo plugged into this computer. No terminal, nothing uploaded.</p>
 
@@ -148,21 +40,21 @@ kbd { border: 1px solid var(--rule); border-bottom-width: 2px; padding: 0 5px; b
         <h3><span class="tag">Terminal</span> One command</h3>
         <p>Plug the Kobo into a computer and tap <strong>Connect</strong> on the reader's screen. Then in Terminal:</p>
         <pre>curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh</pre>
-        <p class="note">Installs Cobalt and NickelMenu, adds the menu entry, ejects the drive. Keeps what is already on the reader. It also turns on the reader's SSH server with a key only this computer holds, then saves the reader when it is back on Wi-Fi, so apps that take files from your computer work straight away.</p>
+        <p class="note">Installs the <code>kobo</code> command, then writes Cobalt and NickelMenu to the reader, adds the menu entry and ejects the drive. Keeps what is already on the reader. It also turns on the reader's SSH server with a key only this computer holds, then saves the reader when it is back on Wi-Fi, so apps that take files from your computer work straight away.</p>
       </section>
 
       <section class="way">
         <h3><span class="tag">From source</span> Build it yourself</h3>
-        <p>Needs Rust. Builds the same thing the others download. Plug the Kobo in and tap <strong>Connect</strong> on its screen first.</p>
+        <p>Needs Rust and an ARM C cross-compiler (the full walkthrough names the package). Builds the same thing the others download. Plug the Kobo in and tap <strong>Connect</strong> on its screen first.</p>
         <pre>git clone https://github.com/BandarLabs/Cobalt.git
 cd Cobalt
 rustup target add armv7-unknown-linux-musleabihf
-cargo run -p kobo-cli -- setup</pre>
+cargo run -p kobo-cli -- setup --source</pre>
       </section>
 
       <section class="way">
         <h3><span class="tag">Any computer</span> Copy one file</h3>
-        <p>No terminal, and any browser. It is the file the steps above would write.</p>
+        <p>No terminal, and any browser. It is the same file the browser install below writes.</p>
         <ol>
           <li>Download <a id="by-hand-archive" href="cobalt-KoboRoot.tgz" download>the Cobalt file</a> <span class="note" id="by-hand-size"></span></li>
           <li>Plug the Kobo in. It asks on its own screen whether to connect: tap <strong>Connect</strong>. It shows up as a drive called <code>KOBOeReader</code>.</li>
@@ -184,6 +76,8 @@ cargo run -p kobo-cli -- setup</pre>
         <p>Plug the Kobo in. It asks on its own screen whether to connect: tap <strong>Connect</strong>. Until you do, it only charges and no drive appears. Then choose <code>KOBOeReader</code> here.</p>
         <button class="btn" id="pick" type="button">Choose the Kobo drive</button>
         <p class="note" id="pick-note">Your browser will ask permission to edit files on the drive. Only <code>.kobo</code> and <code>.adds</code> are written.</p>
+        <p class="note" id="installed-lede" hidden>Applications on this reader. Removing one keeps its data, and the Store can put it back.</p>
+        <ul class="installed" id="installed" hidden></ul>
       </div>
     </li>
 
@@ -191,6 +85,12 @@ cargo run -p kobo-cli -- setup</pre>
       <div>
         <h2>Download Cobalt</h2>
         <p id="download-copy">Downloads Cobalt and checks it against the checksum published with it. If the file that arrives is not the one that was published, it is thrown away instead of written to your reader.</p>
+        <fieldset class="channel">
+          <legend>Channel</legend>
+          <label><input type="radio" name="channel" id="channel-stable" value="stable" checked>Stable<span>Tested versions</span></label>
+          <label><input type="radio" name="channel" id="channel-beta" value="beta">Beta<span>New versions sooner</span></label>
+        </fieldset>
+        <p class="note" id="channel-note"></p>
         <button class="btn" id="fetch" type="button" disabled>Download and check it</button>
         <div class="progress" hidden id="bar"><i></i></div>
         <p class="note" id="fetch-note"></p>
@@ -235,6 +135,23 @@ cargo run -p kobo-cli -- setup</pre>
 
   <p class="aside"><a href="remove/">Looking to uninstall Cobalt?</a></p>
 </main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
+    </div>
+    <nav aria-label="Footer navigation">
+      <a href="../">Home</a>
+      <a href="../developers.html">Developers</a>
+      <a href="../sdk.html">SDK reference</a>
+      <a href="../faq.html">FAQ</a>
+      <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
+      <a href="https://github.com/BandarLabs/Cobalt/blob/main/SECURITY.md">Security</a>
+    </nav>
+  </div>
+</footer>
 
 <script src="install.js"></script>
 </body>

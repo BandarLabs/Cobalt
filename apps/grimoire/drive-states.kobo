@@ -15,3 +15,12 @@ tap Dice
 expect Dice
 clean
 shot dice
+# A roll puts the total in the middle of the page, with how it was made
+# under it.
+tap Advantage
+tap Roll d20
+expect kept
+clean
+shot dice-rolled
+tap Roll d20
+expect Before:

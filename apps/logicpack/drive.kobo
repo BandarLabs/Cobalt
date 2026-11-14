@@ -42,6 +42,10 @@ wait-for-id hashi
 tap Hashi
 tap Five islands
 wait-for-id game-more
+# Every game has the same bar at its foot: Undo, then the mode where a game
+# has one, or Restart where it does not.
+expect Undo
+expect Restart
 tap-id route-0
 tap-id route-1
 tap-id route-2
@@ -51,3 +55,14 @@ expect Next puzzle
 tap Next puzzle
 wait-for-id game-more
 expect Starter
+# A refused save is a line over the board carrying its retry, and the board
+# stays in view.
+scenario storage-full
+tap-id route-0
+expect Progress is not saved
+expect Retry saving
+clean
+shot save-failed
+scenario normal
+tap Retry saving
+expect-missing Progress is not saved

@@ -6,6 +6,11 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 const FILE: &str = "frontlight";
+/// The record of the control a reader's profile chose, when that differs
+/// from the one recorded before the profile was known. Crash recovery is armed
+/// before the display is opened, so the first record is taken by the plain
+/// rule; a profile that steers the light elsewhere adds this second one.
+const PROFILE_FILE: &str = "frontlight-profile";
 const LIMIT: u64 = 512;
 
 fn invalid() -> io::Error {
@@ -31,6 +36,25 @@ impl Frontlight {
     /// # Errors
     /// Refuses an invalid control name or a failed create/write/flush.
     pub fn save_recovery(&self, directory: &Path) -> io::Result<()> {
+        self.save_record(directory, FILE)
+    }
+
+    /// Record the control the reader's profile chose, when it is not the one
+    /// [`Self::save_recovery`] already recorded. Recovery puts back both.
+    ///
+    /// # Errors
+    /// As [`Self::save_recovery`].
+    pub fn save_profile_recovery(&self, directory: &Path) -> io::Result<()> {
+        self.save_record(directory, PROFILE_FILE)
+    }
+
+    /// Whether two handles drive the same control.
+    #[must_use]
+    pub fn same_control(&self, other: &Self) -> bool {
+        self.control == other.control
+    }
+
+    fn save_record(&self, directory: &Path, file: &str) -> io::Result<()> {
         let name = self
             .control
             .file_name()
@@ -45,7 +69,7 @@ impl Frontlight {
             "cobalt.frontlight.v1\n{name}\n{}\n{}\n{colour_maximum}\n{colour}\n",
             self.maximum, self.original_raw
         );
-        let path = directory.join(FILE);
+        let path = directory.join(file);
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -71,7 +95,13 @@ impl Frontlight {
     /// # Errors
     /// As [`Self::recover`]. Record contents cannot select a different root.
     pub fn recover_in(backlights: &Path, directory: &Path) -> io::Result<bool> {
-        let file = match fs::File::open(directory.join(FILE)) {
+        let first = Self::recover_record(backlights, &directory.join(FILE))?;
+        let profile = Self::recover_record(backlights, &directory.join(PROFILE_FILE))?;
+        Ok(first || profile)
+    }
+
+    fn recover_record(backlights: &Path, record: &Path) -> io::Result<bool> {
+        let file = match fs::File::open(record) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
             Err(error) => return Err(error),
@@ -144,6 +174,32 @@ mod tests {
         assert!(Frontlight::recover_in(&root, &journal).unwrap());
         fs::remove_dir_all(root).unwrap();
     }
+    /// Crash recovery is armed before the display is opened and the reader's
+    /// profile is known, so the light is recorded by the plain rule first;
+    /// a profile that then steers the light to another control records that
+    /// one too, and a crash puts back both.
+    #[test]
+    fn recovery_puts_back_the_control_a_profile_chose_after_the_plain_one() {
+        let root = scratch("two-controls");
+        let journal = root.join("session");
+        fs::create_dir(&journal).unwrap();
+        control(&root, "lm3630a_led", "40", "100");
+        control(&root, "mxc_msp430.0", "30", "100");
+        let plain = Frontlight::open_in(&root).unwrap();
+        plain.save_recovery(&journal).unwrap();
+        let chosen = Frontlight::open_in_layout(&root, kobo_profile::LightLayout::Imx).unwrap();
+        assert!(!chosen.same_control(&plain));
+        chosen.save_profile_recovery(&journal).unwrap();
+        chosen.set(100).unwrap();
+        plain.set(0).unwrap();
+        drop((plain, chosen));
+        assert!(Frontlight::recover_in(&root, &journal).unwrap());
+        let read = |name: &str| super::super::read_number(&root.join(name).join("brightness"));
+        assert_eq!(read("lm3630a_led"), Some(40));
+        assert_eq!(read("mxc_msp430.0"), Some(30));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn invalid_records_cannot_change_a_control_or_escape_the_backlight_root() {
         let root = scratch("bad-journal");

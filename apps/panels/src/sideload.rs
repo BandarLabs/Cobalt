@@ -5,12 +5,20 @@ use super::{
     ShelfDownload, ShelfProgress, StoreResult, SIDELOAD,
 };
 
+/// Said on the guide's last page when Check for comic finds no file.
+pub(super) const MISSING_VOLUME: &str =
+    "No volume.cbz in .adds/cobalt/data/panels yet. Check the folder and the name, then check again.";
+
 impl Panels {
     pub(super) fn import_help_screen(&self) -> kobo_sdk::Screen {
         let screen = kobo_sdk::ScreenBuilder::new("panels-import-help")
             .top_bar("Add comic")
             .owns_back(true)
             .page_position(u16::try_from(self.import_help_page + 1).unwrap_or(1), 4);
+        let screen = match &self.notice {
+            Some(notice) => screen.banner(kobo_sdk::BannerLevel::Attention, notice),
+            None => screen,
+        };
         match self.import_help_page {
             0 => screen.heading("Connect by USB")
                 .text("Choose Connect on your reader. Open the reader drive on your computer.")
@@ -102,6 +110,7 @@ impl Panels {
         {
             return;
         }
+        self.checking_from_guide = self.route == Route::ImportHelp;
         self.route = Route::Import;
         self.notice = None;
         let mut load = ShelfDownload::new(SIDELOAD).at_most(transfer::MAX_COMIC);
@@ -163,7 +172,18 @@ impl Panels {
                             .into(),
                     );
                 } else if error == kobo_sdk::StoreError::Missing {
-                    self.import_help_page = 0;
+                    // From the guide's last page the owner has just copied
+                    // the file, or thinks so: say it is not there, on the
+                    // page that names the next step, rather than starting
+                    // the guide again as if Check for comic had not been
+                    // tapped.
+                    if self.checking_from_guide {
+                        self.import_help_page = 3;
+                        self.notice = Some(MISSING_VOLUME.into());
+                    } else {
+                        self.import_help_page = 0;
+                        self.help_from_sent = false;
+                    }
                     self.route = Route::ImportHelp;
                 } else {
                     self.route = Route::Library;

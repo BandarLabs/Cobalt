@@ -1,0 +1,25 @@
+# sweep: skip
+# The live half of drive-source: every story is saved from its own site, then
+# the brief survives a restart with its source and its time. Story sites can
+# be slow or down for minutes, and a restart waits for that saving to finish,
+# so this runs by hand rather than in the sweep.
+wait-for Nothing yet
+tap Source
+wait-for All four are public Hacker News lists
+tap-id source-show
+wait-idle
+tap Brief
+wait-for Show Hacker News selected. Refresh to fetch it.
+tap Refresh
+wait-idle 60000
+wait-for Show Hacker News · as of
+expect Ready offline:
+restart
+wait-for Show Hacker News · as of
+tap Source
+wait-for All four are public Hacker News lists
+clean
+shot sources-after-restart
+tap Brief
+wait-for Daily brief
+expect-missing as of 20

@@ -1,0 +1,61 @@
+# sweep: --seed-root examples/books/fixtures/formats
+# Every kind of file Books lists: Markdown, HTML and text open in the reader,
+# a damaged EPUB says it could not be opened, and a PDF goes to the Kobo
+# reader shelf and says where it opens. Enough files are seeded that the
+# Library shelf turns pages both ways.
+wait-for Library
+expect 15 books
+expect Kobo reader
+shot books-many
+tap Library
+wait-for 1 of
+shot books-library-shelf
+tap-id next
+wait-for 2 of
+tap-id previous
+wait-for 1 of
+# Each book closes back to the shelf it was opened from.
+tap-paged A Letter Home
+wait-for hill behind the house
+shot books-text
+tap-id 4294967295
+wait-for 1 of
+expect-missing hill behind the house
+tap-paged Damaged
+wait-for could not be opened
+expect-missing not a zip
+shot books-damaged
+tap-id 4294967295
+wait-for 1 of
+tap-paged Index of Streets
+wait-for Market Street runs east
+shot books-html
+tap-id 4294967295
+wait-for of 
+tap-paged Notes on a Rainy Afternoon
+wait-for kettle boiled
+expect-missing # Notes
+shot books-markdown
+tap-id 4294967295
+wait-for of 
+tap-id 4294967295
+wait-for Your books
+# What was opened is on the Recent shelf, newest first, and the last
+# readable book is offered to continue.
+expect Continue reading
+expect Recent
+tap Recent
+wait-for Notes on a Rainy Afternoon
+expect Index of Streets
+expect A Letter Home
+expect-missing Damaged
+shot books-recent
+tap-id 4294967295
+wait-for Your books
+tap Kobo reader
+wait-for Timetable
+tap Timetable
+wait-for PDFs open in the Kobo reader
+shot books-pdf
+tap-id 4294967295
+wait-for Timetable

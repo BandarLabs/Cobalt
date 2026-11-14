@@ -4,8 +4,9 @@
   "short_label": "Inkling",
   "summary": "Solve a fresh five-letter puzzle each day.",
   "page_description": "A daily five-letter word puzzle you can play anywhere, with or without Wi-Fi.",
-  "version": "0.2.4",
-  "release_notes": "Hard mode is now a switch on the Rules screen that says what it does, and a failed export shows an error with Try again on it.",
-  "glyph": "note",
+  "version": "0.2.9",
+  "release_notes": "Back on an earlier page of the archive now returns to the page before it instead of leaving the archive.",
+  "minimum_cobalt_version": "0.3.34",
+  "glyph": "letter-check",
   "capabilities": []
 }

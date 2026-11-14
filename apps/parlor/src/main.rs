@@ -17,7 +17,7 @@ use games::{Draughts, DraughtsMove, Kalah, Morris, MorrisMove, Reversi, ReversiM
 use kobo_sdk::game::{self as chrome, Menu, Tap};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, Chrome, Context, DisplayMetrics, Glyph, KoboApp, Orientation,
-    Screen, ScreenBuilder, SlotWidth, StoreResult, Tile, TileShape,
+    Screen, ScreenBuilder, SlotWidth, Space, StoreResult, Tile, TileShape,
 };
 use std::cmp::Ordering;
 use std::process::ExitCode;
@@ -65,7 +65,7 @@ impl Title {
             Self::Reversi => "Reversi",
             Self::Draughts => "Draughts",
             Self::Morris => "Nine Men's Morris",
-            Self::Kalah => "Kalah 6,4",
+            Self::Kalah => "Kalah",
         }
     }
     const fn key(self) -> &'static str {
@@ -614,10 +614,21 @@ impl Parlor {
             // The game already in progress is the first thing a reader who put
             // the panel down wants, so it sits above the shelf rather than
             // under it, where a fourth card would have pushed it off the panel.
-            screen.primary_button("resume", "Resume saved game")
+            // It names the game, since the shelf under it offers all four,
+            // and a margin of paper keeps it from reading as the lid of the
+            // first two cards.
+            screen
+                .primary_button("resume", self.resume_label().unwrap_or_default())
+                .spacer(Space::Medium)
         } else {
             screen
         }
+    }
+
+    /// The button that goes back to the game in progress, named for it.
+    fn resume_label(&self) -> Option<String> {
+        let position = self.position.as_ref()?;
+        Some(format!("Resume {}", position.title().name()))
     }
 
     /// What starting a game here would throw away, said before it happens.
@@ -1063,21 +1074,26 @@ impl Parlor {
         rotated: bool,
         marks: &[usize],
     ) -> ScreenBuilder {
-        // Each store says whose it is in its own square, so the line that
-        // used to repeat both counts above the board is gone: it was one more
-        // paragraph pushing the pits down, and the only place the owners were
-        // named, as compass points.
-        base.grid_with_selection(
-            7,
-            false,
-            ordered(14, rotated).map(|display| {
-                let pit = KALAH_DISPLAY[display];
-                let label = match pit {
-                    6 => format!("{}: {}", self.store_tag(1), game.pits[pit]),
-                    13 => format!("{}: {}", self.store_tag(-1), game.pits[pit]),
-                    _ => game.pits[pit].to_string(),
-                };
-                (cell_name(pit), label, marks.contains(&pit))
+        // A board as it is carved: two rows of six pits between the two
+        // stores, each store standing at its own end through both rows with
+        // whose it is under its count. It used to be two rows of seven grey
+        // keys with a store in two opposite corners, each count labelled in
+        // a different place.
+        base.board_with_selection(
+            8,
+            ordered(16, rotated).map(|display| match KALAH_DISPLAY[display] {
+                Some(pit) => {
+                    let label = match pit {
+                        6 | 13 => format!(
+                            "Store {} {}",
+                            self.store_tag(if pit == 6 { 1 } else { -1 }),
+                            game.pits[pit]
+                        ),
+                        _ => game.pits[pit].to_string(),
+                    };
+                    (cell_name(pit), label, None, marks.contains(&pit))
+                }
+                None => (format!("kalah-end-{display}"), String::new(), None, false),
             }),
         )
     }
@@ -1327,12 +1343,10 @@ impl Parlor {
         self.undo_pending = false;
         self.scored = false;
         self.notice = match title {
-            Title::Reversi => "Tap a hollow destination.".into(),
-            Title::Draughts => {
-                "Tap a piece, then a hollow destination. Captures are mandatory.".into()
-            }
+            Title::Reversi => "Tap a dotted square.".into(),
+            Title::Draughts => "Tap a piece, then a dotted square. Captures are mandatory.".into(),
             Title::Morris => {
-                "Placement: tap a hollow point. Completing a mill earns one removal.".into()
+                "Placement: tap a dotted point. Completing a mill earns one removal.".into()
             }
             Title::Kalah => "Tap one of your six non-empty pits to sow counter-clockwise.".into(),
         };
@@ -1407,8 +1421,7 @@ impl Parlor {
     fn tap_reversi(&mut self, game: Reversi, at: usize) {
         let mv = ReversiMove::Place(at);
         if !game.legal_moves().contains(&mv) {
-            self.notice =
-                "That square brackets no opposing discs. Tap a hollow destination.".into();
+            self.notice = "That square brackets no opposing discs. Tap a dotted square.".into();
             return;
         }
         self.push_history(reversi_entry(
@@ -1451,7 +1464,7 @@ impl Parlor {
         }
         if moves.iter().any(|mv| mv.from == at) {
             self.selected = Some(at);
-            self.notice = "Piece selected. Tap a hollow destination.".into();
+            self.notice = "Piece selected. Tap a dotted square.".into();
         } else if moves.iter().any(|mv| mv.captured.is_some()) {
             self.notice = "Captures are mandatory. Select a piece that can capture.".into();
         } else {
@@ -1534,7 +1547,7 @@ impl Parlor {
             self.notice = if game.count(game.turn) == 3 {
                 "Flying: choose any empty point."
             } else {
-                "Piece selected. Choose an adjacent hollow point."
+                "Piece selected. Choose an adjacent dotted point."
             }
             .into();
         } else {
@@ -1843,7 +1856,10 @@ impl KoboApp for Parlor {
                             *self = saved;
                             self.landscape = landscape;
                             self.shown_landscape = shown;
-                            self.notice = "Saved game ready. Choose Resume saved game.".into();
+                            self.notice = format!(
+                                "Saved game ready. Choose {}.",
+                                self.resume_label().unwrap_or_default()
+                            );
                             self.view = View::Menu;
                         }
                     }
@@ -2056,7 +2072,27 @@ fn square_name(at: usize, side: usize) -> String {
 const MORRIS_GRID: [usize; 24] = [
     0, 3, 6, 8, 10, 12, 16, 17, 18, 21, 22, 23, 25, 26, 27, 30, 31, 32, 36, 38, 40, 42, 45, 48,
 ];
-const KALAH_DISPLAY: [usize; 14] = [13, 12, 11, 10, 9, 8, 7, 0, 1, 2, 3, 4, 5, 6];
+/// The pits in the order the board shows them, eight a row: the far store,
+/// the far pits from right to left, then the near pits and the near store.
+/// `None` is the end of a row whose place the other row's store fills.
+const KALAH_DISPLAY: [Option<usize>; 16] = [
+    Some(13),
+    Some(12),
+    Some(11),
+    Some(10),
+    Some(9),
+    Some(8),
+    Some(7),
+    None,
+    None,
+    Some(0),
+    Some(1),
+    Some(2),
+    Some(3),
+    Some(4),
+    Some(5),
+    Some(6),
+];
 
 fn encode(app: &Parlor, position: &Position) -> String {
     let mode = u8::from(app.mode == Mode::Solo);
@@ -3095,8 +3131,12 @@ mod tests {
         assert!(marked.iter().all(|pit| (7..13).contains(pit)), "{marked:?}");
         let words = shown(&kalah.screen()).join(" ");
         assert!(words.contains("The computer sowed"), "{words}");
-        assert!(words.contains("You: "), "{words}");
-        assert!(words.contains("Computer: "), "{words}");
+        // Each store's owner is named under it, after the board's counts.
+        let board = words.split("sowed").nth(1).unwrap_or_default();
+        assert!(
+            board.contains("Computer") && board.contains("You"),
+            "{words}"
+        );
 
         let mut morris = Parlor::default();
         morris.start(Title::Morris);

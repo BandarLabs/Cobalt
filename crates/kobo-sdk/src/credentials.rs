@@ -23,6 +23,8 @@ use kobo_ui::{BannerLevel, FieldKind};
 use std::fmt;
 
 const ENTER: &str = "credential.enter";
+/// The password field of an account that has a username and a password.
+const PASSWORD: &str = "credential.password";
 const CLI: &str = "credential.cli";
 const CHECK: &str = "credential.check";
 const PHONE: &str = "credential.phone";
@@ -82,6 +84,9 @@ pub struct CredentialSetup {
     /// Why what was typed was not saved. Drawn as the field's error, because
     /// it is about what went into the field.
     problem: Option<String>,
+    /// Whether [`Self::problem`] is about the username rather than the
+    /// password, so it is drawn under the field it is about.
+    problem_on_username: bool,
     /// What a presence check found. Drawn as a banner that carries Check
     /// again, because the fix is to look again once the account is there.
     check: Option<String>,
@@ -126,6 +131,7 @@ impl CredentialSetup {
             view: View::Closed,
             entry: TextEntry::new(),
             problem: None,
+            problem_on_username: false,
             check: None,
             basic: false,
             username: String::new(),
@@ -261,11 +267,23 @@ impl CredentialSetup {
         self.view = View::Closed;
     }
 
-    /// Back to the prompt, with nothing half entered kept.
+    /// Back to the prompt, keeping a username that was accepted.
+    ///
+    /// The username is shown in its own field and is not a secret, so an
+    /// owner who backs out of the password, or whose save was refused, finds
+    /// it still there and only has to type the password again.
     fn back_to_prompt(&mut self) {
         self.entry.close();
-        self.username.clear();
         self.view = View::Prompt;
+    }
+
+    /// Puts the runtime's field up for the username, holding what was typed
+    /// before so a correction is an edit rather than a retyping.
+    fn ask_for_username(&mut self) {
+        self.entry.close();
+        self.entry = TextEntry::new();
+        self.entry.open_with(self.username.clone());
+        self.view = View::Username;
     }
 
     /// Ask the runtime whether the account arrived from somewhere else.
@@ -349,32 +367,46 @@ impl CredentialSetup {
         } else {
             screen.heading(format!("Connect {}", self.service))
         };
-        screen = screen
-            .field(ENTER, "", self.enter_label())
-            .field_label(if self.basic {
-                "Username and password"
-            } else {
-                "Account key"
-            })
-            // Nothing is in the field to hide: the runtime holds the
-            // key, and the kind says what the field is for.
-            .field_kind(if self.basic {
-                FieldKind::Text
-            } else {
-                FieldKind::Secret
-            });
+        if self.basic {
+            // Two fields, as every sign-in form has: one labelled field
+            // asking for both read as a single box to type a username and a
+            // password into together. Each names itself inside its box
+            // rather than on a line above it, which is how a sign-in form is
+            // usually set and what lets the pair, the steps and the other
+            // ways in fit a small panel held on its side. The username is
+            // shown once typed; the password is never here to show, so its
+            // field stays masked.
+            screen = screen.field(ENTER, self.username.clone(), "Username");
+            if let Some(problem) = self.problem.as_ref().filter(|_| self.problem_on_username) {
+                screen = screen.field_error(problem);
+            }
+            screen = screen
+                .field(PASSWORD, "", "Password")
+                .field_kind(FieldKind::Secret);
+        } else {
+            // Nothing is in the field to hide: the runtime holds the key,
+            // and the kind says what the field is for.
+            screen = screen
+                .field(ENTER, "", self.enter_label())
+                .field_label("Account key")
+                .field_kind(FieldKind::Secret);
+        }
         // While a check's banner is up, it is what the owner needs to
         // read, and the hint gives up its lines to it so the prompt
         // still fits a panel held on its side at the largest text.
-        // The same guidance is under the runtime's field when typing.
+        // The same guidance is under the runtime's field when typing. Two
+        // fields named Username and Password need no line saying so.
         if self.check.is_none() {
-            screen = screen.field_hint(self.guidance.as_deref().unwrap_or(if self.basic {
-                "Use your server username and password."
-            } else {
-                "Add the account key for this service."
-            }));
+            let hint = match (&self.guidance, self.basic) {
+                (Some(guidance), _) => Some(guidance.as_str()),
+                (None, false) => Some("Add the account key for this service."),
+                (None, true) => None,
+            };
+            if let Some(hint) = hint {
+                screen = screen.field_hint(hint);
+            }
         }
-        if let Some(problem) = &self.problem {
+        if let Some(problem) = self.problem.as_ref().filter(|_| !self.problem_on_username) {
             screen = screen.field_error(problem);
         }
         if let Some(check) = &self.check {
@@ -505,12 +537,22 @@ impl CredentialSetup {
                 self.problem = None;
                 self.check = None;
                 if self.basic {
-                    self.entry.close();
-                    self.entry = TextEntry::new();
-                    self.entry.open();
-                    self.view = View::Username;
+                    self.ask_for_username();
                 } else {
                     self.ask_for_secret(View::Entry);
+                }
+                Some(CredentialEvent::Changed)
+            }
+            // A password belongs to a username, so a password field touched
+            // before there is one asks for the username first, and the
+            // password follows it as it does from the username field.
+            (View::Prompt, value) if value == action_id(PASSWORD) && self.basic => {
+                self.problem = None;
+                self.check = None;
+                if self.username.is_empty() {
+                    self.ask_for_username();
+                } else {
+                    self.ask_for_secret(View::Password);
                 }
                 Some(CredentialEvent::Changed)
             }
@@ -547,6 +589,7 @@ impl CredentialSetup {
             Typing::Submitted(value) if self.view == View::Username => {
                 if value.contains(':') || value.chars().any(char::is_control) {
                     self.problem = Some("Enter a username without a colon or line break.".into());
+                    self.problem_on_username = true;
                     self.back_to_prompt();
                 } else {
                     self.username = value;
@@ -567,6 +610,7 @@ impl CredentialSetup {
                 CredentialEvent::Changed
             }
             Typing::Refused(result) => {
+                self.problem_on_username = false;
                 self.problem = Some(
                     match result {
                         DeviceResult::Denied(_) => {
@@ -822,7 +866,81 @@ mod tests {
         asked(&setup, &mut context);
         answer(&mut setup, &mut context, TextOutcome::Cancelled);
         assert_eq!(setup.view, super::View::Prompt);
-        assert!(setup.username.is_empty());
+        assert_eq!(
+            setup.username, "reader",
+            "the username stays in its field for the password to be typed again"
+        );
+    }
+
+    /// The fields a prompt draws, as what they ask for, what is in them and
+    /// their kind.
+    fn fields(screen: &crate::Screen) -> Vec<(String, String, FieldKind)> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Field {
+                    label,
+                    placeholder,
+                    value,
+                    kind,
+                    ..
+                } => Some((
+                    label.clone().unwrap_or_else(|| placeholder.clone()),
+                    value.clone(),
+                    *kind,
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_username_and_password_account_asks_for_each_in_its_own_field_with_the_password_masked() {
+        let mut setup = CredentialSetup::new("komga", "Komga").with_basic();
+        let mut context = Context::default();
+        setup.bind_server("https://books.example").unwrap();
+        setup.open();
+        assert_eq!(
+            fields(&setup.screen("Komga")),
+            [
+                ("Username".to_owned(), String::new(), FieldKind::Text),
+                ("Password".to_owned(), String::new(), FieldKind::Secret),
+            ]
+        );
+        // The password field asks for the username first while there is none.
+        setup.on_action(&mut context, action_id("credential.password"));
+        assert_eq!(setup.view, super::View::Username);
+        asked(&setup, &mut context);
+        answer(
+            &mut setup,
+            &mut context,
+            TextOutcome::Typed("reader".into()),
+        );
+        asked(&setup, &mut context);
+        answer(&mut setup, &mut context, TextOutcome::Cancelled);
+        assert_eq!(
+            fields(&setup.screen("Komga"))[0],
+            ("Username".to_owned(), "reader".to_owned(), FieldKind::Text)
+        );
+        // With a username in place, the password field goes straight to the
+        // runtime's secret field, saving under that username.
+        setup.on_action(&mut context, action_id("credential.password"));
+        assert_eq!(setup.view, super::View::Password);
+        assert_eq!(
+            secret_of(asked(&setup, &mut context).as_ref()).and_then(|target| target.username),
+            Some("reader".to_owned())
+        );
+    }
+
+    #[test]
+    fn an_account_key_still_asks_in_one_masked_field() {
+        let mut setup = CredentialSetup::new("zotero", "Zotero");
+        setup.open();
+        assert_eq!(
+            fields(&setup.screen("Zotero")),
+            [("Account key".to_owned(), String::new(), FieldKind::Secret)]
+        );
     }
 
     #[test]

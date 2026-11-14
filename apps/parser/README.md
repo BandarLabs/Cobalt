@@ -13,18 +13,18 @@ Play interactive fiction offline on your Kobo.
 - Plays text-only Z-machine stories in versions 3, 5 and 8 (`.z3`, `.z5`,
   `.z8`).
 - The transcript is set as prose, with page turns by tap or page button.
-- Type commands, or tap LOOK, INVENTORY, directions, UNDO, SAVE, RESTORE and
-  AGAIN. EXAMINE, TAKE, DROP, OPEN, READ and LIGHT ask which thing, from the
-  ones on the page, or let you type it. Tap a word in the transcript to add
-  it to your command.
+- Type commands, or tap **Look**, **Inventory**, the directions, **Undo**,
+  **Again**, **Save** and **Restore**. **Examine**, **Take**, **Drop**,
+  **Open**, **Read** and **Light** ask which thing, from the ones on the page,
+  or let you type it. A command appears only if the story knows the word. Tap
+  a word in the transcript to add it to your command.
 - Ten save slots per story, plus an autosave after every turn. Reopening a
   story continues where you stopped.
 - *First Light*, a short original tutorial story, is included.
 
 ## Adding a story
 
-Parser never downloads games. Send a story file you own from your computer:
-
+Parser never downloads games. Send a story file you own from your computer.
 Set up the reader once over USB with `kobo setup`, if you have not already.
 
 ```sh

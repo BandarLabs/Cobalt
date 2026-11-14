@@ -10,6 +10,9 @@ import zlib
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parent / "Minuet"
+# A second, one-page score, so a setlist has two entries to order and turns
+# from the end of one score to the start of the next.
+SECOND = Path(__file__).resolve().parent / "Gavotte"
 
 
 def staff_page(path, seed, width=1072, height=1448):
@@ -32,3 +35,5 @@ if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     for index in range(2):
         staff_page(OUT / f"page-{index + 1}.png", seed=index)
+    SECOND.mkdir(exist_ok=True)
+    staff_page(SECOND / "page-1.png", seed=40)

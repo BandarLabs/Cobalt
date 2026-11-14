@@ -76,3 +76,67 @@ expect Not connected
 expect-missing Connection lost
 clean
 shot not-connected-yet
+
+# The Pairing menu names the computer and says nothing was saved yet, since
+# a pairing is kept only once the computer confirms it.
+tap Pairing
+wait-for Computer connection
+expect laptop:9332
+expect Waiting for this computer to confirm pairing.
+expect-missing Pairing is saved for next time.
+expect-missing Your saved connection
+clean
+shot pairing-menu
+tap Return to terminal
+wait-for Not connected
+# A computer that does not answer is told apart from a reader off Wi-Fi.
+scenario host-down
+wait-for Not connected yet. On your computer, run kobo stream terminal.
+expect-missing This Kobo is not on Wi-Fi.
+clean
+shot host-not-answering
+# Change computer goes back to the address with the last one in it, and
+# the code with the last code.
+tap Pairing
+wait-for Computer connection
+tap Change computer
+wait-for Pair with your computer
+expect laptop:9332
+tap-id kb.enter
+wait-for Now the pairing code
+expect abc234
+# Help on the entry screen opens the steps; the Back buttons under each
+# step walk them in order. The top bar's back arrow is also called Back, so
+# the buttons are tapped by what they do.
+tap Help
+wait-for Pair once
+tap Next
+wait-for Reopen Cobalt once
+tap Next
+wait-for Share a terminal
+# The top bar's back arrow steps back through them as well.
+tap-id 4294967295
+wait-for Reopen Cobalt once
+tap Next
+wait-for Share a terminal
+tap-id trust
+wait-for Reopen Cobalt once
+tap-id setup
+wait-for Pair once
+tap-id welcome
+wait-for Terminal sessions
+# The preview closes back to the first screen, and offers setup too.
+tap-id preview
+wait-for Preview
+tap Connect a computer
+wait-for Pair once
+tap-id welcome
+wait-for Terminal sessions
+tap-id preview
+wait-for Preview
+tap Close preview
+wait-for Terminal sessions
+# Nothing was confirmed, so a restart opens on the first screen again.
+restart
+wait-for Terminal sessions
+expect-missing Not connected

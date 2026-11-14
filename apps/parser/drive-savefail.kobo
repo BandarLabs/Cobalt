@@ -1,0 +1,16 @@
+# Seeded with the Lamplight fixture. A turn whose autosave the reader cannot
+# store says so, and the story page still fits under the message.
+wait-for Lamplight
+tap Lamplight
+wait-for light.
+scenario storage-full
+tap North
+wait-for The save could not be written. Check free space.
+expect Gravel crunches
+clean
+shot savefail-banner
+scenario normal
+tap South
+# A room already seen is named without its description.
+wait-for Lamp Square
+expect-missing The save could not be written.

@@ -1,0 +1,140 @@
+# Browsing the catalog: the filters, turning its pages, an installed app's
+# page, a built-in app's page, the refresh that fails without Wi-Fi, and the
+# installs that fail for want of room or permission. The title is not
+# what the route waits on: at the largest size the bar cuts it short.
+wait-for Link a browser
+wait-for 1 /
+expect All
+expect Installed
+expect Updates
+expect Available
+expect-missing refreshing
+# The list turns forward and back, and its heading says where it is.
+tap-id next
+wait-for 2 /
+shot store-catalog-page-two
+expect Previous
+tap-id previous
+wait-for 1 /
+# An installed app's row opens the app; the mark at its edge opens its page,
+# which says what it may do in words and offers Open and Uninstall only.
+# At the largest size the facts turn onto a second page of their own.
+tap-id app-audiobook
+wait-for Permissions
+expect Can play sound
+expect Open
+expect Uninstall
+expect-missing bluetooth-audio
+shot store-detail-installed
+maybe-tap-id detail-next
+wait-for Managed by App Store
+expect-missing Not installed
+maybe-tap-id detail-previous
+wait-for Permissions
+tap-id 4294967295
+wait-for 1 /
+# The Installed tab lists built-in apps too; Updates has none to offer here.
+tap-id filter-installed
+wait-for Installed
+expect-missing Available to install
+tap-id filter-updates
+wait-for Every installed app is up to date.
+shot store-updates-empty
+tap-id filter-all
+wait-for 1 /
+# Built-in apps come last. Their page offers Open and nothing that would
+# remove them. The catalog has no page turn to page by, so the route presses
+# More until it is gone: 11 pages at the default size, 26 at the largest.
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+maybe-tap-id next
+wait-for Built in
+expect Terminal
+expect-missing More
+shot store-catalog-last-page
+tap-id app-terminal
+wait-for Built into Cobalt
+expect Open
+expect-missing Uninstall
+shot store-detail-built-in
+tap-id 4294967295
+wait-for Built in
+# A refresh with no Wi-Fi keeps the list and says how to fix it; a refresh
+# that works takes the banner away.
+scenario offline
+tap-id refresh
+wait-for The list could not be updated
+expect Connect to Wi-Fi and refresh.
+expect Apps
+shot store-refresh-offline
+scenario normal
+tap-id refresh
+wait-idle
+expect-missing The list could not be updated
+# A reader that is full keeps the app off and says what to check, with Try
+# again on the app's page.
+tap-id filter-available
+wait-for Sudoku
+tap Sudoku
+wait-for Not installed
+scenario storage-full
+tap-id install-sudoku
+wait-for Couldn't save the change.
+expect Try again
+expect Not installed
+shot store-install-no-room
+# A runtime that does not allow app changes says so in words.
+scenario permission-denied
+tap Try again
+wait-for App management isn't available.
+expect Not installed
+shot store-install-not-allowed
+scenario normal
+tap-id install-sudoku
+wait-for Sudoku is installed.
+# Back from a page clears its banner.
+tap-id 4294967295
+wait-for Every app in the catalog is installed.
+expect-missing Sudoku is installed.
+# Link a browser opens its own screen and comes back to the list. The
+# simulator has no browser link, so the screen says that in the link's own
+# words rather than about installing, and offers no button that cannot work.
+tap-id filter-all
+tap Link a browser
+wait-for Browser links are unavailable
+expect This version of Cobalt cannot link a browser on this reader.
+expect-missing install apps
+expect-missing Reset link
+shot store-link-browser
+tap-id 4294967295
+wait-for Link a browser
+expect All

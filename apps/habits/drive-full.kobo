@@ -1,0 +1,166 @@
+# sweep: --seed-root scripts/fixtures/habits/shelf
+# A first run with no habits, then adding, ticking, skipping, editing,
+# archiving, the backup out and back in, and the habits surviving a restart.
+# The shelf holds a habits backup and a text file that is not one, because
+# no companion command puts a file on Habits' shelf.
+# Only daily habits are ticked here: the route runs on the real calendar, and
+# a weekday habit is not due at the weekend.
+wait-for Nothing due
+expect Add a habit
+expect-missing Yesterday
+clean
+shot habits-first-run
+tap Streaks
+wait-for No streaks yet
+tap Manage
+wait-for No habits yet
+tap Stats
+wait-for 0 completions
+expect This week: nothing was due.
+clean
+shot habits-stats-empty
+# Adding with nothing typed adds nothing.
+tap Manage
+wait-for No habits yet
+tap-id add
+wait-for Habit name
+expect Use 48 characters or fewer.
+tap Add
+wait-for No habits yet
+tap-id add
+wait-for Habit name
+type read
+tap Add
+wait-for read
+tap-id add
+wait-for Habit name
+type stretch
+tap Add
+wait-for stretch
+expect daily
+clean
+shot habits-manage
+tap Today
+wait-for Tap a habit when it is done.
+# A tick marks a habit done, and a second tap takes it back.
+tap read
+wait-for Done
+tap read
+wait-idle
+tap Stats
+wait-for 0 completions
+tap Today
+wait-for Tap a habit when it is done.
+tap read
+wait-for Done
+# Skipping is in the habit's own menu, and tapping a skipped habit undoes it.
+tap-id menu-1
+wait-for Skip today
+tap Skip today
+wait-for Skipped
+clean
+shot habits-today-done-and-skipped
+tap stretch
+wait-idle
+expect-missing Skipped
+tap Streaks
+wait-for 1 current, 1 best
+expect 0 current, 0 best
+tap Stats
+wait-for 1 completion
+clean
+shot habits-stats
+# Rename, schedule and archive from one habit's screen.
+tap Manage
+wait-for stretch
+tap read
+wait-for How often
+expect Rename
+expect Archive
+tap Rename
+wait-for Habit name
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type walk
+tap Save
+wait-for walk
+expect How often
+tap Every 2 days
+wait-idle
+tap Daily
+wait-idle
+tap Archive
+wait-for Put back
+clean
+shot habits-edit-archived
+tap-id 4294967295
+wait-for daily; archived
+tap Today
+wait-for stretch
+expect-missing walk
+tap Manage
+wait-for walk
+tap walk
+wait-for Put back
+tap Put back
+wait-for Archive
+tap-id 4294967295
+wait-for walk
+expect-missing archived
+tap Today
+wait-for walk
+expect Done
+# The backup goes out to the computer.
+tap Stats
+wait-for completion
+tap Settings
+wait-for Stored on this reader
+expect A skipped day keeps it.
+clean
+shot habits-settings
+tap Export a backup
+wait-for Ready for your computer.
+expect habits-backup
+companion export --app habits --sim --out target/habits-route-export
+tap-id 4294967295
+wait-for Export a backup
+# The backup just exported is listed by its date, first. A file that is
+# not a backup says so; a backup is offered to replace or merge.
+tap Import a backup
+wait-for Backup of
+expect Text backup ·
+expect habits-backup.txt
+expect shopping-list.txt
+clean
+shot habits-import-choose
+tap shopping-list.txt
+wait-for That file has no habits this reader can import.
+tap Backup of
+wait-for Replace habits on this reader
+tap Replace habits on this reader
+wait-for The backup replaced the habits on this reader.
+expect walk
+clean
+shot habits-import-replaced
+tap Stats
+wait-for completion
+expect-missing The backup replaced
+tap Settings
+wait-for Import a backup
+tap Import a backup
+wait-for habits-backup.txt
+tap habits-backup.txt
+wait-for 3 habits
+expect Replace habits on this reader
+expect Merge with habits on this reader
+clean
+shot habits-import-confirm
+tap Merge with habits on this reader
+wait-for Tap a habit when it is done.
+expect tea
+expect walk
+wait-for The backup was merged with the habits on this reader.
+clean
+shot habits-import-merged

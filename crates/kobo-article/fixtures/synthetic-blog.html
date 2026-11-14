@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Measuring tide heights with a pressure sensor - Notes from the Slipway</title>
+<meta name="description" content="A weekend build log: logging tide heights with a cheap pressure sensor and a microcontroller.">
+<meta property="og:site_name" content="Notes from the Slipway">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "BlogPosting",
+ "headline": "Measuring tide heights with a pressure sensor",
+ "author": {"@type": "Person", "name": "Sam Okafor"},
+ "datePublished": "2025-09-21T10:00:00+01:00",
+ "image": "https://slipway.example.net/images/sensor-cover.jpg"}
+</script>
+<link rel="alternate" type="application/rss+xml" href="/feed.xml">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <p class="site-title"><a href="/">Notes from the Slipway</a></p>
+  <nav><a href="/">Posts</a> <a href="/projects/">Projects</a> <a href="/about/">About</a> <a href="/feed.xml">RSS</a></nav>
+</header>
+
+<div class="layout">
+<main id="main">
+<article class="post h-entry">
+  <h1 class="post-title p-name">Measuring tide heights with a pressure sensor</h1>
+  <p class="post-meta">Posted on <time datetime="2025-09-21">21 September 2025</time> by <span class="p-author">Sam Okafor</span> &middot; 6 min read</p>
+
+  <div class="post-content e-content">
+    <p>Our slipway floods at the top of every spring tide, and the published tide tables are for a port twelve miles up the coast. I wanted to know how far off they are for our bit of shore, so I spent a weekend building a logger from a pressure sensor and a microcontroller I had in a drawer.</p>
+
+    <h2 id="how-it-works"><a class="anchor" href="#how-it-works" aria-hidden="true">#</a>How it works</h2>
+    <p>A sealed pressure sensor sits in a weighted pipe at the bottom of the slipway. Water pressure rises by about one hundred pascals for every centimetre of depth, so the reading minus the air pressure gives the height of water above the sensor.</p>
+
+    <figure>
+      <svg width="400" height="200" viewBox="0 0 400 200"><rect width="400" height="200" fill="#eee"/><text x="20" y="100">sensor in pipe</text></svg>
+      <img src="/images/logger-wiring-diagram.png" width="800" height="500" alt="Wiring of the sensor, logger and battery">
+      <figcaption>Figure 1. The sensor, the logger and the battery, wired on a scrap of stripboard.</figcaption>
+    </figure>
+
+    <h3 id="parts">Parts</h3>
+    <ol>
+      <li>A sealed pressure sensor rated to two bar.</li>
+      <li>A small microcontroller board with an SD card slot.</li>
+      <li>Four metres of cable, a length of drainpipe and some lead weights.</li>
+    </ol>
+
+    <h2 id="code"><a class="anchor" href="#code" aria-hidden="true">#</a>The code</h2>
+    <p>The logger wakes once a minute, takes ten readings, and writes the median to the card. Taking the median rather than the mean throws away the spikes that waves put on the reading.</p>
+<pre><code class="language-rust"><span class="token comment">// Ten readings, keep the middle one.</span>
+<span class="token keyword">fn</span> <span class="token function">median</span>(mut readings: [u32; 10]) -&gt; u32 {
+    readings.sort_unstable();
+    readings[5]
+}</code></pre>
+    <p>The depth is then <code>(water - air) / 98</code> millimetres, close enough for this job, where <code>air</code> comes from a second sensor kept in the shed.</p>
+
+    <h2 id="results"><a class="anchor" href="#results" aria-hidden="true">#</a>Results</h2>
+    <p>Over three weeks the logger recorded forty high waters. Our high water comes on average eighteen minutes after the published time, and the spring tides run eleven centimetres higher than the table says.</p>
+    <table>
+      <thead><tr><th>Tide</th><th>Published</th><th>Measured</th><th>Difference</th></tr></thead>
+      <tbody>
+        <tr><td>Spring</td><td>5.20 m</td><td>5.31 m</td><td>+11 cm</td></tr>
+        <tr><td>Neap</td><td>3.90 m</td><td>3.94 m</td><td>+4 cm</td></tr>
+      </tbody>
+    </table>
+    <blockquote><p>The table is right about everything except the bit of shore you are standing on.</p></blockquote>
+    <p>Next I want to add a temperature sensor and see whether the sea warms faster on the flood than on the ebb, which the fishermen here swear it does.</p>
+  </div>
+
+  <footer class="post-footer">
+    <div class="share-buttons">
+      <p>Share this post:</p>
+      <a href="https://social.example/intent?text=x">X</a>
+      <a href="https://social.example/post?text=x">Post it</a>
+      <a href="https://news.example.com/submit?u=x">Hacker News</a>
+    </div>
+    <p class="tags">Tagged: <a href="/tags/electronics/">electronics</a>, <a href="/tags/tides/">tides</a></p>
+    <nav class="post-nav"><a href="/posts/boat-trailer-lights/">Previous: Fixing the boat trailer lights</a> <a href="/posts/winter-mooring/">Next: Winter mooring checklist</a></nav>
+  </footer>
+</article>
+
+<section class="comments" id="comments">
+  <h2>12 comments</h2>
+  <article class="comment"><p class="comment-meta">Priya, 22 September 2025</p><p>Lovely build. Have you thought about logging the barometric pressure as well, so you can see the storm surge on top of the tide?</p></article>
+  <article class="comment"><p class="comment-meta">Old Jim, 23 September 2025</p><p>The eighteen minutes matches what my grandfather always said about this beach, he set his nets by it and never once looked at a table.</p></article>
+  <form><textarea placeholder="Leave a comment"></textarea><button>Post</button></form>
+</section>
+</main>
+
+<aside class="sidebar">
+  <section class="about-widget"><h2>About</h2><img src="/images/me.jpg" class="avatar" width="80" height="80" alt=""><p>I mend boats and build things that measure the sea.</p></section>
+  <section class="archive"><h2>Archive</h2><ul><li><a href="/2025/09/">September 2025</a></li><li><a href="/2025/08/">August 2025</a></li><li><a href="/2025/07/">July 2025</a></li></ul></section>
+  <section class="newsletter"><h2>Subscribe</h2><p>Get new posts by email.</p><form><input type="email"><button>Subscribe</button></form></section>
+</aside>
+</div>
+
+<footer class="site-footer"><p>Notes from the Slipway. Words and pictures by Sam Okafor. Powered by a static site generator.</p></footer>
+</body>
+</html>

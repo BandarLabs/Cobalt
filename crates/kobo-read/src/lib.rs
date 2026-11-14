@@ -298,7 +298,10 @@ impl Default for Memory {
             bookmarks: BTreeSet::new(),
             highlights: BTreeSet::new(),
             annotations: BTreeMap::new(),
-            full_page: false,
+            // The page is the whole panel, as on the stock reader: the bar
+            // comes back with a touch at the top and goes with the next
+            // touch on the page. A reader who wants it pinned asks once.
+            full_page: true,
             next_annotation_id: 1,
             scale: TextScale::default(),
             light: None,
@@ -326,8 +329,10 @@ impl Memory {
         if let Some(light) = self.light {
             let _ = writeln!(text, "light {light}");
         }
-        if self.full_page {
-            let _ = writeln!(text, "full 1");
+        // Written only when it departs from the default, so a book saved
+        // before the default changed opens on the whole page too.
+        if !self.full_page {
+            let _ = writeln!(text, "full 0");
         }
         for bookmark in &self.bookmarks {
             let _ = writeln!(text, "mark {bookmark}");
@@ -494,6 +499,8 @@ pub mod action {
     pub const BACK: &str = "reader-back";
     /// Shows the controls, or puts them away again.
     pub const CONTROLS: &str = "reader-controls";
+    /// Puts away whatever is over the page and goes back to reading.
+    pub const BOOK: &str = "reader-book";
     /// Shows the front light on its own, or puts it away again.
     pub const LIGHT: &str = "reader-light";
     /// One per type size, suffixed with its step: 0 standard, 2 largest.
@@ -511,6 +518,9 @@ pub mod action {
     pub const MARK: &str = "reader-mark-";
     /// One per stored mark, suffixed with its block index.
     pub const GO: &str = "reader-go-";
+    /// One per bookmark, suffixed with its block index. Goes to the page that
+    /// was bookmarked, which is not always where its paragraph starts.
+    pub const PLACE: &str = "reader-place-";
     /// Turns the bar away while reading, or asks for it back.
     pub const FULL_PAGE: &str = "reader-full-page";
     /// Opens the book's own table of contents.
@@ -520,6 +530,11 @@ pub mod action {
     /// One internal link target, distinct from a TOC/mark jump because it
     /// records an origin that Back can return to.
     pub const LINK: &str = "reader-link-";
+    /// Turns a list drawn over the book (the contents, the notes, the links
+    /// on a page) back a page.
+    pub const LIST_BACK: &str = "reader-list-back";
+    /// Turns a list drawn over the book on a page.
+    pub const LIST_NEXT: &str = "reader-list-next";
 }
 
 /// One bounded in-book search match.
@@ -555,7 +570,16 @@ pub struct Reader {
     pages: Vec<Vec<Piece>>,
     page: usize,
     chrome: Chrome,
+    /// Which page of the list in front of the book is showing, when one is.
+    list_page: usize,
+    /// How that list was last cut into pages. Laying out a long contents is
+    /// the expensive part of showing it, and without this every turn of the
+    /// list laid out all of it twice.
+    list_paging: Option<Paging>,
     problem: Option<String>,
+    /// How the line in `problem` is drawn. Reaching the last page is news,
+    /// not trouble, so it is said quietly; a refusal is said as one.
+    problem_level: BannerLevel,
     panel: DisplayMetrics,
     /// Whether the last page is the end of the book or merely where it stopped.
     ///
@@ -602,7 +626,10 @@ impl Reader {
             pages: Vec::new(),
             page: 0,
             chrome: Chrome::Hidden,
+            list_page: 0,
+            list_paging: None,
             problem: None,
+            problem_level: BannerLevel::Attention,
             panel: *panel,
             cut: false,
             pending: false,
@@ -627,37 +654,27 @@ impl Reader {
         // the layout engine drops them without saying anything.
         let mut metrics = *panel;
         metrics.text_scale = self.memory.scale;
-        // No bar is ever reserved: a reading page has nothing at its foot,
-        // and the controls are drawn over it rather than under it.
-        //
-        // The strip that says which page this is, though, is drawn there, and
-        // the layout engine takes it out of the content before it places
-        // anything. Measured without it, the last two lines of every page were
-        // set underneath "22 of 226" and the chevrons beside it.
-        let mut full = metrics.prose_area_in(true, false, Face::Reading);
+        // Nothing is reserved at the foot. A reading page has no bar, no page
+        // number and no arrows under it: the sides of the page turn it, as on
+        // the stock reader, and the place in the book is in the controls.
+        // Measured without the bar when the bar is out of sight: when it is
+        // called back it is drawn over the page rather than above it.
+        let mut area = metrics.prose_area_in(!self.memory.full_page, false, Face::Reading);
         if let Some(problem) = &self.problem {
             let notice = kobo_ui::with_text_scale(panel.text_scale, || {
-                kobo_ui::banner_height(problem, full.width, panel)
+                kobo_ui::banner_height(problem, area.width, panel)
             });
-            full.height = full
+            area.height = area
                 .height
                 .saturating_sub(notice)
-                .saturating_sub(full.gap)
+                .saturating_sub(area.gap)
                 .max(1);
         }
-        let mut area = full;
-        area.height = area
-            .height
-            .saturating_sub(metrics.page_position_band())
-            .max(1);
         // Measured with the prose at the size the screen will ask for. The
         // scale has to be ambient while this runs, because the wrapper and the
         // line height both read it -- and the screen carries the same value,
-        // so what was measured here is what gets drawn. It is the reading
-        // scale rather than the interface one, so the bar above the page and
-        // the strip below it stay the size the reader set for the device and
-        // a larger book gets all of the room it asked for.
-        let (mut pages, mut capped) = kobo_ui::with_reading_scale(self.memory.scale, || {
+        // so what was measured here is what gets drawn.
+        let (mut pages, capped) = kobo_ui::with_reading_scale(self.memory.scale, || {
             paginate(
                 &self.document,
                 &self.memory.highlights,
@@ -666,25 +683,6 @@ impl Reader {
                 area,
             )
         });
-        // A book of one page says nothing about where it is, so no strip is
-        // drawn and the room it was holding belongs to the words. Deciding it
-        // this way round rather than the other cannot oscillate: more room
-        // never turns one page into two.
-        if pages.len() <= 1 {
-            let (whole, cut) = kobo_ui::with_reading_scale(self.memory.scale, || {
-                paginate(
-                    &self.document,
-                    &self.memory.highlights,
-                    &self.pictures,
-                    &metrics,
-                    full,
-                )
-            });
-            if whole.len() <= 1 {
-                pages = whole;
-                capped = cut;
-            }
-        }
         decorate_annotation_ranges(&self.document, &self.memory.annotations, &mut pages);
         self.pages = pages;
         self.cut = capped || self.document.truncated;
@@ -1143,6 +1141,34 @@ impl Reader {
         self.bookmark_here().is_some()
     }
 
+    /// The page a bookmark on `block` stands for, counted from zero.
+    ///
+    /// A bookmark is kept on the paragraph at the top of the page, and that
+    /// paragraph often began on the page before. The page that opens with it
+    /// is the one that was bookmarked; at another type size there may be
+    /// none, and then it is the first page it is on.
+    fn bookmark_page(&self, block: Locator) -> Option<usize> {
+        self.pages
+            .iter()
+            .position(|page| page.first().is_some_and(|piece| piece.block == block))
+            .or_else(|| {
+                self.pages
+                    .iter()
+                    .position(|page| page.iter().any(|piece| piece.block == block))
+            })
+    }
+
+    /// Goes to the page a bookmark stands for, and puts the list away.
+    fn go_to_bookmark(&mut self, block: Locator, panel: &DisplayMetrics) {
+        let Some(page) = self.bookmark_page(block) else {
+            self.go_to(block, panel);
+            return;
+        };
+        self.page = page;
+        self.remember_position();
+        self.set_chrome(Chrome::Hidden, panel);
+    }
+
     /// The bookmarked block on this page, if there is one.
     fn bookmark_here(&self) -> Option<Locator> {
         self.pages
@@ -1254,13 +1280,45 @@ impl Reader {
         // open changes how much room the book has. This used to reserve a bar,
         // and opening the controls reflowed the book under the reader's
         // finger.
-        let _ = panel;
         self.chrome = chrome;
+        self.list_page = 0;
+        let Some(list) = self.list() else {
+            self.list_paging = None;
+            return;
+        };
+        let paging = self.paging_of(&list, panel).into_owned();
+        // A list opens where the reader is in it. For the contents that is
+        // the chapter being read, which in a book of a hundred and thirty-five
+        // chapters is a long way past the first page of them.
+        self.list_page = paging
+            .pages
+            .iter()
+            .position(|shown| shown.contains(&list.current))
+            .unwrap_or(0);
+        self.list_paging = Some(paging);
+    }
+
+    /// How `list` falls into pages on `panel`, measured again only when it
+    /// has changed since it was last measured.
+    fn paging_of(&self, list: &List, panel: &DisplayMetrics) -> std::borrow::Cow<'_, Paging> {
+        let key = list.key(panel);
+        match &self.list_paging {
+            Some(paging) if paging.key == key && paging.covers(list.entries.len()) => {
+                std::borrow::Cow::Borrowed(paging)
+            }
+            _ => std::borrow::Cow::Owned(list.paging(key, panel)),
+        }
     }
 
     /// Says something went wrong, on the next repaint.
     pub fn report(&mut self, problem: impl Into<String>) {
+        self.tell(BannerLevel::Attention, problem);
+    }
+
+    /// Says something on the next repaint at `level`.
+    fn tell(&mut self, level: BannerLevel, problem: impl Into<String>) {
         self.problem = Some(problem.into());
+        self.problem_level = level;
         let panel = self.panel;
         self.repaginate(&panel);
     }
@@ -1307,7 +1365,10 @@ impl Reader {
                 if self.forward() {
                     Outcome::Save
                 } else {
-                    self.report("This is the end of the book.");
+                    // Not "of the book": the same reader shows articles,
+                    // papers and feed items, and reaching the end of any of
+                    // them is not a problem.
+                    self.tell(BannerLevel::Info, "This is the end.");
                     Outcome::Repaint
                 }
             }
@@ -1315,7 +1376,7 @@ impl Reader {
                 if self.backward() {
                     Outcome::Save
                 } else {
-                    self.report("This is the beginning of the book.");
+                    self.tell(BannerLevel::Info, "This is the first page.");
                     Outcome::Repaint
                 }
             }
@@ -1339,23 +1400,18 @@ impl Reader {
                 self.set_chrome(next, panel);
                 Outcome::Repaint
             }
+            // Back to the book puts every panel away, the type panel too.
+            action::BOOK
+            | action::HIGHLIGHTS
+            | action::CONTENTS
+            | action::LINKS
+            | action::MARKING => {
+                self.set_chrome(list_chrome(name), panel);
+                Outcome::Repaint
+            }
             action::FULL_PAGE => self.turn_full_page_over(panel),
-            action::HIGHLIGHTS => {
-                self.set_chrome(Chrome::Highlights, panel);
-                Outcome::Repaint
-            }
-            action::CONTENTS => {
-                self.set_chrome(Chrome::Contents, panel);
-                Outcome::Repaint
-            }
-            action::LINKS => {
-                self.set_chrome(Chrome::Links, panel);
-                Outcome::Repaint
-            }
-            action::MARKING => {
-                self.set_chrome(Chrome::Marking, panel);
-                Outcome::Repaint
-            }
+            action::LIST_BACK => self.turn_list(false, panel),
+            action::LIST_NEXT => self.turn_list(true, panel),
             action::LARGER => {
                 let changed = self.larger(panel);
                 self.resized(changed, "That is the largest size.")
@@ -1389,6 +1445,8 @@ impl Reader {
                 if let Some(block) = target_of(other) {
                     if other.starts_with(action::MARK) {
                         self.toggle_highlight(block, panel);
+                    } else if other.starts_with(action::PLACE) {
+                        self.go_to_bookmark(block, panel);
                     } else if other.starts_with(action::LINK) {
                         self.follow(block, panel);
                     } else {
@@ -1401,6 +1459,27 @@ impl Reader {
         }
     }
 
+    /// Turns the list in front of the book a page, stopping at either end.
+    fn turn_list(&mut self, forward: bool, panel: &DisplayMetrics) -> Outcome {
+        let Some(list) = self.list() else {
+            return Outcome::Repaint;
+        };
+        let paging = self.paging_of(&list, panel).into_owned();
+        // From the page showing in the list as it is now. One that has lost
+        // pages since it opened (a larger type size, a mark taken off) still
+        // remembers the old page, and turning back from there went through
+        // pages that no longer exist before the screen changed at all.
+        let final_page = paging.pages.len() - 1;
+        let page = self.list_page.min(final_page);
+        self.list_page = if forward {
+            (page + 1).min(final_page)
+        } else {
+            page.saturating_sub(1)
+        };
+        self.list_paging = Some(paging);
+        Outcome::Repaint
+    }
+
     /// Gives the page the panel, or gives the bar back.
     ///
     /// The panel goes away with it: the setting is about what the page looks
@@ -1409,6 +1488,8 @@ impl Reader {
     /// way it was left.
     fn turn_full_page_over(&mut self, panel: &DisplayMetrics) -> Outcome {
         self.memory.full_page = !self.memory.full_page;
+        // The page is a bar's height taller or shorter now.
+        self.repaginate(panel);
         self.set_chrome(Chrome::Hidden, panel);
         Outcome::Save
     }
@@ -1423,6 +1504,14 @@ impl Reader {
     /// would have to keep its own copy of that list in step, and the failure
     /// when it drifted would be a control that silently did nothing.
     pub fn act_on(&mut self, action: kobo_ui::ActionId, panel: &DisplayMetrics) -> Outcome {
+        // A tap off an open panel arrives as Back from the scrim, and puts
+        // the panel away. Passed on, it closed the book under the reader.
+        if action == kobo_ui::ActionId::BACK
+            && matches!(self.chrome, Chrome::Controls | Chrome::Light)
+        {
+            self.set_chrome(Chrome::Hidden, panel);
+            return Outcome::Repaint;
+        }
         if action == kobo_ui::ActionId::BACK && !self.navigation.is_empty() {
             self.return_from_link(panel);
             return Outcome::Save;
@@ -1431,6 +1520,7 @@ impl Reader {
             action::FORWARD.into(),
             action::BACK.into(),
             action::CONTROLS.into(),
+            action::BOOK.into(),
             action::LIGHT.into(),
             action::FULL_PAGE.into(),
             action::CLOSE.into(),
@@ -1443,6 +1533,8 @@ impl Reader {
             action::MARKING.into(),
             action::CONTENTS.into(),
             action::LINKS.into(),
+            action::LIST_BACK.into(),
+            action::LIST_NEXT.into(),
         ];
         // Every size there is, rather than a hard-coded three. The stepper's
         // ends name the size either side of the one in force, so a range that
@@ -1456,8 +1548,17 @@ impl Reader {
         for (block, _) in self.markable() {
             names.push(format!("{}{block}", action::MARK));
         }
-        for block in self.memory.highlights.iter().chain(&self.memory.bookmarks) {
+        for block in &self.memory.highlights {
             names.push(format!("{}{block}", action::GO));
+        }
+        for block in &self.memory.bookmarks {
+            names.push(format!("{}{block}", action::PLACE));
+        }
+        // A note leads back to where its passage starts, and that paragraph
+        // need not be marked or bookmarked as well, so it is named here in its
+        // own right. Left out, a note in the list was a row that did nothing.
+        for annotation in self.memory.annotations.values() {
+            names.push(format!("{}{}", action::GO, annotation.range.start.block));
         }
         for entry in &self.document.contents {
             names.push(format!("{}{}", action::GO, entry.block));
@@ -1486,23 +1587,32 @@ impl Reader {
     /// Draws whatever the reader should be looking at.
     #[must_use]
     pub fn screen(&self, title: &str) -> Screen {
-        match self.chrome {
-            Chrome::Highlights => self.marks_screen(title),
-            Chrome::Contents => self.contents_screen(title),
-            Chrome::Links => self.links_screen(title),
-            Chrome::Marking => self.marking_screen(title),
-            Chrome::Controls | Chrome::Light | Chrome::Hidden => self.book_screen(title),
+        match self.list() {
+            Some(list) => list.screen(title, self.list_page, &self.paging_of(&list, &self.panel)),
+            None => self.book_screen(title),
         }
     }
 
-    /// The line at the foot that says where in the book this page is.
+    /// The list drawn in place of the page, when one is.
+    fn list(&self) -> Option<List> {
+        match self.chrome {
+            Chrome::Highlights => Some(self.marks_list()),
+            Chrome::Contents => Some(self.contents_list()),
+            Chrome::Links => Some(self.links_list()),
+            Chrome::Marking => Some(self.marking_list()),
+            Chrome::Controls | Chrome::Light | Chrome::Hidden => None,
+        }
+    }
+
+    /// Which page of how many, said in the controls rather than under the
+    /// page.
     ///
-    /// It lives at the foot now, not in the bar: the foot is where every Kobo
-    /// has always shown the place, and a reader glances there for it without
-    /// thinking. One page has no place worth stating, so it says nothing rather
-    /// than "1 of 1". The book's name is not repeated anywhere -- whoever is
-    /// reading it knows what it is.
-    fn foot_position(&self) -> Option<(u16, u16)> {
+    /// It used to sit at the foot with an arrow either side, a strip of the
+    /// panel taken from every page to repeat what the sides of the page
+    /// already do. The stock reader keeps the page to the words and gives the
+    /// place when its menu is opened, and so does this. One page has no place
+    /// worth stating, so it says nothing rather than "1 of 1".
+    fn place_in_book(&self) -> Option<(u16, u16)> {
         let pages = self.page_count();
         if pages <= 1 {
             return None;
@@ -1600,7 +1710,7 @@ impl Reader {
             };
         }
         if let Some(problem) = &self.problem {
-            screen = screen.banner(BannerLevel::Attention, problem.clone());
+            screen = screen.banner(self.problem_level, problem.clone());
         } else if self.pending && self.near_downloaded_end() {
             // The next chunk was asked for and has not landed yet. Said here,
             // at the foot, so a page turn that runs out of downloaded book
@@ -1628,14 +1738,6 @@ impl Reader {
         screen = screen
             .page_turns(action::BACK, action::FORWARD)
             .reading_menu(action::CONTROLS);
-        // The place, at the foot, muted, one caption line. It is what tells a
-        // page turn from a tap that landed on nothing, and it is where a Kobo
-        // reader's eye goes for it. Drawn under every chrome state, reading
-        // included, because the place is a fact about the book and not a
-        // control the reader has to summon.
-        if let Some((page, total)) = self.foot_position() {
-            screen = screen.page_position(page, total);
-        }
         // Holding a finger on the page asks to mark something on it, which is
         // what a hold does in every reader anyone has used. It opens the list
         // of this page's paragraphs rather than dropping a caret into the
@@ -1662,6 +1764,10 @@ impl Reader {
         //
         // It also holds more than five things, which the bar could not: the
         // bar dropped its sixth control silently.
+        //
+        // On a page measured without the bar, the bar the panel hangs from is
+        // drawn over the page too. Laid out above it, it pushed the page down
+        // and the last lines were cut off for as long as the panel was open.
         match self.chrome {
             Chrome::Light => screen
                 .popover(action::LIGHT, |panel| Self::light_panel(self, panel))
@@ -1670,6 +1776,7 @@ impl Reader {
                 .popover(action::CONTROLS, |panel| self.controls_panel(panel))
                 .build(),
         }
+        .with_auto_hidden_top_bar(self.memory.full_page)
     }
 
     /// What the light control opens: the front light and nothing else.
@@ -1704,6 +1811,10 @@ impl Reader {
         let scale = self.memory.scale;
         let smaller = scale.smaller().unwrap_or(scale);
         let larger = scale.larger().unwrap_or(scale);
+        let panel = match self.place_in_book() {
+            Some((page, total)) => panel.secondary(format!("Page {page} of {total}")),
+            None => panel,
+        };
         let mut panel = panel
             .stepper(
                 format!("{}%", scale.percent()),
@@ -1767,7 +1878,11 @@ impl Reader {
         // Four across at most: a fifth control on this panel would be narrower
         // than a fingertip, and the row wraps rather than shrinking.
         let columns = u8::try_from(row.len().min(4)).unwrap_or(4);
-        panel.controls(columns, row)
+        // The ribbon is drawn filled on a bookmarked page. Its label changes
+        // too, but the cell shows the picture alone.
+        panel
+            .controls(columns, row)
+            .control_on(action::BOOKMARK, self.is_bookmarked())
     }
 
     /// Where this page points, each line a way there.
@@ -1779,18 +1894,21 @@ impl Reader {
     /// the marker; what this gives is every destination on the page at a size
     /// nobody has to aim at, which is the same answer the marking screen
     /// already gives for choosing a paragraph.
-    fn links_screen(&self, title: &str) -> Screen {
-        let mut screen = ScreenBuilder::new("reader-links").top_bar(title);
-        let here = self.links_here();
-        if here.is_empty() {
-            return screen
-                .secondary("Nothing on this page points anywhere else in the book.")
-                .build();
+    fn links_list(&self) -> List {
+        let entries: Vec<Entry> = self
+            .links_here()
+            .into_iter()
+            .map(|(text, block)| Entry::new(None, format!("{}{block}", action::LINK), &text))
+            .collect();
+        List {
+            name: "reader-links",
+            intro: entries
+                .is_empty()
+                .then_some("Nothing on this page points anywhere else in the book."),
+            entries,
+            bar: Vec::new(),
+            current: 0,
         }
-        for (text, block) in here {
-            screen = screen.button(format!("{}{block}", action::LINK), text);
-        }
-        screen.build()
     }
 
     /// Where inside one paragraph the links are, and what each one answers.
@@ -1864,62 +1982,81 @@ impl Reader {
     /// Nesting is drawn with an indent rather than a heading per level: a
     /// reference work nests three deep, and a heading for every part would
     /// leave a screen that is mostly headings.
-    fn contents_screen(&self, title: &str) -> Screen {
-        let mut screen = ScreenBuilder::new("reader-contents").top_bar(title);
-        for entry in &self.document.contents {
-            let indent = "    ".repeat(entry.depth as usize);
-            screen = screen.button(
-                format!("{}{}", action::GO, entry.block),
-                format!("{indent}{}", entry.title),
-            );
+    fn contents_list(&self) -> List {
+        let top = usize::try_from(self.top()).unwrap_or(usize::MAX);
+        List {
+            name: "reader-contents",
+            intro: None,
+            entries: self
+                .document
+                .contents
+                .iter()
+                .map(|entry| {
+                    let indent = "    ".repeat(entry.depth as usize);
+                    Entry::new(
+                        None,
+                        format!("{}{}", action::GO, entry.block),
+                        &format!("{indent}{}", entry.title),
+                    )
+                })
+                .collect(),
+            bar: Vec::new(),
+            // The chapter being read is the last one to start at or before
+            // the top of the page.
+            current: self
+                .document
+                .contents
+                .iter()
+                .rposition(|entry| entry.block <= top)
+                .unwrap_or(0),
         }
-        screen.build()
     }
 
-    fn marks_screen(&self, title: &str) -> Screen {
-        let mut screen = ScreenBuilder::new("reader-marks").top_bar(title);
+    fn marks_list(&self) -> List {
         let marks = self.highlights();
         let places = self.bookmarks();
         let annotations = self.annotations();
-        if marks.is_empty() && places.is_empty() && annotations.is_empty() {
-            screen = screen.secondary(
-                "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.",
+        let mut entries = Vec::new();
+        for annotation in annotations {
+            let selected = self.text_in(annotation.range).map_or_else(
+                || "Unavailable passage".to_owned(),
+                |text| first_words(&text),
             );
+            let label = annotation.note.as_ref().map_or(selected.clone(), |note| {
+                format!("{selected} — {}", first_words(note))
+            });
+            entries.push(Entry::new(
+                Some("Highlights & marginalia"),
+                format!("{}{}", action::GO, annotation.range.start.block),
+                &label,
+            ));
         }
-        if !annotations.is_empty() {
-            screen = screen.heading("Highlights & marginalia");
-            for annotation in annotations {
-                let selected = self.text_in(annotation.range).map_or_else(
-                    || "Unavailable passage".to_owned(),
-                    |text| first_words(&text),
-                );
-                let label = annotation.note.as_ref().map_or(selected.clone(), |note| {
-                    format!("{selected} — {}", first_words(note))
-                });
-                screen = screen.button(
-                    format!("{}{}", action::GO, annotation.range.start.block),
-                    label,
-                );
-            }
+        for (block, text) in marks {
+            entries.push(Entry::new(
+                Some("Marked passages"),
+                format!("{}{block}", action::GO),
+                &text,
+            ));
         }
-        if !marks.is_empty() {
-            screen = screen.heading("Marked passages");
-            for (block, text) in marks {
-                screen = screen.button(format!("{}{block}", action::GO), text);
-            }
-        }
-        if !places.is_empty() {
-            // Kept apart because they answer different questions: a passage is
-            // something a reader wanted to keep, a bookmark is somewhere they
-            // meant to come back to. Run together, the list of one buries the
-            // other.
-            screen = screen.heading("Bookmarks");
-            for (block, text) in places {
-                screen = screen.button(format!("{}{block}", action::GO), text);
-            }
+        // Kept apart because they answer different questions: a passage is
+        // something a reader wanted to keep, a bookmark is somewhere they
+        // meant to come back to. Run together, the list of one buries the
+        // other.
+        // Each bookmark says which page it goes to as well as the words
+        // there, so two bookmarks that open on the same heading or the same
+        // title can still be told apart.
+        for (block, text) in places {
+            let label = self
+                .bookmark_page(block)
+                .map_or(text.clone(), |page| format!("Page {} · {text}", page + 1));
+            entries.push(Entry::new(
+                Some("Bookmarks"),
+                format!("{}{block}", action::PLACE),
+                &label,
+            ));
         }
         let mut bar = vec![
-            (action::CONTROLS, "Back to the book"),
+            (action::BOOK, "Back to the book"),
             (
                 action::BOOKMARK,
                 if self.is_bookmarked() {
@@ -1936,59 +2073,334 @@ impl Reader {
             // the person about to make another.
             bar.push((action::MARKING, "Mark a paragraph"));
         }
-        screen.action_bar(bar).build()
+        List {
+            name: "reader-marks",
+            intro: entries.is_empty().then_some(
+                "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.",
+            ),
+            entries,
+            bar,
+            current: 0,
+        }
     }
 
     /// The paragraphs on this page, each a tap away from being marked.
-    fn marking_screen(&self, title: &str) -> Screen {
-        let mut screen = ScreenBuilder::new("reader-marking")
-            .top_bar(title)
-            .secondary("Tap a paragraph to mark it, or to take the mark off.");
-        for (block, text) in self.markable() {
-            let marked = self.memory.highlights.contains(&block);
-            // The state is in the row, because the list is the only place it
-            // can be seen: the page underneath is not on screen while this is.
-            // Said in words rather than with a tick: the reading face has no
-            // check mark in it, and a screen carrying a character the face
-            // cannot draw is refused outright -- correctly, because the
-            // alternative is an empty box where the answer should be.
-            let label = if marked {
-                format!("Marked: {text}")
-            } else {
-                text
-            };
-            screen = screen.button(format!("{}{block}", action::MARK), label);
-        }
-        screen
-            .action_bar([
-                (action::CONTROLS, "Back to the book"),
+    fn marking_list(&self) -> List {
+        let entries = self
+            .markable()
+            .into_iter()
+            .map(|(block, text)| {
+                let marked = self.memory.highlights.contains(&block);
+                // The state is in the row, because the list is the only place
+                // it can be seen: the page underneath is not on screen while
+                // this is. Said in words rather than with a tick: the reading
+                // face has no check mark in it, and a screen carrying a
+                // character the face cannot draw is refused outright --
+                // correctly, because the alternative is an empty box where the
+                // answer should be.
+                let label = if marked {
+                    format!("Marked: {text}")
+                } else {
+                    text
+                };
+                Entry::new(None, format!("{}{block}", action::MARK), &label)
+            })
+            .collect();
+        List {
+            name: "reader-marking",
+            intro: Some("Tap a paragraph to mark it, or to take the mark off."),
+            entries,
+            bar: vec![
+                (action::BOOK, "Back to the book"),
                 (action::HIGHLIGHTS, "Notes"),
-            ])
-            .build()
+            ],
+            current: 0,
+        }
     }
 }
 
-/// The block a `reader-mark-` or `reader-go-` action refers to.
+/// A list the reader draws in place of the page: the contents, the notes, the
+/// links on a page, the paragraphs that can be marked.
+///
+/// Paged, because every one of them can outgrow the panel. Pride and
+/// Prejudice lists sixty-three chapters, and drawn as one screen the panel
+/// showed nine and dropped the other fifty-four without a word: the chapters
+/// past the fold were in the book and could not be reached from here.
+struct List {
+    name: &'static str,
+    /// Said above the entries, on every page of them.
+    intro: Option<&'static str>,
+    entries: Vec<Entry>,
+    bar: Vec<(&'static str, &'static str)>,
+    /// The entry the list opens showing.
+    current: usize,
+}
+
+/// One line of a [`List`].
+struct Entry {
+    /// The heading it sits under, said again at the top of a page the
+    /// section spills onto: a page of bookmarks under no heading reads as
+    /// more of whatever the last page was.
+    section: Option<&'static str>,
+    action: String,
+    label: String,
+}
+
+impl Entry {
+    /// The label is the book's words, so a letter no face can draw is put as
+    /// the box the page draws for it rather than refusing the list.
+    fn new(section: Option<&'static str>, action: String, label: &str) -> Self {
+        Self {
+            section,
+            action,
+            label: kobo_ui::drawable_in(label, Face::Text).into_owned(),
+        }
+    }
+}
+
+/// How a [`List`] falls into pages on one panel.
+#[derive(Clone, Debug)]
+struct Paging {
+    /// What it was measured from: the entries, what is drawn round them and
+    /// the panel. A list with the same key measures the same, so turning a
+    /// page does not lay every entry out again.
+    key: u64,
+    /// Never empty: a list with nothing in it is one page saying so.
+    pages: Vec<std::ops::Range<usize>>,
+    /// Labels cut short to fit a page on their own, by entry.
+    shortened: BTreeMap<usize, String>,
+}
+
+impl Paging {
+    /// Whether these pages are of a list of `count` entries, which a list
+    /// whose key happened to match one of a different length would not be.
+    fn covers(&self, count: usize) -> bool {
+        self.pages.last().is_some_and(|shown| shown.end == count)
+    }
+}
+
+impl List {
+    /// Page `page` of this list as `paging` cut it, or its last page when
+    /// there are fewer.
+    fn screen(&self, title: &str, page: usize, paging: &Paging) -> Screen {
+        let page = page.min(paging.pages.len() - 1);
+        let position = (paging.pages.len() > 1).then_some((page, paging.pages.len()));
+        self.build(
+            title,
+            paging.pages[page].clone(),
+            position,
+            &paging.shortened,
+        )
+    }
+
+    /// What [`Self::paging`] depends on.
+    fn key(&self, panel: &DisplayMetrics) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.name.hash(&mut hasher);
+        self.intro.hash(&mut hasher);
+        self.bar.hash(&mut hasher);
+        for entry in &self.entries {
+            entry.section.hash(&mut hasher);
+            entry.action.hash(&mut hasher);
+            entry.label.hash(&mut hasher);
+        }
+        panel.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn build(
+        &self,
+        title: &str,
+        shown: std::ops::Range<usize>,
+        position: Option<(usize, usize)>,
+        shortened: &BTreeMap<usize, String>,
+    ) -> Screen {
+        // The book's title is the book's words too.
+        let mut screen =
+            ScreenBuilder::new(self.name).top_bar(kobo_ui::drawable_in(title, Face::Text));
+        if let Some(intro) = self.intro {
+            screen = screen.secondary(intro);
+        }
+        let mut section = None;
+        for index in shown {
+            let entry = &self.entries[index];
+            if let Some(heading) = entry.section.filter(|_| entry.section != section) {
+                screen = screen.heading(heading);
+            }
+            section = entry.section;
+            let label = shortened.get(&index).unwrap_or(&entry.label);
+            screen = screen.button(&entry.action, label.as_str());
+        }
+        if let Some((page, of)) = position {
+            screen = screen
+                .page_turns(action::LIST_BACK, action::LIST_NEXT)
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(of).unwrap_or(u16::MAX),
+                );
+        }
+        if !self.bar.is_empty() {
+            screen = screen.action_bar(self.bar.iter().copied());
+        }
+        screen.build()
+    }
+
+    /// The entries, cut into pages that each show whole. Never empty.
+    ///
+    /// Measured by laying the screen out rather than by adding up heights, so
+    /// a heading repeated at the top of a page, a label that wraps and the
+    /// strip that says which page this is are all counted the way they are
+    /// drawn. `key` is [`Self::key`], passed in by a caller that has already
+    /// worked it out to see whether this was needed.
+    fn paging(&self, key: u64, panel: &DisplayMetrics) -> Paging {
+        let count = self.entries.len();
+        let mut shortened = BTreeMap::new();
+        if count == 0 || self.fits(0..count, None, panel, &shortened) {
+            return Paging {
+                key,
+                pages: std::iter::once(0..count).collect(),
+                shortened,
+            };
+        }
+        // Measured with the strip from here on. Two pages is enough to give
+        // it its widest number for any list a reader will page through.
+        let strip = Some((0, 2));
+        let mut pages = Vec::new();
+        let mut start = 0;
+        while start < count {
+            // Every other entry can wait for the next page, but one taller
+            // than a page by itself has nowhere else to go: drawn whole, it
+            // ran off the foot and its destination could not be tapped. It is
+            // cut short until it fits.
+            let after = start + 1;
+            if !self.fits(start..after, strip, panel, &shortened) {
+                if let Some(label) = self.shortened_to_fit(start, strip, panel) {
+                    shortened.insert(start, label);
+                }
+            }
+            // At least one entry a page, whatever it measures, because the
+            // alternative is an entry that can never be reached. Then the end
+            // is found by doubling and halving: a page holds a dozen entries
+            // and a contents can hold hundreds, so trying every end in turn
+            // would lay the same page out a dozen times.
+            let mut fit = after;
+            let mut over = None;
+            let mut step = 1;
+            while fit < count {
+                let end = (fit + step).min(count);
+                if self.fits(start..end, strip, panel, &shortened) {
+                    fit = end;
+                    step *= 2;
+                } else {
+                    over = Some(end);
+                    break;
+                }
+            }
+            if let Some(mut over) = over {
+                while over - fit > 1 {
+                    let middle = fit + (over - fit) / 2;
+                    if self.fits(start..middle, strip, panel, &shortened) {
+                        fit = middle;
+                    } else {
+                        over = middle;
+                    }
+                }
+            }
+            pages.push(start..fit);
+            start = fit;
+        }
+        Paging {
+            key,
+            pages,
+            shortened,
+        }
+    }
+
+    /// An opening of entry `index`'s label short enough to fit a page on its
+    /// own, found by halving, or `None` when not even a word of it does.
+    fn shortened_to_fit(
+        &self,
+        index: usize,
+        position: Option<(usize, usize)>,
+        panel: &DisplayMetrics,
+    ) -> Option<String> {
+        let label = &self.entries[index].label;
+        let after = index + 1;
+        let mut most = label.chars().count();
+        while most > 1 {
+            most /= 2;
+            let trial = BTreeMap::from([(index, opening(label, most))]);
+            if self.fits(index..after, position, panel, &trial) {
+                return trial.into_values().next();
+            }
+        }
+        None
+    }
+
+    fn fits(
+        &self,
+        shown: std::ops::Range<usize>,
+        position: Option<(usize, usize)>,
+        panel: &DisplayMetrics,
+        shortened: &BTreeMap<usize, String>,
+    ) -> bool {
+        let screen = self.build("", shown, position, shortened);
+        kobo_ui::with_text_scale(panel.text_scale, || {
+            screen.diagnostics(panel, &kobo_ui::Chrome::measuring(true))
+        })
+        .issues
+        .iter()
+        .all(|issue| {
+            !matches!(
+                issue.kind,
+                kobo_ui::LayoutIssueKind::ContentOverflow { .. }
+                    | kobo_ui::LayoutIssueKind::InteractiveOffscreen
+                    | kobo_ui::LayoutIssueKind::Clipped
+            )
+        })
+    }
+}
+
+/// The panel a list action opens, and none for Back to the book.
+fn list_chrome(name: &str) -> Chrome {
+    match name {
+        action::HIGHLIGHTS => Chrome::Highlights,
+        action::CONTENTS => Chrome::Contents,
+        action::LINKS => Chrome::Links,
+        action::MARKING => Chrome::Marking,
+        _ => Chrome::Hidden,
+    }
+}
+
+/// The block a `reader-mark-`, `reader-go-` or `reader-place-` action
+/// refers to.
 #[must_use]
 pub fn target_of(name: &str) -> Option<Locator> {
     name.strip_prefix(action::MARK)
         .or_else(|| name.strip_prefix(action::GO))
+        .or_else(|| name.strip_prefix(action::PLACE))
         .or_else(|| name.strip_prefix(action::LINK))
         .and_then(|rest| rest.parse().ok())
 }
 
 /// The opening of a paragraph, for a list that has to fit on one row.
 fn first_words(text: &str) -> String {
-    const MOST: usize = 60;
+    opening(text, 60)
+}
+
+/// At most `most` characters from the start of `text`, and an ellipsis when
+/// that is not all of it.
+fn opening(text: &str, most: usize) -> String {
     let trimmed = text.trim();
-    if trimmed.chars().count() <= MOST {
+    if trimmed.chars().count() <= most {
         return trimmed.to_owned();
     }
-    let mut out: String = trimmed.chars().take(MOST).collect();
+    let mut out: String = trimmed.chars().take(most).collect();
     // Cut at a word rather than mid-syllable, unless there is no space late
     // enough to cut at -- which is what a long URL looks like.
     if let Some(space) = out.rfind(' ') {
-        if space > MOST / 2 {
+        if space > most / 2 {
             out.truncate(space);
         }
     }
@@ -2286,16 +2698,6 @@ impl Reader {
             .collect()
     }
 
-    /// What kind of thing a piece is, for deciding what stands around it.
-    fn set_of(&self, piece: &Piece) -> Set {
-        match piece.kind {
-            Kind::Caption => Set::Plate,
-            Kind::Picture if self.illustration_at(piece.block) => Set::Plate,
-            Kind::Picture => Set::Formula,
-            _ => Set::Prose,
-        }
-    }
-
     /// The air owed between two pieces that follow each other on a page.
     ///
     /// Only at the seam between a group and what is not in it. A plate asks
@@ -2305,14 +2707,10 @@ impl Reader {
     /// sentence of the paper, set as mathematics -- and wants to be told apart
     /// from the paragraph it interrupts rather than lifted out of it.
     fn between(&self, previous: &Piece, piece: &Piece) -> Option<kobo_ui::Space> {
-        let (before, after) = (self.set_of(previous), self.set_of(piece));
-        if before == after {
-            return None;
-        }
-        if before == Set::Plate || after == Set::Plate {
-            return Some(kobo_ui::Space::Small);
-        }
-        Some(kobo_ui::Space::Tight)
+        between(
+            set_of(&self.document, previous.block, previous.kind),
+            set_of(&self.document, piece.block, piece.kind),
+        )
     }
 
     /// Whether a block is an illustration rather than a drawn piece of text.
@@ -2474,6 +2872,65 @@ enum Set {
     Formula,
 }
 
+/// What kind of thing a piece of a block is, for deciding what stands around
+/// it.
+fn set_of(document: &Document, block: Locator, kind: Kind) -> Set {
+    let illustration = usize::try_from(block)
+        .ok()
+        .and_then(|at| document.blocks.get(at))
+        .is_some_and(|block| {
+            matches!(
+                block,
+                Block::Picture {
+                    illustration: true,
+                    ..
+                }
+            )
+        });
+    match kind {
+        Kind::Caption => Set::Plate,
+        Kind::Picture if illustration => Set::Plate,
+        Kind::Picture => Set::Formula,
+        _ => Set::Prose,
+    }
+}
+
+/// The air owed at the seam between two kinds of piece, if any.
+fn between(before: Set, after: Set) -> Option<kobo_ui::Space> {
+    if before == after {
+        return None;
+    }
+    if before == Set::Plate || after == Set::Plate {
+        return Some(kobo_ui::Space::Small);
+    }
+    Some(kobo_ui::Space::Tight)
+}
+
+/// The room the seam before a piece takes on the page: the spacer the screen
+/// puts there and the gap the layout leaves after it.
+///
+/// Charged when the page is packed because the screen draws it. Left out,
+/// a page with a picture in the middle of it held two seams' worth more
+/// prose than the panel could show, and the renderer refused the page rather
+/// than cut its last lines.
+fn seam_height(
+    document: &Document,
+    previous: Option<&Piece>,
+    block: Locator,
+    kind: Kind,
+    metrics: &kobo_ui::DisplayMetrics,
+    gap: i32,
+) -> i32 {
+    previous
+        .and_then(|previous| {
+            between(
+                set_of(document, previous.block, previous.kind),
+                set_of(document, block, kind),
+            )
+        })
+        .map_or(0, |space| metrics.space(space).saturating_add(gap))
+}
+
 fn is_outline_font(bytes: &[u8]) -> bool {
     bytes.starts_with(b"\0\x01\0\0")
         || bytes.starts_with(b"OTTO")
@@ -2504,6 +2961,8 @@ struct Placing<'a> {
     page: &'a mut Vec<Piece>,
     used: &'a mut i32,
     gap: i32,
+    /// The room the seam before the picture takes, if it goes on this page.
+    seam: i32,
 }
 
 /// Puts a picture on the page, or on the next one when it will not fit.
@@ -2518,14 +2977,15 @@ fn place_picture(
     area: ProseArea,
 ) {
     let height = picture_height(drawn, metrics, area);
-    if !placing.page.is_empty() && *placing.used + placing.gap + height > area.height {
+    if !placing.page.is_empty() && *placing.used + placing.gap + placing.seam + height > area.height
+    {
         placing.pages.push(std::mem::take(placing.page));
         *placing.used = 0;
     }
     *placing.used += if placing.page.is_empty() {
         height
     } else {
-        placing.gap + height
+        placing.gap + placing.seam + height
     };
     placing.page.push(piece);
 }
@@ -2825,6 +3285,25 @@ fn following_height(
 /// is the only unit both this and the layout agree on. The layout squeezes
 /// these to fit the panel; the point of measuring them here is that a table
 /// split across two pages is squeezed by the same amounts on both.
+/// Whether a table's first row names the columns of figures under it.
+///
+/// A first row of words only names columns when there is something else
+/// beneath it. A book's contents is a table of words from top to bottom, and
+/// reading its first row as a heading greyed out "Chapter I" and drew a rule
+/// under it, as though the first chapter were the title of the rest.
+fn names_figures(blocks: &[Block], first: usize, cells: &[String]) -> bool {
+    kobo_ui::row_names_the_columns(cells)
+        && blocks
+            .get(first + 1..)
+            .unwrap_or_default()
+            .iter()
+            .map_while(|block| match block {
+                Block::Row { cells, .. } => Some(cells),
+                _ => None,
+            })
+            .any(|cells| !kobo_ui::row_names_the_columns(cells))
+}
+
 fn table_columns(blocks: &[Block], from: usize, area: ProseArea) -> Vec<u16> {
     let mut wants: Vec<u16> = Vec::new();
     for block in &blocks[from.min(blocks.len())..] {
@@ -2925,6 +3404,28 @@ fn row_height(
     tallest
 }
 
+/// How much of the page a row takes as the layout draws it: the cells, and
+/// under a column of cells the half gap that spaces it from the next row.
+///
+/// A heading row is also ruled off, with a gap around the rule. The pages
+/// used to be packed as if every row were spaced like a paragraph, which was
+/// close for a table with one heading row and short for one whose every row
+/// is a heading, as a list of labelled facts is. A page of such rows ran
+/// past the foot, and with a banner under it the screen was refused.
+/// Stacked rows carry their own spacing in [`row_height`].
+fn row_drawn(cells: i32, header: bool, stacked: bool, metrics: &DisplayMetrics) -> i32 {
+    if stacked {
+        return cells;
+    }
+    let gap = metrics.space(kobo_ui::Space::Small);
+    let rule = if header {
+        gap.saturating_add(metrics.rule_thickness())
+    } else {
+        0
+    };
+    cells.saturating_add(gap / 2).saturating_add(rule)
+}
+
 fn lines_high(lines: usize, line: i32) -> i32 {
     i32::try_from(lines)
         .unwrap_or(1)
@@ -2946,7 +3447,13 @@ fn paginate(
     let mut pages: Vec<Vec<Piece>> = Vec::new();
     let mut page: Vec<Piece> = Vec::new();
     let mut used = 0;
-    let gap = metrics.space(kobo_ui::Space::Small);
+    // The space the layout leaves between two pieces, which the area carries
+    // for this. Counted as the larger step instead, every paragraph on a page
+    // cost a little more than it took, and a page of short paragraphs ended a
+    // line or two above its foot.
+    let gap = area.gap;
+    // A table's rows are set further apart than paragraphs.
+    let row_gap = metrics.space(kobo_ui::Space::Small);
     if area.width <= 0 || area.height <= 0 {
         return (pages, !document.blocks.is_empty());
     }
@@ -3042,12 +3549,13 @@ fn paginate(
             if page.is_empty() {
                 continue;
             }
-            if used + gap + height > area.height {
+            let seam = seam_height(document, page.last(), index, kind, metrics, gap);
+            if used + gap + seam + height > area.height {
                 pages.push(std::mem::take(&mut page));
                 used = 0;
                 continue;
             }
-            used += gap + height;
+            used += gap + seam + height;
             page.push(Piece {
                 block: index,
                 text: String::new(),
@@ -3064,39 +3572,17 @@ fn paginate(
         // A table row is placed whole. Its cells are laid out side by side,
         // so unlike prose there is no first half of it that reads correctly
         // on its own: half a row is the top half of several columns at once.
-        if let Block::Row { cells, .. } = block {
+        if let Block::Row { cells, header } = block {
             if columns.is_empty() {
                 columns = table_columns(&document.blocks, index_of(index), area);
-                head =
-                    kobo_ui::row_names_the_columns(cells).then(|| (index_of(index), cells.clone()));
+                // A row the book marked as the heading is one, whatever is
+                // under it; only an unmarked row is judged by what follows.
+                head = (*header || names_figures(&document.blocks, index_of(index), cells))
+                    .then(|| (index_of(index), cells.clone()));
                 row_index = 0;
             }
             let labels = head.as_ref().map_or(&[][..], |(_, cells)| cells.as_slice());
             let stacked = column_widths(&columns, metrics, area).1;
-            // Stacked, the heading row is not drawn at all: its headings are
-            // written beside the values instead, so it takes no room.
-            let height = if stacked && row_index == 0 && !labels.is_empty() {
-                0
-            } else {
-                row_height(cells, &columns, labels, row_index, metrics, area)
-            };
-            if !page.is_empty() && used + gap + height > area.height {
-                pages.push(std::mem::take(&mut page));
-                used = 0;
-                // The heading row goes at the top of the continuation, drawn
-                // and charged for exactly as the layout will draw it.
-                if let Some((at, cells)) = head.clone().filter(|(at, _)| *at != index_of(index)) {
-                    if !stacked {
-                        used += row_height(&cells, &columns, &[], 0, metrics, area);
-                    }
-                    page.push(row_piece(at, Kind::Row { header: true }, &cells, &columns));
-                }
-            }
-            used += if page.is_empty() {
-                height
-            } else {
-                gap + height
-            };
             // Marked as the heading it is, whatever the markup called it:
             // LaTeXML writes every cell as data, and the layout has to know
             // which row names the others before it can say so beside them.
@@ -3105,6 +3591,55 @@ fn paginate(
             } else {
                 kind
             };
+            let header = matches!(kind, Kind::Row { header: true });
+            // Stacked, the heading row is not drawn at all: its headings are
+            // written beside the values instead, so it takes no room.
+            let height = if stacked && row_index == 0 && !labels.is_empty() {
+                0
+            } else {
+                row_drawn(
+                    row_height(cells, &columns, labels, row_index, metrics, area),
+                    header,
+                    stacked,
+                    metrics,
+                )
+            };
+            // Rows in a run are one table on the screen, spaced by the table
+            // itself; only the first is set apart from what comes before it.
+            let follows_row = page
+                .last()
+                .is_some_and(|piece| matches!(piece.kind, Kind::Row { .. }));
+            let lead = if page.is_empty() {
+                0
+            } else if follows_row {
+                if stacked {
+                    row_gap
+                } else {
+                    0
+                }
+            } else {
+                gap + seam_height(document, page.last(), index, kind, metrics, gap)
+            };
+            if !page.is_empty() && used + lead + height > area.height {
+                pages.push(std::mem::take(&mut page));
+                used = 0;
+                // The heading row goes at the top of the continuation, drawn
+                // and charged for exactly as the layout will draw it.
+                if let Some((at, cells)) = head.clone().filter(|(at, _)| *at != index_of(index)) {
+                    if !stacked {
+                        used += row_drawn(
+                            row_height(&cells, &columns, &[], 0, metrics, area),
+                            true,
+                            false,
+                            metrics,
+                        );
+                    }
+                    page.push(row_piece(at, Kind::Row { header: true }, &cells, &columns));
+                }
+                used += height;
+            } else {
+                used += lead + height;
+            }
             page.push(row_piece(index_of(index), kind, cells, &columns));
             row_index += 1;
             continue;
@@ -3135,6 +3670,7 @@ fn paginate(
                         row: None,
                     },
                     &mut Placing {
+                        seam: seam_height(document, page.last(), index, kind, metrics, gap),
                         pages: &mut pages,
                         page: &mut page,
                         used: &mut used,
@@ -3157,17 +3693,23 @@ fn paginate(
         // Wrapped against the pictures rather than the words they stand for
         // when both are known, because a page counted one way and drawn the
         // other is a page with a line too many on it.
-        let lines = match rich_layout.map(|rich| block_formulae(rich, pictures)) {
-            Some(formulae) if !formulae.is_empty() => kobo_ui::wrap_text_with_formulae(
-                text,
-                width,
-                size,
-                area.face,
-                &formulae,
-                natural_height,
-            ),
-            _ => wrap_text_in(text, width, wrap_size, wrap_face),
-        };
+        // And in the cut each run is drawn in: a passage in italic sets
+        // narrower than the same words upright.
+        let lines =
+            match rich_layout.map(|rich| (block_formulae(rich, pictures), block_emphasis(rich))) {
+                Some((formulae, emphasis)) if !formulae.is_empty() || !emphasis.is_empty() => {
+                    kobo_ui::wrap_rich_text(
+                        text,
+                        &emphasis,
+                        width,
+                        size,
+                        area.face,
+                        &formulae,
+                        natural_height,
+                    )
+                }
+                _ => wrap_text_in(text, width, wrap_size, wrap_face),
+            };
         if lines.is_empty() {
             continue;
         }
@@ -3181,6 +3723,14 @@ fn paginate(
                 .unwrap_or(i32::MAX)
                 .saturating_mul(height)
                 .saturating_add(gap)
+                .saturating_add(seam_height(
+                    document,
+                    page.last(),
+                    index,
+                    kind,
+                    metrics,
+                    gap,
+                ))
                 .saturating_add(following_height(
                     document,
                     index_of(index),
@@ -3194,16 +3744,63 @@ fn paginate(
             }
         }
 
+        let offsets = line_offsets(text, &lines);
         let mut placed = 0;
         let mut source_at = 0usize;
         while placed < lines.len() {
-            let room = area.height - used - if page.is_empty() { 0 } else { gap };
-            let fits = if room < height.saturating_add(extra_height) {
+            let seam = if placed == 0 {
+                seam_height(document, page.last(), index, kind, metrics, gap)
+            } else {
+                0
+            };
+            let room = area.height - used - seam - if page.is_empty() { 0 } else { gap };
+            // What the margin above shrinks to against the paragraph before
+            // it, counted before deciding how much fits rather than after.
+            let shared = if placed == 0 {
+                rich_layout.zip(page.last()).map_or(0, |(rich, previous)| {
+                    if previous.kind == Kind::Body {
+                        natural_height.saturating_mul(i32::from(
+                            rich.style
+                                .margin_before_em
+                                .min(previous.presentation.margin_after_em),
+                        )) / 100
+                    } else {
+                        0
+                    }
+                })
+            } else {
+                0
+            };
+            // Only the paragraph's first piece is drawn with the margin above
+            // it, and only its last with the margin below. A piece that goes
+            // on overleaf was charged the margin below as well, so a page
+            // ended a line early whenever a paragraph crossed its foot.
+            let (above, below) = rich_layout.map_or((0, 0), |rich| {
+                let margin = |em: u16| natural_height.saturating_mul(i32::from(em)) / 100;
+                let above = if placed == 0 {
+                    margin(rich.style.margin_before_em).saturating_sub(shared)
+                } else {
+                    0
+                };
+                (above, margin(rich.style.margin_after_em))
+            });
+            let left = lines.len() - placed;
+            let whole = i32::try_from(left)
+                .unwrap_or(i32::MAX)
+                .saturating_mul(height)
+                .saturating_add(above)
+                .saturating_add(below);
+            let fits = if room >= whole {
+                left
+            } else if room < height.saturating_add(above) {
                 0
             } else {
-                usize::try_from((room - extra_height) / height).unwrap_or(usize::MAX)
+                // Short of the whole paragraph, so the piece taken here ends
+                // without the margin below.
+                usize::try_from((room - above) / height)
+                    .unwrap_or(usize::MAX)
+                    .min(left.saturating_sub(1))
             };
-            let left = lines.len() - placed;
             // Either the rest fits, or enough of it fits to be worth
             // breaking: two lines here and two over the page.
             //
@@ -3231,7 +3828,7 @@ fn paginate(
                     .unwrap_or(1)
                     .max(1);
                     let end = (placed + forced).min(lines.len());
-                    let text = lines[placed..end].join(" ");
+                    let text = rejoined(text, &lines, offsets.as_deref(), placed, end);
                     let (spans, formulae, presentation) =
                         piece_presentation(rich, text.as_str(), &mut source_at);
                     let presentation =
@@ -3256,17 +3853,29 @@ fn paginate(
                 continue;
             }
             if !page.is_empty() {
-                used += gap;
+                used += gap + seam;
             }
-            let text = lines[placed..placed + take].join(" ");
+            let text = rejoined(text, &lines, offsets.as_deref(), placed, placed + take);
             let (spans, formulae, presentation) =
                 piece_presentation(rich, text.as_str(), &mut source_at);
             let presentation =
                 fragment_presentation(presentation, placed == 0, placed + take == lines.len());
+            let presentation = collapsed_after(page.last(), presentation);
+            // Only prose is drawn with the book's margins. A heading, a quote,
+            // an item or a caption is set by the toolkit with its own spacing,
+            // so charging it the margins its stylesheet asked for counted room
+            // the page never spent. Standard Ebooks gives every chapter heading
+            // three ems above and three below, and each page a chapter opened
+            // on ended six heading lines early.
+            let margins = if rich_layout.is_some() {
+                presentation_height(presentation, natural_height)
+            } else {
+                0
+            };
             used += i32::try_from(take)
                 .unwrap_or(i32::MAX)
                 .saturating_mul(height)
-                .saturating_add(presentation_height(presentation, natural_height));
+                .saturating_add(margins);
             page.push(Piece {
                 block: index,
                 text,
@@ -3287,6 +3896,44 @@ fn paginate(
         pages.push(page);
     }
     (pages, capped)
+}
+
+/// Where each wrapped line sits in the paragraph it was wrapped from.
+///
+/// The wrapper hands back slices of the paragraph, in order, so each is found
+/// by looking forward from the end of the one before. `None` if one cannot be
+/// found, which would mean the lines did not come from this text.
+fn line_offsets(text: &str, lines: &[String]) -> Option<Vec<(usize, usize)>> {
+    let mut at = 0;
+    lines
+        .iter()
+        .map(|line| {
+            let start = at + text.get(at..)?.find(line.as_str())?;
+            at = start + line.len();
+            Some((start, at))
+        })
+        .collect()
+}
+
+/// Lines `from..to` of a paragraph as they were written.
+///
+/// They used to be joined with a space. A line the wrapper broke after a
+/// hyphen has no space after it in the book, so "daisy-chain" broken across
+/// two lines came back as "daisy- chain", and once the text no longer matched
+/// the paragraph its italics could not be found in it either.
+fn rejoined(
+    text: &str,
+    lines: &[String],
+    offsets: Option<&[(usize, usize)]>,
+    from: usize,
+    to: usize,
+) -> String {
+    match offsets {
+        Some(offsets) if from < to && to <= offsets.len() => {
+            text[offsets[from].0..offsets[to - 1].1].to_owned()
+        }
+        _ => lines[from..to].join(" "),
+    }
 }
 
 fn kind_of(block: &Block, marked: bool) -> Kind {
@@ -3372,10 +4019,33 @@ fn piece_presentation(
                 superscript: span.style.superscript,
                 subscript: span.style.subscript,
                 highlighted: false,
+                muted: false,
             },
         });
     }
     (spans, formulae, paragraph_presentation(&rich.style))
+}
+
+/// The runs of a block set in emphasis, as offsets into the block's own text
+/// the way [`block_formulae`] gives its formulae.
+fn block_emphasis(rich: &kobo_doc::RichBlock) -> Vec<kobo_ui::RichTextSpan> {
+    let mut emphasis = Vec::new();
+    let mut cursor = 0usize;
+    for span in &rich.spans {
+        let start = cursor;
+        cursor += span.text.len();
+        if span.style.emphasis && start < cursor {
+            emphasis.push(kobo_ui::RichTextSpan {
+                start,
+                end: cursor,
+                presentation: kobo_ui::TextPresentation {
+                    emphasis: true,
+                    ..kobo_ui::TextPresentation::default()
+                },
+            });
+        }
+    }
+    emphasis
 }
 
 /// Every formula in a block, as the pictures they are drawn as.
@@ -3431,6 +4101,7 @@ fn paragraph_presentation(style: &kobo_doc::BlockStyle) -> kobo_ui::ParagraphPre
         margin_before_em: style.margin_before_em,
         margin_after_em: style.margin_after_em,
         first_line_indent_em: style.first_line_indent_em,
+        ..kobo_ui::ParagraphPresentation::default()
     }
 }
 
@@ -3445,6 +4116,27 @@ fn fragment_presentation(
     }
     if !last {
         presentation.margin_after_em = 0;
+    }
+    presentation
+}
+
+/// The margin above a paragraph once it has met the margin below the one
+/// before it.
+///
+/// Two margins that meet collapse to the larger of them, as they do in every
+/// browser and every reader that follows CSS. They were added instead, so a
+/// book asking for a quarter of an em above and below each paragraph got half
+/// an em between every pair, and an indented novel read as a list of
+/// separate blocks.
+fn collapsed_after(
+    previous: Option<&Piece>,
+    mut presentation: kobo_ui::ParagraphPresentation,
+) -> kobo_ui::ParagraphPresentation {
+    if let Some(previous) = previous.filter(|previous| previous.kind == Kind::Body) {
+        let shared = presentation
+            .margin_before_em
+            .min(previous.presentation.margin_after_em);
+        presentation.margin_before_em -= shared;
     }
     presentation
 }
@@ -3898,29 +4590,38 @@ mod tests {
         );
     }
 
-    /// A reader wants to know how far through they are. The place moved from
-    /// the bar to the foot, where every Kobo has always shown it and where a
-    /// reader's eye goes for it, and it rides on the page turns as one muted
-    /// caption line. The book's name is not repeated in it: whoever is reading
-    /// it knows what it is.
+    /// A reader wants to know how far through they are, and the stock reader
+    /// tells them when its menu is opened rather than under every page. The
+    /// controls say which page of how many; the page itself carries no place.
     #[test]
-    fn the_foot_says_where_in_the_book_this_page_is() {
+    fn the_controls_say_where_in_the_book_this_page_is() {
         let mut reader = reader(40);
-        let pages = u16::try_from(reader.page_count()).unwrap();
+        let pages = reader.page_count();
         assert!(reader.forward());
         let screen = reader.screen("Pride and Prejudice");
         assert_eq!(
             screen.page_turns.and_then(|turns| turns.position),
-            Some((2, pages)),
-            "the foot carries the place, not the bar"
+            None,
+            "the page carries no place of its own"
         );
-        // The book's name is what the bar holds now.
         assert_eq!(
             screen.top_bar.map(|bar| bar.title),
             Some("Pride and Prejudice".to_owned())
         );
+        reader.act(action::CONTROLS, &panel());
+        let layout = reader
+            .screen("Pride and Prejudice")
+            .layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+        let place = format!("Page 2 of {pages}");
+        assert!(
+            layout
+                .nodes
+                .iter()
+                .any(|node| node.text_lines.iter().any(|line| *line == place)),
+            "the controls do not say {place}"
+        );
         // A book of one page has no place worth stating.
-        let short = Reader::open(
+        let mut short = Reader::open(
             Document {
                 title: None,
                 author: None,
@@ -3931,24 +4632,25 @@ mod tests {
             Memory::default(),
             &panel(),
         );
-        assert_eq!(
-            short
-                .screen("Short")
-                .page_turns
-                .and_then(|turns| turns.position),
-            None
-        );
+        short.act(action::CONTROLS, &panel());
+        let layout = short
+            .screen("Short")
+            .layout_with(&panel(), &kobo_ui::Chrome::with_back(true));
+        assert!(!layout
+            .nodes
+            .iter()
+            .any(|node| node.text_lines.iter().any(|line| line.starts_with("Page "))));
     }
 
-    /// The strip at the foot is taken out of the page before the words are
-    /// set, or the words are set underneath it. Every page of a real book ran
-    /// its last two lines under "22 of 226" and the chevrons beside it, which
-    /// is a page of a novel with two lines missing and nothing to say so.
+    /// The page is the words, down to the margin. A strip with the page number
+    /// and an arrow either side used to take the foot of every page, and the
+    /// sides of the page already turn it.
     #[test]
-    fn no_line_of_a_page_is_set_under_the_strip_that_says_where_it_is() {
+    fn a_page_has_no_strip_under_it_and_its_words_stop_at_the_margin() {
         let mut reader = reader(40);
         assert!(reader.page_count() > 1, "one page proves nothing here");
         let panel = panel();
+        let floor = panel.height - panel.screen_margin();
         for page in 0..reader.page_count() {
             while reader.page_number() < page + 1 {
                 assert!(reader.forward());
@@ -3956,25 +4658,18 @@ mod tests {
             let layout = reader
                 .screen("Pride and Prejudice")
                 .layout_with(&panel, &kobo_ui::Chrome::with_back(true));
-            let band = layout
-                .nodes
-                .iter()
-                .find(|node| node.kind == kobo_ui::LayoutKind::PagePosition)
-                .expect("a book of many pages says which one this is")
-                .rect;
-            let spilling = layout
-                .nodes
-                .iter()
-                .filter(|node| !node.text_lines.is_empty())
-                .filter(|node| node.kind != kobo_ui::LayoutKind::PagePosition)
-                .filter(|node| node.rect.y + node.rect.height > band.y)
-                .count();
-            assert_eq!(
-                spilling,
-                0,
-                "page {} set {spilling} things under the strip",
+            assert!(
+                !layout.nodes.iter().any(|node| matches!(
+                    node.kind,
+                    kobo_ui::LayoutKind::PagePosition
+                        | kobo_ui::LayoutKind::PagePrevious(_)
+                        | kobo_ui::LayoutKind::PageNext(_)
+                )),
+                "page {} still draws the strip",
                 page + 1
             );
+            let bottom = text_bottom_on_page(&reader, &panel);
+            assert!(bottom <= floor, "page {} runs past the margin", page + 1);
         }
     }
 
@@ -4053,18 +4748,14 @@ mod tests {
     /// book has to be on it. The bar it replaced carried five things and
     /// dropped the sixth without saying so.
     #[test]
-    fn a_full_page_is_asked_for_from_the_panel_and_kept_with_the_book() {
-        // The bar is what teaches the middle-column tap, so it is never taken
-        // from a reader who has not gone looking for the setting themselves.
+    fn a_page_is_the_whole_panel_until_the_bar_is_pinned() {
+        // As on the stock reader, the bar is out of sight until a touch at
+        // the top calls it back, and the page is measured for the room it
+        // leaves.
         let mut reader = reader(40);
-        assert!(
-            !reader.memory().full_page,
-            "a reader who has asked for nothing keeps the bar"
-        );
-        assert!(
-            !reader.screen("Pride and Prejudice").auto_hide_top_bar,
-            "and the shell is not told to hide it"
-        );
+        assert!(reader.memory().full_page);
+        assert!(reader.screen("Pride and Prejudice").auto_hide_top_bar);
+        let whole = reader.page_count();
 
         reader.act(action::CONTROLS, &panel());
         let outcome = reader.act(action::FULL_PAGE, &panel());
@@ -4073,32 +4764,29 @@ mod tests {
             Outcome::Save,
             "the book has to reopen the way it was left, so it is written down"
         );
-        assert!(reader.memory().full_page);
+        assert!(!reader.memory().full_page);
         let screen = reader.screen("Pride and Prejudice");
-        assert!(screen.auto_hide_top_bar, "the page is the whole page now");
+        assert!(!screen.auto_hide_top_bar, "the bar is pinned now");
         assert!(
             screen.overlay.is_none(),
-            "the panel that changed the page cannot be what hides it"
+            "the panel that changed the page cannot be what covers it"
         );
-
-        // Written and read back by name, so a reader that has never heard of
-        // the setting simply skips the line rather than losing the record.
-        let carried = Memory::decode(&reader.memory().encode());
-        assert!(carried.full_page);
-
-        // This record belongs to one book, so the next book starts with the
-        // bar. That is the same place the type size is kept, and it is worth
-        // being plain about: setting it here does not set it everywhere.
         assert!(
-            !Memory::default().full_page,
-            "another book opens with its bar until it is asked otherwise"
+            reader.page_count() >= whole,
+            "a page under a pinned bar holds no more than a whole one"
         );
 
-        // And it is a setting, not a trap: the same control gives the bar back.
+        // Written and read back by name, and a book saved before the default
+        // changed opens on the whole page.
+        let carried = Memory::decode(&reader.memory().encode());
+        assert!(!carried.full_page);
+        assert!(Memory::decode(b"at 0\n").full_page);
+
+        // And it is a setting, not a trap: the same control hides it again.
         reader.act(action::CONTROLS, &panel());
         reader.act(action::FULL_PAGE, &panel());
-        assert!(!reader.memory().full_page);
-        assert!(!reader.screen("Pride and Prejudice").auto_hide_top_bar);
+        assert!(reader.memory().full_page);
+        assert!(reader.screen("Pride and Prejudice").auto_hide_top_bar);
     }
 
     #[test]
@@ -4243,6 +4931,121 @@ mod tests {
             reader.page_count()
         );
         assert!(!reader.page().is_empty());
+    }
+
+    #[test]
+    fn a_table_of_words_has_no_heading_row_but_one_of_figures_does() {
+        let row = |cells: &[&str]| Block::Row {
+            cells: cells.iter().map(|cell| (*cell).to_owned()).collect(),
+            header: false,
+        };
+        let contents = vec![
+            row(&["CHAPTER I.", "Down the Rabbit-Hole"]),
+            row(&["CHAPTER II.", "The Pool of Tears"]),
+        ];
+        assert!(!super::names_figures(
+            &contents,
+            0,
+            &["CHAPTER I.".into(), "Down the Rabbit-Hole".into()]
+        ));
+        let results = vec![row(&["Model", "Score"]), row(&["1", "0.93"])];
+        assert!(super::names_figures(
+            &results,
+            0,
+            &["Model".into(), "Score".into()]
+        ));
+    }
+
+    #[test]
+    fn the_margins_between_two_paragraphs_collapse_to_the_larger() {
+        let spaced = kobo_ui::ParagraphPresentation {
+            margin_before_em: 25,
+            margin_after_em: 25,
+            ..kobo_ui::ParagraphPresentation::default()
+        };
+        let previous = Piece {
+            block: 0,
+            text: "One.".into(),
+            kind: Kind::Body,
+            spans: Vec::new(),
+            formulae: Vec::new(),
+            presentation: spaced,
+            source_offset: None,
+            row: None,
+        };
+        let next = super::collapsed_after(Some(&previous), spaced);
+        assert_eq!(next.margin_before_em, 0, "a quarter em, not half of one");
+        assert_eq!(next.margin_after_em, 25);
+        let wider = kobo_ui::ParagraphPresentation {
+            margin_before_em: 100,
+            ..spaced
+        };
+        assert_eq!(
+            super::collapsed_after(Some(&previous), wider).margin_before_em,
+            75
+        );
+        assert_eq!(super::collapsed_after(None, spaced).margin_before_em, 25);
+    }
+
+    #[test]
+    fn a_heading_row_the_book_marked_is_kept_over_a_table_of_words() {
+        // A table of words is not given a heading row by inference, but one
+        // the book marked keeps it: repeated at the top of every page the
+        // table spills onto.
+        let mut blocks = vec![Block::Row {
+            cells: vec!["Name".into(), "Role".into()],
+            header: true,
+        }];
+        for index in 0..120 {
+            blocks.push(Block::Row {
+                cells: vec![format!("Person {index}"), "Somebody".into()],
+                header: false,
+            });
+        }
+        let document = Document {
+            title: None,
+            author: None,
+            blocks,
+            truncated: false,
+            ..Document::default()
+        };
+        let reader = Reader::open(document, Memory::default(), &panel());
+        assert!(reader.pages.len() > 1, "the table has to spill");
+        let top = &reader.pages[1][0];
+        assert_eq!(top.kind, Kind::Row { header: true });
+        assert_eq!(
+            top.block, 0,
+            "the continuation does not repeat the heading row"
+        );
+    }
+
+    #[test]
+    fn a_line_broken_after_a_hyphen_comes_back_without_a_space() {
+        let text = "the pleasure of making a daisy-chain would be worth";
+        let lines = vec![
+            "the pleasure of making a daisy-".to_owned(),
+            "chain would be worth".to_owned(),
+        ];
+        let offsets = super::line_offsets(text, &lines);
+        assert_eq!(
+            super::rejoined(text, &lines, offsets.as_deref(), 0, 2),
+            text
+        );
+        assert_eq!(
+            super::rejoined(text, &lines, offsets.as_deref(), 1, 2),
+            "chain would be worth"
+        );
+    }
+
+    #[test]
+    fn lines_that_did_not_come_from_the_text_are_still_joined() {
+        let lines = vec!["one".to_owned(), "two".to_owned()];
+        let offsets = super::line_offsets("something else", &lines);
+        assert!(offsets.is_none());
+        assert_eq!(
+            super::rejoined("something else", &lines, offsets.as_deref(), 0, 2),
+            "one two"
+        );
     }
 
     #[test]
@@ -4580,6 +5383,7 @@ mod tests {
         for block in 0..200u32 {
             candidates.push(format!("{}{block}", action::MARK));
             candidates.push(format!("{}{block}", action::GO));
+            candidates.push(format!("{}{block}", action::PLACE));
         }
         let mut present = Vec::new();
         for name in candidates {
@@ -5421,6 +6225,7 @@ mod tests {
             margin_before_em: 75,
             margin_after_em: 50,
             first_line_indent_em: 125,
+            ..kobo_ui::ParagraphPresentation::PLAIN
         };
 
         let first = fragment_presentation(whole, true, false);
@@ -5439,6 +6244,21 @@ mod tests {
         assert_eq!(last.margin_after_em, 50);
         assert_eq!(last.alignment, kobo_ui::ParagraphAlignment::Justify);
         assert_eq!(last.line_height_percent, 140);
+    }
+
+    #[test]
+    fn a_tap_off_an_open_panel_puts_it_away_and_keeps_the_book_open() {
+        for opener in [action::CONTROLS, action::LIGHT] {
+            let mut reader = reader(40);
+            reader.act(opener, &panel());
+            assert_ne!(reader.chrome(), Chrome::Hidden);
+            assert_eq!(
+                reader.act_on(kobo_ui::ActionId::BACK, &panel()),
+                Outcome::Repaint,
+                "the tap off {opener} was passed on and closed the book"
+            );
+            assert_eq!(reader.chrome(), Chrome::Hidden);
+        }
     }
 
     #[test]
@@ -5548,7 +6368,7 @@ mod tests {
     /// bottom of the panel, so the guess is never what is measured here.
     fn no_cell_falls_off_a_page(reader: &Reader) {
         let panel = panel();
-        let floor = panel.height - panel.page_position_band();
+        let floor = panel.height - panel.screen_margin();
         let mut turned = reader.clone();
         turned.go_to(0, &panel);
         for number in 0..reader.page_count() {
@@ -5596,7 +6416,7 @@ mod tests {
 
     fn no_words_fall_off_a_page(reader: &Reader) {
         let panel = panel();
-        let floor = panel.height - panel.page_position_band();
+        let floor = panel.height - panel.screen_margin();
         let mut turned = reader.clone();
         turned.go_to(0, &panel);
         for number in 0..reader.page_count() {
@@ -5609,10 +6429,130 @@ mod tests {
         }
     }
 
+    // An article with its picture in the middle of a page. The screen sets
+    // the picture apart with a space above and below it, and the pages were
+    // packed without counting those spaces, so the paragraph after the
+    // picture ran two lines past the foot and the panel refused the page.
+    #[test]
+    fn a_page_with_a_picture_in_the_middle_holds_only_what_the_panel_shows() {
+        let opening =
+            "Each day a different picture of the sky is shown with a few lines about it. ";
+        let explanation = "It is time to say goodbye to an observatory that served for years. ";
+        let document = Document {
+            blocks: vec![
+                Block::Paragraph("Picture of the day".to_owned()),
+                Block::Paragraph(opening.repeat(2)),
+                Block::Picture {
+                    name: "telescope.jpg".to_owned(),
+                    alt: "The observatory".to_owned(),
+                    illustration: true,
+                },
+                Block::Heading {
+                    level: 1,
+                    text: "A farewell".to_owned(),
+                },
+                Block::Paragraph(explanation.repeat(14)),
+            ],
+            ..Document::default()
+        };
+        let panel = panel();
+        let mut reader = Reader::open(document, Memory::default(), &panel);
+        reader.set_pictures(
+            BTreeMap::from([(
+                "telescope.jpg".to_owned(),
+                kobo_ui::TilePicture::new(kobo_ui::PictureHandle(1), 2048, 1460),
+            )]),
+            &panel,
+        );
+        assert!(
+            reader.page_count() > 1,
+            "the explanation has to go overleaf"
+        );
+        reader.go_to(0, &panel);
+        let issues = reader
+            .screen("Article")
+            .diagnostics(&panel, &kobo_ui::Chrome::default())
+            .issues;
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| issue.kind == kobo_ui::LayoutIssueKind::TextOverflow),
+            "{issues:?}"
+        );
+    }
+
+    // A paragraph that runs over the foot of a page is drawn there without
+    // the margin below it, which belongs to its last line overleaf. Charged
+    // it anyway, a book with a generous margin under each paragraph ended
+    // every such page a line or more early.
+    #[test]
+    fn a_paragraph_that_goes_on_overleaf_fills_the_page_it_starts_on() {
+        let sentence = "The rabbit-hole went straight on like a tunnel for some way. ";
+        let document = Document {
+            blocks: vec![Block::Paragraph(sentence.repeat(80))],
+            rich: std::iter::once((
+                0,
+                kobo_doc::RichBlock {
+                    spans: Vec::new(),
+                    style: kobo_doc::BlockStyle {
+                        margin_after_em: 250,
+                        ..kobo_doc::BlockStyle::default()
+                    },
+                },
+            ))
+            .collect(),
+            ..Document::default()
+        };
+        let panel = panel();
+        let reader = Reader::open(document, Memory::default(), &panel);
+        assert!(
+            reader.page_count() > 1,
+            "the paragraph has to go on overleaf"
+        );
+        no_words_fall_off_a_page(&reader);
+        let floor = panel.height - panel.screen_margin();
+        let natural = kobo_ui::FontSize::Body.line_height_in(kobo_ui::Face::Reading);
+        let left = floor - text_bottom_on_page(&reader, &panel);
+        assert!(
+            left < 2 * natural,
+            "the first page stopped {left} short of its foot, room for another line"
+        );
+    }
+
     // A heading is drawn by the toolkit at one size in its own face, whatever
     // level it is and whatever face the book asked for. Measured as the
     // book's own type instead, this heading came out two lines where three
     // were drawn, and the line that made was drawn over the page number.
+    #[test]
+    fn a_heading_is_not_charged_margins_it_is_not_drawn_with() {
+        let opening = |margins: u16| {
+            let mut document = book(20);
+            document.rich.insert(
+                0,
+                kobo_doc::RichBlock {
+                    spans: Vec::new(),
+                    style: kobo_doc::BlockStyle {
+                        margin_before_em: margins,
+                        margin_after_em: margins,
+                        ..kobo_doc::BlockStyle::default()
+                    },
+                },
+            );
+            let reader = Reader::open(document, Memory::default(), &panel());
+            no_words_fall_off_a_page(&reader);
+            reader
+                .page()
+                .iter()
+                .map(|piece| piece.text.len())
+                .sum::<usize>()
+        };
+        assert_eq!(
+            opening(300),
+            opening(0),
+            "the heading's margins took room from the page it opened"
+        );
+    }
+
     #[test]
     fn a_heading_is_measured_at_the_size_it_is_drawn() {
         let mut blocks = Vec::new();
@@ -5933,6 +6873,80 @@ mod tests {
         no_cell_falls_off_a_page(&reader);
     }
 
+    /// The facts under a NASA picture of the day: a table whose every row is
+    /// a heading, as a list of labels and values is. Each is ruled off, and
+    /// the pages used to be packed as if none were, so a page that ended in
+    /// one ran past the foot; with "This is the end." under it the screen was
+    /// refused and the reader never said it.
+    #[test]
+    fn a_table_of_labelled_rows_fits_its_page_with_or_without_a_banner() {
+        let panel = kobo_ui::CLARA_BW_METRICS;
+        let table = "<table><tbody>\
+            <tr><th scope=\"row\">Date</th><td>November 10, 2026</td></tr>\
+            <tr><th scope=\"row\">Credit &amp; Copyright</th><td>Roberto Ortu</td></tr>\
+            <tr><th scope=\"row\">Authors &amp; editors:</th><td>Robert Nemiroff, Jerry Bonnell, Cecilia Chirenti, Keighley Rockcliffe</td></tr>\
+            <tr><th scope=\"row\">A service of:</th><td>ASD at NASA / GSFC,<br/>NASA Science Activation &amp; Michigan Tech. U.</td></tr>\
+            </tbody></table><p>Yesterday's Image</p>";
+        let sentence = "Saturn disappears from view when the Moon moves in front. ";
+        for words in (10..2_400).step_by(10) {
+            let prose: String = sentence
+                .repeat(words / 10 + 1)
+                .chars()
+                .take(words)
+                .collect();
+            let html = format!("<h2>Saturn Behind the Moon</h2><p>{prose}</p>{table}");
+            let mut reader = Reader::open(kobo_doc::html::parse(&html), Memory::default(), &panel);
+            for page in 0..reader.page_count() {
+                let mut on_page = reader.clone();
+                on_page.page = page;
+                let problems = on_page.screen("Article").validate(&panel);
+                assert!(
+                    problems.is_empty(),
+                    "{words} letters, page {page}: {problems:?}"
+                );
+            }
+            while reader.forward() {}
+            reader.act(action::FORWARD, &panel);
+            assert_eq!(
+                banners(&reader.screen("Article")),
+                vec![(BannerLevel::Info, "This is the end.".to_owned())]
+            );
+            let problems = reader.screen("Article").validate(&panel);
+            assert!(
+                problems.is_empty(),
+                "{words} letters, at the end: {problems:?}"
+            );
+        }
+    }
+
+    /// A long table with one heading row, which the layout rules off once and
+    /// repeats at the top of each page it runs onto.
+    #[test]
+    fn a_long_table_with_a_heading_row_fits_every_page_it_runs_onto() {
+        let panel = kobo_ui::CLARA_BW_METRICS;
+        let mut rows = String::new();
+        for index in 0..120 {
+            rows.push_str(&format!(
+                "<tr><td>Site {index}</td><td>{} lines of the log</td></tr>",
+                index * 7
+            ));
+        }
+        let html = format!(
+            "<p>The stations, and how much each sent.</p><table><tr><th>Station</th><th>Readings</th></tr>{rows}</table>"
+        );
+        let reader = Reader::open(kobo_doc::html::parse(&html), Memory::default(), &panel);
+        assert!(
+            reader.page_count() > 2,
+            "a hundred and twenty rows need pages"
+        );
+        for page in 0..reader.page_count() {
+            let mut on_page = reader.clone();
+            on_page.page = page;
+            let problems = on_page.screen("Log").validate(&panel);
+            assert!(problems.is_empty(), "page {page}: {problems:?}");
+        }
+    }
+
     #[test]
     fn a_row_is_never_cut_in_half_by_a_page_break() {
         let blocks = (0..400)
@@ -5963,5 +6977,370 @@ mod tests {
             );
         }
         no_cell_falls_off_a_page(&reader);
+    }
+
+    /// A book of a hundred and forty chapters, each named in its contents.
+    fn long_contents() -> Document {
+        let mut blocks = Vec::new();
+        let mut contents = Vec::new();
+        for chapter in 0..140 {
+            contents.push(kobo_doc::Contents {
+                title: format!("Chapter {chapter:03}"),
+                block: blocks.len(),
+                depth: 0,
+            });
+            blocks.push(Block::Heading {
+                level: 1,
+                text: format!("Chapter {chapter:03}"),
+            });
+            blocks.push(Block::Paragraph(format!(
+                "The whole of chapter {chapter}, which is long enough to be a page of its own."
+            )));
+        }
+        Document {
+            title: Some("Moby-Dick".into()),
+            blocks,
+            contents,
+            ..Document::default()
+        }
+    }
+
+    /// The labels of the buttons a screen draws, in order.
+    fn buttons(screen: &Screen) -> Vec<String> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Button { label, .. } => Some(label.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Whether the layout engine dropped or cut anything on this screen.
+    fn overflows(screen: &Screen) -> bool {
+        screen
+            .diagnostics(&panel(), &kobo_ui::Chrome::measuring(true))
+            .issues
+            .iter()
+            .any(|issue| {
+                matches!(
+                    issue.kind,
+                    kobo_ui::LayoutIssueKind::ContentOverflow { .. }
+                        | kobo_ui::LayoutIssueKind::InteractiveOffscreen
+                        | kobo_ui::LayoutIssueKind::Clipped
+                )
+            })
+    }
+
+    /// Every chapter of a long book can be reached from its contents.
+    ///
+    /// Moby-Dick's contents run to a hundred and forty-five entries. Drawn as
+    /// one screen, the panel showed the first few and dropped the rest without
+    /// a word, so most of the book could only be reached by turning to it a
+    /// page at a time.
+    #[test]
+    fn every_chapter_of_a_long_book_can_be_reached_from_its_contents() {
+        let mut reader = Reader::open(long_contents(), Memory::default(), &panel());
+        reader.act(action::CONTENTS, &panel());
+
+        let mut seen = Vec::new();
+        let mut pages = 0;
+        loop {
+            let screen = reader.screen("Moby-Dick");
+            assert!(
+                !overflows(&screen),
+                "page {pages} of the contents overflows"
+            );
+            let shown = buttons(&screen);
+            assert!(!shown.is_empty(), "page {pages} of the contents is empty");
+            if seen.last() == shown.last() {
+                break;
+            }
+            seen.extend(shown);
+            pages += 1;
+            assert_eq!(reader.act(action::LIST_NEXT, &panel()), Outcome::Repaint);
+        }
+        let expected: Vec<String> = (0..140)
+            .map(|chapter| format!("Chapter {chapter:03}"))
+            .collect();
+        assert_eq!(seen, expected);
+        assert!(
+            pages > 1,
+            "a hundred and forty chapters fitted on one screen"
+        );
+    }
+
+    /// An entry too long for a page of its own is shortened, not lost.
+    ///
+    /// Every other entry can be pushed to the next page, but one that is
+    /// taller than the panel by itself has nowhere to go: drawn whole, it ran
+    /// off the foot and its destination could not be tapped at all.
+    #[test]
+    fn a_contents_entry_taller_than_the_panel_can_still_be_tapped() {
+        let mut document = long_contents();
+        document.contents.truncate(3);
+        document.contents[1].title = "an endless chapter title ".repeat(200);
+        let target = document.contents[1].block;
+        let mut reader = Reader::open(document, Memory::default(), &panel());
+        reader.act(action::CONTENTS, &panel());
+
+        let go = kobo_sdk::action_id(&format!("{}{target}", action::GO));
+        let mut reached = false;
+        for _ in 0..3 {
+            let screen = reader.screen("Moby-Dick");
+            assert!(!overflows(&screen), "a page of the contents overflows");
+            let layout = screen.layout_with(&panel(), &kobo_ui::Chrome::measuring(true));
+            if let Some(rect) = layout.rect_of_action(go) {
+                assert!(
+                    rect.y >= layout.content.y
+                        && rect.y + rect.height <= layout.content.y + layout.content.height,
+                    "the long entry is drawn past the content area"
+                );
+                reached = true;
+            }
+            reader.act(action::LIST_NEXT, &panel());
+        }
+        assert!(reached, "the long entry was never tappable");
+    }
+
+    fn bookmarked(count: Locator) -> Memory {
+        Memory {
+            bookmarks: (0..count).map(|chapter| chapter * 2 + 1).collect(),
+            ..Memory::default()
+        }
+    }
+
+    /// A list that lost pages while it was open turns back from the page it
+    /// is showing, not from the one it used to be on.
+    #[test]
+    fn a_list_that_shrank_while_open_turns_back_at_once() {
+        let mut reader = Reader::open(long_contents(), bookmarked(80), &panel());
+        reader.act(action::HIGHLIGHTS, &panel());
+        for _ in 0..40 {
+            reader.act(action::LIST_NEXT, &panel());
+        }
+        // The kept place arrives from the store with fewer bookmarks in it,
+        // the way it does when another copy of the book was read since.
+        reader.restore(bookmarked(20), &panel());
+        let before = buttons(&reader.screen("Moby-Dick"));
+        reader.act(action::LIST_BACK, &panel());
+        assert_ne!(
+            buttons(&reader.screen("Moby-Dick")),
+            before,
+            "turning back stayed on the same page"
+        );
+    }
+
+    /// Turning a list goes by the pages already measured.
+    ///
+    /// Laying out a long contents is the expensive part of showing it, and
+    /// measuring it again on every tap made reading through it quadratic.
+    #[test]
+    fn turning_a_list_goes_by_the_pages_already_measured() {
+        let mut reader = Reader::open(long_contents(), Memory::default(), &panel());
+        reader.act(action::CONTENTS, &panel());
+        // Cut by hand into pages the measurement would never make, so a
+        // screen drawn from a fresh measurement cannot pass.
+        let paging = reader.list_paging.as_mut().expect("measured on opening");
+        paging.pages = vec![0..1, 1..2, 2..140];
+        reader.act(action::LIST_NEXT, &panel());
+
+        assert_eq!(buttons(&reader.screen("Moby-Dick")), ["Chapter 001"]);
+    }
+
+    /// The contents open on the chapter being read, not on the first one.
+    #[test]
+    fn the_contents_open_where_the_reader_is() {
+        let mut reader = Reader::open(long_contents(), Memory::default(), &panel());
+        let chapter_100 = reader.document().contents[100].block;
+        reader.act(&format!("{}{chapter_100}", action::GO), &panel());
+        reader.act(action::CONTENTS, &panel());
+
+        assert!(
+            buttons(&reader.screen("Moby-Dick")).contains(&"Chapter 100".to_owned()),
+            "the contents opened somewhere other than chapter 100"
+        );
+        // And the way back to the start is still there.
+        for _ in 0..20 {
+            reader.act(action::LIST_BACK, &panel());
+        }
+        assert_eq!(
+            buttons(&reader.screen("Moby-Dick"))
+                .first()
+                .map(String::as_str),
+            Some("Chapter 000")
+        );
+    }
+
+    /// A heading is said again at the top of a page its section spills onto.
+    #[test]
+    fn a_long_list_of_bookmarks_keeps_its_heading_on_every_page() {
+        let mut reader = Reader::open(long_contents(), bookmarked(80), &panel());
+        reader.act(action::HIGHLIGHTS, &panel());
+
+        let first = reader.screen("Moby-Dick");
+        assert!(!overflows(&first));
+        reader.act(action::LIST_NEXT, &panel());
+        let second = reader.screen("Moby-Dick");
+        assert!(!overflows(&second));
+        assert_ne!(buttons(&first), buttons(&second), "the notes did not turn");
+        assert!(
+            second.nodes.iter().any(|node| matches!(
+                node,
+                kobo_ui::Node::Heading { text, .. } if text == "Bookmarks"
+            )),
+            "the second page of bookmarks is under no heading"
+        );
+    }
+
+    /// A note leads back to its passage even when nothing else marks it.
+    ///
+    /// An application handed hashed identifiers goes through `act_on`, which
+    /// only answers names it was told about. Notes were never among them, so
+    /// a note on an unmarked paragraph was a row that did nothing.
+    #[test]
+    fn a_note_on_an_unmarked_paragraph_can_be_followed() {
+        let mut reader = Reader::open(long_contents(), Memory::default(), &panel());
+        let passage = TextPosition {
+            block: 101,
+            offset: 0,
+        };
+        reader
+            .create_annotation(
+                1,
+                TextRange {
+                    start: passage,
+                    end: TextPosition {
+                        block: 101,
+                        offset: 9,
+                    },
+                },
+                Some("Ahab"),
+                &panel(),
+            )
+            .expect("a note");
+        reader.act(action::HIGHLIGHTS, &panel());
+
+        let go = kobo_sdk::action_id(&format!("{}101", action::GO));
+        assert_eq!(reader.act_on(go, &panel()), Outcome::Save);
+        assert!(
+            reader.page().iter().any(|piece| piece.block == 101),
+            "the note did not lead to its passage"
+        );
+    }
+
+    fn banners(screen: &kobo_ui::Screen) -> Vec<(BannerLevel, String)> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_ui::Node::Banner { level, text, .. } => Some((*level, text.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_last_page_says_it_is_the_end_quietly_and_without_calling_it_a_book() {
+        // The same reader shows articles, papers and feed items. Reaching
+        // the end of one is news, not trouble, and it is not a book.
+        let mut reader = reader(20);
+        while reader.forward() {}
+        reader.act(action::FORWARD, &panel());
+        let said = banners(&reader.screen("An article"));
+        assert_eq!(
+            said,
+            vec![(BannerLevel::Info, "This is the end.".to_owned())]
+        );
+        reader.go_to(0, &panel());
+        reader.act(action::BACK, &panel());
+        let said = banners(&reader.screen("An article"));
+        assert_eq!(
+            said,
+            vec![(BannerLevel::Info, "This is the first page.".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_refusal_is_still_said_as_a_warning() {
+        let mut reader = reader(20);
+        reader.report("That is the largest size.");
+        let said = banners(&reader.screen("A book"));
+        assert_eq!(said[0].0, BannerLevel::Attention);
+    }
+
+    #[test]
+    fn each_bookmark_in_the_notes_names_the_page_it_goes_to() {
+        // Two bookmarks under the same heading read alike by their words
+        // alone, so each row says its page as well.
+        let mut reader = reader(200);
+        reader.forward();
+        reader.forward();
+        reader.toggle_bookmark();
+        let third = reader.page_number();
+        reader.forward();
+        reader.forward();
+        reader.toggle_bookmark();
+        let fifth = reader.page_number();
+        reader.act(action::HIGHLIGHTS, &panel());
+        let rows = texts(&reader.screen("A book"));
+        for page in [third, fifth] {
+            assert!(
+                rows.iter()
+                    .any(|row| row.starts_with(&format!("Page {page} · "))),
+                "no row for the bookmark on page {page}: {rows:?}"
+            );
+        }
+        // And the row goes to that page, not to where its paragraph began.
+        let block = *reader.memory().bookmarks.iter().next().unwrap();
+        let go = kobo_sdk::action_id(&format!("{}{block}", action::PLACE));
+        assert_eq!(reader.act_on(go, &panel()), Outcome::Save);
+        assert_eq!(reader.page_number(), third);
+        assert_eq!(reader.chrome(), Chrome::Hidden);
+    }
+
+    #[test]
+    fn back_to_the_book_from_the_notes_or_the_marking_list_puts_every_panel_away() {
+        // It used to open the type panel, which left the page keys dead
+        // until the reader found a second way to close it.
+        for list in [action::HIGHLIGHTS, action::MARKING] {
+            let mut reader = reader(40);
+            reader.act(action::CONTROLS, &panel());
+            reader.act(list, &panel());
+            assert_ne!(reader.chrome(), Chrome::Hidden);
+            let back = kobo_sdk::action_id(action::BOOK);
+            assert_eq!(reader.act_on(back, &panel()), Outcome::Repaint);
+            assert_eq!(reader.chrome(), Chrome::Hidden, "from {list}");
+            assert!(reader.screen("A book").overlay.is_none(), "from {list}");
+        }
+    }
+
+    #[test]
+    fn the_bookmark_control_shows_whether_this_page_is_bookmarked() {
+        // The cell draws only its picture, so the state has to be in the
+        // cell rather than in a label nobody sees.
+        let bookmark_cell = |reader: &Reader| {
+            let screen = reader.screen("A book");
+            let overlay = screen.overlay.expect("the controls are open");
+            overlay
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    kobo_ui::Node::Grid { cells, .. } => cells
+                        .iter()
+                        .find(|cell| cell.action == kobo_sdk::action_id(action::BOOKMARK))
+                        .cloned(),
+                    _ => None,
+                })
+                .expect("a bookmark control")
+        };
+        let mut reader = reader(40);
+        reader.act(action::CONTROLS, &panel());
+        assert!(!bookmark_cell(&reader).selected);
+        reader.act(action::BOOKMARK, &panel());
+        assert!(bookmark_cell(&reader).selected);
+        reader.act(action::BOOKMARK, &panel());
+        assert!(!bookmark_cell(&reader).selected);
     }
 }

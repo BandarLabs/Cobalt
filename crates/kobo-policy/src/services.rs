@@ -11,11 +11,11 @@
 
 use crate::{Capability, Declared, Grant, Grants, PowerPolicy};
 use kobo_protocol::{
-    AudioPlaybackState, DenyReason, DeviceError, DeviceRequest, DeviceResult, DictionaryEntry,
-    UpdateChannel,
+    AudioDetail, AudioPlaybackState, AudioSource, DenyReason, DeviceError, DeviceRequest,
+    DeviceResult, DictionaryEntry, UpdateChannel,
 };
 use std::collections::BTreeSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Which hardware this build is actually allowed to operate.
 ///
@@ -79,6 +79,29 @@ impl Default for DeviceState {
     }
 }
 
+/// What a simulated load learned about a source.
+#[derive(Clone, Debug)]
+pub struct SimulatedBook {
+    pub duration_ms: u32,
+    pub detail: AudioDetail,
+}
+
+/// What opens an audio source for a simulator: the book behind it, a device
+/// error for a source that is there and will not play, or `None` for one it
+/// cannot see at all, which is then simulated as a half-hour book.
+pub type OpenAudio =
+    dyn Fn(&AudioSource) -> Option<Result<SimulatedBook, DeviceError>> + Send + Sync;
+
+/// How a simulator opens audio sources.
+#[derive(Clone)]
+pub struct AudioOpener(pub std::sync::Arc<OpenAudio>);
+
+impl std::fmt::Debug for AudioOpener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AudioOpener")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DeviceServices {
     grants: Grants,
@@ -94,6 +117,15 @@ pub struct DeviceServices {
     audio_position_ms: u32,
     audio_duration_ms: u32,
     audio_volume: u8,
+    audio_speed_percent: u16,
+    /// What the loaded source says about itself, once loaded.
+    audio_detail: Option<AudioDetail>,
+    /// When playing began and where, so the position moves with the clock
+    /// the way a reader's does.
+    audio_started: Option<(Instant, u32)>,
+    /// How the simulator opens a real file for its length and description.
+    /// Without one, every source is a half-hour book that says nothing.
+    audio_opener: Option<AudioOpener>,
     dictionaries: kobo_dict::Index,
     /// Where the library is read from, when not the reader's own storage.
     ///
@@ -103,6 +135,9 @@ pub struct DeviceServices {
     library_roots: Option<Vec<std::path::PathBuf>>,
     auto_update: AutoUpdateChoices,
     update_channel: UpdateChannel,
+    /// The time zone picked in Settings. Kept in memory here, for the
+    /// simulator; the runtime keeps it on the card.
+    time_zone: Option<&'static crate::zones::Zone>,
 }
 
 /// The two standing update switches, held together because they are asked
@@ -140,6 +175,26 @@ impl DeviceServices {
         self
     }
 
+    /// Opens audio sources with `opener`, so a simulated load has the
+    /// length, chapters and cover of the real file behind it.
+    #[must_use]
+    pub fn with_audio_opener(mut self, opener: AudioOpener) -> Self {
+        self.audio_opener = Some(opener);
+        self
+    }
+
+    /// The folders the audio library is read from: the ones given, else the
+    /// reader's own.
+    #[must_use]
+    pub fn library_roots(&self) -> Vec<std::path::PathBuf> {
+        self.library_roots.clone().unwrap_or_else(|| {
+            crate::library::ROOTS
+                .iter()
+                .map(std::path::PathBuf::from)
+                .collect()
+        })
+    }
+
     #[must_use]
     pub fn new(declared: Declared, policy: PowerPolicy, backends: Backends) -> Self {
         Self {
@@ -156,6 +211,10 @@ impl DeviceServices {
             audio_position_ms: 0,
             audio_duration_ms: 0,
             audio_volume: 70,
+            audio_speed_percent: 100,
+            audio_detail: None,
+            audio_started: None,
+            audio_opener: None,
             dictionaries: kobo_dict::Index::default(),
             library_roots: None,
             // Both on, matching a real reader that never opened settings.
@@ -164,6 +223,7 @@ impl DeviceServices {
                 apps: true,
             },
             update_channel: UpdateChannel::Stable,
+            time_zone: None,
         }
     }
 
@@ -322,7 +382,10 @@ impl DeviceServices {
             | DeviceRequest::PauseAudio
             | DeviceRequest::SeekAudio { .. }
             | DeviceRequest::StopAudio
-            | DeviceRequest::SetAudioVolume { .. }) => self.handle_audio(&request),
+            | DeviceRequest::SetAudioVolume { .. }
+            | DeviceRequest::ReadAudioDetail
+            | DeviceRequest::SetAudioSpeed { .. }) => self.handle_audio(&request),
+            DeviceRequest::ListAudio => self.list_audio(),
             // Only a real reader has an installation to replace, so nothing
             // is downloaded or written here. The simulator answers the way a
             // reader that finished installing would, which is what lets an
@@ -350,13 +413,45 @@ impl DeviceServices {
             | DeviceRequest::ReadAppLink
             | DeviceRequest::BeginAppLink
             | DeviceRequest::PollAppLink
-            | DeviceRequest::DisconnectAppLink => DeviceResult::Denied(DenyReason::Unsupported),
+            | DeviceRequest::DisconnectAppLink
+            // The notices belong to the runtime's session, which answers for
+            // them before a request reaches here.
+            | DeviceRequest::MarkNoticesRead
+            | DeviceRequest::ClearNotices
+            | DeviceRequest::OpenNotice { .. } => DeviceResult::Denied(DenyReason::Unsupported),
             request @ (DeviceRequest::ReadAutoUpdate
             | DeviceRequest::SetAutoUpdate { .. }
             | DeviceRequest::ReadUpdateChannel
             | DeviceRequest::SetUpdateChannel { .. }) => self.handle_update_preferences(&request),
+            DeviceRequest::ReadTimeZone => crate::zones::answer(self.time_zone, 0),
+            DeviceRequest::SetTimeZone { zone } if zone.is_empty() => {
+                self.time_zone = None;
+                crate::zones::answer(None, 0)
+            }
+            DeviceRequest::SetTimeZone { zone } => match crate::zones::find(&zone) {
+                Some(found) => {
+                    self.time_zone = Some(found);
+                    crate::zones::answer(self.time_zone, 0)
+                }
+                None => DeviceResult::Failed(DeviceError::InvalidInput),
+            },
             DeviceRequest::ListLibrary => self.list_library(),
             DeviceRequest::ReadLibrary { id } => self.read_library(&id),
+            DeviceRequest::RemoveArticle { id } => self.remove_article(&id),
+        }
+    }
+
+    /// Who may ask is decided by the host, by identity: only Books.
+    fn remove_article(&self, id: &str) -> DeviceResult {
+        if let Some(reason) = self.refusal(Capability::Library) {
+            return DeviceResult::Denied(reason);
+        }
+        match crate::library::remove_article(&self.library_roots(), id) {
+            Ok(()) => DeviceResult::Done,
+            Err(crate::library::Removal::NotAnArticle) => {
+                DeviceResult::Failed(DeviceError::NotFound)
+            }
+            Err(crate::library::Removal::Refused) => DeviceResult::Failed(DeviceError::Backend),
         }
     }
 
@@ -367,7 +462,7 @@ impl DeviceServices {
         let listing = self
             .library_roots
             .as_deref()
-            .map_or_else(crate::library::list, crate::library::list_in);
+            .map_or_else(crate::library::list, crate::library::list_with_stock_in);
         let truncated =
             listing.truncated || listing.entries.len() > kobo_protocol::MAX_LIBRARY_ENTRIES;
         DeviceResult::Library {
@@ -386,7 +481,7 @@ impl DeviceServices {
             return DeviceResult::Denied(reason);
         }
         let bytes = match self.library_roots.as_deref() {
-            Some(roots) => crate::library::read_in(roots, id),
+            Some(roots) => crate::library::read_with_stock_in(roots, id),
             None => crate::library::read(id),
         };
         match bytes {
@@ -559,7 +654,22 @@ impl DeviceServices {
             || DeviceResult::Bluetooth {
                 available: true,
                 enabled: self.bluetooth_enabled,
-                devices: Vec::new(),
+                // A pair of headphones, paired and connected, the moment the
+                // radio is on. Without one no player under the simulator
+                // ever plays: Play opens the picker, the scan finds nothing,
+                // and the one path every audio application takes could not
+                // be tried off the reader.
+                devices: if self.bluetooth_enabled {
+                    vec![kobo_protocol::BluetoothDevice {
+                        address: "00:11:22:33:44:55".to_owned(),
+                        name: "Simulated headphones".to_owned(),
+                        kind: kobo_protocol::BluetoothDeviceKind::Audio,
+                        paired: true,
+                        connected: true,
+                    }]
+                } else {
+                    Vec::new()
+                },
                 // The simulated host hands the panel back by returning, so
                 // nothing here ever reboots.
                 restart_on_exit: false,
@@ -593,30 +703,95 @@ impl DeviceServices {
         )
     }
 
+    /// Moves a playing book's position on with the clock, and finishes it
+    /// at its end, so a simulated player sees what a reader's would.
+    fn refresh_audio(&mut self) {
+        let Some((since, from_ms)) = self.audio_started else {
+            return;
+        };
+        if self.audio_state != AudioPlaybackState::Playing {
+            self.audio_started = None;
+            return;
+        }
+        let elapsed = u64::try_from(since.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let moved = elapsed.saturating_mul(u64::from(self.audio_speed_percent)) / 100;
+        let position = u64::from(from_ms).saturating_add(moved);
+        if position >= u64::from(self.audio_duration_ms) {
+            self.audio_position_ms = self.audio_duration_ms;
+            self.audio_state = AudioPlaybackState::Finished;
+            self.audio_started = None;
+        } else {
+            self.audio_position_ms = u32::try_from(position).unwrap_or(u32::MAX);
+        }
+    }
+
     fn handle_audio(&mut self, request: &DeviceRequest) -> DeviceResult {
         if let Some(reason) = self.refusal(Capability::BluetoothAudio) {
             return DeviceResult::Denied(reason);
         }
+        self.refresh_audio();
+        let loaded = !matches!(
+            self.audio_state,
+            AudioPlaybackState::Idle | AudioPlaybackState::Loading
+        );
         match request {
             DeviceRequest::ReadAudio => {}
-            DeviceRequest::LoadAudio { .. } => {
+            DeviceRequest::LoadAudio { source } => {
+                self.audio_started = None;
+                let opened = self
+                    .audio_opener
+                    .as_ref()
+                    .and_then(|opener| (opener.0)(source));
+                match opened {
+                    Some(Ok(book)) => {
+                        self.audio_duration_ms = book.duration_ms;
+                        self.audio_detail = Some(book.detail);
+                    }
+                    Some(Err(error)) => {
+                        self.audio_state = AudioPlaybackState::Idle;
+                        self.audio_duration_ms = 0;
+                        self.audio_detail = None;
+                        return DeviceResult::Failed(error);
+                    }
+                    None => {
+                        self.audio_duration_ms = 30 * 60 * 1_000;
+                        self.audio_detail = Some(AudioDetail {
+                            duration_ms: self.audio_duration_ms,
+                            ..AudioDetail::default()
+                        });
+                    }
+                }
                 self.audio_state = AudioPlaybackState::Ready;
                 self.audio_position_ms = 0;
-                self.audio_duration_ms = 30 * 60 * 1_000;
             }
-            DeviceRequest::PlayAudio | DeviceRequest::SeekAudio { .. }
-                if self.audio_state == AudioPlaybackState::Idle =>
+            DeviceRequest::PlayAudio
+            | DeviceRequest::SeekAudio { .. }
+            | DeviceRequest::ReadAudioDetail
+                if !loaded =>
             {
                 return DeviceResult::Failed(DeviceError::NotFound);
             }
-            DeviceRequest::PlayAudio => self.audio_state = AudioPlaybackState::Playing,
+            DeviceRequest::PlayAudio => {
+                if self.audio_state == AudioPlaybackState::Finished {
+                    self.audio_position_ms = 0;
+                }
+                self.audio_state = AudioPlaybackState::Playing;
+                self.audio_started = Some((Instant::now(), self.audio_position_ms));
+            }
             DeviceRequest::PauseAudio => {
                 if self.audio_state == AudioPlaybackState::Playing {
                     self.audio_state = AudioPlaybackState::Paused;
                 }
+                self.audio_started = None;
             }
             DeviceRequest::SeekAudio { position_ms } => {
                 self.audio_position_ms = (*position_ms).min(self.audio_duration_ms);
+                if self.audio_state == AudioPlaybackState::Finished {
+                    self.audio_state = AudioPlaybackState::Paused;
+                }
+                if self.audio_state == AudioPlaybackState::Playing {
+                    self.audio_started = Some((Instant::now(), self.audio_position_ms));
+                }
             }
             DeviceRequest::StopAudio => {
                 self.audio_state = if self.audio_duration_ms == 0 {
@@ -625,11 +800,44 @@ impl DeviceServices {
                     AudioPlaybackState::Ready
                 };
                 self.audio_position_ms = 0;
+                self.audio_started = None;
             }
             DeviceRequest::SetAudioVolume { percent } => self.audio_volume = (*percent).min(100),
+            DeviceRequest::SetAudioSpeed { percent } => {
+                // Rebased so the clock keeps counting from here at the new
+                // speed rather than re-pricing the time already played.
+                if let Some(started) = self.audio_started.as_mut() {
+                    *started = (Instant::now(), self.audio_position_ms);
+                }
+                self.audio_speed_percent = (*percent).clamp(50, 300);
+            }
+            DeviceRequest::ReadAudioDetail => {
+                return self.audio_detail.clone().map_or(
+                    DeviceResult::Failed(DeviceError::NotFound),
+                    DeviceResult::AudioDetail,
+                );
+            }
             _ => return DeviceResult::Failed(DeviceError::InvalidInput),
         }
         self.audio_state()
+    }
+
+    fn list_audio(&self) -> DeviceResult {
+        if let Some(reason) = self.refusal(Capability::Audio) {
+            return DeviceResult::Denied(reason);
+        }
+        let listing = crate::audio_library::list_in(&self.library_roots());
+        let truncated =
+            listing.truncated || listing.entries.len() > kobo_protocol::MAX_AUDIO_ENTRIES;
+        DeviceResult::AudioLibrary {
+            entries: listing
+                .entries
+                .into_iter()
+                .take(kobo_protocol::MAX_AUDIO_ENTRIES)
+                .map(crate::audio_library::to_wire)
+                .collect(),
+            truncated,
+        }
     }
 
     fn set_frontlight(&mut self, percent: u8) -> DeviceResult {
@@ -722,7 +930,10 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::PauseAudio
         | DeviceRequest::SeekAudio { .. }
         | DeviceRequest::StopAudio
-        | DeviceRequest::SetAudioVolume { .. } => Capability::BluetoothAudio,
+        | DeviceRequest::SetAudioVolume { .. }
+        | DeviceRequest::ReadAudioDetail
+        | DeviceRequest::SetAudioSpeed { .. } => Capability::BluetoothAudio,
+        DeviceRequest::ListAudio => Capability::Audio,
         // An update is fetched from the network and applied to the
         // installation the requester is already running from, so the network
         // permission is the one that governs it.
@@ -741,6 +952,11 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         // prove a build ran. It touches no radio and costs no power, and the
         // values are already on the session's own banner, so it is free.
         | DeviceRequest::ReadIdentity
+        // Notices are news the runtime already holds and shows; the launcher
+        // is the only caller the runtime accepts, by identity.
+        | DeviceRequest::MarkNoticesRead
+        | DeviceRequest::ClearNotices
+        | DeviceRequest::OpenNotice { .. }
         // Reading and choosing the standing preference touch a settings file,
         // not a radio or the panel, so no capability governs them; who may
         // ask is decided by the runtime, exactly as for the store requests.
@@ -748,6 +964,9 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         | DeviceRequest::SetAutoUpdate { .. }
         | DeviceRequest::ReadUpdateChannel
         | DeviceRequest::SetUpdateChannel { .. }
+        // The time zone is the same kind of choice: one line in a file.
+        | DeviceRequest::ReadTimeZone
+        | DeviceRequest::SetTimeZone { .. }
         | DeviceRequest::SetSecret { .. }
         | DeviceRequest::SetServerSecret { .. }
         | DeviceRequest::CheckSecrets { .. }
@@ -755,7 +974,9 @@ pub fn request_capability(request: &DeviceRequest) -> Option<Capability> {
         // A secret typed into a field is held to the same per-name review as
         // one set directly, by the host, before the field is drawn.
         | DeviceRequest::TypeText { .. } => return None,
-        DeviceRequest::ListLibrary | DeviceRequest::ReadLibrary { .. } => Capability::Library,
+        DeviceRequest::ListLibrary
+        | DeviceRequest::ReadLibrary { .. }
+        | DeviceRequest::RemoveArticle { .. } => Capability::Library,
     })
 }
 
@@ -912,6 +1133,41 @@ mod tests {
         assert_eq!(
             services.handle(DeviceRequest::ReadUpdateChannel),
             DeviceResult::UpdateChannel(UpdateChannel::Beta)
+        );
+    }
+
+    #[test]
+    fn a_picked_time_zone_is_kept_and_one_that_is_not_on_the_list_is_refused() {
+        let mut services =
+            DeviceServices::new(declared(&[]), PowerPolicy::DEFAULT, Backends::with([]));
+        assert_eq!(
+            services.handle(DeviceRequest::ReadTimeZone),
+            DeviceResult::TimeZone {
+                zone: None,
+                offset_minutes: 0
+            }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetTimeZone {
+                zone: "Asia/Kolkata".into()
+            }),
+            DeviceResult::TimeZone {
+                zone: Some("Asia/Kolkata".into()),
+                offset_minutes: 330
+            }
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::SetTimeZone {
+                zone: "Mars/Olympus_Mons".into()
+            }),
+            DeviceResult::Failed(kobo_protocol::DeviceError::InvalidInput)
+        );
+        assert_eq!(
+            services.handle(DeviceRequest::ReadTimeZone),
+            DeviceResult::TimeZone {
+                zone: Some("Asia/Kolkata".into()),
+                offset_minutes: 330
+            }
         );
     }
 

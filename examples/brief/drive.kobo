@@ -21,9 +21,11 @@ expect Best
 tap Refresh
 wait-for as of
 expect Best of the week
-# The time is the reader's own, not UTC, and the stories behind the headlines
-# are being kept for reading offline.
-expect-missing UTC
+# The time is said as the reader's own ("as of today, 22:12"), and the stories
+# behind the headlines are being kept for reading offline. A check for "UTC"
+# missing matched live headlines such as "Dutch", so the route looks for the
+# spoken time instead.
+expect as of today,
 expect eady offline
 expect 1 of
 clean

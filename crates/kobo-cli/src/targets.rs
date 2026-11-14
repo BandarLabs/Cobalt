@@ -260,6 +260,19 @@ pub fn resolve_nickname(name: &str) -> Result<String, String> {
     Ok(address)
 }
 
+/// [`resolve_nickname`] without waiting for the reader to be woken.
+///
+/// For a clip sent from a browser, where nobody is at a terminal to wake the
+/// reader and the answer that it is asleep is the article waiting for later.
+pub fn resolve_nickname_now(name: &str) -> Result<String, String> {
+    let path = crate::readers::store_path();
+    let mut store = crate::readers::Store::load(&path)?;
+    let address =
+        crate::readers::resolve_saved(&mut store, name, probe_serial, sweep_serials, || false)?;
+    let _ = store.save(&path);
+    Ok(address)
+}
+
 /// The serial answering at one address, when a Kobo answers at all.
 pub(crate) fn probe_serial(address: &str) -> Option<String> {
     crate::identify_device(address)
@@ -405,6 +418,7 @@ const ACTS_ON_A_READER: &[ReaderCommand] = &[
     ReaderCommand::sends("birds", &["listen", "push"]),
     ReaderCommand::sends("feeds", &["push"]),
     ReaderCommand::sends("deck", &["push"]),
+    ReaderCommand::sends("clip", &["sync"]),
     ReaderCommand::sends("secret", &["set", "list", "remove"]),
     ReaderCommand::sends("trust", &["set", "list", "remove"]),
     ReaderCommand::sends("sync", &["setup"]),

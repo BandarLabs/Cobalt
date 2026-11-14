@@ -9,11 +9,11 @@ Browse and search arXiv preprints, and read them on your Kobo.
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/formulas.png" alt="Typeset mathematics"><br>Typeset mathematics</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/table.png" alt="A results table in columns"><br>A results table in columns</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/table.png" alt="A table of figures kept in its columns"><br>A table of figures kept in its columns</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/figure.png" alt="A figure with its caption"><br>A figure with its caption</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/saved.png" alt="Saved searches and followed subjects"><br>Saved searches and followed subjects</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/figure.png" alt="A figure of map screenshots with its caption"><br>A figure of map screenshots with its caption</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/saved.png" alt="A saved search and a followed subject"><br>A saved search and a followed subject</td>
 </tr>
 </table>
 
@@ -40,6 +40,8 @@ Browse and search arXiv preprints, and read them on your Kobo.
   Followed subjects also sit at the top of the first screen.
 - The bar over a paper shows its title.
 - Results come 25 at a time. **Older papers** appears when there are more.
+  The button at the foot of a listing cycles its reach between **Any time**,
+  **This week** and **Last 30 days**.
 
 ## Permissions
 

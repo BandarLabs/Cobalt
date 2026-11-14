@@ -97,8 +97,7 @@ export function setupPanel(app) {
       <code class="setup-command">${escapeHtml(KOBO_COMMAND_INSTALL)}</code></p>`
     : "";
   return `
-  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
-    <p class="eyebrow">App setup</p>
+  <section class="section prerequisites" aria-labelledby="prerequisites-title">
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
 ${steps}

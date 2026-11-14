@@ -578,7 +578,9 @@ fn notice_line(r: &AppRunner<Crossword>) -> String {
         .nodes
         .iter()
         .find_map(|node| match node {
-            kobo_sdk::Node::Secondary { text, .. } => Some(text.clone()),
+            kobo_sdk::Node::Secondary { text, .. } | kobo_sdk::Node::Text { text, .. } => {
+                Some(text.clone())
+            }
             _ => None,
         })
         .unwrap_or_default()
@@ -791,4 +793,142 @@ fn load_and_save_failures_are_splashes_with_their_fix_directly_under_them() {
             assert_eq!(r.app().games, before);
         }
     }
+}
+
+#[test]
+fn an_untouched_puzzle_whose_grid_changed_does_not_lock_the_games_that_were_played() {
+    // A reader's save from the four-puzzle day: the cat puzzle part solved,
+    // the others listed but never opened. The mini grid has since been
+    // redrawn under the same name, and that untouched entry made every game
+    // unreadable, the cat puzzle with it.
+    let bytes = br#"{"schema":"crossword.games","version":1,"payload":{"current":"0","games":[{"id":"cat-v1","answer":"CATARETEN","position":{"letters":"CAT......","selected":"3","down":false},"undo":[],"reveals":0,"checks":0,"solved":false},{"id":"mini-v1","answer":"CAT##ORE##WEDGE##DOM##YOU","position":{"letters":"...##...##.....##...##...","selected":"5","down":false},"undo":[],"reveals":0,"checks":0,"solved":false}]}}"#;
+    let (games, current) = crate::saved::decode(bytes).expect("the played game is kept");
+    assert_eq!(current, 0);
+    assert_eq!(&games[0].position.letters[..3], b"CAT");
+}
+
+#[test]
+fn a_played_puzzle_whose_grid_changed_is_still_refused_rather_than_dropped() {
+    let bytes = br#"{"schema":"crossword.games","version":1,"payload":{"current":"0","games":[{"id":"mini-v1","answer":"CAT##ORE##WEDGE##DOM##YOU","position":{"letters":"CAT##...##.....##...##...","selected":"5","down":false},"undo":[],"reveals":0,"checks":0,"solved":false}]}}"#;
+    assert!(crate::saved::decode(bytes).is_err());
+}
+
+#[test]
+fn a_small_puzzle_prints_its_clue_in_ink_and_every_clue_under_the_grid() {
+    let r = on_board(3);
+    let screen = r.app().screen(&r.context());
+    let clue = screen.nodes.iter().find_map(|node| match node {
+        kobo_sdk::Node::Text { text, .. } => Some(text.clone()),
+        _ => None,
+    });
+    assert!(clue.is_some_and(|text| text.contains("Across")));
+    let drawn = screen
+        .layout_with(&r.context().metrics(), &kobo_sdk::Chrome::measuring(true))
+        .nodes
+        .iter()
+        .flat_map(|node| node.text_lines.clone())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(
+        drawn.contains("Across") && drawn.contains("Down"),
+        "{drawn}"
+    );
+    assert!(drawn.contains("Place down (3)"), "{drawn}");
+}
+
+fn store_saves(commands: &[Command]) -> Vec<(String, Vec<u8>)> {
+    commands
+        .iter()
+        .filter_map(|c| match c {
+            Command::Store(StoreRequest::Save { key, value }) => Some((key.clone(), value.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+fn says(r: &AppRunner<Crossword>, words: &str) -> bool {
+    format!("{:?}", r.app().screen(&r.context()).nodes).contains(words)
+}
+
+/// Try again reads the same bytes and fails the same way, so it alone was a
+/// dead end. Start over keeps those bytes under a key of their own, and only
+/// then lets the unreadable record go.
+#[test]
+fn start_over_copies_unreadable_progress_aside_before_writing_a_fresh_record() {
+    let unreadable = b"not a saved game".to_vec();
+    let mut r = AppRunner::new(Crossword::default());
+    r.start();
+    r.store_result(StoreResult::Loaded {
+        key: saved::KEY.into(),
+        value: Some(unreadable.clone()),
+    });
+    assert!(says(&r, "Start over"));
+    r.action(action_id(recover::START_OVER));
+    assert!(says(&r, "Start over?"));
+    r.action(ActionId::BACK);
+    assert!(!says(&r, "Start over?"));
+    r.action(action_id(recover::START_OVER));
+    let commands = r.action(action_id(recover::CONFIRM));
+    assert!(commands
+        .iter()
+        .any(|c| matches!(c, Command::Store(StoreRequest::List))));
+    let commands = r.store_result(StoreResult::Keys(vec![saved::KEY.into()]));
+    let copy = format!("{}-unreadable-1", saved::KEY);
+    assert_eq!(store_saves(&commands), [(copy.clone(), unreadable)]);
+    assert!(!r.app().loaded);
+    let commands = r.store_result(StoreResult::Saved { key: copy });
+    assert!(r.app().loaded);
+    assert!(r.app().view == View::Puzzles);
+    // The unreadable record goes once its copy is kept, so reopening finds
+    // the shelf as on the first day.
+    assert!(store_saves(&commands).is_empty());
+    assert!(commands.iter().any(|c| matches!(
+        c,
+        Command::Store(StoreRequest::Forget { key }) if key == saved::KEY
+    )));
+}
+
+#[test]
+fn the_shelf_names_its_page_and_rules_opened_there_return_to_the_same_page() {
+    let mut r = AppRunner::new(Crossword::default());
+    r.start();
+    r.store_result(StoreResult::Loaded {
+        key: saved::KEY.into(),
+        value: None,
+    });
+    r.action(action_id("puzzles-next"));
+    assert_eq!(r.app().puzzle_page, 1);
+    let drawn: Vec<String> = r
+        .app()
+        .screen(&r.context())
+        .layout_with(&kobo_ui::CLARA_BW_METRICS, &Chrome::measuring(true))
+        .nodes
+        .into_iter()
+        .flat_map(|node| node.text_lines)
+        .collect();
+    assert!(
+        drawn.iter().any(|line| line.starts_with("2 of ")),
+        "{drawn:?}"
+    );
+    r.action(action_id(chrome::RULES));
+    r.action(ActionId::BACK);
+    assert!(r.app().view == View::Puzzles);
+    assert_eq!(r.app().puzzle_page, 1);
+}
+
+#[test]
+fn each_answer_opens_on_the_letters_even_after_the_last_one_went_to_the_symbols() {
+    let mut r = AppRunner::new(Crossword::default());
+    r.start();
+    r.store_result(StoreResult::Loaded {
+        key: saved::KEY.into(),
+        value: None,
+    });
+    r.action(action_id("puzzle-3"));
+    r.action(action_id("cell-1"));
+    r.action(action_id(kobo_ui::keyboard::LAYER));
+    assert_ne!(r.app().keyboard.layer(), Keyboard::new().layer());
+    r.action(ActionId::BACK);
+    r.action(action_id("cell-1"));
+    assert_eq!(r.app().keyboard.layer(), Keyboard::new().layer());
 }

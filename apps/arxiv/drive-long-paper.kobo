@@ -1,0 +1,19 @@
+# sweep: --bare
+# A paper longer than the reader fetches arrives cut short. Keep for offline
+# on it must say it was not kept rather than open the paper and do nothing.
+wait-for Preprints
+tap Search arXiv
+wait-for Type here
+type swarmevolve
+tap Search
+wait-idle 20000
+wait-for SwarmEvolve: Latent Agent Swarms
+tap SwarmEvolve: Latent Agent Swarms
+wait-idle
+tap Keep for offline
+wait-idle 30000
+wait 3000
+wait-for This paper is too long to keep for offline reading.
+expect Keep for offline
+clean
+shot keep-long

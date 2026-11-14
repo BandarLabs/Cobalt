@@ -4,7 +4,7 @@ Read Hacker News stories, discussions and articles on your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/stories.png" alt="Ranked stories with scores"><br>Ranked stories with scores</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/stories.png" alt="Ranked Show HN stories with scores"><br>Ranked Show HN stories with scores</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/thread.png" alt="A story's comment thread"><br>A story's comment thread</td>
 </tr>
 </table>
@@ -36,9 +36,9 @@ Read Hacker News stories, discussions and articles on your Kobo.
 
 ```sh
 cargo test -p kobo-hn
-kobo run --sim --app hn      # in the browser simulator
+(cd examples/hn && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py hn
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

@@ -47,12 +47,23 @@ cargo run -p kobo-cli -- drive --script tour.kobo --shots target/shots
 cargo run -p kobo-cli -- drive --step "tap Search" --step "expect Results"
 ```
 
-A script is one step per line: `tap LABEL`, `tap-at X,Y`, `type TEXT`,
-`expect TEXT`, `expect-missing TEXT`, `wait-for TEXT`, `clean`, `shot NAME`,
-`dump`, `scenario NAME`, `lifecycle background`, `wait MS`. A failing step
+A script is one step per line: `tap LABEL`, `tap-id ACTION`, `tap-at X,Y`,
+`type TEXT`, `expect TEXT`, `expect-missing TEXT`, `wait-for TEXT`,
+`wait-for-id ACTION`, `clean`, `shot NAME`, `dump`, `scenario NAME`,
+`lifecycle foreground|background`, `wait MS`, `wait-idle [MS]`, and
+`expect-state ENDPOINT#JSON_POINTER JSON_VALUE` to check the app's typed
+state, and `notice TITLE` to raise a runtime notice the way a companion does. A failing step
 reports the line and the reason and screenshots the panel first. Add `--ideal`
 to take screenshots without the panel's e-ink residue, which is what you want
 when a person or a model is going to read them.
+
+Under a colour profile (`KOBO_SIM_PROFILE=clara-colour-393`) screenshots are
+in colour. Without `--ideal` they show the frame as a Kaleido 3 filter would
+render it: sixteen levels per channel, colour at half the grey resolution and
+reduced saturation, which is a model with its parameters in the sidecar
+metadata, not a measured panel. With `--ideal` they show the renderer's own
+RGB. Check an app on `clara-bw-391` as well, because that is what most readers
+have and an accent changes nothing there.
 
 `tap` resolves the label against the layout the renderer produced and then taps
 the coordinate, through the panel's own touch transform and the renderer's own
@@ -71,8 +82,9 @@ cargo run -p kobo-cli --features device-write -- tap --device <address> 536,900
 grabs, refreshes or writes, so it is safe against a device with the stock
 reader in the foreground. `tap --device` writes real evdev records to the real
 touch node, so the digitiser, the transform, the multitouch decoder and the
-hit-testing all run as they do under a finger; it is behind `device-write` and
-an unlock phrase, and it always lifts.
+hit-testing all run as they do under a finger. Several `MS:X,Y` steps after
+the first run in one upload, timed on the device. It is behind `device-write`
+and an unlock phrase, and it always lifts.
 
 To record the simulator rather than photograph it one screen at a time:
 
@@ -96,8 +108,8 @@ what you are recording. `--ideal` still governs the `shot` steps.
 ffmpeg is required and is checked for before the script runs, because
 discovering it is missing at the end of a run costs the run.
 
-`scripts/record-apps-sim.sh` does that for every application in
-`apps/catalog.json`, one simulator at a time, into a dated directory under
+`scripts/record-apps-sim.sh` does that for every application in the Store
+registry (each `cobalt-app.json`), one simulator at a time, into a dated directory under
 `target/sim-recordings/`. It needs no reader:
 
 ```sh
@@ -118,7 +130,7 @@ cargo run -p kobo-cli -- record --device <address> --seconds 24 --out target/run
 
 `record --device` is read-only in the same way `shot --device` is. It writes
 numbered greyscale PNGs and a `timings.txt`, plus a `recording.mp4` and a
-`recording.gif` when ffmpeg is on the path -- there the pictures are the
+`recording.gif` when ffmpeg is on the path. There the pictures are the
 product and the video is a bonus, so a missing ffmpeg is a note rather than a
 refusal. Every grey level is kept: the panel is greyscale and its
 text is anti-aliased, so a recording that flattened the greys would look
@@ -126,8 +138,8 @@ harsher than the device and would read as a rendering bug that is not there.
 What keeps it small is that e-ink barely moves, so identical frames are dropped
 and only the changes are stored.
 
-`scripts/record-apps.sh --device <address>` drives every example application
-through a short tap sequence and records each one, into a dated directory under
+`scripts/record-apps.sh --device <address>` drives the launcher and the
+bundled applications through a short tap sequence and records each one, into a dated directory under
 `target/device-test/`. It is a script rather than a list of commands because
 the interesting failures are the ones that appear between two runs, and
 comparing runs is only possible if both were driven the same way.
@@ -143,9 +155,11 @@ cd weather && ../target/debug/kobo dev
 Build every device-side program:
 
 ```sh
-rustup target add armv7-unknown-linux-musleabihf
 cargo run -p kobo-cli -- build --device
 ```
+
+`rust-toolchain.toml` lists the ARM target, so rustup installs it with the
+pinned compiler.
 
 The cross-compiler the TLS stack needs is listed under
 [Building from source](INSTALL.md#building-from-source); `build --device` finds it under any of its
@@ -175,7 +189,7 @@ cargo +nightly fuzz run protocol_decode -- -max_total_time=60
 ```
 
 `cargo fuzz` needs nightly for the sanitizer, and the root toolchain file pins
-stable, so nightly is named on the command line. The Fuzz workflow runs every
+1.85.1, so nightly is named on the command line. The Fuzz workflow runs every
 target for a bounded time each night and keeps any crashing input as a run
 artifact. A reader that gains a new entry point gets a target beside these.
 

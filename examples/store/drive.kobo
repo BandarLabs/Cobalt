@@ -3,7 +3,7 @@
 # At the largest text size the tabs give up their counts so their names
 # stay whole, and the open tab's heading carries its count.
 wait-for App Store
-expect Link browser
+expect Link a browser
 expect Available
 expect Updates
 shot store-catalog

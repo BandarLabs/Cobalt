@@ -9,14 +9,25 @@ expect No games finished yet
 expect-missing How to play
 tap Rules
 wait-for Make three in a row
+expect O goes first.
 wait 250
 clean
 shot tictactoe-help
 tap Play
 wait-for O to play
+# Back leaves the rules as Play does.
+tap Rules
+wait-for Make three in a row
+tap-id 4294967295
+wait-for O to play
+expect-missing Make three in a row
 wait 600
 tap-id cell-0
 wait-for X to play
+# A taken square is not a move: the turn stays with X and the O stays put.
+tap-id cell-0
+expect X to play
+expect-state /layout#/nodes/14/lines/0 "O"
 tap-id cell-3
 wait-for O to play
 tap-id cell-1
@@ -26,22 +37,105 @@ wait-for O to play
 tap-id cell-2
 wait-for O wins
 expect O 1
+expect Next game
+# A finished board takes no more moves.
+tap-id cell-8
+expect O wins
+expect-state /layout#/nodes/30/lines/0 " "
+expect O 1 · X 0 · ties 0
 wait 600
 clean
 shot tictactoe-won
 tap Next game
 wait-for O to play
 expect O 1
+expect-missing Next game
+# X can win too, and the score counts it on its own side.
+tap-id cell-0
+tap-id cell-3
+tap-id cell-1
+tap-id cell-4
+tap-id cell-8
+tap-id cell-5
+wait-for X wins
+expect O 1 · X 1 · ties 0
+clean
+shot tictactoe-x-won
+tap Next game
+wait-for O to play
+# New game from the menu clears a half-played board and keeps the score.
+tap-id cell-4
+wait-for X to play
+tap-id game-more
+wait-for New game
+expect Against the Kobo
+expect Clear score
+clean
+shot tictactoe-menu
+tap New game
+wait-for O to play
+expect-state /layout#/nodes/22/lines/0 " "
+expect O 1 · X 1 · ties 0
+# The Kobo takes X and answers each move at once.
 tap-id game-more
 wait-for New game
 tap Against the Kobo
-wait-for Your turn
+wait-for Your turn, playing O
+expect You 1 · Kobo 1 · ties 0
 tap-id cell-0
 wait-for Your turn
+expect-state /layout#/nodes/22/lines/0 "X"
 wait 600
 clean
 shot tictactoe-solo
+# A fork it cannot cover: corner, opposite corner, then the third corner.
+tap-id cell-8
+wait-for Your turn
+tap-id cell-6
+wait-for Your turn
+tap-id cell-3
+wait-for You win
+expect You 2 · Kobo 1 · ties 0
+clean
+shot tictactoe-solo-won
+tap Next game
+wait-for Your turn, playing O
+# A careless game: the Kobo takes the win when it is offered.
+tap-id cell-1
+tap-id cell-2
+tap-id cell-3
+wait-for The Kobo wins
+expect You 2 · Kobo 2 · ties 0
+clean
+shot tictactoe-kobo-won
+tap Next game
+wait-for Your turn, playing O
+# A full board with no line is a tie.
+tap-id cell-4
+tap-id cell-8
+tap-id cell-1
+tap-id cell-3
+tap-id cell-6
+wait-for A tie
+expect You 2 · Kobo 2 · ties 1
+clean
+shot tictactoe-tie
+# The opponent and the score outlast a restart; the board does not.
+restart
+wait-for Your turn, playing O
+expect You 2 · Kobo 2 · ties 1
+expect-state /layout#/nodes/22/lines/0 " "
+expect-missing Next game
+# Back to two players keeps the score and starts a fresh board.
+tap-id game-more
+wait-for Two players
+tap Two players
+wait-for O to play
+expect O 2 · X 2 · ties 1
 tap-id game-more
 tap Clear score
 wait-for No games finished yet
+restart
+wait-for O to play
+expect No games finished yet
 wait 900

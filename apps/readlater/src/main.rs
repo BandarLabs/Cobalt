@@ -155,6 +155,10 @@ struct ReadLater {
     /// for: a finished sync or sign-in is a success, an unsaved write or a
     /// refused sign-in an error, a server out of reach something to attend to.
     notice: Option<(BannerLevel, String)>,
+    /// The failure the notice was made from, while it is the notice, so the
+    /// banner can carry its fix: Join Wi-Fi offline, Try again where asking
+    /// again can help. The banner used to say "Join Wi-Fi" with no way to.
+    failure: Option<kobo_sdk::failure::Problem>,
     /// The server address, typed on the runtime's keyboard.
     address: TextEntry,
     editing: Option<Setting>,
@@ -214,7 +218,8 @@ impl ReadLater {
     /// Says what a failed request means, at the level the failure asks for.
     fn fail(&mut self, error: TaskError) {
         let problem = self.problem(error);
-        self.notice = Some((problem.level(), problem.message));
+        self.notice = Some((problem.level(), problem.message.clone()));
+        self.failure = Some(problem);
     }
 
     /// Whether the notice says `text`, whatever its level.
@@ -424,11 +429,21 @@ impl ReadLater {
         let retry = self.snapshot.as_ref().is_some_and(Snapshot::retryable) || self.cache_dirty;
         // Retry saving is the fix for what the banner says, so it is the
         // banner's own action whenever there is a banner to carry it.
+        let failure = self.failure.as_ref().filter(|problem| {
+            self.notice
+                .as_ref()
+                .is_some_and(|(_, note)| *note == problem.message)
+        });
         match &self.notice {
             Some((level, note)) if retry => {
                 page = page
                     .banner(*level, note)
                     .banner_action("retry-save", "Retry saving");
+            }
+            Some(_) if failure.is_some() => {
+                if let Some(problem) = failure {
+                    page = page.problem_banner_with(problem, "sync", None);
+                }
             }
             Some((level, note)) => page = page.banner(*level, note),
             None if retry => page = page.button("retry-save", "Retry saving"),
@@ -817,9 +832,10 @@ impl ReadLater {
         );
     }
     fn persist_config(&self, context: &mut Context) {
-        context
-            .store()
-            .save(CONFIG, format!("{}\n{CREDENTIAL}", self.server));
+        context.store().save(
+            CONFIG,
+            format!("{}\n{CREDENTIAL}\n{}", self.server, self.depth),
+        );
     }
 }
 
@@ -913,6 +929,16 @@ impl KoboApp for ReadLater {
                     // name is fixed now, so only the server is read back.
                     self.server
                         .clone_from(&text.lines().next().unwrap_or_default().to_owned());
+                    // The third line is how many articles to keep. It used
+                    // to live only in memory, so every start went back to 50.
+                    if let Some(depth) = text
+                        .lines()
+                        .nth(2)
+                        .and_then(|line| line.trim().parse::<u16>().ok())
+                        .filter(|depth| [20, 50, 100].contains(depth))
+                    {
+                        self.depth = depth;
+                    }
                 }
             }
             if key == session::STORE_KEY {
@@ -1026,12 +1052,12 @@ impl KoboApp for ReadLater {
             } else {
                 current.saturating_sub(1)
             };
-        } else if action == action_id("depth-20") {
-            self.depth = 20;
-        } else if action == action_id("depth-50") {
-            self.depth = 50;
-        } else if action == action_id("depth-100") {
-            self.depth = 100;
+        } else if let Some(depth) = [20, 50, 100]
+            .into_iter()
+            .find(|depth| action == action_id(&format!("depth-{depth}")))
+        {
+            self.depth = depth;
+            self.persist_config(context);
         } else if self.view == Some(View::Article)
             && (action == action_id("previous-page") || action == action_id("next-page"))
         {
@@ -1215,15 +1241,15 @@ fn article_screen(context: &mut Context, entry: &Entry) -> kobo_sdk::Screen {
             Glyph::Heart,
         )
         .reading(true)
+        // The page turns the pages were measured for. A bar of three buttons
+        // stood in for them: it was taller than the pages allowed, so each
+        // ended a few lines short, it hid the page count, and its Next stayed
+        // live on the last page. Back in the top bar is the reading list.
+        .page_turns("previous-page", "next-page")
         .page_position(
             u16::try_from(index + 1).unwrap_or(u16::MAX),
             u16::try_from(pages.len()).unwrap_or(u16::MAX),
-        )
-        .action_bar([
-            ("previous-page", "Previous"),
-            ("back", "Reading list"),
-            ("next-page", "Next"),
-        ]);
+        );
     if let Some(paragraphs) = pages.get(index) {
         for paragraph in paragraphs {
             page = page.text(paragraph);
@@ -1997,6 +2023,48 @@ mod tests {
             format!("{commands:?}").contains("No sign-in has arrived"),
             "{commands:?}"
         );
+    }
+
+    #[test]
+    fn an_offline_sync_over_the_list_offers_join_wifi_on_its_banner() {
+        let mut app = reading_list(3);
+        app.fail(TaskError::Offline);
+        let drawn = format!("{:?}", app.queue_screen(&Context::default()));
+        assert!(
+            drawn.contains("label: \"Join Wi-Fi\""),
+            "the banner has no control: {drawn}"
+        );
+    }
+
+    #[test]
+    fn the_number_of_articles_to_keep_survives_a_restart() {
+        let mut app = reading_list(0);
+        let mut context = kobo_sdk::AppRunner::new(ReadLater::default()).context();
+        app.on_action(&mut context, action_id("depth-20"));
+        let saved = context
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                kobo_sdk::Command::Store(kobo_sdk::StoreRequest::Save { key, value })
+                    if key == CONFIG =>
+                {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .expect("the choice was not saved");
+        let mut again = ReadLater::default();
+        let mut context = kobo_sdk::AppRunner::new(ReadLater::default()).context();
+        again.on_start(&mut context);
+        again.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: CONFIG.to_owned(),
+                value: Some(saved),
+            },
+        );
+        assert_eq!(again.depth, 20);
+        assert_eq!(again.server, "https://bag.example");
     }
 
     #[test]

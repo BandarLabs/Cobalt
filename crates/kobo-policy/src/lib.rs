@@ -8,6 +8,7 @@
 //! application asking for something unreasonable gets a reduced grant rather
 //! than the device it asked for.
 
+pub mod audio_library;
 pub mod clock;
 pub mod credentials;
 pub mod library;
@@ -16,6 +17,7 @@ pub mod services;
 pub mod shelf;
 pub mod store;
 pub mod tasks;
+pub mod zones;
 
 pub use persistence::WriteFault;
 pub use services::{request_capability, Backends, DeviceServices, DeviceState};

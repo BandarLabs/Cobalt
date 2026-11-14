@@ -49,6 +49,9 @@ pub struct ProviderSetup {
     task: Option<TaskId>,
     connection: Connection,
     advice: Option<String>,
+    /// Good news for the banner, such as account details being kept, which
+    /// is not drawn with the warning mark that advice carries.
+    confirmation: Option<String>,
     needs_wifi: bool,
     sample: bool,
     server_accounts: bool,
@@ -98,6 +101,7 @@ impl ProviderSetup {
             task: None,
             connection: Connection::Unchecked,
             advice: None,
+            confirmation: None,
             needs_wifi: false,
             sample,
             server_accounts: false,
@@ -243,6 +247,8 @@ impl ProviderSetup {
         }
         if let Some(advice) = &self.advice {
             screen = screen.banner(BannerLevel::Attention, advice);
+        } else if let Some(confirmation) = &self.confirmation {
+            screen = screen.banner(BannerLevel::Info, confirmation);
         }
         screen = screen.field(ADDRESS, &self.address, "Add server address");
         if self.endpoint == Endpoint::Account {
@@ -268,6 +274,9 @@ impl ProviderSetup {
     }
 
     pub fn on_action(&mut self, context: &mut Context, action: ActionId) -> Option<Event> {
+        if !self.credentials.is_open() && !self.entry.is_open() {
+            self.confirmation = None;
+        }
         if self.credentials.is_open() {
             return self
                 .credentials
@@ -362,8 +371,13 @@ impl ProviderSetup {
             }
             TaskOutcome::Failed(error) => {
                 self.needs_wifi = *error == crate::TaskError::Offline;
+                // With no account saved the runtime refuses the check
+                // outright, which in general words read as "not available".
                 self.advice = Some(match error {
                     crate::TaskError::NoCredential => "Add account details, then check the connection again.",
+                    crate::TaskError::Denied if self.endpoint == Endpoint::Account => {
+                        "Add account details, then check the connection again."
+                    }
                     crate::TaskError::Unauthorized => "The server did not accept your account details. Update them and check again.",
                     _ => Failure::of(*error).advice,
                 }.into());
@@ -382,7 +396,8 @@ impl ProviderSetup {
             .map(|event| {
                 if event == CredentialEvent::Saved {
                     self.connection = Connection::Unchecked;
-                    self.advice =
+                    self.advice = None;
+                    self.confirmation =
                         Some("Account details saved. Check the connection to continue.".into());
                 }
                 Event::Changed
@@ -498,6 +513,40 @@ mod tests {
         setup.restore_address("https://another.example").unwrap();
         assert!(!setup.is_connected());
     }
+    #[test]
+    fn a_check_refused_for_want_of_an_account_says_to_add_one() {
+        let mut setup = ProviderSetup::new("Comics", "comics", "/api/v1/users/me", false).unwrap();
+        setup.restore_address("https://library.example").unwrap();
+        let mut context = Context::default();
+        setup.on_action(&mut context, action_id(TEST));
+        setup.on_task(
+            setup.task.unwrap(),
+            &TaskOutcome::Failed(crate::TaskError::Denied),
+        );
+        let advice = setup.advice.clone().unwrap();
+        assert!(advice.contains("Add account details"), "{advice}");
+        assert!(!advice.contains("isn't available"), "{advice}");
+    }
+
+    #[test]
+    fn saved_account_details_are_said_without_a_warning_mark() {
+        let mut setup = ProviderSetup::new("Comics", "comics", "/api/v1/users/me", false).unwrap();
+        setup.confirmation =
+            Some("Account details saved. Check the connection to continue.".into());
+        let screen = setup.screen();
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            crate::Node::Banner { level: BannerLevel::Info, text, .. } if text.contains("saved")
+        )));
+        assert!(!screen.nodes.iter().any(|node| matches!(
+            node,
+            crate::Node::Banner {
+                level: BannerLevel::Attention,
+                ..
+            }
+        )));
+    }
+
     #[test]
     fn production_failure_mapping_does_not_claim_connected() {
         let mut setup = ProviderSetup::new("Articles", "articles", "/api/account", false).unwrap();

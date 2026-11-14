@@ -561,6 +561,31 @@ impl Feeds {
         self.refresh_next(context);
     }
 
+    /// Fetches the feeds that are not in `known`, one after another.
+    ///
+    /// An imported list used to sit on the shelf as names with nothing under
+    /// them until Refresh all was tapped, which nothing said to do. The new
+    /// feeds are read straight away; the ones already there keep their copy.
+    fn refresh_new(&mut self, context: &mut Context, known: &[String]) {
+        if self.refreshing.is_some() {
+            return;
+        }
+        let fresh: std::collections::VecDeque<String> = self
+            .subscriptions
+            .iter()
+            .map(|feed| feed.url.clone())
+            .filter(|url| !known.contains(url))
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        self.load_saved_caches(context);
+        self.refresh_queue = fresh;
+        self.refreshed = (0, 0);
+        self.problem = None;
+        self.refresh_next(context);
+    }
+
     fn refresh_next(&mut self, context: &mut Context) {
         if self.refreshing.is_some() {
             return;
@@ -682,8 +707,12 @@ impl Feeds {
             } else {
                 item.link.as_str()
             };
-            self.keeper
-                .keep_markup(context, &article_id(item, feed_url), origin, &item.html);
+            self.keeper.keep_markup(
+                context,
+                &article_id(item, feed_url),
+                origin,
+                &kobo_html::article::main_content(&item.html),
+            );
         }
     }
 
@@ -786,6 +815,7 @@ impl Feeds {
             .iter()
             .map(|feed| self.statuses.unread_of(&feed.url).unwrap_or(0))
             .collect();
+        let now = status::now();
         let rows: Vec<(String, String)> = self
             .subscriptions
             .iter()
@@ -796,7 +826,7 @@ impl Feeds {
                 let summary = context.clamped_row_with_edge(
                     &self
                         .statuses
-                        .summary(&feed.url)
+                        .summary(&feed.url, now)
                         .unwrap_or_else(|| pretty_host(&feed.site, &feed.url)),
                     2,
                     true,
@@ -1008,15 +1038,21 @@ impl Feeds {
                     screen.banner_action(kobo_sdk::JOIN_WIFI, "Join Wi-Fi")
                 }
                 Some(failure) if !failure.retryable => screen,
+                // The address answered, with something that is not a feed or
+                // with more than can be read. Asking again gets the same
+                // answer, so the one way on is Change address.
+                None if self.direct || !problem.ends_with("Try again.") => screen,
                 _ => screen.banner_action("search-retry", "Try again"),
             };
             return screen.button("add", "Change address").build();
         }
         if self.found.is_empty() {
             return screen
-                .empty_state(
-                    "No feeds there. Some sites publish one at a different \
-                     address, so it is worth trying the exact page you read.",
+                .splash(
+                    Some(Glyph::Search),
+                    "No feeds found",
+                    "Some sites publish one at a different address, so it is \
+                     worth trying the exact page you read.",
                 )
                 .primary_button("add", "Try another address")
                 .build();
@@ -1280,7 +1316,11 @@ impl Feeds {
                 screen.activity("Reading the saved articles", None).build()
             } else {
                 screen
-                    .empty_state("No saved articles match this search.")
+                    .splash(
+                        Some(Glyph::Search),
+                        "No matches",
+                        "No saved articles match this search.",
+                    )
                     .build()
             };
         }
@@ -1407,8 +1447,15 @@ impl Feeds {
                 self.problem = Some("This article could not be opened.".to_owned());
             }
         } else {
-            self.reader
-                .open(context, kobo_doc::html::parse(&item.html), memory);
+            // A feed that carries whole articles often carries the page
+            // around them too: its section menu, its buttons and its labels.
+            // They are cut here exactly as they are for a page fetched from a
+            // link, so the kept copy and this one read the same.
+            self.reader.open(
+                context,
+                kobo_doc::html::parse(&kobo_html::article::main_content(&item.html)),
+                memory,
+            );
             self.illustrations.open(context, &mut self.reader, &origin);
         }
         self.keep_position(context);
@@ -1588,10 +1635,17 @@ impl Feeds {
         }
         let matches = self.matching_items();
         if matches.is_empty() {
+            // A search that found nothing is not an empty shelf: the
+            // standard empty state titled it "Nothing here yet" over a folder.
             return screen
-                .empty_state("No saved articles match this search.")
+                .splash(
+                    Some(Glyph::Search),
+                    "No matches",
+                    "No saved articles match this search.",
+                )
                 .build();
         }
+        let now = status::now();
         let rows: Vec<(String, String)> = matches
             .iter()
             .map(|index| &self.items[*index])
@@ -1606,7 +1660,7 @@ impl Feeds {
                             } else {
                                 ""
                             },
-                            byline(item)
+                            byline(item, now)
                         ),
                         true,
                     ),
@@ -1709,10 +1763,13 @@ fn page_groups(
     }
 }
 
-/// The line under an article's title.
-fn byline(item: &feed::Item) -> String {
-    let date = item.short_date();
-    match (item.author.trim(), date.as_str()) {
+/// The line under an article's title, with the date said against `now`.
+fn byline(item: &feed::Item, now: Option<kobo_sdk::clock::Snapshot>) -> String {
+    byline_dated(item, &item.short_date(now))
+}
+
+fn byline_dated(item: &feed::Item, date: &str) -> String {
+    match (item.author.trim(), date) {
         ("", "") => first_words(&item.body),
         ("", date) => date.to_owned(),
         (author, "") => author.to_owned(),
@@ -1736,7 +1793,7 @@ fn article_id(item: &feed::Item, feed_url: &str) -> String {
         item.link.as_str()
     };
     let body = if item.html.is_empty() {
-        article_text(item)
+        identity_text(item)
     } else {
         item.html.clone()
     };
@@ -1754,10 +1811,20 @@ fn matches_words(item: &feed::Item, words: &[&str]) -> bool {
 }
 
 fn article_text(item: &feed::Item) -> String {
+    article_text_with(item, &byline(item, status::now()))
+}
+
+/// The text an article's identity is hashed over. Its byline carries the
+/// date as earlier versions wrote it, so the identity of an article does not
+/// change with the day it is read on.
+fn identity_text(item: &feed::Item) -> String {
+    article_text_with(item, &byline_dated(item, &item.identity_date()))
+}
+
+fn article_text_with(item: &feed::Item, byline: &str) -> String {
     let mut text = String::new();
-    let byline = byline(item);
     if !byline.is_empty() {
-        text.push_str(&byline);
+        text.push_str(byline);
         text.push_str("\n\n");
     }
     text.push_str(item.body.trim());
@@ -1855,6 +1922,12 @@ fn indexed(action: ActionId, prefix: &str, count: usize) -> Option<usize> {
 }
 
 impl KoboApp for Feeds {
+    /// The feed icon is orange, and has been since Firefox introduced it in
+    /// 2004.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Orange)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(FEEDS);
         context.store().load(progress::KEY);
@@ -1952,9 +2025,15 @@ impl KoboApp for Feeds {
                     );
                     if let Some(candidate) = self.import_pending.take() {
                         if encode(&candidate) == written {
+                            let known: Vec<String> = self
+                                .subscriptions
+                                .iter()
+                                .map(|feed| feed.url.clone())
+                                .collect();
                             self.subscriptions = candidate;
                             self.import_preview = None;
                             self.view = View::Shelf;
+                            self.refresh_new(context, &known);
                         }
                     }
                     if self
@@ -2961,6 +3040,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_address_that_answers_with_something_other_than_a_feed_offers_no_try_again() {
+        let address = "https://example.com";
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Found,
+            query: address.to_owned(),
+            ..Feeds::default()
+        });
+        runner.action(action_id("search-retry"));
+        let task = runner.app_mut().task.unwrap().0;
+        let commands = runner.task_outcome(
+            task,
+            TaskOutcome::Completed(b"<html><body>A home page</body></html>".to_vec()),
+        );
+        let screen = screen_of(&commands);
+        assert_eq!(
+            banners_of(&screen),
+            [(kobo_sdk::BannerLevel::Attention, None)]
+        );
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Button { action, .. } if *action == action_id("add")
+        )));
+    }
+
     /// The shelf under each banner it can carry, with badges on some rows,
     /// and the Add screen with a refused address, on a Clara at every text
     /// size held either way. Every page of the shelf draws every row it was
@@ -3819,6 +3924,41 @@ mod tests {
     }
 
     #[test]
+    fn an_imported_feed_is_fetched_as_soon_as_the_import_is_saved() {
+        let fresh = Subscription {
+            title: "New journal".into(),
+            url: "https://example.com/new.xml".into(),
+            site: String::new(),
+        };
+        let mut runner = AppRunner::new(Feeds {
+            view: View::Import,
+            loaded: true,
+            subscriptions: following(),
+            import_preview: Some(opml::Import {
+                feeds: vec![fresh.clone()],
+                skipped: 0,
+            }),
+            ..Feeds::default()
+        });
+        runner.action(action_id("import-confirm"));
+        assert!(runner.app().import_pending.is_some());
+        let commands = runner.store_result(kobo_sdk::StoreResult::Saved {
+            key: FEEDS.to_owned(),
+        });
+        let fetched: Vec<&str> = commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Spawn {
+                    work: kobo_sdk::Task::Fetch { url, .. },
+                    ..
+                } => Some(url.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fetched, [fresh.url.as_str()], "only the new feed is read");
+    }
+
+    #[test]
     fn an_empty_opml_selection_does_not_write_subscriptions() {
         let mut runner = AppRunner::new(Feeds {
             view: View::Import,
@@ -3999,6 +4139,39 @@ mod tests {
     }
 
     #[test]
+    fn a_feed_that_carries_the_whole_page_opens_without_the_page_menu() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            items: vec![super::feed::Item {
+                title: "A farewell to a telescope".to_owned(),
+                link: "https://example.com/story/".to_owned(),
+                html: "<div class=\"secondary-navigation\"><button type=button>Pictures</button>\
+                    <nav><ol><li><a href=/>Science</a></li><li><a href=/p>Pictures</a></li></ol></nav>\
+                    <div><ul><li><a href=/today>Today</a></li><li><a href=/archive>Archive</a></li>\
+                    <li><a href=/submit>Submissions</a></li><li><a href=/about>About</a></li></ul></div></div>\
+                    <h2>A farewell to a telescope</h2><p>After twenty-two years it came home.</p>"
+                    .to_owned(),
+                body: "After twenty-two years it came home.".to_owned(),
+                ..super::feed::Item::default()
+            }],
+            ..Feeds::default()
+        });
+        runner.action(action_id("item-0"));
+        let reader = runner
+            .app_mut()
+            .reader
+            .reader()
+            .expect("the article opened");
+        assert_eq!(reader.search("twenty-two", 4).len(), 1);
+        for chrome in ["Archive", "Submissions", "Science", "Pictures"] {
+            assert!(reader.search(chrome, 4).is_empty(), "{chrome} was kept");
+        }
+    }
+
+    #[test]
     fn opening_an_article_cuts_it_into_pages_that_fit_the_panel() {
         let mut runner = AppRunner::new(Feeds {
             loaded: true,
@@ -4158,7 +4331,7 @@ mod tests {
             body: "The body.".to_owned(),
             html: String::new(),
         };
-        assert_eq!(byline(&item), "A Writer \u{00b7} 05 Jul");
+        assert_eq!(byline(&item, None), "A Writer \u{00b7} 5 Jul");
         let text = article_text(&item);
         assert!(text.contains("A Writer"));
         assert!(text.contains("The body."));
@@ -4172,7 +4345,7 @@ mod tests {
             body: "A few words of the body stand in for the byline.".to_owned(),
             ..super::feed::Item::default()
         };
-        assert!(byline(&item).starts_with("A few words"));
+        assert!(byline(&item, None).starts_with("A few words"));
     }
 
     /// The last screen an action produced.

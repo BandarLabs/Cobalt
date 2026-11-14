@@ -5,11 +5,11 @@ offline.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/game.png" alt="A Hard puzzle with pencil notes"><br>A Hard puzzle with pencil notes</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/game.png" alt="An Easy puzzle with pencil notes and an answer"><br>An Easy puzzle with pencil notes and an answer</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/completed.png" alt="A completed puzzle"><br>A completed puzzle</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/landscape.png" alt="The same puzzle in landscape"><br>The same puzzle in landscape</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/landscape.png" alt="An Easy puzzle in landscape"><br>An Easy puzzle in landscape</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/recovery.png" alt="Retry saving in More after a save failed"><br>Retry saving in More after a save failed</td>
 </tr>
 </table>
@@ -21,8 +21,8 @@ offline.
 - Tap a square, then a number. The selected row and column are shaded, and
   the 3×3 boxes are spaced apart.
 - The bar at the foot holds **Undo**, **Notes** and **Erase**, in the same
-  place as in the other Cobalt games. **Notes** switches to pencil notes and
-  **Digits** switches back. **Erase** clears the selected square, so notes can
+  place as in the other Cobalt games. **Notes** switches to pencil notes, with
+  a tick over it while it is on; tap it again for answers. **Erase** clears the selected square, so notes can
   go where an answer was.
 - **Undo** reverses one edit, including an erase, reveal or restart, and keeps
   the last 64 edits after reopening.
@@ -59,8 +59,8 @@ This is a guide to technique, not solving time.
 Changes save automatically. If a save fails, the status line says **Not
 saved**, your game stays in memory and **More → Retry saving** tries again.
 Closing the app before a successful retry can lose those edits. A save that
-cannot be read is kept, and the app offers to retry rather than starting a
-blank game.
+cannot be read is kept. **Try again** reads it once more, and **Start over**
+first keeps a copy of it on the reader, then begins a new game.
 
 ## The puzzles
 

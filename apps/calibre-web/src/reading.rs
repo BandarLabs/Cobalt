@@ -78,6 +78,19 @@ pub struct Reading {
     write: Option<Vec<u8>>,
     saved: Vec<u8>,
     save_failed: bool,
+    news: SaveNews,
+}
+/// What the next library write to land should say.
+///
+/// Only a downloaded book joining the library is "Saved for offline
+/// reading." A reading position saved after Retry saving used to be called
+/// that too.
+#[derive(Clone, Copy, Default, PartialEq)]
+enum SaveNews {
+    #[default]
+    Quiet,
+    Retried,
+    Book,
 }
 impl Reading {
     pub fn start(&mut self, c: &mut Context) {
@@ -481,6 +494,13 @@ impl Reading {
         self.book = Some(book);
         self.say(BannerLevel::Info, "Saving book…");
     }
+    fn say_saved(&mut self) {
+        match std::mem::take(&mut self.news) {
+            SaveNews::Book => self.say(BannerLevel::Success, "Saved for offline reading."),
+            SaveNews::Retried => self.say(BannerLevel::Success, "Library changes saved."),
+            SaveNews::Quiet => {}
+        }
+    }
     fn save(&mut self, c: &mut Context) {
         if self.write.is_some()
             || self.save_failed
@@ -539,7 +559,7 @@ impl Reading {
             match result {
                 StoreResult::Saved { key } if key == books::KEY => {
                     self.saved = self.write.take().unwrap();
-                    self.say(BannerLevel::Success, "Saved for offline reading.");
+                    self.say_saved();
                     self.save(c);
                     return true;
                 }
@@ -565,6 +585,7 @@ impl Reading {
                     if let Some(book) = self.book.clone() {
                         if self.library.insert(book).is_ok() {
                             self.repair = None;
+                            self.news = SaveNews::Book;
                             self.save(c);
                         } else {
                             self.save_failed = true;
@@ -671,6 +692,9 @@ impl Reading {
             self.start(c);
         } else if action == action_id("offline-save") {
             self.save_failed = false;
+            if self.news != SaveNews::Book {
+                self.news = SaveNews::Retried;
+            }
             self.save(c);
         } else {
             let rows = self.rows(c);
@@ -927,6 +951,33 @@ mod tests {
             matches!(node, kobo_sdk::Node::Button { action, .. } if *action == action_id(name))
         })
     }
+    #[test]
+    fn a_reading_position_saved_on_retry_is_not_called_a_book_saved_for_offline_reading() {
+        let mut reading = ready();
+        let mut c = Context::default();
+        reading.write = Some(b"positions".to_vec());
+        reading.store(&mut c, &StoreResult::Denied(kobo_sdk::StoreError::TooFull));
+        reading.action(&mut c, action_id("offline-save"));
+        reading.write = Some(b"positions again".to_vec());
+        reading.store(
+            &mut c,
+            &StoreResult::Saved {
+                key: books::KEY.into(),
+            },
+        );
+        let said = banners(&reading.screen(&c));
+        assert!(
+            said.iter()
+                .all(|(_, text, _)| text != "Saved for offline reading."),
+            "{said:?}"
+        );
+        assert!(
+            said.iter()
+                .any(|(_, text, _)| text == "Library changes saved."),
+            "{said:?}"
+        );
+    }
+
     #[test]
     fn a_saved_book_says_so_as_a_success_and_a_refused_write_is_an_error_carrying_retry_saving() {
         let mut reading = ready();

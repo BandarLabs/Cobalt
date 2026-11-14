@@ -18,6 +18,81 @@ const PUBLIC_MANIFEST_FIELDS = [
   "glyph"
 ];
 
+// Each channel carries two signed catalogs. The one readers from 0.3.34 fetch,
+// kobo_app_store::CATALOG_FILE, names every application's own mark. The one
+// runtimes up to 0.3.33 fetch, kobo_app_store::EARLIER_CATALOG_FILE, is the
+// same catalog with each glyph replaced by one those runtimes draw, because
+// they refuse a whole catalog over a glyph name they do not know.
+export const CATALOG_FILE = "cobalt-app-catalog-v2.json";
+export const EARLIER_CATALOG_FILE = "cobalt-app-catalog.json";
+export const FIRST_MARKED_RUNTIME = "0.3.34";
+
+// The glyph names 0.3.33 accepted, kobo_app_store::is_earlier_glyph. Frozen:
+// it is what those runtimes shipped with.
+export const EARLIER_GLYPHS = Object.freeze([
+  "app", "book", "note", "clock", "settings", "folder", "chart", "search", "wifi",
+  "battery", "reader", "power", "grid", "circle", "check", "terminal", "chat", "news",
+  "rss", "light", "close", "download", "bookmark", "filter", "person", "tag", "globe",
+  "refresh", "more", "bluetooth", "key", "magnet", "play", "pause", "rewind30",
+  "forward30", "volume-down", "volume-up", "more-vertical", "trash", "previous", "next",
+  "plus", "headphones"
+]);
+
+function cobaltVersionAtLeast(current, minimum) {
+  const parse = value =>
+    /^\d+\.\d+\.\d+$/.test(String(value)) ? String(value).split(".").map(Number) : null;
+  const left = parse(current);
+  const right = parse(minimum);
+  if (!left || !right) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return left[index] > right[index];
+  }
+  return true;
+}
+
+// The earlier catalog is correct when it is the catalog, entry for entry,
+// differing only in glyphs those runtimes draw, and only on entries they will
+// not install: they check a bundle against its entry byte for byte, so a
+// changed entry they would install is an application they can never get.
+// Which stand-in each mark takes is the Rust publisher's to decide and its
+// tests' to check; this is the part a published channel can get wrong.
+export function earlierCatalogFailures(earlier, catalog) {
+  if (earlier?.format_version !== 1 || !Array.isArray(earlier.entries)) {
+    return ["the earlier catalog is not a format_version 1 catalog"];
+  }
+  if (catalog?.format_version !== 1 || !Array.isArray(catalog.entries)) {
+    return ["the catalog is not a format_version 1 catalog"];
+  }
+  if (earlier.entries.length !== catalog.entries.length) {
+    return [
+      `the earlier catalog has ${earlier.entries.length} entries and the catalog ${catalog.entries.length}`
+    ];
+  }
+  const failures = [];
+  catalog.entries.forEach((entry, index) => {
+    const offered = earlier.entries[index];
+    const id = entry?.manifest?.id;
+    const glyph = offered?.manifest?.glyph;
+    if (!EARLIER_GLYPHS.includes(glyph)) {
+      failures.push(`${id}: offered to runtimes up to 0.3.33 as ${JSON.stringify(glyph)}, which they refuse`);
+    }
+    const same = JSON.stringify({ ...offered, manifest: { ...offered?.manifest, glyph: entry?.manifest?.glyph } });
+    if (same !== JSON.stringify(entry)) {
+      failures.push(`${id}: differs between the two catalogs in more than its glyph`);
+      return;
+    }
+    if (
+      glyph !== entry.manifest.glyph &&
+      !cobaltVersionAtLeast(entry.manifest.minimum_cobalt_version, FIRST_MARKED_RUNTIME)
+    ) {
+      failures.push(
+        `${id}: wears a stand-in glyph for runtimes that would still install it, which they then refuse`
+      );
+    }
+  });
+  return failures;
+}
+
 export function catalogSignatureIsValid(
   catalogBytes,
   signatureText,
@@ -96,17 +171,21 @@ export function publishedCatalogFailures(catalog, registry, assetNames) {
 }
 
 function argumentsFrom(argv) {
-  const allowed = ["--catalog", "--signature", "--registry", "--release"];
+  const required = ["--catalog", "--signature", "--registry", "--release"];
+  const earlier = ["--earlier-catalog", "--earlier-signature"];
   const usage =
-    "usage: node tools/verify-published-catalog.mjs --catalog PATH --signature PATH --registry PATH --release PATH";
+    "usage: node tools/verify-published-catalog.mjs --catalog PATH --signature PATH --registry PATH --release PATH [--earlier-catalog PATH --earlier-signature PATH]";
   const values = new Map();
   for (let index = 0; index < argv.length; index += 2) {
     const flag = argv[index];
     const value = argv[index + 1];
-    if (!allowed.includes(flag) || !value) throw new Error(usage);
+    if (![...required, ...earlier].includes(flag) || !value || values.has(flag)) {
+      throw new Error(usage);
+    }
     values.set(flag, value);
   }
-  if (values.size !== allowed.length) throw new Error(usage);
+  if (!required.every(flag => values.has(flag))) throw new Error(usage);
+  if (values.has(earlier[0]) !== values.has(earlier[1])) throw new Error(usage);
   return values;
 }
 
@@ -131,6 +210,28 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       throw new Error(
         `the published catalog is not what this tree describes:\n${failures.map(failure => `  ${failure}`).join("\n")}`
       );
+    }
+    if (values.has("--earlier-catalog")) {
+      const earlierBytes = readFileSync(values.get("--earlier-catalog"));
+      if (
+        !catalogSignatureIsValid(
+          earlierBytes,
+          readFileSync(values.get("--earlier-signature"), "utf8")
+        )
+      ) {
+        throw new Error(
+          "the earlier catalog signature does not cover the earlier catalog; runtimes up to 0.3.33 are refusing this channel"
+        );
+      }
+      const earlierFailures = earlierCatalogFailures(
+        JSON.parse(earlierBytes.toString("utf8")),
+        JSON.parse(catalogBytes.toString("utf8"))
+      );
+      if (earlierFailures.length > 0) {
+        throw new Error(
+          `the earlier catalog is not the catalog for runtimes up to 0.3.33:\n${earlierFailures.map(failure => `  ${failure}`).join("\n")}`
+        );
+      }
     }
     console.log(
       `The published catalog is signed, complete and matches this tree: ${JSON.parse(catalogBytes.toString("utf8")).entries.length} apps.`

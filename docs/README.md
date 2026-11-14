@@ -3,7 +3,7 @@
 ## Using Cobalt
 
 - [Installing Cobalt](INSTALL.md): browser, terminal and manual installs, updates, recovery and removal.
-- [Using Cobalt from your computer](companion-cli.md): sync folders, feed files, credentials, Sidekick and Deck setup.
+- [Using Cobalt from your computer](companion-cli.md): sending files, sync folders, feed files, credentials, Sidekick and Deck setup.
 - [Offline dictionaries](DICTIONARIES.md)
 - [Flashcards package compatibility](FLASHCARDS_COMPATIBILITY.md)
 

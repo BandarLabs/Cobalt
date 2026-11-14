@@ -37,8 +37,8 @@ it back. A checker on the bar comes in first: tap **Bar**, then a marked point.
 The numbers beside the points carry the marks: a boxed number is a point you
 can tap now, and a solid one is the checker in hand. Between turns they show
 the last turn, boxed where its checkers left and solid where they landed, and
-the line under the board says it in words, such as "Computer rolled 6 and 4
-and played 1/7 1/5." The board keeps its size and place for the whole game.
+the line under the board says it in words, such as "Computer opened with 4
+and 6 and played 1/7 1/5." The board keeps its size and place for the whole game.
 
 **Rules** is in the top bar. The menu beside it starts with **New game**, which
 asks first when a match is under way, then Match settings and Turn history.

@@ -1093,6 +1093,22 @@ def originals():
     return first
 
 
+def number_within_levels(pack):
+    """Numbers each new puzzle by its place in its own level's list.
+
+    The app lists one kind at one level at a time. Numbered across the whole
+    kind, the Starter list read "Four twos, Puzzle 6, Puzzle 7", as though
+    five puzzles were missing. Ids keep the old numbering, so saved progress
+    still finds its puzzle.
+    """
+    seen = {}
+    for index, p in enumerate(pack):
+        level = (p["kind"], p["difficulty"])
+        seen[level] = seen.get(level, 0) + 1
+        if index >= len(ORIGINAL_IDS):
+            p["title"] = f"Puzzle {seen[level]}"
+
+
 def build():
     pack = originals()
     for kind, make, seed in (("slither", slither_puzzles, 1), ("hashi", hashi_puzzles, 2),
@@ -1103,6 +1119,7 @@ def build():
         for _, *_, puzzle in made:
             number += 1
             pack.append(dict(id=f"{kind}-{number - 1:02}", title=f"Puzzle {number}", **puzzle))
+    number_within_levels(pack)
     return [dict(id=p["id"], kind=p["kind"], title=p["title"], difficulty=p["difficulty"],
                  guide=p["guide"], **{k: v for k, v in p.items()
                                       if k not in ("id", "kind", "title", "difficulty", "guide")})

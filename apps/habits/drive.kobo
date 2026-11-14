@@ -12,7 +12,14 @@ shot today
 # streak counts it.
 tap Yesterday
 expect Tap a habit you did yesterday.
-expect Not yesterday?
+# Skipping is in each habit's own menu rather than a row of buttons.
+expect-missing Not yesterday?
+tap-id menu-0
+expect Skip yesterday
+clean
+shot yesterday-menu
+tap Back
+expect-missing Skip yesterday
 tap-id done-0
 expect Done
 clean

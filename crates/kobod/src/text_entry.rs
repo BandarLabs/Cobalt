@@ -31,7 +31,8 @@ use kobo_protocol::{
 };
 use kobo_ui::keyboard::{self, Keyboard, Pressed};
 use kobo_ui::{
-    ActionId, Chrome, DiagnosticSeverity, DisplayMetrics, FieldKind, Node, NodeId, Screen, TopBar,
+    ActionId, Chrome, DiagnosticSeverity, DisplayMetrics, FieldKind, Node, NodeId,
+    ParagraphPresentation, RichTextSpan, Screen, TextPresentation, TopBar,
 };
 use std::fmt;
 
@@ -240,11 +241,14 @@ impl Field {
             id
         };
         let bar_title = match shape.title {
+            // The prompt names the field, not the page: the bar already says
+            // whose screen this is. Set at the first level it was a second
+            // title, larger than the first, over a single line of input.
             Some(title) => {
                 nodes.push(Node::Heading {
                     id: id(),
                     text: self.prompt.clone(),
-                    level: 1,
+                    level: 2,
                 });
                 title.to_owned()
             }
@@ -264,6 +268,25 @@ impl Field {
                     links: Vec::new(),
                 },
                 Line::Quiet(text) => Node::Secondary { id: id(), text },
+                // One run over the whole line, so the placeholder is the same
+                // paragraph at the same size as the words that replace it and
+                // the rule under the field does not move on the first key.
+                Line::Placeholder(text) => Node::RichText {
+                    id: id(),
+                    spans: vec![RichTextSpan {
+                        start: 0,
+                        end: text.len(),
+                        presentation: TextPresentation {
+                            muted: true,
+                            ..TextPresentation::default()
+                        },
+                    }],
+                    text,
+                    links: Vec::new(),
+                    presentation: ParagraphPresentation::PLAIN,
+                    selection: None,
+                    formulae: Vec::new(),
+                },
             });
         }
         nodes.push(Node::Divider { id: id() });
@@ -302,7 +325,7 @@ impl Field {
     fn field_lines(&self, tail: Option<usize>) -> Vec<Line> {
         let text = self.keyboard.text();
         if text.is_empty() {
-            return vec![Line::Plain("Type here".to_owned())];
+            return vec![Line::Placeholder(PLACEHOLDER.to_owned())];
         }
         let shown = match tail {
             Some(keep) if self.keyboard.count() > keep => {
@@ -339,7 +362,13 @@ struct Shape<'a> {
 enum Line {
     Plain(String),
     Quiet(String),
+    /// What an empty field says in place of an entry. Muted, because set in
+    /// ink at the size of an entry it reads as something already typed.
+    Placeholder(String),
 }
+
+/// What an empty field shows.
+const PLACEHOLDER: &str = "Type here";
 
 /// The answer an application gets for a finished field.
 ///
@@ -627,5 +656,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn an_empty_field_says_type_here_in_the_muted_tone_and_typing_replaces_it_in_ink() {
+        let muted = |screen: &Screen| {
+            screen.nodes.iter().any(|node| {
+                matches!(node, Node::RichText { text, spans, .. }
+                    if text == "Type here"
+                        && spans.iter().all(|span| span.presentation.muted))
+            })
+        };
+        let mut field = open(FieldKind::Text);
+        let empty = field.screen(Some(&app_screen()), &kobo_ui::CLARA_BW_METRICS);
+        assert!(muted(&empty), "{empty:?}");
+        tap(&mut field, "kb.r0c0");
+        let typed = field.screen(Some(&app_screen()), &kobo_ui::CLARA_BW_METRICS);
+        assert!(!muted(&typed), "{typed:?}");
+        assert!(
+            typed
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::Text { text, .. } if text == "q")),
+            "{typed:?}"
+        );
     }
 }

@@ -17,7 +17,7 @@ use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BandAlign, BannerLevel, Context, ControlState, DeviceRequest,
     DeviceResult, Failure, Glyph, Heartbeat, KoboApp, Orientation, Screen, ScreenBuilder,
-    SlotWidth, StoreResult, Task, TaskError, TaskId, TaskOutcome, Tile, TileShape, TileState,
+    SlotWidth, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 #[cfg(any(test, debug_assertions))]
 use model::ChallengeTime;
@@ -31,6 +31,10 @@ use std::time::{Duration, Instant};
 
 const SESSION_KEY: &str = "lichess.session.v1";
 const PUZZLE_KEY: &str = "lichess.puzzles.v1";
+/// Asks the owner to wait for an account check a time tile started; the
+/// check's own failure replaces it, since Ready is no longer coming.
+const CHECKING_ACCOUNT: &str =
+    "Checking your Lichess account. Tap a time again when the top line says Ready.";
 const BOARD_RATE_KEY: &str = "lichess.board-rate.v1";
 const EVENT_RATE_KEY: &str = "lichess.event-rate.v1";
 const SEEK_RATE_KEY: &str = "lichess.seek-rate.v1";
@@ -54,7 +58,6 @@ const TOKEN_GUIDANCE: &str = "Make one at lichess.org/account/oauth/token with o
 /// ticked and the token named, so nothing about it is typed at all.
 const TOKEN_PAGE: &str =
     "https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt";
-const HOME_TILE_COUNT: usize = SeekPreset::ALL.len() + 4;
 
 /// A line for the banner, with how loudly it is drawn.
 ///
@@ -123,22 +126,13 @@ impl std::ops::Deref for Notice {
     }
 }
 
-/// How the home cards are laid out on this panel at this text size.
+/// How much of the first screen fits the panel: everything, everything but
+/// the heading and the line under it, or the button and the rows' names.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct HomeGrid {
-    /// Cards to a row.
-    columns: usize,
-    /// The Account/Games card says "Challenges" alone, where no grid gives
-    /// it room for "Challenges · boards".
-    brief: bool,
-}
-
-struct HomeTile {
-    action: String,
-    label: String,
-    glyph: Glyph,
-    subtitle: String,
-    state: TileState,
+enum Room {
+    Full,
+    Short,
+    Least,
 }
 
 type BuilderSlot = (SlotWidth, Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>);
@@ -147,6 +141,9 @@ type BuilderSlot = (SlotWidth, Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>);
 enum Route {
     #[default]
     Home,
+    /// The times a game with a person can be found at, and whether it is
+    /// rated.
+    Online,
     HowTo,
     Puzzles,
     Solve,
@@ -427,6 +424,19 @@ impl Puzzle {
         })
     }
 
+    /// The move the owner was looking for, written as the board writes
+    /// moves elsewhere ("Ra8", not "a1a8"), and called the first move when
+    /// the puzzle stopped before any was found.
+    fn missed_move(&self) -> Option<String> {
+        let movement = self.solution.get(self.cursor)?;
+        let (_, san) = chess::play(&self.fen, movement)?;
+        Some(if self.cursor == 0 {
+            format!("The first move was {san}.")
+        } else {
+            format!("The move was {san}.")
+        })
+    }
+
     fn stored(&self) -> Value {
         ObjectBuilder::new()
             .set("id", self.id.clone())
@@ -469,7 +479,9 @@ impl Puzzle {
 )]
 struct Lichess {
     route: Route,
-    home_page: usize,
+    /// The page of Play online on screen, where the larger text sizes or a
+    /// panel held sideways need more than one.
+    online_page: usize,
     /// The page of How to play on screen, where the larger text sizes need
     /// more than one.
     help_page: usize,
@@ -490,7 +502,7 @@ struct Lichess {
     challenge_preset: SeekPreset,
     challenge_side: ChallengeSide,
     /// Whether a time tile seeks a rated game. The owner's standing choice,
-    /// made in Account/Games, named on every time tile and kept across
+    /// made on Play online, named on every time tile and kept across
     /// restarts.
     seek_rated: bool,
     /// Whether the seek in flight is rated. Captured when the seek starts so
@@ -552,7 +564,7 @@ impl Default for Lichess {
     fn default() -> Self {
         Self {
             route: Route::Home,
-            home_page: 0,
+            online_page: 0,
             help_page: 0,
             account: AccountState::Unknown,
             loaded_session: false,
@@ -632,13 +644,14 @@ impl Default for Lichess {
 impl Lichess {
     fn show(&mut self, context: &mut Context) {
         if self.credential.is_open() {
-            // Back closes the prompt onto Account/Games rather than leaving
+            // Back closes the prompt onto Your games rather than leaving
             // the app, which is where the owner opened it from.
             context.set_screen(self.credential.screen("Lichess").with_own_back(true));
             return;
         }
         let screen = match self.route {
             Route::Home => self.home(context),
+            Route::Online => self.online_screen(context),
             Route::HowTo => self.how_to_screen(context),
             Route::Puzzles => self.puzzles_screen(),
             Route::Solve => self.solve_screen(),
@@ -693,271 +706,176 @@ impl Lichess {
         }
     }
 
-    fn home_header(&self) -> ScreenBuilder {
-        let mut screen = ScreenBuilder::new("lichess-home")
-            .top_bar("Lichess")
-            .secondary(self.pairing_status());
+    /// The first screen: one clear thing to do, then a short list of the rest.
+    ///
+    /// It used to be nine boxed cards of equal weight, five of them times
+    /// written as "10+5" with a pool name under each, so somebody who opened
+    /// the app to play a game had to read the whole wall to find the one card
+    /// that needs no account. Playing the computer is that card, and resuming
+    /// a game against it is the commonest reason to come back, so it is the
+    /// one button; the times moved to Play online, where the pool is chosen
+    /// beside them.
+    fn home(&self, context: &Context) -> Screen {
+        // Where the panel is short, held sideways or at the larger sizes,
+        // the heading and the line under it go first and then the line under
+        // each row, so the button and every row stay on one page without a
+        // pager.
+        let metrics = context.metrics();
+        [Room::Full, Room::Short, Room::Least]
+            .into_iter()
+            .map(|room| self.home_in(room))
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| self.home_in(Room::Least))
+    }
+
+    fn home_in(&self, room: Room) -> Screen {
+        let mut screen = ScreenBuilder::new("lichess-home").top_bar("Lichess");
         if let Some(notice) = &self.notice {
             screen = screen.banner(notice.level, &notice.text);
         }
+        if room == Room::Full {
+            screen = screen.heading("Chess").secondary(
+                "Play the computer on this reader, or people online with a Lichess account.",
+            );
+        }
+        let summary = |words: &'static str| if room == Room::Least { "" } else { words };
         screen
+            .primary_button(
+                "play-computer",
+                if self.computer_game_in_progress() {
+                    "Resume your game"
+                } else {
+                    "Play the computer"
+                },
+            )
+            .spacer(kobo_ui::Space::Medium)
+            .rows([
+                (
+                    "play-online",
+                    "Play online",
+                    summary("Find someone to play at your pace"),
+                    Glyph::Globe,
+                ),
+                (
+                    "play",
+                    "Your games",
+                    summary("Challenges and games in progress"),
+                    Glyph::Person,
+                ),
+                (
+                    "puzzles",
+                    "Puzzles",
+                    summary("Solve positions, also offline"),
+                    Glyph::Grid,
+                ),
+                (
+                    "how-to-play",
+                    "How to play",
+                    summary("Moving pieces, clocks and accounts"),
+                    Glyph::Note,
+                ),
+            ])
+            .build()
     }
 
-    /// How the home cards sit: as many to a row as the panel takes, fewer
-    /// while a card's name or the line under it would be cut short, and the
-    /// Account/Games card's line in brief only where no column count reads
-    /// it whole.
+    /// The times a game with a person can be found at.
     ///
-    /// The line under a time card says whether the game is rated, the one
-    /// thing an owner must know before tapping it, so a text size that cuts
-    /// it to "Rapid ·…" gets wider cards instead. Measured on the cards
-    /// themselves, row by row, so the columns follow the words on this panel
-    /// rather than a guess at the text size.
-    ///
-    /// Fewer columns do not always widen a card: the runtime splits a wide
-    /// slot into cards of its own minimum width, so held sideways a card is
-    /// never much wider than a third of the panel. At the largest size that
-    /// is too narrow for "Challenges · boards", and the card says
-    /// "Challenges" there rather than "Challenges ·…".
-    fn home_grid(&self, context: &Context) -> HomeGrid {
+    /// Each says how long each player has and what is added after a move, in
+    /// words, since "15+10" means nothing to somebody new to clocks. Rated or
+    /// casual sits above them because it is the other thing to decide before
+    /// tapping one. The top line says whether a tap will start looking now.
+    fn online_screen(&self, context: &Context) -> Screen {
+        let pages = self.online_pages(context);
+        let page = self.online_page.min(pages.len() - 1);
+        self.online_page_screen(&pages[page], page, pages.len())
+    }
+
+    /// The times each page of Play online holds: all five where they fit, as
+    /// at the default size held upright, and otherwise as many whole rows as
+    /// fit with the pager drawn.
+    fn online_pages(&self, context: &Context) -> Vec<Vec<usize>> {
         let metrics = context.metrics();
-        let widest = metrics.grid_columns(TileShape::Square).clamp(1, 3);
-        let seek_state = self.seek_tile_state();
-        let tiles = (0..HOME_TILE_COUNT).collect::<Vec<_>>();
-        [false, true]
-            .into_iter()
-            .flat_map(|brief| {
-                (1..=widest)
-                    .rev()
-                    .map(move |columns| HomeGrid { columns, brief })
-            })
-            .find(|grid| {
-                tiles.chunks(grid.columns).all(|row| {
-                    let cards = row
-                        .iter()
-                        .map(|&index| {
-                            Self::home_tile(index, seek_state, self.seek_rated, grid.brief)
-                        })
-                        .collect();
-                    !Self::home_card_row(self.home_header(), cards, grid.columns)
-                        .build()
-                        .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
-                        .nodes
-                        .iter()
-                        .any(|node| {
-                            matches!(
-                                node.kind,
-                                kobo_ui::LayoutKind::TileLabel
-                                    | kobo_ui::LayoutKind::TileLabelMuted
-                                    | kobo_ui::LayoutKind::TileSubtitle
-                            ) && node
-                                .text_lines
-                                .iter()
-                                .any(|line| line.ends_with('\u{2026}'))
-                        })
-                })
-            })
-            // Nothing on this panel reads whole: the widest grid at least
-            // costs the fewest pages.
-            .unwrap_or(HomeGrid {
-                columns: widest,
-                brief: true,
-            })
-    }
-
-    /// The home cards a page holds, in rows of [`Self::home_grid`].
-    ///
-    /// Everything on one page where it fits; otherwise as many whole rows
-    /// as the panel holds under the header with the pager drawn, measured
-    /// the way the runtime will draw them, so a tall card at a large text
-    /// size moves to the next page instead of off the foot of this one.
-    fn home_pages(&self, context: &Context) -> Vec<Vec<usize>> {
-        self.home_pages_in(context, self.home_grid(context))
-    }
-
-    /// [`Self::home_pages`] for a grid already measured, so drawing the home
-    /// screen measures its cards once.
-    fn home_pages_in(&self, context: &Context, grid: HomeGrid) -> Vec<Vec<usize>> {
-        let metrics = context.metrics();
-        let fits = |tiles: &[usize], pages: usize| {
+        let fits = |presets: &[usize], pages: usize| {
             !self
-                .home_page_screen(tiles, grid, 0, pages)
+                .online_page_screen(presets, 0, pages)
                 .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
                 .has_errors()
         };
-        let all = (0..HOME_TILE_COUNT).collect::<Vec<_>>();
+        let all = (0..SeekPreset::ALL.len()).collect::<Vec<_>>();
         if fits(&all, 1) {
             return vec![all];
         }
         let mut pages = Vec::new();
-        let mut page = Vec::new();
-        for row in all.chunks(grid.columns) {
-            let mut candidate = page.clone();
-            candidate.extend_from_slice(row);
-            if !page.is_empty() && !fits(&candidate, 2) {
-                pages.push(std::mem::take(&mut page));
-                candidate = row.to_vec();
+        let mut page: Vec<usize> = Vec::new();
+        for preset in all {
+            page.push(preset);
+            if page.len() > 1 && !fits(&page, 2) {
+                page.pop();
+                pages.push(std::mem::replace(&mut page, vec![preset]));
             }
-            page = candidate;
         }
-        if !page.is_empty() {
-            pages.push(page);
-        }
+        pages.push(page);
         pages
     }
 
-    /// How a time tile looks while a seek cannot start yet.
-    ///
-    /// Never unavailable. A greyed tile does not answer a tap, and most of the
-    /// reasons a seek cannot start are ones a tap can resolve or at least
-    /// name, so the tile stays live and [`Self::explain_unready_seek`] answers
-    /// it. The busy mark appears only while the app is still connecting, the
-    /// one case where waiting a moment is the whole fix.
-    fn seek_tile_state(&self) -> TileState {
-        let connecting = matches!(self.account, AccountState::Checking)
-            || (matches!(self.account, AccountState::Ready(_))
-                && (!self.event_open || !self.playing_ready))
-            || self.seek_task.is_some()
-            || self.seek_waiting;
-        if !self.seek_ready() && connecting {
-            TileState::Busy
-        } else {
-            TileState::Normal
+    fn online_page_screen(&self, presets: &[usize], page: usize, pages: usize) -> Screen {
+        let mut screen = ScreenBuilder::new("lichess-online")
+            .top_bar("Play online")
+            .secondary(self.pairing_status());
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(notice.level, &notice.text);
         }
-    }
-
-    /// One home card. A time card names the pool it seeks in, so the owner
-    /// knows before tapping whether the game will touch their rating; the
-    /// choice itself lives in Account/Games, because a row of chips above
-    /// the cards costs the smallest panel a whole row of them.
-    fn home_tile(index: usize, seek_state: TileState, rated: bool, brief: bool) -> HomeTile {
-        if index == 0 {
-            HomeTile {
-                action: "play".to_owned(),
-                label: "Account/Games".to_owned(),
-                glyph: Glyph::Settings,
-                subtitle: if brief {
-                    "Challenges"
-                } else {
-                    "Challenges · boards"
-                }
-                .to_owned(),
-                state: TileState::Normal,
-            }
-        } else if index == 1 {
-            HomeTile {
-                action: "puzzles".to_owned(),
-                label: "Puzzles".to_owned(),
-                glyph: Glyph::Grid,
-                subtitle: "Offline training".to_owned(),
-                state: TileState::Normal,
-            }
-        } else if index == 2 {
-            HomeTile {
-                action: "play-computer".to_owned(),
-                label: "Computer".to_owned(),
-                glyph: Glyph::ChessBlackKnight,
-                subtitle: "Offline".to_owned(),
-                state: TileState::Normal,
-            }
-        } else if index == 3 {
-            HomeTile {
-                action: "how-to-play".to_owned(),
-                label: "How to play".to_owned(),
-                glyph: Glyph::Note,
-                subtitle: "Board · controls".to_owned(),
-                state: TileState::Normal,
-            }
-        } else {
-            let preset = SeekPreset::ALL[index - 4];
-            HomeTile {
-                action: preset.action().to_owned(),
-                label: preset.label(),
-                glyph: Glyph::Clock,
-                subtitle: format!(
-                    "{} · {}",
-                    preset.speed_label(),
-                    if rated { "Rated" } else { "Casual" }
-                ),
-                state: seek_state,
-            }
-        }
-    }
-
-    fn home_card_row(screen: ScreenBuilder, tiles: Vec<HomeTile>, columns: usize) -> ScreenBuilder {
-        let mut slots: Vec<BuilderSlot> = tiles
-            .into_iter()
-            .map(|tile| {
+        screen = screen
+            .segmented(
+                usize::from(!self.seek_rated),
+                [("seek-rated", "Rated"), ("seek-casual", "Casual")],
+            )
+            .rows(presets.iter().map(|&index| {
+                let preset = SeekPreset::ALL[index];
                 (
-                    SlotWidth::Fill,
-                    Box::new(move |slot: ScreenBuilder| {
-                        let state = tile.state;
-                        slot.tile_grid(
-                            TileShape::Card,
-                            [(tile.action, tile.label, tile.glyph, move |card: Tile| {
-                                card.with_subtitle(tile.subtitle).with_state(state)
-                            })],
-                        )
-                    }) as Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>,
+                    preset.action(),
+                    format!("{} minutes each", preset.minutes()),
+                    match preset.increment() {
+                        0 => "No time added".to_owned(),
+                        seconds => format!("Plus {seconds} seconds a move"),
+                    },
+                    Glyph::Clock,
                 )
-            })
-            .collect();
-        while slots.len() < columns {
-            slots.push((SlotWidth::Fill, Box::new(|slot| slot)));
-        }
-        screen.band(BandAlign::Top, slots)
-    }
-
-    fn home(&mut self, context: &Context) -> Screen {
-        let grid = self.home_grid(context);
-        let pages = self.home_pages_in(context, grid);
-        self.home_page = self.home_page.min(pages.len().saturating_sub(1));
-        self.home_page_screen(&pages[self.home_page], grid, self.home_page, pages.len())
-    }
-
-    /// One page of home cards, `columns` to a row.
-    fn home_page_screen(
-        &self,
-        tiles: &[usize],
-        grid: HomeGrid,
-        page: usize,
-        page_count: usize,
-    ) -> Screen {
-        let page_index = u16::try_from(page).unwrap_or(u16::MAX);
-        let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
-        let page_count = u16::try_from(page_count).unwrap_or(u16::MAX);
-        let seek_state = self.seek_tile_state();
-        let mut screen = self.home_header().page_rail(page_index, page_count);
-        for row in tiles.chunks(grid.columns) {
-            let cards = row
-                .iter()
-                .map(|index| Self::home_tile(*index, seek_state, self.seek_rated, grid.brief))
-                .collect();
-            screen = Self::home_card_row(screen, cards, grid.columns);
-        }
-        // A position only where there is somewhere to turn to: "1 of 1" under
-        // a home screen that fits on one page reads as a list that failed to
-        // load the rest.
-        if page_count > 1 {
+            }));
+        if pages > 1 {
             screen = screen
-                .page_turns("home-previous", "home-next")
-                .page_position(page_number, page_count);
+                .page_turns("online-previous", "online-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages).unwrap_or(u16::MAX),
+                );
         }
         screen.build()
     }
 
+    fn computer_game_in_progress(&self) -> bool {
+        self.local_game && self.game.as_ref().is_some_and(Game::active)
+    }
+
     fn puzzles_screen(&self) -> Screen {
+        // How many are waiting, in a sentence. "Ready 0" and "Current None"
+        // were a database's fields, and the current puzzle's id meant
+        // nothing to anybody solving it.
+        let remaining = self.remaining_puzzles();
         let mut screen = ScreenBuilder::new("lichess-puzzles")
             .top_bar("Puzzles")
-            .facts([
-                ("Ready", self.remaining_puzzles().to_string()),
-                (
-                    "Current",
-                    self.puzzles
-                        .get(self.current_puzzle)
-                        .map_or_else(|| "None".to_owned(), |puzzle| puzzle.id.clone()),
-                ),
-            ]);
+            .text(match remaining {
+                0 if self.puzzles.is_empty() => {
+                    "No puzzles yet. Download a set to solve them offline.".to_owned()
+                }
+                0 => "Every downloaded puzzle is done. Download a new set for more.".to_owned(),
+                1 => "One puzzle is waiting.".to_owned(),
+                count => format!("{count} puzzles are waiting."),
+            });
         if let Some(notice) = &self.notice {
             screen = screen.banner(notice.level, &notice.text);
         }
@@ -983,9 +901,9 @@ impl Lichess {
     const HOW_TO: [&'static str; 6] = [
         "Tap a piece, then a marked square. Tap the selected piece again to cancel.",
         "Outlined squares show the last move.",
-        "Computer starts an offline game. Choose your side and whether to use a clock.",
-        "Time tiles seek a live opponent. Choose rated or casual games in Account/Games.",
-        "Account/Games holds challenges and ongoing boards. Puzzles work offline after download.",
+        "Play the computer starts a game on this reader that needs no account. Choose your side and whether to use a clock.",
+        "Play online lists the times a live opponent can be found at, and whether the game is rated.",
+        "Your games holds challenges and games in progress. Puzzles work offline after download.",
         "During a live game, the clock and board update while this screen is open.",
     ];
 
@@ -1097,11 +1015,8 @@ impl Lichess {
             .text(if self.puzzle_wrong > 1 {
                 self.puzzles
                     .get(self.current_puzzle)
-                    .and_then(|puzzle| puzzle.solution.first())
-                    .map_or_else(
-                        || "The solution could not be read.".to_owned(),
-                        |movement| format!("The first move was {movement}."),
-                    )
+                    .and_then(Puzzle::missed_move)
+                    .unwrap_or_else(|| "The solution could not be read.".to_owned())
             } else {
                 "Counted only on this reader.".to_owned()
             })
@@ -1114,11 +1029,11 @@ impl Lichess {
         reason = "one declarative screen keeps all account, challenge, and ongoing-game states visible"
     )]
     fn play_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("lichess-play").top_bar("Account/Games");
+        let mut screen = ScreenBuilder::new("lichess-play").top_bar("Your games");
         screen = match &self.account {
             AccountState::Unknown => screen.secondary("Offline"),
             AccountState::Missing => screen.secondary("Not connected").text(
-                "Connect a Lichess account to play people. Computer and Puzzles work without one.",
+                "Connect a Lichess account to play people. Playing the computer and Puzzles work without one.",
             ),
             AccountState::Checking => screen.activity("Checking account", None),
             AccountState::Ready(account) => screen.secondary(account.username.clone()),
@@ -1184,13 +1099,6 @@ impl Lichess {
                 Glyph::Grid,
             )]);
         }
-        // One pool or the other, never both, so the two are segments of one
-        // control rather than chips, which read as filters that can be on
-        // together.
-        screen = screen.section("Time tiles").segmented(
-            usize::from(!self.seek_rated),
-            [("seek-rated", "Rated"), ("seek-casual", "Casual")],
-        );
         // Without an account a challenge can never be sent, so the button is
         // left out rather than shown grey under the Connect button that is
         // the actual next step.
@@ -1289,6 +1197,8 @@ impl Lichess {
         }
         let reconciling =
             self.has_pending(|pending| matches!(pending, Pending::SeekReconcile { .. }));
+        // A seek still open after Cancel is one Lichess is closing.
+        let cancelling = self.seek_task.is_some() && !self.seek_waiting;
         let mut screen = ScreenBuilder::new("lichess-pairing")
             .top_bar("Pairing")
             .heading(clock)
@@ -1296,6 +1206,8 @@ impl Lichess {
             .activity(
                 if reconciling {
                     "Checking games"
+                } else if cancelling {
+                    "Cancelling the search"
                 } else if self.seek_task.is_some() {
                     "Finding an opponent"
                 } else {
@@ -1315,7 +1227,7 @@ impl Lichess {
             .button_with_state(
                 "cancel-seek",
                 "Cancel pairing",
-                enabled(self.seek_task.is_some() || self.seek_waiting),
+                enabled(!cancelling && (self.seek_task.is_some() || self.seek_waiting)),
             )
             .build()
     }
@@ -1440,16 +1352,17 @@ impl Lichess {
         let last = game
             .last_san
             .as_deref()
-            .or_else(|| game.state.moves.last().map(String::as_str))
-            .unwrap_or("none");
+            .or_else(|| game.state.moves.last().map(String::as_str));
         let sent = self
             .pending_move
             .as_ref()
             .filter(|pending| pending.game_id == game.id);
+        // Before the first move there is no move to name, and the status
+        // simply ends at the kind of game rather than reading "none".
         let move_status = match (self.selected.as_deref(), sent) {
-            (Some(square), _) => format!("{square} →"),
-            (None, Some(pending)) => pending.movement.clone(),
-            (None, None) => last.to_owned(),
+            (Some(square), _) => format!(" · {square} →"),
+            (None, Some(pending)) => format!(" · {}", pending.movement),
+            (None, None) => last.map(|last| format!(" · {last}")).unwrap_or_default(),
         };
         let live = self.board_is_live(&game.id);
         let blocked = !live || self.pending_action.is_some() || self.pending_move.is_some();
@@ -1502,7 +1415,7 @@ impl Lichess {
         )];
         if timed {
             opponent_slots.push((
-                SlotWidth::Fixed(220),
+                SlotWidth::Natural,
                 Box::new(move |slot| {
                     slot.chips([("opponent-clock", opponent_clock, opponent_active)])
                 }),
@@ -1558,19 +1471,27 @@ impl Lichess {
             SlotWidth::Fill,
             Box::new(move |slot| {
                 slot.text(you_name).secondary(format!(
-                    "{you_color} · {turn} · {game_kind} · {move_status}{check}"
+                    "{you_color} · {turn} · {game_kind}{move_status}{check}"
                 ))
             }),
         )];
         if timed {
             you_slots.push((
-                SlotWidth::Fixed(220),
+                SlotWidth::Natural,
                 Box::new(move |slot| slot.chips([("your-clock", you_clock, your_active)])),
             ));
-        } else {
+        } else if game.active() {
             you_slots.push((
-                SlotWidth::Fixed(220),
+                SlotWidth::Natural,
                 Box::new(|slot| slot.chips([("take-back", "Undo", false)])),
+            ));
+        } else {
+            // Once the game is over its place holds the next game rather
+            // than Undo, which offered to take a move back into a game that
+            // had finished.
+            you_slots.push((
+                SlotWidth::Natural,
+                Box::new(|slot| slot.chips([("computer-again", "New game", false)])),
             ));
         }
         screen = screen.band(BandAlign::Top, you_slots);
@@ -2358,7 +2279,7 @@ impl Lichess {
         }
         match self.account {
             AccountState::Missing | AccountState::Invalid => {
-                // Account/Games already says what is missing and holds the
+                // Your games already says what is missing and holds the
                 // Connect button, so landing there is the whole answer.
                 self.route = Route::Play;
                 return;
@@ -2366,7 +2287,7 @@ impl Lichess {
             AccountState::Unknown | AccountState::Failed(_) | AccountState::Checking => {
                 self.validate_account(context);
                 if self.account == AccountState::Checking {
-                    self.notice = Some(Notice::info("Checking your Lichess account. Tap a time again when the top line says Ready."));
+                    self.notice = Some(Notice::info(CHECKING_ACCOUNT));
                 }
                 return;
             }
@@ -2378,9 +2299,10 @@ impl Lichess {
             ));
         } else if self.game.as_ref().is_some_and(Game::active) {
             self.notice = Some(Notice::info(if self.local_game {
-                "Finish or resign the computer game first. Tap Computer to return to it.".to_owned()
+                "Finish or resign the computer game first. Resume it from the first screen."
+                    .to_owned()
             } else {
-                "Finish your current game first. It is under Account/Games.".to_owned()
+                "Finish your current game first. It is under Your games.".to_owned()
             }));
         } else {
             self.notice = Some(Notice::info(
@@ -2417,7 +2339,11 @@ impl Lichess {
     fn cancel_seek(&mut self, context: &mut Context) {
         let generation = self.seek_generation;
         self.seek_waiting = false;
-        self.selected_preset = None;
+        // While Lichess is still cancelling, Pairing keeps naming the time
+        // being cancelled; the seek's own end clears it.
+        if self.seek_task.is_none() {
+            self.selected_preset = None;
+        }
         self.seek_baseline.clear();
         self.seek_candidate = None;
         for (task, pending) in self.tasks.clone() {
@@ -2438,7 +2364,7 @@ impl Lichess {
             self.notice = Some(Notice::info("Cancelling."));
         } else if self.route == Route::Pairing {
             self.clock.stop(context);
-            self.route = Route::Play;
+            self.route = Route::Online;
             self.notice = Some(Notice::success("Cancelled."));
         }
     }
@@ -2606,10 +2532,11 @@ impl Lichess {
     }
 
     fn start_computer_game(&mut self, context: &mut Context) {
-        let owner = match &self.account {
-            AccountState::Ready(account) => account.username.clone(),
-            _ => "You".to_owned(),
-        };
+        // A game against the computer never touches the account, so the board
+        // says You rather than the Lichess username: that name is the owner's
+        // to share, and it would otherwise sit under every photograph of a
+        // reader playing offline.
+        let owner = "You".to_owned();
         self.notice = None;
         let color = self.computer_side.resolve();
         let clock_ms = self.computer_clock.milliseconds();
@@ -3034,16 +2961,13 @@ impl Lichess {
             .is_some_and(|solution| solution != &movement)
         {
             self.puzzle_wrong = self.puzzle_wrong.saturating_add(1);
-            self.notice = Some(Notice::info(if self.puzzle_wrong == 1 {
-                "Not it. Try again.".to_owned()
-            } else {
-                format!(
-                    "Not solved. The move was {}.",
-                    expected.clone().unwrap_or_default()
-                )
-            }));
             if self.puzzle_wrong > 1 {
+                // The result screen names the move; a banner saying it again
+                // would follow the owner onto the next puzzle.
+                self.notice = None;
                 self.route = Route::PuzzleResult;
+            } else {
+                self.notice = Some(Notice::info("Not it. Try again."));
             }
             return;
         }
@@ -3337,7 +3261,15 @@ impl Lichess {
                 self.notice = None;
             }
             other => {
-                self.account = AccountState::Failed(Notice::failed(other));
+                let failure = Notice::failed(other);
+                if self
+                    .notice
+                    .as_ref()
+                    .is_some_and(|notice| notice.text == CHECKING_ACCOUNT)
+                {
+                    self.notice = Some(failure.clone());
+                }
+                self.account = AccountState::Failed(failure);
             }
         }
         if self.local_game {
@@ -3942,6 +3874,9 @@ impl Lichess {
                     );
                 } else if self.seek_generation == generation {
                     self.seek_task = None;
+                    if !self.seek_waiting {
+                        self.finish_cancelled_seek(context);
+                    }
                 }
             }
             Pending::SeekGrace { generation } => {
@@ -4160,6 +4095,9 @@ impl Lichess {
                     );
                 } else if self.seek_generation == generation {
                     self.seek_task = None;
+                    if !self.seek_waiting {
+                        self.finish_cancelled_seek(context);
+                    }
                 }
             }
             Pending::SeekReconcile { generation }
@@ -4229,19 +4167,25 @@ impl Lichess {
         }
     }
 
+    /// Ends a seek the owner cancelled once its request has settled, which
+    /// is when Pairing stops naming its time.
+    fn finish_cancelled_seek(&mut self, context: &mut Context) {
+        self.selected_preset = None;
+        self.seek_baseline.clear();
+        self.seek_candidate = None;
+        if self.route == Route::Pairing {
+            self.clock.stop(context);
+            self.route = Route::Play;
+            self.notice = Some(Notice::success("Cancelled."));
+        }
+    }
+
     fn handle_cancelled(&mut self, context: &mut Context, pending: &Pending) {
         match pending {
             Pending::Seek { generation, .. } if self.seek_generation == *generation => {
                 self.seek_task = None;
                 self.seek_waiting = false;
-                self.selected_preset = None;
-                self.seek_baseline.clear();
-                self.seek_candidate = None;
-                if self.route == Route::Pairing {
-                    self.clock.stop(context);
-                    self.route = Route::Play;
-                    self.notice = Some(Notice::success("Cancelled."));
-                }
+                self.finish_cancelled_seek(context);
             }
             Pending::EventNext | Pending::EventOpen => self.event_open = false,
             Pending::BoardNext(id) | Pending::BoardOpen(id)
@@ -4808,8 +4752,8 @@ impl KoboApp for Lichess {
                 self.route = match self.route {
                     Route::Solve | Route::PuzzleResult => Route::Puzzles,
                     Route::Game if self.local_game => Route::Home,
+                    Route::Pairing => Route::Online,
                     Route::Game
-                    | Route::Pairing
                     | Route::ChallengePlayer
                     | Route::ChallengeSetup
                     | Route::Challenge => Route::Play,
@@ -4843,12 +4787,20 @@ impl KoboApp for Lichess {
                 Some(_) | None => {}
             }
         } else if action == action_id("puzzles") {
-            self.home_page = 0;
             self.route = Route::Puzzles;
+        } else if action == action_id("play-online") {
+            self.online_page = 0;
+            self.route = Route::Online;
         } else if action == action_id("how-to-play") {
-            self.home_page = 0;
             self.help_page = 0;
             self.route = Route::HowTo;
+        } else if action == action_id("online-next") || action == action_id("online-previous") {
+            let last = self.online_pages(context).len().saturating_sub(1);
+            self.online_page = if action == action_id("online-next") {
+                (self.online_page + 1).min(last)
+            } else {
+                self.online_page.saturating_sub(1)
+            };
         } else if action == action_id("help-next") || action == action_id("help-previous") {
             let last = Self::how_to_pages(context).len().saturating_sub(1);
             self.help_page = if action == action_id("help-next") {
@@ -4857,14 +4809,12 @@ impl KoboApp for Lichess {
                 self.help_page.saturating_sub(1)
             };
         } else if action == action_id("home") {
-            self.home_page = 0;
             self.route = Route::Home;
         } else if action == action_id("play") {
-            self.home_page = 0;
             self.route = Route::Play;
             self.validate_account(context);
         } else if action == action_id("play-computer") {
-            if self.local_game && self.game.as_ref().is_some_and(Game::active) {
+            if self.computer_game_in_progress() {
                 self.route = Route::Game;
                 self.reset_clock(context, self.local_clock_runs());
             } else {
@@ -4882,13 +4832,6 @@ impl KoboApp for Lichess {
         } else if action == action_id("seek-rated") || action == action_id("seek-casual") {
             self.seek_rated = action == action_id("seek-rated");
             self.save_preferences(context);
-        } else if action == action_id("home-next") || action == action_id("home-previous") {
-            let pages = self.home_pages(context).len();
-            self.home_page = if action == action_id("home-next") {
-                (self.home_page + 1).min(pages.saturating_sub(1))
-            } else {
-                self.home_page.saturating_sub(1)
-            };
         } else if action == action_id("refresh-play") {
             self.validate_account(context);
         } else if action == action_id(CONNECT) {
@@ -4972,6 +4915,12 @@ impl KoboApp for Lichess {
             }
         } else if action == action_id("game-menu") {
             self.menu_open = !self.menu_open;
+            // A nudge such as "Nothing to take back yet." answered the last
+            // tap on the board; it does not belong above the menu or a
+            // confirmation opened from it.
+            if self.local_game {
+                self.notice = None;
+            }
         } else if action == action_id("confirm-resign") {
             self.menu_open = false;
             self.confirmation = Some(Confirmation::Resign);
@@ -5004,6 +4953,10 @@ impl KoboApp for Lichess {
                 self.send_action(context, GameAction::Abort, api::abort(&game.id));
             }
         } else if action == action_id("offer-draw") {
+            // The menu item has been chosen, so the menu closes as it does
+            // for Resign and Abort. Left open, it came back over the next
+            // game and swallowed the first Back on the finished board.
+            self.menu_open = false;
             if self.local_game {
                 if let Some(game) = self.game.as_mut().filter(|game| game.active()) {
                     "draw".clone_into(&mut game.state.status);
@@ -5063,12 +5016,17 @@ impl KoboApp for Lichess {
             self.route = Route::Solve;
         } else if action == action_id("skip-puzzle") {
             self.puzzle_wrong = 2;
+            self.selected = None;
+            self.notice = None;
             self.route = Route::PuzzleResult;
             context.store().save(PUZZLE_KEY, self.encode_puzzles());
         } else if action == action_id("next-puzzle") {
             self.current_puzzle = self.current_puzzle.saturating_add(1);
             self.puzzle_wrong = 0;
             self.selected = None;
+            self.invalid_square = None;
+            // A verdict belongs to the puzzle it was given on.
+            self.notice = None;
             self.route = if self.remaining_puzzles() > 0 {
                 Route::Solve
             } else {
@@ -5226,7 +5184,10 @@ fn board_cells(
             let (label, glyph) = if invalid_square == Some(square.as_str()) {
                 ("×".to_owned(), None)
             } else if piece.is_none() && destinations.contains(&square) {
-                ("·".to_owned(), None)
+                // The runtime's legal-move dot, the same size and grey on
+                // every square; a typed middle dot came out at whatever size
+                // the square's label was set, a different one on each.
+                ("Legal square".to_owned(), Some(Glyph::LegalPoint))
             } else {
                 (" ".to_owned(), piece.and_then(piece_glyph))
             };
@@ -5394,15 +5355,14 @@ mod tests {
         ChallengeDirection, ChallengeSide, ChallengeTime, Color, ComputerClock, Event, FullGame,
         Game, GameAction, Lichess, Notice, Orientation, Pending, Player, Promotion, Puzzle, Route,
         ServerState, Session, ACCOUNT_RETRY_SECONDS, BOARD_RATE_KEY, CONNECT, EVENT_RATE_KEY,
-        HOME_TILE_COUNT, SEEK_RATE_KEY,
+        SEEK_RATE_KEY,
     };
     use kobo_sdk::{
         action_id, ActionId, AppRunner, Command, Context, DeviceRequest, DeviceResult, KoboApp,
         Screen, StoreRequest, TaskError, TaskOutcome,
     };
     use kobo_ui::{
-        render_with, tone, BannerLevel, Chrome, ControlState, DisplayMetrics, Glyph, LayoutKind,
-        Node, Surface, TextScale, TileShape, TileState, CLARA_BW_METRICS,
+        BannerLevel, Chrome, DisplayMetrics, Glyph, LayoutKind, Node, TextScale, CLARA_BW_METRICS,
     };
     use std::collections::BTreeSet;
 
@@ -5523,127 +5483,6 @@ mod tests {
             .collect()
     }
 
-    fn visible_tile_actions(screen: &Screen, metrics: &DisplayMetrics) -> BTreeSet<ActionId> {
-        screen
-            .layout_with(metrics, &Chrome::with_back(false))
-            .nodes
-            .iter()
-            .filter_map(|node| match node.kind {
-                LayoutKind::Tile(action, _) => Some(action),
-                _ => None,
-            })
-            .collect()
-    }
-
-    fn declared_tiles(nodes: &[Node]) -> Vec<(ActionId, TileShape, TileState, bool)> {
-        let mut declared = Vec::new();
-        for node in nodes {
-            match node {
-                Node::TileGrid { shape, tiles, .. } => declared.extend(
-                    tiles
-                        .iter()
-                        .map(|tile| (tile.action, *shape, tile.state, tile.badge.is_empty())),
-                ),
-                Node::Band { slots, .. } => {
-                    for slot in slots {
-                        declared.extend(declared_tiles(&slot.nodes));
-                    }
-                }
-                Node::Card { children, .. } => declared.extend(declared_tiles(children)),
-                _ => {}
-            }
-        }
-        declared
-    }
-
-    fn tile_copy(nodes: &[Node]) -> Vec<(ActionId, String, String)> {
-        let mut copy = Vec::new();
-        for node in nodes {
-            match node {
-                Node::TileGrid { tiles, .. } => copy.extend(
-                    tiles
-                        .iter()
-                        .map(|tile| (tile.action, tile.label.clone(), tile.subtitle.clone())),
-                ),
-                Node::Band { slots, .. } => {
-                    for slot in slots {
-                        copy.extend(tile_copy(&slot.nodes));
-                    }
-                }
-                Node::Card { children, .. } => copy.extend(tile_copy(children)),
-                _ => {}
-            }
-        }
-        copy
-    }
-
-    fn pixel(surface: &Surface, metrics: &DisplayMetrics, x: i32, y: i32) -> u8 {
-        let x = usize::try_from(x).expect("pixel x");
-        let y = usize::try_from(y).expect("pixel y");
-        let width = usize::try_from(metrics.width).expect("surface width");
-        surface.pixels[y * width + x]
-    }
-
-    fn assert_consistent_card_grid(layout: &kobo_ui::Layout, columns: usize) {
-        let outlines = layout
-            .nodes
-            .iter()
-            .filter(|node| matches!(node.kind, LayoutKind::TileOutline(_)))
-            .collect::<Vec<_>>();
-        let first_y = outlines.first().expect("card outline").rect.y;
-        let first_row = outlines
-            .iter()
-            .filter(|outline| outline.rect.y == first_y)
-            .collect::<Vec<_>>();
-        assert_eq!(first_row.len(), columns);
-        let widths = first_row
-            .iter()
-            .map(|outline| outline.rect.width)
-            .collect::<BTreeSet<_>>();
-        assert!(
-            widths.iter().next_back().expect("width") - widths.iter().next().expect("width") <= 2,
-            "card widths were {widths:?}"
-        );
-        let mut horizontal = first_row
-            .windows(2)
-            .map(|pair| pair[1].rect.x - pair[0].rect.x - pair[0].rect.width)
-            .collect::<Vec<_>>();
-        horizontal.sort_unstable();
-        assert!(horizontal.last().expect("gap") - horizontal.first().expect("gap") <= 1);
-        let rows = outlines
-            .iter()
-            .map(|outline| outline.rect.y)
-            .collect::<BTreeSet<_>>();
-        let rows = rows.into_iter().collect::<Vec<_>>();
-        let mut vertical = rows
-            .windows(2)
-            .map(|pair| pair[1] - pair[0] - outlines[0].rect.height)
-            .collect::<Vec<_>>();
-        vertical.sort_unstable();
-        if let (Some(first), Some(last)) = (vertical.first(), vertical.last()) {
-            assert!(last - first <= 1);
-        }
-        for outline in outlines {
-            let content = layout.nodes.iter().filter(|node| {
-                node.id == outline.id
-                    && matches!(
-                        node.kind,
-                        LayoutKind::TileGlyph(_)
-                            | LayoutKind::TileGlyphMuted(_)
-                            | LayoutKind::TileLabel
-                            | LayoutKind::TileLabelMuted
-                            | LayoutKind::TileSubtitle
-                    )
-            });
-            for node in content {
-                assert!(node.rect.x > outline.rect.x);
-                assert!(node.rect.y > outline.rect.y);
-                assert!(node.rect.x + node.rect.width < outline.rect.x + outline.rect.width);
-                assert!(node.rect.y + node.rect.height < outline.rect.y + outline.rect.height);
-            }
-        }
-    }
-
     #[test]
     fn black_orientation_and_live_controls_fit_clara_bw() {
         let app = app_with_game(&["e2e4", "c7c5", "g1f3"], Color::Black);
@@ -5676,69 +5515,98 @@ mod tests {
             .any(|command| { matches!(command, Command::SetOrientation(Orientation::Portrait)) }));
     }
 
-    #[test]
-    fn folio_home_pages_every_preset_without_overflow() {
-        let expected = std::iter::once(action_id("puzzles"))
-            .chain(std::iter::once(action_id("play-computer")))
-            .chain(std::iter::once(action_id("how-to-play")))
-            .chain(
-                api::SeekPreset::ALL
-                    .into_iter()
-                    .map(|preset| action_id(preset.action())),
-            )
-            .chain(std::iter::once(action_id("play")))
-            .collect::<BTreeSet<_>>();
-        for (name, metrics) in panels() {
-            let mut runner = AppRunner::with_metrics(ready_app(), metrics);
-            let mut screen = painted(runner.start()).expect("home screen");
-            let mut seen = BTreeSet::new();
-            for page in 0..HOME_TILE_COUNT {
-                let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
-                for node in &layout.nodes {
-                    assert!(
-                        node.rect.x >= 0
-                            && node.rect.y >= 0
-                            && node.rect.x.saturating_add(node.rect.width) <= metrics.width
-                            && node.rect.y.saturating_add(node.rect.height) <= metrics.height,
-                        "{name}: {:?} overflowed on page {page}",
-                        node.kind
-                    );
-                }
-                let tiles = declared_tiles(&screen.nodes);
-                assert!(tiles
-                    .iter()
-                    .all(|(_, shape, _, badge_empty)| *shape == TileShape::Card && *badge_empty));
-                let declared = tiles
-                    .iter()
-                    .map(|(action, _, _, _)| *action)
-                    .collect::<BTreeSet<_>>();
-                let visible = visible_tile_actions(&screen, &metrics);
-                assert_eq!(
-                    visible, declared,
-                    "{name}: page {page} declared a tile that was not laid out"
-                );
-                if page == 0 {
-                    assert!(visible.contains(&action_id("play")));
-                    assert!(visible.contains(&action_id("puzzles")));
-                }
-                seen.extend(visible);
-                let Some(next) = painted(runner.action(action_id("home-next"))) else {
-                    break;
-                };
-                screen = next;
-            }
-            assert_eq!(seen, expected, "{name}: a home tile was lost or duplicated");
+    /// Every action on the first screen and on Play online, by name.
+    fn home_actions() -> [&'static str; 5] {
+        [
+            "play-computer",
+            "play-online",
+            "play",
+            "puzzles",
+            "how-to-play",
+        ]
+    }
+
+    /// Every layout node of `screen` lies on the panel.
+    fn assert_on_the_panel(screen: &Screen, metrics: &DisplayMetrics, at: &str) {
+        let layout = screen.layout_with(metrics, &Chrome::with_back(false));
+        for node in &layout.nodes {
+            assert!(
+                node.rect.x >= 0
+                    && node.rect.y >= 0
+                    && node.rect.x.saturating_add(node.rect.width) <= metrics.width
+                    && node.rect.y.saturating_add(node.rect.height) <= metrics.height,
+                "{at}: {:?} overflowed",
+                node.kind
+            );
         }
     }
 
-    /// The line under a time card is where the owner reads whether a game
-    /// will touch their rating, so no text size may cut it short. Every
-    /// card's name and line read in full on every page at every size, and
-    /// every card is on some page, held upright, the way this app holds the
-    /// panel, and held sideways too, where at the largest size the
-    /// Account/Games card says its line in brief rather than cut.
+    /// The actions Play online lays out on each of its pages, turning them
+    /// with the pager, and the screens it drew.
+    fn online_pages_seen(
+        runner: &mut AppRunner<Lichess>,
+        metrics: &DisplayMetrics,
+    ) -> (BTreeSet<ActionId>, Vec<Screen>) {
+        let mut seen = BTreeSet::new();
+        let mut screens = Vec::new();
+        let mut screen = painted(runner.action(action_id("play-online"))).expect("play online");
+        for _ in 0..api::SeekPreset::ALL.len() {
+            let layout = screen.layout_with(metrics, &Chrome::with_back(true));
+            let candidates = api::SeekPreset::ALL
+                .iter()
+                .map(|preset| preset.action())
+                .chain(["seek-rated", "seek-casual"]);
+            seen.extend(
+                candidates
+                    .map(action_id)
+                    .filter(|action| layout.rect_of_action(*action).is_some()),
+            );
+            let more = screen.page_turns.is_some()
+                && runner.app().online_page + 1
+                    < runner.app().online_pages(&runner.context()).len();
+            screens.push(screen);
+            if !more {
+                break;
+            }
+            screen = painted(runner.action(action_id("online-next"))).expect("next page");
+        }
+        (seen, screens)
+    }
+
     #[test]
-    fn every_home_card_reads_in_full_on_a_clara_at_every_text_size_held_either_way() {
+    fn home_fits_every_panel_on_one_page_and_play_online_reaches_every_time() {
+        let every = api::SeekPreset::ALL
+            .iter()
+            .map(|preset| preset.action())
+            .chain(["seek-rated", "seek-casual"])
+            .map(action_id)
+            .collect::<BTreeSet<_>>();
+        for (name, metrics) in panels() {
+            let mut runner = AppRunner::with_metrics(ready_app(), metrics);
+            let home = painted(runner.start()).expect("home screen");
+            assert_on_the_panel(&home, &metrics, &name);
+            let layout = home.layout_with(&metrics, &Chrome::with_back(false));
+            for action in home_actions() {
+                assert!(
+                    layout.rect_of_action(action_id(action)).is_some(),
+                    "{name}: {action} was not laid out"
+                );
+            }
+            assert!(home.page_turns.is_none(), "{name}: home turned a page");
+            let (seen, screens) = online_pages_seen(&mut runner, &metrics);
+            for screen in &screens {
+                assert_on_the_panel(screen, &metrics, &name);
+            }
+            assert_eq!(seen, every, "{name}: a time was never shown");
+        }
+    }
+
+    /// The first screen and every page of Play online read in full on a
+    /// Clara at every text size, held upright, the way this app holds the
+    /// panel, and sideways. At the default size held upright Play online is
+    /// one page.
+    #[test]
+    fn home_and_play_online_read_in_full_on_a_clara_at_every_text_size_held_either_way() {
         for text_scale in TextScale::STEPS {
             for orientation in [Orientation::Portrait, Orientation::Landscape] {
                 let metrics = DisplayMetrics {
@@ -5746,43 +5614,29 @@ mod tests {
                     ..CLARA_BW_METRICS
                 }
                 .oriented(orientation);
-                let runner = AppRunner::with_metrics(Lichess::default(), metrics);
-                let context = runner.context();
                 let at = format!("{text_scale:?} {orientation:?}");
                 for rated in [true, false] {
-                    let mut app = Lichess {
-                        seek_rated: rated,
-                        ..Lichess::default()
-                    };
-                    let mut seen = BTreeSet::new();
-                    for page in 0..app.home_pages(&context).len() {
-                        app.home_page = page;
-                        let screen = app.home(&context);
+                    let mut runner = AppRunner::with_metrics(
+                        Lichess {
+                            seek_rated: rated,
+                            ..Lichess::default()
+                        },
+                        metrics,
+                    );
+                    let home = painted(runner.start()).expect("home");
+                    let (_, online) = online_pages_seen(&mut runner, &metrics);
+                    if text_scale == TextScale::Default && orientation == Orientation::Portrait {
+                        assert_eq!(online.len(), 1, "{at}: Play online turned a page");
+                    }
+                    for screen in std::iter::once(&home).chain(&online) {
                         let diagnostics = screen.diagnostics(&metrics, &Chrome::measuring(true));
                         assert!(
                             diagnostics.issues.is_empty(),
-                            "{at} page {page}: {:?}",
+                            "{at} {}: {:?}",
+                            screen.id,
                             diagnostics.issues
                         );
-                        seen.extend(visible_tile_actions(&screen, &metrics));
-                        for node in &diagnostics.layout.nodes {
-                            if matches!(
-                                node.kind,
-                                LayoutKind::TileLabel
-                                    | LayoutKind::TileLabelMuted
-                                    | LayoutKind::TileSubtitle
-                            ) {
-                                assert!(
-                                    node.text_lines
-                                        .iter()
-                                        .all(|line| !line.ends_with('\u{2026}')),
-                                    "{at} page {page}: {:?} was cut short",
-                                    node.text_lines
-                                );
-                            }
-                        }
                     }
-                    assert_eq!(seen.len(), HOME_TILE_COUNT, "{at}: a card was never shown");
                 }
             }
         }
@@ -5805,7 +5659,7 @@ mod tests {
             .collect::<Vec<_>>();
         let settings = [
             (
-                app.play_screen(),
+                app.online_screen(&Context::default()),
                 vec!["seek-rated".to_owned(), "seek-casual".to_owned()],
                 0,
             ),
@@ -5913,42 +5767,19 @@ mod tests {
     }
 
     #[test]
-    fn time_tiles_stay_tappable_before_the_account_is_ready() {
+    fn times_stay_tappable_before_the_account_is_ready() {
         let mut runner = AppRunner::new(Lichess::default());
-        let screen = painted(runner.start()).expect("home");
-        assert!(format!("{screen:?}").contains("Offline"));
-        let tiles = declared_tiles(&screen.nodes);
-        assert!(!tiles.is_empty());
-        assert!(tiles.iter().all(|(_, _, state, badge_empty)| {
-            *badge_empty && matches!(*state, TileState::Normal | TileState::Busy)
-        }));
+        runner.start();
+        let screen = painted(runner.action(action_id("play-online"))).expect("play online");
         let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
-        assert!(!layout
-            .nodes
-            .iter()
-            .any(|node| node.kind == LayoutKind::TileGlyph(Glyph::Close)));
-        assert!(!layout
-            .nodes
-            .iter()
-            .any(|node| node.kind == LayoutKind::TileOutline(ControlState::Disabled)));
-        let preset = layout
-            .nodes
-            .iter()
-            .find(|node| {
-                matches!(
-                    node.kind,
-                    LayoutKind::Tile(action, _)
-                        if action == action_id(api::SeekPreset::Rapid10_0.action())
-                )
-            })
-            .expect("time tile");
-        assert_eq!(
-            layout.hit_test(
-                preset.rect.x + preset.rect.width / 2,
-                preset.rect.y + preset.rect.height / 2
-            ),
-            Some(action_id(api::SeekPreset::Rapid10_0.action()))
-        );
+        for preset in api::SeekPreset::ALL {
+            let action = action_id(preset.action());
+            let rect = layout.rect_of_action(action).expect("time row");
+            assert_eq!(
+                layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
+                Some(action)
+            );
+        }
     }
 
     #[test]
@@ -5994,7 +5825,7 @@ mod tests {
             event_open: false,
             ..ready_app()
         };
-        assert_eq!(connecting.seek_tile_state(), TileState::Busy);
+        assert_eq!(connecting.pairing_status(), "Connecting");
         let mut context = Context::default();
         connecting.on_action(&mut context, seek);
         assert_eq!(connecting.route, Route::Home);
@@ -6021,9 +5852,9 @@ mod tests {
     fn casual_is_chosen_in_account_games_and_seeks_from_the_casual_pool() {
         let mut runner = AppRunner::new(ready_app());
         runner.start();
-        runner.action(action_id("play"));
-        let play = format!("{:?}", runner.app().play_screen());
-        assert!(play.contains("Casual") && play.contains("Rated"));
+        runner.action(action_id("play-online"));
+        let online = format!("{:?}", runner.app().online_screen(&runner.context()));
+        assert!(online.contains("Casual") && online.contains("Rated"));
         let commands = runner.action(action_id("seek-casual"));
         assert!(!runner.app().seek_rated);
         assert!(commands.iter().any(|command| matches!(
@@ -6109,194 +5940,64 @@ mod tests {
     }
 
     #[test]
-    fn home_copy_is_only_destination_or_time_speed_and_pool() {
-        let context = Context::default();
+    fn home_leads_with_the_computer_and_names_no_times_pools_or_jargon() {
         let mut app = ready_app();
-        for (rated, pool) in [(true, "Rated"), (false, "Casual")] {
-            app.seek_rated = rated;
-            assert_home_copy(&mut app, &context, pool);
-        }
-    }
-
-    fn assert_home_copy(app: &mut Lichess, context: &Context, pool: &str) {
-        for page in 0..app.home_pages(context).len() {
-            app.home_page = page;
-            let screen = app.home(context);
-            let rendered = format!("{screen:?}");
-            for forbidden in ["random color", "protocol", "API"] {
-                assert!(
-                    !rendered.contains(forbidden),
-                    "{forbidden} appeared on home"
-                );
-            }
-            for (action, label, subtitle) in tile_copy(&screen.nodes) {
-                if action == action_id("play") {
-                    assert_eq!(label, "Account/Games");
-                    assert_eq!(subtitle, "Challenges · boards");
-                } else if action == action_id("puzzles") {
-                    assert_eq!(label, "Puzzles");
-                    assert_eq!(subtitle, "Offline training");
-                } else if action == action_id("play-computer") {
-                    assert_eq!(label, "Computer");
-                    assert_eq!(subtitle, "Offline");
-                } else if action == action_id("how-to-play") {
-                    assert_eq!(label, "How to play");
-                    assert_eq!(subtitle, "Board · controls");
-                } else {
-                    let preset = api::SeekPreset::ALL
-                        .into_iter()
-                        .find(|preset| action == action_id(preset.action()))
-                        .expect("preset action");
-                    assert_eq!(label, preset.label());
-                    assert_eq!(subtitle, format!("{} · {pool}", preset.speed_label()));
-                }
-            }
-        }
-    }
-
-    #[test]
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one acceptance test ties card geometry, full hit targets, and rendered outlines across both Clara orientations"
-    )]
-    fn clara_home_is_dense_in_portrait_and_landscape() {
-        for (name, metrics, minimum) in [
-            ("portrait", CLARA_BW_METRICS, HOME_TILE_COUNT),
-            (
-                "landscape",
-                DisplayMetrics {
-                    width: CLARA_BW_METRICS.height,
-                    height: CLARA_BW_METRICS.width,
-                    ..CLARA_BW_METRICS
-                },
-                6,
-            ),
+        let home = app.home(&Context::default());
+        let rendered = format!("{home:?}");
+        for forbidden in [
+            "random color",
+            "protocol",
+            "API",
+            "10+",
+            "Rapid",
+            "Classical",
+            "Rated",
+            "Casual",
         ] {
-            let mut runner = AppRunner::with_metrics(ready_app(), metrics);
-            let screen = painted(runner.start()).expect("home");
-            let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
-            let tiles = layout
-                .nodes
-                .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::Tile(_, _)))
-                .collect::<Vec<_>>();
-            let outlines = layout
-                .nodes
-                .iter()
-                .filter(|node| matches!(node.kind, LayoutKind::TileOutline(_)))
-                .collect::<Vec<_>>();
-            let visible = visible_tile_actions(&screen, &metrics);
             assert!(
-                visible.len() >= minimum,
-                "Clara {name} showed only {} tiles",
-                visible.len()
+                !rendered.contains(forbidden),
+                "{forbidden} appeared on home"
             );
-            assert!(visible.contains(&action_id("play")));
-            assert!(visible.contains(&action_id("puzzles")));
-            assert_eq!(outlines.len(), tiles.len());
-            let widths = outlines
-                .iter()
-                .map(|outline| outline.rect.width)
-                .collect::<BTreeSet<_>>();
+        }
+        let layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
+        let first = home_actions()
+            .into_iter()
+            .map(|action| {
+                let rect = layout.rect_of_action(action_id(action)).expect("action");
+                (rect.y, action)
+            })
+            .min()
+            .expect("an action");
+        assert_eq!(first.1, "play-computer", "the computer is not first");
+        assert!(rendered.contains("Play the computer"));
+        app.route = Route::Online;
+        let online = format!("{:?}", app.online_screen(&Context::default()));
+        for words in [
+            "10 minutes each",
+            "No time added",
+            "Plus 5 seconds a move",
+            "Rated",
+            "Casual",
+        ] {
             assert!(
-                widths.iter().next_back().expect("widest card")
-                    - widths.iter().next().expect("narrowest card")
-                    <= 2,
-                "Clara {name} card widths were {widths:?}"
+                online.contains(words),
+                "{words} is missing from Play online"
             );
-            assert!(tiles
-                .iter()
-                .all(|tile| outlines.iter().any(|outline| outline.rect == tile.rect)));
-            assert!(tiles.iter().all(|tile| {
-                tile.rect.width >= metrics.touch_target_minimum()
-                    && tile.rect.height >= metrics.touch_target_minimum()
-            }));
-            for tile in &tiles {
-                let LayoutKind::Tile(action, ControlState::Enabled) = tile.kind else {
-                    panic!("ready tile was disabled")
-                };
-                for (x, y) in [
-                    (tile.rect.x + 1, tile.rect.y + 1),
-                    (
-                        tile.rect.x + tile.rect.width - 2,
-                        tile.rect.y + tile.rect.height - 2,
-                    ),
-                ] {
-                    assert_eq!(
-                        layout.hit_test(x, y),
-                        Some(action),
-                        "Clara {name} card did not own its full hit rectangle"
-                    );
-                }
-            }
-            let mut surface = Surface::new(
-                usize::try_from(metrics.width).expect("width"),
-                usize::try_from(metrics.height).expect("height"),
-            );
-            render_with(
-                &screen,
-                &metrics,
-                &Chrome::with_back(false),
-                &mut surface,
-                None,
-            );
-            for outline in outlines {
-                assert_ne!(
-                    pixel(
-                        &surface,
-                        &metrics,
-                        outline.rect.x + outline.rect.width / 2,
-                        outline.rect.y
-                    ),
-                    tone::PAPER,
-                    "Clara {name} card top edge did not render"
-                );
-                assert_ne!(
-                    pixel(
-                        &surface,
-                        &metrics,
-                        outline.rect.x,
-                        outline.rect.y + outline.rect.height / 2
-                    ),
-                    tone::PAPER,
-                    "Clara {name} card left edge did not render"
-                );
-            }
-            if name == "portrait" {
-                assert_consistent_card_grid(&layout, 3);
-                assert_eq!(
-                    tiles
-                        .iter()
-                        .map(|tile| tile.rect.x)
-                        .collect::<BTreeSet<_>>()
-                        .len(),
-                    3
-                );
-                assert_eq!(
-                    tiles
-                        .iter()
-                        .map(|tile| tile.rect.y)
-                        .collect::<BTreeSet<_>>()
-                        .len(),
-                    3
-                );
-            } else {
-                assert_consistent_card_grid(&layout, 3);
-            }
         }
     }
 
     #[test]
-    fn returning_from_account_games_restores_the_primary_home_page() {
+    fn back_from_play_online_and_from_a_cancelled_pairing_lands_where_the_owner_was() {
         let mut app = ready_app();
-        app.home_page = 2;
         let mut context = Context::default();
-        app.on_action(&mut context, action_id("play"));
-        assert_eq!(app.home_page, 0);
-        assert_eq!(app.route, Route::Play);
+        app.on_action(&mut context, action_id("play-online"));
+        assert_eq!(app.route, Route::Online);
         app.on_action(&mut context, ActionId::BACK);
         assert_eq!(app.route, Route::Home);
-        assert_eq!(app.home_page, 0);
+        app.on_action(&mut context, action_id("play-online"));
+        app.route = Route::Pairing;
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.route, Route::Online);
     }
 
     #[test]
@@ -6412,7 +6113,13 @@ mod tests {
             assert_eq!(cells[0].rect.x + cells[0].rect.width, cells[1].rect.x);
             assert_eq!(cells[0].rect.y + cells[0].rect.height, cells[8].rect.y);
             let moves = board_cells(super::chess::START, Color::White, Some("e2"), None, None);
-            assert_eq!(moves.iter().filter(|cell| cell.1 == "·").count(), 2);
+            assert_eq!(
+                moves
+                    .iter()
+                    .filter(|cell| cell.2 == Some(Glyph::LegalPoint))
+                    .count(),
+                2
+            );
         }
     }
 
@@ -6447,6 +6154,28 @@ mod tests {
                 ..
             }
         )));
+    }
+
+    #[test]
+    fn the_first_button_offers_to_resume_while_a_computer_game_is_in_progress() {
+        let label = |app: &Lichess| {
+            let home = format!("{:?}", app.home(&Context::default()));
+            if home.contains("Resume your game") {
+                "Resume your game"
+            } else {
+                assert!(home.contains("Play the computer"));
+                "Play the computer"
+            }
+        };
+        let mut runner = AppRunner::new(ready_app());
+        assert_eq!(label(runner.app()), "Play the computer");
+        runner.action(action_id("play-computer"));
+        runner.action(action_id("start-computer"));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().route, Route::Home);
+        assert_eq!(label(runner.app()), "Resume your game");
+        runner.action(action_id("play-computer"));
+        assert_eq!(runner.app().route, Route::Game);
     }
 
     #[test]
@@ -6488,6 +6217,25 @@ mod tests {
         assert_eq!(app.session.as_ref().expect("session").color, Color::Black);
         let cells = board_cells(&game.fen, Color::Black, None, None, None);
         assert_eq!(cells.first().expect("first").0, "square-h1");
+    }
+
+    #[test]
+    fn a_new_board_ends_its_status_at_the_kind_of_game_until_a_move_is_made() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("play-computer"));
+        app.on_action(&mut context, action_id("start-computer"));
+        let fresh = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(fresh.contains("White · Your move · Casual\""), "{fresh}");
+        assert!(!fresh.contains("none"), "{fresh}");
+
+        app.on_action(&mut context, action_id("square-e2"));
+        app.on_action(&mut context, action_id("square-e4"));
+        let replied = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(
+            replied.contains("White · Your move · Casual · "),
+            "{replied}"
+        );
     }
 
     #[test]
@@ -6577,6 +6325,118 @@ mod tests {
         black.on_action(&mut context, action_id("take-back"));
         assert_eq!(black.game.as_ref().expect("game").state.moves.len(), 1);
         assert!(black.game.as_ref().expect("game").my_turn());
+    }
+
+    #[test]
+    fn a_game_against_the_computer_names_the_owner_you_even_when_signed_in() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        let drawn = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(drawn.contains("\"You\""), "{drawn}");
+        assert!(!drawn.contains("\"Owner\""), "{drawn}");
+    }
+
+    #[test]
+    fn a_finished_game_offers_the_next_game_where_undo_was() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_computer_game(&mut context);
+        let playing = format!("{:?}", app.game_screen(&Context::default()));
+        assert!(playing.contains("\"Undo\""), "{playing}");
+        app.on_action(&mut context, action_id("confirm-resign"));
+        app.on_action(&mut context, action_id("resign"));
+        app.on_action(&mut context, action_id("dismiss-result"));
+        let finished = app.game_screen(&Context::default());
+        let drawn = format!("{finished:?}");
+        assert!(!drawn.contains("\"Undo\""), "{drawn}");
+        let layout = finished.layout_with(
+            &kobo_ui::CLARA_BW_METRICS,
+            &kobo_ui::Chrome::measuring(true),
+        );
+        assert!(layout.rect_of_action(action_id("computer-again")).is_some());
+        assert!(layout.rect_of_action(action_id("take-back")).is_none());
+    }
+
+    #[test]
+    fn undo_and_the_clocks_end_at_the_right_edge_of_the_board_at_every_text_size() {
+        let edges = |app: &Lichess, chip: &str, metrics: &DisplayMetrics| {
+            let layout = app
+                .game_screen(&Context::default())
+                .layout_with(metrics, &kobo_ui::Chrome::measuring(true));
+            let right = |rect: kobo_ui::Rect| rect.x + rect.width;
+            let squares = layout
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, kobo_ui::LayoutKind::Cell(..)));
+            let board_left = squares
+                .clone()
+                .map(|node| node.rect.x)
+                .min()
+                .expect("board");
+            let board_right = squares.map(|node| right(node.rect)).max().expect("board");
+            let chip = layout
+                .nodes
+                .iter()
+                .find(|node| {
+                    matches!(node.kind, kobo_ui::LayoutKind::Chip(action, _) if action == action_id(chip))
+                })
+                .map(|node| right(node.rect))
+                .expect("chip");
+            // The player's name is the band's other end, and starts where the
+            // board's first file does.
+            let name_left = layout
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.kind == kobo_ui::LayoutKind::Text
+                        && node
+                            .text_lines
+                            .iter()
+                            .any(|line| line == "Kobo" || line == "You")
+                })
+                .map(|node| node.rect.x)
+                .min()
+                .expect("a player's name");
+            (board_left, board_right, chip, name_left)
+        };
+        for text_scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale,
+                ..CLARA_BW_METRICS
+            };
+            let mut untimed = ready_app();
+            let mut context = Context::default();
+            untimed.start_computer_game(&mut context);
+            let (left, board, undo, name) = edges(&untimed, "take-back", &metrics);
+            assert_eq!(
+                undo, board,
+                "{text_scale:?}: Undo ends off the board's edge"
+            );
+            assert_eq!(
+                name, left,
+                "{text_scale:?}: a name starts off the board's edge"
+            );
+            // A clock is taller than the name beside it, which leaves a
+            // little less height for the board, so the board is narrower
+            // than the page; the clocks still end where its squares do.
+            let mut timed = ready_app();
+            timed.computer_clock = ComputerClock::Ten;
+            timed.start_computer_game(&mut context);
+            for clock in ["your-clock", "opponent-clock"] {
+                let (left, board, chip, name) = edges(&timed, clock, &metrics);
+                assert_eq!(
+                    chip,
+                    board,
+                    "{text_scale:?}: {clock} ends {} pixels past the board",
+                    chip - board
+                );
+                assert_eq!(
+                    name, left,
+                    "{text_scale:?}: a name starts off the board's edge"
+                );
+            }
+        }
     }
 
     #[test]
@@ -7286,7 +7146,7 @@ mod tests {
             })
         }
 
-        // Downloaded while the owner is on Account/Games, so the news is a
+        // Downloaded while the owner is on Your games, so the news is a
         // banner there rather than the Puzzles screen itself.
         let mut app = ready_app();
         app.route = Route::Play;
@@ -8355,7 +8215,7 @@ mod tests {
             })
             .expect("reconciliation");
         app.cancel_seek(&mut context);
-        assert_eq!(app.route, Route::Play);
+        assert_eq!(app.route, Route::Online);
         app.on_task(
             &mut context,
             reconcile,
@@ -9019,7 +8879,7 @@ mod tests {
             .iter()
             .any(|command| matches!(command, Command::Device(_))));
         let screen = format!("{:?}", painted(commands).expect("account games"));
-        assert!(screen.contains("Account/Games"), "{screen}");
+        assert!(screen.contains("Your games"), "{screen}");
         assert!(screen.contains("Connect Lichess"), "{screen}");
         assert!(!runner.app_mut().credential.is_open());
         assert_eq!(runner.app_mut().route, Route::Play);
@@ -9451,5 +9311,163 @@ mod tests {
                 format!("{:?}", app.game_screen(&Context::default())).contains("Black won by time")
             );
         }
+    }
+
+    #[test]
+    fn offering_the_computer_a_draw_closes_the_menu_so_the_next_game_opens_without_it() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("play-computer"));
+        app.on_action(&mut context, action_id("start-computer"));
+        app.on_action(&mut context, action_id("game-menu"));
+        assert!(app.menu_open);
+        app.on_action(&mut context, action_id("offer-draw"));
+        assert!(!app.menu_open);
+        assert_eq!(app.game.as_ref().expect("game").state.status, "draw");
+
+        // One Back after the result leaves the finished board.
+        app.on_action(&mut context, action_id("dismiss-result"));
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.route, Route::Home);
+
+        app.on_action(&mut context, action_id("play-computer"));
+        app.on_action(&mut context, action_id("start-computer"));
+        assert!(!format!("{:?}", app.game_screen(&Context::default())).contains("Offer draw"));
+    }
+
+    #[test]
+    fn opening_the_game_menu_clears_a_nudge_about_the_last_tap_on_the_board() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("play-computer"));
+        app.on_action(&mut context, action_id("computer-clock-none"));
+        app.on_action(&mut context, action_id("start-computer"));
+        app.on_action(&mut context, action_id("take-back"));
+        assert_eq!(app.notice.as_deref(), Some("Nothing to take back yet."));
+        app.on_action(&mut context, action_id("game-menu"));
+        app.on_action(&mut context, action_id("confirm-abort"));
+        assert_eq!(app.confirmation, Some(super::Confirmation::Abort));
+        assert_eq!(app.notice, None);
+    }
+
+    #[test]
+    fn a_missed_puzzle_names_the_move_in_board_notation_and_the_next_puzzle_opens_without_the_verdict(
+    ) {
+        let puzzle = |id: &str| Puzzle {
+            id: id.to_owned(),
+            fen: super::chess::START.to_owned(),
+            solution: vec!["g1f3".to_owned()],
+            cursor: 0,
+        };
+        let mut app = Lichess {
+            route: Route::Solve,
+            puzzles: vec![puzzle("first"), puzzle("second")],
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        for _ in 0..2 {
+            app.on_action(&mut context, action_id("square-e2"));
+            app.on_action(&mut context, action_id("square-e4"));
+        }
+        assert_eq!(app.route, Route::PuzzleResult);
+        let result = format!("{:?}", app.puzzle_result());
+        assert!(result.contains("The first move was Nf3."), "{result}");
+        assert!(!result.contains("g1f3"), "{result}");
+
+        app.on_action(&mut context, action_id("next-puzzle"));
+        assert_eq!(app.route, Route::Solve);
+        assert_eq!(app.notice, None);
+        assert!(!format!("{:?}", app.solve_screen()).contains("Not solved"));
+    }
+
+    #[test]
+    fn a_puzzle_missed_partway_names_the_move_that_was_due_rather_than_the_first() {
+        let puzzle = Puzzle {
+            id: "line".to_owned(),
+            fen: super::chess::START.to_owned(),
+            solution: ["e2e4", "e7e5", "g1f3"].map(str::to_owned).to_vec(),
+            cursor: 0,
+        };
+        let mut app = Lichess {
+            route: Route::Solve,
+            puzzles: vec![puzzle],
+            ..Lichess::default()
+        };
+        app.choose_puzzle_square("e2".to_owned());
+        app.choose_puzzle_square("e4".to_owned());
+        for _ in 0..2 {
+            app.choose_puzzle_square("b1".to_owned());
+            app.choose_puzzle_square("c3".to_owned());
+        }
+        assert_eq!(app.route, Route::PuzzleResult);
+        assert!(format!("{:?}", app.puzzle_result()).contains("The move was Nf3."));
+    }
+
+    #[test]
+    fn the_puzzles_list_says_every_puzzle_is_done_rather_than_that_none_were_downloaded() {
+        let done = Lichess {
+            puzzles: vec![Puzzle {
+                id: "done".to_owned(),
+                fen: super::chess::START.to_owned(),
+                solution: vec!["e2e4".to_owned()],
+                cursor: 0,
+            }],
+            current_puzzle: 1,
+            ..Lichess::default()
+        };
+        let screen = format!("{:?}", done.puzzles_screen());
+        assert!(
+            screen.contains("Every downloaded puzzle is done."),
+            "{screen}"
+        );
+        assert!(!screen.contains("No puzzles yet"), "{screen}");
+        assert!(format!("{:?}", Lichess::default().puzzles_screen()).contains("No puzzles yet"));
+    }
+
+    #[test]
+    fn a_failed_account_check_replaces_the_request_to_wait_for_ready() {
+        let mut app = Lichess {
+            route: Route::Online,
+            account: AccountState::Failed(Notice::failed(kobo_sdk::TaskError::Offline)),
+            ..Lichess::default()
+        };
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("seek-10-0"));
+        assert_eq!(app.notice.as_deref(), Some(super::CHECKING_ACCOUNT));
+        let check = app
+            .tasks
+            .iter()
+            .find_map(|(task, pending)| matches!(pending, Pending::Account).then_some(*task))
+            .expect("account check");
+        app.on_task(
+            &mut context,
+            check,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Offline),
+        );
+        assert!(matches!(app.account, AccountState::Failed(_)));
+        let banner = app.notice.as_deref().unwrap_or_default();
+        assert!(!banner.contains("Ready"), "{banner}");
+        assert!(banner.contains("not on a network"), "{banner}");
+    }
+
+    #[test]
+    fn pairing_keeps_naming_the_cancelled_time_until_lichess_confirms_the_cancel() {
+        let mut app = ready_app();
+        let mut context = Context::default();
+        app.start_seek(&mut context, api::SeekPreset::Rapid10_5);
+        let seek = app.seek_task.expect("seek");
+        app.on_action(&mut context, action_id("cancel-seek"));
+        assert_eq!(app.route, Route::Pairing);
+        assert_eq!(app.selected_preset, Some(api::SeekPreset::Rapid10_5));
+        let pairing = format!("{:?}", app.pairing_screen());
+        assert!(pairing.contains("10+5"), "{pairing}");
+        assert!(!pairing.contains("10+0"), "{pairing}");
+        assert!(pairing.contains("Cancelling the search"), "{pairing}");
+        assert!(!pairing.contains("Finding an opponent"), "{pairing}");
+
+        app.on_task(&mut context, seek, TaskOutcome::Cancelled);
+        assert_eq!(app.selected_preset, None);
+        assert_eq!(app.route, Route::Play);
+        assert_eq!(app.notice.as_deref(), Some("Cancelled."));
     }
 }

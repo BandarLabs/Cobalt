@@ -1,0 +1,21 @@
+# A page number past the end is refused, and the refusal is said where the
+# number was typed, not tucked behind a Details control.
+wait-for Try a sample comic
+tap Try a sample comic
+wait-for CBZ
+tap-at 536,1378
+wait-for Available on this reader
+tap Open
+wait-for-id comic-next
+wait-idle
+tap-at 536,724
+wait-for Fit page
+tap Go to page
+wait-for Enter a page from 1 to 4
+tap-id comic-digit-9
+wait-for 9
+tap Go
+wait-idle
+clean
+shot go-to-page-refused
+expect Choose a page from 1 to 4.

@@ -1,0 +1,26 @@
+{
+  "format": "fieldbook-shelf",
+  "version": "2",
+  "packs": [
+    {
+      "id": "garden",
+      "title": "Garden Birds",
+      "region": "GB-ENG",
+      "issued": "2026-10-01",
+      "species": [
+        {
+          "code": "HOSP",
+          "common": "House Sparrow",
+          "scientific": "Passer domesticus",
+          "photo": {"asset": "photos/f374e0e48f112bb0f4b355076ee09c03bf931bd0d5c94606ed0e637970ead35b.jpg", "attribution": "f374e0e48f112bb0f4b355076ee09c03bf931bd0d5c94606ed0e637970ead35b"}
+        },
+        {
+          "code": "EURO",
+          "common": "European Robin",
+          "scientific": "Erithacus rubecula"
+        }
+      ]
+    }
+  ],
+  "failures": []
+}

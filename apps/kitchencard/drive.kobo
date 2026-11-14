@@ -15,10 +15,16 @@ type mealie.invalid:8443
 tap Save
 expect Kitchen Card settings
 expect https://mealie.invalid:8443
+# The token comes from the computer, by the command the first screen gave.
+expect kobo connect kitchencard
+expect-missing Credential name
+expect-missing secret set
 clean
 shot kitchen-settings-saved
 tap Back
 expect No recipes yet
+# Saving an address takes down the note that no account had arrived.
+expect-missing No account has arrived
 clean
 shot kitchen-empty
 tap Sync Mealie

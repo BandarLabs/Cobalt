@@ -29,6 +29,24 @@ pub const HOOK_PORT: u16 = 9330;
 /// LAN port where the reader collects them, over TLS.
 pub const READER_PORT: u16 = 9331;
 
+/// The ports `run` listens on: the usual ones, or others named in
+/// `KOBO_SIDEKICK_HOOK_PORT` and `KOBO_SIDEKICK_READER_PORT`, so a test run
+/// on a developer's computer never meets the helper already running there.
+#[must_use]
+pub fn ports() -> (u16, u16) {
+    let chosen = |name: &str, usual: u16| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|port| *port != 0)
+            .unwrap_or(usual)
+    };
+    (
+        chosen("KOBO_SIDEKICK_HOOK_PORT", HOOK_PORT),
+        chosen("KOBO_SIDEKICK_READER_PORT", READER_PORT),
+    )
+}
+
 /// How long `run` holds a hook's question before answering "no decision".
 /// Codex allows a hook ten minutes by default and Claude Code less, so five
 /// keeps everyone comfortable while never leaving an agent stuck.

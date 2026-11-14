@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Drive Inkling end to end: deterministic pinned day, a board that stays in
-view above the keys, filled squares for letters in the right place, a refused
+view above the keys, solid squares for letters in the right place, a refused
 word that stays typed, Rules and More in the top bar, real date display,
 statistics with a win distribution, result export verified on disk, archive
 play that leaves statistics untouched, and daily persistence across a
@@ -98,7 +98,7 @@ def main():
                 # name as every other game, and the old jargon is gone.
                 drive("expect-missing Shapes, not color", "expect-missing Enter guess",
                       "tap Rules", "wait-for Find the five-letter word",
-                      "expect Filled: right spot.", "expect Hard mode",
+                      "expect Black: right spot.", "expect Hard mode",
                       "expect Guesses can leave out letters found.")
                 capture("inkling-help")
                 # Hard mode is a switch under the rules, applied on the tap.
@@ -108,7 +108,7 @@ def main():
                 drive("tap-id game-more", "wait-for New game", "expect-missing Hard mode",
                       "expect Statistics")
                 capture("inkling-more")
-                drive("tap Statistics", "wait-for Played 0. Won 0.", "tap Play",
+                drive("tap Statistics", "wait-for 0%", "wait-for Best streak", "tap Play",
                       "wait-for Six guesses.")
 
                 # The keys sit under the board. A refused word stays typed.
@@ -118,16 +118,15 @@ def main():
                 drive("maybe-tap-id enter", "type zzzzz", "tap Guess",
                       "wait-for Not in the word list.")
                 drive("maybe-tap-id enter", *["tap-id kb.backspace"] * 5)
+                # What a guess finds is on the tiles and keys, not spelled out.
                 drive("type crane", "tap Guess", "wait-for 1 of 6",
-                      "wait-for Right spot: _RA__")
+                      "expect-missing Right spot")
                 capture("inkling-knowledge")
                 drive("maybe-tap-id enter", "type gravy", "tap Guess", "wait-for Solved")
                 capture("inkling-solved")
 
                 # Statistics carry the win and its distribution slot.
-                drive("tap Statistics", "wait-for Played 1. Won 1.",
-                      "wait-for 2 guesses: 1",
-                      "wait-for Today is September 1, 2026.")
+                drive("tap Statistics", "wait-for 100%", "wait-for Streak")
                 capture("inkling-stats")
 
                 # The export lands in the store and reads back exactly.
@@ -166,7 +165,7 @@ def main():
                 drive("maybe-tap-id enter", "type dizzy", "tap Guess",
                       "wait-for Archive games do not change statistics")
                 capture("inkling-archive-solved")
-                drive("tap Statistics", "wait-for Played 1. Won 1.")
+                drive("tap Statistics", "wait-for 100%")
                 drive("tap Play", "tap Today's puzzle", "wait-for Inkling · Sep 1",
                       "wait-for Solved.")
 
@@ -175,13 +174,12 @@ def main():
                 start()
                 drive("wait-for Solved.")
                 capture("inkling-restored")
-                drive("tap Statistics", "wait-for Played 1. Won 1.",
-                      "wait-for 2 guesses: 1")
+                drive("tap Statistics", "wait-for 100%", "wait-for Best streak")
 
                 result["checks"].append(dict(
                     name="inkling journey",
                     detail="real date title, rules and menu in the top bar, a refused "
-                           "word kept, letter knowledge above the board, filled-square solve, "
+                           "word kept, tiles and keys in three tones, solid-square solve, "
                            "statistics with distribution, export received byte-for-byte by CLI, no overwrite, "
                            "archive solve with statistics untouched, daily game and "
                            "statistics proven across a restart",

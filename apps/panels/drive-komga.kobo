@@ -1,0 +1,53 @@
+# Browse sets up a Komga server: an HTTPS address, then account details,
+# then a connection check that says plainly why it failed.
+wait-for Your shelf is empty
+tap Browse
+wait-for Connect Komga
+expect Add server address
+tap Check connection
+wait-for Enter an HTTPS server address
+tap Account details
+wait-for Add a valid HTTPS server address first.
+clean
+shot komga-no-address
+tap Add server address
+wait-for HTTPS address
+type https://komga.invalid
+tap Use address
+wait-for https://komga.invalid
+# Account details are typed on the reader: the password is never shown,
+# only counted, and Save keeps both for this server.
+tap Account details
+wait-for Username
+tap Username
+wait-for For https://komga.invalid
+type reader
+tap Next
+wait-for Password
+type secret1
+wait-for 7 characters entered
+expect-missing secret1
+clean
+shot komga-password
+tap Save
+wait-for Account details saved.
+clean
+shot komga-saved
+# No Wi-Fi and a server that does not answer each say so.
+scenario offline
+tap Check connection
+wait-for not on a network
+expect Join Wi-Fi
+clean
+shot komga-offline
+scenario host-down
+tap Check connection
+wait-for did not answer
+clean
+shot komga-host-down
+scenario normal
+tap-id 4294967295
+wait-for Your shelf is empty
+# The address is kept for the next visit.
+tap Browse
+wait-for https://komga.invalid

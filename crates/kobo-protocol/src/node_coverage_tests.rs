@@ -514,6 +514,81 @@ fn a_grid_cell_carries_its_glyph_across_the_wire() {
 }
 
 #[test]
+fn a_word_game_tile_carries_its_tone_and_an_older_reader_refuses_it() {
+    let cells = vec![
+        Cell::new(ActionId(11), "G").with_tone(kobo_ui::CellTone::Solid),
+        Cell::new(ActionId(12), "R").with_tone(kobo_ui::CellTone::Shaded),
+        Cell::new(ActionId(13), "A")
+            .with_tone(kobo_ui::CellTone::Faded)
+            .with_selected(true),
+        Cell::new(ActionId(14), "V"),
+    ];
+    let screen = Screen::new(
+        1,
+        vec![Node::Grid {
+            id: NodeId(1),
+            columns: 4,
+            square: true,
+            cells: cells.clone(),
+        }],
+    );
+    match round_trip(screen.clone()).nodes.first() {
+        Some(Node::Grid { cells: back, .. }) => assert_eq!(back, &cells),
+        other => panic!("expected a grid, got {other:?}"),
+    }
+    // A plain cell is the byte it always was, a flag for its selection, so a
+    // frame without tones is unchanged for every runtime already on a reader.
+    let plain = |selected: bool| {
+        encode(&Frame {
+            version: VERSION,
+            request_id: 1,
+            message: Message::SetScreen(Screen::new(
+                1,
+                vec![Node::Grid {
+                    id: NodeId(1),
+                    columns: 1,
+                    square: true,
+                    cells: vec![Cell::new(ActionId(14), "V").with_selected(selected)],
+                }],
+            )),
+        })
+        .unwrap()
+    };
+    let (off, on) = (plain(false), plain(true));
+    let differing = (0..on.len())
+        .filter(|index| off[*index] != on[*index])
+        .collect::<Vec<_>>();
+    assert_eq!(differing.len(), 1);
+    let flag = differing[0];
+    assert_eq!((off[flag], on[flag]), (0, 1));
+    let mut solid = on.clone();
+    solid[flag] = 0b011;
+    match decode(&solid).unwrap().message {
+        Message::SetScreen(screen) => match &screen.nodes[0] {
+            Node::Grid { cells, .. } => {
+                assert!(cells[0].selected);
+                assert_eq!(cells[0].tone, kobo_ui::CellTone::Solid);
+            }
+            other => panic!("expected a grid, got {other:?}"),
+        },
+        other => panic!("expected a screen, got {other:?}"),
+    }
+    // A tone with no meaning is refused, as is any tone before tones existed.
+    let mut unknown = on.clone();
+    unknown[flag] = 0b1000;
+    assert!(
+        decode(&unknown).is_err(),
+        "a tone with no meaning was accepted"
+    );
+    let frame = Frame {
+        version: CELL_TONE_VERSION - 1,
+        request_id: 1,
+        message: Message::SetScreen(screen),
+    };
+    assert!(encode(&frame).is_err());
+}
+
+#[test]
 fn a_reading_screen_keeps_its_publisher_font_handle() {
     let screen = Screen::new(
         1,
@@ -847,49 +922,69 @@ fn a_choice_offering_no_answers_is_rejected() {
 fn unknown_tags_are_rejected_rather_than_guessed() {
     for (label, bytes) in [
         ("glyph", {
-            let mut screen = Vec::new();
-            let mut count = 0;
-            encode_screen(
-                &mut screen,
-                &Screen::new(
-                    1,
-                    vec![Node::TileGrid {
-                        shape: TileShape::Square,
-                        id: NodeId(1),
-                        tiles: vec![Tile::new(ActionId(1), "x", Glyph::App)],
-                    }],
-                ),
-                0,
-                &mut count,
-                VERSION,
-            )
-            .expect("encode");
-            let last = screen.len() - 1;
-            screen[last] = 200;
+            let encoded = |glyph| {
+                let mut screen = Vec::new();
+                let mut count = 0;
+                encode_screen(
+                    &mut screen,
+                    &Screen::new(
+                        1,
+                        vec![Node::TileGrid {
+                            shape: TileShape::Square,
+                            id: NodeId(1),
+                            tiles: vec![Tile::new(ActionId(1), "x", glyph)],
+                        }],
+                    ),
+                    0,
+                    &mut count,
+                    VERSION,
+                )
+                .expect("encode");
+                screen
+            };
+            // Found by comparison rather than taken from the end: the last
+            // byte of a screen is now its accent, which an older build reads
+            // as grey rather than refusing, by design.
+            let mut screen = encoded(Glyph::App);
+            let position = screen
+                .iter()
+                .zip(encoded(Glyph::Book))
+                .position(|(app, book)| *app != book)
+                .expect("the glyph is encoded");
+            screen[position] = 200;
             screen
         }),
         ("banner level", {
-            let mut screen = Vec::new();
-            let mut count = 0;
-            encode_screen(
-                &mut screen,
-                &Screen::new(
-                    1,
-                    vec![Node::Banner {
-                        id: NodeId(1),
-                        level: BannerLevel::Info,
-                        text: String::new(),
-                        action: None,
-                    }],
-                ),
-                0,
-                &mut count,
-                VERSION,
-            )
-            .expect("encode");
-            // The level byte sits after the screen header, node tag and id,
-            // ahead of the empty text's length and the action flag.
-            let position = screen.len() - 4;
+            let encoded = |level| {
+                let mut screen = Vec::new();
+                let mut count = 0;
+                encode_screen(
+                    &mut screen,
+                    &Screen::new(
+                        1,
+                        vec![Node::Banner {
+                            id: NodeId(1),
+                            level,
+                            text: String::new(),
+                            action: None,
+                        }],
+                    ),
+                    0,
+                    &mut count,
+                    VERSION,
+                )
+                .expect("encode");
+                screen
+            };
+            // Found rather than counted from the end: two banners that differ
+            // only in level differ in exactly the level byte, however many
+            // bytes a later protocol appends after the nodes.
+            let mut screen = encoded(BannerLevel::Info);
+            let position = screen
+                .iter()
+                .zip(encoded(BannerLevel::Attention))
+                .position(|(info, attention)| *info != attention)
+                .expect("the level is encoded");
             screen[position] = 9;
             screen
         }),

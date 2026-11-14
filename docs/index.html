@@ -45,306 +45,8 @@
   "codeRepository": "https://github.com/BandarLabs/Cobalt"
 }
 </script>
-<style>
-:root {
-  --paper: #f6f2ea;
-  --paper-deep: #eee8db;
-  --ink: #1b1813;
-  --ink-soft: #5a5347;
-  --rule: #d9d1c0;
-  --cobalt: #1a41a8;
-  --cobalt-deep: #143283;
-  --dither-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect x='0' y='0' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='4' y='4' width='1' height='1' fill='%23ffffff' fill-opacity='.22'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%23ffffff' fill-opacity='.12'/%3E%3C/svg%3E");
-  --dither-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect x='0' y='0' width='1' height='1' fill='%231a41a8' fill-opacity='.10'/%3E%3Crect x='4' y='4' width='1' height='1' fill='%231a41a8' fill-opacity='.10'/%3E%3Crect x='6' y='2' width='1' height='1' fill='%231a41a8' fill-opacity='.05'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%231a41a8' fill-opacity='.05'/%3E%3C/svg%3E");
-  --serif: "Charter", "Iowan Old Style", "Palatino", "Georgia", serif;
-  --mono: "SF Mono", "Menlo", "Consolas", monospace;
-}
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html { scroll-behavior: smooth; max-width: 100%; overflow-x: hidden; }
-body {
-  background: var(--paper) url("media/site/grain.png") repeat;
-  background-size: 128px 128px;
-  background-blend-mode: multiply;
-  color: var(--ink);
-  font-family: var(--serif);
-  font-size: 19px;
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-  border-top: 5px solid var(--cobalt);
-  max-width: 100%; overflow-x: hidden;
-}
-::selection { background: var(--cobalt); color: var(--paper); }
-a { color: var(--cobalt); text-decoration: none; }
-a:hover { text-decoration: underline; text-underline-offset: 3px; }
-img { display: block; max-width: 100%; height: auto; }
-picture { display: block; }
-.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
-
-/* ---------- masthead ---------- */
-header.masthead {
-  border-bottom: 1px solid var(--ink);
-  padding: 18px 0;
-}
-.masthead .wrap {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 24px;
-  flex-wrap: wrap;
-}
-.brand { display: flex; align-items: center; color: var(--ink); }
-.brand img { height: 34px; width: auto; }
-nav.top { display: flex; gap: 26px; font-size: 16px; }
-nav.top a { color: var(--ink); }
-nav.top a:hover { color: var(--cobalt); }
-.icon-link { display: inline-flex; align-items: center; gap: 6px; }
-.icon-link svg { width: 15px; height: 15px; flex: none; fill: currentColor; }
-
-/* ---------- hero ---------- */
-.hero { padding: 72px 0 64px; border-bottom: 1px solid var(--rule); position: relative; }
-.hero::after {
-  content: ""; position: absolute; inset: 0;
-  background-image: radial-gradient(circle, rgba(26, 65, 168, 0.55) 1px, transparent 1px);
-  background-size: 26px 26px;
-  pointer-events: none;
-  mask-image: linear-gradient(115deg, transparent 52%, #000 100%);
-  -webkit-mask-image: linear-gradient(115deg, transparent 52%, #000 100%);
-}
-.hero .wrap { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 64px; align-items: center; position: relative; z-index: 1; }
-.hero h1 {
-  font-size: clamp(38px, 5.4vw, 58px);
-  line-height: 1.06;
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  margin-bottom: 26px;
-}
-.hero p.lede { font-size: 21px; color: var(--ink); max-width: 34em; margin-bottom: 14px; }
-.hero p.sub { font-size: 18px; color: var(--ink-soft); max-width: 34em; margin-bottom: 30px; }
-.cta { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
-.btn {
-  display: inline-block; padding: 12px 22px; font-size: 17px;
-  border: 1.5px solid var(--ink); color: var(--ink);
-}
-.btn.icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 9px; }
-.btn.icon-btn svg { width: 19px; height: 19px; flex: none; }
-.btn:hover { background: var(--ink); color: var(--paper); text-decoration: none; }
-.btn.primary { background: var(--cobalt); border-color: var(--cobalt); color: #fff; }
-.btn.primary:hover { background: var(--cobalt-deep); border-color: var(--cobalt-deep); }
-.hero-proof {
-  margin-top: 16px;
-  color: var(--ink-soft);
-  font-size: 14px;
-}
-.hero-proof a { color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px; }
-.hero-proof span + span::before { content: "·"; margin: 0 9px; color: var(--rule); }
-.hero figure { margin: 0; }
-.hero figure img { border: 1px solid var(--rule); }
-figcaption {
-  font-size: 13.5px; color: var(--ink-soft); margin-top: 10px;
-  letter-spacing: 0.02em;
-}
-
-/* ---------- fact strip ---------- */
-.facts { background: var(--cobalt) var(--dither-light); background-size: 8px 8px; }
-.facts .wrap {
-  display: flex; flex-wrap: wrap; gap: 8px 0; padding-top: 13px; padding-bottom: 13px;
-  font-size: 15px; color: #fff;
-}
-.facts span { white-space: nowrap; }
-.facts span + span::before { content: "·"; margin: 0 14px; color: var(--rule); }
-
-/* ---------- sections ---------- */
-section { padding: 76px 0; border-bottom: 1px solid var(--rule); }
-.kicker {
-  font-family: var(--mono); font-size: 13px; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--cobalt); margin-bottom: 14px;
-}
-.kicker::before {
-  content: ""; display: inline-block; width: 9px; height: 9px;
-  background: var(--cobalt); margin-right: 10px;
-}
-h2 { font-size: clamp(28px, 3.6vw, 38px); line-height: 1.12; letter-spacing: -0.01em; margin-bottom: 18px; }
-.measure { max-width: 40em; }
-.measure p + p { margin-top: 14px; }
-p.quiet { color: var(--ink-soft); }
-
-/* ---------- tour ---------- */
-.tour { display: grid; grid-template-columns: minmax(260px, 380px) 1fr; gap: 64px; align-items: start; }
-.tour figure video { display: block; border: 1px solid var(--rule); width: 100%; height: auto; }
-.tour .measure { padding-top: 8px; }
-.tested-devices {
-  margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--rule);
-}
-.tested-devices h3 { font-size: 18px; margin-bottom: 12px; }
-.tested-devices ol {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 7px 28px;
-  padding-left: 24px; color: var(--ink-soft); font-size: 16px;
-}
-.tested-devices p { margin-top: 16px; color: var(--ink-soft); font-size: 15px; }
-
-/* ---------- field photos ---------- */
-.field-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 44px;
-}
-.field-grid figure img, .field-wide figure img {
-  border: 1px solid var(--rule);
-}
-.field-wide { margin-top: 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
-.field-wide figure img { border: 1px solid var(--rule); }
-
-/* ---------- apps ---------- */
-.apps-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 36px 28px; margin-top: 44px;
-}
-.app { font-size: 15.5px; }
-.app a.shot { display: block; border: 1px solid var(--rule); background: #fff; }
-.app a.shot:hover { border-color: var(--ink); }
-.app h3 { font-size: 17px; margin: 12px 0 4px; font-weight: 700; }
-.app h3 a { color: var(--ink); }
-.app p { color: var(--ink-soft); line-height: 1.45; }
-.app h3 .tag { margin-left: 8px; vertical-align: 2px; }
-.suggest-app {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px;
-  align-items: center; margin-top: 48px; padding: 28px 30px;
-  border: 1px solid var(--rule); background: var(--paper-deep);
-}
-.suggest-app h3 { font-size: 24px; line-height: 1.2; margin-bottom: 8px; }
-.suggest-app p { color: var(--ink-soft); max-width: 43em; font-size: 16px; }
-
-/* ---------- reasons ---------- */
-.reasons {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1px; margin-top: 36px; border: 1px solid var(--rule);
-  background: var(--rule);
-}
-.reason { padding: 28px; background: var(--paper); }
-.reason h3 { font-size: 20px; line-height: 1.2; margin-bottom: 9px; }
-.reason p { color: var(--ink-soft); font-size: 16px; }
-
-/* ---------- SDK ---------- */
-.hero .wrap > *, .tour > *, .sdk > *, .store > * { min-width: 0; }
-.sdk { display: grid; grid-template-columns: 1fr 1fr; gap: 64px; align-items: start; }
-pre {
-  font-family: var(--mono); font-size: 13px; line-height: 1.55;
-  background: var(--ink); color: #e8e2d4; padding: 22px 26px;
-  overflow-x: auto; tab-size: 4;
-  border-left: 4px solid var(--cobalt);
-}
-pre .k { color: #8fb4ff; }
-pre .s { color: #c9b98a; }
-pre .c { color: #8a8371; }
-code.inline {
-  font-family: var(--mono); font-size: 0.82em; background: var(--paper-deep);
-  padding: 2px 6px; border: 1px solid var(--rule);
-}
-.sdk-list { margin-top: 30px; border-top: 1px solid var(--rule); }
-.sdk-list div {
-  display: grid; grid-template-columns: 120px 1fr; gap: 18px;
-  padding: 11px 0; border-bottom: 1px solid var(--rule);
-  font-size: 16px; color: var(--ink-soft);
-}
-.sdk-list dt { font-weight: 700; color: var(--ink); }
-.sdk-list dd { margin: 0; }
-/* ---------- store ---------- */
-.store { display: grid; grid-template-columns: 1fr minmax(260px, 360px); gap: 64px; align-items: start; }
-.store figure img { border: 1px solid var(--rule); width: 100%; }
-
-/* ---------- install ---------- */
-.install { position: relative; overflow: hidden; }
-.install pre { margin: 26px 0; position: relative; z-index: 1; max-width: 44em; }
-.device-engraving {
-  position: absolute; right: 0; top: 46%; transform: translateY(-50%);
-  width: 270px; height: auto; opacity: 0.55; pointer-events: none; z-index: 0;
-  color: var(--ink-soft);
-}
-.install .wrap { position: relative; }
-.steps { list-style: none; counter-reset: step; max-width: 40em; }
-.steps li {
-  counter-increment: step; padding: 14px 0 14px 52px; position: relative;
-  border-top: 1px solid var(--rule); font-size: 17px; color: var(--ink-soft);
-}
-.steps li::before {
-  content: counter(step); position: absolute; left: 0; top: 12px;
-  font-family: var(--mono); font-size: 14px; color: #fff;
-  background: var(--cobalt); width: 30px; height: 30px;
-  display: flex; align-items: center; justify-content: center;
-}
-.steps li strong { color: var(--ink); }
-
-/* ---------- safety ---------- */
-.safety { background: var(--paper-deep) var(--dither-ink); background-size: 8px 8px; }
-
-/* ---------- footer ---------- */
-footer {
-  background: var(--cobalt) var(--dither-light); background-size: 8px 8px;
-  padding: 52px 0 60px; font-size: 15px; color: #fff;
-}
-footer a { color: #fff; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(255,255,255,.45); }
-footer a:hover { text-decoration-color: #fff; }
-footer .wrap { display: flex; justify-content: space-between; align-items: center; gap: 24px; flex-wrap: wrap; }
-footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
-.element {
-  display: flex; align-items: center; gap: 18px;
-}
-.element .tile {
-  width: 64px; height: 64px; background: #fff; color: var(--cobalt);
-  font-family: var(--mono); position: relative; flex: none;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 26px; font-weight: 700;
-}
-.element .tile small {
-  position: absolute; top: 5px; left: 7px; font-size: 11px; font-weight: 400;
-}
-.element p { max-width: 26em; }
-
-@media (max-width: 860px) {
-  body { font-size: 17px; }
-  pre { font-size: 12px; padding: 16px 18px; white-space: pre-wrap; word-break: break-word; }
-  .hero .wrap, .tour, .sdk, .store { grid-template-columns: 1fr; gap: 40px; }
-  .suggest-app { grid-template-columns: 1fr; }
-  .reasons { grid-template-columns: 1fr; }
-  .field-grid { grid-template-columns: 1fr; }
-  .field-wide { grid-template-columns: 1fr; }
-  .tested-devices ol { grid-template-columns: 1fr; }
-  section { padding: 56px 0; }
-  .hero { padding: 32px 0 48px; }
-  .hero .wrap { gap: 28px; }
-  .hero h1 { margin-bottom: 18px; }
-  .hero p.lede { font-size: 19px; margin-bottom: 22px; }
-  .hero p.sub { display: none; }
-  .hero figure { max-width: 420px; }
-  .device-engraving { display: none; }
-}
-@media (max-width: 520px) {
-  .wrap { padding-left: 18px; padding-right: 18px; }
-  header.masthead { padding: 14px 0; }
-  .masthead .wrap { align-items: center; gap: 12px; }
-  nav.top {
-    width: 100%; gap: 18px; flex-wrap: nowrap; overflow-x: auto;
-    padding-bottom: 4px; font-size: 15px; scrollbar-width: thin;
-  }
-  nav.top a { white-space: nowrap; }
-  .hero { padding: 28px 0 42px; }
-  .hero h1 { font-size: 38px; }
-  .cta { display: grid; grid-template-columns: 1fr; gap: 10px; }
-  .btn { padding: 12px 16px; font-size: 16px; text-align: center; }
-  .hero-proof span { display: block; }
-  .hero-proof span + span { margin-top: 3px; }
-  .hero-proof span + span::before { content: none; }
-  .facts .wrap { display: block; padding-top: 12px; padding-bottom: 12px; }
-  .facts span { display: block; white-space: normal; }
-  .facts span + span { margin-top: 3px; }
-  .facts span + span::before { content: none; }
-  section { padding: 48px 0; }
-  .apps-grid { gap: 30px; margin-top: 34px; }
-  .suggest-app { margin-top: 38px; padding: 22px 20px; }
-  .install pre {
-    margin-left: -18px; margin-right: -18px; padding: 16px 18px;
-    border-left-width: 3px;
-  }
-  footer { padding: 42px 0 48px; }
-  footer .wrap { display: block; }
-  footer nav { margin-top: 22px; }
-}
-</style>
+<link rel="preload" href="fonts/Literata-SemiBold.woff" as="font" type="font/woff" crossorigin>
+<link rel="stylesheet" href="site.css">
 </head>
 <body>
 
@@ -353,529 +55,344 @@ footer nav { display: flex; gap: 22px; flex-wrap: wrap; }
     <a class="brand" href="https://bandarlabs.github.io/Cobalt/">
       <img src="logo.svg" alt="Cobalt" width="81" height="34">
     </a>
-    <nav class="top">
+    <nav class="top" aria-label="Main navigation">
       <a href="#apps">Apps</a>
+      <a href="install/">Install</a>
       <a href="developers.html">Developers</a>
       <a href="faq.html">FAQ</a>
-      <a href="#store">Store</a>
-      <a href="install/">Install</a>
-      <a class="icon-link" href="https://github.com/BandarLabs/Cobalt">
-        <svg viewBox="0 0 16 16" aria-hidden="true">
-          <path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.49c-2.23.49-2.7-1.08-2.7-1.08-.37-.93-.9-1.18-.9-1.18-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.51-1.07-1.78-.2-3.65-.89-3.65-3.96 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.22 2.2.82A7.66 7.66 0 0 1 8 3.72a7.7 7.7 0 0 1 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.08-1.88 3.75-3.66 3.95.29.25.54.74.54 1.5v2.32c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/>
-        </svg>
-        GitHub
-      </a>
+      <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>
   </div>
 </header>
 
-<div class="hero">
+<main>
+<div class="opening">
   <div class="wrap">
     <div>
       <h1>Your Kobo can run apps now.</h1>
-      <p class="lede">Cobalt is an open-source application platform for Kobo e-readers: a launcher, a signed apps catalog, a Rust SDK, and a runtime that keeps every app in its own unprivileged process.</p>
-      <div class="cta">
+      <p class="lede">Cobalt adds a launcher and an app store beside the reader you already use. Install it once over USB. After that, apps arrive over <span class="nb">Wi-Fi</span>, and your books and settings stay as they are.</p>
+      <div class="actions">
         <a class="btn primary" href="install/">Install on your Kobo</a>
-        <a class="btn" href="https://github.com/BandarLabs/Cobalt">Read the source</a>
+        <a class="btn" href="#apps">See the apps</a>
       </div>
-      <p class="hero-proof">
-        <span><a href="https://www.producthunt.com/products/cobalt-10?utm_source=cobalt-site&amp;utm_medium=referral">Featured on Product Hunt</a></span>
-        <span><a href="https://news.ycombinator.com/item?id=49390427">Aug 2026: #1 on Hacker News · 662 points</a></span>
-      </p>
+      <p class="after">Free and open source. Tested on seven Kobo models: <a href="#readers">check yours</a>. <a href="https://news.ycombinator.com/item?id=49390427">Number one on Hacker News</a> in August 2026.</p>
     </div>
-    <figure>
-      <picture>
-        <source type="image/avif" sizes="(max-width: 456px) calc(100vw - 36px), 420px"
-                srcset="media/site/cobalt-launcher-kobo-clara-bw-480.avif 480w, media/site/cobalt-launcher-kobo-clara-bw-840.avif 840w, media/site/cobalt-launcher-kobo-clara-bw-1200.avif 1200w">
-        <source type="image/webp" sizes="(max-width: 456px) calc(100vw - 36px), 420px"
-                srcset="media/site/cobalt-launcher-kobo-clara-bw-480.webp 480w, media/site/cobalt-launcher-kobo-clara-bw-840.webp 840w, media/site/cobalt-launcher-kobo-clara-bw-1200.webp 1200w">
-        <img src="media/site/cobalt-launcher-kobo-clara-bw.jpg" width="1400" height="1867"
-             alt="The Cobalt launcher on a Kobo Clara BW showing Settings, App Store, Terminal, AI Chat, Audiobooks, Components, Daily Brief, Feeds and Gutenbird"
-             fetchpriority="high">
-      </picture>
-      <figcaption>The launcher on a Kobo Clara BW.</figcaption>
+    <figure class="reader">
+      <div class="reader-body">
+        <div class="reader-screen">
+          <video id="tour-video" width="600" height="810" poster="tour-poster.webp" preload="none" controls muted loop playsinline
+                 aria-label="A Kobo Clara BW paging through the Cobalt launcher, playing the opening of a chess game against the computer in Lichess, then opening a crossword">
+            <source src="cobalt-tour.webm" type='video/webm; codecs="av01.0.04M.08"'>
+            <source src="cobalt-tour.mp4" type="video/mp4">
+            <a href="cobalt-tour.mp4">Watch the tour as a video file.</a>
+          </video>
+        </div>
+      </div>
+      <div class="tour-control" id="tour-control" hidden>
+        <button type="button" id="tour-play">Play the tour</button>
+      </div>
+      <figcaption>Recorded on a Kobo Clara BW running Cobalt 0.3.35, with only the waits shortened.</figcaption>
     </figure>
   </div>
 </div>
 
-<div class="facts">
+<section class="band" id="uses">
   <div class="wrap">
-    <span>Not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</span>
-  </div>
-</div>
-
-<section id="tour">
-  <div class="wrap tour">
-    <figure>
-      <video width="600" height="810" poster="tour-poster.webp" preload="none" controls muted loop playsinline
-             aria-label="A Kobo Clara BW running Audiobook Studio, Gutenbird, Terminal, Hacker News, Sidekick and the App Store, then installing, playing, removing and reinstalling Sudoku over Wi-Fi">
-        <source src="cobalt-tour.webm" type='video/webm; codecs="av01.0.04M.08"'>
-        <source src="cobalt-tour.mp4" type="video/mp4">
-        <a href="cobalt-tour.mp4">Watch the tour as a video file.</a>
-      </video>
-      <figcaption>Recorded on-device at 3× speed.</figcaption>
-    </figure>
-    <div class="measure">
-      <h2>More to do on your Kobo.</h2>
-      <p>Read books and papers, follow feeds, play a game, listen to audio, or check a task without changing devices. Install only the apps you want, then update or remove them over Wi-Fi.</p>
-      <div class="tested-devices">
-        <h3>Tested devices</h3>
-        <ol>
-          <li>Kobo Clara BW</li>
-          <li>Kobo Clara Colour</li>
-          <li>Kobo Elipsa 2E</li>
-          <li>Kobo Clara HD</li>
-          <li>Kobo Libra 2</li>
-          <li>Kobo Libra Colour</li>
-          <li>Kobo Libra H2O</li>
-        </ol>
-        <p>These are the Kobos somebody has physically tested. Cobalt runs on others too: it shows what has not been tested about your device and asks once before it starts. To get yours onto this list, <a href="https://github.com/BandarLabs/Cobalt/issues">join an existing device thread or create a new one</a>.</p>
+    <h2>More to do on your Kobo.</h2>
+    <p class="lede">Install only the apps you want, then update or remove them over Wi-Fi.</p>
+    <div class="uses">
+      <!-- uses:start -->
+      <div class="use">
+        <div>
+          <h3>Play</h3>
+          <p>Chess on Lichess or against the reader itself, sixty-one crosswords, sudoku and nonograms.</p>
+          <a class="more" href="#games">All games</a>
+        </div>
+        <ul class="use-shots">
+          <li><a href="apps/lichess/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/lichess-160w-85e68fbb892c.webp 160w, media/site/app-thumbs/lichess-480w-85e68fbb892c.webp 480w, media/site/app-thumbs/lichess-800w-85e68fbb892c.webp 800w"><img src="media/site/apps/lichess.png" width="1072" height="1448" loading="lazy" alt="Lichess on Kobo with Play the computer first, then Play online, Your games, Puzzles and How to play."></picture></span><b>Lichess</b></a></li>
+          <li><a href="apps/crossword/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/crossword-160w-30b1819c1725.webp 160w, media/site/app-thumbs/crossword-480w-30b1819c1725.webp 480w, media/site/app-thumbs/crossword-800w-30b1819c1725.webp 800w"><img src="media/site/apps/crossword.png" width="1072" height="1448" loading="lazy" alt="Crossword grid on a Kobo with an answer filled in, the current clue above it and every clue below it."></picture></span><b>Crossword</b></a></li>
+          <li><a href="apps/sudoku/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/sudoku-160w-7885f4e53c48.webp 160w, media/site/app-thumbs/sudoku-480w-7885f4e53c48.webp 480w, media/site/app-thumbs/sudoku-800w-7885f4e53c48.webp 800w"><img src="media/site/apps/sudoku.png" width="1072" height="1448" loading="lazy" alt="An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded"></picture></span><b>Sudoku</b></a></li>
+          <li><a href="apps/nonograms/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/nonograms-160w-1c72b81ac0b9.webp 160w, media/site/app-thumbs/nonograms-480w-1c72b81ac0b9.webp 480w, media/site/app-thumbs/nonograms-800w-1c72b81ac0b9.webp 800w"><img src="media/site/apps/nonograms.png" width="1072" height="1448" loading="lazy" alt="A Nonograms puzzle with the selected square and its row and column clues highlighted."></picture></span><b>Nonograms</b></a></li>
+        </ul>
       </div>
-    </div>
-  </div>
-</section>
-
-<section id="why-cobalt">
-  <div class="wrap">
-    <h2 class="measure">Your Kobo stays a Kobo.</h2>
-    <p class="measure quiet">Cobalt adds apps next to the stock reader. Your books, library and reading settings are left as they are.</p>
-    <div class="reasons">
-      <div class="reason">
-        <h3>Keep the reader you bought</h3>
-        <p>Open Cobalt from the reader's menu, use an app, then return to the original reader. A restart always returns there too.</p>
+      <div class="use">
+        <div>
+          <h3>Read and listen</h3>
+          <p>Follow feeds, read arXiv papers with their mathematics and tables, download free books from Project Gutenberg, and play audiobooks.</p>
+          <a class="more" href="#reading">All reading apps</a>
+        </div>
+        <ul class="use-shots">
+          <li><a href="apps/rss/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/feeds-160w-04dcbe235094.webp 160w, media/site/app-thumbs/feeds-480w-04dcbe235094.webp 480w, media/site/app-thumbs/feeds-800w-04dcbe235094.webp 800w"><img src="media/site/apps/feeds.png" width="1072" height="1448" loading="lazy" alt="Unread articles from one subscribed feed in the Feeds app on a Kobo"></picture></span><b>Feeds</b></a></li>
+          <li><a href="apps/arxiv/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/arxiv-160w-4f66ad959551.webp 160w, media/site/app-thumbs/arxiv-480w-4f66ad959551.webp 480w, media/site/app-thumbs/arxiv-800w-4f66ad959551.webp 800w"><img src="media/site/apps/arxiv.png" width="1072" height="1448" loading="lazy" alt="The newest Artificial Intelligence preprints listed newest first in the Preprints app on a Kobo"></picture></span><b>Preprints</b></a></li>
+          <li><a href="apps/gutenbird/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/gutenbird-160w-894c21d2becc.webp 160w, media/site/app-thumbs/gutenbird-480w-894c21d2becc.webp 480w, media/site/app-thumbs/gutenbird-800w-894c21d2becc.webp 800w"><img src="media/site/apps/gutenbird.png" width="1072" height="1448" loading="lazy" alt="Popular Project Gutenberg books with their covers in Gutenbird on a Kobo"></picture></span><b>Gutenbird</b></a></li>
+          <li><a href="apps/audiobook/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/audiobook-160w-b4303ca4c04d.webp 160w, media/site/app-thumbs/audiobook-480w-b4303ca4c04d.webp 480w, media/site/app-thumbs/audiobook-800w-b4303ca4c04d.webp 800w"><img src="media/site/apps/audiobook.png" width="1072" height="1448" loading="lazy" alt="An audiobook player with cover art and playback controls on a Kobo"></picture></span><b>Audiobooks</b></a></li>
+        </ul>
       </div>
-      <div class="reason">
-        <h3>Install apps on the device</h3>
-        <p>After one USB setup, browse, install, update, and remove apps over Wi-Fi. You do not need to reconnect a cable for every app.</p>
+      <div class="use">
+        <div>
+          <h3>Around the house</h3>
+          <p>A photo frame that wakes on a schedule, Home Assistant tiles, recipes set for the kitchen counter, and sheet music with half-page turns.</p>
+          <a class="more" href="#everyday">Everyday tools</a>
+        </div>
+        <ul class="use-shots">
+          <li><a href="apps/frame/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/frame-160w-9343c5e887cf.webp 160w, media/site/app-thumbs/frame-480w-9343c5e887cf.webp 480w, media/site/app-thumbs/frame-800w-9343c5e887cf.webp 800w"><img src="media/site/apps/frame.png" width="1072" height="1448" loading="lazy" alt="Ansel Adams's The Tetons and the Snake River filling the Frame screen on a Kobo Clara BW."></picture></span><b>Frame</b></a></li>
+          <li><a href="apps/homepanel/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/homepanel-160w-230282b5f93d.webp 160w, media/site/app-thumbs/homepanel-480w-230282b5f93d.webp 480w, media/site/app-thumbs/homepanel-800w-230282b5f93d.webp 800w"><img src="media/site/apps/homepanel.png" width="1072" height="1448" loading="lazy" alt="Home Panel tile grid on a Kobo showing eight Home Assistant tiles with the last refresh time."></picture></span><b>Home Panel</b></a></li>
+          <li><a href="apps/kitchencard/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/kitchencard-160w-b61fb6171e6b.webp 160w, media/site/app-thumbs/kitchencard-480w-b61fb6171e6b.webp 480w, media/site/app-thumbs/kitchencard-800w-b61fb6171e6b.webp 800w"><img src="media/site/apps/kitchencard.png" width="1072" height="1448" loading="lazy" alt="Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."></picture></span><b>Kitchen Card</b></a></li>
+          <li><a href="apps/musicstand/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/musicstand-160w-11a24ad9b4dc.webp 160w, media/site/app-thumbs/musicstand-480w-11a24ad9b4dc.webp 480w, media/site/app-thumbs/musicstand-800w-11a24ad9b4dc.webp 800w"><img src="media/site/apps/musicstand.png" width="1072" height="1448" loading="lazy" alt="Music Stand showing the opening of the Prelude from Bach's Cello Suite No. 1 at reading size."></picture></span><b>Music Stand</b></a></li>
+        </ul>
       </div>
-      <div class="reason">
-        <h3>Choose only what belongs</h3>
-        <p>Apps are separate choices, not a bundle you must accept. Remove one without disturbing the others or reinstalling Cobalt.</p>
+      <div class="use">
+        <div>
+          <h3>With your computer</h3>
+          <p>Answer questions from Claude Code and Codex, run commands from a pad of keys, keep folders in sync, and use the reader as a terminal.</p>
+          <a class="more" href="#home-and-computer">Home and computer</a>
+        </div>
+        <ul class="use-shots">
+          <li><a href="apps/sidekick/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/sidekick-160w-b12604569656.webp 160w, media/site/app-thumbs/sidekick-480w-b12604569656.webp 480w, media/site/app-thumbs/sidekick-800w-b12604569656.webp 800w"><img src="media/site/apps/sidekick.png" width="1072" height="1448" loading="lazy" alt="Sidekick showing several coding-agent sessions and their pending approvals."></picture></span><b>Sidekick</b></a></li>
+          <li><a href="apps/deck/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/deck-160w-bb95cd98f437.webp 160w, media/site/app-thumbs/deck-480w-bb95cd98f437.webp 480w, media/site/app-thumbs/deck-800w-bb95cd98f437.webp 800w"><img src="media/site/apps/deck.png" width="1072" height="1448" loading="lazy" alt="Deck paired with a computer, showing Test, Format, Lint, Docs and Deploy command pads."></picture></span><b>Deck</b></a></li>
+          <li><a href="apps/syncthing/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/syncthing-160w-77eec307b0d3.webp 160w, media/site/app-thumbs/syncthing-480w-77eec307b0d3.webp 480w, media/site/app-thumbs/syncthing-800w-77eec307b0d3.webp 800w"><img src="media/site/apps/syncthing.png" width="1072" height="1448" loading="lazy" alt="Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."></picture></span><b>Sync</b></a></li>
+          <li><a href="apps/paperterm/"><span class="panel-shot"><picture><source type="image/webp" sizes="(max-width: 560px) 45vw, (max-width: 860px) 22vw, 190px" srcset="media/site/app-thumbs/paperterm-160w-88da65536d88.webp 160w, media/site/app-thumbs/paperterm-480w-88da65536d88.webp 480w, media/site/app-thumbs/paperterm-800w-88da65536d88.webp 800w"><img src="media/site/apps/paperterm.png" width="1072" height="1448" loading="lazy" alt="Paperterm showing a laptop terminal session in portrait, with the keyboard open."></picture></span><b>Paperterm</b></a></li>
+        </ul>
       </div>
-      <div class="reason">
-        <h3>Made for an e-ink screen</h3>
-        <p>Large touch targets, readable type, simple screens, and full refreshes only when the panel needs one.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="field">
-  <div class="wrap">
-    <h2 class="measure">Read research papers. Answer Claude Code and Codex.</h2>
-    <p class="measure quiet">Read complete papers with sections, mathematics, tables, and figures. When work needs a simple decision, answer it from the same screen.</p>
-    <div class="field-grid">
-      <figure>
-        <img src="media/site/arxiv-preprint-kobo-clara-bw.jpg" width="1000" height="1333" loading="lazy"
-             alt="An arXiv preprint section titled 'A hard optimization problem and its relaxation' rendered on a Kobo Clara BW">
-        <figcaption>A preprint, page 8 of 54, on the panel.</figcaption>
-      </figure>
-      <figure>
-        <img src="media/site/arxiv-results-table-kobo.jpg" width="1000" height="1333" loading="lazy"
-             alt="A results table from an arXiv paper comparing language models, rendered on a Kobo e-reader">
-        <figcaption>A results table from the same paper.</figcaption>
-      </figure>
-      <figure>
-        <img src="media/site/arxiv-math-typesetting-kobo.jpg" width="1000" height="1333" loading="lazy"
-             alt="Mathematical notation and a numbered algorithm from an arXiv paper on a Kobo e-reader">
-        <figcaption>Math notation and a numbered algorithm.</figcaption>
-      </figure>
-    </div>
-    <div class="field-wide">
-      <figure>
-        <img src="media/site/sidekick-claude-code-question-kobo.jpg" width="1000" height="1333" loading="lazy"
-             alt="Sidekick on a Kobo showing a question from Claude Code with three tappable answers and a 'Leave it for the terminal' button">
-        <figcaption>Sidekick showing a question from Claude Code, with tappable answers.</figcaption>
-      </figure>
-      <figure>
-        <img src="media/site/sidekick-watching-kobo.jpg" width="1000" height="1333" loading="lazy"
-             alt="Sidekick's watching screen on a Kobo, paired with a machine on the local network, showing the last answer sent">
-        <figcaption>Sidekick paired over the local network, waiting for the next question.</figcaption>
-      </figure>
+      <!-- uses:end -->
     </div>
   </div>
 </section>
 
-<section id="apps">
-  <div class="wrap">
-    <h2 class="measure">All apps</h2>
-    <p class="measure quiet">You can install new apps from the Cobalt Apps Catalog over Wi-Fi.</p>
-    <div class="apps-grid">
-<!-- apps-grid:start -->
-      <div class="app">
-        <a class="shot" href="apps/launcher/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/launcher-480w-093d76e66463.webp 480w, media/site/app-thumbs/launcher-800w-093d76e66463.webp 800w"><img src="media/site/apps/launcher.png" width="1072" height="1448" loading="lazy" alt="The Cobalt launcher on its Apps tab, with Books, Settings and Kobo reader tabs below"></picture></a>
-        <h3><a href="apps/launcher/">Launcher</a></h3>
-        <p>Opens installed apps and always keeps a route back to the Kobo reader.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/store/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/store-480w-4f06a935c793.webp 480w, media/site/app-thumbs/store-800w-4f06a935c793.webp 800w"><img src="media/site/apps/store.png" width="1072" height="1448" loading="lazy" alt="The Cobalt App Store listing installed and available apps"></picture></a>
-        <h3><a href="apps/store/">App Store</a></h3>
-        <p>Installs, updates, removes and reinstalls signed apps over Wi-Fi.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/terminal/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/terminal-480w-2c55dbcc380e.webp 480w, media/site/app-thumbs/terminal-800w-2c55dbcc380e.webp 800w"><img src="media/site/apps/terminal.png" width="1072" height="1448" loading="lazy" alt="A shell and touch keyboard on a Kobo"></picture></a>
-        <h3><a href="apps/terminal/">Terminal</a></h3>
-        <p>A shell with an on-screen keyboard.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/settings/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/settings-480w-ee478a64de4d.webp 480w, media/site/app-thumbs/settings-800w-ee478a64de4d.webp 800w"><img src="media/site/apps/settings.png" width="1072" height="1448" loading="lazy" alt="Cobalt Settings listing Bluetooth, Wi-Fi, Battery, Software update and About"></picture></a>
-        <h3><a href="apps/settings/">Settings</a></h3>
-        <p>Wi-Fi, device information and Cobalt updates.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/chat/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/chat-480w-8bca7d7671ec.webp 480w, media/site/app-thumbs/chat-800w-8bca7d7671ec.webp 800w"><img src="media/site/apps/chat.png" width="1072" height="1448" loading="lazy" alt="An answer displayed for touch-friendly reading on a Kobo"></picture></a>
-        <h3><a href="apps/chat/">AI Command Center</a></h3>
-        <p>Ask a question, then read and navigate the answer with touch controls. Needs an account.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/audiobook/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/audiobook-480w-131b2cee775f.webp 480w, media/site/app-thumbs/audiobook-800w-131b2cee775f.webp 800w"><img src="media/site/apps/audiobook.png" width="1072" height="1448" loading="lazy" alt="An audiobook player with cover art and playback controls on a Kobo"></picture></a>
-        <h3><a href="apps/audiobook/">Audiobook Studio</a></h3>
-        <p>Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/backgammon/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/backgammon-480w-cd088b896cf3.webp 480w, media/site/app-thumbs/backgammon-800w-cd088b896cf3.webp 800w"><img src="media/site/apps/backgammon.png" width="1072" height="1448" loading="lazy" alt="Backgammon board on a Kobo after Black opened with 4 and 6, with dice, cube and match score."></picture></a>
-        <h3><a href="apps/backgammon/">Backgammon</a></h3>
-        <p>Play complete solo or pass-and-play backgammon on one Kobo.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/birds/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/birds-480w-d94c6225bfe3.webp 480w, media/site/app-thumbs/birds-800w-d94c6225bfe3.webp 800w"><img src="media/site/apps/birds.png" width="1072" height="1448" loading="lazy" alt="A labelled collage of public-domain bird plates filling a Kobo screen."></picture></a>
-        <h3><a href="apps/birds/">Birds</a></h3>
-        <p>Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/gallery/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/components-480w-f89cc174c2de.webp 480w, media/site/app-thumbs/components-800w-f89cc174c2de.webp 800w"><img src="media/site/apps/components.png" width="1072" height="1448" loading="lazy" alt="Cobalt typography and interface components on a Kobo"></picture></a>
-        <h3><a href="apps/gallery/">Components</a></h3>
-        <p>See every Cobalt UI component on the device in one reference app.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/crossword/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/crossword-480w-4a228381011a.webp 480w, media/site/app-thumbs/crossword-800w-4a228381011a.webp 800w"><img src="media/site/apps/crossword.png" width="1072" height="1448" loading="lazy" alt="Crossword grid on a Kobo with the first answer filled in and numbered cells."></picture></a>
-        <h3><a href="apps/crossword/">Crossword</a></h3>
-        <p>Sixty-one offline crosswords with clue navigation and saved progress.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/brief/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/brief-480w-004995875a77.webp 480w, media/site/app-thumbs/brief-800w-004995875a77.webp 800w"><img src="media/site/apps/brief.png" width="1072" height="1448" loading="lazy" alt="A numbered daily news brief on a Kobo"></picture></a>
-        <h3><a href="apps/brief/">Daily Brief</a></h3>
-        <p>A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/deck/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/deck-480w-7bff21ef44d1.webp 480w, media/site/app-thumbs/deck-800w-7bff21ef44d1.webp 800w"><img src="media/site/apps/deck.png" width="1072" height="1448" loading="lazy" alt="Deck paired with a computer, showing Test, Format and Deploy command pads."></picture></a>
-        <h3><a href="apps/deck/">Deck</a></h3>
-        <p>Turn your Kobo into a remote control for your computer. Needs your computer.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/rss-miniflux/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/rss-miniflux-480w-3e831d4812e9.webp 480w, media/site/app-thumbs/rss-miniflux-800w-3e831d4812e9.webp 800w"><img src="media/site/apps/rss-miniflux.png" width="1072" height="1448" loading="lazy" alt="A Miniflux article open on a Kobo with text-size and front-light controls."></picture></a>
-        <h3><a href="apps/rss-miniflux/">Digest</a></h3>
-        <p>Read your Miniflux feeds anywhere. Needs an account.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/fanshelf/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/fanshelf-480w-eaec4986892f.webp 480w, media/site/app-thumbs/fanshelf-800w-eaec4986892f.webp 800w"><img src="media/site/apps/fanshelf.png" width="1072" height="1448" loading="lazy" alt="A followed work in Fanshelf naming its author, fandom, rating and chapter count, with Read and Check updates controls."></picture></a>
-        <h3><a href="apps/fanshelf/">Fanshelf</a></h3>
-        <p>Save public AO3 works to a shelf made for offline reading.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/rss/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/feeds-480w-8817f060f30c.webp 480w, media/site/app-thumbs/feeds-800w-8817f060f30c.webp 800w"><img src="media/site/apps/feeds.png" width="1072" height="1448" loading="lazy" alt="Subscribed feeds and articles in the Feeds app on a Kobo"></picture></a>
-        <h3><a href="apps/rss/">Feeds</a></h3>
-        <p>Follow feeds, search saved articles and read offline with images.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/fieldbook/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/fieldbook-480w-e9e98f7fe6da.webp 480w, media/site/app-thumbs/fieldbook-800w-e9e98f7fe6da.webp 800w"><img src="media/site/apps/fieldbook.png" width="1072" height="1448" loading="lazy" alt="Fieldbook tallying an American Robin during an outing."></picture></a>
-        <h3><a href="apps/fieldbook/">Fieldbook</a></h3>
-        <p>Log bird sightings anywhere and build your life list.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/flashcards/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/flashcards-480w-0947edb9d0f3.webp 480w, media/site/app-thumbs/flashcards-800w-0947edb9d0f3.webp 800w"><img src="media/site/apps/flashcards.png" width="1072" height="1448" loading="lazy" alt="A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons."></picture></a>
-        <h3><a href="apps/flashcards/">Flashcards</a></h3>
-        <p>Review flashcards anywhere, even without Wi-Fi.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/frame/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/frame-480w-0f5e1346ef45.webp 480w, media/site/app-thumbs/frame-800w-0f5e1346ef45.webp 800w"><img src="media/site/apps/frame.png" width="1072" height="1448" loading="lazy" alt="A full-area monochrome photograph in Frame on a Kobo Clara BW."></picture></a>
-        <h3><a href="apps/frame/">Frame</a></h3>
-        <p>Show photos from your computer as a slideshow, with the screen on or waking on a schedule. Needs your computer.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/grimoire/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/grimoire-480w-4fd884258619.webp 480w, media/site/app-thumbs/grimoire-800w-4fd884258619.webp 800w"><img src="media/site/apps/grimoire.png" width="1072" height="1448" loading="lazy" alt="Grimoire initiative order showing the active combatant and round counter on a Kobo."></picture></a>
-        <h3><a href="apps/grimoire/">Grimoire</a></h3>
-        <p>Browse offline SRD references and manage tabletop combat.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/gutenbird/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/gutenbird-480w-911b6b377e73.webp 480w, media/site/app-thumbs/gutenbird-800w-911b6b377e73.webp 800w"><img src="media/site/apps/gutenbird.png" width="1072" height="1448" loading="lazy" alt="A shelf of books from an OPDS library on a Kobo"></picture></a>
-        <h3><a href="apps/gutenbird/">Gutenbird</a></h3>
-        <p>Download free books from Project Gutenberg and other libraries, and read them offline.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/habits/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/habits-480w-9aa38b2ad50e.webp 480w, media/site/app-thumbs/habits-800w-9aa38b2ad50e.webp 800w"><img src="media/site/apps/habits.png" width="1072" height="1448" loading="lazy" alt="Habits today screen on a Kobo Clara BW, with daily and weekday streak tasks."></picture></a>
-        <h3><a href="apps/habits/">Habits</a></h3>
-        <p>Track daily and weekday habits with local streaks.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/hn/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/hackernews-480w-19035b42adac.webp 480w, media/site/app-thumbs/hackernews-800w-19035b42adac.webp 800w"><img src="media/site/apps/hackernews.png" width="1072" height="1448" loading="lazy" alt="A ranked list of Hacker News stories on a Kobo"></picture></a>
-        <h3><a href="apps/hn/">Hacker News</a></h3>
-        <p>Read Top, New, Ask, and Show stories with complete comment threads.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/homepanel/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/homepanel-480w-c32003df4bc7.webp 480w, media/site/app-thumbs/homepanel-800w-c32003df4bc7.webp 800w"><img src="media/site/apps/homepanel.png" width="1072" height="1448" loading="lazy" alt="Home Panel tile grid on a Kobo showing four Home Assistant tiles with the last refresh time."></picture></a>
-        <h3><a href="apps/homepanel/">Home Panel</a></h3>
-        <p>Control saved Home Assistant tiles from a low-power panel. Needs an account. Home Assistant must be on HTTPS.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/inkling/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/inkling-480w-f3d6b174ea2a.webp 480w, media/site/app-thumbs/inkling-800w-f3d6b174ea2a.webp 800w"><img src="media/site/apps/inkling.png" width="1072" height="1448" loading="lazy" alt="A solved Inkling five-letter daily puzzle with grayscale shape feedback."></picture></a>
-        <h3><a href="apps/inkling/">Inkling</a></h3>
-        <p>Solve a fresh five-letter puzzle each day.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/kitchencard/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/kitchencard-480w-37effb49901e.webp 480w, media/site/app-thumbs/kitchencard-800w-37effb49901e.webp 800w"><img src="media/site/apps/kitchencard.png" width="1072" height="1448" loading="lazy" alt="Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."></picture></a>
-        <h3><a href="apps/kitchencard/">Kitchen Card</a></h3>
-        <p>Keep Mealie recipes handy in a counter-friendly cooking view. Needs an account.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/calibre-web/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/calibre-web-480w-15aed4df6181.webp 480w, media/site/app-thumbs/calibre-web-800w-15aed4df6181.webp 800w"><img src="media/site/apps/calibre-web.png" width="1072" height="1448" loading="lazy" alt="A book from a calibre-web library open on a Kobo, with text-size and front-light controls and the page count."></picture></a>
-        <h3><a href="apps/calibre-web/">Library</a></h3>
-        <p>Browse and read books from your calibre-web library. Needs an account.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/lichess/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/lichess-480w-9eabc5f4ad8a.webp 480w, media/site/app-thumbs/lichess-800w-9eabc5f4ad8a.webp 800w"><img src="media/site/apps/lichess.png" width="1072" height="1448" loading="lazy" alt="Lichess on Kobo with Account/Games, Puzzles, Computer and How to play tiles above the rapid and classical time controls."></picture></a>
-        <h3><a href="apps/lichess/">Lichess</a></h3>
-        <p>Play Lichess games, challenge players, solve puzzles, or play offline.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/logicpack/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/logicpack-480w-fa119fdd5d72.webp 480w, media/site/app-thumbs/logicpack-800w-fa119fdd5d72.webp 800w"><img src="media/site/apps/logicpack.png" width="1072" height="1448" loading="lazy" alt="Logic Pack's Minesweeper board after a revealed cell and contradiction check."></picture></a>
-        <h3><a href="apps/logicpack/">Logic Pack</a></h3>
-        <p>Play four familiar logic games offline.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/magnet/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/magnet-480w-e024a19ccc0a.webp 480w, media/site/app-thumbs/magnet-800w-e024a19ccc0a.webp 800w"><img src="media/site/apps/magnet.png" width="1072" height="1448" loading="lazy" alt="The Kobo hall sensor responding to a magnet"></picture></a>
-        <h3><a href="apps/magnet/">Magnet</a></h3>
-        <p>Find the hall sensor behind the bezel and watch it respond to a magnet.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/morse/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/morse-480w-3b8fb52406a3.webp 480w, media/site/app-thumbs/morse-800w-3b8fb52406a3.webp 800w"><img src="media/site/apps/morse.png" width="1072" height="1448" loading="lazy" alt="A letter filling the Kobo screen while the front light sends Morse code"></picture></a>
-        <h3><a href="apps/morse/">Morse</a></h3>
-        <p>Type a message and send it in Morse code with the front light.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/musicstand/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/musicstand-480w-3dcec4c1ac7c.webp 480w, media/site/app-thumbs/musicstand-800w-3dcec4c1ac7c.webp 800w"><img src="media/site/apps/musicstand.png" width="1072" height="1448" loading="lazy" alt="Music Stand showing the Prelude from Bach's Cello Suite No. 1 as a full-page score."></picture></a>
-        <h3><a href="apps/musicstand/">Music Stand</a></h3>
-        <p>Read music scores with setlists and half-page turns. Needs your computer.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/needles/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/needles-480w-6e981cc344e6.webp 480w, media/site/app-thumbs/needles-800w-6e981cc344e6.webp 800w"><img src="media/site/apps/needles.png" width="1072" height="1448" loading="lazy" alt="Needles row counter showing the current row, section and repeat progress, with +1 row and Undo."></picture></a>
-        <h3><a href="apps/needles/">Needles</a></h3>
-        <p>Count rows, browse Ravelry collections, and read your synced patterns offline.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/nonograms/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/nonograms-480w-e630b0a45efd.webp 480w, media/site/app-thumbs/nonograms-800w-e630b0a45efd.webp 800w"><img src="media/site/apps/nonograms.png" width="1072" height="1448" loading="lazy" alt="A Nonograms puzzle with the selected square and its row and column clues highlighted."></picture></a>
-        <h3><a href="apps/nonograms/">Nonograms</a></h3>
-        <p>Solve 78 picture and pattern puzzles, or make your own from photos.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/panels/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/panels-480w-c77eed3924f7.webp 480w, media/site/app-thumbs/panels-800w-c77eed3924f7.webp 800w"><img src="media/site/apps/panels.png" width="1072" height="1448" loading="lazy" alt="The Panels comic shelf with a cover and saved progress, page 2 of 4."></picture></a>
-        <h3><a href="apps/panels/">Panels</a></h3>
-        <p>Read comics added from your computer or Komga library.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/paperterm/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/paperterm-480w-f9e91e7b057c.webp 480w, media/site/app-thumbs/paperterm-800w-f9e91e7b057c.webp 800w"><img src="media/site/apps/paperterm.png" width="1072" height="1448" loading="lazy" alt="Paperterm showing a laptop terminal session in portrait, with the keyboard open."></picture></a>
-        <h3><a href="apps/paperterm/">Paperterm</a></h3>
-        <p>Pair with a computer to mirror a terminal session on e-ink. Needs your computer.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/parlor/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/parlor-480w-dad440c6a05e.webp 480w, media/site/app-thumbs/parlor-800w-dad440c6a05e.webp 800w"><img src="media/site/apps/parlor.png" width="1072" height="1448" loading="lazy" alt="Reversi opening board showing four legal moves, with Undo, Moves and New game."></picture></a>
-        <h3><a href="apps/parlor/">Parlor</a></h3>
-        <p>Play Reversi, Draughts, Nine Men's Morris and Kalah on one Kobo.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/parser/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/parser-480w-a49f189eaa97.webp 480w, media/site/app-thumbs/parser-800w-a49f189eaa97.webp 800w"><img src="media/site/apps/parser.png" width="1072" height="1448" loading="lazy" alt="Parser opening Lamplight, with tappable words in the story and command buttons for LOOK, TAKE and the compass directions."></picture></a>
-        <h3><a href="apps/parser/">Parser</a></h3>
-        <p>Play an original interactive story without Wi-Fi.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/post/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/post-480w-fc3f6ca87d66.webp 480w, media/site/app-thumbs/post-800w-fc3f6ca87d66.webp 800w"><img src="media/site/apps/post.png" width="1072" height="1448" loading="lazy" alt="Post inbox listing Hermes letters newest first, with Newer and Older paging."></picture></a>
-        <h3><a href="apps/post/">Post</a></h3>
-        <p>Read and reply to letters from Hermes. Needs an account.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/arxiv/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/arxiv-480w-4934177dd82e.webp 480w, media/site/app-thumbs/arxiv-800w-4934177dd82e.webp 800w"><img src="media/site/apps/arxiv.png" width="1072" height="1448" loading="lazy" alt="The newest Artificial Intelligence preprints listed newest first in the Preprints app on a Kobo"></picture></a>
-        <h3><a href="apps/arxiv/">Preprints</a></h3>
-        <p>Browse every arXiv category, keep preprints with their figures, and read them offline on your Kobo.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/pubquiz/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/pubquiz-480w-d1427429068a.webp 480w, media/site/app-thumbs/pubquiz-800w-d1427429068a.webp 800w"><img src="media/site/apps/pubquiz.png" width="1072" height="1448" loading="lazy" alt="Pub Quiz pass-around question with four large answer choices for Ada."></picture></a>
-        <h3><a href="apps/pubquiz/">Pub Quiz</a></h3>
-        <p>Play offline solo or pass-around trivia rounds.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/readlater/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/readlater-480w-53c2e00591fe.webp 480w, media/site/app-thumbs/readlater-800w-53c2e00591fe.webp 800w"><img src="media/site/apps/readlater.png" width="1072" height="1448" loading="lazy" alt="Read Later's unread queue of synced Wallabag articles with reading times."></picture></a>
-        <h3><a href="apps/readlater/">Read Later</a></h3>
-        <p>Read your Wallabag articles anywhere. Needs an account.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/readeck/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/readeck/inbox-480w-8261f966889e.webp 480w, media/site/app-thumbs/readeck/inbox-800w-8261f966889e.webp 800w"><img src="media/site/apps/readeck/inbox.png" width="1072" height="1448" loading="lazy" alt="Readeck inbox with sample articles, rendered by Cobalt at Clara BW dimensions; not a device capture."></picture></a>
-        <h3><a href="apps/readeck/">Readeck</a></h3>
-        <p>Read and search your saved Readeck articles. Needs an account.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/sidekick/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/sidekick-480w-d2f649bb7080.webp 480w, media/site/app-thumbs/sidekick-800w-d2f649bb7080.webp 800w"><img src="media/site/apps/sidekick.png" width="1072" height="1448" loading="lazy" alt="Sidekick showing several coding-agent sessions and their pending approvals."></picture></a>
-        <h3><a href="apps/sidekick/">Sidekick</a></h3>
-        <p>Answer coding-agent permission prompts from your Kobo. Needs your computer.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/zotero-reader/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/zotero-reader-480w-e82a350e3ad2.webp 480w, media/site/app-thumbs/zotero-reader-800w-e82a350e3ad2.webp 800w"><img src="media/site/apps/zotero-reader.png" width="1072" height="1448" loading="lazy" alt="Reading a paper with structured layout and Zotero metadata on a Kobo"></picture></a>
-        <h3><a href="apps/zotero-reader/">Stacks</a></h3>
-        <p>Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline. Needs an account.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/sudoku/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/sudoku-480w-d04c1eb236ff.webp 480w, media/site/app-thumbs/sudoku-800w-d04c1eb236ff.webp 800w"><img src="media/site/apps/sudoku.png" width="1072" height="1448" loading="lazy" alt="An original Sudoku puzzle with pencil notes, selected keys and a highlighted row and column"></picture></a>
-        <h3><a href="apps/sudoku/">Sudoku</a></h3>
-        <p>Play 600 original Sudoku puzzles with pencil notes, undo and saved games.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/syncthing/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/syncthing-480w-55cf20b2fb23.webp 480w, media/site/app-thumbs/syncthing-800w-55cf20b2fb23.webp 800w"><img src="media/site/apps/syncthing.png" width="1072" height="1448" loading="lazy" alt="Sync folders: vault, frame and books receive, out sends."></picture></a>
-        <h3><a href="apps/syncthing/">Sync</a></h3>
-        <p>Sync folders between your computer and your Kobo with Syncthing. Needs your computer.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/tictactoe/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/tictactoe-480w-5a7f67874906.webp 480w, media/site/app-thumbs/tictactoe-800w-5a7f67874906.webp 800w"><img src="media/site/apps/tictactoe.png" width="1072" height="1448" loading="lazy" alt="A completed game of tic-tac-toe on a Kobo"></picture></a>
-        <h3><a href="apps/tictactoe/">Tic-tac-toe</a></h3>
-        <p>Play tic-tac-toe together on one Kobo.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/todo/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/todo-480w-d5b98d91ef56.webp 480w, media/site/app-thumbs/todo-800w-d5b98d91ef56.webp 800w"><img src="media/site/apps/todo.png" width="1072" height="1448" loading="lazy" alt="A to-do list with one open item on a Kobo"></picture></a>
-        <h3><a href="apps/todo/">Todo</a></h3>
-        <p>Keep a simple to-do list that stays on your Kobo.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/vault/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/vault-480w-9b189bd758fa.webp 480w, media/site/app-thumbs/vault-800w-9b189bd758fa.webp 800w"><img src="media/site/apps/vault.png" width="1072" height="1448" loading="lazy" alt="Vault home on a Kobo with four synced notes and Browse, Tags, Recent and Search rows."></picture></a>
-        <h3><a href="apps/vault/">Vault</a></h3>
-        <p>Browse your notes by folder, tag, link, and backlink. Needs your computer.</p>
-      </div>
-      <div class="app">
-        <a class="shot" href="apps/verses/"><picture><source type="image/webp" sizes="(max-width: 465px) calc(100vw - 36px), (max-width: 931px) 314px, 240px" srcset="media/site/app-thumbs/verses-480w-b52a551c937f.webp 480w, media/site/app-thumbs/verses-800w-b52a551c937f.webp 800w"><img src="media/site/apps/verses.png" width="1072" height="1448" loading="lazy" alt="Verses displaying a public-domain daily poem in a spacious Kobo reading layout."></picture></a>
-        <h3><a href="apps/verses/">Verses</a></h3>
-        <p>Read a public-domain poem each day.</p>
-      </div>
-      <!-- apps-grid:end -->
+<section class="band" id="why-cobalt">
+  <div class="wrap split">
+    <div>
+      <h2>Your Kobo stays a Kobo.</h2>
+      <p class="lede">Cobalt adds apps next to the stock reader. Your books, library and reading settings are left as they are.</p>
     </div>
-    <aside class="suggest-app" aria-labelledby="suggest-app-title">
+    <dl class="terms">
       <div>
-        <h3 id="suggest-app-title">Help shape what comes next</h3>
-        <p>Join r/CobaltForKobo to request an app, suggest a feature, report a bug, or show what you are running on your Kobo.</p>
+        <dt>Keep the reader you bought</dt>
+        <dd>Open Cobalt from the reader's menu, use an app, then return to the original reader. A restart always returns there too.</dd>
       </div>
-      <a class="btn icon-btn" href="https://www.reddit.com/r/CobaltForKobo/">
-        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="13" r="7"></circle>
-          <circle cx="9.5" cy="12" r=".8" fill="currentColor" stroke="none"></circle>
-          <circle cx="14.5" cy="12" r=".8" fill="currentColor" stroke="none"></circle>
-          <path d="M9 15c1.7 1.1 4.3 1.1 6 0M12.5 6l1-3 3.2.8M18.2 8.5a2 2 0 1 1 1.5 3.4M5.8 8.5a2 2 0 1 0-1.5 3.4"></path>
-        </svg>
-        Join the community
-      </a>
-    </aside>
+      <div>
+        <dt>Install apps on the device</dt>
+        <dd>After one USB setup, browse, install, update, and remove apps over Wi-Fi. You do not need to reconnect a cable for every app.</dd>
+      </div>
+      <div>
+        <dt>Choose only what belongs</dt>
+        <dd>Apps are separate choices, not a bundle you must accept. Remove one without disturbing the others or reinstalling Cobalt.</dd>
+      </div>
+      <div>
+        <dt>Made for an e-ink screen</dt>
+        <dd>Large touch targets, readable type, simple screens, and full refreshes only when the panel needs one.</dd>
+      </div>
+    </dl>
   </div>
 </section>
 
-<section id="store">
-  <div class="wrap store">
-    <div class="measure">
+<section class="band" id="apps">
+  <div class="wrap">
+    <h2>All apps</h2>
+    <p class="lede">Install any of these from App Store on the reader, over Wi-Fi.</p>
+    <!-- apps-grid:start -->
+    <nav class="index-nav" aria-label="Kinds of app">
+      <a href="#reading">Reading and listening</a>
+      <a href="#games">Games</a>
+      <a href="#everyday">Everyday tools</a>
+      <a href="#home-and-computer">Home and computer</a>
+      <a href="#developers">For developers</a>
+      <a href="#included">Included with Cobalt</a>
+    </nav>
+    <section class="index-group" id="reading">
+      <h3>Reading and listening <span>14</span></h3>
+      <ul class="index">
+        <li><a href="apps/audiobook/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/audiobook-160w-b4303ca4c04d.webp 160w, media/site/app-thumbs/audiobook-480w-b4303ca4c04d.webp 480w, media/site/app-thumbs/audiobook-800w-b4303ca4c04d.webp 800w"><img src="media/site/apps/audiobook.png" width="1072" height="1448" loading="lazy" alt="An audiobook player with cover art and playback controls on a Kobo"></picture></span><span><b>Audiobooks</b><span class="says">Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.</span></span></a></li>
+        <li><a href="apps/brief/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/brief-160w-2036a0f283bb.webp 160w, media/site/app-thumbs/brief-480w-2036a0f283bb.webp 480w, media/site/app-thumbs/brief-800w-2036a0f283bb.webp 800w"><img src="media/site/apps/brief.png" width="1072" height="1448" loading="lazy" alt="A numbered daily news brief on a Kobo"></picture></span><span><b>Daily Brief</b><span class="says">A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.</span></span></a></li>
+        <li><a href="apps/rss-miniflux/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/rss-miniflux-160w-4a15f914f947.webp 160w, media/site/app-thumbs/rss-miniflux-480w-4a15f914f947.webp 480w, media/site/app-thumbs/rss-miniflux-800w-4a15f914f947.webp 800w"><img src="media/site/apps/rss-miniflux.png" width="1072" height="1448" loading="lazy" alt="An essay from Walden open in Digest on a Kobo, under an engraving of Thoreau's house."></picture></span><span><b>Digest</b><span class="says">Read your Miniflux feeds anywhere. Needs an account.</span></span></a></li>
+        <li><a href="apps/fanshelf/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/fanshelf-160w-20d6ade97663.webp 160w, media/site/app-thumbs/fanshelf-480w-20d6ade97663.webp 480w, media/site/app-thumbs/fanshelf-800w-20d6ade97663.webp 800w"><img src="media/site/apps/fanshelf.png" width="1072" height="1448" loading="lazy" alt="A followed work in Fanshelf naming its author, fandom, rating and chapter count, with a Download EPUB button."></picture></span><span><b>Fanshelf</b><span class="says">Save public AO3 works to a shelf made for offline reading.</span></span></a></li>
+        <li><a href="apps/rss/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/feeds-160w-04dcbe235094.webp 160w, media/site/app-thumbs/feeds-480w-04dcbe235094.webp 480w, media/site/app-thumbs/feeds-800w-04dcbe235094.webp 800w"><img src="media/site/apps/feeds.png" width="1072" height="1448" loading="lazy" alt="Unread articles from one subscribed feed in the Feeds app on a Kobo"></picture></span><span><b>Feeds</b><span class="says">Follow feeds, search saved articles and read offline with images.</span></span></a></li>
+        <li><a href="apps/gutenbird/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/gutenbird-160w-894c21d2becc.webp 160w, media/site/app-thumbs/gutenbird-480w-894c21d2becc.webp 480w, media/site/app-thumbs/gutenbird-800w-894c21d2becc.webp 800w"><img src="media/site/apps/gutenbird.png" width="1072" height="1448" loading="lazy" alt="Popular Project Gutenberg books with their covers in Gutenbird on a Kobo"></picture></span><span><b>Gutenbird</b><span class="says">Download free books from Project Gutenberg and other libraries, and read them offline.</span></span></a></li>
+        <li><a href="apps/hn/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/hackernews-160w-8187790ac66a.webp 160w, media/site/app-thumbs/hackernews-480w-8187790ac66a.webp 480w, media/site/app-thumbs/hackernews-800w-8187790ac66a.webp 800w"><img src="media/site/apps/hackernews.png" width="1072" height="1448" loading="lazy" alt="A ranked list of Show HN stories on a Kobo"></picture></span><span><b>Hacker News</b><span class="says">Read Top, New, Ask, and Show stories with complete comment threads.</span></span></a></li>
+        <li><a href="apps/calibre-web/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/calibre-web-160w-be2b102089e2.webp 160w, media/site/app-thumbs/calibre-web-480w-be2b102089e2.webp 480w, media/site/app-thumbs/calibre-web-800w-be2b102089e2.webp 800w"><img src="media/site/apps/calibre-web.png" width="1072" height="1448" loading="lazy" alt="The first page of Pride and Prejudice from a calibre-web library on a Kobo."></picture></span><span><b>Library</b><span class="says">Browse and read books from your calibre-web library. Needs an account.</span></span></a></li>
+        <li><a href="apps/panels/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/panels-160w-8ea3da3322a9.webp 160w, media/site/app-thumbs/panels-480w-8ea3da3322a9.webp 480w, media/site/app-thumbs/panels-800w-8ea3da3322a9.webp 800w"><img src="media/site/apps/panels.png" width="1072" height="1448" loading="lazy" alt="The Panels comic shelf with a cover and saved progress, page 3 of 4."></picture></span><span><b>Panels</b><span class="says">Read comics added from your computer or Komga library.</span></span></a></li>
+        <li><a href="apps/arxiv/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/arxiv-160w-4f66ad959551.webp 160w, media/site/app-thumbs/arxiv-480w-4f66ad959551.webp 480w, media/site/app-thumbs/arxiv-800w-4f66ad959551.webp 800w"><img src="media/site/apps/arxiv.png" width="1072" height="1448" loading="lazy" alt="The newest Artificial Intelligence preprints listed newest first in the Preprints app on a Kobo"></picture></span><span><b>Preprints</b><span class="says">Browse every arXiv category, keep preprints with their figures, and read them offline on your Kobo.</span></span></a></li>
+        <li><a href="apps/readlater/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/readlater-160w-5602a195860d.webp 160w, media/site/app-thumbs/readlater-480w-5602a195860d.webp 480w, media/site/app-thumbs/readlater-800w-5602a195860d.webp 800w"><img src="media/site/apps/readlater.png" width="1072" height="1448" loading="lazy" alt="Read Later's unread queue of synced Wallabag articles with reading times."></picture></span><span><b>Read Later</b><span class="says">Read your Wallabag articles anywhere. Needs an account.</span></span></a></li>
+        <li><a href="apps/readeck/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/readeck/inbox-160w-6be4762ef796.webp 160w, media/site/app-thumbs/readeck/inbox-480w-6be4762ef796.webp 480w, media/site/app-thumbs/readeck/inbox-800w-6be4762ef796.webp 800w"><img src="media/site/apps/readeck/inbox.png" width="1072" height="1448" loading="lazy" alt="Readeck inbox on a Kobo listing four public-domain essays with their reading times."></picture></span><span><b>Readeck</b><span class="says">Read and search your saved Readeck articles. Needs an account.</span></span></a></li>
+        <li><a href="apps/zotero-reader/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/zotero-reader-160w-ebd479a4b0c7.webp 160w, media/site/app-thumbs/zotero-reader-480w-ebd479a4b0c7.webp 480w, media/site/app-thumbs/zotero-reader-800w-ebd479a4b0c7.webp 800w"><img src="media/site/apps/zotero-reader.png" width="1072" height="1448" loading="lazy" alt="The opening of Darwin's On the Origin of Species, read from a Zotero library's indexed text on a Kobo"></picture></span><span><b>Stacks</b><span class="says">Browse Zotero collections, read metadata and indexed paper text, and keep papers available offline. Needs an account.</span></span></a></li>
+        <li><a href="apps/verses/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/verses-160w-e1a187d1ebbf.webp 160w, media/site/app-thumbs/verses-480w-e1a187d1ebbf.webp 480w, media/site/app-thumbs/verses-800w-e1a187d1ebbf.webp 800w"><img src="media/site/apps/verses.png" width="1072" height="1448" loading="lazy" alt="William Blake's The Tiger in Verses, set in a spacious Kobo reading layout."></picture></span><span><b>Verses</b><span class="says">Read a public-domain poem each day.</span></span></a></li>
+      </ul>
+    </section>
+    <section class="index-group" id="games">
+      <h3>Games <span>11</span></h3>
+      <ul class="index">
+        <li><a href="apps/backgammon/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/backgammon-160w-1b0c722227b8.webp 160w, media/site/app-thumbs/backgammon-480w-1b0c722227b8.webp 480w, media/site/app-thumbs/backgammon-800w-1b0c722227b8.webp 800w"><img src="media/site/apps/backgammon.png" width="1072" height="1448" loading="lazy" alt="Backgammon on a Kobo in the middle of a game against the computer, with its last move marked on the board and described below it."></picture></span><span><b>Backgammon</b><span class="says">Play complete solo or pass-and-play backgammon on one Kobo.</span></span></a></li>
+        <li><a href="apps/crossword/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/crossword-160w-30b1819c1725.webp 160w, media/site/app-thumbs/crossword-480w-30b1819c1725.webp 480w, media/site/app-thumbs/crossword-800w-30b1819c1725.webp 800w"><img src="media/site/apps/crossword.png" width="1072" height="1448" loading="lazy" alt="Crossword grid on a Kobo with an answer filled in, the current clue above it and every clue below it."></picture></span><span><b>Crossword</b><span class="says">Sixty-one offline crosswords with clue navigation and saved progress.</span></span></a></li>
+        <li><a href="apps/inkling/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/inkling-160w-a6d9dc5cdcd5.webp 160w, media/site/app-thumbs/inkling-480w-a6d9dc5cdcd5.webp 480w, media/site/app-thumbs/inkling-800w-a6d9dc5cdcd5.webp 800w"><img src="media/site/apps/inkling.png" width="1072" height="1448" loading="lazy" alt="A solved Inkling puzzle in three guesses, with right-spot letters in black squares."></picture></span><span><b>Inkling</b><span class="says">Solve a fresh five-letter puzzle each day.</span></span></a></li>
+        <li><a href="apps/lichess/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/lichess-160w-85e68fbb892c.webp 160w, media/site/app-thumbs/lichess-480w-85e68fbb892c.webp 480w, media/site/app-thumbs/lichess-800w-85e68fbb892c.webp 800w"><img src="media/site/apps/lichess.png" width="1072" height="1448" loading="lazy" alt="Lichess on Kobo with Play the computer first, then Play online, Your games, Puzzles and How to play."></picture></span><span><b>Lichess</b><span class="says">Play Lichess games, challenge players, solve puzzles, or play offline.</span></span></a></li>
+        <li><a href="apps/logicpack/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/logicpack-160w-14be003799ae.webp 160w, media/site/app-thumbs/logicpack-480w-14be003799ae.webp 480w, media/site/app-thumbs/logicpack-800w-14be003799ae.webp 800w"><img src="media/site/apps/logicpack.png" width="1072" height="1448" loading="lazy" alt="A solved Hashi puzzle in Logic Pack, with sixteen islands joined by single and double bridges."></picture></span><span><b>Logic Pack</b><span class="says">Play four familiar logic games offline.</span></span></a></li>
+        <li><a href="apps/nonograms/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/nonograms-160w-1c72b81ac0b9.webp 160w, media/site/app-thumbs/nonograms-480w-1c72b81ac0b9.webp 480w, media/site/app-thumbs/nonograms-800w-1c72b81ac0b9.webp 800w"><img src="media/site/apps/nonograms.png" width="1072" height="1448" loading="lazy" alt="A Nonograms puzzle with the selected square and its row and column clues highlighted."></picture></span><span><b>Nonograms</b><span class="says">Solve 78 picture and pattern puzzles, or make your own from photos.</span></span></a></li>
+        <li><a href="apps/parlor/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/parlor-160w-f3d4a42e6d94.webp 160w, media/site/app-thumbs/parlor-480w-f3d4a42e6d94.webp 480w, media/site/app-thumbs/parlor-800w-f3d4a42e6d94.webp 800w"><img src="media/site/apps/parlor.png" width="1072" height="1448" loading="lazy" alt="Reversi against the computer on a Kobo, on a ruled board with the computer's last disc marked and the legal moves shown as grey dots."></picture></span><span><b>Parlor</b><span class="says">Play Reversi, Draughts, Nine Men's Morris and Kalah on one Kobo.</span></span></a></li>
+        <li><a href="apps/parser/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/parser-160w-aa3c6e328691.webp 160w, media/site/app-thumbs/parser-480w-aa3c6e328691.webp 480w, media/site/app-thumbs/parser-800w-aa3c6e328691.webp 800w"><img src="media/site/apps/parser.png" width="1072" height="1448" loading="lazy" alt="Parser opening Lamplight, with every word of the story tappable, a run of verbs such as Look and Take, and a row of compass directions."></picture></span><span><b>Parser</b><span class="says">Play an original interactive story without Wi-Fi.</span></span></a></li>
+        <li><a href="apps/pubquiz/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/pubquiz-160w-162ae2a7a2b0.webp 160w, media/site/app-thumbs/pubquiz-480w-162ae2a7a2b0.webp 480w, media/site/app-thumbs/pubquiz-800w-162ae2a7a2b0.webp 800w"><img src="media/site/apps/pubquiz.png" width="1072" height="1448" loading="lazy" alt="Pub Quiz pass-around question on Ada's turn, with four numbered answer choices."></picture></span><span><b>Pub Quiz</b><span class="says">Play offline solo or pass-around trivia rounds.</span></span></a></li>
+        <li><a href="apps/sudoku/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/sudoku-160w-7885f4e53c48.webp 160w, media/site/app-thumbs/sudoku-480w-7885f4e53c48.webp 480w, media/site/app-thumbs/sudoku-800w-7885f4e53c48.webp 800w"><img src="media/site/apps/sudoku.png" width="1072" height="1448" loading="lazy" alt="An original Sudoku puzzle with pencil notes, an answer entered in grey and the selected square's row, column and box shaded"></picture></span><span><b>Sudoku</b><span class="says">Play 600 original Sudoku puzzles with pencil notes, undo and saved games.</span></span></a></li>
+        <li><a href="apps/tictactoe/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/tictactoe-160w-637f3d3a74d2.webp 160w, media/site/app-thumbs/tictactoe-480w-637f3d3a74d2.webp 480w, media/site/app-thumbs/tictactoe-800w-637f3d3a74d2.webp 800w"><img src="media/site/apps/tictactoe.png" width="1072" height="1448" loading="lazy" alt="A completed game of tic-tac-toe on a Kobo"></picture></span><span><b>Tic-tac-toe</b><span class="says">Play tic-tac-toe together on one Kobo.</span></span></a></li>
+      </ul>
+    </section>
+    <section class="index-group" id="everyday">
+      <h3>Everyday tools <span>10</span></h3>
+      <ul class="index">
+        <li><a href="apps/fieldbook/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/fieldbook-160w-8e179d3dfc8a.webp 160w, media/site/app-thumbs/fieldbook-480w-8e179d3dfc8a.webp 480w, media/site/app-thumbs/fieldbook-800w-8e179d3dfc8a.webp 800w"><img src="media/site/apps/fieldbook.png" width="1072" height="1448" loading="lazy" alt="Fieldbook during an outing at Lake Merced, listing the birds logged so far with a Finish outing button."></picture></span><span><b>Fieldbook</b><span class="says">Log bird sightings anywhere and build your life list.</span></span></a></li>
+        <li><a href="apps/flashcards/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/flashcards-160w-f8c07082a597.webp 160w, media/site/app-thumbs/flashcards-480w-f8c07082a597.webp 480w, media/site/app-thumbs/flashcards-800w-f8c07082a597.webp 800w"><img src="media/site/apps/flashcards.png" width="1072" height="1448" loading="lazy" alt="A Flashcards review showing the revealed answer with Again, Hard, Good and Easy rating buttons."></picture></span><span><b>Flashcards</b><span class="says">Review flashcards anywhere, even without Wi-Fi.</span></span></a></li>
+        <li><a href="apps/grimoire/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/grimoire-160w-a38a56827be0.webp 160w, media/site/app-thumbs/grimoire-480w-a38a56827be0.webp 480w, media/site/app-thumbs/grimoire-800w-a38a56827be0.webp 800w"><img src="media/site/apps/grimoire.png" width="1072" height="1448" loading="lazy" alt="Grimoire initiative order showing the active combatant and round counter on a Kobo."></picture></span><span><b>Grimoire</b><span class="says">Browse offline SRD references and manage tabletop combat.</span></span></a></li>
+        <li><a href="apps/habits/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/habits-160w-c09a606a9304.webp 160w, media/site/app-thumbs/habits-480w-c09a606a9304.webp 480w, media/site/app-thumbs/habits-800w-c09a606a9304.webp 800w"><img src="media/site/apps/habits.png" width="1072" height="1448" loading="lazy" alt="Habits today screen on a Kobo Clara BW, with Read 20 pages checked off and two more habits due."></picture></span><span><b>Habits</b><span class="says">Track daily and weekday habits with local streaks.</span></span></a></li>
+        <li><a href="apps/kitchencard/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/kitchencard-160w-b61fb6171e6b.webp 160w, media/site/app-thumbs/kitchencard-480w-b61fb6171e6b.webp 480w, media/site/app-thumbs/kitchencard-800w-b61fb6171e6b.webp 800w"><img src="media/site/apps/kitchencard.png" width="1072" height="1448" loading="lazy" alt="Kitchen Card showing a large cooking instruction with Steps and Ingredients tabs."></picture></span><span><b>Kitchen Card</b><span class="says">Keep Mealie recipes handy in a counter-friendly cooking view. Needs an account.</span></span></a></li>
+        <li><a href="apps/musicstand/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/musicstand-160w-11a24ad9b4dc.webp 160w, media/site/app-thumbs/musicstand-480w-11a24ad9b4dc.webp 480w, media/site/app-thumbs/musicstand-800w-11a24ad9b4dc.webp 800w"><img src="media/site/apps/musicstand.png" width="1072" height="1448" loading="lazy" alt="Music Stand showing the opening of the Prelude from Bach's Cello Suite No. 1 at reading size."></picture></span><span><b>Music Stand</b><span class="says">Read music scores with setlists and half-page turns. Needs your computer.</span></span></a></li>
+        <li><a href="apps/needles/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/needles-160w-6b703bad945a.webp 160w, media/site/app-thumbs/needles-480w-6b703bad945a.webp 480w, media/site/app-thumbs/needles-800w-6b703bad945a.webp 800w"><img src="media/site/apps/needles.png" width="1072" height="1448" loading="lazy" alt="Needles row counter showing the current row, section and repeat progress, with +1 row and Undo."></picture></span><span><b>Needles</b><span class="says">Count rows, browse Ravelry collections, and read your synced patterns offline.</span></span></a></li>
+        <li><a href="apps/post/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/post-160w-89f5697c0010.webp 160w, media/site/app-thumbs/post-480w-89f5697c0010.webp 480w, media/site/app-thumbs/post-800w-89f5697c0010.webp 800w"><img src="media/site/apps/post.png" width="1072" height="1448" loading="lazy" alt="Post inbox listing Hermes letters newest first, with Newer and Older paging."></picture></span><span><b>Post</b><span class="says">Read and reply to letters from Hermes. Needs an account.</span></span></a></li>
+        <li><a href="apps/todo/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/todo-160w-0e3debfa2cb0.webp 160w, media/site/app-thumbs/todo-480w-0e3debfa2cb0.webp 480w, media/site/app-thumbs/todo-800w-0e3debfa2cb0.webp 800w"><img src="media/site/apps/todo.png" width="1072" height="1448" loading="lazy" alt="A to-do list with four open items and one done on a Kobo."></picture></span><span><b>Todo</b><span class="says">Keep a simple to-do list that stays on your Kobo.</span></span></a></li>
+        <li><a href="apps/vault/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/vault-160w-a30819032bd4.webp 160w, media/site/app-thumbs/vault-480w-a30819032bd4.webp 480w, media/site/app-thumbs/vault-800w-a30819032bd4.webp 800w"><img src="media/site/apps/vault.png" width="1072" height="1448" loading="lazy" alt="Vault home on a Kobo with eight notes and Browse, Tags, Recent and Search rows."></picture></span><span><b>Vault</b><span class="says">Browse your notes by folder, tag, link, and backlink. Needs your computer.</span></span></a></li>
+      </ul>
+    </section>
+    <section class="index-group" id="home-and-computer">
+      <h3>Home and computer <span>7</span></h3>
+      <ul class="index">
+        <li><a href="apps/birds/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/birds-160w-5f6b5932a47f.webp 160w, media/site/app-thumbs/birds-480w-5f6b5932a47f.webp 480w, media/site/app-thumbs/birds-800w-5f6b5932a47f.webp 800w"><img src="media/site/apps/birds.png" width="1072" height="1448" loading="lazy" alt="A labelled collage of public-domain bird plates filling a Kobo screen."></picture></span><span><b>Birds</b><span class="says">Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.</span></span></a></li>
+        <li><a href="apps/deck/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/deck-160w-bb95cd98f437.webp 160w, media/site/app-thumbs/deck-480w-bb95cd98f437.webp 480w, media/site/app-thumbs/deck-800w-bb95cd98f437.webp 800w"><img src="media/site/apps/deck.png" width="1072" height="1448" loading="lazy" alt="Deck paired with a computer, showing Test, Format, Lint, Docs and Deploy command pads."></picture></span><span><b>Deck</b><span class="says">Turn your Kobo into a remote control for your computer. Needs your computer.</span></span></a></li>
+        <li><a href="apps/frame/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/frame-160w-9343c5e887cf.webp 160w, media/site/app-thumbs/frame-480w-9343c5e887cf.webp 480w, media/site/app-thumbs/frame-800w-9343c5e887cf.webp 800w"><img src="media/site/apps/frame.png" width="1072" height="1448" loading="lazy" alt="Ansel Adams's The Tetons and the Snake River filling the Frame screen on a Kobo Clara BW."></picture></span><span><b>Frame</b><span class="says">Show photos from your computer as a slideshow, with the screen on or waking on a schedule. Needs your computer.</span></span></a></li>
+        <li><a href="apps/homepanel/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/homepanel-160w-230282b5f93d.webp 160w, media/site/app-thumbs/homepanel-480w-230282b5f93d.webp 480w, media/site/app-thumbs/homepanel-800w-230282b5f93d.webp 800w"><img src="media/site/apps/homepanel.png" width="1072" height="1448" loading="lazy" alt="Home Panel tile grid on a Kobo showing eight Home Assistant tiles with the last refresh time."></picture></span><span><b>Home Panel</b><span class="says">Control saved Home Assistant tiles from a low-power panel. Needs an account. Home Assistant must be on HTTPS.</span></span></a></li>
+        <li><a href="apps/morse/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/morse-160w-923899b3698a.webp 160w, media/site/app-thumbs/morse-480w-923899b3698a.webp 480w, media/site/app-thumbs/morse-800w-923899b3698a.webp 800w"><img src="media/site/apps/morse.png" width="1072" height="1448" loading="lazy" alt="A letter filling the Kobo screen while the front light sends Morse code"></picture></span><span><b>Morse</b><span class="says">Type a message and send it in Morse code with the front light.</span></span></a></li>
+        <li><a href="apps/paperterm/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/paperterm-160w-88da65536d88.webp 160w, media/site/app-thumbs/paperterm-480w-88da65536d88.webp 480w, media/site/app-thumbs/paperterm-800w-88da65536d88.webp 800w"><img src="media/site/apps/paperterm.png" width="1072" height="1448" loading="lazy" alt="Paperterm showing a laptop terminal session in portrait, with the keyboard open."></picture></span><span><b>Paperterm</b><span class="says">Pair with a computer to mirror a terminal session on e-ink. Needs your computer.</span></span></a></li>
+        <li><a href="apps/syncthing/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/syncthing-160w-77eec307b0d3.webp 160w, media/site/app-thumbs/syncthing-480w-77eec307b0d3.webp 480w, media/site/app-thumbs/syncthing-800w-77eec307b0d3.webp 800w"><img src="media/site/apps/syncthing.png" width="1072" height="1448" loading="lazy" alt="Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."></picture></span><span><b>Sync</b><span class="says">Sync folders between your computer and your Kobo with Syncthing. Needs your computer.</span></span></a></li>
+      </ul>
+    </section>
+    <section class="index-group" id="developers">
+      <h3>For developers <span>4</span></h3>
+      <ul class="index">
+        <li><a href="apps/chat/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/chat-160w-838071e08e27.webp 160w, media/site/app-thumbs/chat-480w-838071e08e27.webp 480w, media/site/app-thumbs/chat-800w-838071e08e27.webp 800w"><img src="media/site/apps/chat.png" width="1072" height="1448" loading="lazy" alt="An answer displayed for touch-friendly reading on a Kobo"></picture></span><span><b>Chat</b><span class="says">Ask a question, then read and navigate the answer with touch controls. Needs an account.</span></span></a></li>
+        <li><a href="apps/gallery/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/components-160w-756118d8160f.webp 160w, media/site/app-thumbs/components-480w-756118d8160f.webp 480w, media/site/app-thumbs/components-800w-756118d8160f.webp 800w"><img src="media/site/apps/components.png" width="1072" height="1448" loading="lazy" alt="Cobalt typography and interface components on a Kobo"></picture></span><span><b>Components</b><span class="says">See every Cobalt UI component on the device in one reference app.</span></span></a></li>
+        <li><a href="apps/magnet/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/magnet-160w-b6b84cb8cff2.webp 160w, media/site/app-thumbs/magnet-480w-b6b84cb8cff2.webp 480w, media/site/app-thumbs/magnet-800w-b6b84cb8cff2.webp 800w"><img src="media/site/apps/magnet.png" width="1072" height="1448" loading="lazy" alt="The Kobo hall sensor responding to a magnet"></picture></span><span><b>Magnet</b><span class="says">Find the hall sensor behind the bezel and watch it respond to a magnet.</span></span></a></li>
+        <li><a href="apps/sidekick/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/sidekick-160w-b12604569656.webp 160w, media/site/app-thumbs/sidekick-480w-b12604569656.webp 480w, media/site/app-thumbs/sidekick-800w-b12604569656.webp 800w"><img src="media/site/apps/sidekick.png" width="1072" height="1448" loading="lazy" alt="Sidekick showing several coding-agent sessions and their pending approvals."></picture></span><span><b>Sidekick</b><span class="says">Answer coding-agent permission prompts from your Kobo. Needs your computer.</span></span></a></li>
+      </ul>
+    </section>
+    <section class="index-group" id="included">
+      <h3>Included with Cobalt <span>4</span></h3>
+      <ul class="index">
+        <li><a href="apps/launcher/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/launcher-160w-64e09d34f8dd.webp 160w, media/site/app-thumbs/launcher-480w-64e09d34f8dd.webp 480w, media/site/app-thumbs/launcher-800w-64e09d34f8dd.webp 800w"><img src="media/site/apps/launcher.png" width="1072" height="1448" loading="lazy" alt="The Cobalt launcher on its Apps tab, with Books, Settings and Kobo reader tabs below"></picture></span><span><b>Launcher</b><span class="says">Opens installed apps and always keeps a route back to the Kobo reader.</span></span></a></li>
+        <li><a href="apps/store/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/store-160w-f7724b022590.webp 160w, media/site/app-thumbs/store-480w-f7724b022590.webp 480w, media/site/app-thumbs/store-800w-f7724b022590.webp 800w"><img src="media/site/apps/store.png" width="1072" height="1448" loading="lazy" alt="The Cobalt App Store listing installed and available apps"></picture></span><span><b>App Store</b><span class="says">Installs, updates, removes and reinstalls signed apps over Wi-Fi.</span></span></a></li>
+        <li><a href="apps/terminal/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/terminal-160w-2be190b1186f.webp 160w, media/site/app-thumbs/terminal-480w-2be190b1186f.webp 480w, media/site/app-thumbs/terminal-800w-2be190b1186f.webp 800w"><img src="media/site/apps/terminal.png" width="1072" height="1448" loading="lazy" alt="A shell and touch keyboard on a Kobo"></picture></span><span><b>Terminal</b><span class="says">A shell with an on-screen keyboard.</span></span></a></li>
+        <li><a href="apps/settings/"><span class="panel-shot"><picture><source type="image/webp" sizes="72px" srcset="media/site/app-thumbs/settings-160w-89c6306af995.webp 160w, media/site/app-thumbs/settings-480w-89c6306af995.webp 480w, media/site/app-thumbs/settings-800w-89c6306af995.webp 800w"><img src="media/site/apps/settings.png" width="1072" height="1448" loading="lazy" alt="Cobalt Settings listing Bluetooth, Wi-Fi, Battery, Software update and About"></picture></span><span><b>Settings</b><span class="says">Wi-Fi, device information and Cobalt updates.</span></span></a></li>
+      </ul>
+    </section>
+    <!-- apps-grid:end -->
+    <p class="after-index">Want one that is not here? Request an app, suggest a feature or report a bug in <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.</p>
+  </div>
+</section>
+
+<section class="band" id="store">
+  <div class="wrap beside">
+    <div>
       <h2>Add an app without reconnecting USB.</h2>
-      <p>Browse available apps on the reader, install one over Wi-Fi, and remove it when you no longer want it. App updates arrive without reinstalling Cobalt.</p>
-      <p>Every package is checked before it opens. An interrupted install or update leaves the working version in place.</p>
-      <p class="quiet">Cobalt updates remain separate from app updates, so the Store cannot replace the platform itself.</p>
-      <p style="margin-top:20px"><a href="developers.html">Build and publish an app</a></p>
+      <div class="prose">
+        <p>Browse available apps on the reader, install one over Wi-Fi, and remove it when you no longer want it. App updates arrive without reinstalling Cobalt.</p>
+        <p>Every package is checked before it opens. An interrupted install or update leaves the working version in place.</p>
+        <p>Cobalt updates remain separate from app updates, so the Store cannot replace the platform itself.</p>
+      </div>
     </div>
-    <figure>
-      <img src="media/store-demo.gif" width="430" height="580" loading="lazy"
-           alt="The Cobalt App Store installing an app over Wi-Fi on a Kobo Clara BW">
+    <figure class="reader">
+      <div class="reader-body">
+        <div class="reader-screen">
+          <img src="media/store-demo.gif" width="430" height="580" loading="lazy"
+               alt="The Cobalt App Store installing an app over Wi-Fi on a Kobo Clara BW">
+        </div>
+      </div>
       <figcaption>Sudoku arriving over Wi-Fi.</figcaption>
     </figure>
   </div>
 </section>
 
-<section id="build">
-  <div class="wrap sdk">
-    <div class="measure">
+<section class="band" id="install">
+  <div class="wrap">
+    <h2>How to install</h2>
+    <ol class="steps">
+      <li><div>
+        <p><strong>Install it from your browser.</strong> Plug the reader into this computer and install Cobalt in about a minute.</p>
+        <p><a class="btn primary" href="install/">Install Cobalt</a></p>
+        <p class="quiet">Or from a terminal, which also installs the <code>kobo</code> command and sets up the reader for apps that take files from your computer:</p>
+        <pre><code>curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh</code></pre>
+      </div></li>
+      <li><div><p><strong>Restart the reader</strong> and open <strong>Cobalt</strong> from Kobo's menu.</p></div></li>
+      <li><div><p><strong>Open App Store.</strong> New apps download over Wi-Fi.</p></div></li>
+    </ol>
+    <p class="after-index">The complete walkthrough, including recovery steps, is in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
+  </div>
+</section>
+
+<section class="band" id="readers">
+  <div class="wrap split">
+    <div>
+      <h2>The stock reader is always one restart away.</h2>
+      <div class="prose">
+        <p>Cobalt does not replace Kobo's boot chain, and a restart returns to the stock reader. Installing it adds files to the reader's user storage. It is provided without warranty.</p>
+        <p>On a model or firmware that is not in the table, Cobalt lists what has not been tested and asks before it starts. Kobo firmware 5.x is not supported.</p>
+      </div>
+    </div>
+    <div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Tested reader</th><th scope="col">Firmware</th></tr></thead>
+          <tbody>
+            <tr><td>Kobo Clara BW</td><td>4.45</td></tr>
+            <tr><td>Kobo Clara Colour</td><td>4.45</td></tr>
+            <tr><td>Kobo Clara HD</td><td>4.38</td></tr>
+            <tr><td>Kobo Elipsa 2E</td><td>4.38</td></tr>
+            <tr><td>Kobo Libra 2</td><td>4.38</td></tr>
+            <tr><td>Kobo Libra Colour</td><td>4.45, 4.46</td></tr>
+            <tr><td>Kobo Libra H2O</td><td>4.38</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="table-note">These are the Kobos somebody has physically tested, at the firmware and kernel versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>. To get yours onto this list, <a href="https://github.com/BandarLabs/Cobalt/issues">join an existing device thread or create a new one</a>.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="build">
+  <div class="wrap beside flip">
+    <figure class="reader">
+      <div class="reader-body">
+        <div class="reader-screen">
+          <img src="media/site/apps/components.png" width="1072" height="1448" loading="lazy" alt="Cobalt interface controls and typography rendered on an e-ink screen">
+        </div>
+      </div>
+      <figcaption>The component gallery on a supported reader.</figcaption>
+    </figure>
+    <div>
       <h2>Build your own app.</h2>
-      <p>Start a Rust app, run it in the Cobalt simulator, test it on a supported reader, and submit it to Store. An app can ship without waiting for a Cobalt platform release.</p>
-      <div class="cta" style="margin-top:26px">
+      <div class="prose">
+        <p>Start a Rust app, run it in the Cobalt simulator, test it on a supported reader, and submit it to Store. An app can ship without waiting for a Cobalt platform release.</p>
+      </div>
+      <div class="actions">
         <a class="btn primary" href="developers.html">Build for Cobalt</a>
         <a class="btn" href="sdk.html">SDK reference</a>
       </div>
     </div>
-    <figure>
-      <img src="media/site/apps/components.png" width="1072" height="1448" loading="lazy" alt="Cobalt interface controls and typography rendered on an e-ink screen">
-      <figcaption>The component gallery on a supported reader.</figcaption>
-    </figure>
   </div>
 </section>
-
-<section id="install" class="install">
-  <div class="wrap">
-    <svg class="device-engraving" viewBox="0 0 220 320" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <defs>
-        <pattern id="screen-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" stroke-width="0.4" opacity="0.5"/>
-        </pattern>
-      </defs>
-      <!-- body -->
-      <rect x="30" y="14" width="160" height="252" rx="12" stroke="currentColor" stroke-width="1"/>
-      <!-- screen -->
-      <rect x="42" y="30" width="136" height="196" stroke="currentColor" stroke-width="0.6"/>
-      <rect x="42" y="30" width="136" height="196" fill="url(#screen-hatch)"/>
-      <!-- chin wordmark line -->
-      <line x1="88" y1="246" x2="132" y2="246" stroke="currentColor" stroke-width="1.4"/>
-      <!-- power button -->
-      <line x1="140" y1="13" x2="164" y2="13" stroke="currentColor" stroke-width="2.5"/>
-      <!-- usb-c port -->
-      <rect x="98" y="264" width="24" height="4" rx="2" stroke="currentColor" stroke-width="0.8"/>
-      <!-- dimension callout -->
-      <line x1="14" y1="14" x2="14" y2="266" stroke="currentColor" stroke-width="0.5"/>
-      <line x1="10" y1="14" x2="18" y2="14" stroke="currentColor" stroke-width="0.5"/>
-      <line x1="10" y1="266" x2="18" y2="266" stroke="currentColor" stroke-width="0.5"/>
-      <line x1="30" y1="282" x2="190" y2="282" stroke="currentColor" stroke-width="0.5"/>
-      <line x1="30" y1="278" x2="30" y2="286" stroke="currentColor" stroke-width="0.5"/>
-      <line x1="190" y1="278" x2="190" y2="286" stroke="currentColor" stroke-width="0.5"/>
-      <text x="110" y="304" text-anchor="middle" font-family="ui-monospace, monospace" font-size="10" fill="currentColor" letter-spacing="1">FIG. 1 CLARA BW N365</text>
-    </svg>
-    <h2 class="measure">How to install</h2>
-    <ol class="steps">
-      <li><strong>Install it from your browser.</strong> Plug the reader into this computer and install Cobalt in about a minute.</li>
-    </ol>
-    <div class="cta" style="margin-top:16px">
-      <a class="btn primary" href="install/">Install Cobalt</a>
-    </div>
-    <p class="measure quiet" style="margin-top:18px">Or from a terminal, which does the same thing:</p>
-<pre><code>curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh</code></pre>
-    <ol class="steps" start="2" style="counter-reset: step 1">
-      <li><strong>Restart the reader</strong> and open <strong>Cobalt</strong> from Kobo's menu.</li>
-      <li><strong>Open Store.</strong> New apps download over Wi-Fi.</li>
-    </ol>
-    <p class="measure quiet" style="margin-top:22px">The complete walkthrough, including recovery steps, is in <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">docs/INSTALL.md</a>.</p>
-  </div>
-</section>
-
-<section class="safety">
-  <div class="wrap measure">
-    <p class="kicker">Safety</p>
-    <h2>The stock reader is always one restart away.</h2>
-    <p>Cobalt does not replace Kobo's boot chain, and a restart returns to the stock reader. Installing it adds files to the reader's user storage. It is provided without warranty.</p>
-    <p>The Clara BW, Clara Colour, Elipsa 2E, Clara HD, Libra 2, Libra Colour and Libra H2O are tested at the firmware and kernel versions in the <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">device support matrix</a>. On any other model or firmware, Cobalt lists what has not been tested and asks before it starts. Cobalt is an independent project, not affiliated with Rakuten Kobo.</p>
-  </div>
-</section>
+</main>
 
 <footer>
   <div class="wrap">
-    <div class="element">
-      <div class="tile"><small>27</small>Co</div>
-      <p>Cobalt · AGPL-3.0 · <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a></p>
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
     </div>
-    <nav>
+    <nav aria-label="Footer navigation">
       <a href="developers.html">Developers</a>
       <a href="faq.html">FAQ</a>
       <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
-      <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">Install</a>
+      <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/INSTALL.md">Install guide</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/CONTRIBUTING_APPS.md">Contribute an app</a>
       <a href="https://github.com/BandarLabs/Cobalt/blob/main/SECURITY.md">Security</a>
     </nav>
   </div>
 </footer>
 
+<script src="site.js" defer></script>
 </body>
 </html>

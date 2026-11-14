@@ -6,10 +6,10 @@ on your Kobo.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/inbox.png" alt="The inbox, newest first"><br>The inbox, newest first</td>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/post/post-reply-sent.png" alt="A letter with its reply state"><br>A letter with its reply state</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reply-sent.png" alt="A letter with its reply delivered"><br>A letter with its reply delivered</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/post/post-draft-restored.png" alt="An unsent draft restored after a restart"><br>An unsent draft restored after a restart</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/draft.png" alt="An unsent draft restored after a restart"><br>An unsent draft restored after a restart</td>
 </tr>
 </table>
 

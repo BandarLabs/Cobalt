@@ -58,7 +58,7 @@ def outlined(layout):
     """Squares drawn with the selection outline, which also marks the last move."""
     marked = set()
     for node in layout["nodes"]:
-        found = re.match(r"Cell\(ActionId\((\d+)\), Board(?:Dark)?, true\)", node["kind"])
+        found = re.match(r"Cell\(ActionId\((\d+)\), Board(?:Dark|Light)?, true\)", node["kind"])
         if found:
             marked.add(SQUARES[int(found.group(1))])
     return marked
@@ -132,7 +132,7 @@ for scale in ["default", "170"]:
                             "http://" + address + "/layout", timeout=2
                         ) as response:
                             layout = json.load(response)
-                        if "Computer" in json.dumps(layout):
+                        if "Play the computer" in json.dumps(layout):
                             break
                     except OSError:
                         pass
@@ -186,7 +186,7 @@ for scale in ["default", "170"]:
             before = replied["paints"]
             time.sleep(2.5)
             assert layout()["paints"] == before, "an unclocked board repainted while nobody moved"
-            drive("tap-id take-back", "wait-for White · Your move · Casual · none",
+            drive("tap-id take-back", "wait-for White · Your move · Casual",
                   "clean", "shot untimed-white-undo")
             assert outlined(layout()) == set(), "Undo left the old move outlined"
 

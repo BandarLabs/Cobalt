@@ -15,7 +15,7 @@ shot parlor-help
 tap Back
 tap Start game
 expect Your move
-expect Tap a hollow destination
+expect Tap a dotted square
 clean
 shot reversi
 scenario storage-full
@@ -79,7 +79,17 @@ expect Black to move
 expect Black 0 · White 0
 clean
 shot reversi-landscape
+# The game and the landscape choice both survive a relaunch.
+restart
+wait-for Resume Reversi
+expect Board games
+clean
+shot parlor-relaunched-landscape
+tap Resume Reversi
+expect Game resumed.
+expect Black to move
 tap-id game-more
+expect Use portrait
 tap New game
 expect Turns for each player
 clean
@@ -101,3 +111,8 @@ expect Black 0 · White 0
 tap-id game-more
 tap Use portrait
 expect Black to move
+tap Back
+expect Resume Reversi
+expect-missing Resume saved game
+clean
+shot parlor-menu-resume

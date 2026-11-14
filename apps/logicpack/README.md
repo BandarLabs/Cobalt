@@ -6,11 +6,11 @@ and Minesweeper.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/collection.png" alt="The four games, with how many of each are solved"><br>The four games, with how many of each are solved</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/slitherlink.png" alt="Slitherlink"><br>Slitherlink</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/slitherlink.png" alt="Slitherlink, with part of the loop drawn"><br>Slitherlink, with part of the loop drawn</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/hashi.png" alt="Hashi, with single and double bridges"><br>Hashi, with single and double bridges</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/kakuro.png" alt="Kakuro"><br>Kakuro</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/kakuro.png" alt="Kakuro, with the first digits entered"><br>Kakuro, with the first digits entered</td>
 </tr>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/entry.png" alt="Entering a Kakuro digit, with both sums shown"><br>Entering a Kakuro digit, with both sums shown</td>
@@ -40,18 +40,20 @@ the top, **Undo** first at the foot. The menu starts with **New game**, which
 opens the next puzzle of the same kind you have not solved, then **Restart
 puzzle** and **Puzzles**. Slitherlink and Minesweeper put the way taps work
 beside Undo, named for what a tap there does: **Mark crosses** or **Draw
-lines**, **Flag mines** or **Reveal squares**.
+lines**, **Flag mines** or **Reveal squares**. Hashi and Kakuro put
+**Restart** there, and a solved puzzle offers **Next puzzle**.
 
 - The puzzle list shows one grade at a time and as many puzzles as fit the
-  page, each marked solved or in progress.
+  page, numbered from the start of the grade and each marked solved or in
+  progress.
 - A puzzle tells you when it is solved, and when a finished-looking board
   breaks a rule, which rule it is.
 - Each puzzle keeps its own progress and up to 32 undo steps, which survive
   reopening.
 - In Kakuro, tapping a square opens a digit chooser that shows both sums.
 - **Restart puzzle** asks first, leaves other puzzles alone and can be undone.
-- Progress shows **Saving…** until storage confirms it. If a save fails, keep
-  the app open and choose **Retry saving**.
+- Saving is quiet when it works. If a save fails, a line over the board says
+  so: keep the app open and choose **Retry saving**.
 
 ## How the puzzles are made
 

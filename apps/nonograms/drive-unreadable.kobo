@@ -1,0 +1,18 @@
+# sweep: --seed-root scripts/fixtures/nonograms/unreadable-save
+# A puzzle whose save cannot be read says so, keeps the file, and lets the
+# owner go back to the other puzzles.
+expect Picture puzzles
+tap House
+wait-for Cannot open game
+expect Your saved game was kept.
+expect Retry
+clean
+shot nonograms-unreadable
+tap Retry
+wait-for Cannot open game
+tap Puzzles
+expect Picture puzzles
+# The other puzzles still open.
+tap Arrow
+wait-for-id more
+expect 0/25

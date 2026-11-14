@@ -4,7 +4,7 @@ A shell on your Kobo, with a touch keyboard.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/shell.png" alt="A shell listing the reader's files"><br>A shell listing the reader's files</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/shell.png" alt="A shell listing the books on the reader"><br>A shell listing the books on the reader</td>
 </tr>
 </table>
 
@@ -28,9 +28,10 @@ allowed to use it.
 
 ```sh
 cargo test -p kobo-terminal
-kobo run --sim --app terminal      # in the browser simulator
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo dev --runtime --apps terminal   # the launcher and this app in the browser simulator
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
+
 The simulator starts a real `/bin/sh` on your computer.
 
 ---

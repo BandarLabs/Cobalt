@@ -1,0 +1,79 @@
+# Seeded with one pattern; a second arrives while Needles is open and is
+# offered the next time Needles comes back.
+wait-for Read a pattern
+expect Winter socks
+companion needles push apps/needles/fixtures/lace-shawl.md --sim
+lifecycle background
+lifecycle foreground
+wait-for 2 patterns from your computer
+# With two patterns, Read a pattern lists them and says which were opened.
+tap Read a pattern
+wait-for Patterns
+expect Winter socks
+expect Lace shawl
+expect Not opened yet
+clean
+shot patterns
+tap Lace shawl
+wait-for A top-down triangle
+clean
+shot reading-first-page
+# The page keys turn the pattern; the middle opens its menu, which says the
+# page and changes the text size.
+page next
+wait-idle
+page next
+wait-idle
+expect-missing A top-down triangle
+tap-at 536,724
+wait-for Page 3 of
+expect 100%
+# The plus end of the text size stepper; its action names the size it goes to.
+tap-at 942,259
+wait-for 110%
+tap Bookmark
+wait-for Bookmarked
+clean
+shot reading-menu
+tap-id 4294967295
+wait-idle
+expect-missing Bookmarked
+# Back from the pattern lands on its project, whose sections are the
+# pattern's own.
+tap-id 4294967295
+wait-for Lace shawl
+tap Change section
+wait-for Garter tab
+expect Border
+tap-id 4294967295
+wait-for Lace shawl
+# The pattern reopens on the page it was left on, after a restart too.
+tap Read a pattern
+wait-for Patterns
+# Lace shawl now opens where it was left; Winter socks is still unopened.
+expect Opens where you left it
+expect Not opened yet
+restart
+wait-for Read a pattern
+tap Read a pattern
+wait-for Patterns
+tap Lace shawl
+wait-for-id 282227963
+wait-idle
+expect-missing A top-down triangle
+tap-at 536,724
+wait-for Page 3 of
+tap-id 4294967295
+wait-idle
+tap-id 4294967295
+wait-for Lace shawl
+# Projects lists every project with the section and row it is on.
+tap Projects
+wait-for Row counter
+expect Lace shawl
+clean
+shot projects
+tap Lace shawl
+wait-for Read a pattern
+# A new project starts on the first section of its pattern.
+expect Garter tab

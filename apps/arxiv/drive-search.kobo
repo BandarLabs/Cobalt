@@ -1,0 +1,52 @@
+# sweep: --bare
+# A typed search lists matches, can be saved, and the saved search reruns
+# from Saved after a restart.
+wait-for Preprints
+tap Saved
+wait-for Nothing saved
+tap Back
+wait-idle
+tap Search arXiv
+wait-for Type here
+type xstack
+tap Search
+wait-idle 20000
+wait-for XStack: A Benchmark for ML Repo Migration
+expect Save this search
+expect Any time
+clean
+shot search-results
+tap Save this search
+wait-idle
+expect-missing Save this search
+tap Back
+wait-idle
+restart
+wait-for Preprints
+tap Saved
+wait-for Saved search
+expect xstack
+clean
+shot saved-search
+tap xstack
+wait-idle 20000
+wait-for XStack: A Benchmark
+expect-missing Save this search
+tap Back
+wait-idle
+tap Saved
+wait-for Saved search
+tap Manage
+wait-for Done
+tap xstack
+wait-for Nothing saved
+tap Back
+wait-idle
+# A date shown to a person reads as a date, not a database stamp.
+tap Search arXiv
+wait-for Type here
+type xstack
+tap Search
+wait-idle 20000
+wait-for XStack: A Benchmark for ML Repo Migration
+expect-missing 2026-11-05

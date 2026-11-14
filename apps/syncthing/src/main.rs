@@ -613,6 +613,12 @@ fn about_screen() -> Screen {
 }
 
 impl KoboApp for Sync {
+    /// Syncthing's own blue, from its mark, kept apart from the platform's
+    /// cobalt so the two are not mistaken for one another.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Blue)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(CONFIG);
         context.store().load(META);
@@ -755,7 +761,12 @@ impl KoboApp for Sync {
         } else if action == action_id("setup") {
             self.view = View::Guide;
         } else if action == action_id("back") || action == ActionId::BACK {
-            self.view = View::Status;
+            // About is opened from the folders page, and Back returns there.
+            self.view = if self.view == View::About {
+                View::Folders
+            } else {
+                View::Status
+            };
         }
         self.show(context);
     }
@@ -824,6 +835,18 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn back_from_about_returns_to_the_folders_page_that_opened_it() {
+        let mut app = Sync::default();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("folders"));
+        app.on_action(&mut context, action_id("about"));
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.view, View::Folders);
+        app.on_action(&mut context, ActionId::BACK);
+        assert_eq!(app.view, View::Status);
     }
 
     #[test]

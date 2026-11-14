@@ -59,7 +59,12 @@ fn runtime_back_returns_from_every_supporting_page_without_changing_sync() {
                     .is_empty(),
                 "{action} must have one unambiguous way back"
             );
-            let returned = runner.action(ActionId::BACK);
+            let mut returned = runner.action(ActionId::BACK);
+            // About is opened from the folders page and returns there first.
+            if action == "about" {
+                assert_eq!(runner.app().view, View::Folders);
+                returned = runner.action(ActionId::BACK);
+            }
             assert_eq!(runner.app().view, View::Status);
             assert!(
                 !screen(&returned).owns_back,

@@ -113,7 +113,7 @@ fn a_list_paged_below_a_banner_of_any_level_with_its_action_is_drawn_whole_on_a_
             for action in [false, true] {
                 let mut shape = BannerShape::new(level, TEXT);
                 if action {
-                    shape = shape.with_action();
+                    shape = shape.with_labelled_action("Retry saving");
                 }
                 let pages = context.paginate_rows_below_banner(&rows, true, Some(shape));
                 let mut seen = Vec::new();
@@ -202,7 +202,7 @@ fn rows_with_counts_buttons_and_menus_under_a_banner_with_an_action_are_drawn_wh
             .iter()
             .map(|(title, summary, edge)| (title.as_str(), *summary, *edge))
             .collect();
-        let shape = BannerShape::new(BannerLevel::Error, TEXT).with_action();
+        let shape = BannerShape::new(BannerLevel::Error, TEXT).with_labelled_action("Retry saving");
         let pages = context.paginate_rows_with_edges_below_banner(&measured, true, Some(shape));
         let mut seen = Vec::new();
         for (number, page) in pages.iter().enumerate() {

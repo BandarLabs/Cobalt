@@ -4,9 +4,9 @@
   "short_label": "Verses",
   "summary": "Read a public-domain poem each day.",
   "page_description": "Discover a daily poem, browse its source, and keep favorites for later.",
-  "version": "0.1.12",
-  "release_notes": "Searches are typed on Cobalt's own keyboard, and the suggested poets stay on screen while you choose.",
-  "glyph": "note",
+  "version": "0.1.17",
+  "release_notes": "The favourite heart now sits in the poem's panel and is filled when the poem is a favourite. A search with no results says so plainly, and a long poem shows its page count.",
+  "glyph": "quote",
   "capabilities": [
     "network"
   ]

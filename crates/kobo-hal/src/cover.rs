@@ -3,7 +3,8 @@
 //! The Kobo has a hall sensor behind one edge of the bezel. A magnet near it
 //! closes a contact, and the kernel publishes that on the `gpio-keys` evdev
 //! node as `EV_KEY` code 35: a press when the magnet arrives, a release when it
-//! leaves. That is the whole of the hardware interface.
+//! leaves. That is the whole of the hardware interface. Most i.MX Kobos send
+//! the same thing on code 59 instead, so either code is read as the magnet.
 //!
 //! Three properties of this node decide the shape of everything below.
 //!
@@ -40,8 +41,15 @@ use std::time::Duration;
 const EVENT_BYTES: usize = 16;
 const READ_CHUNK_EVENTS: usize = 16;
 
-/// The name the kernel gives the node the hall sensor reports on.
-const SENSOR_NAME: &str = "gpio-keys";
+/// The names the kernel gives the node the hall sensor reports on.
+///
+/// `gpio-keys` on every measured reader. `ntx_event0` is the name the older
+/// NTX kernels give their key node; nobody here has seen the sensor on it,
+/// so it is only tried when no `gpio-keys` node exists.
+const SENSOR_NAMES: [&str; 2] = ["gpio-keys", "ntx_event0"];
+
+/// The key codes the hall sensor is reported on.
+const COVER_KEYS: [u16; 2] = [input::KEY_COVER, input::KEY_COVER_ALTERNATE];
 
 /// Where to look for it. The node number is stable on this firmware, but the
 /// name is what actually identifies it, so the whole directory is searched
@@ -102,7 +110,7 @@ impl fmt::Display for CoverError {
         match self {
             Self::NoSensor => write!(
                 formatter,
-                "no {SENSOR_NAME} input device carries the cover key, so this reader has no hall sensor"
+                "no gpio-keys input device carries the cover key, so this reader has no hall sensor"
             ),
             Self::Io(error) => write!(formatter, "{error}"),
         }
@@ -150,11 +158,14 @@ impl CoverSensor {
         let file = File::open(path)?;
         // Ask rather than wait. See the module comment: an edge that happened
         // before we opened is an edge we will never be told about.
-        let magnet = if input::key_is_pressed(&file, input::KEY_COVER)? {
-            Magnet::Present
-        } else {
-            Magnet::Absent
-        };
+        // Either code held down means a magnet. A node only ever carries one
+        // of them, and the other reads as released.
+        let mut magnet = Magnet::Absent;
+        for code in COVER_KEYS {
+            if input::key_is_pressed(&file, code)? {
+                magnet = Magnet::Present;
+            }
+        }
         let (sender, changes) = mpsc::channel();
         thread::Builder::new()
             .name("cover".to_owned())
@@ -244,7 +255,7 @@ fn read_forever(mut file: File, initial: Magnet, sender: &mpsc::Sender<Magnet>) 
 /// The state one raw event means, or `None` when it is about something else.
 fn cover_state(bytes: &[u8]) -> Option<Magnet> {
     let event = InputEvent32::decode(bytes)?;
-    if event.kind != input::EV_KEY || event.code != input::KEY_COVER {
+    if event.kind != input::EV_KEY || !COVER_KEYS.contains(&event.code) {
         return None;
     }
     Magnet::from_value(event.value)
@@ -265,12 +276,22 @@ fn find_sensor(directory: &Path) -> Option<PathBuf> {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.starts_with("event"))
         })
+        .filter_map(|path| {
+            let name = input::device_name(&File::open(&path).ok()?).ok()?;
+            Some((path, name.trim().to_owned()))
+        })
         .collect::<Vec<_>>();
     nodes.sort();
-    nodes.into_iter().find(|path| {
-        File::open(path).is_ok_and(|file| {
-            input::device_name(&file).is_ok_and(|name| name.trim() == SENSOR_NAME)
-        })
+    pick_sensor(&nodes)
+}
+
+/// The first node with the most preferred sensor name.
+fn pick_sensor(nodes: &[(PathBuf, String)]) -> Option<PathBuf> {
+    SENSOR_NAMES.iter().find_map(|wanted| {
+        nodes
+            .iter()
+            .find(|(_, name)| name == wanted)
+            .map(|(path, _)| path.clone())
     })
 }
 
@@ -338,6 +359,40 @@ mod tests {
         assert_eq!(sensor.poll(), None);
         sender.send(Magnet::Present).expect("queue a real change");
         assert_eq!(sensor.poll(), Some(Magnet::Present));
+    }
+
+    #[test]
+    fn the_i_mx_cover_code_is_read_as_the_same_magnet() {
+        assert_eq!(cover_state(&event(1, 59, 1)), Some(Magnet::Present));
+        assert_eq!(cover_state(&event(1, 59, 0)), Some(Magnet::Absent));
+        assert_eq!(cover_state(&event(1, 59, 2)), Some(Magnet::Present));
+    }
+
+    #[test]
+    fn the_older_key_node_name_is_used_only_when_gpio_keys_is_missing() {
+        use std::path::PathBuf;
+        let node = |path: &str, name: &str| (PathBuf::from(path), name.to_owned());
+        let both = [
+            node("/dev/input/event0", "ntx_event0"),
+            node("/dev/input/event1", "touch"),
+            node("/dev/input/event2", "gpio-keys"),
+        ];
+        assert_eq!(
+            super::pick_sensor(&both),
+            Some(PathBuf::from("/dev/input/event2"))
+        );
+        let older = [
+            node("/dev/input/event0", "ntx_event0"),
+            node("/dev/input/event1", "touch"),
+        ];
+        assert_eq!(
+            super::pick_sensor(&older),
+            Some(PathBuf::from("/dev/input/event0"))
+        );
+        assert_eq!(
+            super::pick_sensor(&[node("/dev/input/event1", "touch")]),
+            None
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@ cargo +nightly fuzz run json_parse -- -max_total_time=60
 ```
 
 `cargo fuzz` needs a nightly compiler for the sanitizer. The root
-`rust-toolchain.toml` pins stable for the device workspace, so name nightly
+`rust-toolchain.toml` pins stable 1.85.1 for the device workspace, so name nightly
 on the command line as above. A crashing input is written to `artifacts/`, and
 `cargo +nightly fuzz fmt <target> <file>` shows it as the target saw it.
 

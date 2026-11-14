@@ -1,6 +1,0 @@
-expect Board games
-tap Reversi
-expect Computer strength
-tap Start game
-expect Tap a hollow destination
-shot reversi

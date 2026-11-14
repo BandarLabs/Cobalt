@@ -118,6 +118,12 @@ impl Provider {
             .find(|provider| provider.key() == key)
             .unwrap_or_default()
     }
+
+    /// The provider a stored key names, or nothing for a key that names none.
+    #[must_use]
+    pub fn named(key: &str) -> Option<Self> {
+        PROVIDERS.into_iter().find(|provider| provider.key() == key)
+    }
 }
 
 /// The ceiling on the response.
@@ -240,6 +246,12 @@ impl Role {
 pub struct Turn {
     pub role: Role,
     pub text: String,
+    /// The service that wrote a reply. Kept with the reply, because the
+    /// service in use changes: labelled by the current one, every earlier
+    /// reply took the name of whichever service was chosen last. `None` for
+    /// the reader's own turns, and for replies saved before this was kept
+    /// until they are signed with the service that was in use.
+    pub by: Option<Provider>,
 }
 
 /// The messages so far, oldest first.
@@ -274,6 +286,7 @@ impl Conversation {
         self.turns.push(Turn {
             role,
             text: clip(text.as_ref(), MAX_TURN_BYTES),
+            by: None,
         });
         while self.turns.len() > 1
             && (self.turns.len() > MAX_TURNS || self.bytes() > MAX_HISTORY_BYTES)
@@ -282,10 +295,27 @@ impl Conversation {
         }
     }
 
-    /// Adds the model's answer, remembering whether it ran out of room.
-    pub fn push_reply(&mut self, reply: Completion) {
+    /// Adds the model's answer, remembering who wrote it and whether it ran
+    /// out of room.
+    pub fn push_reply(&mut self, reply: Completion, by: Provider) {
         self.push(Role::Assistant, reply.text);
+        if let Some(turn) = self.turns.last_mut() {
+            turn.by = Some(by);
+        }
         self.cut_short = reply.cut_short;
+    }
+
+    /// Names `provider` as the writer of every reply that names nobody, which
+    /// is a reply saved before the writer was kept. Returns whether any was.
+    pub fn sign_unsigned(&mut self, provider: Provider) -> bool {
+        let mut signed = false;
+        for turn in &mut self.turns {
+            if turn.role == Role::Assistant && turn.by.is_none() {
+                turn.by = Some(provider);
+                signed = true;
+            }
+        }
+        signed
     }
 
     /// Whether the newest turn is a reply that stopped at the length limit,
@@ -308,10 +338,14 @@ impl Conversation {
             .turns
             .iter()
             .map(|turn| {
-                ObjectBuilder::new()
+                let saved = ObjectBuilder::new()
                     .set("role", turn.role.wire())
-                    .set("text", turn.text.as_str())
-                    .build()
+                    .set("text", turn.text.as_str());
+                match turn.by {
+                    Some(by) => saved.set("by", by.key()),
+                    None => saved,
+                }
+                .build()
             })
             .collect::<Vec<_>>();
         let mut saved = ObjectBuilder::new()
@@ -345,6 +379,12 @@ impl Conversation {
             };
             let text = turn.get("text").and_then(Value::as_str)?;
             conversation.push(role, text);
+            if let Some(last) = conversation.turns.last_mut() {
+                last.by = turn
+                    .get("by")
+                    .and_then(Value::as_str)
+                    .and_then(Provider::named);
+            }
         }
         conversation.cut_short = value.get("cut").and_then(Value::as_bool) == Some(true);
         Some(conversation)
@@ -353,9 +393,10 @@ impl Conversation {
     /// The transcript as plain text, for a copy on the paired computer.
     ///
     /// By-lined the way the panel by-lines it, and with the model's trailing
-    /// options line left out, because the panel never shows it either.
+    /// options line left out, because the panel never shows it either. A
+    /// reply that names no writer is by-lined `unsigned`.
     #[must_use]
-    pub fn transcript_text(&self, assistant: &str) -> String {
+    pub fn transcript_text(&self, unsigned: &str) -> String {
         let mut out = String::new();
         for turn in &self.turns {
             if !out.is_empty() {
@@ -363,7 +404,7 @@ impl Conversation {
             }
             match turn.role {
                 Role::You => out.push_str("You"),
-                Role::Assistant => out.push_str(assistant),
+                Role::Assistant => out.push_str(turn.by.map_or(unsigned, |by| by.label())),
             }
             out.push('\n');
             let body = match turn.role {
@@ -1123,6 +1164,42 @@ mod tests {
         assert_eq!(restored.turns(), conversation.turns());
     }
 
+    /// Who wrote each reply is saved with it, and a reply saved before that
+    /// was kept is signed once, with the service that was in use, and never
+    /// again by a later choice.
+    #[test]
+    fn each_reply_keeps_the_name_of_the_service_that_wrote_it() {
+        let mut conversation = Conversation::default();
+        conversation.push(Role::You, "who wrote Bleak House");
+        conversation.push_reply(
+            Completion {
+                text: "Charles Dickens.".to_owned(),
+                cut_short: false,
+            },
+            Provider::Anthropic,
+        );
+        let restored = Conversation::restore(&conversation.encode()).expect("restores");
+        assert_eq!(restored.turns()[1].by, Some(Provider::Anthropic));
+        assert!(restored
+            .transcript_text("Google Gemini")
+            .contains("Anthropic"));
+
+        let older = br#"{"v":"1","turns":[{"role":"user","text":"hi"},{"role":"assistant","text":"Hello."}]}"#;
+        let mut older = Conversation::restore(older).expect("an older save restores");
+        assert_eq!(older.turns()[1].by, None);
+        assert!(older.sign_unsigned(Provider::OpenAi));
+        assert!(
+            !older.sign_unsigned(Provider::Gemini),
+            "a signed reply was signed again"
+        );
+        assert_eq!(older.turns()[1].by, Some(Provider::OpenAi));
+        assert_eq!(
+            older.turns()[0].by,
+            None,
+            "the reader's own words name no service"
+        );
+    }
+
     #[test]
     fn a_saved_conversation_from_another_time_is_left_alone() {
         for bytes in [
@@ -1277,10 +1354,13 @@ mod tests {
     fn a_reply_that_was_cut_short_is_remembered_until_anything_else_is_said() {
         let mut conversation = Conversation::default();
         conversation.push(Role::You, "how do I make bread");
-        conversation.push_reply(Completion {
-            text: "First you mix".to_owned(),
-            cut_short: true,
-        });
+        conversation.push_reply(
+            Completion {
+                text: "First you mix".to_owned(),
+                cut_short: true,
+            },
+            Provider::OpenAi,
+        );
         assert!(conversation.reply_cut_short());
         let restored = Conversation::restore(&conversation.encode()).expect("restores");
         assert!(restored.reply_cut_short(), "a restart forgot the way on");

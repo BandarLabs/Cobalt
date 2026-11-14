@@ -46,3 +46,40 @@ expect-missing No images
 expect English
 clean
 shot gutenbird-book
+# Search by typing on the reader's keyboard, and page the results.
+tap-id 4294967295
+wait-for All Books
+tap-id search
+wait-for Search every catalog
+tap-id query
+wait-for-id kb.enter
+type austen
+tap-id kb.enter
+wait-for Books: austen
+wait-for Emma
+clean
+shot gutenbird-search-results
+tap-id shelf-next
+wait-for 2 of
+tap-id shelf-back
+wait-for 1 of
+# A book with several downloads offers them, and its description pages.
+tap Emma
+wait-for-id read
+expect Choose download
+maybe-tap-id about-next
+wait-idle
+maybe-tap-id about-back
+wait-idle
+tap Choose download
+wait-for Each keeps its own reading position
+expect no images
+clean
+shot gutenbird-formats
+tap no images
+wait-for-id read
+clean
+shot gutenbird-edition-chosen
+# The page should describe the edition that was chosen, not the catalog's
+# default one.
+expect-missing This edition has images.

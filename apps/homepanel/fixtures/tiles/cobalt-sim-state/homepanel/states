@@ -1,0 +1,12 @@
+light.kitchen	on
+switch.coffee_maker	off
+climate.living_room	heat
+sensor.outdoor_temperature	12.5 °C
+fan.bedroom	off
+lock.front_door	locked
+light.porch	off
+cover.garage_door	closed
+light.hallway	on
+switch.heater	off
+sensor.humidity	48 %
+scene.good_night	unknown

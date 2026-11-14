@@ -1,0 +1,94 @@
+# The keys a shell needs beyond letters: backspace, shift, the arrows, ctrl,
+# and history. Each is checked by what the shell answers, not by the tap.
+wait-for Terminal
+clean
+# Backspace erases the key before it, so the sum is 40 + 2, not 40 + 3.
+type expr 40 + 3
+tap abc
+tap-id kb.backspace
+tap ?123
+type 2
+tap abc
+tap-id kb.enter
+wait-for 42
+# Shift capitalises the next letter only, and its key says it is on.
+type echo a
+tap-id kb.shift
+expect SHIFT
+tap-id kb.r2c4
+type c
+tap-id kb.enter
+wait-for echo aBc
+shot terminal-shift
+# Left moves the cursor back a character, so the 1 lands before the 3.
+type expr 2 + 3
+tap-id term.left
+type 1
+tap abc
+tap-id kb.enter
+wait-for 15
+# Ctrl with c stops a running command; the next one answers within the
+# wait, long before the sleep would have ended.
+type sleep 30
+tap abc
+tap-id kb.enter
+tap-id term.ctrl
+expect CTRL
+shot terminal-ctrl
+tap-id kb.r2c2
+type expr 300 + 33
+tap abc
+tap-id kb.enter
+wait-for 333
+shot terminal-interrupted
+# Up steps back through earlier commands: past clear to the sum before it.
+type clear
+tap-id kb.enter
+wait-idle
+expect-missing 333
+tap-id term.up
+tap-id term.up
+tap-id kb.enter
+wait-for 333
+# Tab completes a command name.
+type ech
+tap-id term.tab
+type abc | tr a-c x-z
+tap abc
+tap-id kb.enter
+wait-for xyz
+shot terminal-completed
+# Output that arrives while another app is in front is there on return.
+type sleep 2; expr 500 + 55
+tap abc
+tap-id kb.enter
+lifecycle background
+wait 3000
+lifecycle foreground
+wait-for 555
+shot terminal-after-background
+# The page keys read back through earlier output as Earlier and Latest do.
+type seq 1 80
+tap abc
+tap-id kb.enter
+wait-for 80
+page back
+wait-for Latest
+shot terminal-page-back
+page next
+expect-missing Latest
+# A shell killed outright says it was stopped, not that it closed, and
+# Restart opens a new one.
+type kill -9 0
+tap abc
+tap-id kb.enter
+wait-for Shell was stopped
+expect Restart
+shot terminal-stopped
+tap Restart
+wait-for Terminal
+expect-missing Shell was stopped
+type expr 7 + 7
+tap abc
+tap-id kb.enter
+wait-for 14

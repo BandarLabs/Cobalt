@@ -1,7 +1,7 @@
 # The gateway setup names the guided command, Check again answers, and the
 # address field takes typed input on the on-screen keyboard.
 wait-for Post
-expect Connect a gateway
+wait-for Connect a gateway
 expect kobo connect post
 clean
 shot post-setup
@@ -13,3 +13,69 @@ type hermes
 expect https://hermes
 clean
 shot post-typed
+# A plain address stays in the field with the reason under it.
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type hermes.local
+tap Save gateway
+wait-for Enter the secure https address of your Hermes gateway.
+expect hermes.local
+expect-missing No letters yet
+clean
+shot post-wrong-scheme
+# An HTTPS address opens the inbox. With no token on the reader the first
+# check says which command brings one.
+tap-id gateway-url
+wait-for Gateway address
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type https://hermes.example.net
+tap Save gateway
+wait-for No letters yet
+wait-for No Hermes account is on this reader yet
+expect kobo connect post
+expect Page 1 · 0 letters
+clean
+shot post-empty-inbox
+# Check asks again and says the same thing; Older and Newer have nowhere to go.
+tap Check
+wait-for No Hermes account is on this reader yet
+tap Older
+expect No letters yet
+tap Newer
+expect No letters yet
+# The address is kept, so the next start opens the inbox, not setup.
+restart
+wait-for No letters yet
+expect-missing Connect a gateway
+# Offline with a token on the reader, the check says the reader is not on
+# Wi-Fi rather than blaming the account.
+companion secret set hermes-post --from apps/post/fixtures/token --sim
+scenario offline
+tap Check
+wait-for This reader is not on Wi-Fi.
+expect-missing No Hermes account
+clean
+shot post-offline

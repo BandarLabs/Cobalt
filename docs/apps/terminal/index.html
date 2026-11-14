@@ -21,7 +21,7 @@
 <meta name="twitter:description" content="A shell with an on-screen keyboard. Included with Cobalt on supported Kobo e-readers.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/terminal.png">
 <meta name="twitter:image:alt" content="A shell and touch keyboard on a Kobo">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-hiZmfzMIIv4sWRHQo899jqqrjpGubjbzIvjddanituI='; style-src 'self'; img-src 'self'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-hiZmfzMIIv4sWRHQo899jqqrjpGubjbzIvjddanituI='; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
@@ -74,7 +74,7 @@
     }
   ]
 }</script>
-<link rel="stylesheet" href="../install.css">
+<link rel="stylesheet" href="../../site.css">
 </head>
 <body>
 <header class="masthead">
@@ -82,45 +82,50 @@
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
+      <a href="../../install/">Install</a>
       <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
-      <a href="../../#store">Store</a>
-      <a href="../../#install">Install</a>
-      <a href="../../#contributing">Contributing</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>
   </div>
 </header>
-<main class="wrap">
-  <div class="app-hero">
-    <div class="app-copy">
-      <p class="eyebrow">Cobalt system app</p>
+<main>
+  <div class="app-head wrap">
+    <div>
+      <p class="crumb"><a href="../../#apps">Apps</a> / <a href="../../#included">Included with Cobalt</a></p>
       <h1>Terminal</h1>
-      <p class="summary">A shell with an on-screen keyboard.</p>
-      <div class="meta"><span>Included with Cobalt</span></div>
-      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/terminal">Source code on GitHub</a></p>
+      <p class="lede">A shell with an on-screen keyboard.</p>
+      <div class="actions">
+        <a class="btn primary" href="../../install/">Install Cobalt</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/terminal">Source code on GitHub</a>
+      </div>
+      <dl class="facts">
+        <div><dt>Comes with</dt><dd>Cobalt, with nothing separate to install</dd></div>
+      </dl>
     </div>
-    <figure class="app-shot">
-      <img src="../../media/site/apps/terminal.png" width="1072" height="1448" alt="A shell and touch keyboard on a Kobo">
+    <figure class="reader">
+      <div class="reader-body">
+        <div class="reader-screen">
+          <img src="../../media/site/apps/terminal.png" width="1072" height="1448" alt="A shell and touch keyboard on a Kobo">
+        </div>
+      </div>
     </figure>
   </div>
-  <section class="panel setup">
-    <p class="eyebrow">Included with Cobalt</p>
-    <h2>No separate install</h2>
-    <p>Terminal is installed with Cobalt.</p>
-    <a class="button-link" href="../../#install">Set up Cobalt</a>
+  <div class="wrap">
+  <section class="section">
+    <p class="after-index">Want another Kobo app? Request it, suggest a feature or report a bug in <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.</p>
   </section>
-  <aside class="community">
-    <strong>Want another Kobo app?</strong>
-    Request it, suggest a feature or report a bug in
-    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
-  </aside>
+  </div>
 </main>
 <footer>
   <div class="wrap">
-    <span>Cobalt · AGPL-3.0</span>
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
+    </div>
     <nav aria-label="Footer navigation">
       <a href="../../">Home</a>
+      <a href="../../faq.html">FAQ</a>
       <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>

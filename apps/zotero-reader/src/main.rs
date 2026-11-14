@@ -834,6 +834,11 @@ impl ReadingList {
         self.save_snapshot(context, bytes);
     }
 
+    fn clear_search(&mut self) {
+        self.phrase.clear();
+        self.apply_search();
+    }
+
     fn apply_search(&mut self) {
         let phrase = self.phrase.trim();
         self.filtered = self
@@ -1020,23 +1025,35 @@ impl ReadingList {
             return screen.activity("Reading Zotero collections", None).build();
         }
         if self.collections.is_empty() {
+            // Under a failure the list is empty because nothing arrived, so
+            // the banner says why and this does not call the library empty.
+            let screen = if self.trouble.is_some() {
+                screen.splash(
+                    Some(Glyph::Folder),
+                    "Collections not loaded",
+                    "They show here once Zotero answers.",
+                )
+            } else {
+                screen.empty_state("This Zotero library contains no collections.")
+            };
             return screen
-                .empty_state("This Zotero library contains no collections.")
-                .bottom_action_marked(REFRESH, "Try again", Glyph::Download)
+                .bottom_action_marked(REFRESH, "Try again", Glyph::Refresh)
                 .build();
         }
         let rows: Vec<(String, String)> = self
             .collections
             .iter()
             .map(|collection| {
+                // The collection's key is Zotero's own reference, not
+                // something an owner reads, so only the current one is said.
                 let summary = if self
                     .selected
                     .as_ref()
                     .is_some_and(|selected| selected.key == collection.key)
                 {
-                    format!("{} · Current", collection.key)
+                    "Current".to_owned()
                 } else {
-                    collection.key.clone()
+                    String::new()
                 };
                 (collection.name.clone(), summary)
             })
@@ -1073,17 +1090,30 @@ impl ReadingList {
             .selected
             .as_ref()
             .map_or("Stacks", |collection| collection.name.as_str());
-        let mut screen = ScreenBuilder::new("zotero-reader-feed").top_bar(title);
+        // A search narrows the list until it is cleared. It used to leave the
+        // collection's name in the bar and no way back short of searching for
+        // nothing, which the keyboard does not send. The bar names the search
+        // now, and Back clears it rather than leaving the app.
+        let searched = self.phrase.trim();
+        let title = if searched.is_empty() {
+            title.to_owned()
+        } else {
+            format!("\u{201c}{searched}\u{201d}")
+        };
+        let mut screen = ScreenBuilder::new("zotero-reader-feed")
+            .top_bar(title)
+            .owns_back(!searched.is_empty());
         let mut actions = vec![
-            (REFRESH, "Refresh", Some(Glyph::Download)),
+            (REFRESH, "Refresh", Some(Glyph::Refresh)),
             (SEARCH, "Search", Some(Glyph::Search)),
         ];
         if self.pending_memory.is_some() && self.memory_upload.is_none() {
-            actions.push((RETRY_MEMORY, "Retry position", Some(Glyph::Download)));
+            actions.push((RETRY_MEMORY, "Retry position", Some(Glyph::Refresh)));
         }
+        let phrase = self.phrase.trim();
         if let Some(trouble) = &self.trouble {
             screen = screen.banner(BannerLevel::Attention, trouble.clone());
-        } else if self.snapshot.truncated {
+        } else if self.snapshot.truncated && phrase.is_empty() {
             screen = screen.banner(
                 BannerLevel::Info,
                 format!(
@@ -1208,7 +1238,7 @@ impl ReadingList {
             actions.push((KEEP, "Keep offline", Some(Glyph::Download)));
         }
         if self.pending_memory.is_some() && self.memory_upload.is_none() {
-            actions.push((RETRY_MEMORY, "Retry memory", Some(Glyph::Download)));
+            actions.push((RETRY_MEMORY, "Retry memory", Some(Glyph::Refresh)));
         }
         let has_actions = !actions.is_empty();
         screen = match actions.as_slice() {
@@ -1317,7 +1347,7 @@ impl ReadingList {
                 screen = screen.bottom_action_marked(
                     RETRY_MEMORY,
                     "Retry reading position",
-                    Glyph::Download,
+                    Glyph::Refresh,
                 );
             }
             return screen.build();
@@ -1359,11 +1389,8 @@ impl ReadingList {
             .page_turns(LIST_BACK, LIST_NEXT)
             .page_position(page_number(page), page_total(pages.len()));
         if self.pending_memory.is_some() && self.memory_upload.is_none() {
-            screen = screen.bottom_action_marked(
-                RETRY_MEMORY,
-                "Retry reading position",
-                Glyph::Download,
-            );
+            screen =
+                screen.bottom_action_marked(RETRY_MEMORY, "Retry reading position", Glyph::Refresh);
         }
         screen.build()
     }
@@ -1461,6 +1488,8 @@ impl ReadingList {
                     View::Detail
                 };
             }
+            // Back from a searched list is the whole list.
+            View::Feed if !self.phrase.trim().is_empty() => self.clear_search(),
             View::Feed | View::Setup => return,
         }
         self.show(context);
@@ -1468,6 +1497,12 @@ impl ReadingList {
 }
 
 impl KoboApp for ReadingList {
+    /// Zotero's mark is red. The bar takes the same colour so the shelf reads
+    /// as the reader's Zotero library.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Red)
+    }
+
     fn on_foreground(&mut self, context: &mut Context) {
         self.returned(context);
     }
@@ -1785,7 +1820,8 @@ impl KoboApp for ReadingList {
                         awaiting,
                         Awaiting::StartConversion | Awaiting::PollConversion | Awaiting::Document
                     );
-                self.trouble = Some(explain_failure(awaiting, error));
+                let cached = !self.snapshot.papers.is_empty() || !self.library.is_empty();
+                self.trouble = Some(explain_failure(awaiting, error, cached));
                 if missing_direct_credential {
                     self.credential_retry = Some(awaiting);
                     // The first collection list is where a new connection
@@ -2010,10 +2046,15 @@ impl KoboApp for ReadingList {
     }
 }
 
+/// The paper's facts and abstract, a paragraph each.
+///
+/// Paragraphs are what the page is cut by, at blank lines. The facts were
+/// joined by single line breaks, which the page reads as spaces, so the
+/// authors, venue, year, DOI and source ran on as one sentence.
 fn detail_text(detail: &Detail) -> String {
-    let mut text = String::new();
+    let mut paragraphs = Vec::new();
     if !detail.authors.is_empty() {
-        let _ = writeln!(text, "{}", detail.authors.join(", "));
+        paragraphs.push(detail.authors.join(", "));
     }
     let mut facts = Vec::new();
     if !detail.venue.is_empty() {
@@ -2026,17 +2067,17 @@ fn detail_text(detail: &Detail) -> String {
         facts.push(format!("DOI {}", detail.doi));
     }
     if !facts.is_empty() {
-        let _ = writeln!(text, "{}", facts.join(" · "));
+        paragraphs.push(facts.join(" · "));
     }
     if !detail.url.is_empty() {
-        let _ = writeln!(text, "Source {}", detail.url);
+        paragraphs.push(format!("Source {}", detail.url));
     }
     if detail.abstract_text.is_empty() {
-        text.push_str("No abstract is stored for this item.");
+        paragraphs.push("No abstract is stored for this item.".to_owned());
     } else {
-        let _ = writeln!(text, "\n{}", detail.abstract_text);
+        paragraphs.push(detail.abstract_text.clone());
     }
-    text
+    paragraphs.join("\n\n")
 }
 
 fn encode_selection(collection: &Collection) -> Vec<u8> {
@@ -2176,7 +2217,16 @@ fn valid_origin(origin: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
 }
 
-fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
+/// What a failed request means, said for the service it went to.
+///
+/// "Cached papers are still available" is said only when there are some: on
+/// first run, offline, it promised papers that were never fetched.
+fn explain_failure(awaiting: Awaiting, error: TaskError, cached: bool) -> String {
+    let offline = if cached {
+        "This reader is not on Wi-Fi. Cached papers are still available."
+    } else {
+        "This reader is not on Wi-Fi. Join Wi-Fi and try again."
+    };
     let conversion_service = matches!(
         awaiting,
         Awaiting::StartConversion | Awaiting::PollConversion | Awaiting::Document
@@ -2187,9 +2237,7 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
                 "Install the conversion-service token with: kobo secret set zotero-bridge."
                     .to_owned()
             }
-            TaskError::Offline => {
-                "This reader is offline. Cached papers are still available.".to_owned()
-            }
+            TaskError::Offline => offline.to_owned(),
             TaskError::Denied => {
                 "Stacks is not allowed to reach the conversion service.".to_owned()
             }
@@ -2209,9 +2257,7 @@ fn explain_failure(awaiting: Awaiting, error: TaskError) -> String {
     match error {
         TaskError::NotFound => "The requested Zotero item is no longer available.".to_owned(),
         TaskError::TooLarge => "The Zotero response exceeded the app's safety limit.".to_owned(),
-        TaskError::Offline => {
-            "This reader is not on Wi-Fi. Cached papers are still available.".to_owned()
-        }
+        TaskError::Offline => offline.to_owned(),
         error => {
             kobo_sdk::failure::Service::new("Zotero")
                 .fixed_by("Run kobo connect zotero-reader on your computer.")
@@ -2905,20 +2951,62 @@ mod tests {
     }
 
     #[test]
+    fn offline_with_nothing_saved_does_not_promise_cached_papers() {
+        let none = super::explain_failure(
+            super::Awaiting::Collections,
+            super::TaskError::Offline,
+            false,
+        );
+        assert!(!none.contains("Cached papers"), "{none}");
+        let some = super::explain_failure(
+            super::Awaiting::Collections,
+            super::TaskError::Offline,
+            true,
+        );
+        assert!(some.contains("Cached papers are still available"), "{some}");
+    }
+
+    #[test]
+    fn paper_facts_are_paragraphs_of_their_own_rather_than_one_run_on_line() {
+        let detail = super::Detail {
+            authors: vec!["Ada Lovelace".into()],
+            venue: "Notes".into(),
+            doi: "10.1000/x".into(),
+            url: "https://example.org/paper".into(),
+            abstract_text: "An abstract.".into(),
+            ..super::Detail::default()
+        };
+        let text = super::detail_text(&detail);
+        let paragraphs: Vec<&str> = text.split("\n\n").collect();
+        assert_eq!(paragraphs[0], "Ada Lovelace");
+        assert!(paragraphs[1].starts_with("Notes"), "{text}");
+        assert_eq!(paragraphs[2], "Source https://example.org/paper");
+        assert_eq!(paragraphs[3], "An abstract.");
+    }
+
+    #[test]
     fn unreachable_errors_name_the_service_that_was_requested() {
         assert_eq!(
             super::explain_failure(
                 super::Awaiting::StartConversion,
                 super::TaskError::Unreachable,
+                true,
             ),
             "The conversion service could not be reached."
         );
         assert_eq!(
-            super::explain_failure(super::Awaiting::Collections, super::TaskError::Unreachable),
-            "Zotero did not answer, or its certificate is not one this reader trusts. Try again later."
+            super::explain_failure(
+                super::Awaiting::Collections,
+                super::TaskError::Unreachable,
+                true
+            ),
+            "Zotero did not answer, or its certificate is not one this reader trusts."
         );
-        let refused =
-            super::explain_failure(super::Awaiting::Collections, super::TaskError::Unauthorized);
+        let refused = super::explain_failure(
+            super::Awaiting::Collections,
+            super::TaskError::Unauthorized,
+            true,
+        );
         assert!(refused.contains("kobo connect zotero-reader"), "{refused}");
     }
 

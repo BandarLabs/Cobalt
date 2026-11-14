@@ -15,7 +15,7 @@ wait-for Added
 expect New item
 type buy milk
 tap Add
-expect Todo: 2 left
+expect Added
 # Back on the reader's keyboard puts it away after a run of adds.
 tap Back
 wait-for water the fern
@@ -34,7 +34,7 @@ wait-for 2 selected
 clean
 shot todo-selecting
 tap Finish
-wait-for Todo: all done
+wait-for Done
 # Deleting several at once, and the undo that follows it.
 tap Select
 wait-for Select items
@@ -48,4 +48,4 @@ shot todo-deleted
 tap Undo delete
 wait-for water the fern
 expect buy milk
-expect Todo: all done
+expect Done

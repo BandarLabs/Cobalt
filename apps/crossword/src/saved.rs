@@ -86,6 +86,21 @@ fn number(v: &Value, key: &str) -> Result<u32, Error> {
         .and_then(|n| u32::try_from(n).ok())
         .ok_or(Error::Corrupt)
 }
+/// Whether a game record holds nothing a reader did: no letter typed, no
+/// step to undo, no check, reveal or solve.
+fn untouched(v: &Value) -> Result<bool, Error> {
+    let letters = text(v.get("position").ok_or(Error::Corrupt)?, "letters")?;
+    let steps = v
+        .get("undo")
+        .and_then(Value::as_array)
+        .ok_or(Error::Corrupt)?;
+    Ok(letters.bytes().all(|b| b == b'.' || b == b'#')
+        && steps.is_empty()
+        && number(v, "checks")? == 0
+        && number(v, "reveals")? == 0
+        && !flag(v, "solved")?)
+}
+
 fn read_position(v: &Value, answer: &[u8]) -> Result<Position, Error> {
     let letters = text(v, "letters")?.as_bytes().to_vec();
     let selected = text(v, "selected")?
@@ -153,7 +168,18 @@ pub fn decode(bytes: &[u8]) -> Result<(Vec<Progress>, usize), Error> {
             .position(|p| p.id == id)
             .ok_or(Error::Corrupt)?;
         let p = &PUZZLES[index];
-        if std::mem::replace(&mut seen[index], true) || text(v, "answer")?.as_bytes() != p.answer {
+        if std::mem::replace(&mut seen[index], true) {
+            return Err(Error::Corrupt);
+        }
+        if text(v, "answer")?.as_bytes() != p.answer {
+            // Version 1 listed every puzzle of its day, opened or not, and a
+            // grid has since been redrawn under its old name. An entry with
+            // nothing typed into it loses nothing by being left out, and
+            // refusing it locked away the games that had been played.
+            if untouched(v)? {
+                seen[index] = false;
+                continue;
+            }
             return Err(Error::Corrupt);
         }
         let steps = v

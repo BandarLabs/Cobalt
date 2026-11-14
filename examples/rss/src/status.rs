@@ -97,14 +97,14 @@ impl Statuses {
     ///
     /// The unread count is not in it: the shelf draws that as the row's
     /// badge, at the right edge where an eye scanning for what is new looks.
-    pub fn summary(&self, url: &str) -> Option<String> {
+    pub fn summary(&self, url: &str, now: Option<kobo_sdk::clock::Snapshot>) -> Option<String> {
         let record = self
             .records
             .get(&kobo_net::sha256::hex_digest(url.as_bytes()))?;
         let refreshed = if record.success.is_empty() {
             "Not refreshed yet".into()
         } else {
-            format!("Updated {}", record.success)
+            format!("Updated {}", said(&record.success, now))
         };
         Some(if record.failure.is_empty() {
             refreshed
@@ -249,19 +249,50 @@ fn decode(bytes: &[u8]) -> Option<BTreeMap<String, Record>> {
     Some(records)
 }
 
-/// When a feed was refreshed, on the reader's own clock.
-///
-/// It used to be written in UTC, which put an evening refresh on tomorrow's
-/// date for half the world and made "Updated 06:00" mean nothing to somebody
-/// who refreshed at breakfast in another time zone.
-pub fn timestamp() -> Option<String> {
+/// The reader's clock, at their own offset from UTC.
+pub fn now() -> Option<kobo_sdk::clock::Snapshot> {
     use kobo_sdk::clock::{Clock, SystemClock};
-    stamp(SystemClock::reader().now().ok()?)
+    SystemClock::reader().now().ok()
 }
 
-fn stamp(now: kobo_sdk::clock::Snapshot) -> Option<String> {
-    let (hour, minute) = now.hour_minute()?;
-    Some(format!("{} {hour:02}:{minute:02}", now.date()?))
+/// When a feed was refreshed, written down as milliseconds since 1970.
+///
+/// A moment rather than a line of text, so it can be said against whatever
+/// day it is read on: "today, 07:25" this morning is "yesterday" tomorrow.
+pub fn timestamp() -> Option<String> {
+    now().map(|now| now.unix_millis.to_string())
+}
+
+/// A refresh moment as it is said after "Updated".
+///
+/// Versions before this wrote the reader's wall clock as "2026-11-07 07:25",
+/// and before that the same in UTC with " UTC" after it. Both are still read,
+/// the first at the reader's present offset, which is the one it was most
+/// likely written at.
+fn said(success: &str, now: Option<kobo_sdk::clock::Snapshot>) -> String {
+    let moment = if success.bytes().all(|byte| byte.is_ascii_digit()) {
+        success.parse::<u64>().ok()
+    } else if let Some(utc) = success.strip_suffix(" UTC") {
+        kobo_sdk::when::stamp_millis(utc)
+    } else {
+        kobo_sdk::when::stamp_millis(success).and_then(|wall| {
+            let offset = i64::from(now?.utc_offset_minutes) * 60_000;
+            wall.checked_add_signed(-offset)
+        })
+    };
+    let Some(said) = moment
+        .zip(now)
+        .and_then(|(moment, now)| kobo_sdk::when::spoken(moment, now))
+    else {
+        return success.to_owned();
+    };
+    // Set inside a sentence: "Updated today, 07:25", "Updated yesterday".
+    for word in ["Today", "Yesterday"] {
+        if let Some(rest) = said.strip_prefix(word) {
+            return format!("{}{rest}", word.to_lowercase());
+        }
+    }
+    said
 }
 
 #[cfg(test)]
@@ -286,13 +317,13 @@ mod tests {
         status.note(&mut context, URL, Ok("2026-09-09 08:30 UTC".into()));
         status.note(&mut context, URL, Err("Offline".into()));
         assert!(status
-            .summary(URL)
+            .summary(URL, None)
             .unwrap()
             .contains("2026-09-09 08:30 UTC"));
         assert_eq!(status.detail(URL), Some("Offline"));
         status.note(&mut context, URL, Ok("2026-09-10 10:45 UTC".into()));
         assert_eq!(status.detail(URL), None);
-        assert!(status.summary(URL).unwrap().contains("2026-09-10"));
+        assert!(status.summary(URL, None).unwrap().contains("2026-09-10"));
     }
     #[test]
     fn pending_refresh_events_keep_their_order_when_the_file_loads() {
@@ -307,7 +338,7 @@ mod tests {
                 value: None,
             },
         );
-        assert!(status.summary(URL).unwrap().contains("2026-09-09"));
+        assert!(status.summary(URL, None).unwrap().contains("2026-09-09"));
         assert_eq!(status.detail(URL), Some("Offline"));
     }
     #[test]
@@ -335,7 +366,7 @@ mod tests {
             },
         );
         assert_eq!(reopened.detail(URL), Some("Offline"));
-        assert!(reopened.summary(URL).unwrap().contains("2026-09-09"));
+        assert!(reopened.summary(URL, None).unwrap().contains("2026-09-09"));
     }
     #[test]
     fn unreadable_history_is_not_overwritten_by_a_refresh() {
@@ -362,8 +393,8 @@ mod tests {
             Err("Offline".into()),
         );
         status.retain(&mut context, [URL.to_owned()].into_iter());
-        assert!(status.summary(URL).is_some());
-        assert!(status.summary("https://example.com/other").is_none());
+        assert!(status.summary(URL, None).is_some());
+        assert!(status.summary("https://example.com/other", None).is_none());
     }
     #[test]
     fn unread_summaries_survive_reload_without_changing_refresh_history() {
@@ -381,28 +412,51 @@ mod tests {
             },
         );
         assert_eq!(restored.unread_of(URL), Some(3));
-        assert!(!restored.summary(URL).unwrap().contains("unread"));
-        assert!(restored.summary(URL).unwrap().contains("2026-09-09"));
+        assert!(!restored.summary(URL, None).unwrap().contains("unread"));
+        assert!(restored.summary(URL, None).unwrap().contains("2026-09-09"));
         restored.unread(&mut context, URL, 6, 5);
         assert!(restored.failed);
         assert_eq!(restored.unread_of(URL), Some(3));
     }
 
-    #[test]
-    fn a_refresh_is_stamped_with_the_readers_own_time_rather_than_utc() {
-        let evening_in_new_york = kobo_sdk::clock::Snapshot {
-            unix_millis: 1_793_221_200_000,
+    /// 7 November 2026, 09:30 on the reader's clock.
+    fn morning(offset: i16) -> kobo_sdk::clock::Snapshot {
+        kobo_sdk::clock::Snapshot {
+            unix_millis: kobo_sdk::when::stamp_millis("2026-11-07T09:30:00Z").unwrap()
+                - u64::try_from(i64::from(offset) * 60_000).unwrap_or(0),
             monotonic_millis: 0,
-            utc_offset_minutes: -240,
-        };
-        let stamped = stamp(evening_in_new_york).unwrap();
-        assert!(!stamped.contains("UTC"), "{stamped}");
-        let utc = stamp(kobo_sdk::clock::Snapshot {
-            utc_offset_minutes: 0,
-            ..evening_in_new_york
-        })
-        .unwrap();
-        assert_ne!(stamped, utc);
+            utc_offset_minutes: offset,
+        }
+    }
+
+    #[test]
+    fn a_refresh_is_said_the_way_a_person_would_say_it() {
+        let (mut status, mut context) = loaded();
+        let earlier = kobo_sdk::when::stamp_millis("2026-11-07T07:25:00Z").unwrap();
+        status.note(&mut context, URL, Ok(earlier.to_string()));
+        assert_eq!(
+            status.summary(URL, Some(morning(0))).as_deref(),
+            Some("Updated today, 07:25")
+        );
+        let before = kobo_sdk::when::stamp_millis("2026-11-06T22:00:00Z").unwrap();
+        status.note(&mut context, URL, Ok(before.to_string()));
+        assert_eq!(
+            status.summary(URL, Some(morning(0))).as_deref(),
+            Some("Updated yesterday")
+        );
+    }
+
+    #[test]
+    fn a_refresh_written_down_by_an_earlier_version_is_still_said_in_words() {
+        // The reader's own wall clock, written in New York.
+        assert_eq!(
+            said("2026-11-07 07:25", Some(morning(-300))),
+            "today, 07:25"
+        );
+        // Older still, in UTC with the zone after it.
+        assert_eq!(said("2026-11-03 07:25 UTC", Some(morning(0))), "3 Nov");
+        // Without a clock nothing better can be said than what was written.
+        assert_eq!(said("2026-11-03 07:25 UTC", None), "2026-11-03 07:25 UTC");
     }
 
     #[test]

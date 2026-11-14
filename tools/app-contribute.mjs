@@ -132,18 +132,30 @@ function main(args) {
   writeFileSync(registryPath, `${JSON.stringify(plan.registry, null, 2)}\n`);
   const betaUrl =
     "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta";
-  const publishedCatalog = join(publishedDirectory, "cobalt-app-catalog.json");
+  const publishedCatalog = join(publishedDirectory, "cobalt-app-catalog-v2.json");
   const publishedProvenance = join(
     publishedDirectory,
     "cobalt-app-catalog-provenance.json"
   );
-  run(
-    "curl",
-    ["--fail", "--silent", "--show-error", "--location", "--retry", "3", "--retry-all-errors",
-      "--output", publishedCatalog,
-      `${betaUrl}/cobalt-app-catalog.json`],
-    "Could not read the current Beta baseline; check connectivity and retry."
-  );
+  // The catalog that names every mark, or the earlier one on a Beta channel
+  // last published before there were two.
+  const fetchCatalog = name =>
+    execFileSync(
+      "curl",
+      ["--silent", "--show-error", "--location", "--retry", "3", "--retry-all-errors",
+        "--output", publishedCatalog, "--write-out", "%{http_code}", `${betaUrl}/${name}`],
+      { cwd: root, encoding: "utf8" }
+    ).trim();
+  let status;
+  try {
+    status = fetchCatalog("cobalt-app-catalog-v2.json");
+    if (status === "404") status = fetchCatalog("cobalt-app-catalog.json");
+  } catch {
+    status = "failed";
+  }
+  if (status !== "200") {
+    throw new Error("Could not read the current Beta baseline; check connectivity and retry.");
+  }
   run(
     "curl",
     ["--fail", "--silent", "--show-error", "--location", "--retry", "3", "--retry-all-errors",
@@ -229,8 +241,8 @@ function main(args) {
     [
       "run", "--locked", "-q", "-p", "kobo-cli", "--", "app-catalog",
       "--seed", seed,
-      "--out", join(previewDirectory, "cobalt-app-catalog.json"),
-      "--signature", join(previewDirectory, "cobalt-app-catalog.json.sig"),
+      "--out", join(previewDirectory, "cobalt-app-catalog-v2.json"),
+      "--earlier-out", join(previewDirectory, "cobalt-app-catalog.json"),
       "--entry", packagePath,
       `https://example.invalid/releases/download/app-catalog-beta/${basename(packagePath)}`
     ],

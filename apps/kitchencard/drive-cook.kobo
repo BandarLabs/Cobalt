@@ -1,0 +1,150 @@
+# sweep: --seed-root scripts/fixtures/kitchencard/synced
+# Three recipes already synced, as scripts/quality/check-kitchencard-sync-sim.py
+# leaves them after a real sync over its local TLS fixture. The sweep has no
+# Mealie to talk to, so every Sync here runs under a failure scenario.
+wait-for Lemon Herb Roasted Chicken
+expect Tomato Basil Pasta
+expect Overnight Oats with Berries
+expect serves 4 · 4 steps
+expect-missing Connect Mealie
+clean
+shot kitchen-cook-list
+tap Lemon Herb Roasted Chicken
+wait-for Serves 4
+expect Tonight's card is saved for offline cooking.
+expect A weeknight roast chicken
+expect Start cooking
+expect Pick recipe
+clean
+shot kitchen-cook-tonight
+# Servings go up and down one at a time.
+tap-id more
+expect Serves 5
+tap-id less
+tap-id less
+expect Serves 3
+tap Start cooking
+wait-for Cooking · 1 of 4
+expect Heat the oven to 220C
+# Step one names no time, so it offers no timer.
+expect-missing min timer
+expect-missing Finish
+clean
+shot kitchen-cook-step-one
+tap-id next
+wait-for Cooking · 2 of 4
+expect Start 20 min timer
+tap Start 20 min timer
+wait-for Timer: 20 min left, set on step 2.
+# The simulator has no wake service, so the timer says it only ends while
+# the app is open, as it would on a reader that refused the wake.
+expect this reader cannot wake itself for it.
+expect Stop the timer
+expect-missing Start 20 min timer
+clean
+shot kitchen-cook-timer-running
+# The timer ending needs the clock to pass 20 minutes, which only a reader
+# or a simulator started with a manual clock can do.
+tap Stop the timer
+wait-for Start 20 min timer
+expect Timer stopped.
+expect-missing min left
+# Ticking off ingredients: each line toggles, and the boxes are read from
+# the layout because a tick has no words.
+tap Ingredients
+wait-for Serves 3 · tap a line to check it off
+expect 1 1/2 kg whole chicken, patted dry
+expect 6 sprigs fresh thyme
+tap whole chicken
+tap 4 cloves garlic
+tap 4 cloves garlic
+tap 2 lemons
+expect-state /layout#/nodes/13/kind "RowCheck(Checked)"
+expect-state /layout#/nodes/17/kind "RowCheck(Checked)"
+expect-state /layout#/nodes/21/kind "RowCheck(Unchecked)"
+clean
+shot kitchen-cook-ingredients-ticked
+# Tonight's recipe, its servings, the step and the ticks survive the app
+# restarting.
+restart
+wait-for Lemon Herb Roasted Chicken
+expect Serves 3
+tap Continue from step 2
+wait-for Cooking · 2 of 4
+expect-missing Timer stopped.
+tap Ingredients
+wait-for Serves 3 · tap a line to check it off
+expect-state /layout#/nodes/13/kind "RowCheck(Checked)"
+expect-state /layout#/nodes/17/kind "RowCheck(Checked)"
+expect-state /layout#/nodes/21/kind "RowCheck(Unchecked)"
+tap Steps
+wait-for Cooking · 2 of 4
+tap-id next
+wait-for Cooking · 3 of 4
+# A range such as 45-50 minutes starts the timer at its first number.
+expect Start 45 min timer
+tap-id next
+wait-for Cooking · 4 of 4
+expect Start 15 min timer
+expect Finish
+clean
+shot kitchen-cook-last-step
+tap-id previous
+wait-for Cooking · 3 of 4
+tap-id next
+wait-for Cooking · 4 of 4
+tap Finish
+wait-for Dinner's ready
+expect Lemon Herb Roasted Chicken
+expect Cook again
+clean
+shot kitchen-cook-finished
+tap Cook again
+wait-for Cooking · 1 of 4
+tap-id 4294967295
+wait-for Start cooking
+expect-missing Continue from
+expect Serves 3
+# Picking another recipe replaces tonight's card and its servings.
+tap Pick recipe
+wait-for Pick a recipe
+expect Overnight Oats with Berries
+clean
+shot kitchen-cook-pick
+tap Tomato Basil Pasta
+wait-for Serves 2
+expect Tomato Basil Pasta
+expect-missing Lemon Herb Roasted Chicken
+tap Start cooking
+wait-for Cooking · 1 of 3
+tap-id next
+wait-for Cooking · 2 of 3
+expect Start 2 min timer
+tap-id 4294967295
+wait-for Continue from step 2
+# Settings shows the synced address and how the token arrives.
+tap-id settings
+wait-for Kitchen Card settings
+expect https://demo.mealie.io
+expect kobo connect kitchencard
+clean
+shot kitchen-cook-settings
+tap-id 4294967295
+wait-for Continue from step 2
+# Sync without a network says so, and the saved recipes still cook.
+scenario offline
+tap Sync
+wait-idle
+wait-for Saved recipes still cook.
+expect Tomato Basil Pasta
+expect Continue from step 2
+clean
+shot kitchen-cook-sync-offline
+scenario host-down
+tap Sync
+wait-idle
+wait-for Saved recipes still cook.
+expect-missing No Mealie account
+clean
+shot kitchen-cook-sync-host-down
+scenario normal

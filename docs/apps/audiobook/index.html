@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Audiobook Studio for Kobo e-readers | Cobalt</title>
-<meta name="description" content="Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
+<title>Audiobooks for Kobo e-readers | Cobalt</title>
+<meta name="description" content="Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/audiobook/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Audiobook Studio for Kobo e-readers | Cobalt">
-<meta property="og:description" content="Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
+<meta property="og:title" content="Audiobooks for Kobo e-readers | Cobalt">
+<meta property="og:description" content="Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/audiobook/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/audiobook.png">
@@ -17,18 +17,18 @@
 <meta property="og:image:height" content="1448">
 <meta property="og:image:alt" content="An audiobook player with cover art and playback controls on a Kobo">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Audiobook Studio for Kobo e-readers | Cobalt">
-<meta name="twitter:description" content="Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
+<meta name="twitter:title" content="Audiobooks for Kobo e-readers | Cobalt">
+<meta name="twitter:description" content="Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/audiobook.png">
 <meta name="twitter:image:alt" content="An audiobook player with cover art and playback controls on a Kobo">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-/xDA4UwdNWQnMOGeY2zh2bQGTuCg1SFWcFcsJRjA6T8='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-ooukbH3BafxdDDjcDis582jhhWZepwpEfNIVttZEAjs='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
-      "name": "Audiobook Studio",
-      "description": "Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account.",
+      "name": "Audiobooks",
+      "description": "Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/audiobook/",
       "image": {
         "@type": "ImageObject",
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "MultimediaApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "1.0.19",
+      "softwareVersion": "2.0.2",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -68,14 +68,14 @@
         {
           "@type": "ListItem",
           "position": 3,
-          "name": "Audiobook Studio",
+          "name": "Audiobooks",
           "item": "https://bandarlabs.github.io/Cobalt/apps/audiobook/"
         }
       ]
     }
   ]
 }</script>
-<link rel="stylesheet" href="../install.css">
+<link rel="stylesheet" href="../../site.css">
 </head>
 <body>
 <header class="masthead">
@@ -83,74 +83,66 @@
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
+      <a href="../../install/">Install</a>
       <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
-      <a href="../../#store">Store</a>
-      <a href="../../#install">Install</a>
-      <a href="../../#contributing">Contributing</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="audiobook" data-minimum-cobalt-version="0.3.31">
-  <div class="app-hero">
-    <div class="app-copy">
-      <p class="eyebrow">Audio</p>
-      <h1>Audiobook Studio</h1>
-      <p class="summary">Turn a topic into an original narrated audiobook and listen on your Kobo. Needs an account.</p>
+<main data-app-id="audiobook" data-minimum-cobalt-version="0.3.34">
+  <div class="app-head wrap">
+    <div>
+      <p class="crumb"><a href="../../#apps">Apps</a> / <a href="../../#reading">Reading and listening</a></p>
+      <h1>Audiobooks</h1>
+      <p class="lede">Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.</p>
+      <div class="actions">
+        <a class="btn primary" href="#setup-panel">Install on your Kobo</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/audiobook">Source code on GitHub</a>
+      </div>
       <dl class="facts">
-        <div><dt>Version</dt><dd>1.0.19</dd></div>
-        <div><dt>Permissions</dt><dd>network, audio, bluetooth-audio, bluetooth-control</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.31</dd></div>
+        <div><dt>Version</dt><dd>2.0.2</dd></div>
+        <div><dt>Needs</dt><dd>Cobalt 0.3.34 or newer</dd></div>
+        <div><dt>May use</dt><dd>The network, sound, Bluetooth headphones, Bluetooth control</dd></div>
       </dl>
-      <a class="cta" href="#setup-panel">Install on your Kobo</a>
-      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/audiobook">Source code on GitHub</a></p>
     </div>
-    <figure class="app-shot">
-      <img src="../../media/site/apps/audiobook.png" width="1072" height="1448" alt="An audiobook player with cover art and playback controls on a Kobo">
+    <figure class="reader">
+      <div class="reader-body">
+        <div class="reader-screen">
+          <img src="../../media/site/apps/audiobook.png" width="1072" height="1448" alt="An audiobook player with cover art and playback controls on a Kobo">
+        </div>
+      </div>
     </figure>
   </div>
-  <section class="gallery" aria-label="Audiobook Studio screenshots">
+  <section class="gallery wrap" aria-label="Audiobooks screenshots">
     <div class="strip">
-      <figure><img src="../../media/site/apps/audiobook/narrating.png" width="1072" height="1448" loading="lazy" alt="Audiobook Studio: Narrating a new audiobook, part 1 of 3"><figcaption>Narrating a new audiobook, part 1 of 3</figcaption></figure>
-      <figure><img src="../../media/site/apps/audiobook/resume.png" width="1072" height="1448" loading="lazy" alt="Audiobook Studio: Choosing a topic and language for a new audiobook"><figcaption>Choosing a topic and language for a new audiobook</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/audiobook/narrating.png" width="1072" height="1448" loading="lazy" alt="Audiobooks: Narrating a new audiobook, part 1 of 3"></span><figcaption>Narrating a new audiobook, part 1 of 3</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/audiobook/resume.png" width="1072" height="1448" loading="lazy" alt="Audiobooks: Choosing a topic and language for a new audiobook"></span><figcaption>Choosing a topic and language for a new audiobook</figcaption></figure>
     </div>
   </section>
-  <section class="whats-new">
-    <h2>New in 1.0.19</h2>
-    <p>The topic is typed on Cobalt's own keyboard, with a topic that is too short explained under it. The player keeps every control on the panel at every text size, and Bluetooth is a switch in the headphone picker.</p>
-  </section>
-  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
-    <p class="eyebrow">App setup</p>
+  <div class="wrap">
+  <section class="section prerequisites" aria-labelledby="prerequisites-title">
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
       <li>Set up the reader once over USB, if you have not already.
         <code class="setup-command">kobo setup</code></li>
-      <li>A book is researched by Exa, written by OpenAI and narrated by ElevenLabs, on your own accounts. Create an API key with each and save them in private files: ~/.exa, ~/.openai and ~/.elevenlabs.</li>
-      <li>Install the research key.
+      <li>Plug the reader in, open its storage and copy audiobooks into a folder called Audiobooks: an .m4b, .m4a, .mp3, .ogg, .opus, .flac or .wav file is one book, and a folder of numbered files is one book with a part per file.</li>
+      <li>Open Audiobooks, tap a book, and connect headphones or a speaker when asked. Tapping a book later carries on where you left it.</li>
+      <li>To make a book from a topic instead, create an API key with Exa, OpenAI and ElevenLabs, save them in ~/.exa, ~/.openai and ~/.elevenlabs, and install each with its command. It shows the time and cost before anything is spent.
         <code class="setup-command">kobo secret set exa</code></li>
-      <li>Install the writing key.
-        <code class="setup-command">kobo secret set openai</code></li>
-      <li>Install the narration key.
-        <code class="setup-command">kobo secret set elevenlabs</code></li>
-      <li>Open Audiobook Studio and type a topic. It shows the time and cost before anything is spent: about 3 to 8 minutes and $1 to $5 a book. The free sample plays with no keys.</li>
     </ol>
     <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
       <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
-  <section class="panel get-cobalt" id="setup-panel">
-    <div class="get-cobalt-copy">
-      <p class="eyebrow">New to Cobalt?</p>
-      <h2>Install Cobalt from your browser</h2>
-      <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
-      <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
-    </div>
-    <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
+  <section class="section" id="setup-panel">
+    <h2>New to Cobalt? Install it from your browser.</h2>
+    <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
+    <p class="quiet">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
+    <p><a class="btn" href="../../install/">Install Cobalt</a></p>
   </section>
-  <section class="panel" id="pair-panel">
-    <p class="eyebrow">Already have Cobalt?</p>
-    <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong>, tap the globe in the top bar and choose <strong>Link browser</strong>. Scan the QR code, or enter the pairing code and verification key.</p>
+  <section class="section" id="pair-panel">
+    <h2>Already have Cobalt? Link your Kobo.</h2>
+    <p>On your Kobo, open <strong>App Store</strong> and tap <strong>Link a browser</strong> in the top bar, then <strong>Link a browser</strong> again. Scan the QR code, or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>
@@ -164,26 +156,33 @@
     </form>
     <p class="status" id="pair-status" role="status" aria-live="polite"></p>
   </section>
-  <section class="panel" id="install-panel" hidden>
+  <section class="section" id="install-panel" hidden>
     <h2>Install on <span id="device-name">your Kobo</span></h2>
     <p>Your Kobo checks the app's signature before installing it.</p>
     <div class="actions">
-      <button type="button" id="install">Install Audiobook Studio</button>
+      <button type="button" id="install">Install Audiobooks</button>
       <button type="button" id="forget" class="secondary">Forget this Kobo</button>
     </div>
     <p class="status" id="install-status" role="status" aria-live="polite"></p>
   </section>
-  <aside class="community">
-    <strong>Want another Kobo app?</strong>
-    Request it, suggest a feature or report a bug in
-    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
-  </aside>
+  <section class="section whats-new">
+    <h2>New in 2.0.2</h2>
+    <p>A file that will not play says what to do about it, and the library fits its page while a book is playing.</p>
+  </section>
+  <section class="section">
+    <p class="after-index">Want another Kobo app? Request it, suggest a feature or report a bug in <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.</p>
+  </section>
+  </div>
 </main>
 <footer>
   <div class="wrap">
-    <span>Cobalt · AGPL-3.0</span>
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
+    </div>
     <nav aria-label="Footer navigation">
       <a href="../../">Home</a>
+      <a href="../../faq.html">FAQ</a>
       <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>

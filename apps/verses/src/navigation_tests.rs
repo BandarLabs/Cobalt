@@ -254,6 +254,8 @@ fn quote_card_back_restores_the_screen_it_came_from() {
             view,
             ..Verses::default()
         });
+        // The card is offered from the middle of the poem.
+        runner.action(action_id(POEM_MENU));
         tap(&mut runner, "card");
         assert_eq!(runner.app().view, View::Card);
         runner.action(action_id("card"));
@@ -328,6 +330,8 @@ fn every_bundled_poem_is_protocol_valid_at_every_text_size() {
             );
             // show() invokes Context's actual frame validation, which catches
             // a one-entry action_bar even when a renderer-only layout fits.
+            let mut runner = runner;
+            runner.action(action_id(POEM_MENU));
             let shown = screen(&runner);
             assert!(shown
                 .layout_with(&metrics, &Chrome::measuring(true))

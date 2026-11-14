@@ -1,0 +1,142 @@
+# sweep: --seed-root apps/zotero-reader/fixtures/kept
+# A connected library with its Reading Queue cached and one paper kept
+# offline. The key in the fixture is not a real one, so the first refresh is
+# refused (or fails, without a network); either way the cached queue stays
+# on screen, and the rest of the route runs with the reader offline.
+wait-for Reading Queue
+wait-for Paper number 1 on bounded readers
+expect Read
+expect 1 of 3
+clean
+shot queue-cached
+scenario offline
+# The queue pages forward and back.
+tap-id list-next
+wait-for 2 of 3
+expect Paper number 7 on bounded readers
+clean
+shot queue-page-two
+tap-id list-back
+wait-for 1 of 3
+# Search looks through the cached papers only.
+tap Search
+wait-for Search cached papers
+type 12
+tap-id kb.enter
+wait-for Paper number 12 on bounded readers
+expect-missing Paper number 2 on bounded readers
+clean
+shot search-cached
+tap Collections
+wait-for Choose collection
+wait 15000
+wait-for not on Wi-Fi
+clean
+shot collections-offline
+# Back from Collections is the searched list, named in the bar; Back again
+# clears the search.
+tap Back
+wait-for “12”
+tap Back
+wait-for Reading Queue
+# The kept paper opens from Offline without the network, and reads to the
+# end of its indexed text.
+tap Offline
+wait-for Offline papers
+expect Paper number 1 on bounded readers
+expect KB
+clean
+shot offline-papers
+tap Paper number 1 on bounded readers
+wait-for Open offline text
+expect Remove offline
+expect Mark unread
+clean
+shot kept-paper
+tap Open offline text
+wait-for-id reader-forward
+wait-idle
+expect Paragraph 1.
+clean
+shot reading-first-page
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+tap-id reader-forward
+wait-idle
+expect The end of the indexed text.
+clean
+shot reading-end
+# The place is kept: reopened, and after a restart, it is where it was left.
+tap Back
+wait-for Offline papers
+tap Paper number 1 on bounded readers
+wait-for Open offline text
+tap Open offline text
+wait-for-id reader-forward
+wait-idle
+expect The end of the indexed text.
+restart
+wait-for Paper number 1 on bounded readers
+scenario offline
+tap Offline
+wait-for Offline papers
+tap Paper number 1 on bounded readers
+wait-for Open offline text
+tap Open offline text
+wait-for-id reader-forward
+wait-idle
+expect The end of the indexed text.
+tap Back
+wait-for Offline papers
+tap Paper number 1 on bounded readers
+wait-for Remove offline
+# Read and unread is the reader's own mark; opening the text marks it read,
+# and Mark unread takes that back.
+tap Mark unread
+wait-idle
+expect Mark read
+# Removing the kept copy empties the offline shelf.
+tap Remove offline
+wait-idle
+expect-missing Remove offline
+tap Back
+wait-idle
+tap Offline
+wait-for Offline papers
+expect-missing Paper number 1 on bounded readers
+clean
+shot offline-empty
+tap Back
+wait-for Reading Queue
+expect-missing Ada Lovelace et al. · 2026 · Read
+# Collections offline should say they could not be read, not that the
+# library has none.
+tap Collections
+wait 15000
+wait-for not on Wi-Fi
+expect-missing contains no collections
+wait-for Collections not loaded
+clean
+shot collections-offline
+tap Back
+wait-for Reading Queue
+# A search narrows the list and the bar names it; Back returns the whole list.
+tap Search
+wait-for-id kb.enter
+type bounded
+tap-id kb.enter
+wait-for “bounded”
+expect-missing Reading Queue
+clean
+shot search-filtered
+tap Back
+wait-for Reading Queue
+expect-missing “bounded”

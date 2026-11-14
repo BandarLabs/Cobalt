@@ -184,6 +184,28 @@ impl FramePlanner {
         self.transition(regions, dirty, false, cleaning)
     }
 
+    /// Plans the next update as [`Self::plan`] does, cleaning every region
+    /// it repaints.
+    ///
+    /// For taking away something that lay over the page, such as the
+    /// runtime's notice card. A partial waveform over a rectangle that was a
+    /// card a moment ago leaves its outline on the panel; the full waveform
+    /// on just that rectangle costs one short flash where the card was and
+    /// leaves nothing behind.
+    #[must_use]
+    pub fn plan_clean(&self, surface: &Surface) -> Option<FrameTransition> {
+        let mut transition = self.plan(surface)?;
+        for update in &mut transition.regions {
+            if update.waveform != PanelWaveform::Colour {
+                update.waveform = PanelWaveform::Gc16;
+            }
+        }
+        if transition.waveform != PanelWaveform::Colour {
+            transition.waveform = PanelWaveform::Gc16;
+        }
+        Some(transition)
+    }
+
     /// Plans an update for a region whose pixels and waveform are already
     /// known by the caller.
     ///
@@ -217,13 +239,19 @@ impl FramePlanner {
         // The waveform still follows the pixels themselves. A two-level
         // waveform over antialiased grey would crush edges that no later
         // frame comparison could repair, because committing this update
-        // marks the rectangle current.
-        let waveform =
-            if waveform == PanelWaveform::Du && !self.two_level_transition(surface, region) {
-                PanelWaveform::Gl16
-            } else {
-                waveform
-            };
+        // marks the rectangle current. The same holds for colour: a grey
+        // write over a tinted control would commit its luminance as current,
+        // and repainting the identical screen afterwards would find nothing
+        // to redraw, leaving a grey rectangle in the bar until something else
+        // repainted it. So a region holding colour is written in colour,
+        // whatever feedback asked for.
+        let waveform = if surface.region_has_colour(region) {
+            PanelWaveform::Colour
+        } else if waveform == PanelWaveform::Du && !self.two_level_transition(surface, region) {
+            PanelWaveform::Gl16
+        } else {
+            waveform
+        };
         let area = u64::try_from(region.width)
             .ok()?
             .saturating_mul(u64::try_from(region.height).ok()?);
@@ -670,6 +698,36 @@ mod tests {
     }
 
     #[test]
+    fn taking_a_card_away_cleans_only_where_it_was() {
+        let (mut planner, page) = started(64, 64);
+        let mut covered = page.clone();
+        for y in 4..20 {
+            for x in 8..56 {
+                covered.pixels[y * 64 + x] = if y == 4 { tone::INK } else { 170 };
+            }
+        }
+        let shown = planner.plan(&covered).expect("the card is a change");
+        assert!(!shown.full);
+        assert!(shown
+            .regions
+            .iter()
+            .all(|update| update.waveform != PanelWaveform::Gc16));
+        assert!(planner.commit(&covered, &shown));
+        let gone = planner
+            .plan_clean(&page)
+            .expect("the card going is a change");
+        assert!(!gone.full, "only the card's rectangle flashes");
+        assert!(gone
+            .regions
+            .iter()
+            .all(|update| update.waveform == PanelWaveform::Gc16
+                && update.region.y <= 4
+                && update.region.y + update.region.height >= 20));
+        assert!(planner.commit(&page, &gone));
+        assert!(planner.plan_clean(&page).is_none(), "nothing left to clean");
+    }
+
+    #[test]
     fn uncertain_panel_requires_cleaning_without_resetting_sequence() {
         let (mut planner, frame) = started(32, 32);
         let before = planner.refreshes();
@@ -695,6 +753,63 @@ mod tests {
             "a partial colour update must not flash the whole panel"
         );
         assert!(planner.commit(&frame, &colour));
+    }
+
+    // Pressing a control on a tinted bar inverts its rectangle and asks for
+    // the fast two-level waveform; releasing it paints the rectangle back. If
+    // either write went out as grey the planner would commit that grey as
+    // what the panel shows, and the repaint of the unchanged screen would
+    // find no difference and leave the hole.
+    #[test]
+    fn feedback_over_a_tinted_control_is_written_in_colour_and_restored_in_colour() {
+        // Large enough that the two rectangles stay apart once each is
+        // aligned to the panel's update grid.
+        let (mut planner, mut frame) = started(64, 64);
+        let bar = Rect {
+            x: 0,
+            y: 0,
+            width: 64,
+            height: 16,
+        };
+        for y in 0..16 {
+            for x in 0..64 {
+                frame.blend_colour(x, y, [0xFF, 0x88, 0x33], 255);
+            }
+        }
+        let shown = planner.plan(&frame).expect("the bar appears");
+        assert!(planner.commit(&frame, &shown));
+
+        let mut pressed = frame.clone();
+        pressed.invert_rect(bar);
+        let down = planner
+            .plan_damage(&pressed, bar, PanelWaveform::Du)
+            .expect("press feedback");
+        assert_eq!(down.regions[0].waveform, PanelWaveform::Colour);
+        assert!(planner.commit(&pressed, &down));
+
+        let up = planner
+            .plan_damage(&frame, bar, PanelWaveform::Du)
+            .expect("release feedback");
+        assert_eq!(up.regions[0].waveform, PanelWaveform::Colour);
+        assert!(planner.commit(&frame, &up));
+        assert!(
+            planner.plan(&frame).is_none(),
+            "the restored bar is what the panel shows"
+        );
+
+        // A grey control on the same panel keeps the fast waveform.
+        let grey = Rect {
+            x: 0,
+            y: 40,
+            width: 64,
+            height: 16,
+        };
+        let mut pressed = frame.clone();
+        pressed.invert_rect(grey);
+        let down = planner
+            .plan_damage(&pressed, grey, PanelWaveform::Du)
+            .expect("press feedback");
+        assert_eq!(down.regions[0].waveform, PanelWaveform::Du);
     }
 
     // The reason the grey path is worth a test of its own: a Clara BW has no

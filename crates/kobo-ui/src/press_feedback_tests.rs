@@ -53,6 +53,42 @@ fn a_finger_on_bare_text_has_nothing_to_invert() {
     );
 }
 
+#[test]
+fn a_pressed_switch_row_covers_the_first_letter_of_its_label() {
+    let screen = Screen::new(
+        1,
+        vec![Node::Toggle {
+            id: NodeId(1),
+            action: ActionId(7),
+            label: "Bluetooth".into(),
+            summary: "Turn on to find devices".into(),
+            on: false,
+            state: ControlState::Enabled,
+        }],
+    );
+    let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let label = layout
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::ToggleLabel(_)))
+        .expect("the label was laid out")
+        .rect;
+    let pressed = layout
+        .pressed_control(label.x + label.width / 2, label.y + label.height / 2)
+        .expect("a finger on the label presses the row");
+    // The same inset the patch is drawn with.
+    let inset = min(
+        CLARA_BW_METRICS.tenth_mm(PRESS_INSET_TENTH_MM),
+        min(pressed.width, pressed.height) / 8,
+    );
+    assert!(
+        pressed.x + inset <= label.x,
+        "the patch starts at {} and the label at {}",
+        pressed.x + inset,
+        label.x
+    );
+}
+
 /// A screen with one outlined button, rendered, and the button's rect.
 fn rendered_button(emphasis: Emphasis) -> (Surface, Rect) {
     let screen = Screen::new(
@@ -581,6 +617,26 @@ fn a_section_header_with_nothing_under_it_is_caught() {
             .iter()
             .any(|issue| issue.kind == LayoutIssueKind::OrphanedSection),
         "a header that keeps its first line is exactly right"
+    );
+}
+
+#[test]
+fn a_section_header_that_carries_its_own_value_may_close_a_page() {
+    let closing = Screen::new(
+        1,
+        vec![Node::Section {
+            id: NodeId(1),
+            title: "Cobalt".to_owned(),
+            value: Some("0.3.34".to_owned()),
+            link: None,
+        }],
+    );
+    assert!(
+        !closing
+            .validate(&CLARA_BW_METRICS)
+            .iter()
+            .any(|issue| issue.kind == LayoutIssueKind::OrphanedSection),
+        "a name and its value is a whole line, not a header waiting for content"
     );
 }
 

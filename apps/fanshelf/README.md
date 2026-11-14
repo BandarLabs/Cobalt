@@ -6,10 +6,10 @@ read them offline.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/shelf.png" alt="The shelf, with an unread update"><br>The shelf, with an unread update</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/work.png" alt="A work, with its last update check"><br>A work, with its last update check</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/work.png" alt="A work with new chapters found"><br>A work with new chapters found</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/updates.png" alt="Works with unread updates"><br>Works with unread updates</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/updates.png" alt="Each work with its update status"><br>Each work with its update status</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/fandom-filter.png" alt="The shelf filtered to one fandom"><br>The shelf filtered to one fandom</td>
 </tr>
 <tr>
@@ -44,8 +44,8 @@ Fanshelf is a personal reading tool, not a crawler.
 
 - Every request follows something you did: opening a work, downloading it,
   opening a tag or checking for updates. Update all checks your works in
-  progress one at a time and downloads only the ones that changed. There is no background checking,
-  prefetching, search scraping or mirroring.
+  progress one at a time and downloads only the ones that changed. There is
+  no background checking, prefetching, search scraping or mirroring.
 - One request at a time, at least one second apart, identified as
   `kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)`.
 - When AO3 asks it to slow down, it waits as long as AO3 says, up to an hour.
@@ -94,5 +94,4 @@ requests to AO3.
 
 Fanshelf is unofficial and not affiliated with the Organization for
 Transformative Works. Works belong to their authors and Fanshelf never
-republishes them. [FanFicFare](https://github.com/JimmXinu/FanFicFare) was a
-behaviour reference; none of its code is used.
+republishes them.

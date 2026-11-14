@@ -15,6 +15,7 @@ use kobo_sdk::{
     RichTextSpan, Screen, ScreenBuilder, ShelfDownload, ShelfProgress, ShelfUpload, SlotWidth,
     Space, StoreError, StoreResult, TextPresentation, TilePicture,
 };
+use kobo_ui::TextScale;
 mod sample;
 mod scheduler;
 mod study;
@@ -24,22 +25,25 @@ use study::Study;
 
 const BUNDLE_NAME: &str = "collection.cobfc";
 const REVIEW_LOG_NAME: &str = "cobalt-review-log.ndjson";
+/// The owner's review settings. Kept in the app's store, not on the shelf
+/// beside the collection, so a new push from the computer never resets them.
+const SETTINGS: &str = "review-settings-v1";
 const JAPANESE_FONT_HANDLE: FontHandle = FontHandle(1);
 const PICTURE_HANDLE: PictureHandle = PictureHandle(1);
 const NOTICE: &str = "Flashcards reviews host-prepared Cobalt bundles offline. The device contains no linked study-engine code, requests no remote-network capability, and uses only Cobalt's required local runtime IPC. Applicable device licences are in Licences & about.";
 const CARD_PRESENTATION: ParagraphPresentation = ParagraphPresentation {
-    alignment: ParagraphAlignment::Center,
-    line_height_percent: 135,
+    alignment: ParagraphAlignment::Start,
+    line_height_percent: 100,
     margin_before_em: 30,
     margin_after_em: 30,
-    first_line_indent_em: 0,
+    ..ParagraphPresentation::PLAIN
 };
 const DECK_PRESENTATION: ParagraphPresentation = ParagraphPresentation {
     alignment: ParagraphAlignment::Center,
     line_height_percent: 110,
     margin_before_em: 0,
     margin_after_em: 20,
-    first_line_indent_em: 0,
+    ..ParagraphPresentation::PLAIN
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -121,8 +125,10 @@ struct ReviewScreenModel {
     menu_open: bool,
     page: usize,
     pages: usize,
-    completed: usize,
-    total_cards: usize,
+    /// The size the card's own words are set at, above the reader's own.
+    hero_scale: TextScale,
+    /// The question, shown above the answer on the answer's first page.
+    question: Option<StyledPage>,
 }
 
 #[allow(
@@ -230,9 +236,9 @@ impl Flashcards {
                 self.loading_total,
                 self.sample_saving,
             ),
-            View::FirstUse => first_use_screen(self.menu_open),
+            View::FirstUse => first_use_screen(&context.metrics(), self.menu_open),
             View::Decks => self.deck_picker(),
-            View::Review => self.review(),
+            View::Review => self.review(context),
             View::Settings => {
                 let pages = settings_pages(context, self.show_details);
                 let page = self.settings_page.min(pages.len().saturating_sub(1));
@@ -451,7 +457,7 @@ impl Flashcards {
         choices
     }
 
-    fn review(&self) -> Screen {
+    fn review(&self, context: &Context) -> Screen {
         let completed = self.reviewed_count();
         let total = completed + self.active_card_ids().len();
         let Some(card) = self.current_card() else {
@@ -473,19 +479,10 @@ impl Flashcards {
         let shown = if let Some(page) = self.card_pages.get(page) {
             page
         } else {
-            fallback = StyledPage {
-                text: side_text(card, self.answer).to_owned(),
-                spans: side_spans(card, self.answer).to_vec(),
-            };
+            fallback = side_page(card, self.answer);
             &fallback
         };
-        let phase = if let Some(grade) = self.pending_grade.filter(|_| self.saving) {
-            format!("Saving {}", grade.label())
-        } else if self.answer {
-            "Answer".to_owned()
-        } else {
-            "Question".to_owned()
-        };
+        let saving = self.pending_grade.filter(|_| self.saving);
         let details = self.show_details.then(|| {
             let template = if matches!(
                 card_text_font(&card.template_name),
@@ -506,25 +503,29 @@ impl Flashcards {
         let japanese_font = (matches!(
             card_text_font(side_text(card, self.answer)),
             Ok(CardTextFont::Japanese)
-        ) || matches!(card_text_font(&deck), Ok(CardTextFont::Japanese)))
+        ) || (self.answer
+            && matches!(card_text_font(&card.front), Ok(CardTextFont::Japanese)))
+            || matches!(card_text_font(&deck), Ok(CardTextFont::Japanese)))
         .then_some(self.japanese_font)
         .flatten();
         review_screen(
             &ReviewScreenModel {
                 deck,
-                status: format!("{phase} · {} of {total}", completed + 1),
+                status: review_status(saving, completed, total),
                 details,
                 attachment_note: side_attachment_summary(card, self.answer),
                 media_note: self.media_message.clone(),
                 picture: self.picture,
                 answer: self.answer,
-                saving: self.pending_grade.filter(|_| self.saving),
+                saving,
                 japanese_font,
                 menu_open: self.menu_open,
                 page,
                 pages: page_count,
-                completed,
-                total_cards: total,
+                hero_scale: hero_scale(context.metrics().text_scale),
+                question: (self.answer && page == 0)
+                    .then(|| question_above_answer(card))
+                    .flatten(),
             },
             &shown.text,
             &shown.spans,
@@ -782,7 +783,12 @@ impl Flashcards {
             self.media_message = Some("Image unavailable on this Kobo.".to_owned());
             return;
         };
-        let Ok(decoded) = kobo_image::decode(bytes) else {
+        let decoded = if context.panel_shows_colour() {
+            kobo_image::decode_colour(bytes)
+        } else {
+            kobo_image::decode(bytes)
+        };
+        let Ok(decoded) = decoded else {
             self.media_message = Some("Image could not be displayed safely.".to_owned());
             return;
         };
@@ -790,12 +796,10 @@ impl Flashcards {
             self.media_message = Some("Image could not fit the review area.".to_owned());
             return;
         };
-        self.picture = context.put_picture(
-            PICTURE_HANDLE,
-            picture.width(),
-            picture.height(),
-            picture.into_grey(),
-        );
+        let (width, height) = (picture.width(), picture.height());
+        let colour = picture.colour().map(<[u8]>::to_vec);
+        self.picture =
+            context.put_picture_shown(PICTURE_HANDLE, width, height, picture.into_grey(), colour);
         if self.picture.is_none() {
             self.media_message = Some("Image memory is unavailable right now.".to_owned());
         }
@@ -807,8 +811,7 @@ impl Flashcards {
             self.card_page = 0;
             return;
         };
-        let text = side_text(card, self.answer).to_owned();
-        let spans = side_spans(card, self.answer).to_vec();
+        let StyledPage { text, spans } = side_page(card, self.answer);
         let completed = self.reviewed_count();
         let total = completed + self.active_card_ids().len();
         let details = self.show_details.then(|| {
@@ -829,16 +832,13 @@ impl Flashcards {
         });
         let deck = self.selected_deck_name();
         let japanese_font = (matches!(card_text_font(&text), Ok(CardTextFont::Japanese))
+            || (self.answer && matches!(card_text_font(&card.front), Ok(CardTextFont::Japanese)))
             || matches!(card_text_font(&deck), Ok(CardTextFont::Japanese)))
         .then_some(self.japanese_font)
         .flatten();
         let model = ReviewScreenModel {
             deck,
-            status: format!(
-                "{} · {} of {total}",
-                if self.answer { "Answer" } else { "Question" },
-                completed + 1
-            ),
+            status: review_status(None, completed, total),
             details,
             attachment_note: side_attachment_summary(card, self.answer),
             media_note: self.media_message.clone(),
@@ -849,8 +849,8 @@ impl Flashcards {
             menu_open: false,
             page: 0,
             pages: 2,
-            completed,
-            total_cards: total,
+            hero_scale: hero_scale(context.metrics().text_scale),
+            question: self.answer.then(|| question_above_answer(card)).flatten(),
         };
         self.card_pages = paginate_review_text(&model, &text, &spans, context.metrics());
         self.card_page = self.card_page.min(self.card_pages.len().saturating_sub(1));
@@ -1111,8 +1111,60 @@ impl Flashcards {
     }
 }
 
+impl Flashcards {
+    fn set_details(&mut self, context: &mut Context, show: bool) {
+        if self.show_details != show {
+            self.show_details = show;
+            context.store().save(SETTINGS, encode_settings(show));
+        }
+        context.set_screen(self.screen(context));
+    }
+}
+
+fn encode_settings(show_details: bool) -> Vec<u8> {
+    format!(
+        "details={}\n",
+        if show_details { "detailed" } else { "compact" }
+    )
+    .into_bytes()
+}
+
+/// Whether the saved settings ask for card details. Anything unreadable is
+/// the default, compact.
+fn decode_settings(bytes: &[u8]) -> bool {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .any(|line| line.trim() == "details=detailed")
+}
+
 impl KoboApp for Flashcards {
+    fn on_load(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key != SETTINGS {
+            self.on_store(context, result);
+            return;
+        }
+        if let StoreResult::Loaded {
+            value: Some(value), ..
+        } = result
+        {
+            let show = decode_settings(&value);
+            if show != self.show_details {
+                self.show_details = show;
+                context.set_screen(self.screen(context));
+            }
+        }
+    }
+
+    // A refused settings save costs the choice at the next start, and is not
+    // a review that failed to save.
+    fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if key != SETTINGS {
+            self.on_store(context, result);
+        }
+    }
+
     fn on_start(&mut self, context: &mut Context) {
+        context.store().load(SETTINGS);
         context.log(LogLevel::Info, NOTICE);
         self.notice_documents = build_notice_documents(context);
         self.start_download(context);
@@ -1192,11 +1244,9 @@ impl KoboApp for Flashcards {
             self.view = View::NoticeDocument;
             context.set_screen(self.screen(context));
         } else if action == action_id("details-compact") {
-            self.show_details = false;
-            context.set_screen(self.screen(context));
+            self.set_details(context, false);
         } else if action == action_id("details-detailed") {
-            self.show_details = true;
-            context.set_screen(self.screen(context));
+            self.set_details(context, true);
         } else if action == action_id("answer") {
             self.reveal(context);
         } else if let Some(grade) = Grade::ALL
@@ -1382,24 +1432,41 @@ fn loading_screen(
         .unwrap_or_else(|| with(0))
 }
 
-fn first_use_screen(menu_open: bool) -> Screen {
-    ScreenBuilder::new("flashcards-first-use")
-        .top_bar("Flashcards")
-        .top_bar_overflow("more", menu_open, [("notices", "Licences & about")])
-        .heading("No collection yet")
+fn first_use_screen(metrics: &kobo_sdk::DisplayMetrics, menu_open: bool) -> Screen {
+    let build = |heading: bool| {
+        let mut screen = ScreenBuilder::new("flashcards-first-use")
+            .top_bar("Flashcards")
+            .top_bar_overflow("more", menu_open, [("notices", "Licences & about")]);
+        if heading {
+            screen = screen.heading("No collection yet");
+        }
         // No sentence before the button: it said what the button and the
         // section under it already say, and at the largest text size held
         // sideways the two commands had no room left under it.
-        .primary_button("sample", "Start with the sample")
-        // The two commands, each set apart and whole. The sentence these
-        // replace carried a run of spaces in the middle of a filename and left
-        // out where the bundle goes, so typing it as shown failed.
-        .section("Your own Anki deck")
-        .command("kobo flashcards import deck.apkg --merge collection.cobfc")
-        .text("Then send it over Wi-Fi:")
-        .command("kobo flashcards push collection.cobfc")
-        .bottom_action("retry", "Read collection again")
-        .build()
+        screen
+            .primary_button("sample", "Start with the sample")
+            // The two commands, each set apart and whole. The sentence these
+            // replace carried a run of spaces in the middle of a filename and
+            // left out where the bundle goes, so typing it as shown failed.
+            .section("Your own Anki deck")
+            .command("kobo flashcards import deck.apkg --merge collection.cobfc")
+            .text("Then send it over Wi-Fi:")
+            .command("kobo flashcards push collection.cobfc")
+            .bottom_action("retry", "Read collection again")
+            .build()
+    };
+    // Held sideways at the largest text size the panel cannot hold the
+    // heading as well as both commands whole. The commands cannot be
+    // shortened and the bar already names the app, so the heading goes.
+    let full = build(true);
+    if full
+        .diagnostics(metrics, &Chrome::measuring(true))
+        .has_errors()
+    {
+        build(false)
+    } else {
+        full
+    }
 }
 
 fn problem_screen(kind: ProblemKind, message: &str, menu_open: bool) -> Screen {
@@ -1561,10 +1628,16 @@ fn done_screen(
 fn review_screen(model: &ReviewScreenModel, text: &str, spans: &[CardTextSpan]) -> Screen {
     let total = model.pages.max(1);
     let page = model.page.min(total - 1);
-    let progress =
-        u8::try_from(progress_percent(model.completed, model.total_cards)).unwrap_or(100);
+    // The deck names the bar while its cards are up, because that is where
+    // the reader is. A name the interface face cannot set keeps the app's
+    // own name there rather than a row of empty boxes.
+    let title = if matches!(card_text_font(&model.deck), Ok(CardTextFont::Interface)) {
+        bounded_label(&model.deck, "Flashcards")
+    } else {
+        "Flashcards".to_owned()
+    };
     let mut screen = ScreenBuilder::new("flashcards-review")
-        .top_bar("Flashcards")
+        .top_bar(title)
         .top_bar_overflow(
             "more",
             model.menu_open,
@@ -1575,9 +1648,7 @@ fn review_screen(model: &ReviewScreenModel, text: &str, spans: &[CardTextSpan]) 
             ],
         )
         .owns_back(true)
-        .rich_text(model.deck.clone(), Vec::new(), DECK_PRESENTATION)
-        .secondary(model.status.clone())
-        .progress(progress);
+        .secondary(model.status.clone());
     if let Some(details) = &model.details {
         screen = screen.secondary(details);
     }
@@ -1587,8 +1658,27 @@ fn review_screen(model: &ReviewScreenModel, text: &str, spans: &[CardTextSpan]) 
     if let Some(note) = &model.media_note {
         screen = screen.secondary(note);
     }
+    // The card sits a little below the count on both of its sides, so the
+    // count reads as a note about the card rather than its first line.
+    screen = screen.spacer(Space::Small);
     if let Some(picture) = model.picture {
         screen = screen.picture(picture, 38);
+    }
+    if let Some(question) = &model.question {
+        // Above the answer the question is a reminder, not the thing being
+        // read, so it is set small and muted and the answer under it is the
+        // larger of the two. Japanese has no glyphs in the interface face, so
+        // a Japanese question stays in the face that can draw it.
+        screen = if matches!(card_text_font(&question.text), Ok(CardTextFont::Interface)) {
+            screen.secondary(question.text.clone())
+        } else {
+            screen.rich_text(
+                question.text.clone(),
+                ui_spans(&question.spans),
+                CARD_PRESENTATION,
+            )
+        }
+        .divider();
     }
     let display_text = if text.trim().is_empty() && model.picture.is_none() {
         "No text was rendered for this side."
@@ -1606,8 +1696,12 @@ fn review_screen(model: &ReviewScreenModel, text: &str, spans: &[CardTextSpan]) 
     } else {
         screen.primary_button("answer", "Reveal answer")
     };
+    // The card's words are set as reading, in the reading face and larger
+    // than the interface around them; the bar, the count and the buttons keep
+    // the reader's own size.
+    screen = screen.reading(true).text_scale(model.hero_scale);
     if let Some(font) = model.japanese_font {
-        screen = screen.reading(true).reading_font(font);
+        screen = screen.reading_font(font);
     }
     if total > 1 {
         screen = screen
@@ -1673,6 +1767,7 @@ fn ui_spans(spans: &[CardTextSpan]) -> Vec<RichTextSpan> {
                 superscript: span.style.superscript,
                 subscript: span.style.subscript,
                 highlighted: false,
+                muted: false,
             },
         })
         .collect()
@@ -1694,7 +1789,12 @@ fn paginate_review_text(
         .collect::<Vec<_>>();
     let mut pages = Vec::new();
     let mut start = 0;
+    // The question stands above the answer on its first page only, so the
+    // pages after it are measured without it.
+    let mut later = model.clone();
+    later.question = None;
     while start < text.len() {
+        let model = if pages.is_empty() { model } else { &later };
         let start_index = boundaries
             .binary_search(&start)
             .expect("page start is a character boundary");
@@ -1824,7 +1924,7 @@ fn styled_page(text: &str, spans: &[CardTextSpan], start: usize, end: usize) -> 
 fn build_notice_documents(context: &Context) -> Vec<NoticeDocument> {
     let mut documents = Vec::new();
     for (title, text) in DEVICE_DISTRIBUTION_DOCUMENTS {
-        let readable = readable_notice(text);
+        let readable = without_heading(&readable_notice(text), title);
         let mut pages = context.paginate(&readable, true);
         if pages.is_empty() {
             pages.push(vec![readable]);
@@ -1838,6 +1938,17 @@ fn build_notice_documents(context: &Context) -> Vec<NoticeDocument> {
         });
     }
     documents
+}
+
+/// The document without a first line that only repeats its title, which
+/// the bar above it already shows.
+fn without_heading(text: &str, title: &str) -> String {
+    match text.split_once('\n') {
+        Some((first, rest)) if first.trim().eq_ignore_ascii_case(title) => {
+            rest.trim_start_matches('\n').to_owned()
+        }
+        _ => text.to_owned(),
+    }
 }
 
 fn readable_notice(text: &str) -> String {
@@ -1931,19 +2042,66 @@ fn image_for_side(card: &Card, answer: bool) -> Option<&kobo_flashcards_format::
     }
 }
 
+/// The question to show above a card's answer, unless the answer already
+/// shows it somewhere of its own.
+///
+/// An answer is read against its question: "Magnetic north." alone does not
+/// say what it answers, and grading it means remembering a screen that is
+/// gone. Most imported cards are written as the question, a rule and the
+/// answer already. Those open with the question, which is then set here as
+/// the quiet line above the answer like any other card's, and the answer is
+/// what follows it; see [`answer_start`]. A back that quotes its question
+/// anywhere else keeps the layout its author gave it.
+fn question_above_answer(card: &Card) -> Option<StyledPage> {
+    let question = card.front.trim();
+    if question.is_empty() || (card.back.contains(question) && answer_start(card).is_none()) {
+        return None;
+    }
+    let offset = card.front.len() - card.front.trim_start().len();
+    Some(styled_page(
+        &card.front,
+        &card.front_spans,
+        offset,
+        offset + question.len(),
+    ))
+}
+
+/// Where the answer proper starts in a back that opens by repeating its
+/// question, as imported cards do.
+///
+/// Without this an imported card set its question twice on the answer side:
+/// once as the quiet line above the rule and again, at the answer's size, as
+/// the first line of the back. `None` when the back does not open with the
+/// question, or is nothing but the question.
+fn answer_start(card: &Card) -> Option<usize> {
+    let question = card.front.trim();
+    if question.is_empty() {
+        return None;
+    }
+    let rest = card.back.trim_start().strip_prefix(question)?;
+    let start = card.back.len() - rest.trim_start().len();
+    (start < card.back.len()).then_some(start)
+}
+
+/// The words a side shows: the front, or the back from where its answer
+/// starts.
+fn side_page(card: &Card, answer: bool) -> StyledPage {
+    if answer {
+        let start = answer_start(card).unwrap_or(0);
+        styled_page(&card.back, &card.back_spans, start, card.back.len())
+    } else {
+        StyledPage {
+            text: card.front.clone(),
+            spans: card.front_spans.clone(),
+        }
+    }
+}
+
 fn side_text(card: &Card, answer: bool) -> &str {
     if answer {
         &card.back
     } else {
         &card.front
-    }
-}
-
-fn side_spans(card: &Card, answer: bool) -> &[CardTextSpan] {
-    if answer {
-        &card.back_spans
-    } else {
-        &card.front_spans
     }
 }
 
@@ -1977,8 +2135,31 @@ fn next_due_sentence(days: Option<i64>) -> String {
     }
 }
 
-fn progress_percent(done: usize, total: usize) -> usize {
-    done.saturating_mul(100).checked_div(total).unwrap_or(100)
+/// Where the reader is in today's cards, as the one quiet line above a card.
+///
+/// Only the count. Which side is showing is plain from the card itself, and a
+/// bar measuring the same count a second time was the heaviest thing on a
+/// screen whose words are the point.
+fn review_status(saving: Option<Grade>, completed: usize, total: usize) -> String {
+    let position = format!("{} of {total}", completed + 1);
+    match saving {
+        Some(grade) => format!("Saving {} · {position}", grade.label()),
+        None => position,
+    }
+}
+
+/// The size a card's words are set at, two steps above the reader's own.
+///
+/// A card is one sentence or a few words, and it is the only thing on the
+/// screen that is read rather than glanced at. Set at the interface's size it
+/// weighed the same as the deck's name over it and the buttons under it, so
+/// nothing on the page was obviously the card.
+fn hero_scale(reader: TextScale) -> TextScale {
+    reader
+        .larger()
+        .and_then(TextScale::larger)
+        .or_else(|| reader.larger())
+        .unwrap_or(reader)
 }
 
 fn main() -> ExitCode {
@@ -1998,7 +2179,7 @@ mod tests {
         encode, rasterize_svg, Attachment, BundleManifest, Deck, DeckConfiguration, DeckQueue,
         Note, NoteType, ReviewQueue, Source, CONVERTER_REVISION,
     };
-    use kobo_ui::{render_all, LayoutKind, PictureCache, Surface, TextScale, CLARA_BW_METRICS};
+    use kobo_ui::{render_all, LayoutKind, PictureCache, Surface, CLARA_BW_METRICS};
     use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -2165,7 +2346,7 @@ mod tests {
     fn review_model(answer: bool) -> ReviewScreenModel {
         ReviewScreenModel {
             deck: "Japanese".to_owned(),
-            status: format!("{} · 3 of 18", if answer { "Answer" } else { "Question" }),
+            status: "3 of 18".to_owned(),
             details: None,
             attachment_note: None,
             media_note: None,
@@ -2176,8 +2357,8 @@ mod tests {
             menu_open: false,
             page: 0,
             pages: 1,
-            completed: 2,
-            total_cards: 18,
+            hero_scale: hero_scale(TextScale::Default),
+            question: None,
         }
     }
 
@@ -2451,6 +2632,122 @@ mod tests {
     }
 
     #[test]
+    fn the_answer_is_shown_under_its_question_and_a_rule() {
+        use kobo_sdk::AppRunner;
+
+        let (mut values, mut blobs, mut writes) =
+            (TestMaps::new(), TestMaps::new(), TestMaps::new());
+        let mut runner = AppRunner::new(Flashcards {
+            fixed_day: Some(TEST_DAY),
+            ..Flashcards::default()
+        });
+        let commands = runner.start();
+        pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        for action in ["sample", "deck-0", "answer"] {
+            let commands = runner.action(action_id(action));
+            pump_transfers(&mut runner, commands, &mut values, &mut blobs, &mut writes);
+        }
+        let card = runner.app().current_card().expect("a card").clone();
+        let screen = runner.app().screen(&runner.context());
+        let order = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Secondary { text, .. } if *text == card.front => Some("question"),
+                kobo_sdk::Node::Divider { .. } => Some("rule"),
+                kobo_sdk::Node::RichText { text, .. } if *text == card.back => Some("answer"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(order, ["question", "rule", "answer"]);
+    }
+
+    #[test]
+    fn the_answer_is_set_larger_than_the_muted_question_above_it_and_no_bar_counts_cards() {
+        let mut model = review_model(true);
+        model.question = Some(StyledPage {
+            text: "What does a compass needle point toward?".to_owned(),
+            spans: Vec::new(),
+        });
+        let screen = review_screen(&model, "Magnetic north.", &[]);
+        assert!(
+            screen.reading,
+            "the card's words are set in the reading face"
+        );
+        assert!(
+            screen.text_scale.map(TextScale::percent) > Some(TextScale::Default.percent()),
+            "the card's words are set above the reader's own size: {:?}",
+            screen.text_scale
+        );
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::Secondary { text, .. } if text == "What does a compass needle point toward?"
+        )));
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::RichText { text, .. } if text == "Magnetic north."
+        )));
+        assert!(!screen
+            .nodes
+            .iter()
+            .any(|node| matches!(node, kobo_sdk::Node::Progress { .. })));
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+        let height_of = |words: &str| {
+            layout
+                .nodes
+                .iter()
+                .find(|node| node.text_lines.concat().contains(words))
+                .map_or_else(
+                    || panic!("{words}: {:?}", layout.nodes),
+                    |node| node.rect.height,
+                )
+        };
+        assert!(height_of("Magnetic") > height_of("compass"));
+    }
+
+    #[test]
+    fn a_japanese_question_stays_in_the_face_that_can_draw_it() {
+        let mut model = review_model(true);
+        model.question = Some(StyledPage {
+            text: "こんにちは".to_owned(),
+            spans: Vec::new(),
+        });
+        let screen = review_screen(&model, "Hello", &[]);
+        assert!(screen.nodes.iter().any(|node| matches!(
+            node,
+            kobo_sdk::Node::RichText { text, .. } if text == "こんにちは"
+        )));
+    }
+
+    #[test]
+    fn an_imported_back_that_opens_with_its_question_shows_the_answer_alone_under_it() {
+        let mut card = fixture_card(1, 1);
+        card.front = "Name this star pattern.".to_owned();
+        card.back = "Name this star pattern.\n\nThe Plough.".to_owned();
+        assert_eq!(
+            question_above_answer(&card).map(|page| page.text),
+            Some("Name this star pattern.".to_owned())
+        );
+        assert_eq!(side_page(&card, true).text, "The Plough.");
+        card.back = "Name this star pattern.".to_owned();
+        assert!(question_above_answer(&card).is_none());
+        assert_eq!(side_page(&card, true).text, "Name this star pattern.");
+    }
+
+    #[test]
+    fn an_answer_that_quotes_its_question_elsewhere_is_shown_as_written() {
+        let mut card = fixture_card(1, 1);
+        card.front = "Capital of France?".to_owned();
+        card.back = "Paris, the capital. Capital of France?".to_owned();
+        assert!(question_above_answer(&card).is_none());
+        card.back = "Paris".to_owned();
+        assert_eq!(
+            question_above_answer(&card).map(|page| page.text),
+            Some("Capital of France?".to_owned())
+        );
+    }
+
+    #[test]
     fn a_card_answered_again_comes_back_before_the_session_ends() {
         use kobo_sdk::AppRunner;
 
@@ -2636,7 +2933,12 @@ mod tests {
     ) -> Vec<(&'static str, Screen, Option<ActionId>, bool)> {
         vec![
             ("empty", empty_app.deck_picker(), None, false),
-            ("first-use", first_use_screen(false), None, false),
+            (
+                "first-use",
+                first_use_screen(&CLARA_BW_METRICS, false),
+                None,
+                false,
+            ),
             (
                 "done",
                 done_screen("日本語", 18, Some(1), false, Some(JAPANESE_FONT_HANDLE)),
@@ -2809,7 +3111,7 @@ mod tests {
                         diagnostics.issues
                     );
                 };
-                let first_use = first_use_screen(false);
+                let first_use = first_use_screen(&metrics, false);
                 assert_fits("first use", &first_use);
                 assert!(screen_text(
                     &first_use,
@@ -2884,7 +3186,7 @@ mod tests {
         for selected in Grade::ALL {
             let mut saving = review_model(true);
             saving.saving = Some(selected);
-            saving.status = format!("Saving {} · 3 of 18", selected.label());
+            saving.status = review_status(Some(selected), 2, 18);
             let layout = review_screen(&saving, "Answer", &[])
                 .layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
             for grade in Grade::ALL {
@@ -2900,7 +3202,7 @@ mod tests {
     }
 
     #[test]
-    fn question_and_answer_keep_stable_chrome_and_progress() {
+    fn question_and_answer_keep_the_bar_and_the_count_in_one_place() {
         let question_screen = review_screen(&review_model(false), "Question", &[]);
         let answer_screen = review_screen(&review_model(true), "Answer", &[]);
         assert_eq!(question_screen.id, answer_screen.id);
@@ -2919,8 +3221,8 @@ mod tests {
             rect(&answer, LayoutKind::TopBar)
         );
         assert_eq!(
-            rect(&question, LayoutKind::Progress),
-            rect(&answer, LayoutKind::Progress)
+            rect(&question, LayoutKind::Secondary),
+            rect(&answer, LayoutKind::Secondary)
         );
         let primary_count = |layout: &kobo_ui::Layout| {
             layout
@@ -2971,6 +3273,53 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_card_details_choice_is_saved_and_read_back_at_the_next_start() {
+        use kobo_sdk::{Command, StoreRequest};
+
+        let mut app = Flashcards::default();
+        let mut context = Context::default();
+        app.on_action(&mut context, action_id("details-detailed"));
+        let saved = context
+            .commands()
+            .iter()
+            .find_map(|command| match command {
+                Command::Store(StoreRequest::Save { key, value }) if key == SETTINGS => {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .expect("the choice was not saved");
+
+        let mut restarted = Flashcards::default();
+        let mut context = Context::default();
+        restarted.on_load(
+            &mut context,
+            SETTINGS,
+            StoreResult::Loaded {
+                key: SETTINGS.to_owned(),
+                value: Some(saved),
+            },
+        );
+        assert!(restarted.show_details);
+        assert!(!decode_settings(b"not settings"));
+    }
+
+    #[test]
+    fn a_licence_document_does_not_repeat_its_title_under_the_bar() {
+        let documents = build_notice_documents(&Context::default());
+        let notice = documents
+            .iter()
+            .find(|document| document.title == "Flashcards device notice")
+            .expect("the device notice is listed");
+        let first = notice.pages[0][0].lines().next().unwrap_or_default();
+        assert_ne!(first.trim(), "Flashcards device notice");
+        assert_eq!(
+            without_heading("Kept title\n\nBody", "Other"),
+            "Kept title\n\nBody"
+        );
     }
 
     #[test]

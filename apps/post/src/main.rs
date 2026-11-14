@@ -12,6 +12,9 @@ const GATEWAY: &str = "gateway";
 const CACHE: &str = "letters";
 const DRAFTS: &str = "drafts";
 const OUTBOX: &str = "outbox";
+/// How many letters the gateway last said it holds. Kept beside the cache,
+/// because the cached list alone opened as "0 letters" with letters on it.
+const TOTAL: &str = "letters-total";
 const REFRESH: &str = "refresh";
 const OLDER: &str = "older";
 const NEWER: &str = "newer";
@@ -239,10 +242,14 @@ impl Post {
                 )
             }));
         }
-        s.text(format!("Page {} · {} letters", page + 1, self.total))
-            .spacer(Space::Small)
-            .action_bar([("newer", "Newer"), ("older", "Older")])
-            .build()
+        s.text(format!(
+            "Page {} · {}",
+            page + 1,
+            letter_count(self.known_total())
+        ))
+        .spacer(Space::Small)
+        .action_bar([("newer", "Newer"), ("older", "Older")])
+        .build()
     }
 
     fn letter_prefix(&self, letter: &Letter) -> ScreenBuilder {
@@ -317,11 +324,17 @@ impl Post {
     fn compose(&self) -> Screen {
         let s = ScreenBuilder::new("post-compose")
             .top_bar("Reply")
-            .heading("Write a letter")
+            .heading("Write a reply")
             .field("reply-body", self.keyboard.text(), "Your reply");
         Self::banner(s, self.notice.as_ref())
             .keyboard(&self.keyboard, "Send letter")
             .build()
+    }
+
+    /// How many letters the inbox holds, as far as this reader knows: what
+    /// the gateway last said, and never fewer than are cached here.
+    fn known_total(&self) -> usize {
+        self.total.max(self.letters.len())
     }
 
     fn place(&self, id: &str) -> usize {
@@ -431,6 +444,7 @@ impl Post {
                             .unwrap_or_else(|| pages.len().saturating_sub(1));
                     }
                     self.save_cache(c);
+                    c.store().save(TOTAL, total.to_string().into_bytes());
                 } else {
                     // The gateway is the owner's own, and one that answers
                     // with something else needs its address or its setup
@@ -541,10 +555,14 @@ impl Post {
             self.show(c);
             self.flush_replies(c);
         } else {
-            self.notice = Some((
-                BannerLevel::Error,
-                "Write a reply of at most 32,000 characters.".into(),
-            ));
+            // An empty reply is refused for being empty: it used to be told
+            // the length limit, which says nothing to someone who wrote none.
+            let why = if text.trim().is_empty() {
+                "This reply is empty. Write something, then send it."
+            } else {
+                "This reply is too long to send. Shorten it to 32,000 characters or fewer."
+            };
+            self.notice = Some((BannerLevel::Error, why.into()));
             self.show(c);
         }
     }
@@ -560,6 +578,11 @@ impl Post {
             self.check(c);
         } else {
             text.clone_into(&mut self.draft);
+            // The field now says what is wrong; a banner still saying no
+            // gateway has arrived would answer a question nobody asked.
+            if self.checked() {
+                self.notice = None;
+            }
             self.address_error =
                 Some("Enter the secure https address of your Hermes gateway.".into());
             self.show(c);
@@ -608,7 +631,7 @@ impl Post {
 }
 
 fn problem_at(gateway: &str, error: TaskError) -> kobo_sdk::failure::Problem {
-    let service = kobo_sdk::failure::Service::new("Your gateway")
+    let service = kobo_sdk::failure::Service::new("Hermes")
         .fixed_by("Run kobo connect post on your computer.");
     let service = if gateway.is_empty() {
         service
@@ -618,8 +641,27 @@ fn problem_at(gateway: &str, error: TaskError) -> kobo_sdk::failure::Problem {
     service.explain(error)
 }
 
+/// The start of a letter as one line for the inbox: line breaks become
+/// spaces, and a long start ends at a whole word with an ellipsis.
 fn excerpt(text: &str) -> String {
-    text.chars().take(72).collect()
+    const LIMIT: usize = 72;
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= LIMIT {
+        return flat;
+    }
+    let cut: String = flat.chars().take(LIMIT).collect();
+    let whole = cut
+        .rsplit_once(' ')
+        .map_or(cut.as_str(), |(words, _)| words);
+    format!("{}…", whole.trim_end_matches([',', ';', ':', '.', ' ']))
+}
+
+fn letter_count(count: usize) -> String {
+    if count == 1 {
+        "1 letter".into()
+    } else {
+        format!("{count} letters")
+    }
 }
 
 fn page_words(page: &[String]) -> usize {
@@ -656,6 +698,7 @@ impl KoboApp for Post {
         c.store().load(CACHE);
         c.store().load(DRAFTS);
         c.store().load(OUTBOX);
+        c.store().load(TOTAL);
         self.show(c);
     }
 
@@ -702,6 +745,19 @@ impl KoboApp for Post {
                 if let Some(outbox) = protocol::decode_outbox(&bytes) {
                     self.outbox = outbox;
                 }
+            }
+        } else if key == TOTAL {
+            // A check that has already answered knows better than the store.
+            if !self.loaded {
+                if let Some(total) = value
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                    .and_then(|text| text.trim().parse().ok())
+                {
+                    self.total = total;
+                }
+            }
+            if self.view == View::Inbox {
+                self.show(c);
             }
         }
         if self.view == View::Opening {
@@ -923,6 +979,82 @@ mod tests {
             vec![("dawn".to_string(), "Hello from the reader".to_string())]
         );
         assert_eq!(fresh.outbox, vec![reply]);
+    }
+
+    #[test]
+    fn a_cached_inbox_counts_its_letters_before_the_gateway_answers() {
+        let mut c = Context::default();
+        let letter = |n: usize| Letter {
+            id: format!("{n}"),
+            title: format!("Note {n}"),
+            body: "Tea first.".into(),
+        };
+        let mut app = Post {
+            view: View::Inbox,
+            letters: (0..14).map(letter).collect(),
+            ..Default::default()
+        };
+        let drawn = format!("{:?}", app.inbox(&c));
+        assert!(drawn.contains("Page 1 · 14 letters"), "{drawn}");
+        // What the gateway last said it holds comes back after a restart.
+        app.on_store(
+            &mut c,
+            StoreResult::Loaded {
+                key: TOTAL.into(),
+                value: Some(b"40".to_vec()),
+            },
+        );
+        let drawn = format!("{:?}", app.inbox(&c));
+        assert!(drawn.contains("Page 1 · 40 letters"), "{drawn}");
+        assert_eq!(letter_count(1), "1 letter");
+    }
+
+    #[test]
+    fn an_empty_reply_is_refused_for_being_empty_not_for_its_length() {
+        let mut c = Context::default();
+        let mut app = Post {
+            view: View::Compose,
+            letters: vec![Letter {
+                id: "dawn".into(),
+                title: "Morning note".into(),
+                body: "Tea first.".into(),
+            }],
+            ..Default::default()
+        };
+        app.submit_reply(&mut c, "dawn", "   ");
+        let (_, said) = app.notice.clone().expect("the empty reply was refused");
+        assert!(said.contains("empty"), "{said}");
+        assert!(!said.contains("32,000"), "{said}");
+        assert!(app.outbox.is_empty());
+    }
+
+    #[test]
+    fn an_inbox_excerpt_is_one_line_that_ends_on_a_whole_word() {
+        assert_eq!(excerpt("Dear Sam,\n\nThe kettle"), "Dear Sam, The kettle");
+        let long =
+            "The kettle takes its time this morning, and the light comes slowly over the hill";
+        let cut = excerpt(long);
+        assert!(cut.ends_with('…'), "{cut}");
+        assert!(long.starts_with(cut.trim_end_matches('…')), "{cut}");
+        assert!(cut.chars().count() <= 73, "{cut}");
+        assert!(!cut.contains('\n'));
+        assert_eq!(
+            cut,
+            "The kettle takes its time this morning, and the light comes slowly over…"
+        );
+    }
+
+    #[test]
+    fn a_refused_address_takes_the_no_gateway_yet_banner_down() {
+        let mut c = Context::default();
+        let mut app = Post {
+            view: View::Setup,
+            notice: Some((BannerLevel::Attention, NO_GATEWAY_YET.into())),
+            ..Default::default()
+        };
+        app.submit_gateway(&mut c, "http://gateway.example");
+        assert!(app.notice.is_none());
+        assert!(app.address_error.is_some());
     }
 
     #[test]
@@ -1200,7 +1332,7 @@ mod large_text_tests {
                     (
                         Some((
                             BannerLevel::Error,
-                            "Your gateway did not accept your account. Run kobo connect post on your computer.",
+                            "Hermes did not accept your account. Run kobo connect post on your computer.",
                         )),
                         None,
                     ),

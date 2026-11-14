@@ -34,3 +34,53 @@ expect Sync is off
 tap Set up Sync
 tap Back
 expect Paused. Your files stay here.
+# Setup step 4 in the Store listing says to turn on the Sync switch: the
+# control is one switch named Sync, and no Turn on Sync button exists.
+expect-missing Turn on Sync
+# Turned on with a schedule, both are kept across a restart.
+tap-id toggle
+wait-for Files move with your computer.
+expect-missing Turn on Sync
+expect Starting
+tap Every hour
+wait-for How often Sync runs
+tap Once a day
+wait-for Once a day
+expect Runs while Cobalt is open. Tap to change.
+expect When on Wi-Fi
+restart
+wait-for Files move with your computer.
+expect Once a day
+expect-missing Sync is off
+clean
+shot syncthing-after-restart
+# Every schedule can be chosen, and the list closes on the choice.
+tap Once a day
+wait-for How often Sync runs
+tap Every 4 hours
+wait-for Every 4 hours
+expect-missing How often Sync runs
+tap Every 4 hours
+wait-for How often Sync runs
+tap No schedule
+wait-for You start each sync. Tap to change.
+expect When you tap Sync now
+# Back from the schedule list leaves the schedule as it was.
+tap No schedule
+wait-for How often Sync runs
+tap-id 4294967295
+wait-for You start each sync. Tap to change.
+# Sync now asks the runtime for a sync. Nothing in the simulator answers,
+# so after half a minute the screen says it has not started.
+tap Sync now
+wait-for Starting a sync.
+wait 36000
+wait-for Sync has not started.
+expect Not started
+clean
+shot syncthing-not-started
+# Turning Sync off clears the request and says files stay put.
+tap-id toggle
+wait-for Sync is off. Nothing moves until you turn it on.
+expect Off
+expect-missing Sync now

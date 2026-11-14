@@ -2,11 +2,11 @@
 
 Actual SDK output in the Clara BW simulator. These are ideal grayscale frames, not hardware captures.
 
-| Image | Evidence |
+| Image | What it shows |
 | --- | --- |
-| play.png | [Whole run marked](../../../docs/quality/evidence/nonograms/05-whole-run.json) |
-| large-board.png | [Zoomed window on a 25×25 board](../../../docs/quality/evidence/nonograms/08-large-board.json) |
-| picture-completed.png | [Completed picture puzzle](../../../docs/quality/evidence/nonograms/16-picture-completed.json) |
-| imported-puzzles.png | [Two pushed photos imported by name](../../../docs/quality/evidence/nonograms/18-imported-puzzles.json) |
+| play.png | A whole run marked on a 5×5 picture |
+| large-board.png | A zoomed window on a 25×25 board |
+| picture-completed.png | A completed picture puzzle |
+| imported-puzzles.png | Three pushed photos imported by name |
 
-Each JSON records source/binary digests, font provenance, scale, display profile and fixture identity. Reproduce with `scripts/quality/check-nonograms-sim.py` after building `kobo-cli` into the same cargo target directory.
+`play.png` comes from the app's `drive.kobo` route. `scripts/quality/check-nonograms-sim.py` drives the other three screens and writes each capture with its source digests, font provenance, scale and display profile. Build `kobo-cli` into the same cargo target directory first.

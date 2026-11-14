@@ -236,8 +236,10 @@ impl Magnet {
             // against the bezel.
             Sensor::Watching { magnet_present } => {
                 let mut screen = builder
+                    // "Magnet found" rather than "Magnet", which only said
+                    // the bar's title a second time in larger type.
                     .heading(if magnet_present {
-                        "Magnet"
+                        "Magnet found"
                     } else {
                         "No magnet"
                     })
@@ -245,16 +247,15 @@ impl Magnet {
                 if let Some(picture) = picture {
                     screen = screen.unframed_picture(picture, 46);
                 }
-                if magnet_present {
-                    // The mark appears with the magnet and goes with it. On
-                    // this panel a picture arriving is a far louder signal
-                    // than a word changing, and the screen has to be readable
-                    // from across the room with both hands busy.
-                    screen = screen.facts([("Against the bezel", "Yes".to_owned())]);
-                } else {
-                    screen = screen.facts([("Against the bezel", "Not now".to_owned())]);
-                }
+                // One list, so its answers share a column. Set as two, the
+                // first answer stood a word's width right of the three under
+                // it, because each list lines its answers up on its own
+                // labels.
                 screen = screen.facts([
+                    (
+                        "Against the bezel",
+                        if magnet_present { "Yes" } else { "Not now" }.to_owned(),
+                    ),
                     ("Sweeping", self.sweeping.label().to_owned()),
                     (
                         "Changes here",
@@ -453,6 +454,20 @@ mod tests {
         let text = format!("{screen:?}");
         assert!(text.contains("Asking the sensor"), "{text}");
         assert!(!text.contains("No magnet"), "{text}");
+    }
+
+    #[test]
+    fn a_magnet_against_the_bezel_is_named_as_found_rather_than_by_the_app_name() {
+        let screen = watching(true).screen(Some(drawn()));
+        let headings: Vec<String> = screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                kobo_sdk::Node::Heading { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(headings, ["Magnet found"]);
     }
 
     #[test]

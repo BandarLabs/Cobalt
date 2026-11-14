@@ -1,0 +1,23 @@
+# sweep: --bare
+# A first run is a plain row counter with no pattern on the reader yet.
+wait-for Row counter
+expect Row 0
+expect Send one from your computer
+clean
+shot first-run
+tap Read a pattern
+wait-for No patterns yet
+expect kobo needles push PATTERN.pdf
+expect Check for patterns
+clean
+shot no-patterns
+tap Check for patterns
+wait-for No patterns yet
+companion needles push apps/needles/fixtures/pattern.md --sim
+tap Check for patterns
+wait-for Winter socks
+clean
+shot first-pattern
+tap-id 4294967295
+wait-for Row counter
+expect Winter socks

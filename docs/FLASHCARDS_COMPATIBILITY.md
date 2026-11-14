@@ -1,7 +1,7 @@
 # Flashcards package compatibility
 
-`flashcards-import` is an unofficial host-only converter for the explicitly
-listed legacy Anki package subset. It is not affiliated with, endorsed by, or
+`flashcards-import` is an unofficial host-only converter for the Anki package
+subset listed below. It is not affiliated with, endorsed by, or
 sponsored by Ankitects, Anki, or AnkiWeb and includes no upstream logo or
 artwork. It does not claim complete package or application compatibility.
 Exact host source pins, full licence texts, dependency notices, and
@@ -20,16 +20,16 @@ interpret, or resolve it.
 
 The Kobo `.cobalt-app` parses only `CBFLASH`. It contains no linked Anki code,
 does no collection migration or card-template execution, and requests no
-remote-network capability. It necessarily uses Cobalt's local Unix-domain IPC
-transport to communicate with the device runtime; that is not internet access.
-Anki AGPL/source notices therefore ship with the host helper only. The device
-Notices screen contains only resvg, font, Cobalt, and resolved
-device-dependency terms for code/assets present in that binary.
+remote-network capability. It uses Cobalt's local Unix-domain IPC transport to talk
+to the device runtime, which is not internet access. Anki AGPL/source notices
+therefore ship with the host helper only. The app's **Licences & about** screen
+carries only the Flashcards device notice, the resvg, font and Cobalt Japanese
+font terms, and the resolved device-dependency licences for code and assets in
+that binary.
 
-Pre-neutral `CBFLASH` version 3 is intentionally rejected rather than accepted
-with its host source pin still embedded. Re-import the original APKG/COLPKG
-with the current host converter and stage the resulting version-4 bundle. The
-separate owner-local review log is preserved by that replacement.
+`CBFLASH` version 3 bundles, which embedded the host source pin, are rejected.
+Re-import the original APKG/COLPKG with the current converter and send the
+version-4 bundle. The owner-local review log survives that replacement.
 
 Build the complete validation artifact set with the repository's configured
 `rust-lld` device linker, then audit it:
@@ -46,15 +46,13 @@ restart with a minimal environment and fixed system-tool path, discover ARM
 tools only from fixed directories and name allowlists, clear Rust
 compiler/wrapper/flag overrides, reject rustup directory overrides, and pin the
 account-default toolchain's real `cargo`, `rustc`, and `rust-lld` executables.
-Cargo runs with a clean
-configuration home. Only registry archives/indexes and Git object databases
+Cargo runs with a clean configuration home. Only registry archives/indexes and Git object databases
 are shared as cache inputs; Cargo rematerializes all compiled source trees for
 each build and audit. The scripts reject toolchain configuration above the
 audited repository, force empty wrapper/rustflag overrides, pin cargo-about
 0.6.4 at its fixed tool path, and run Python validation in isolated mode. The
-fixed validation
-signing material is public, removed immediately, and derives the fixed audit
-public key
+fixed validation signing material is public, removed immediately, and derives
+the fixed audit public key
 `d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48`.
 It is not trusted by production runtimes. The script requires a clean committed
 checkout so the host helper and `flashcards-import.source-commit.txt` can carry
@@ -72,6 +70,7 @@ revision, and corresponding-source instructions. The validation `.cobalt-app` an
 single-entry catalog are verified with Cobalt's real Ed25519/canonical parsers,
 bound back to `apps/catalog.json`, and checked against the exact standalone
 ARM ELF.
+
 The verifier CLI is rebuilt from the clean audited checkout in a freshly
 emptied target directory together with a host helper. The audit is the
 finalization step for the distributed host artifact: it discards any candidate
@@ -83,15 +82,13 @@ build directories and the packaging-only host CLI are removed before the audit
 succeeds. Cargo intermediates are pruned and the audit recursively rejects
 every undeclared file, directory, dotfile, or symlink with a newline-safe
 Python path inventory. The build starts by removing every existing child of
-the dedicated target root except
-`.cobalt-flashcards-validation-root`. A non-empty directory without that
-sentinel is refused, as are `/`, the home directory, the repository, and paths
-that contain or sit inside the repository.
-The audit also checks all four linked Anki crates against the exact Cargo
+the dedicated target root except `.cobalt-flashcards-validation-root`. A
+non-empty directory without that sentinel is refused, as are `/`, the home
+directory, the repository, and paths that contain or sit inside the
+repository. The audit also checks all four linked Anki crates against the exact Cargo
 metadata Git revision and regenerates both dependency notice bundles in
 `--check` mode. Source cleanliness and `HEAD` are rechecked after each trusted
-build and before the final report.
-It writes the verified summary and hashes itself to
+build and before the final report. It writes the verified summary and hashes itself to
 `artifacts/ARTIFACT-AUDIT.txt`; callers do not supply or redirect that report.
 
 ## Exact supported package boundary
@@ -178,11 +175,15 @@ visible page controls and the review actions retained on every page.
 
 ## Check the installed helper
 
+The import, push and stage commands are in the
+[Flashcards README](../apps/flashcards/README.md); `kobo flashcards --help`
+lists them all.
+
 `kobo flashcards status` shows the selected executable, helper version,
 source-build identity and notice. `kobo flashcards formats` prints that helper's
 supported package subset without importing a file. `kobo flashcards --licenses`
 shows its bundled license and source documents. A missing helper reports the
-installation steps instead of claiming that all import support is unavailable.
+steps to restore it (`kobo update`, or a source build) and starts nothing.
 
 ## Host toolchain
 
@@ -246,13 +247,15 @@ collision rejects the merge. Equal same-named media is deduplicated by bytes;
 differing bytes reject the merge. These rules are deterministic and do not
 invent replacement IDs or filenames.
 
-A legacy COLPKG replacement atomically replaces the Flashcards collection
-bundle and does not merge the previous Anki metadata. The separately named,
-owner-local `cobalt-review-log.ndjson` is the only documented Cobalt state
-preserved by collection replacement/staging. Format-2 records bind card ID, one of `again`, `hard`, `good`, or `easy`, the
-imported scheduling snapshot, and the exact bundle SHA-256. Export
-requires exact fields, a supported grade, a valid digest, bounded
-newline-terminated records, and byte-for-byte verification after atomic write.
+A COLPKG replacement atomically replaces the Flashcards collection bundle and
+does not merge the previous Anki metadata. The separately named, owner-local
+`cobalt-review-log.ndjson` is the only Cobalt state preserved by collection
+replacement and staging. Each record binds the card ID, one of `again`, `hard`,
+`good` or `easy`, the imported due date and repetition count, the exact bundle
+SHA-256 and, from format 3, the reader's calendar day. `kobo flashcards
+export-review-log` requires exact fields, a supported grade, a valid digest,
+bounded newline-terminated records, and byte-for-byte verification after the
+atomic write.
 The log is not presented as an Anki scheduler round trip.
 
 ## Bounds and deterministic publication

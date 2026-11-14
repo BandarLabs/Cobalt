@@ -1,5 +1,5 @@
 wait 800
-expect AI Command Center
+expect Chat
 expect question 7
 clean
 shot conversation
@@ -30,6 +30,11 @@ expect New conversation
 expect Save a copy
 clean
 shot menu
+# Back lifts the menu and leaves the conversation where it was.
+tap-id 4294967295
+expect-missing Save a copy
+expect A reply long enough
+tap more
 tap New conversation
 expect Start over
 tap Keep talking
@@ -83,3 +88,11 @@ expect kobo secret set anthropic
 expect-missing kobo secret set openai
 clean
 shot first-run-key-anthropic
+tap Service
+tap Google Gemini
+wait-for Nothing said yet
+expect This uses your own Google Gemini key
+expect kobo secret set gemini
+expect-missing kobo secret set anthropic
+clean
+shot first-run-key-gemini

@@ -37,7 +37,6 @@ your computer catches it through the agent's own hooks.
 | --- | --- |
 | Claude Code | Permission requests and `AskUserQuestion` |
 | Codex | Permission requests |
-| Gemini CLI, OpenCode, GitHub Copilot CLI, Cursor CLI | Detected, not yet supported |
 
 ## Setup
 
@@ -99,9 +98,9 @@ terminal prompts work as usual.
 
 ```sh
 cargo test -p kobo-sidekick
-kobo run --sim --app sidekick      # in the browser simulator
+(cd examples/sidekick && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py sidekick
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

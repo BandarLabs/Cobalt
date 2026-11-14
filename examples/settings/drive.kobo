@@ -1,21 +1,62 @@
-# About says how a computer finds this reader. An update check with no
-# network says so in words, and its banner offers Join Wi-Fi, which opens
-# the Wi-Fi page. The channel and the automatic updates are runtime controls
-# on a screen of their own, and changing the channel still asks first.
-# At the largest text size About is on the second page of the list, so the
-# route turns to it, and turns back for Software update.
+# The home list names every page with where it stands now, and each page
+# opens from its row and comes back to the list. About says how a computer
+# finds this reader. An update check with no network says so in words, and
+# its banner offers Join Wi-Fi, which opens the Wi-Fi page. The channel and
+# the automatic updates are runtime controls on a screen of their own, and
+# changing the channel still asks first.
+# At the largest text size the list runs to a second page, so the route
+# turns to rows it cannot see and turns back for the ones it left behind.
 wait-for Settings
-tap-paged Model, versions and Wi-Fi address
+expect Connections
+expect Bluetooth
+expect Wi-Fi
+expect On · Not connected
+expect Device
+expect Battery
+expect 72% · Discharging
+expect-missing Checking…
+shot settings-home
+# The simulator offers Settings no Bluetooth backend, which a reader whose
+# runtime cannot drive the radio also sees: a sentence, not a dead switch.
+tap Bluetooth
+wait-for This version of Cobalt cannot use Bluetooth on this reader.
+expect-missing Turn on to find devices
+shot settings-bluetooth-unsupported
+tap-id 4294967295
+wait-for Connections
+tap-paged Battery
+wait-for Charge
+expect 72%
+expect Status
+expect Discharging
+expect-missing Reading the battery.
+shot settings-battery
+tap-id 4294967295
+wait-for Settings
+tap-paged Model and versions
 wait-for From your computer
+expect This reader
+expect Simulated Kobo Clara BW
+expect For support
+expect 1072 × 1448 pixels
 expect kobo setup
+expect-missing SIMULATOR:
+expect-missing Reading this reader's details.
 shot settings-about
+# About turns a page rather than run off the panel where its facts do not
+# fit; the simulator's reader has few enough that one page holds them.
+maybe-tap-id more
 tap-id 4294967295
 wait-for Settings
 maybe-tap-id previous
-wait-for Software update
-tap Software update
+wait-for Connections
+tap-paged Software update
 wait-for Check for updates
+expect Installed
+expect Nothing is downloaded until you choose to install it.
 expect Channel and automatic updates
+expect Stable · Cobalt and apps update on their own
+shot settings-update
 tap Channel and automatic updates
 wait-for Update Cobalt automatically
 expect Update apps automatically
@@ -32,7 +73,15 @@ scenario offline
 tap Check for updates
 wait-for This reader is not on Wi-Fi.
 expect-missing this reader is not on a network
+expect Check again
 shot settings-update-offline
 tap Join Wi-Fi
 wait-for Not connected
 shot settings-wifi
+# Back from the Wi-Fi page the check opened returns to the check, and back
+# from there is the home list.
+tap-id 4294967295
+wait-for This reader is not on Wi-Fi.
+tap-id 4294967295
+wait-for Settings
+expect-missing Join Wi-Fi

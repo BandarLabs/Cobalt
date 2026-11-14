@@ -28,7 +28,6 @@ The decision is written per app and per service, in the platform:
 So a new app that talks to a service needs a platform release, the policy
 crate grows a module per service, and an app's manifest, the one document an
 owner and a reviewer can read, says nothing about where its token may go.
-The roadmap's "owner-approved service connections" is this problem.
 
 ## The proposal
 

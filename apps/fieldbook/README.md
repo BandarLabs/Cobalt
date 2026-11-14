@@ -65,8 +65,8 @@ that fails to import is listed with the reason.
    from the reader's clock.
 2. Tap a species to add it to the tally. Turn the page for more species, or
    tap **Type a species** to search.
-3. **Review sightings** lists the log. Tap an entry to remove it, or
-   **Undo delete** to restore it.
+3. **Review sightings** lists the log. Tick entries and choose **Delete** to
+   remove them; **Undo delete** brings them back.
 4. **Finish outing** files it under Today.
 
 **Write checklist file** prepares the CSV, with one column per outing. The
@@ -91,8 +91,8 @@ The simulator check builds the app, opens it in a fresh simulator and plays
 
 Species photos come from Avicommons and are included only when their licence
 allows redistribution. Each pack carries attribution for its photos, and the
-detail screen shows the credit. The photo above is a Northern Cardinal by Adam
-Jackson (CC0), via Avicommons.
+detail screen shows the credit. The photo above is a House Finch by Nigel
+(CC BY 2.0), via Avicommons.
 
 eBird and the Cornell Lab of Ornithology are trademarks of their owners.
 Fieldbook is an unofficial companion.

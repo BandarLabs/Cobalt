@@ -3,10 +3,10 @@
   "display_name": "Magnet",
   "short_label": "Magnet",
   "summary": "Find the hall sensor behind the bezel and watch it respond to a magnet.",
-  "version": "1.0.10",
+  "version": "1.0.13",
   "glyph": "magnet",
   "capabilities": [
     "cover-sensor"
   ],
-  "release_notes": "Rebuilt with the current Cobalt SDK."
+  "release_notes": "The four readings line up in one column, and a magnet against the bezel is headed Magnet found."
 }

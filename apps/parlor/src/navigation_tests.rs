@@ -152,3 +152,45 @@ fn record_page_turns_clamp_and_do_not_resave_or_change_the_game() {
     runner.action(ActionId::BACK);
     assert_eq!(runner.app().view, View::Board);
 }
+
+#[test]
+fn the_menu_names_the_game_to_resume_and_leaves_paper_under_it() {
+    let _runner = kobo_sdk::AppRunner::new(Parlor::default());
+    for title in GAMES {
+        let mut app = Parlor::default();
+        app.start(title);
+        app.handle_action(ActionId::BACK);
+        assert_eq!(app.view, View::Menu);
+        let screen = app.screen();
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::measuring(true));
+        let resume = layout
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(node.kind, kobo_ui::LayoutKind::Button(action, ..) if action == action_id("resume"))
+            })
+            .expect("a way back to the game");
+        assert_eq!(resume.text_lines, [format!("Resume {}", title.name())]);
+        let shelf = layout
+            .rect_of_action(action_id(title.key()))
+            .expect("the shelf");
+        let first_card = GAMES
+            .iter()
+            .filter_map(|game| layout.rect_of_action(action_id(game.key())))
+            .map(|rect| rect.y)
+            .min()
+            .unwrap_or(shelf.y);
+        assert!(
+            first_card - (resume.rect.y + resume.rect.height)
+                >= CLARA_BW_METRICS.space(kobo_ui::Space::Medium),
+            "the shelf is pressed against the resume button"
+        );
+        let errors = screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .into_iter()
+            .filter(|issue| issue.severity == kobo_ui::DiagnosticSeverity::Error)
+            .collect::<Vec<_>>();
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+}

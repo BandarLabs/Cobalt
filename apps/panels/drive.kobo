@@ -11,3 +11,48 @@ wait-for Your shelf is empty
 expect Try a sample comic
 tap Add comic
 wait-for Connect by USB
+# The guide walks the copy one step a page, and Back walks it backwards.
+clean
+shot usb-guide-1
+tap Next
+wait-for Open this folder
+expect .adds/cobalt/data/panels
+tap Next
+wait-for Copy your CBZ file
+expect volume.cbz
+expect up to 32 MB
+tap Next
+wait-for Return to Panels
+expect Check for comic
+clean
+shot usb-guide-4
+tap-id 4294967295
+wait-for Copy your CBZ file
+tap-id 4294967295
+wait-for Open this folder
+tap-id 4294967295
+wait-for Connect by USB
+# Sample from the guide previews the built-in comic; Back leaves it unadded.
+tap Sample
+wait-for A small garden
+expect CBZ
+expect Keep a copy on this reader
+clean
+shot sample-preview
+tap-id 4294967295
+wait-for Your shelf is empty
+# Check for comic with no volume.cbz copied should say nothing was found,
+# not drop silently back to the first page of the guide.
+tap Add comic
+wait-for Connect by USB
+tap Next
+tap Next
+tap Next
+wait-for Return to Panels
+tap Check for comic
+wait-idle
+expect-missing Connect by USB
+expect Return to Panels
+expect No volume.cbz in .adds/cobalt/data/panels yet.
+clean
+shot check-no-file

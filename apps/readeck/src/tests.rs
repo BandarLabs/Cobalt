@@ -439,14 +439,16 @@ fn saved_position_and_reading_size_are_restored_after_restart() {
     // Offline after the restart: the kept copy opens at the saved place.
     let commands = restarted.store_result(StoreResult::Loaded {
         key: kobo_sdk::cache_key(kept_key(ORIGIN, &id)),
-        value: Some(
+        value: Some(encode_kept(
+            ORIGIN,
+            &id,
             format!(
                 "<article>{}</article>",
                 "<p>A paragraph for a long readable article, with words to wrap across lines.</p>"
                     .repeat(100)
             )
-            .into_bytes(),
-        ),
+            .as_bytes(),
+        )),
     });
     no_spawn(&commands);
     assert_eq!(restarted.app_mut().view, View::Reading);
@@ -555,8 +557,11 @@ fn screens_fit_clara_and_elipsa() {
         runner.action(ActionId::BACK);
         screens.push(last_screen(&runner.action(action_id("settings"))).clone());
         for screen in screens {
+            // With the chrome the runtime draws it with: a reading screen has
+            // no status band, and its bar, when called back, is drawn over it.
+            let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(false).status);
             let errors: Vec<_> = screen
-                .diagnostics(&metrics, &Chrome::measuring(false))
+                .diagnostics(&metrics, &chrome)
                 .issues
                 .into_iter()
                 .filter(|i| i.severity == DiagnosticSeverity::Error)
@@ -741,7 +746,7 @@ fn a_refused_address_is_said_under_the_field_and_kept_to_mend() {
         screen.nodes.iter().any(|node| matches!(
             node,
             Node::Field { value, error: Some(error), .. }
-                if value == "http://read.example" && error.contains("HTTPS")
+                if value == "http://read.example" && error.contains("https://")
         )),
         "{screen:?}"
     );
@@ -890,4 +895,136 @@ fn a_check_that_finds_no_server_keeps_the_connect_step_under_its_banner() {
         node,
         Node::Field { action, .. } if *action == action_id("server-address")
     )));
+}
+
+#[test]
+fn an_article_with_a_usual_twenty_two_character_id_is_kept_under_a_key_the_store_accepts() {
+    let id = "Xl0gqn8v1PZqZrmkt4AbCd";
+    let key = kobo_sdk::cache_key(kept_key(ORIGIN, id));
+    assert!(kobo_protocol::is_valid_key(&key), "{key}");
+    assert_ne!(kept_key(ORIGIN, id), kept_key(ORIGIN, &id.to_lowercase()));
+    let kept = encode_kept(ORIGIN, id, b"<p>Kept</p>");
+    assert_eq!(decode_kept(ORIGIN, id, &kept), Some("<p>Kept</p>"));
+    assert_eq!(
+        decode_kept(ORIGIN, &id.to_lowercase(), &kept),
+        None,
+        "a copy kept for another id never opens as this one"
+    );
+    assert_eq!(decode_kept("https://other.example", id, &kept), None);
+}
+
+#[test]
+fn an_article_the_store_refuses_to_keep_says_so_in_the_reader() {
+    let mut runner = loaded();
+    runner.action(action_id("article-0"));
+    let id = runner.app_mut().open.clone().unwrap();
+    runner.store_result(StoreResult::Loaded {
+        key: place_key(ORIGIN, &id),
+        value: None,
+    });
+    let commands = runner.store_result(StoreResult::Loaded {
+        key: kobo_sdk::cache_key(kept_key(ORIGIN, &id)),
+        value: None,
+    });
+    let commands = runner.task_outcome(
+        spawned(&commands).0,
+        TaskOutcome::Completed(b"<article><p>A short article.</p></article>".to_vec()),
+    );
+    assert!(commands.iter().any(|c| matches!(
+        c,
+        Command::Store(StoreRequest::Save { key, .. })
+            if *key == kobo_sdk::cache_key(kept_key(ORIGIN, &id))
+    )));
+    let commands = runner.store_result(StoreResult::Denied(StoreError::TooFull));
+    let drawn = format!("{:?}", last_screen(&commands));
+    assert!(drawn.contains("could not be kept on the reader"), "{drawn}");
+    assert_eq!(runner.app_mut().view, View::Reading);
+}
+
+#[test]
+fn the_inbox_says_which_page_of_how_many_it_is_on() {
+    let (mut runner, commands) = configured();
+    let commands = runner.task_outcome(
+        spawned(&commands).0,
+        TaskOutcome::Completed(batch(30, true)),
+    );
+    let turns = last_screen(&commands).page_turns.expect("page turns");
+    assert!(
+        matches!(turns.position, Some((1, of)) if of > 1),
+        "{turns:?}"
+    );
+}
+
+#[test]
+fn a_refresh_keeps_the_inbox_on_screen_and_the_owner_can_still_open_an_article() {
+    let mut runner = loaded();
+    let commands = runner.action(action_id("refresh"));
+    let (list, _) = spawned(&commands);
+    let drawn = format!("{:?}", last_screen(&commands));
+    assert!(drawn.contains("Article 0"), "{drawn}");
+    assert!(
+        drawn.contains("Checking Readeck for new articles."),
+        "{drawn}"
+    );
+    assert!(!drawn.contains("Loading articles"), "{drawn}");
+    // A second Refresh while one runs does not start another.
+    runner.action(action_id("more"));
+    no_spawn(&runner.action(action_id("refresh")));
+    let commands = fail(&mut runner, list, TaskError::Unreachable);
+    let drawn = format!("{:?}", last_screen(&commands));
+    assert!(!drawn.contains("Checking Readeck"), "{drawn}");
+    assert!(drawn.contains("did not answer"), "{drawn}");
+    assert!(drawn.contains("Article 0"), "{drawn}");
+
+    let mut runner = loaded();
+    runner.action(action_id("refresh"));
+    runner.action(action_id("article-1"));
+    assert_eq!(
+        runner.app_mut().open.as_deref(),
+        Some(&*format!("{:018}", 1))
+    );
+}
+
+#[test]
+fn the_article_controls_offer_type_size_and_light_beside_the_changes() {
+    let mut runner = loaded();
+    read(&mut runner);
+    let commands = runner.action(action_id(kobo_read::action::CONTROLS));
+    let steppers: Vec<_> = last_screen(&commands)
+        .nodes
+        .iter()
+        .filter_map(|node| match node {
+            Node::Stepper {
+                label, less, more, ..
+            } => Some((label.clone(), less.action, more.action)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(steppers.len(), 2, "{steppers:?}");
+    assert!(steppers[0].0.starts_with("Type size "), "{steppers:?}");
+    assert_eq!(steppers[0].2, action_id(kobo_read::action::LARGER));
+    assert_eq!(steppers[1].1, action_id(kobo_read::action::DIMMER));
+    let before = runner.app_mut().book.memory().unwrap().scale;
+    runner.action(action_id(kobo_read::action::LARGER));
+    assert_ne!(runner.app_mut().book.memory().unwrap().scale, before);
+    assert_eq!(runner.app_mut().view, View::Controls);
+}
+
+#[test]
+fn an_address_typed_without_its_scheme_is_taken_as_https() {
+    assert_eq!(
+        typed_server(" read.example/ "),
+        Ok("https://read.example".to_owned())
+    );
+    assert_eq!(
+        typed_server("http://read.example"),
+        Err("Readeck needs an address that starts with https://.")
+    );
+    assert!(typed_server("https://").is_err());
+    // The full address typed after a scheme already in the field is still
+    // the one server, not https://https://.
+    assert_eq!(
+        typed_server("https://https://read.example"),
+        Ok("https://read.example".to_owned())
+    );
 }

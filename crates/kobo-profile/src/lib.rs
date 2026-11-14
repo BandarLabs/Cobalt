@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+pub mod calibration;
 pub mod observation;
 pub mod provisional;
 
@@ -16,6 +17,40 @@ pub enum FramebufferController {
     Hwtcon,
     /// The i.MX6 EPDC v2 interface (72-byte update struct).
     MxcfbV2,
+}
+
+/// How a reader's front light controls are wired, and so which one sets the
+/// brightness and whether the warmth may be touched.
+///
+/// Declared on the profile for the same reason as the touch transform: the
+/// same control names mean different things on different boards, and the
+/// only safe source for which is which is somebody holding the reader.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum LightLayout {
+    /// The `lm3630a_led` aggregate sets the brightness, and its balance may be
+    /// moved to light both banks at the top of the range. Measured on the
+    /// `MediaTek` readers, and what every measured profile used before this
+    /// field existed.
+    #[default]
+    Aggregate,
+    /// The i.MX6 arrangement reported for the Clara HD, Libra H2O and Libra 2:
+    /// brightness on `mxc_msp430.0` where it exists, and `lm3630a_led/color`
+    /// is the warmth on a reversed scale, never written. Provisional profiles
+    /// on i.MX use it. A measured profile opts in only once somebody has
+    /// watched it work on that reader.
+    Imx,
+}
+
+impl LightLayout {
+    /// The layout a reader with no profile is given, from its device tree.
+    #[must_use]
+    pub fn from_compatible(compatible: &[String]) -> Self {
+        if compatible.iter().any(|name| name.starts_with("fsl,imx")) {
+            Self::Imx
+        } else {
+            Self::Aggregate
+        }
+    }
 }
 
 /// How a device's touch controller reports position relative to the display.
@@ -90,12 +125,23 @@ pub enum TouchTransform {
     /// Confirmed on the Clara BW and the Clara HD, each by a physically
     /// captured touch.
     TransposeMirrorX,
+    /// Whatever the owner's two taps showed, on a reader with no profile.
+    ///
+    /// Only a provisional profile ever carries this. It can hold any of the
+    /// eight ways a digitiser can sit under a panel, including the ones the
+    /// variants above deliberately leave out, because on unmeasured hardware
+    /// nobody knows in advance which of them it will be. It is measured at
+    /// the pose the reader was in when the dots were tapped, which is also
+    /// the provisional profile's only verified pose, so the warning above
+    /// about composing with a half turn never comes into play. See
+    /// [`calibration`].
+    Calibrated(TouchMapping),
 }
 
 impl TouchTransform {
     /// Lowers a declared transform into the composable form.
     ///
-    /// Lossless in both directions for all four variants. The composed value
+    /// Lossless in both directions for the four measured variants. The composed value
     /// this feeds is a superset: a transpose with both axes mirrored is
     /// reachable here and deliberately has no variant above, because it is a
     /// runtime fact about which way up the reader is being held rather than a
@@ -123,6 +169,7 @@ impl TouchTransform {
                 mirror_x: true,
                 mirror_y: false,
             },
+            Self::Calibrated(mapping) => mapping,
         }
     }
 }
@@ -300,6 +347,7 @@ pub const CLARA_BW_391: DeviceProfile = DeviceProfile {
     // replacement to complete association because a stale route can linger.
     reap_nickel_supplicant: true,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Tolino Shine 5 T302 running the Kobo Clara BW 391 software stack.
@@ -384,6 +432,7 @@ pub const CLARA_BW_395: DeviceProfile = DeviceProfile {
     // fix never ran on the refreshed hardware that needed it just as much.
     reap_nickel_supplicant: true,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// The Kobo Clara HD, added upstream without i.MX6 hardware to test on.
@@ -453,6 +502,7 @@ pub const CLARA_HD_376: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Kobo Clara Colour, whose measured framebuffer geometry, HWTCON interface,
@@ -473,6 +523,7 @@ pub const CLARA_COLOUR_393: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     colour_panel: true,
+    front_light: LightLayout::Aggregate,
     ..CLARA_BW_391
 };
 
@@ -537,6 +588,7 @@ pub const ELIPSA_2E_389: DeviceProfile = DeviceProfile {
     // This does not initialize the MediaTek driver or touch Bluetooth.
     reap_nickel_supplicant: true,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Kobo Libra 2, codename `io`, an i.MX6SLL Mark 7 device driven by
@@ -632,6 +684,7 @@ pub const LIBRA_2_388: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &["/bin/wpa_supplicant"],
     reap_nickel_supplicant: true,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Kobo Libra Colour, a `MediaTek` HWTCON device like the Clara BW, and the
@@ -728,6 +781,7 @@ pub const LIBRA_COLOUR_390: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     colour_panel: true,
+    front_light: LightLayout::Aggregate,
 };
 
 /// Kobo Libra Colour on firmware 4.46.23836. The doctor report and attended
@@ -860,6 +914,7 @@ pub const LIBRA_H2O_384: DeviceProfile = DeviceProfile {
     leftover_radio_daemons: &[],
     reap_nickel_supplicant: false,
     colour_panel: false,
+    front_light: LightLayout::Aggregate,
 };
 
 pub const SUPPORTED_PROFILES: &[&DeviceProfile] = &[
@@ -949,6 +1004,50 @@ pub fn write_ready_profile(
         Ok(profile)
     } else {
         Err(report.write_blockers)
+    }
+}
+
+/// Whether a blocker says only that the firmware is on a branch nobody
+/// measured.
+///
+/// Narrower than [`FIRMWARE_BLOCKER`] on purpose. A version that could not be
+/// read shares that prefix, and waiving it would let a reader whose firmware
+/// is unknown through without anyone having seen that it is 4.x.
+fn is_branch_mismatch(blocker: &str) -> bool {
+    blocker.starts_with(&format!("{FIRMWARE_BLOCKER}: expected a "))
+}
+
+/// Returns the profile an owner-run tool may write through, which is
+/// [`write_ready_profile`] without its firmware branch.
+///
+/// The synthetic tap, the touch probe, the guardian and the bounded smoke run
+/// are started by someone holding the reader. They used to refuse it the
+/// moment Kobo moved it to a firmware branch no profile was measured on, while
+/// the Cobalt session on the same reader carried on after the owner accepted
+/// the untested-firmware notice. The tools were stricter than the product they
+/// exist to test, and the strictness bought nothing: a tap goes into the
+/// kernel's touch node beneath the stock reader, and a smoke frame into the
+/// framebuffer, so where either lands is decided by the panel, the digitiser
+/// and the driver. Those are what the device code, serial prefix and kernel
+/// release pin, and those stay exact.
+///
+/// A generation the reader cannot launch Cobalt on is not a branch and stays
+/// refused, as does a profile still waiting for its attended evidence.
+///
+/// # Errors
+///
+/// Returns every remaining blocker when no profile claims the device or the
+/// claiming profile disagrees with it on anything but the firmware branch.
+pub fn attended_write_profile(
+    snapshot: &DeviceSnapshot,
+) -> Result<&'static DeviceProfile, Vec<String>> {
+    let profile = identify_profile(snapshot)
+        .ok_or_else(|| vec!["no supported hardware profile matched this device".to_owned()])?;
+    let blockers = profile.attended_write_blockers(snapshot);
+    if blockers.is_empty() {
+        Ok(profile)
+    } else {
+        Err(blockers)
     }
 }
 
@@ -1238,6 +1337,9 @@ pub struct DeviceProfile {
     /// filter. The greyscale path is identical either way, so a wrong `true`
     /// costs colour content and nothing else.
     pub colour_panel: bool,
+    /// Which front light control sets the brightness, and whether the warmth
+    /// may be moved. See [`LightLayout`].
+    pub front_light: LightLayout,
 }
 
 /// Pose geometry derived by a profile's [`GeometryRule`].
@@ -1413,6 +1515,22 @@ impl DeviceProfile {
             .filter(|blocker| {
                 blocker.as_str() != WRITE_EVIDENCE_PENDING && !blocker.starts_with(FIRMWARE_BLOCKER)
             })
+            .collect()
+    }
+
+    /// The write blockers an owner-run tool still has to respect: everything
+    /// but an unmeasured firmware branch.
+    ///
+    /// See [`attended_write_profile`] for why the branch is the one thing
+    /// these tools set aside. The evidence-pending blocker is kept, because a
+    /// panel nobody has watched take a write is a question about the hardware,
+    /// and a tool is no better placed to answer it than the profile is.
+    #[must_use]
+    pub fn attended_write_blockers(&self, snapshot: &DeviceSnapshot) -> Vec<String> {
+        self.validate(snapshot)
+            .write_blockers
+            .into_iter()
+            .filter(|blocker| !is_branch_mismatch(blocker))
             .collect()
     }
 
@@ -2021,7 +2139,9 @@ fn compare_identity(blockers: &mut Vec<String>, name: &str, expected: &str, actu
 
 #[cfg(test)]
 mod tests {
-    use super::{PanelPose, PoseError, TouchMapping, TouchTransform, SUPPORTED_PROFILES};
+    use super::{
+        LightLayout, PanelPose, PoseError, TouchMapping, TouchTransform, SUPPORTED_PROFILES,
+    };
 
     /// The Libra 2 at the pose it was measured in: page-turn buttons on the
     /// right, which this device reports as rotation 1. Every display
@@ -2659,6 +2779,35 @@ mod tests {
                     observed: rotation,
                     reference: 1,
                 })
+            );
+        }
+    }
+
+    /// Every measured profile drives its light exactly as it did before the
+    /// layout became a field. Changing one is a hardware claim, made by
+    /// editing that profile after watching it work, never by a default.
+    #[test]
+    fn every_measured_profile_keeps_the_light_layout_it_was_tested_with() {
+        for profile in SUPPORTED_PROFILES {
+            assert_eq!(
+                profile.front_light,
+                LightLayout::Aggregate,
+                "{}",
+                profile.id
+            );
+        }
+    }
+
+    /// A calibration belongs to one owner's unmeasured reader. A measured
+    /// profile carrying one would mean somebody's two taps had replaced a
+    /// transform that was checked against the hardware.
+    #[test]
+    fn no_measured_profile_carries_a_calibrated_transform() {
+        for profile in SUPPORTED_PROFILES {
+            assert!(
+                !matches!(profile.touch_transform, TouchTransform::Calibrated(_)),
+                "{} carries a calibration",
+                profile.id
             );
         }
     }
@@ -3489,6 +3638,56 @@ mod tests {
         assert!(CLARA_BW_391
             .write_identity_blockers(&clara_bw_on_firmware("4.45.23792"))
             .is_empty());
+    }
+
+    #[test]
+    fn a_reader_moved_to_a_new_firmware_branch_stays_open_to_attended_tools() {
+        // Kobo moved the owner's Clara BW from 4.45 to 4.46 and the synthetic
+        // tap refused it, although nothing a tap depends on had changed.
+        let snapshot = clara_bw_on_firmware("4.46.23852");
+        assert!(super::write_ready_profile(&snapshot).is_err());
+        assert_eq!(
+            super::attended_write_profile(&snapshot).map(|profile| profile.id),
+            Ok(CLARA_BW_391.id)
+        );
+    }
+
+    #[test]
+    fn a_firmware_version_that_could_not_be_read_still_closes_attended_tools() {
+        let mut snapshot = clara_bw_on_firmware("4.46.23852");
+        snapshot.identity.firmware_version = None;
+        let blockers = super::attended_write_profile(&snapshot)
+            .expect_err("nobody has seen that an unread firmware is 4.x");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.contains("could not be read")),
+            "{blockers:?}"
+        );
+    }
+
+    #[test]
+    fn a_different_kernel_still_closes_attended_tools() {
+        let mut snapshot = clara_bw_on_firmware("4.46.23852");
+        snapshot.identity.kernel_release = Some("5.10.0".into());
+        let blockers = super::attended_write_profile(&snapshot)
+            .expect_err("the kernel is what tracks the driver a tap goes through");
+        assert!(
+            blockers.iter().any(|blocker| blocker.contains("kernel")),
+            "{blockers:?}"
+        );
+    }
+
+    #[test]
+    fn a_generation_cobalt_cannot_launch_on_still_closes_attended_tools() {
+        let blockers = super::attended_write_profile(&clara_bw_on_firmware("5.0.1"))
+            .expect_err("an unlaunchable generation is not a branch to set aside");
+        assert!(
+            blockers
+                .iter()
+                .any(|blocker| blocker.starts_with(super::FIRMWARE_GENERATION_BLOCKER)),
+            "{blockers:?}"
+        );
     }
 
     #[test]

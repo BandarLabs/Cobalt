@@ -1,0 +1,20 @@
+# Seeded with the Lamplight fixture. The keys open over the newest reply,
+# not over an older page of the transcript.
+wait-for Lamplight
+tap Lamplight
+wait-for light.
+tap Keyboard
+type xyzzy
+tap Run
+wait-for not a verb I recognize.
+tap Close keys
+tap Look
+wait-for pool of light.
+tap Inventory
+wait-for empty handed
+clean
+shot keys-closed
+tap Keyboard
+expect empty handed
+clean
+shot keys-open

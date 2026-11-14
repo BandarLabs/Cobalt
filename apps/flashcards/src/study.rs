@@ -40,6 +40,8 @@ pub struct Study {
     again_order: Vec<i64>,
     /// Every card due today, in the order they come up.
     due: Vec<i64>,
+    /// The day an undated grade is taken to have been given.
+    undated_day: i64,
 }
 
 impl Study {
@@ -125,9 +127,22 @@ impl Study {
                     .or_else(|| group_of_root.get(&home_root(card)).copied())
             })
             .collect();
+        // A grade from before the reader dated them was given after the
+        // newest change to any card in the bundle, since the bundle was made
+        // after it. Counting it as today's instead moved it forward every
+        // day, so those cards never came due again.
+        let undated_day = manifest
+            .cards
+            .iter()
+            .map(|card| card.modified)
+            .max()
+            .and_then(|seconds| local_day(seconds, offset_minutes))
+            .filter(|day| (EARLIEST_COLLECTION_DAY..=today).contains(day))
+            .unwrap_or(today);
         let mut study = Self {
             today,
             offset_minutes,
+            undated_day,
             groups,
             card_groups,
             queue_rank,
@@ -160,10 +175,9 @@ impl Study {
             let Some(grade) = Grade::from_action(&record.grade) else {
                 continue;
             };
-            // A grade from before the reader dated them counts as today's,
-            // and a clock that went backwards is not allowed to put a grade
-            // in the future.
-            let day = record.day.unwrap_or(self.today).min(self.today);
+            // A clock that went backwards is not allowed to put a grade in
+            // the future.
+            let day = record.day.unwrap_or(self.undated_day).min(self.today);
             self.apply(index, card, grade, day);
         }
         self.rebuild(manifest);
@@ -506,6 +520,30 @@ mod tests {
         // it is not due; card 2 has been studied in Anki since, so Anki's
         // queue stands.
         assert_eq!(study.due(&manifest, None), vec![2, 3]);
+    }
+
+    /// A grade logged before grades carried a day stays on one day, so its
+    /// card comes due again instead of always being days away.
+    #[test]
+    fn an_undated_grade_does_not_move_forward_with_the_calendar() {
+        let mut manifest = manifest(19_000);
+        for card in &mut manifest.cards {
+            card.modified = (DAY - 40) * 86_400;
+        }
+        let mut study = Study::new(&manifest, DAY, 0);
+        study.replay(
+            &manifest,
+            &[ReviewRecord {
+                bundle_sha256: "a".repeat(64),
+                card_id: 1,
+                grade: "good".to_owned(),
+                imported_due: 1,
+                imported_reps: 0,
+                day: None,
+            }],
+        );
+        assert!(study.due(&manifest, None).contains(&1));
+        assert_eq!(study.cleared_today(&manifest, None), 0);
     }
 
     #[test]

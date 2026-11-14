@@ -5,7 +5,7 @@ offline.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/catalog.png" alt="Catalog sections"><br>Catalog sections</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/catalog.png" alt="A home library's sections and books"><br>A home library's sections and books</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/private-catalog.png" alt="A private library"><br>A private library</td>
 </tr>
 <tr>
@@ -38,9 +38,10 @@ offline.
    It asks for the OPDS address, your username and password, checks them with
    the library, and sets Library up. Open Library, or tap **Check again**.
 
-Or, on the reader, choose **Add library**, enter the HTTPS OPDS address (a
-bare server address opens `/opds`), then **Sign in** or **Use public
-library**. The password form counts the characters typed and has **Show**.
+Or, on the reader, choose **Add library**, enter the address you open
+calibre-web at (a bare server address opens `/opds`), then **Sign in** or
+**Use public library**. Sign in asks for your username and then your
+password; the password form counts the characters typed and has **Show**.
 
 Your username and password are stored by the runtime for that server only,
 used only to read from it, and never shown to the app.

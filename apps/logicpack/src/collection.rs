@@ -446,6 +446,22 @@ impl Puzzle {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_numbered_puzzle_is_named_for_its_place_in_its_own_level() {
+        for puzzle in puzzles() {
+            let Some(number) = puzzle.title.strip_prefix("Puzzle ") else {
+                continue;
+            };
+            let place = puzzles()
+                .iter()
+                .filter(|other| other.kind == puzzle.kind && other.difficulty == puzzle.difficulty)
+                .position(|other| other.id == puzzle.id)
+                .expect("listed in its level")
+                + 1;
+            assert_eq!(number, place.to_string(), "{}", puzzle.id);
+        }
+    }
+
     /// A puzzle as a search problem: what each cell may hold, sums that
     /// groups of cells must reach, groups that may not repeat a digit, and
     /// pairs of bridges that would cross.

@@ -17,8 +17,8 @@ Application contributions have their own guide:
 
 You do not need to write code to help support another Kobo.
 
-1. Find the matching porting issue linked from the README. If none exists,
-   open one before testing.
+1. Find the [issue](https://github.com/BandarLabs/Cobalt/issues) for your
+   model. If none exists, open one before testing.
 2. Comment with the exact model, firmware, and whether the device is available
    for attended testing. This also avoids duplicate ports.
 3. Begin with the read-only doctor report in

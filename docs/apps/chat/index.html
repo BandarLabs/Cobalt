@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Command Center for Kobo e-readers | Cobalt</title>
+<title>Chat for Kobo e-readers | Cobalt</title>
 <meta name="description" content="Ask a question, then read and navigate the answer with touch controls. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/chat/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="AI Command Center for Kobo e-readers | Cobalt">
+<meta property="og:title" content="Chat for Kobo e-readers | Cobalt">
 <meta property="og:description" content="Ask a question, then read and navigate the answer with touch controls. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/chat/">
 <meta property="og:site_name" content="Cobalt">
@@ -17,17 +17,17 @@
 <meta property="og:image:height" content="1448">
 <meta property="og:image:alt" content="An answer displayed for touch-friendly reading on a Kobo">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="AI Command Center for Kobo e-readers | Cobalt">
+<meta name="twitter:title" content="Chat for Kobo e-readers | Cobalt">
 <meta name="twitter:description" content="Ask a question, then read and navigate the answer with touch controls. Needs an account. Install it on a supported Kobo e-reader with Cobalt.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/chat.png">
 <meta name="twitter:image:alt" content="An answer displayed for touch-friendly reading on a Kobo">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-mRQ9ilGn1/aE4J2fUB5mWc3HVWae8b1dyJDHifJufaQ='; style-src 'self'; img-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-U9hGNazCcADnuO0E99gCA4tdRZmCZWioyqXlFFdPNy8='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://cobalt-install-relay.anandabhishek.workers.dev; base-uri 'none'; form-action 'self'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
-      "name": "AI Command Center",
+      "name": "Chat",
       "description": "Ask a question, then read and navigate the answer with touch controls. Needs an account.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/chat/",
       "image": {
@@ -40,7 +40,7 @@
       "applicationSuite": "Cobalt",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
-      "softwareVersion": "1.0.16",
+      "softwareVersion": "1.0.20",
       "isAccessibleForFree": true,
       "offers": {
         "@type": "Offer",
@@ -68,14 +68,14 @@
         {
           "@type": "ListItem",
           "position": 3,
-          "name": "AI Command Center",
+          "name": "Chat",
           "item": "https://bandarlabs.github.io/Cobalt/apps/chat/"
         }
       ]
     }
   ]
 }</script>
-<link rel="stylesheet" href="../install.css">
+<link rel="stylesheet" href="../../site.css">
 </head>
 <body>
 <header class="masthead">
@@ -83,45 +83,45 @@
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
+      <a href="../../install/">Install</a>
       <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
-      <a href="../../#store">Store</a>
-      <a href="../../#install">Install</a>
-      <a href="../../#contributing">Contributing</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>
   </div>
 </header>
-<main class="wrap" data-app-id="chat" data-minimum-cobalt-version="0.3.31">
-  <div class="app-hero">
-    <div class="app-copy">
-      <p class="eyebrow">Developer</p>
-      <h1>AI Command Center</h1>
-      <p class="summary">Ask a question, then read and navigate the answer with touch controls. Needs an account.</p>
+<main data-app-id="chat" data-minimum-cobalt-version="0.3.34">
+  <div class="app-head wrap">
+    <div>
+      <p class="crumb"><a href="../../#apps">Apps</a> / <a href="../../#developers">For developers</a></p>
+      <h1>Chat</h1>
+      <p class="lede">Ask a question, then read and navigate the answer with touch controls. Needs an account.</p>
+      <div class="actions">
+        <a class="btn primary" href="#setup-panel">Install on your Kobo</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/chat">Source code on GitHub</a>
+      </div>
       <dl class="facts">
-        <div><dt>Version</dt><dd>1.0.16</dd></div>
-        <div><dt>Permissions</dt><dd>network</dd></div>
-        <div><dt>Requires</dt><dd>Cobalt 0.3.31</dd></div>
+        <div><dt>Version</dt><dd>1.0.20</dd></div>
+        <div><dt>Needs</dt><dd>Cobalt 0.3.34 or newer</dd></div>
+        <div><dt>May use</dt><dd>The network</dd></div>
       </dl>
-      <a class="cta" href="#setup-panel">Install on your Kobo</a>
-      <p class="source"><a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/chat">Source code on GitHub</a></p>
     </div>
-    <figure class="app-shot">
-      <img src="../../media/site/apps/chat.png" width="1072" height="1448" alt="An answer displayed for touch-friendly reading on a Kobo">
+    <figure class="reader">
+      <div class="reader-body">
+        <div class="reader-screen">
+          <img src="../../media/site/apps/chat.png" width="1072" height="1448" alt="An answer displayed for touch-friendly reading on a Kobo">
+        </div>
+      </div>
     </figure>
   </div>
-  <section class="gallery" aria-label="AI Command Center screenshots">
+  <section class="gallery wrap" aria-label="Chat screenshots">
     <div class="strip">
-      <figure><img src="../../media/site/apps/chat/answer.png" width="1072" height="1448" loading="lazy" alt="AI Command Center: An answer set for reading"><figcaption>An answer set for reading</figcaption></figure>
-      <figure><img src="../../media/site/apps/chat/service.png" width="1072" height="1448" loading="lazy" alt="AI Command Center: Choosing OpenAI, Anthropic or Google Gemini"><figcaption>Choosing OpenAI, Anthropic or Google Gemini</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/chat/answer.png" width="1072" height="1448" loading="lazy" alt="Chat: An answer set for reading"></span><figcaption>An answer set for reading</figcaption></figure>
+      <figure><span class="panel-shot"><img src="../../media/site/apps/chat/service.png" width="1072" height="1448" loading="lazy" alt="Chat: Choosing OpenAI, Anthropic or Google Gemini"></span><figcaption>Choosing OpenAI, Anthropic or Google Gemini</figcaption></figure>
     </div>
   </section>
-  <section class="whats-new">
-    <h2>New in 1.0.16</h2>
-    <p>Messages are typed on Cobalt's own keyboard, which names the service that will answer, and the service list marks the one in use.</p>
-  </section>
-  <section class="panel prerequisites" aria-labelledby="prerequisites-title">
-    <p class="eyebrow">App setup</p>
+  <div class="wrap">
+  <section class="section prerequisites" aria-labelledby="prerequisites-title">
     <h2 id="prerequisites-title">Before you install</h2>
     <ol>
       <li>Set up the reader once over USB, if you have not already.
@@ -129,24 +129,20 @@
       <li>Create an API key with OpenAI, Anthropic or Google Gemini. Save it in a private file named for the service: ~/.openai, ~/.anthropic or ~/.gemini.</li>
       <li>Install the key on the reader under the same name: openai, anthropic or gemini.
         <code class="setup-command">kobo secret set openai</code></li>
-      <li>Open AI Command Center. If the key is not for OpenAI, tap Service and choose its service, then tap Type and ask.</li>
+      <li>Open Chat. If the key is not for OpenAI, tap Service and choose its service, then tap Type and ask.</li>
     </ol>
     <p class="setup-tool">Commands need the <code>kobo</code> command on macOS, Linux or Windows WSL. This installs it ready-built, without touching the reader:
       <code class="setup-command">curl -fsSL https://bandarlabs.github.io/Cobalt/install.sh | sh -s -- --no-setup</code></p>
   </section>
-  <section class="panel get-cobalt" id="setup-panel">
-    <div class="get-cobalt-copy">
-      <p class="eyebrow">New to Cobalt?</p>
-      <h2>Install Cobalt from your browser</h2>
-      <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
-      <p class="fine">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
-    </div>
-    <a class="get-cobalt-go" href="../../install/">Install Cobalt<span aria-hidden="true">&#8594;</span></a>
+  <section class="section" id="setup-panel">
+    <h2>New to Cobalt? Install it from your browser.</h2>
+    <p>Plug your Kobo into this computer and install Cobalt in about a minute. After that, apps install over Wi-Fi.</p>
+    <p class="quiet">Works in Chrome, Edge and Opera. <a href="https://github.com/BandarLabs/Cobalt/blob/main/docs/DEVICES.md#device-support-matrix">Check your Kobo is supported</a>.</p>
+    <p><a class="btn" href="../../install/">Install Cobalt</a></p>
   </section>
-  <section class="panel" id="pair-panel">
-    <p class="eyebrow">Already have Cobalt?</p>
-    <h2>Link your Kobo to install</h2>
-    <p>On your Kobo, open <strong>App Store</strong>, tap the globe in the top bar and choose <strong>Link browser</strong>. Scan the QR code, or enter the pairing code and verification key.</p>
+  <section class="section" id="pair-panel">
+    <h2>Already have Cobalt? Link your Kobo.</h2>
+    <p>On your Kobo, open <strong>App Store</strong> and tap <strong>Link a browser</strong> in the top bar, then <strong>Link a browser</strong> again. Scan the QR code, or enter the pairing code and verification key it shows.</p>
     <form id="pair-form">
       <div class="field">
         <label for="pair-code">Pairing code</label>
@@ -160,26 +156,33 @@
     </form>
     <p class="status" id="pair-status" role="status" aria-live="polite"></p>
   </section>
-  <section class="panel" id="install-panel" hidden>
+  <section class="section" id="install-panel" hidden>
     <h2>Install on <span id="device-name">your Kobo</span></h2>
     <p>Your Kobo checks the app's signature before installing it.</p>
     <div class="actions">
-      <button type="button" id="install">Install AI Command Center</button>
+      <button type="button" id="install">Install Chat</button>
       <button type="button" id="forget" class="secondary">Forget this Kobo</button>
     </div>
     <p class="status" id="install-status" role="status" aria-live="polite"></p>
   </section>
-  <aside class="community">
-    <strong>Want another Kobo app?</strong>
-    Request it, suggest a feature or report a bug in
-    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
-  </aside>
+  <section class="section whats-new">
+    <h2>New in 1.0.20</h2>
+    <p>Each reply keeps the name of the service that wrote it, and a question that was not answered keeps its Try again until it is.</p>
+  </section>
+  <section class="section">
+    <p class="after-index">Want another Kobo app? Request it, suggest a feature or report a bug in <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.</p>
+  </section>
+  </div>
 </main>
 <footer>
   <div class="wrap">
-    <span>Cobalt · AGPL-3.0</span>
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
+    </div>
     <nav aria-label="Footer navigation">
       <a href="../../">Home</a>
+      <a href="../../faq.html">FAQ</a>
       <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>

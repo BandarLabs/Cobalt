@@ -1,0 +1,102 @@
+# sweep: --bare
+# The rest of a first session: Detailed card details, every grade, leaving a
+# review half way and coming back, the licences pages, the collection pushed
+# again from the computer with the grades kept, and the app restarting.
+wait-for No collection yet
+tap Start with the sample
+wait-for Choose a deck
+expect Getting started
+expect Not started today
+# Detailed card details show the template and how often a card was seen.
+tap-id more
+tap Review settings
+wait-for Card details
+expect Due cards, then missed ones
+tap-id details-detailed
+wait-idle
+expect-state /layout#/nodes/11/kind "ChoiceOption(ActionId(3421518992), true)"
+clean
+shot flashcards-full-settings-detailed
+tap Done
+wait-for Choose a deck
+tap Getting started
+wait-for 1 of 6
+expect Recognition · 0 prior reviews
+expect Reveal answer
+clean
+shot flashcards-full-question-detailed
+tap-id answer
+wait-for Magnetic north.
+expect Again
+expect Hard
+expect Good
+expect Easy
+tap-id hard
+wait-for 2 of 6
+tap-id answer
+wait-for Evaporation.
+tap-id easy
+wait-for 3 of 6
+# Leaving half way goes back to the decks with the reviews counted, and the
+# deck picks up at the next card.
+tap-id 4294967295
+wait-for Choose a deck
+expect 4 due
+clean
+shot flashcards-full-decks-part-done
+tap Getting started
+wait-for How many sides does a hexagon have?
+tap-id answer
+tap-id good
+# The Japanese card is drawn in a face that has its characters.
+wait-for こんにちは
+tap-id answer
+wait-for konnichiwa
+clean
+shot flashcards-full-japanese
+tap-id good
+wait-for Which planet is closest to the Sun?
+tap-id answer
+tap-id good
+wait-for Name the four largest moons of Jupiter.
+tap-id answer
+wait-for Galilean moons
+clean
+shot flashcards-full-long-answer
+tap-id good
+wait-for Done for today
+expect You reviewed 6 cards today.
+expect Choose another deck
+tap Choose another deck
+wait-for Read collection again
+# The licences: an index of documents, each one paged.
+tap-id more
+tap Licences & about
+wait-for On this device
+clean
+shot flashcards-full-licences
+tap-id notice-document-0
+wait-idle
+clean
+shot flashcards-full-licence-document
+tap-id 4294967295
+wait-for On this device
+tap Done
+wait-for Done for today
+# Sending the collection again from the computer keeps the grades.
+companion flashcards push scripts/fixtures/flashcards/getting-started.cobfc --sim
+lifecycle background
+lifecycle foreground
+wait-idle
+tap Read collection again
+wait-idle
+wait-for Done for today
+expect You reviewed 6 cards today.
+# The day's reviews survive a restart, and so should the Detailed choice.
+restart
+wait-for Done for today
+expect You reviewed 6 cards today.
+tap-id more
+tap Review settings
+wait-for Card details
+expect-state /layout#/nodes/11/kind "ChoiceOption(ActionId(3421518992), true)"

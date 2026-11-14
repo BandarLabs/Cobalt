@@ -155,6 +155,10 @@ struct Game {
     guided: bool,
     done: bool,
     solved: BTreeSet<String>,
+    /// Puzzles with a saved board, so the shelf can say a puzzle is under
+    /// way rather than not started. Read from the store's list of records
+    /// at start and added to as boards are saved.
+    started: BTreeSet<String>,
     page: usize,
     notice: Option<String>,
     waiting: Option<TaskId>,
@@ -189,6 +193,7 @@ impl Default for Game {
             guided: false,
             done: false,
             solved: BTreeSet::new(),
+            started: BTreeSet::new(),
             page: 0,
             notice: None,
             waiting: None,
@@ -271,6 +276,8 @@ impl Game {
             "{} · {}×{} · {}",
             if self.solved.contains(&puzzle.id) {
                 "Solved"
+            } else if self.started.contains(&puzzle.id) {
+                "In progress"
             } else {
                 "Not started"
             },
@@ -298,7 +305,16 @@ impl Game {
             );
         if self.pack == Pack::Photos {
             if let Some(notice) = &self.notice {
-                screen = screen.banner(BannerLevel::Attention, notice);
+                // News of new puzzles is not a warning; a photo that could
+                // not be read is.
+                let news = notice.ends_with(" new photo puzzle.")
+                    || notice.ends_with(" new photo puzzles.");
+                let level = if news {
+                    BannerLevel::Info
+                } else {
+                    BannerLevel::Attention
+                };
+                screen = screen.banner(level, notice);
             }
         }
         screen
@@ -392,7 +408,9 @@ impl Game {
             self.browser_actions(
                 self.browser_head()
                     .splash(glyph, "No photo puzzles yet", body)
-                    .command("kobo nonograms push photo.jpg --name Garden --size 9"),
+                    // Broken where a shell allows it, before the options,
+                    // so the panel never wraps it in the middle of one.
+                    .command("kobo nonograms push photo.jpg \\\n  --name Garden --size 9"),
             )
             .build()
         };
@@ -480,6 +498,9 @@ impl Game {
     }
 
     fn save_progress(&mut self, context: &mut Context) {
+        if let Some(puzzle) = self.puzzle() {
+            self.started.insert(puzzle.id.clone());
+        }
         let bytes = saved::encode(self).expect("bounded game");
         self.draft.replace(bytes).expect("bounded draft");
         self.pump(context);
@@ -889,6 +910,7 @@ fn decode_solved(bytes: &[u8], puzzles: &[Puzzle]) -> BTreeSet<String> {
 impl KoboApp for Game {
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(SOLVED);
+        context.store().list();
         self.open_photo(context);
         self.show(context);
     }
@@ -903,6 +925,15 @@ impl KoboApp for Game {
     }
 
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Keys(keys) = &result {
+            self.started.extend(
+                keys.iter()
+                    .filter_map(|key| key.strip_prefix("progress-"))
+                    .map(str::to_owned),
+            );
+            self.show(context);
+            return;
+        }
         if let StoreResult::Loaded { key, value } = result {
             if key == SOLVED {
                 // Do not let a late index read overwrite a completed puzzle
@@ -1387,6 +1418,43 @@ mod tests {
         assert_eq!(photo_id(&black, 5), photo_id(&black, 5));
         assert_ne!(photo_id(&black, 5), photo_id(&white, 5));
         assert_ne!(photo_id(&black, 5), photo_id(&black, 7));
+    }
+
+    #[test]
+    fn a_puzzle_with_a_saved_board_reads_in_progress_on_the_shelf() {
+        let mut game = Game::default();
+        let mut context = Context::default();
+        let first = game.puzzles[0].id.clone();
+        let second = game.puzzles[1].id.clone();
+        assert!(game.browser_detail(0).starts_with("Not started"));
+        // What the store already holds, read at start.
+        game.on_store(
+            &mut context,
+            StoreResult::Keys(vec![format!("progress-{second}"), SOLVED.to_owned()]),
+        );
+        assert!(game.browser_detail(1).starts_with("In progress"));
+        // And a board saved this session.
+        game.select(&mut context, 0);
+        game.toggle(&mut context, 0);
+        assert!(game.started.contains(&first));
+        assert!(game.browser_detail(0).starts_with("In progress"));
+        game.solved.insert(first);
+        assert!(game.browser_detail(0).starts_with("Solved"));
+    }
+
+    #[test]
+    fn the_play_bar_names_the_puzzle_and_add_photos_names_itself() {
+        let mut game = Game::default();
+        let mut context = Context::default();
+        game.select(&mut context, 0);
+        game.progress_loading = false;
+        let title = game.puzzles[0].title.clone();
+        let play = format!("{:?}", game.play(&context));
+        assert!(play.contains(&format!("{title:?}")), "{play}");
+        game.route = Route::PhotoHelp;
+        let help = format!("{:?}", game.help(&context));
+        assert!(help.contains("\"Add photos\""), "{help}");
+        assert!(!help.contains("\"Next\""), "{help}");
     }
 
     #[test]

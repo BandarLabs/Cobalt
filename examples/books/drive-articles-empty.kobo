@@ -1,0 +1,20 @@
+# sweep: --bare paired
+# A reader paired with a computer and with nothing on it yet. Books keeps
+# the Articles shelf, so Sync is in reach, and the empty shelf says where
+# articles come from. The computer is not running its helper, so Sync says
+# that plainly instead of spinning.
+wait-for Articles
+expect No articles
+expect-missing No books yet
+clean
+shot books-articles-home-empty
+tap Articles
+wait-for No articles yet
+expect Sync
+expect-missing Checking your computer
+clean
+shot books-articles-empty
+tap Sync
+wait-for Your computer is not answering
+clean
+shot books-articles-computer-away

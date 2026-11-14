@@ -39,11 +39,7 @@ impl Error for ProbeError {
 /// touch device remains part of the snapshot so the doctor can report unknown
 /// hardware read-only.
 pub fn probe_device() -> Result<DeviceSnapshot, ProbeError> {
-    let compatible = read_nul_list(&[
-        "/sys/firmware/devicetree/base/compatible",
-        "/proc/device-tree/compatible",
-    ])
-    .unwrap_or_default();
+    let compatible = device_tree_compatible();
     let model = read_nul_string(&[
         "/sys/firmware/devicetree/base/model",
         "/proc/device-tree/model",
@@ -62,6 +58,16 @@ pub fn probe_device() -> Result<DeviceSnapshot, ProbeError> {
         touch,
         identity: probe_identity(),
     })
+}
+
+/// The device tree's compatible list, most specific first, or nothing when
+/// the kernel publishes none.
+fn device_tree_compatible() -> Vec<String> {
+    read_nul_list(&[
+        "/sys/firmware/devicetree/base/compatible",
+        "/proc/device-tree/compatible",
+    ])
+    .unwrap_or_default()
 }
 
 /// Reads the non-identifying parts of the Kobo version file and the kernel
@@ -125,6 +131,20 @@ fn probe_touch(path: &Path) -> Result<TouchSnapshot, ProbeError> {
         .map_err(|error| ProbeError::new("query touch X range", error))?;
     let y = input::absolute_axis(&file, input::ABS_MT_POSITION_Y)
         .map_err(|error| ProbeError::new("query touch Y range", error))?;
+    // The kernel answers a range query for an axis the device does not have
+    // with zeros rather than an error. A single-touch controller reports on
+    // `ABS_X` and `ABS_Y`, and those are the ranges its contacts are scaled
+    // against, so an empty multi-touch range sends the query there instead.
+    let (x, y) = if x.maximum > x.minimum && y.maximum > y.minimum {
+        (x, y)
+    } else {
+        (
+            input::absolute_axis(&file, input::ABS_X)
+                .map_err(|error| ProbeError::new("query touch X range", error))?,
+            input::absolute_axis(&file, input::ABS_Y)
+                .map_err(|error| ProbeError::new("query touch Y range", error))?,
+        )
+    };
     Ok(TouchSnapshot {
         path: path.display().to_string(),
         name,
@@ -153,27 +173,119 @@ fn read_nul_string(paths: &[&str]) -> Option<String> {
 
 fn discover_touch_path(input_devices_path: &str) -> Option<PathBuf> {
     let content = fs::read_to_string(input_devices_path).ok()?;
-    discover_touch_path_from(&content)
+    discover_touch_path_from(&content, usize::BITS)
 }
 
-fn discover_touch_path_from(content: &str) -> Option<PathBuf> {
-    content.split("\n\n").find_map(|block| {
-        let name_matches = block
-            .lines()
-            .find(|line| line.starts_with("N: Name="))
-            .is_some_and(|line| line.contains("cyttsp5_mt") || line.contains("Elan Touchscreen"));
-        if !name_matches {
-            return None;
-        }
-        let handlers = block
-            .lines()
-            .find(|line| line.starts_with("H: Handlers="))?;
-        let event = handlers
-            .strip_prefix("H: Handlers=")?
-            .split_whitespace()
-            .find(|handler| handler.starts_with("event"))?;
-        Some(Path::new("/dev/input").join(event))
-    })
+/// The controllers every measured Kobo uses, picked by name before anything
+/// else so that a reader somebody has tested keeps the node it was tested on.
+const NAMED_TOUCH_CONTROLLERS: [&str; 2] = ["cyttsp5_mt", "Elan Touchscreen"];
+
+/// Name fragments of nodes that are never the touch panel, whatever axes
+/// they declare. Buttons, the power key and the cover sensor live on these,
+/// and the old NTX kernels publish their key node as `ntx_event0`.
+const NOT_TOUCH: [&str; 6] = [
+    "gpio-keys",
+    "gpio_keys",
+    "pwrkey",
+    "power",
+    "cover",
+    "ntx_event",
+];
+
+/// One block of `/proc/bus/input/devices`, reduced to what selection reads.
+struct InputBlock<'a> {
+    name: &'a str,
+    event: &'a str,
+    absolute: Option<&'a str>,
+    keys: Option<&'a str>,
+}
+
+impl<'a> InputBlock<'a> {
+    fn parse(block: &'a str) -> Option<Self> {
+        let field = |prefix: &str| block.lines().find_map(|line| line.strip_prefix(prefix));
+        let name = field("N: Name=")?.trim_matches('"');
+        let event = field("H: Handlers=")?.split_whitespace().find(|handler| {
+            handler
+                .strip_prefix("event")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })?;
+        Some(Self {
+            name,
+            event,
+            absolute: field("B: ABS="),
+            keys: field("B: KEY="),
+        })
+    }
+
+    fn has_axes(&self, x: u16, y: u16, word_bits: u32) -> bool {
+        self.absolute.is_some_and(|bitmap| {
+            crate::gpio::bitmap_has(bitmap, x, word_bits)
+                && crate::gpio::bitmap_has(bitmap, y, word_bits)
+        })
+    }
+
+    fn is_multitouch(&self, word_bits: u32) -> bool {
+        self.has_axes(
+            input::ABS_MT_POSITION_X,
+            input::ABS_MT_POSITION_Y,
+            word_bits,
+        )
+    }
+
+    fn is_single_touch(&self, word_bits: u32) -> bool {
+        self.has_axes(input::ABS_X, input::ABS_Y, word_bits)
+            && self
+                .keys
+                .is_some_and(|bitmap| crate::gpio::bitmap_has(bitmap, input::BTN_TOUCH, word_bits))
+    }
+
+    fn is_excluded(&self) -> bool {
+        let name = self.name.to_ascii_lowercase();
+        NOT_TOUCH.iter().any(|fragment| name.contains(fragment))
+    }
+
+    fn path(&self) -> PathBuf {
+        Path::new("/dev/input").join(self.event)
+    }
+}
+
+/// Picks the touch panel out of the kernel's input device list.
+///
+/// A named controller wins, exactly as before this looked at anything else.
+/// Failing that, the first node that declares both multi-touch position axes
+/// is taken, and failing that the first that declares `ABS_X`, `ABS_Y` and
+/// `BTN_TOUCH`, which is how a single-touch controller describes itself.
+/// Nodes named for buttons, the power key or the cover are passed over even
+/// if they declare axes, because a hall sensor or an accelerometer behind a
+/// key node is not somewhere a tap can come from.
+///
+/// `word_bits` is the width of the kernel's `long`, which is how wide each
+/// hex word of the capability bitmaps is.
+fn discover_touch_path_from(content: &str, word_bits: u32) -> Option<PathBuf> {
+    let blocks = content
+        .split("\n\n")
+        .filter_map(InputBlock::parse)
+        .collect::<Vec<_>>();
+    blocks
+        .iter()
+        .find(|block| {
+            NAMED_TOUCH_CONTROLLERS
+                .iter()
+                .any(|name| block.name.contains(name))
+        })
+        .or_else(|| {
+            blocks
+                .iter()
+                .filter(|block| !block.is_excluded())
+                .find(|block| block.is_multitouch(word_bits))
+        })
+        .or_else(|| {
+            blocks
+                .iter()
+                .filter(|block| !block.is_excluded())
+                .find(|block| block.is_single_touch(word_bits))
+        })
+        .map(InputBlock::path)
 }
 
 /// Lists input evidence without selecting, grabbing or reading event streams.
@@ -266,7 +378,7 @@ mod tests {
         assert_eq!(devices.len(), 2);
         assert_eq!(devices[0].capabilities, ["B: ABS=3"]);
         assert_eq!(devices[1].path, "/dev/input/event5");
-        assert!(super::discover_touch_path_from(fixture).is_none());
+        assert!(super::discover_touch_path_from(fixture, 32).is_none());
     }
 
     #[test]
@@ -278,7 +390,7 @@ B: EV=b\n\n\
 N: Name=\"gpio-keys\"\n\
 H: Handlers=event0\n";
         assert_eq!(
-            discover_touch_path_from(fixture).as_deref(),
+            discover_touch_path_from(fixture, 32).as_deref(),
             Some(Path::new("/dev/input/event1"))
         );
     }
@@ -292,8 +404,91 @@ B: EV=b\n\n\
 N: Name=\"gpio-keys\"\n\
 H: Handlers=event0\n";
         assert_eq!(
-            discover_touch_path_from(fixture).as_deref(),
+            discover_touch_path_from(fixture, 32).as_deref(),
             Some(Path::new("/dev/input/event2"))
+        );
+    }
+    /// A multi-touch controller with no name anybody here has seen: pressure,
+    /// touch major and minor, both position axes and a tracking id, printed
+    /// in 32-bit words the way a 32-bit kernel prints them.
+    const UNNAMED_MULTITOUCH: &str = "N: Name=\"zinitix_touch\"\n\
+H: Handlers=event3\n\
+B: EV=b\n\
+B: KEY=400 0 0 0 0 0 0 0 0 0 0\n\
+B: ABS=2630000 1000003\n";
+
+    const GPIO_KEYS: &str = "N: Name=\"gpio-keys\"\n\
+H: Handlers=kbd event0\n\
+B: EV=3\n\
+B: KEY=8000000 0\n";
+
+    #[test]
+    fn an_unnamed_controller_is_found_by_its_multitouch_axes() {
+        let fixture = format!("{GPIO_KEYS}\n{UNNAMED_MULTITOUCH}");
+        assert_eq!(
+            discover_touch_path_from(&fixture, 32).as_deref(),
+            Some(Path::new("/dev/input/event3"))
+        );
+    }
+
+    #[test]
+    fn the_same_bitmap_printed_by_a_64_bit_kernel_is_read_the_same_way() {
+        let fixture = "N: Name=\"zinitix_touch\"\n\
+H: Handlers=event3\n\
+B: KEY=400 0 0 0 0 0\n\
+B: ABS=263000001000003\n";
+        assert_eq!(
+            discover_touch_path_from(fixture, 64).as_deref(),
+            Some(Path::new("/dev/input/event3"))
+        );
+    }
+
+    #[test]
+    fn a_single_touch_controller_is_found_by_its_axes_and_btn_touch() {
+        let fixture = "N: Name=\"zforce-ir-touch\"\n\
+H: Handlers=event1\n\
+B: KEY=400 0 0 0 0 0 0 0 0 0 0\n\
+B: ABS=3\n";
+        assert_eq!(
+            discover_touch_path_from(fixture, 32).as_deref(),
+            Some(Path::new("/dev/input/event1"))
+        );
+    }
+
+    #[test]
+    fn button_power_and_cover_nodes_are_never_taken_for_the_panel() {
+        // An accelerometer or a hall sensor can sit behind a key node and
+        // declare axes. None of these is somewhere a tap comes from.
+        for name in ["gpio-keys", "bd71828-pwrkey", "ntx_event0", "hall cover"] {
+            let fixture = format!(
+                "N: Name=\"{name}\"\nH: Handlers=event0\nB: KEY=400 0 0 0 0 0 0 0 0 0 0\nB: ABS=2630000 1000003\n"
+            );
+            assert!(
+                discover_touch_path_from(&fixture, 32).is_none(),
+                "{name} was taken for the touch panel"
+            );
+        }
+    }
+
+    #[test]
+    fn a_named_controller_is_still_preferred_over_an_earlier_capability_match() {
+        let fixture = format!(
+            "{UNNAMED_MULTITOUCH}\nN: Name=\"cyttsp5_mt\"\nH: Handlers=event1\nB: ABS=2630000 1000003\n"
+        );
+        assert_eq!(
+            discover_touch_path_from(&fixture, 32).as_deref(),
+            Some(Path::new("/dev/input/event1"))
+        );
+    }
+
+    #[test]
+    fn a_multitouch_node_is_preferred_over_a_single_touch_one() {
+        let fixture = format!(
+            "N: Name=\"pointer\"\nH: Handlers=event2\nB: KEY=400 0 0 0 0 0 0 0 0 0 0\nB: ABS=3\n\n{UNNAMED_MULTITOUCH}"
+        );
+        assert_eq!(
+            discover_touch_path_from(&fixture, 32).as_deref(),
+            Some(Path::new("/dev/input/event3"))
         );
     }
 }

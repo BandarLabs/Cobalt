@@ -124,17 +124,25 @@ pub fn observe_touch(
         .map_err(|error| ObserveError::new("start touch reader thread", &error))?;
 
     let deadline = Instant::now() + duration;
-    let mut decoder = TouchDecoder::default();
+    let reporting = crate::touch::contact_reporting(&query);
+    let mut decoder = TouchDecoder::new(reporting);
+    // The raw point printed beside each event comes from whichever axes the
+    // controller actually reports contacts on.
+    let (axis_x, axis_y) = if reporting == crate::touch::ContactReporting::SingleTouch {
+        (input::ABS_X, input::ABS_Y)
+    } else {
+        (input::ABS_MT_POSITION_X, input::ABS_MT_POSITION_Y)
+    };
     let mut last_raw: Option<(i32, i32)> = None;
     let mut reported = 0usize;
     while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
         match receiver.recv_timeout(remaining) {
             Ok(Ok(event)) => {
                 match (event.kind, event.code) {
-                    (input::EV_ABS, input::ABS_MT_POSITION_X) => {
+                    (input::EV_ABS, code) if code == axis_x => {
                         last_raw = Some((event.value, last_raw.map_or(0, |(_, y)| y)));
                     }
-                    (input::EV_ABS, input::ABS_MT_POSITION_Y) => {
+                    (input::EV_ABS, code) if code == axis_y => {
                         last_raw = Some((last_raw.map_or(0, |(x, _)| x), event.value));
                     }
                     _ => {}

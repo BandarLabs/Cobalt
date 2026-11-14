@@ -1,0 +1,46 @@
+# A photo pushed from the computer appears under Photos when the reader wakes.
+expect Picture puzzles
+tap Photos
+wait-for No photo puzzles yet
+companion nonograms push apps/frame/sample-photo.jpg --name Harbour --size 9 --sim
+lifecycle background
+lifecycle foreground
+wait-for Harbour
+expect Your photos
+expect 9×9
+expect-missing No photo puzzles yet
+clean
+shot nonograms-photos-listed
+# A photo puzzle plays like any other and shows the photo when solved.
+tap Harbour
+wait-for-id more
+expect 0/81
+tap-id board.cell.0
+expect 1/81
+tap-id more
+expect Harbour
+tap Back
+tap-id 4294967295
+# A second push adds to the shelf, and --replace keeps only what it names.
+companion nonograms push apps/frame/sample-photo.jpg --name Garden --size 15 --sim
+lifecycle background
+lifecycle foreground
+wait-for Garden
+expect Harbour
+expect Pan to play
+clean
+shot nonograms-photos-two
+companion nonograms push apps/frame/sample-photo.jpg --name Garden --size 15 --replace --sim
+lifecycle background
+lifecycle foreground
+wait-idle
+wait 1000
+wait-idle
+expect Garden
+expect-missing Harbour
+# The photos and their progress are still there after a restart.
+restart
+wait-for Nonograms
+tap Photos
+wait-for Garden
+expect-missing No photo puzzles yet

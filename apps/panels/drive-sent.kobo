@@ -1,0 +1,45 @@
+# A comic sent from the computer goes on the shelf under its own title the
+# next time Panels comes back, ready to read where it was left.
+wait-for Your shelf is empty
+companion panels push scripts/fixtures/panels/night-shift.cbz --sim
+lifecycle background
+lifecycle foreground
+wait-for On this reader
+expect Night shift
+expect Not started · 2 pages
+expect-missing Your shelf is empty
+clean
+shot shelf-sent
+# Add comic lists what was sent and says it is already on the shelf.
+wait-idle
+tap Add comic
+wait-for Sent from your computer
+expect Night shift
+expect 2 pages · On your shelf
+expect Over USB
+clean
+shot sent-list
+# Choosing a sent comic that is on the shelf opens it.
+tap Night shift
+wait-for-id comic-next
+wait-idle
+tap-id comic-next
+wait-idle
+tap-at 536,724
+wait-for Page 2 of 2
+tap Back to the page
+wait-idle
+tap-id 4294967295
+wait-for On this reader
+expect Saved page 2 of 2
+restart
+wait-for On this reader
+expect Saved page 2 of 2
+# Over USB reaches the copy guide from the sent list, and Back from the
+# guide's first page returns to the list it was opened from.
+tap Add comic
+wait-for Sent from your computer
+tap Over USB
+wait-for Connect by USB
+tap-id 4294967295
+wait-for Sent from your computer

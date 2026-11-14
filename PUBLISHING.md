@@ -4,21 +4,25 @@ Every SDK crate is marked `publish = false` and none is on crates.io today;
 applications are built from a checkout of this repository. This is the order
 to follow if that changes.
 
-The public Rust API is split into small crates. Their local `path` dependencies
-also carry exact `0.1.0` registry versions, so a workspace checkout uses local
-source while a published crate resolves the same version from crates.io.
+The public Rust API is split into small crates. Most of their local `path`
+dependencies also carry a `0.3.2` registry version, so a workspace checkout
+uses local source while a published crate would resolve from crates.io. A few
+carry no version yet (`kobo-state`, `kobo-doc`, `kobo-html`, and `kobo-net`'s
+dependency on `kobo-protocol`), and each needs one before anything that
+depends on it can be published.
 
 Publish a release in dependency order:
 
-1. `kobo-ui` and `kobo-abi`
-2. `kobo-protocol` and `kobo-text`
-3. `kobo-policy`
-4. `kobo-sdk`
+1. `kobo-ui`, `kobo-abi`, `kobo-json`, `kobo-dict` and `kobo-html`
+2. `kobo-protocol`, `kobo-text`, `kobo-state` and `kobo-doc`
+3. `kobo-net`
+4. `kobo-policy`
+5. `kobo-sdk`
 
 For each layer, run `cargo publish --dry-run -p <crate>` and publish it before
-checking the next layer. Cargo resolves registry dependencies when
-packaging, so `kobo-sdk` cannot complete its dry run until the preceding crates
-exist in the registry at the same version.
+checking the next layer. Cargo resolves registry dependencies when packaging,
+so `kobo-sdk` cannot complete its dry run until the crates before it exist in
+the registry.
 
 Runtime binaries, CLI tools and examples are distributed from this repository,
 not as library crates. The beta workflow builds the device package and the
@@ -29,10 +33,10 @@ license, dependency terms, third-party notices, and exact source commit.
 ## Stable and beta platform channels
 
 Stable remains the default. Stable readers use GitHub's latest non-prerelease
-release and Stable Store catalog. Owners can enable **Beta updates** in
-Settings to use prerelease platform releases and the separately signed
-`app-catalog-beta` Store catalog. Turning Beta updates off changes future
-checks to Stable; it does not delete apps or install older versions.
+release and Stable Store catalog. Owners can choose **Beta** under
+**Settings ▸ Software update** to use prerelease platform releases and the
+separately signed `app-catalog-beta` Store catalog. Switching back to Stable
+changes future checks; it does not delete apps or install older versions.
 
 The long-lived `beta` branch is the only source for beta publishing:
 
@@ -53,8 +57,11 @@ The long-lived `beta` branch is the only source for beta publishing:
   archive digest. The same host packages support `kobo update`; its default is
   Stable and its Beta host channel is explicit and independent from the
   in-product platform channel.
-- `.github/workflows/apps.yml` publishes beta branch apps only to
-  `app-catalog-beta`; main continues to publish only to `app-catalog`.
+- `.github/workflows/apps.yml` publishes apps from the beta branch only, to
+  `app-catalog-beta`. The Stable `app-catalog` changes only through
+  `.github/workflows/promote-beta-apps.yml`, which copies the tested Beta
+  packages byte for byte (see
+  [docs/CONTRIBUTING_APPS.md](docs/CONTRIBUTING_APPS.md#stable-promotion)).
 - `.github/workflows/promote-beta.yml` is a manual, guarded promotion. Supply
   `X.Y.Z`, the full tested beta commit SHA, the expected primary archive
   SHA-256, and the exact confirmation `promote-beta-vX.Y.Z`. It requires the

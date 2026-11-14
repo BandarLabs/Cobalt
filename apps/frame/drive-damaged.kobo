@@ -1,0 +1,26 @@
+# sweep: --bare --seed-root apps/frame/fixtures/damaged
+# A shelf whose every photo is damaged says so once and points at the push.
+wait-for No photograph can be opened
+expect 2 photos could not be read. Push the album again from your computer.
+expect Check for photos
+expect-missing No photo on this shelf can be read
+expect-missing Push them again
+clean
+shot damaged
+# A fresh push adds a readable photo; Frame finds it when it is opened again.
+companion frame push scripts/fixtures/frame/lighthouse.jpg --album Coast --sim
+lifecycle background
+lifecycle foreground
+wait-for Next photo
+expect Try again
+expect This photograph could not be opened.
+clean
+shot damaged-after-push
+tap Next photo
+wait-for-id next
+wait-idle
+tap-at 536,724
+wait-for Photo 3 of 3
+expect lighthouse.jpg
+clean
+shot damaged-recovered

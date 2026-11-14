@@ -103,6 +103,10 @@ enum Pending {
     Note(String),
 }
 
+/// Said when a pad is tapped in the preview a push leaves on an unpaired
+/// reader.
+const PREVIEW_PRESS: &str = "Preview only. Pair with your computer to use these pads.";
+
 /// Said when the runtime has no room for one more request just now.
 const STILL_TALKING: &str = "Deck is still waiting on your computer. Tap again in a moment.";
 
@@ -279,7 +283,23 @@ impl App {
         // difference between a key that did nothing and a computer that is no
         // longer listening, which is not a difference a reader can see in a
         // grid of squares.
-        screen = screen.secondary(self.connection());
+        //
+        // While the banner is saying what went wrong, the line only names the
+        // computer. Both used to state the cause, so an offline reader was
+        // told it was not on Wi-Fi twice, one line under the other.
+        let banner_says_why = self
+            .trouble
+            .zip(self.notice.as_deref())
+            .is_some_and(|(trouble, notice)| notice == trouble.advice());
+        // A tapped preview pad already says it is a preview in the banner,
+        // so the line saying the same thing steps aside.
+        if self.notice.as_deref() != Some(PREVIEW_PRESS) {
+            screen = screen.secondary(if banner_says_why {
+                self.pairing()
+            } else {
+                self.connection()
+            });
+        }
         // A five-column board rather than the pads shortcut: the shortcut
         // backfills every unassigned place with a blank key, and a reader
         // with three commands saw a wall of ruled boxes that do nothing.
@@ -301,16 +321,25 @@ impl App {
         }
         screen.build()
     }
-    /// What this deck is connected to, as a sentence.
-    fn connection(&self) -> String {
+    /// Which computer this deck is paired with, as a sentence, whether or
+    /// not it is answering.
+    fn pairing(&self) -> String {
         if self.address == "local" {
             return "Preview only. Pair to run commands.".to_owned();
         }
         if self.address.is_empty() {
             return "Not paired with a computer yet.".to_owned();
         }
+        format!("Paired with {}.", self.address)
+    }
+
+    /// What this deck is connected to, as a sentence.
+    fn connection(&self) -> String {
+        if self.address == "local" || self.address.is_empty() {
+            return self.pairing();
+        }
         match self.trouble {
-            None => format!("Paired with {}.", self.address),
+            None => self.pairing(),
             Some(Trouble::Offline) => "This reader is not on Wi-Fi.".to_owned(),
             Some(Trouble::Unreachable) => format!("{} is not answering.", self.address),
             Some(Trouble::Slow) => format!("{} is slow to answer.", self.address),
@@ -459,11 +488,30 @@ impl App {
             self.pending = Some(Pending::Poll);
         }
     }
+    /// Lets go of whatever the deck was waiting on, so a press or a result
+    /// read is the one request it tracks.
+    ///
+    /// The deck holds one task at a time. Starting another over the top used
+    /// to forget the first without stopping it: a look at a computer that had
+    /// gone away kept trying to connect long after the banner said so, and a
+    /// wait between looks finished into nothing.
+    fn drop_outstanding(&mut self, cx: &mut Context) {
+        if let Some(task) = self.task.take() {
+            cx.cancel(task);
+        }
+        // A finished key whose output was still being read is read again on
+        // the next look, so its line under the deck is not lost.
+        if let Some(Pending::Note(id)) = self.pending.take() {
+            self.watching.get_or_insert(id);
+        }
+    }
+
     fn press(&mut self, cx: &mut Context, id: &str, confirmed: bool) {
         if self.address == "local" {
-            self.notice = Some("Preview only. Pair with your computer to use these pads.".into());
+            self.notice = Some(PREVIEW_PRESS.into());
             return;
         }
+        self.drop_outstanding(cx);
         let task = cx.spawn(Task::Post {
             url: format!("https://{}/deck/press?token={}", self.address, self.code),
             body: format!("{{\"key\":\"{id}\",\"confirmed\":{confirmed}}}"),
@@ -493,6 +541,7 @@ impl App {
         self.pending = Some(Pending::Press(id.to_owned()));
     }
     fn result(&mut self, cx: &mut Context, id: &str) {
+        self.drop_outstanding(cx);
         let task = cx.spawn(Task::Fetch {
             url: format!(
                 "https://{}/deck/result?key={id}&token={}",
@@ -640,8 +689,8 @@ impl App {
             .save(PAIRED, format!("{}|{}", self.address, self.code));
         self.view = View::Grid;
         // Whatever was in flight belongs to the old pairing.
-        self.task = None;
-        self.pending = None;
+        self.drop_outstanding(cx);
+        self.watching = None;
         self.poll(cx);
     }
 
@@ -741,10 +790,13 @@ impl KoboApp for App {
             // A look that was cancelled while the panel was elsewhere would
             // otherwise leave a deck that never updates again.
             View::Grid if self.task.is_none() => self.poll(cx),
-            // `kobo sidekick init` may have paired this reader while Deck
-            // sat on its pairing screen. Nothing is lost by looking.
+            // `kobo sidekick init` may have paired this reader, or `kobo deck
+            // push` left a preview, while Deck sat on its pairing screen. The
+            // pads come with it: without them a preview opened on an empty
+            // grid until Deck was restarted.
             View::Address if self.previous.is_none() && !self.entry.is_open() => {
                 cx.store().load(PAIRED);
+                cx.store().load_cached(CACHE);
             }
             _ => {}
         }
@@ -828,10 +880,10 @@ impl KoboApp for App {
                 self.trouble = Some(trouble);
                 // Still worth looking again, but not immediately: a computer
                 // that is not there answers a request a second just as fast
-                // as it answers none.
-                if matches!(pending, Some(Pending::Poll | Pending::Wait)) {
-                    self.wait(cx);
-                }
+                // as it answers none. After a press or a result read too:
+                // the deck used to stop looking there, and its banner stayed
+                // up after the computer came back until Refresh was tapped.
+                self.wait(cx);
                 if let Some(Pending::Press(id)) = pending {
                     if let Some(key) = self
                         .deck
@@ -907,7 +959,12 @@ impl KoboApp for App {
             }
             for key in &page.keys {
                 if a == action_id(&format!("press-{}", key.id)) {
-                    if key.state == "running" {
+                    if self.address == "local" {
+                        // A preview runs nothing, so a pad that asks first
+                        // has nothing to ask about.
+                        let id = key.id.clone();
+                        self.press(cx, &id, false);
+                    } else if key.state == "running" {
                         self.notice = Some("That command is still running.".into());
                     } else if key.state == "failed" || key.state == "ok" {
                         // A key that has already run opens what it said. It
@@ -1080,6 +1137,67 @@ mod tests {
     }
 
     #[test]
+    fn a_pad_pressed_between_looks_stops_the_wait_rather_than_leaving_it_running() {
+        let (mut runner, _) = paired();
+        let waiting = in_flight(&runner).expect("the deck is waiting between looks");
+        let commands = runner.action(action_id("press-test"));
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Cancel(task) if *task == waiting)),
+            "the wait was left running under the press"
+        );
+        assert!(matches!(started(&commands), Some(Task::Post { .. })));
+    }
+
+    #[test]
+    fn after_a_press_the_computer_did_not_answer_the_deck_keeps_looking_for_it() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("press-test"));
+        let post = in_flight(&runner).expect("the press went out");
+        let commands = runner.task_outcome(post, TaskOutcome::Failed(TaskError::Unreachable));
+        assert!(runner
+            .app()
+            .notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("Your computer is not answering.")));
+        assert_eq!(
+            started(&commands),
+            Some(Task::Sleep {
+                seconds: BETWEEN_LOOKS
+            }),
+            "the deck stopped looking for its computer"
+        );
+        // The next look that lands takes the banner down.
+        let waiting = in_flight(&runner).expect("waiting to look again");
+        runner.task_outcome(waiting, TaskOutcome::Completed(Vec::new()));
+        let poll = in_flight(&runner).expect("looked again");
+        runner.task_outcome(poll, TaskOutcome::Completed(LAYOUT.as_bytes().to_vec()));
+        assert_eq!(runner.app().trouble, None);
+        assert_eq!(runner.app().notice, None);
+    }
+
+    #[test]
+    fn a_new_pairing_lets_go_of_the_request_still_out_to_the_old_computer() {
+        let (mut runner, _) = paired();
+        let waiting = in_flight(&runner).expect("the deck is waiting between looks");
+        runner.task_outcome(waiting, TaskOutcome::Completed(Vec::new()));
+        let old_look = in_flight(&runner).expect("a look at the old computer is out");
+        runner.action(action_id("repair"));
+        runner.action(action_id("enter-address"));
+        runner.app_mut().view = View::Code;
+        let mut context = kobo_sdk::Context::default();
+        runner.app_mut().submitted(&mut context, "abc234");
+        let commands = context.take_commands();
+        assert!(
+            commands
+                .iter()
+                .any(|command| matches!(command, Command::Cancel(task) if *task == old_look)),
+            "the old computer was still being dialled"
+        );
+    }
+
+    #[test]
     fn a_key_that_asks_first_does_not_run_until_it_is_answered() {
         let (mut runner, _) = paired();
         let asked = runner.action(action_id("press-deploy"));
@@ -1194,6 +1312,17 @@ mod tests {
         }
         // A pairing problem is never blamed on the network or the address.
         assert!(!seen[0].contains("Wi-Fi") && !seen[0].contains("not answering"));
+    }
+
+    #[test]
+    fn an_offline_deck_says_it_is_not_on_wi_fi_once() {
+        let (mut runner, _) = paired();
+        runner.action(action_id("retry"));
+        let task = in_flight(&runner).expect("a look is in flight");
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Offline));
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert_eq!(drawn.matches("not on Wi-Fi").count(), 1, "{drawn}");
+        assert!(drawn.contains("Paired with 192.168.1.5:8080."), "{drawn}");
     }
 
     #[test]
@@ -1354,6 +1483,71 @@ mod tests {
         };
         assert!(summarise("Deploy", &failed).contains("exit 7"));
         assert!(summarise("Deploy", &failed).contains("read the output"));
+    }
+
+    /// A reader that has never been paired, sitting on the pairing steps.
+    fn unpaired() -> AppRunner<App> {
+        let mut runner = AppRunner::new(App::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: PAIRED.into(),
+            value: None,
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: kobo_sdk::cache_key(super::CACHE),
+            value: None,
+        });
+        runner
+    }
+
+    /// The preview `kobo deck push` leaves on an unpaired reader.
+    fn preview() -> AppRunner<App> {
+        let mut runner = unpaired();
+        runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+        runner.store_result(StoreResult::Loaded {
+            key: PAIRED.into(),
+            value: Some(b"local|preview".to_vec()),
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: kobo_sdk::cache_key(super::CACHE),
+            value: Some(LAYOUT.as_bytes().to_vec()),
+        });
+        runner
+    }
+
+    #[test]
+    fn pads_pushed_while_deck_is_on_the_pairing_steps_are_drawn_when_it_comes_back() {
+        let runner = preview();
+        assert_eq!(runner.app().view, View::Grid);
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert!(
+            drawn.contains("Test") && drawn.contains("Deploy"),
+            "{drawn}"
+        );
+    }
+
+    #[test]
+    fn a_pad_that_asks_first_does_not_ask_to_run_in_a_preview() {
+        let mut runner = preview();
+        let commands = runner.action(action_id("press-deploy"));
+        assert_eq!(runner.app().confirming, None);
+        assert!(
+            started(&commands).is_none(),
+            "the preview started something"
+        );
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert!(
+            !drawn.contains("Run this on the paired computer?"),
+            "{drawn}"
+        );
+    }
+
+    #[test]
+    fn a_tapped_preview_pad_says_it_is_a_preview_once() {
+        let mut runner = preview();
+        runner.action(action_id("press-test"));
+        let drawn = format!("{:?}", runner.app().screen(&kobo_sdk::Context::default()));
+        assert_eq!(drawn.matches("Preview only").count(), 1, "{drawn}");
     }
 
     #[test]

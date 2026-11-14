@@ -236,7 +236,7 @@ def outlined(layout):
     """Squares drawn with the selection outline, which also marks the last move."""
     marked = set()
     for node in layout["nodes"]:
-        found = re.match(r"Cell\(ActionId\((\d+)\), Board(?:Dark)?, true\)", node["kind"])
+        found = re.match(r"Cell\(ActionId\((\d+)\), Board(?:Dark|Light)?, true\)", node["kind"])
         if found:
             marked.add(SQUARES[int(found.group(1))])
     return marked
@@ -280,7 +280,7 @@ def main():
     parser.add_argument("--disconnect-board", action="store_true",
                         help="Drop the live board stream and verify reconnect presentation")
     parser.add_argument("--casual", action="store_true",
-                        help="Choose Casual in Account/Games and pair from the casual pool")
+                        help="Choose Casual on Play online and pair from the casual pool")
     parser.add_argument("--cli", type=Path,
                         help="use this kobo binary instead of building one; for a shared target "
                              "directory that other builds may rewrite during the run")
@@ -375,15 +375,13 @@ def main():
 
             try:
                 start()
-                # Time tiles stay tappable while the app connects and answer
-                # with a notice, so the driver waits for the Ready status
-                # rather than for the tile to become reachable.
+                # The times stay tappable while the app connects and answer
+                # with a notice, so the driver waits for the Ready status on
+                # Play online rather than for a time to become reachable.
                 choose = ["tap-id seek-casual"] if args.casual else []
-                # At the larger text sizes the home cards are two to a row
-                # and the time cards are on the second page.
-                drive("wait-for-id play", "tap-id play", "wait-for Owner", *choose, "tap Back",
-                      "wait-for Ready", "maybe-tap-id home-next",
-                      f"wait-for Rapid · {pool}", "tap-id seek-10-0")
+                drive("wait-for-id play", "tap-id play", "wait-for Owner", "tap Back",
+                      "wait-for-id play-online", "tap-id play-online", *choose,
+                      "wait-for Ready", "tap-id seek-10-0")
                 if args.drop_start_event:
                     capture("00-waiting-for-match")
                 refusal = "cannot seek casual games"

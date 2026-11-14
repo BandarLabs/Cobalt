@@ -9,3 +9,31 @@ expect Source
 expect Garden Mac
 clean
 shot birds-menu
+expect Updated just now
+expect cannot stay awake for Birds yet
+# Refresh in the menu reads the shelf again and puts the art back.
+tap Refresh
+wait-idle
+expect-missing Status
+# The cross closes the menu without leaving Birds.
+tap-at 536,724
+wait-for Status
+tap-at 942,560
+wait-idle
+expect-missing Status
+# A page key also refreshes, as a reader would press it.
+tap-id refresh
+wait-idle
+expect-missing No birds yet
+# A collage the computer publishes while Birds is open arrives on its own,
+# within one ten-second look at the shelf.
+companion birds push scripts/fixtures/birds/older.json scripts/fixtures/birds/older.png --sim
+wait 11000
+wait-idle
+tap-at 536,724
+wait-for Shed Pi
+# A snapshot older than a day says it is out of date.
+expect Out of date. Last updated
+expect-missing Garden Mac
+clean
+shot birds-out-of-date

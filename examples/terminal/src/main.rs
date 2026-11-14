@@ -49,6 +49,8 @@ const RESTART: &str = "restart";
 /// Also in the top bar, for the same reason, and in words: there is no
 /// picture of "up" that would not be mistaken for a page turn.
 const EARLIER: &str = "earlier";
+/// The keyboard's own name for the key that switches to the symbols.
+const SYMBOL_LAYER: &str = "kb.layer";
 const LATEST: &str = "latest";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -77,8 +79,7 @@ impl Status {
     const fn short_title(self) -> &'static str {
         match self {
             Self::Starting | Self::Running => "Terminal",
-            Self::Ended(0) => "Closed",
-            Self::Ended(status) if status > 0 => "Error",
+            Self::Ended(status) if status >= 0 => "Closed",
             Self::Ended(_) => "Stopped",
             Self::Refused(ShellError::NotPermitted) => "Refused",
             Self::Refused(ShellError::Unavailable) => "No shell",
@@ -89,8 +90,12 @@ impl Status {
     fn title(self) -> String {
         match self {
             Self::Starting | Self::Running => "Terminal".to_string(),
-            Self::Ended(0) => "Shell closed".to_string(),
-            Self::Ended(status) if status > 0 => "Shell closed after an error".to_string(),
+            // Closed, whatever the last command's status was. A shell ends
+            // with the status of the last thing run in it, so typing exit
+            // after a command that failed read "Shell closed after an
+            // error", which blamed the owner's own exit on an error the
+            // output above already showed.
+            Self::Ended(status) if status >= 0 => "Shell closed".to_string(),
             Self::Ended(_) => "Shell was stopped".to_string(),
             Self::Refused(ShellError::NotPermitted) => {
                 "Terminal is not allowed on this reader".to_string()
@@ -145,6 +150,17 @@ impl App {
     /// changes size, which is what keeps a key under the finger that is about
     /// to press it again.
     fn compose(&self, rows: Vec<String>, cursor: Option<Caret>) -> Screen {
+        self.compose_with(&self.keys, rows, cursor)
+    }
+
+    /// The same, drawn with `keys` in whatever state they are in, so the grid
+    /// can be measured against each layer of them.
+    fn compose_with(
+        &self,
+        keys: &TerminalKeys,
+        rows: Vec<String>,
+        cursor: Option<Caret>,
+    ) -> Screen {
         let looking_back = self.terminal.lines_back() > 0;
         let title = if looking_back {
             "Earlier output".to_string()
@@ -160,10 +176,14 @@ impl App {
         } else {
             self.status.short_title().to_string()
         };
-        self.bar(title)
-            .terminal(rows, cursor)
-            .terminal_keys(&self.keys)
-            .build()
+        let screen = self.bar(title).terminal(rows, cursor);
+        // A closed shell takes no keys, so none are drawn: a keyboard where
+        // every key is dead reads as a reader that has stopped answering.
+        // Restart takes their place, where the finger already is.
+        if self.status.finished() {
+            return screen.fill().primary_button(RESTART, "Restart").build();
+        }
+        screen.terminal_keys(keys).build()
     }
 
     /// The top bar with its actions. At most two controls fit beside the
@@ -176,8 +196,6 @@ impl App {
             .top_bar_action(EARLIER, "Earlier");
         if self.terminal.lines_back() > 0 {
             builder = builder.top_bar_action(LATEST, "Latest");
-        } else if self.status.finished() {
-            builder = builder.top_bar_action(RESTART, "Restart");
         }
         builder
     }
@@ -212,10 +230,25 @@ impl App {
     }
 
     /// Asks the layout engine, not arithmetic, how big the grid is.
+    ///
+    /// Measured under the tallest the keys get. Typing a digit brings up the
+    /// symbol keys, and where they take a row more than the letters, a grid
+    /// measured under the letters had its newest lines, the prompt and the
+    /// cursor drawn under the keys.
     fn measure(&mut self, context: &Context) -> (u16, u16) {
-        self.metrics = Some(context.metrics());
-        let empty = self.compose(Vec::<String>::new(), None);
-        kobo_sdk::terminal_grid_for(&empty, &context.metrics())
+        let metrics = context.metrics();
+        self.metrics = Some(metrics);
+        let mut symbols = TerminalKeys::new();
+        let _ = symbols.press(action_id(SYMBOL_LAYER));
+        [TerminalKeys::new(), symbols]
+            .iter()
+            .map(|keys| {
+                let empty = self.compose_with(keys, Vec::new(), None);
+                kobo_sdk::terminal_grid_for(&empty, &metrics)
+            })
+            .fold((u16::MAX, u16::MAX), |(columns, rows), (wide, high)| {
+                (columns.min(wide), rows.min(high))
+            })
     }
 
     fn repaint(&mut self, context: &mut Context) {
@@ -341,7 +374,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{App, Status, EARLIER, LATEST, RESTART};
+    use super::{App, Status, EARLIER, LATEST, RESTART, SYMBOL_LAYER};
     use kobo_sdk::terminal::Typed;
     use kobo_sdk::{action_id, AppRunner, Command, ShellError, ShellEvent};
     use kobo_ui::{Chrome, LayoutKind, Rect, Screen, CLARA_BW_METRICS};
@@ -393,23 +426,50 @@ mod tests {
     /// asserting a number somebody typed.
     #[test]
     fn the_shell_is_opened_with_the_grid_the_screen_really_has() {
-        let (_runner, commands) = started();
+        let (mut runner, commands) = started();
         let (columns, rows) = opened(&commands).expect("a terminal opens a shell when it starts");
         assert!(columns > 20, "{columns} columns is not a usable terminal");
         assert!(rows > 10, "{rows} rows is not a usable terminal");
 
-        let screen = screens(&commands).pop().expect("the first screen is drawn");
-        let grid = layout(&screen)
-            .nodes
-            .iter()
-            .find(|node| node.kind == LayoutKind::TerminalGrid)
-            .map(|node| node.rect)
-            .expect("the screen has a terminal on it");
-        assert_eq!(
-            kobo_sdk::terminal_grid(grid.width, grid.height),
-            (columns, rows),
-            "the drawn grid must be the grid the shell was told about"
+        // Under the letters and under the symbols alike, every row the
+        // shell was told about is drawn, and none more columns than it has.
+        let letters = screens(&commands).pop().expect("the first screen is drawn");
+        let symbols = screens(&runner.action(action_id(SYMBOL_LAYER)))
+            .pop()
+            .expect("the symbol keys redraw");
+        for screen in [letters, symbols] {
+            let grid = layout(&screen)
+                .nodes
+                .iter()
+                .find(|node| node.kind == LayoutKind::TerminalGrid)
+                .map(|node| node.rect)
+                .expect("the screen has a terminal on it");
+            let (drawn_columns, drawn_rows) = kobo_sdk::terminal_grid(grid.width, grid.height);
+            assert_eq!(
+                drawn_columns, columns,
+                "the shell wraps where the panel does not"
+            );
+            assert!(
+                drawn_rows >= rows,
+                "{rows} rows were promised and {drawn_rows} are drawn above the keys"
+            );
+        }
+    }
+
+    /// A shell that has closed takes no keys, so it shows none: Restart
+    /// stands where they were. A keyboard drawn with every key dead read as
+    /// a reader that had stopped answering.
+    #[test]
+    fn a_closed_shell_offers_restart_where_the_keys_were() {
+        let (mut runner, _commands) = started();
+        let commands = runner.shell_event(ShellEvent::Closed { status: 0 });
+        let screen = screens(&commands).pop().expect("closing redraws");
+        let drawn = layout(&screen);
+        assert!(
+            drawn.rect_of_action(action_id("kb.r0c0")).is_none(),
+            "the keys are still drawn under a closed shell"
         );
+        assert!(drawn.rect_of_action(action_id(RESTART)).is_some());
     }
 
     /// Output moves nothing.
@@ -464,10 +524,15 @@ mod tests {
         let commands = runner.shell_event(ShellEvent::Refused(ShellError::NotPermitted));
         let screen = screens(&commands).pop().expect("a refusal redraws");
         let title = screen.top_bar.as_ref().map(|bar| bar.title.clone());
-        // Beside Earlier and Restart the sentence does not fit even at the
-        // default size, so the bar says it in a word and the sentence is
-        // written whole under the output.
-        assert_eq!(title.as_deref(), Some("Refused"));
+        // The bar says it whole where it fits beside Earlier, and in a word
+        // where it does not. The sentence is written under the output too.
+        assert!(
+            matches!(
+                title.as_deref(),
+                Some("Refused" | "Terminal is not allowed on this reader")
+            ),
+            "{title:?}"
+        );
         assert!(
             format!("{screen:?}").contains("Terminal is not allowed on this reader."),
             "{screen:?}"
@@ -533,7 +598,9 @@ mod tests {
     #[test]
     fn a_status_says_what_happened_in_words_rather_than_an_exit_code() {
         assert_eq!(Status::Ended(0).title(), "Shell closed");
-        assert_eq!(Status::Ended(1).title(), "Shell closed after an error");
+        // An exit after a failed command is still the owner closing it.
+        assert_eq!(Status::Ended(1).title(), "Shell closed");
+        assert_eq!(Status::Ended(1).short_title(), "Closed");
         assert_eq!(Status::Ended(-1).title(), "Shell was stopped");
         for status in [Status::Ended(1), Status::Ended(127), Status::Ended(-9)] {
             assert!(
@@ -594,14 +661,16 @@ mod tests {
         let screen = screens(&runner.shell_event(ShellEvent::Closed { status: 1 }))
             .pop()
             .expect("closing redraws");
-        let bar = screen.top_bar.as_ref().expect("a top bar");
-        let restart = bar
-            .actions
+        let drawn = layout(&screen);
+        let restart = drawn
+            .nodes
             .iter()
-            .find(|action| action.action == action_id(RESTART))
+            .find(|node| node.kind.acts_on() == Some(action_id(RESTART)))
             .expect("a way to start again");
-        assert_eq!(restart.label, "Restart");
-        assert!(restart.glyph.is_none());
+        assert_eq!(
+            restart.text_lines.first().map(String::as_str),
+            Some("Restart")
+        );
     }
 
     /// A build that ran long enough to fill the panel still leaves the battery

@@ -20,8 +20,8 @@ starting other apps.
 
 ```sh
 cargo test -p kobo-launcher
-kobo run --sim --app launcher      # in the browser simulator
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo dev --runtime   # the launcher and every local app in the browser simulator
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---

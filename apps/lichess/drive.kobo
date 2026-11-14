@@ -1,34 +1,45 @@
 expect Lichess
+# The first screen leads with the one thing that needs no account, and lists
+# the rest under it. The times are a tap further, on Play online.
+expect Play the computer
+expect Play online
+expect Your games
 expect Puzzles
-wait-for Not connected
-# At the larger text sizes the cards are set two to a row, so the time cards
-# are on the second page; at the default size the pager is not drawn at all.
-maybe-tap-id home-next
-expect Rapid · Rated
+expect How to play
+expect-missing 10+0
+expect-missing Rated
+expect-missing home-next
 clean
 shot home
-maybe-tap-id home-previous
 tap How to play
 expect Chess on Lichess
 expect Outlined squares show the last move.
 # How to play turns a page at the larger text sizes; at the default size it
 # is one page and draws no pager.
 maybe-tap-id help-next
-expect Choose rated or casual games in Account/Games.
+expect Play online lists the times
 wait 250
 clean
 shot lichess-help
 tap Play
-expect Computer
+expect Play the computer
 tap Puzzles
 wait-for Download 32 puzzles
 expect-missing Resume puzzle
 tap Back
-expect Computer
-maybe-tap-id home-next
-tap 10+0
+expect Play the computer
+tap-id play-online
+wait-for Not connected
+expect 10 minutes each
+expect Plus 5 seconds a move
+expect No time added
+expect Rated
+expect Casual
+clean
+shot play-online
+tap-id seek-10-0
 wait-for Connect Lichess
-expect Connect a Lichess account to play people. Computer and Puzzles work without one.
+expect Connect a Lichess account to play people. Playing the computer and Puzzles work without one.
 expect-missing Challenge player
 clean
 shot time-tile-without-account
@@ -46,13 +57,19 @@ tap Back
 wait-for Account key
 tap Back
 wait-for Connect Lichess
+tap Back
+wait-for Play the computer
+tap-id play-online
+wait-for 10 minutes each
 tap-id seek-casual
 tap Back
-wait-for Rapid · Casual
-expect-missing Rapid · Rated
+wait-for Play the computer
+tap-id play-online
+wait-for 10 minutes each
 clean
-shot home-casual
-maybe-tap-id home-previous
+shot online-casual
+tap Back
+wait-for Play the computer
 tap-id play-computer
 wait-for Start game
 expect No clock

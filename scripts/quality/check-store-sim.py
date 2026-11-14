@@ -86,7 +86,7 @@ def main():
                 # are read before anything is installed. The page's Install
                 # installs, stays on the page, says so, and offers Open.
                 drive('wait-idle', 'expect-state /simulation#/appStore/mode "signed-local"',
-                      'expect Link browser', 'tap-id filter-available', 'expect Available to install',
+                      'expect Link a browser', 'tap-id filter-available', 'expect Available to install',
                       'tap Install', 'wait-for Permissions', 'expect Not installed', 'shot available')
                 assert not (fixture / 'installed/apps/quality-fixture').exists()
                 drive('tap-id install-quality-fixture', 'wait-for is installed.',

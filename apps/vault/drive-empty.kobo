@@ -1,0 +1,24 @@
+# sweep: --bare
+# A first run has no notes: the splash names the one computer command, and
+# Check for notes picks up a push without leaving Vault.
+wait-for No vault yet
+expect kobo vault push ~/Notes
+expect Check for notes
+clean
+shot empty
+tap About Vault
+wait-for About Vault
+expect only changed notes are sent
+expect-missing Did not import
+clean
+shot about-empty
+tap-id 4294967295
+wait-for No vault yet
+tap Check for notes
+wait-for No vault yet
+companion vault push scripts/fixtures/vault --sim
+tap Check for notes
+wait-for 3 notes
+expect Browse
+clean
+shot first-notes

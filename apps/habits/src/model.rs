@@ -110,12 +110,27 @@ impl Habit {
 
 /// The last seven days across the active habits: due days, how many of
 /// them were completed, and how many were skipped. Today counts.
+///
+/// A habit's days are counted from the first day it was marked, done or
+/// skipped, or from today if it has not been marked yet. The record keeps
+/// no day a habit was added, and counting the whole week for each one made
+/// three habits added this morning a week of twenty-one due days, twenty of
+/// them missed before the habits existed.
 pub fn week_summary(habits: &[Habit], today: u32) -> (u32, u32, u32) {
     let mut due = 0;
     let mut done = 0;
     let mut skipped = 0;
     for habit in habits.iter().filter(|habit| !habit.archived) {
-        for day in today.saturating_sub(6)..=today {
+        let first = habit
+            .done
+            .first()
+            .into_iter()
+            .chain(habit.skipped.first())
+            .min()
+            .copied()
+            .unwrap_or(today)
+            .min(today);
+        for day in today.saturating_sub(6).max(first)..=today {
             if habit.due(day) {
                 due += 1;
                 if has_day(&habit.done, day) {

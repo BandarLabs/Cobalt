@@ -243,3 +243,106 @@ fn exactly_one_destination_reads_as_selected() {
         .count();
     assert_eq!(selected, 1);
 }
+
+#[test]
+fn an_action_bar_is_set_in_ink_and_marks_none_of_its_verbs() {
+    // Undo, Notes and Erase were drawn the grey of a tab nobody is on, and
+    // read as switched off.
+    let screen = Screen::new(
+        1,
+        vec![Node::Text {
+            id: NodeId(1),
+            text: "A board".into(),
+            links: Vec::new(),
+        }],
+    )
+    .with_nav_bar(NavBar::actions(
+        NodeId(2),
+        vec![
+            BarAction::new(ActionId(3), "Undo"),
+            BarAction::new(ActionId(4), "Notes"),
+        ],
+    ));
+    let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+    let entries: Vec<_> = layout
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.kind, LayoutKind::ActionBarEntry(..)))
+        .collect();
+    assert_eq!(entries.len(), 2);
+    assert!(!layout.nodes.iter().any(|node| matches!(
+        node.kind,
+        LayoutKind::NavDestination(..) | LayoutKind::NavDestinationSelected(..)
+    )));
+    let width = usize::try_from(CLARA_BW_METRICS.width).unwrap();
+    let height = usize::try_from(CLARA_BW_METRICS.height).unwrap();
+    let mut surface = Surface::new(width, height);
+    render(&screen, &mut surface, None);
+    let word = screen
+        .layout()
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, LayoutKind::ActionBarEntry(..)))
+        .expect("an entry")
+        .rect;
+    let darkest = (word.y..word.y + word.height)
+        .flat_map(|y| (word.x..word.x + word.width).map(move |x| (x, y)))
+        .filter_map(|(x, y)| {
+            let (x, y) = (usize::try_from(x).ok()?, usize::try_from(y).ok()?);
+            surface.pixels.get(y * width + x).copied()
+        })
+        .min()
+        .unwrap_or(255);
+    assert!(
+        darkest < tone::MUTED,
+        "the label is no darker than a muted one: {darkest}"
+    );
+}
+
+#[test]
+fn a_long_destination_name_takes_room_from_short_ones_rather_than_reaching_the_edge() {
+    // At the largest sizes "Kobo reader" filled its quarter of the bar and
+    // was drawn against the panel's right edge.
+    let names = ["Apps", "Books", "Settings", "Kobo reader"];
+    let bar = NavBar::new(
+        NodeId(1),
+        names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| BarAction::new(ActionId(index as u32 + 1), *name))
+            .collect(),
+        Some(0),
+    );
+    let screen = Screen::new(1, Vec::new()).with_nav_bar(bar);
+    for scale in TextScale::STEPS {
+        let metrics = DisplayMetrics {
+            text_scale: scale,
+            ..CLARA_BW_METRICS
+        };
+        let layout = with_text_scale(scale, || screen.layout_for(&metrics));
+        let slots: Vec<_> = layout
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(
+                    node.kind,
+                    LayoutKind::NavDestination(..) | LayoutKind::NavDestinationSelected(..)
+                )
+            })
+            .collect();
+        assert_eq!(slots.len(), names.len());
+        let margin = metrics.space(Space::Small);
+        for slot in &slots {
+            let word = with_text_scale(scale, || {
+                measure_text(&slot.text_lines[0], FontSize::Caption).0
+            });
+            assert!(
+                word + 2 * margin <= slot.rect.width,
+                "{scale:?}: {:?} has no margin in its slot",
+                slot.text_lines[0]
+            );
+        }
+        let last = slots.last().expect("a last slot");
+        assert_eq!(last.rect.x + last.rect.width, metrics.width, "{scale:?}");
+    }
+}

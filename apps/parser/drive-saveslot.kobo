@@ -1,0 +1,12 @@
+# Seeded with the Lamplight fixture. The slot just saved reads as saved
+# straight away, under the banner that says so.
+wait-for Lamplight
+tap Lamplight
+wait-for light.
+tap Save
+expect Empty: tap to save here
+tap Slot 1
+wait-for Saved in slot 1.
+clean
+shot saveslot-saved
+expect Saved game: tap to overwrite

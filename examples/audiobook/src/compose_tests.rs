@@ -43,9 +43,11 @@ fn language_resume_hint_topic_and_submit_fit_all_clara_text_sizes() {
                 let mut runner = AppRunner::with_metrics(
                     Audiobook {
                         stage: Stage::Compose,
-                        library: Some(vec![Saved {
-                            name: "old.mp3z".into(),
+                        library: Some(vec![Book {
+                            id: "0/Audiobooks/old.mp3z".into(),
                             title: "An old book".into(),
+                            kind: 7,
+                            parts: 1,
                             bytes: 1000,
                         }]),
                         topic: "The Moon and its future".into(),
@@ -95,9 +97,11 @@ fn language_resume_hint_topic_and_submit_fit_all_clara_text_sizes() {
 #[test]
 fn back_and_shelf_keep_an_unsubmitted_topic_and_language() {
     let mut runner = AppRunner::new(Audiobook {
-        library: Some(vec![Saved {
-            name: "old.mp3z".into(),
+        library: Some(vec![Book {
+            id: "0/Audiobooks/old.mp3z".into(),
             title: "An old book".into(),
+            kind: 7,
+            parts: 1,
             bytes: 1000,
         }]),
         ..Audiobook::default()
@@ -202,9 +206,11 @@ fn the_keys_and_estimate_screens_fit_and_keep_their_controls_at_every_text_size(
 #[test]
 fn every_failure_screen_fits_with_its_controls_at_every_text_size() {
     let shelf = || {
-        Some(vec![Saved {
-            name: "old.mp3z".into(),
+        Some(vec![Book {
+            id: "0/Audiobooks/old.mp3z".into(),
             title: "An old book".into(),
+            kind: 7,
+            parts: 1,
             bytes: 1000,
         }])
     };

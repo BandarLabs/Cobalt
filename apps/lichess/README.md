@@ -5,7 +5,7 @@ offline.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/home.png" alt="Time controls and puzzles"><br>Time controls and puzzles</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/home.png" alt="Play the computer first, then the rest"><br>Play the computer first, then the rest</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/game.png" alt="A live game"><br>A live game</td>
 </tr>
 <tr>
@@ -21,13 +21,14 @@ offline.
 ## Features
 
 - Rated or casual games with a random colour at 10+0, 10+5, 15+10, 30+0 and
-  30+20. Choose rated or casual in **Account/Games**; each time tile says
-  which it seeks.
+  30+20, from **Play online**. **Rated** or **Casual** is chosen above the
+  times.
 - Casual challenges to a player by username, with time control and side.
 - Accept or decline incoming challenges with standard clocks.
 - Offline play against the computer, with no account needed. Play White,
-  Black or a random side, with no clock or a 10 or 30 minute clock. An
-  unfinished game resumes from the home screen.
+  Black or a random side, with no clock or a 10 or 30 minute clock. While
+  the app is open, **Resume your game** on the home screen returns to an
+  unfinished game.
 - Offline puzzles. Solving them does not affect your Lichess rating.
 - Two-tap moves, castling, en passant and promotion. The board turns to your
   side.
@@ -35,15 +36,15 @@ offline.
   with "Move sent" in the status line, until Lichess confirms it.
 - Clocks above and below the board. The filled clock shows whose turn it is.
 - A time tile always answers a tap. If a game cannot start yet, it says why,
-  or opens Account/Games when the account needs connecting.
+  or opens **Your games** when the account needs connecting.
 - Offer, accept and decline draws, resign, claim victory when the opponent
   leaves, and abort before both players have moved.
 - If a game starts without the reader being told, the app finds it within ten
   seconds. A seek is never sent twice.
 - If the connection drops, the last confirmed position stays on screen, clocks
   show `--:--`, and moves are paused until the board reconnects.
-- After a restart, **Resume current** reopens the game from Lichess without
-  guessing the position.
+- After a restart, **Current board** in **Your games** reopens the game from
+  Lichess without guessing the position.
 
 ## Setup
 
@@ -53,7 +54,7 @@ Computer games and puzzles need no account. To play people:
    [personal access token](https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt)
    with only the `board:play` scope.
    A phone works.
-2. On the reader, open Lichess, tap **Account/Games**, then
+2. On the reader, open Lichess, tap **Your games**, then
    **Connect Lichess**, and type the token.
 
 Or install it from a computer with the
