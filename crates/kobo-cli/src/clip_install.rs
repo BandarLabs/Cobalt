@@ -525,7 +525,10 @@ fn executable(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("could not make {} runnable: {error}", path.display()))
 }
 
+/// Nothing to mark: Windows runs the launcher by its extension. The result
+/// is kept so both platforms share one signature.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn executable(_: &Path) -> Result<(), String> {
     Ok(())
 }

@@ -99,7 +99,9 @@ mod blackbox;
 mod consent;
 #[cfg(feature = "device-write")]
 mod device;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod syncthing;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod touch_calibration;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod update;
