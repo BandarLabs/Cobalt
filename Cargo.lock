@@ -1267,6 +1267,7 @@ version = "0.3.37"
 dependencies = [
  "kobo-profile",
  "kobo-sdk",
+ "kobo-text",
  "kobo-ui",
 ]
 
@@ -1540,6 +1541,7 @@ dependencies = [
  "kobo-profile",
  "kobo-sdk",
  "kobo-stream",
+ "kobo-text",
  "kobo-ui",
 ]
 
