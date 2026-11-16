@@ -154,6 +154,7 @@ fn read_value(reader: impl Read) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::process::{Command, Stdio};
 
     fn args() -> Vec<String> {
@@ -231,6 +232,9 @@ mod tests {
         assert!(parse(&input).is_err());
     }
 
+    // The record is installed by the reader's /bin/sh script, and the fixture
+    // stubs pidof and mv as shell scripts and checks Unix mode bits.
+    #[cfg(unix)]
     #[test]
     fn the_record_installs_while_cobalt_runs_but_waits_out_an_update() {
         use std::os::unix::fs::{symlink, PermissionsExt};

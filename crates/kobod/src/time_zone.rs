@@ -51,9 +51,7 @@ pub fn choose(root: &Path, zone: Option<&Zone>) -> Result<(), DeviceError> {
         .and_then(|()| file.sync_all())
         .map_err(|_| DeviceError::Backend)?;
     fs::rename(&next, &path).map_err(|_| DeviceError::Backend)?;
-    fs::File::open(parent)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(parent).map_err(|_| DeviceError::Backend)
 }
 
 #[cfg(test)]

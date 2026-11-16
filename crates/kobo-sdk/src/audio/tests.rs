@@ -939,8 +939,23 @@ fn an_end_of_chapter_timer_is_set_from_where_the_book_is_at_its_speed() {
 
 #[test]
 fn resuming_after_a_long_pause_rewinds_a_little() {
+    // An `Instant` cannot reach back past the machine's boot, so a freshly
+    // started Windows runner has no "two hours ago"; the long pauses are
+    // checked on the durations themselves and the press on a short one.
+    assert_eq!(
+        super::rewind_after(Some(Duration::from_secs(2 * 3_600))),
+        30_000
+    );
+    assert_eq!(
+        super::rewind_after(Some(Duration::from_secs(5 * 60))),
+        10_000
+    );
     let mut player = loaded(12);
-    player.paused_since = Instant::now().checked_sub(Duration::from_secs(2 * 3_600));
+    player.paused_since = Instant::now().checked_sub(Duration::from_secs(2 * 60));
+    assert!(
+        player.paused_since.is_some(),
+        "the machine has been up two minutes"
+    );
     let mut context = crate::Context::default();
     player.press(&mut context, action_id(super::PLAY));
     let requests = sent(&mut context);
@@ -949,7 +964,7 @@ fn resuming_after_a_long_pause_rewinds_a_little() {
             requests.as_slice(),
             [
                 DeviceRequest::SeekAudio {
-                    position_ms: 3_645_000
+                    position_ms: 3_665_000
                 },
                 DeviceRequest::PlayAudio
             ]
