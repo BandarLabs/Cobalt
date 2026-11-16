@@ -483,7 +483,7 @@
     {
      "path": "Cargo.lock",
      "base_blob": "ecb30d997c709f521d253dc3d62065e0fde65320",
-     "compatible_blob": "c8708099e15fd45ff1abf47e304633e2d3d68939"
+     "compatible_blob": "dab8200dda18f0609dfc59ce02b04545fa43d9f9"
     },
     {
      "path": "crates/kobo-abi/src/entropy.rs",
