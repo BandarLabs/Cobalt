@@ -2493,16 +2493,6 @@ impl Gutenbird {
                 }
             }
             if current.is_empty() {
-                // Under the cover, a block with no room at all starts the next
-                // page instead, where there is no cover and a summary can be
-                // divided. Held in place, it was drawn off the bottom of the
-                // panel: in landscape on a Clara HD the cover leaves no room
-                // even for the "About" heading.
-                if pages.is_empty() {
-                    pages.push(Vec::new());
-                    queue.push_front(block);
-                    continue;
-                }
                 current = candidate;
                 continue;
             }
@@ -2518,14 +2508,7 @@ impl Gutenbird {
                 pages[index + 1].insert(0, orphan);
             }
         }
-        // The first page keeps its place even when the cover is all it holds.
-        // Dropping it would hand the cover to the page behind it, which was
-        // measured without one.
-        let mut index = 0;
-        pages.retain(|page| {
-            index += 1;
-            index == 1 || !page.is_empty()
-        });
+        pages.retain(|page| !page.is_empty());
         if pages.is_empty() {
             pages.push(Vec::new());
         }
@@ -7950,12 +7933,8 @@ Please read this before you distribute or use this work.\n";
         let blocks = Gutenbird::detail_blocks(&publication);
         let pages = app.detail_pagination(&context, &publication, &blocks);
         assert!(pages.len() > 1, "{name}: a long summary did not page");
-        // An empty first page is the cover alone, and is right only when
-        // nothing fits beside it. Anything else is the old fault, where a
-        // heading moved forward emptied the page and the next one inherited
-        // the cover.
         assert!(
-            !pages[0].is_empty() || !app.detail_fits(&context, &publication, true, &pages[1][..1]),
+            !pages[0].is_empty(),
             "{name}: the first page emptied, so the second inherited the cover"
         );
         assert_eq!(

@@ -3,12 +3,12 @@
   "display_name": "Paperterm",
   "short_label": "Paperterm",
   "summary": "Pair with a computer to mirror a terminal session on e-ink. Needs your computer.",
-  "version": "0.1.19",
+  "version": "0.1.18",
   "glyph": "keyboard",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Pairing and terminal screens are now checked against each supported reader's own type, including the Kobo Nia, at every text size.",
+  "release_notes": "A saved pairing whose computer is off now says so plainly, and the back arrow works on the help steps and the Pairing screen.",
   "setup": {
     "steps": [
       {

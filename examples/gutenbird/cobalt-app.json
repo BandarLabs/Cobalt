@@ -3,11 +3,11 @@
   "display_name": "Gutenbird",
   "short_label": "Gutenbird",
   "summary": "Download free books from Project Gutenberg and other libraries, and read them offline.",
-  "version": "1.0.33",
+  "version": "1.0.32",
   "glyph": "book-download",
   "capabilities": [
     "network",
     "frontlight-control"
   ],
-  "release_notes": "In landscape, a book's details start on the page after the cover when the cover fills the first one, instead of running off the bottom of the screen."
+  "release_notes": "After you choose the edition without images, the book page now says so. A recent search now searches every catalog when that switch is on."
 }

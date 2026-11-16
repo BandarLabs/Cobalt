@@ -29,9 +29,7 @@ use crate::probe::{probe_device, ProbeError};
 use crate::refresh::{Backend, Rect, RefreshPlan};
 use crate::surface::{self, RegionSnapshot, SurfaceError, SurfaceGeometry};
 use kobo_abi::{hwtcon, mxcfb};
-use kobo_profile::{
-    CompletionWait, DeviceProfile, DeviceSnapshot, TouchTransform, WRITE_EVIDENCE_PENDING,
-};
+use kobo_profile::{DeviceProfile, DeviceSnapshot, TouchTransform, WRITE_EVIDENCE_PENDING};
 use std::collections::VecDeque;
 use std::fmt;
 use std::fs::{File, OpenOptions};
@@ -57,9 +55,6 @@ const SMOKE_PATCH_REGION: Rect = Rect {
     height: 256,
 };
 const SMOKE_VISIBLE_HOLD: Duration = Duration::from_millis(1200);
-/// What stands in for a completion wait on a board that bypasses it.
-/// See [`CompletionWait::BypassUnreliableMxcfb`].
-const BYPASSED_COMPLETION_PACING: Duration = Duration::from_micros(2500);
 const ATTENDED_SMOKE_UNLOCK_PHRASE: &str = "OWNER_ATTENDED_CANDIDATE_DISPLAY_VALIDATION";
 
 /// One bounded operation used to gather owner-attended display evidence.
@@ -223,7 +218,7 @@ impl PanelWork {
     fn finish_matching(
         &mut self,
         selected: impl FnMut(&PanelRefresh) -> bool,
-        mut wait: impl FnMut(u32) -> Result<RefreshPhase, DisplayError>,
+        mut wait: impl FnMut(u32) -> Result<(), DisplayError>,
     ) -> Result<RefreshFenceTiming, DisplayError> {
         let mut timing = RefreshFenceTiming::default();
         for refresh in self.matching(selected) {
@@ -237,9 +232,10 @@ impl PanelWork {
             };
             self.observations.record(
                 refresh.request,
-                match &result {
-                    Ok(phase) => *phase,
-                    Err(_) => RefreshPhase::CompletionFailed,
+                if result.is_ok() {
+                    RefreshPhase::Completed
+                } else {
+                    RefreshPhase::CompletionFailed
                 },
                 elapsed,
                 Some(since_submission),
@@ -757,14 +753,7 @@ impl DisplaySession {
         Ok(self.lock_panel_work()?.observations.snapshot())
     }
 
-    fn wait_for_marker(&self, marker: u32) -> Result<RefreshPhase, DisplayError> {
-        if self.profile.completion_wait == CompletionWait::BypassUnreliableMxcfb {
-            // Every fence comes through here, so this is the one place a
-            // stalling completion ioctl has to be kept out of. The marker is
-            // still retired, so overlapping writes and hand-back proceed.
-            sleep(BYPASSED_COMPLETION_PACING);
-            return Ok(RefreshPhase::Paced);
-        }
+    fn wait_for_marker(&self, marker: u32) -> Result<(), DisplayError> {
         // The two backends currently use the same request shape. Keeping the
         // calls separate makes the hardware boundary explicit if either ABI
         // changes later.
@@ -800,7 +789,7 @@ impl DisplaySession {
                 }
             }
         }
-        Ok(RefreshPhase::Completed)
+        Ok(())
     }
 
     fn finish_matching(
@@ -1158,23 +1147,6 @@ mod tests {
         }
     }
 
-    /// A bypassed wait still retires the marker, so later overlapping writes
-    /// and the hand-back are not held up, but the record says it was paced
-    /// rather than claiming the panel finished.
-    #[test]
-    fn a_paced_wait_retires_the_marker_without_claiming_completion() {
-        let mut work = PanelWork::default();
-        work.unfinished.push_back(pending(7, SMOKE_FIXED_REGION));
-        let timing = work
-            .finish_matching(|_| true, |_| Ok(super::RefreshPhase::Paced))
-            .unwrap();
-        assert_eq!(timing.completed, 1);
-        assert!(work.unfinished.is_empty());
-        let observed = work.observations.snapshot();
-        assert_eq!(observed.records.len(), 1);
-        assert_eq!(observed.records[0].phase, super::RefreshPhase::Paced);
-    }
-
     #[test]
     fn failed_wait_keeps_pending_marker_and_retries_never_repeat_a_completion() {
         let region = SMOKE_FIXED_REGION;
@@ -1189,7 +1161,7 @@ mod tests {
                     if marker == 2 {
                         Err(DisplayError::Io(std::io::Error::from_raw_os_error(5)))
                     } else {
-                        Ok(super::RefreshPhase::Completed)
+                        Ok(())
                     }
                 }
             )
@@ -1211,9 +1183,7 @@ mod tests {
         assert_eq!(observed.records[1].request.marker, 2);
         assert_eq!(observed.records[1].errno, Some(5));
         assert_eq!(work.observations.snapshot().records, observed.records);
-        let recovered = work
-            .finish_matching(|_| true, |_| Ok(super::RefreshPhase::Completed))
-            .unwrap();
+        let recovered = work.finish_matching(|_| true, |_| Ok(())).unwrap();
         assert_eq!(recovered.completed, 2);
         assert!(work.unfinished.is_empty());
         let observed = work.observations.snapshot();
