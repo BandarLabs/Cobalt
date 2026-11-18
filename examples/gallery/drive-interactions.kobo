@@ -1,0 +1,191 @@
+# sweep: --bare
+# The specimens that answer a tap, each checked for the answer it gives, and
+# every way out of the worked download. The main route walks the pages; this
+# one presses things on them.
+wait-for Type and tone
+# An enabled button says it was pressed; a disabled one stays silent.
+tap Input
+wait-for Groups, fields and asking
+tap Buttons
+tap-id button-primary
+wait-for You pressed Download.
+tap Keep both
+wait-for You pressed Keep both.
+tap Nothing to save
+expect You pressed Keep both.
+clean
+shot gallery-pressed
+# The segments and the stepper hold one value, and the stepper stops at its
+# ends.
+tap-paged Medium
+wait-for Brightness 1
+tap-id step-more
+wait-for Brightness 2
+tap Small
+wait-for Brightness 0
+# The sort chip opens its menu, and choosing an order closes it.
+tap Sort: Newest
+wait-for Title
+tap Title
+wait-for Sort: Title
+tap Keep awake
+clean
+shot gallery-settings
+tap-paged Night light
+clean
+shot gallery-switches
+# The confirmation over the Fields page keeps the shelf on Keep it.
+tap Fields
+wait-for Search the catalogue
+tap Delete this shelf
+wait-for Delete this shelf?
+expect The books stay on the device.
+clean
+shot gallery-confirm
+tap Keep it
+expect-missing Delete this shelf?
+# A filing choice is marked, and Something else raises the keyboard.
+tap-paged Archive
+wait-for How should this note be filed?
+tap Something else
+wait-for-id kb.enter
+type moss
+tap-id kb.enter
+wait-for moss
+clean
+shot gallery-filed
+tap-paged Pretend it was refused
+wait-for Lichess refused this token
+tap-paged Beta
+wait-for New things first
+# The bar menu and the row menu each open and close, and the row itself
+# answers a tap.
+tap Overlays
+wait-for Ars Technica
+tap-id bar-more
+wait-for Rename
+clean
+shot gallery-bar-menu
+tap-id menu-delete
+expect-missing Rename
+tap-id menu-one-more
+wait-for Rename
+clean
+shot gallery-row-menu
+tap-id row-menu-rename
+expect-missing Rename
+tap Ars Technica
+wait-for You pressed Ars Technica.
+# Ticking rows: the group ticks both, Clear unticks them, and the bar acts on
+# what is ticked.
+tap Lists
+wait-for Lists, rows and tiles
+tap Rows
+tap-paged Garden birds
+wait-for 2 selected
+clean
+shot gallery-ticked
+tap Clear
+expect-missing 2 selected
+tap Robin
+wait-for 1 selected
+tap Delete
+wait-for You pressed Delete.
+tap-paged Update
+wait-for You pressed Update.
+# The icon sheets turn both ways.
+tap Icons
+wait-for Every icon the system draws
+expect App
+tap-id icons-next
+expect-missing Folder
+tap-id icons-back
+wait-for Folder
+# A row in a section pushes its own screen, whose action bar answers, and
+# Back returns to the page.
+tap Input
+wait-for Groups, fields and asking
+tap Groups
+wait-for Two columns, aligned
+tap-paged First
+wait-for Tapping a row in a section pushes a screen.
+expect Share
+clean
+shot gallery-pushed
+tap Save
+tap-id 4294967295
+wait-for You pressed Save.
+expect-missing Tapping a row in a section pushes a screen.
+# Each state page draws its own state, and its buttons answer.
+tap States
+wait-for Nothing to show
+tap Empty
+tap Browse the catalogue
+wait-for You pressed Browse the catalogue.
+tap Denied
+wait-for Permission needed
+expect This app cannot read the library folder.
+tap Error
+wait-for The catalogue came back malformed.
+tap Try again
+wait-for You pressed Try again.
+clean
+shot gallery-error-state
+# A tab comes back on the page it was left on.
+tap Lists
+wait-for Every icon the system draws
+tap Panel
+tap Ghosting
+wait-for Ink state
+expect Paper state
+# A download that fails offers Resume, and resuming puts it back.
+tap Transfer
+wait-for Mrs Dalloway
+tap Pretend it fails
+wait-for Resume
+clean
+shot gallery-transfer-failed
+tap Resume
+wait-for Pretend it fails
+# The content-width action on Folio opens the Ghosting page.
+tap Folio
+wait-for COBALT
+tap Content-width action
+wait-for Turn between Folio and this page
+tap Folio
+wait-for COBALT
+# The worked download: Not now and Stop each go back a step, closing the
+# book goes back to it arrived, and Back from the first step leaves the job.
+tap-paged App Store
+wait-for Downloading a book
+tap Download it
+wait-for Download Mrs Dalloway?
+tap Not now
+expect-missing Download Mrs Dalloway?
+expect Nothing has been downloaded yet.
+tap Download it
+tap Download
+wait-for Arriving
+tap Stop
+wait-for Nothing has been downloaded yet.
+tap Download it
+tap Download
+tap Let it finish
+wait-for Mrs Dalloway is on this device
+tap Open it
+wait-for Close the book
+clean
+shot gallery-reading
+tap Close the book
+wait-for Mrs Dalloway is on this device
+tap-id 4294967295
+wait-for Nothing has been downloaded yet.
+tap-id 4294967295
+wait-for Left open
+expect-missing Downloading a book
+# Reader details under Featured raises the Reader card's menu, so a tap on
+# it shows that menu on the page it was tapped on.
+tap-id panel-back
+wait-for Reader details
+tap Reader details
+wait-for Keep reading

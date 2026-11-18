@@ -169,11 +169,12 @@ fn a_week_sums_only_due_days() {
     habit.schedule = Schedule::Weekdays;
     // 20004 is a Tuesday by the model's Monday-zero shift, so the seven days
     // ending there hold five weekdays.
+    // Marked at the start of the week too, so all seven days are counted.
     let today = 20_004;
-    habit.done = vec![today];
+    habit.done = vec![today - 6, today];
     habit.skipped = vec![today - 1];
     let (due, done, skipped) = week_summary(&[habit], today);
-    assert_eq!((due, done, skipped), (5, 1, 1));
+    assert_eq!((due, done, skipped), (5, 2, 1));
 }
 #[test]
 fn an_undone_skip_leaves_the_day_plainly_not_done() {

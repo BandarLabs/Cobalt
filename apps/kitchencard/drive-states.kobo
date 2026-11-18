@@ -1,3 +1,4 @@
+# sweep: after-main
 # Stateful path: run after drive.kobo without wiping the simulator's store.
 # The saved Mealie address persists, so the app opens ready rather than on
 # the connect splash.

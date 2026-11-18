@@ -44,8 +44,9 @@ trap 'rm -rf "$build_root"' EXIT HUP INT TERM
 
 for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
     binary="$DIST/host-binaries/$platform/kobo"
+    sidekick="$DIST/host-binaries/$platform/kobo-sidekickd"
     importer="$DIST/host-binaries/$platform/flashcards-import"
-    for required in "$binary" "$importer"; do
+    for required in "$binary" "$sidekick" "$importer"; do
         [ -f "$required" ] || {
             echo "missing host binary $required" >&2
             exit 1
@@ -54,8 +55,11 @@ for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
     package="$build_root/$platform"
     mkdir -p "$package/licenses"
     cp "$binary" "$package/kobo"
+    # Sidekick and Deck cannot be set up without this helper, and
+    # `kobo sidekick` looks for it beside the kobo binary first.
+    cp "$sidekick" "$package/kobo-sidekickd"
     cp "$importer" "$package/flashcards-import"
-    chmod 755 "$package/kobo" "$package/flashcards-import"
+    chmod 755 "$package/kobo" "$package/kobo-sidekickd" "$package/flashcards-import"
     cp install.sh "$package/updater.sh"
     chmod 700 "$package/updater.sh"
     cp LICENSE "$package/LICENSE"
@@ -67,12 +71,42 @@ for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
         printf 'source https://github.com/BandarLabs/Cobalt/commit/%s\n' "$SOURCE_SHA"
         printf 'release train immutable beta candidate, promotable unchanged to stable\n'
         printf 'host platform %s\n' "$platform"
-        printf 'commands kobo,flashcards-import\n'
+        printf 'commands kobo,kobo-sidekickd,flashcards-import\n'
     } > "$package/SOURCE.txt"
     asset="$DIST/kobo-$VERSION-$platform.tar.gz"
     tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
         -cf - -C "$package" . | gzip -n -9 > "$asset"
 done
+
+# Windows ships no importer, which is unix-only for now, and no updater,
+# because install.sh is a shell script that does not run on Windows.
+platform=windows-x86_64
+binary="$DIST/host-binaries/$platform/kobo.exe"
+sidekick="$DIST/host-binaries/$platform/kobo-sidekickd.exe"
+for required in "$binary" "$sidekick"; do
+    [ -f "$required" ] || {
+        echo "missing host binary $required" >&2
+        exit 1
+    }
+done
+package="$build_root/$platform"
+mkdir -p "$package/licenses"
+cp "$binary" "$package/kobo.exe"
+cp "$sidekick" "$package/kobo-sidekickd.exe"
+cp LICENSE "$package/LICENSE"
+cp THIRD-PARTY.md "$package/THIRD-PARTY.md"
+cp licenses/LICENSE-Rust-dependencies.txt \
+    "$package/licenses/LICENSE-Rust-dependencies.txt"
+{
+    printf 'Cobalt %s\n' "$VERSION"
+    printf 'source https://github.com/BandarLabs/Cobalt/commit/%s\n' "$SOURCE_SHA"
+    printf 'release train immutable beta candidate, promotable unchanged to stable\n'
+    printf 'host platform %s\n' "$platform"
+    printf 'commands kobo,kobo-sidekickd\n'
+} > "$package/SOURCE.txt"
+asset="$DIST/kobo-$VERSION-$platform.tar.gz"
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+    -cf - -C "$package" . | gzip -n -9 > "$asset"
 
 manifest="$DIST/cobalt-host-manifest.txt"
 {
@@ -84,7 +118,7 @@ manifest="$DIST/cobalt-host-manifest.txt"
         "$device" "$(size_file "$DIST/$device")" "$(sha256_file "$DIST/$device")"
     printf 'bootstrap install.sh %s %s\n' \
         "$(size_file "$DIST/install.sh")" "$(sha256_file "$DIST/install.sh")"
-    for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
+    for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64 windows-x86_64; do
         asset="kobo-$VERSION-$platform.tar.gz"
         printf 'host %s %s %s %s\n' \
             "$platform" "$asset" "$(size_file "$DIST/$asset")" \

@@ -4,11 +4,11 @@ Run commands, open apps and open links on your computer from your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/deck.png" alt="A Build page with Test, Format and Deploy"><br>A Build page with Test, Format and Deploy</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/deck.png" alt="A Build page with Test, Format, Lint, Docs and Deploy"><br>A Build page with Test, Format, Lint, Docs and Deploy</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/run-finished.png" alt="A command's result after it runs"><br>A command's result after it runs</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/deck-fifteen-pads/preview.png" alt="A full page of fifteen pads"><br>A full page of fifteen pads</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/fifteen-pads.png" alt="A full page of fifteen pads"><br>A full page of fifteen pads</td>
 </tr>
 </table>
 
@@ -17,41 +17,69 @@ Run commands, open apps and open links on your computer from your Kobo.
 - Up to six pages of up to fifteen pads each.
 - A pad can run a shell command, open an app or open a link on the paired
   computer.
-- The top bar names the current page. A status line says which computer the
-  deck is talking to and whether it answered.
-- Unassigned pads are drawn faintly so they do not look like controls.
+- The top bar names the current page, and tabs switch between pages. A status
+  line says which computer the deck is talking to and whether it answered.
+- Only assigned pads are drawn, so a page with three commands shows three
+  pads.
 - After a command runs, Deck shows its result, whether it succeeded or not.
 - If the computer stops answering, the last working layout stays on screen.
 
 ## Setup
 
-Deck uses the same computer helper and pairing as [Sidekick](../../examples/sidekick/).
+Deck needs your computer. It uses the same helper and pairing as
+[Sidekick](../../examples/sidekick/). On the computer:
 
-1. Create a layout from a preset, or pad by pad:
+1. Set up the reader once over USB, if you have not already:
+
+   ```sh
+   kobo setup
+   ```
+
+2. In your project folder, lay out your first pads:
 
    ```sh
    kobo deck init --preset build   # test, format, lint, build, status, pull, deploy
-   kobo deck init --preset home    # music, lights, a timer, lock the screen
-
-   kobo deck set 1 --launch todo
-   kobo deck set 2 --url https://example.com
-   kobo deck set 3 --label Test --detail "cargo test" --run "cd ~/src/project && cargo test"
-   kobo deck ls
    ```
 
-2. Send the layout to the reader, or to the simulator with `--sim`:
+   The build pads run in the folder you ran this from. `--preset home` gives
+   play, pause, next, volume, mute and a five-minute timer, plus a pad that
+   turns the screen off on macOS (using the Music app and `pmset`) or locks
+   the session on Linux (using `playerctl`, `pactl`, `notify-send` and
+   `loginctl`).
+
+3. Pair this computer with the reader. There is nothing to type on the
+   reader. The first time, close Cobalt and open it again afterwards so it
+   trusts the computer.
 
    ```sh
-   kobo deck push --device IP
+   kobo sidekick init
    ```
 
-3. Start `kobo-sidekickd run` on the computer. Open Deck and enter the
-   computer's address and six-character pairing code.
+4. Start the helper and leave it running, then open Deck.
+
+   ```sh
+   kobo sidekick run
+   ```
+
+Change pads at any time; a paired deck picks up each change by itself:
+
+```sh
+kobo deck set 1 --launch todo
+kobo deck set 2 --url https://example.com
+kobo deck set 3 --label Test --detail "cargo test" --run "cd ~/src/project && cargo test"
+kobo deck ls
+```
 
 `--launch` opens an app with `open -a` on macOS or `gtk-launch` elsewhere.
 `--url` uses `open` or `xdg-open`. `--run` runs a shell command from your home
-directory. Add `--confirm` to ask before a pad runs, or `--no-confirm` to
-stop asking. New pads do not ask.
+directory, so start it with `cd` when it belongs to a project. Add
+`--confirm` to ask before a pad runs, or `--no-confirm` to stop asking. New
+pads do not ask.
+
+If `kobo sidekick init` cannot reach the reader, it prints an address and a
+six-character code. Enter them in Deck; the port is filled in if you leave it
+off. **Pairing** in the top bar changes the pairing later, and Back returns to
+the deck you had.
 
 The layout lives in `~/.config/kobo/sidekick/deck.toml` and can be edited by
 hand:
@@ -75,8 +103,13 @@ confirm = true
 Saving the file refreshes a paired deck. If the file has an error, the deck
 keeps the last working layout and shows the problem.
 
-A layout pushed to an unpaired simulator shows a preview whose pads do not
-run anything. Choose **Pair** to connect it.
+`kobo deck push --sim` shows a layout in an unpaired simulator as a preview
+whose pads do not run anything. Choose **Pair** to connect it.
+
+When something goes wrong, Deck says which thing: the reader is off Wi-Fi,
+the computer is not answering, the computer refused the pairing code, or the
+computer has no deck yet, each with its fix. A pad that has just run opens
+its output, with **Run again** under it.
 
 ## Security
 

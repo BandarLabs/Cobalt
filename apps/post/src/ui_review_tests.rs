@@ -47,7 +47,7 @@ fn long_letters_keep_every_word_and_the_reply_action_at_every_text_size() {
         for notice in [false, true] {
             let mut app = post();
             if notice {
-                app.notice = Some("The Hermes gateway is offline. Your reply is still queued and will be sent when the connection returns.".into());
+                app.notice = Some((BannerLevel::Attention, "The Hermes gateway is offline. Your reply is still queued and will be sent when the connection returns.".into()));
                 app.outbox
                     .push(Reply::new(&app.gateway, "long", "Thank you for the letter.").unwrap());
             }
@@ -106,4 +106,54 @@ fn repeated_page_turns_stop_at_the_ends_and_a_saved_position_resumes() {
         resumed.action(action_id("previous-page"));
     }
     assert_eq!(resumed.app().place("long"), 0);
+}
+
+#[test]
+fn a_gateway_signed_in_from_the_computer_opens_the_inbox_on_check_again() {
+    let mut runner = kobo_sdk::AppRunner::new(Post::default());
+    runner.start();
+    for key in [GATEWAY, CACHE, DRAFTS, OUTBOX] {
+        runner.store_result(kobo_sdk::StoreResult::Loaded {
+            key: key.into(),
+            value: None,
+        });
+    }
+    assert!(runner.app().view == View::Setup);
+    runner.action(kobo_sdk::action_id("check-again"));
+    runner.store_result(kobo_sdk::StoreResult::Loaded {
+        key: GATEWAY.into(),
+        value: None,
+    });
+    assert!(runner
+        .app()
+        .notice
+        .as_ref()
+        .unwrap()
+        .1
+        .contains("No gateway has arrived"));
+    runner.lifecycle(kobo_sdk::Lifecycle::Foreground);
+    runner.store_result(kobo_sdk::StoreResult::Loaded {
+        key: GATEWAY.into(),
+        value: Some(b"https://letters.example".to_vec()),
+    });
+    assert!(runner.app().view == View::Inbox);
+}
+
+#[test]
+fn a_failed_check_names_its_cause_without_an_em_dash() {
+    let mut app = Post {
+        gateway: "https://letters.example".into(),
+        ..Post::default()
+    };
+    let mut context = kobo_sdk::Context::default();
+    app.fetch_outcome(
+        &mut context,
+        kobo_sdk::TaskOutcome::Failed(kobo_sdk::TaskError::Unauthorized),
+    );
+    let (level, notice) = app.notice.clone().unwrap();
+    // A refused account is not mended by waiting, so it is drawn as an error.
+    assert_eq!(level, kobo_sdk::BannerLevel::Error);
+    assert!(notice.contains("did not accept your account"), "{notice}");
+    assert!(notice.contains("kobo connect post"), "{notice}");
+    assert!(!notice.contains('\u{2014}'), "{notice}");
 }

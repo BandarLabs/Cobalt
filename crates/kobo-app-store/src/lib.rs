@@ -13,14 +13,24 @@ mod model;
 mod release;
 mod signing;
 
-pub use bundle::{build_bundle, parse_bundle, parse_public_bundle, ParsedBundle};
+pub use bundle::{
+    build_bundle, parse_bundle, parse_installable_bundle, parse_public_bundle, ParsedBundle,
+};
 pub use error::{BundleError, FormatError, SignatureError};
 pub use model::{
-    cobalt_version_at_least, is_public_glyph, is_public_reserved_app_id, public_reserved_app_ids,
-    Catalog, CatalogEntry, CatalogEntryInput, Manifest, ManifestInput, Sha256Digest,
+    cobalt_version_at_least, earlier_glyph, is_earlier_glyph, is_public_glyph,
+    is_public_reserved_app_id, mark_names, public_reserved_app_ids, Catalog, CatalogEntry,
+    CatalogEntryInput, Manifest, ManifestInput, Sha256Digest, FIRST_MARKED_RUNTIME,
 };
 pub use release::{verify_release_manifest, ReleaseAsset, ReleaseManifest};
 pub use signing::{derive_public_key, sign, verify, DetachedSignature, Ed25519PublicKey};
+
+/// The signed catalog a runtime from [`FIRST_MARKED_RUNTIME`] reads, which
+/// names each application's own mark.
+pub const CATALOG_FILE: &str = "cobalt-app-catalog-v2.json";
+/// The signed catalog runtimes up to 0.3.33 read, the same entries with every
+/// glyph one they can draw. See [`Catalog::for_earlier_runtimes`].
+pub const EARLIER_CATALOG_FILE: &str = "cobalt-app-catalog.json";
 
 /// JSON schema version understood by this crate.
 pub const FORMAT_VERSION: u64 = 1;

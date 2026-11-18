@@ -5,7 +5,9 @@ A stub `syncthing` binary (identity generation, device ID, and a loopback
 REST API that records configuration writes) and a stub `ssh` (answering the
 kobod pairing calls) let the real `kobo sync` binary run setup, plan, run,
 status, pause/resume, publish and stop exactly as an owner would, with every
-write captured for assertion. Run:
+write captured for assertion. Vault is packed into the Sync home and shared
+from there, so the owner's notes folder must hold exactly the owner's notes
+after every command. Run:
 python3 scripts/quality/check-sync-cli.py --output target/sim-check/sync-cli
 """
 import argparse
@@ -39,7 +41,9 @@ def main():
     subprocess.run(['pkill', '-f', 'sync-cli-stub/syncthing'], capture_output=True)
     time.sleep(.5)
     with tempfile.TemporaryDirectory(prefix='cobalt-sync-cli-', dir='/tmp') as temporary:
-        base = Path(temporary)
+        # Resolved, because /tmp is itself a link on macOS and the Sync home
+        # refuses to live behind one.
+        base = Path(temporary).resolve()
         home = base / 'home'
         sync_home = base / 'sync-home'
         notes = base / 'notes'
@@ -83,8 +87,17 @@ def main():
             return [json.loads(line) for line in log.read_text().splitlines()]
 
         # 1. setup pairs through the stub Kobo and writes a private home.
+        def own_notes_only():
+            names = sorted(path.name for path in notes.iterdir())
+            assert names == ['Alpha.md', 'Beta.md'], names
+
+        package = sync_home / 'packages' / 'vault'
         completed = run_cli('setup', str(notes), '--folder', 'vault', '--device', '192.168.7.1')
-        assert 'Sync mapping ready' in completed.stdout, completed.stdout
+        assert 'Sync is set up' in completed.stdout, completed.stdout
+        assert 'tap Turn on Sync' in completed.stdout, completed.stdout
+        assert 'window' not in completed.stdout, completed.stdout
+        own_notes_only()
+        assert (package / 'synced.v1').is_file()
         assert (sync_home / 'kobo-host.json').is_file()
         for name in ('kobo-host.json', 'cert.pem', 'key.pem', 'config.xml'):
             assert mode(sync_home / name) == 0o600, name
@@ -92,13 +105,15 @@ def main():
         put = next(entry['put-config'] for entry in record() if 'put-config' in entry)
         folder = put['folders'][0]
         assert folder['id'] == 'kobo-vault' and folder['type'] == 'sendonly'
-        assert folder['path'] == str(notes)
+        # Shared from the package, never from the owner's notes.
+        assert folder['path'] == str(package), folder['path']
         assert {device['deviceID'] for device in folder['devices']} == {HOST_ID, KOBO_ID}
         assert put['gui']['address'] == '127.0.0.1:8385'
         # Isolation: nothing landed in the default location under HOME.
         assert not (home / '.config/kobo/syncthing').exists()
         checks.append({'name': 'setup writes an isolated 0700 home, 0600 secrets, '
-                               'loopback API and a send-only vault mapping'})
+                               'loopback API and a send-only vault mapping shared from '
+                               'the package, and leaves the notes folder untouched'})
 
         # 2. A relative explicit root is refused.
         refused = run_cli('status', expect=1, extra_env={'KOBO_SYNC_HOME': 'relative'})
@@ -110,15 +125,26 @@ def main():
         assert plan['format'] == 'kobo-sync-plan'
         assert plan['folders'][0]['id'] == 'kobo-vault'
         assert plan['folders'][0]['direction'] == 'sendonly'
-        assert 'synced.v1' in plan['folders'][0]['ingest']
+        assert 'notes folder is never written' in plan['folders'][0]['ingest']
         assert plan['gui'] == '127.0.0.1:8385'
         checks.append({'name': 'plan --json states direction, ingest contract and loopback API'})
 
         # 4. run + status surface last change and errors, then pause/resume.
+        # An edit made before run reaches the package without a publish.
+        (notes / 'Beta.md').write_text('Beta body, edited\n')
         started = run_cli('run').stdout
-        assert "uses this computer's network until stopped" in started
-        assert 'does not keep a sleeping reader awake' in started
-        assert 'kobo sync pause' in started and 'kobo sync stop' in started
+        assert 'Sync is running on this computer in the background' in started, started
+        assert 'tap Sync now on the reader' in started and 'kobo sync stop' in started
+        assert 'window' not in started, started
+        own_notes_only()
+        repacked = json.loads((package / 'synced.v1').read_text())
+        assert any('edited' in (package / f"{note['id']}.md").read_text()
+                   for note in repacked['notes'] if note['path'] == 'Beta.md')
+        # run applies the layout to the live peer too, which is what moves a
+        # peer set up by an older CLI off the owner's notes folder.
+        layouts = [entry['put-config'] for entry in record() if 'put-config' in entry]
+        assert len(layouts) >= 2, layouts
+        assert layouts[-1]['folders'][0]['path'] == str(package)
         for _ in range(50):
             probe = json.loads(run_cli('status', '--json').stdout)
             if probe['running']:
@@ -134,23 +160,38 @@ def main():
         run_cli('resume')
         actions = [key for entry in record() for key in entry if key in ('pause', 'resume')]
         assert actions == ['pause', 'resume'], actions
-        checks.append({'name': 'run names computer network and reader sleep effects; structured '
-                               'status, pause, resume and stop controls act on the paired reader'})
+        checks.append({'name': 'run repacks Vault, applies the package layout to the live peer, '
+                               'names the next step on the reader; structured status, pause, '
+                               'resume and stop controls act on the paired reader'})
 
-        # 5. publish packs raw notes into the synced.v1 ingest package.
+        # 5. publish packs raw notes into the synced.v1 package in the Sync
+        # home, idempotently, and never writes beside the notes.
         published = run_cli('publish', '--folder', 'vault').stdout
-        assert 'Packed 2 note(s)' in published, published
-        manifest = json.loads((notes / 'synced.v1').read_text())
+        assert 'Packed 2 note(s) for Vault' in published, published
+        own_notes_only()
+        manifest = json.loads((package / 'synced.v1').read_text())
         assert manifest['format'] == 'vault-shelf'
         ids = [note['id'] for note in manifest['notes']]
         assert len(ids) == 2 and all(note_id.startswith('synced-note-') for note_id in ids)
         for note_id in ids:
-            assert (notes / f'{note_id}.md').is_file()
-        before = (notes / 'synced.v1').read_text()
+            assert (package / f'{note_id}.md').is_file()
+        before = (package / 'synced.v1').read_text()
         run_cli('publish', '--folder', 'vault')
-        assert (notes / 'synced.v1').read_text() == before
+        assert (package / 'synced.v1').read_text() == before
         checks.append({'name': 'publish packs raw notes into the exact synced.v1 package '
-                               'the reader ingests, idempotently'})
+                               'the reader ingests, in the Sync home, idempotently'})
+
+        # 5b. What an older publish left beside the notes (each note twice in
+        # Obsidian) is removed when it still matches, and never packed again.
+        for name in ['synced.v1', *[f'{note_id}.md' for note_id in ids]]:
+            shutil.copyfile(package / name, notes / name)
+        assert len(list(notes.iterdir())) == 5
+        cleaned = run_cli('publish', '--folder', 'vault').stdout
+        assert 'Removed 2 duplicate note(s)' in cleaned, cleaned
+        own_notes_only()
+        assert json.loads((package / 'synced.v1').read_text())['notes'] == manifest['notes']
+        checks.append({'name': 'copies an older publish wrote beside the notes are removed '
+                               'and the package keeps one copy of each note'})
 
         # 6. stop leaves a clean stopped state.
         run_cli('stop')

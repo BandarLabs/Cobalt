@@ -138,7 +138,10 @@ impl ScreenBuilder {
     /// majority of a landscape panel to the terminal instead of spending a
     /// fifth row on a separate strip. `Ctrl` shows its state in its label,
     /// since on a panel with no hover and no colour there is nowhere else to
-    /// put it.
+    /// put it. It sits in the bottom row with the other modifiers rather than
+    /// after the home row: the symbol page's home row is already ten keys, and
+    /// an eleventh pushed `Ctrl` onto a row of its own, grew the keyboard and
+    /// hid the prompt it was meant to type into.
     #[must_use]
     pub fn terminal_keys(self, keys: &TerminalKeys) -> Self {
         let control = if keys.is_control() { "CTRL" } else { "ctrl" };
@@ -162,9 +165,8 @@ impl ScreenBuilder {
         };
         let [top, home, bottom] = keyboard.rows();
         let top = row(0, top);
-        let mut home = row(1, home);
+        let home = row(1, home);
         let bottom = row(2, bottom);
-        home.push((CONTROL.to_string(), control.to_string()));
 
         let mut lower = Vec::with_capacity(bottom.len() + 3);
         lower.push((
@@ -177,17 +179,21 @@ impl ScreenBuilder {
         ));
         lower.extend(bottom);
         lower.push((BACKSPACE.to_string(), "back".to_string()));
-        lower.push(("term.esc".to_string(), "esc".to_string()));
 
         self.fill()
             .grid(u8::try_from(top.len()).unwrap_or(u8::MAX), false, top)
             .grid(u8::try_from(home.len()).unwrap_or(u8::MAX), false, home)
             .grid(u8::try_from(lower.len()).unwrap_or(u8::MAX), false, lower)
+            // Esc leads the last row rather than ending the third. The
+            // symbols layer has eight keys on that row where the letters have
+            // seven, and with esc there it wrapped onto a row of its own.
             .grid(
-                8,
+                10,
                 false,
                 [
+                    ("term.esc".to_string(), "esc".to_string()),
                     ("term.tab".to_string(), "tab".to_string()),
+                    (CONTROL.to_string(), control.to_string()),
                     (
                         LAYER.to_string(),
                         match keys.keyboard().layer() {
@@ -852,10 +858,88 @@ mod tests {
     }
 
     #[test]
+    fn both_layers_of_keys_take_the_same_rows_so_neither_hides_the_prompt() {
+        // The symbols layer had eleven keys on its third row and wrapped
+        // onto a fifth, which covered the newest output and the prompt.
+        let metrics = kobo_ui::CLARA_BW_METRICS;
+        let key_rows = |keys: &TerminalKeys| {
+            let screen = crate::ScreenBuilder::new("terminal")
+                .terminal_keys(keys)
+                .build();
+            let mut tops: Vec<i32> = screen
+                .layout_with(&metrics, &kobo_ui::Chrome::measuring(true))
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::Cell(..)))
+                .map(|node| node.rect.y)
+                .collect();
+            tops.sort_unstable();
+            tops.dedup();
+            tops
+        };
+        let mut keys = TerminalKeys::new();
+        let letters = key_rows(&keys);
+        tap(&mut keys, "kb.layer");
+        let symbols = key_rows(&keys);
+        assert_eq!(letters.len(), 4);
+        assert_eq!(letters, symbols);
+    }
+
+    #[test]
     fn the_symbol_layer_reaches_the_characters_a_shell_needs() {
         let mut keys = TerminalKeys::new();
         tap(&mut keys, "kb.layer");
         assert_eq!(tap(&mut keys, "kb.r1c1"), Some(Typed::Send(b"/".to_vec())));
+    }
+
+    #[test]
+    fn shift_on_the_symbol_layer_reaches_pipes_and_home_directories() {
+        // Without these a shell on the reader could not run `ls | wc`,
+        // `cd ~` or `echo $HOME`.
+        let mut keys = TerminalKeys::new();
+        tap(&mut keys, "kb.layer");
+        for (key, sent) in [("kb.r1c7", "|"), ("kb.r1c8", "~"), ("kb.r0c3", "$")] {
+            tap(&mut keys, "kb.shift");
+            assert_eq!(tap(&mut keys, key), Some(Typed::Send(sent.into())));
+        }
+    }
+
+    #[test]
+    fn every_character_the_keys_send_is_drawn_on_the_key_that_sends_it() {
+        // The keys are drawn here and decoded by the keyboard, and shift on
+        // the symbol layer changes every label at once, so a page drawn from
+        // the wrong rows would send one character from under another.
+        const PAGES: [&[&str]; 4] = [&[], &["kb.shift"], &["kb.layer"], &["kb.layer", "kb.shift"]];
+        for page in PAGES {
+            let mut keys = TerminalKeys::new();
+            for name in page {
+                tap(&mut keys, name);
+            }
+            let drawn = crate::ScreenBuilder::new("terminal")
+                .terminal_keys(&keys)
+                .build()
+                .nodes
+                .into_iter()
+                .flat_map(|node| match node {
+                    kobo_ui::Node::Grid { cells, .. } => cells,
+                    _ => Vec::new(),
+                })
+                .map(|cell| (cell.action, cell.label))
+                .collect::<Vec<_>>();
+            for row in 0..3 {
+                for column in 0..16 {
+                    let action = action_id(&format!("kb.r{row}c{column}"));
+                    let Some(Typed::Send(bytes)) = keys.clone().press(action) else {
+                        continue;
+                    };
+                    let sent = String::from_utf8(bytes).expect("a key sends text");
+                    assert!(
+                        drawn.contains(&(action, sent.clone())),
+                        "{page:?}: {sent:?} is sent by a key that is not drawn"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

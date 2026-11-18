@@ -1,9 +1,9 @@
 {
   "id": "audiobook",
-  "display_name": "Audiobook Studio",
+  "display_name": "Audiobooks",
   "short_label": "Audiobooks",
-  "summary": "Turn a topic into an original narrated audiobook and listen on your Kobo.",
-  "version": "1.0.16",
+  "summary": "Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your place kept. Or make one from a topic.",
+  "version": "2.0.2",
   "glyph": "headphones",
   "capabilities": [
     "network",
@@ -11,5 +11,23 @@
     "bluetooth-audio",
     "bluetooth-control"
   ],
-  "release_notes": "The composer keeps topic entry, language choices, Resume and validation readable at larger text sizes. Back returns to the shelf without clearing an unsubmitted topic or language."
+  "release_notes": "A file that will not play says what to do about it, and the library fits its page while a book is playing.",
+  "setup": {
+    "steps": [
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Plug the reader in, open its storage and copy audiobooks into a folder called Audiobooks: an .m4b, .m4a, .mp3, .ogg, .opus, .flac or .wav file is one book, and a folder of numbered files is one book with a part per file."
+      },
+      {
+        "text": "Open Audiobooks, tap a book, and connect headphones or a speaker when asked. Tapping a book later carries on where you left it."
+      },
+      {
+        "text": "To make a book from a topic instead, create an API key with Exa, OpenAI and ElevenLabs, save them in ~/.exa, ~/.openai and ~/.elevenlabs, and install each with its command. It shows the time and cost before anything is spent.",
+        "command": "kobo secret set exa"
+      }
+    ]
+  }
 }

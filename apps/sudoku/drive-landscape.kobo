@@ -1,0 +1,31 @@
+# Use landscape turns the board on its side with the digits beside it, and
+# the choice outlives a restart. Every square must stay a finger's width.
+wait-for-id game-more
+expect Sudoku · Easy 1
+tap-id cell-3
+tap-id game-more
+expect Use landscape
+tap-id rotate
+wait-idle
+expect Sudoku · Easy 1
+clean
+shot sudoku-landscape
+tap-id digit-9
+expect 52 left
+tap-id game-more
+expect Use portrait
+clean
+shot sudoku-landscape-more
+tap-id game-more
+restart
+wait-for Sudoku · Easy 1
+expect 52 left
+tap-id game-more
+expect Use portrait
+tap-id rotate
+wait-idle
+tap-id game-more
+expect Use landscape
+tap-id game-more
+clean
+shot sudoku-portrait-again

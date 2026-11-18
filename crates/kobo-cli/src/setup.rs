@@ -110,6 +110,12 @@ pub struct Mounted {
     pub serial: String,
     /// Firmware version string.
     pub firmware: String,
+    /// The product id at the end of the version file, when it parses.
+    ///
+    /// The serial prefix names a model for the profiles, but only the
+    /// product id says which hardware family a model nobody has measured
+    /// belongs to, which is what decides whether Cobalt can drive it at all.
+    pub product_id: Option<u16>,
 }
 
 impl Mounted {
@@ -131,63 +137,123 @@ impl Mounted {
     }
 }
 
-/// Resolves USB-visible identity through the shared device profile table.
+/// What `kobo setup` can tell about a reader from its book partition, and
+/// how much of that has been tested.
+///
+/// The runtime starts on readers nobody has tested, after saying what is
+/// untested and asking once on the panel, and the web installer writes to them
+/// once the owner ticks a box. `kobo setup` was the one way in that refused
+/// them outright: a model with no profile, a profile still awaiting review,
+/// and a firmware branch nobody measured were all turned away, so an owner was
+/// told Cobalt did not support a reader it would in fact run on. Setup now
+/// installs on them and says what is untested before asking to continue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Identified {
+    /// The profile that claims this model, when one does. It only names the
+    /// reader here: the archive is the same for every model, and the runtime
+    /// checks the panel against its own probe before it draws anything.
+    pub profile: Option<&'static kobo_profile::DeviceProfile>,
+    /// How tested this model and firmware are, as far as a serial prefix and
+    /// a firmware version can say.
+    pub standing: kobo_profile::Standing,
+}
+
+impl Identified {
+    /// The reader as the plan and the confirmation name it.
+    #[must_use]
+    pub fn describe(&self, reader: &Mounted) -> String {
+        match self.profile {
+            Some(profile) => format!(
+                "{} (device code {}, profile {})",
+                profile.model, profile.device_code, profile.id
+            ),
+            None => format!("Kobo model {} (no Cobalt profile)", reader.model_code()),
+        }
+    }
+
+    /// The line that reports which reader was found.
+    #[must_use]
+    pub fn found(&self, reader: &Mounted) -> String {
+        match self.profile {
+            Some(profile) => format!(
+                "found {} ({}, profile {}, device code {}) at {} · firmware {}",
+                profile.model,
+                reader.model_code(),
+                profile.id,
+                profile.device_code,
+                reader.volume.display(),
+                reader.firmware
+            ),
+            None => format!(
+                "found a Kobo with model code {}, which no Cobalt profile describes, at {} · firmware {}",
+                reader.model_code(),
+                reader.volume.display(),
+                reader.firmware
+            ),
+        }
+    }
+
+    /// What has not been tested about this reader, or `None` when this model
+    /// has been tested on this firmware branch. It says what the reader will
+    /// say, so the owner is not told one thing here and another on the panel.
+    #[must_use]
+    pub fn untested(&self, reader: &Mounted) -> Option<String> {
+        let what = match self.standing {
+            kobo_profile::Standing::Measured => return None,
+            kobo_profile::Standing::AwaitingReview => {
+                "awaiting review. A tester has run Cobalt on this model, and the results have not been reviewed yet.".to_owned()
+            }
+            kobo_profile::Standing::UntestedFirmware => format!(
+                "untested firmware. Cobalt is tested on {} builds of this model, and this one is on {}.",
+                model_branches(reader).join(" and "),
+                reader.firmware
+            ),
+            kobo_profile::Standing::Unmeasured => {
+                "untested model. Cobalt has not been tested on this Kobo, so the screen may not draw correctly. Before its first screen it asks for two taps on a dot, so that taps land where they are aimed.".to_owned()
+            }
+        };
+        Some(format!(
+            "{what} The reader says so and asks before Cobalt first starts, and restarting it always returns to the normal Kobo."
+        ))
+    }
+}
+
+/// Every firmware branch any profile for this reader's model was measured on.
+fn model_branches(reader: &Mounted) -> Vec<&'static str> {
+    model_profiles(reader)
+        .into_iter()
+        .flat_map(kobo_profile::DeviceProfile::firmware_branches)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+/// Identifies a reader before installing onto it.
 ///
 /// A mounted book partition exposes only the serial prefix and firmware. That
-/// is enough to select one reviewed profile because each entry in
-/// [`kobo_profile::SUPPORTED_PROFILES`] claims a model and a firmware branch,
-/// and no two claim the same pair. Panel geometry and kernel identity are
-/// checked again by the runtime before it can write to a display.
+/// is enough to pick one profile, because each entry in
+/// [`kobo_profile::SUPPORTED_PROFILES`] claims a model and a firmware branch
+/// and no two claim the same pair. A reader no profile claims is still
+/// installed onto, and [`Identified::untested`] says why it is untested.
 ///
 /// # Errors
 ///
-/// Returns a hardware- or firmware-specific refusal, or an ambiguity error if
-/// profile data ever stops being unique.
-pub fn install_profile(reader: &Mounted) -> Result<&'static kobo_profile::DeviceProfile, String> {
-    install_or_undo_profile(reader, false)
-}
-
-/// Picks the profile to name a reader by while removing Cobalt from it.
-///
-/// Removal only takes back what Cobalt put on the reader, so it is not gated
-/// on write evidence or on the firmware: a reader whose profile awaits
-/// review, or whose firmware has moved on, must still be able to return to
-/// stock. The hardware must still be one a profile describes.
-///
-/// # Errors
-///
-/// Returns a refusal when no profile describes this model code.
-pub fn undo_profile(reader: &Mounted) -> Result<&'static kobo_profile::DeviceProfile, String> {
-    install_or_undo_profile(reader, true)
-}
-
-fn install_or_undo_profile(
-    reader: &Mounted,
-    undo: bool,
-) -> Result<&'static kobo_profile::DeviceProfile, String> {
-    let hardware = kobo_profile::SUPPORTED_PROFILES
-        .iter()
-        .copied()
-        .filter(|profile| profile.serial_prefix == reader.model_code())
-        .collect::<Vec<_>>();
-    if hardware.is_empty() {
-        return Err(format!(
-            "unsupported Kobo hardware: model code {} has no reviewed Cobalt profile",
-            reader.model_code()
-        ));
+/// Returns a refusal for a firmware generation NickelMenu cannot start Cobalt
+/// on, or an ambiguity error if profile data ever stops being unique.
+pub fn install_profile(reader: &Mounted) -> Result<Identified, String> {
+    // Checked before the model and named for the reason rather than the
+    // symptom. This is the one refusal no consent can answer: an installation
+    // here would succeed and could never be launched.
+    // Refused before anything is copied. The reader would refuse the same
+    // model at its first launch with these same words, but by then the owner
+    // has installed something that can never run. A version file without a
+    // product id leaves that check on the reader as the only one.
+    if let Some(family) = reader
+        .product_id
+        .and_then(kobo_profile::provisional::UnsupportedFamily::from_product_id)
+    {
+        return Err(family.reason().to_owned());
     }
-    if undo {
-        return Ok(hardware
-            .iter()
-            .copied()
-            .find(|profile| profile.accepts_firmware(&reader.firmware))
-            .unwrap_or(hardware[0]));
-    }
-    // Checked before the model's own branches, and named for the reason rather
-    // than the symptom. Falling through to "reviewed branches: 4.45" would be
-    // true and would send an owner looking for a 4.45 build of a reader that
-    // Kobo has moved on from, when the answer is that nothing can start Cobalt
-    // there at all.
     if !kobo_profile::launchable_generation(&reader.firmware) {
         return Err(format!(
             "firmware {} cannot start Cobalt: NickelMenu is the only way in from the \
@@ -197,38 +263,71 @@ fn install_or_undo_profile(
             reader.firmware.split('.').next().unwrap_or("that")
         ));
     }
+    let hardware = model_profiles(reader);
+    if hardware.is_empty() {
+        return Ok(Identified {
+            profile: None,
+            standing: kobo_profile::Standing::Unmeasured,
+        });
+    }
     let matching = hardware
         .iter()
         .copied()
         .filter(|profile| profile.accepts_firmware(&reader.firmware))
         .collect::<Vec<_>>();
     match matching.as_slice() {
-        [profile] if profile.write_ready => Ok(*profile),
-        [profile] => Err(format!(
-            "{} ({}) is not enabled for installation: {}",
-            profile.model,
-            profile.id,
-            kobo_profile::WRITE_EVIDENCE_PENDING
-        )),
-        [] => {
-            let supported = hardware
-                .iter()
-                .flat_map(|profile| profile.firmware_branches())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect::<Vec<_>>()
-                .join(", ");
-            Err(format!(
-                "unsupported firmware {} on {}; reviewed branches: {}",
-                reader.firmware, hardware[0].model, supported
-            ))
-        }
+        [profile] => Ok(Identified {
+            profile: Some(*profile),
+            standing: if profile.write_ready {
+                kobo_profile::Standing::Measured
+            } else {
+                kobo_profile::Standing::AwaitingReview
+            },
+        }),
+        [] => Ok(Identified {
+            profile: Some(hardware[0]),
+            standing: kobo_profile::Standing::UntestedFirmware,
+        }),
         _ => Err(format!(
             "ambiguous device profiles for {} on firmware {}; refusing to guess",
             reader.model_code(),
             reader.firmware
         )),
     }
+}
+
+/// Identifies a reader while removing Cobalt from it.
+///
+/// Removal only takes back what Cobalt put on the reader, so nothing about it
+/// is refused: setup installs on any Kobo short of an unlaunchable firmware,
+/// and every one of those must be able to return to stock, including a reader
+/// whose firmware has since moved on to a generation Cobalt cannot start on.
+#[must_use]
+pub fn undo_profile(reader: &Mounted) -> Identified {
+    let hardware = model_profiles(reader);
+    let profile = hardware
+        .iter()
+        .copied()
+        .find(|profile| profile.accepts_firmware(&reader.firmware))
+        .or_else(|| hardware.first().copied());
+    let standing = match profile {
+        None => kobo_profile::Standing::Unmeasured,
+        Some(profile) if !profile.accepts_firmware(&reader.firmware) => {
+            kobo_profile::Standing::UntestedFirmware
+        }
+        Some(profile) if profile.write_ready => kobo_profile::Standing::Measured,
+        Some(_) => kobo_profile::Standing::AwaitingReview,
+    };
+    Identified { profile, standing }
+}
+
+/// The profiles that claim this reader's model, on any firmware.
+fn model_profiles(reader: &Mounted) -> Vec<&'static kobo_profile::DeviceProfile> {
+    kobo_profile::SUPPORTED_PROFILES
+        .iter()
+        .copied()
+        .filter(|profile| profile.serial_prefix == reader.model_code())
+        .collect()
 }
 
 /// Reads the four comma-separated facts the firmware records about itself.
@@ -277,6 +376,33 @@ pub fn mount_roots() -> Vec<PathBuf> {
     }
 }
 
+/// Every drive-letter root, `A:\` through `Z:\`.
+fn drive_letter_roots() -> Vec<PathBuf> {
+    (b'A'..=b'Z')
+        .map(|letter| PathBuf::from(format!("{}:\\", char::from(letter))))
+        .collect()
+}
+
+/// Every volume worth checking for a reader, one per mount point.
+///
+/// On Unix the mount points are the children of [`mount_roots`]. Windows has
+/// no shared parent directory: each volume is its own drive-letter root, so
+/// the letters themselves are the candidates. Probing a letter with no drive
+/// behind it fails fast and silently.
+fn candidates() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        return drive_letter_roots();
+    }
+    let mut volumes = Vec::new();
+    for root in mount_roots() {
+        let Ok(entries) = fs::read_dir(&root) else {
+            continue;
+        };
+        volumes.extend(entries.flatten().map(|entry| entry.path()));
+    }
+    volumes
+}
+
 /// Every mounted reader this machine can see.
 ///
 /// A volume qualifies when it has a readable `.kobo/version` naming a Kobo
@@ -285,17 +411,10 @@ pub fn mount_roots() -> Vec<PathBuf> {
 /// for.
 #[must_use]
 pub fn mounted_readers() -> Vec<Mounted> {
-    let mut found = Vec::new();
-    for root in mount_roots() {
-        let Ok(entries) = fs::read_dir(&root) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if let Some(reader) = read_reader(&entry.path()) {
-                found.push(reader);
-            }
-        }
-    }
+    let mut found: Vec<Mounted> = candidates()
+        .iter()
+        .filter_map(|volume| read_reader(volume))
+        .collect();
     found.sort_by(|left, right| left.volume.cmp(&right.volume));
     found.dedup_by(|left, right| left.volume == right.volume);
     found
@@ -306,10 +425,12 @@ pub fn mounted_readers() -> Vec<Mounted> {
 pub fn read_reader(volume: &Path) -> Option<Mounted> {
     let line = fs::read_to_string(volume.join(SYSTEM_FOLDER).join("version")).ok()?;
     let (serial, firmware) = parse_version(&line);
+    let product_id = kobo_profile::IdentitySnapshot::parse(Some(&line), None).device_code;
     is_kobo_serial(&serial).then(|| Mounted {
         volume: volume.to_owned(),
         serial,
         firmware,
+        product_id,
     })
 }
 
@@ -512,13 +633,8 @@ pub fn host_trust_names() -> Vec<String> {
 
 /// Where this machine keeps the trust roots its own tooling made.
 fn host_trust_directory() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join(".config")
-            .join("kobo")
-            .join("trust"),
-    )
+    let home = kobo_abi::home_directory()?;
+    Some(home.join(".config").join("kobo").join("trust"))
 }
 
 /// The testable inside of [`carry_trust_roots`]: everything but where home is.
@@ -1022,9 +1138,7 @@ pub fn write_sample(volume: &Path) -> Result<PathBuf, String> {
     let path = volume.join(SAMPLE_NAME);
     fs::write(&path, sample_text())
         .map_err(|error| format!("{} cannot be written: {error}", path.display()))?;
-    let file = fs::File::open(&path)
-        .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
-    file.sync_all()
+    kobo_protocol::durability::sync_file(&path)
         .map_err(|error| format!("{} cannot be synced: {error}", path.display()))?;
     Ok(path)
 }
@@ -1154,16 +1268,9 @@ fn preserve_owner_folders(
     Ok(true)
 }
 
-#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), String> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
+    kobo_protocol::durability::sync_directory(path)
         .map_err(|error| format!("sync {}: {error}", path.display()))
-}
-
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 /// Flushes the volume and ejects it, so the reader remounts its own storage.
@@ -1315,11 +1422,14 @@ impl Report {
                 "  · safely eject it from the host before disconnecting the USB cable"
             );
         }
-        text.push_str(&next_steps_for(
-            self.waiting,
-            self.staged_an_archive(),
-            firmware,
-        ));
+        let finding = if self.waiting {
+            Finding::Waiting
+        } else if self.ssh.is_some() {
+            Finding::Pair
+        } else {
+            Finding::NoSsh
+        };
+        text.push_str(&next_steps_for(finding, self.staged_an_archive(), firmware));
         text
     }
 
@@ -1361,7 +1471,7 @@ fn describe_key(key: crate::authorize::Key, staged: crate::authorize::Staged) ->
         crate::authorize::Staged::SlotTaken => format!(
             "{origin} was not installed: another archive is already waiting in \
              .kobo/KoboRoot.tgz. Restart the reader to let it be taken, then run \
-             'kobo setup --enable-ssh --no-menu' again."
+             'kobo setup --no-menu' again."
         ),
     }
 }
@@ -1374,15 +1484,39 @@ fn describe_key(key: crate::authorize::Key, staged: crate::authorize::Staged) ->
 #[must_use]
 #[cfg(test)]
 pub fn next_steps(waiting: bool, staged: Staged) -> String {
-    next_steps_for(waiting, staged, None)
+    let finding = if waiting {
+        Finding::Waiting
+    } else {
+        Finding::Pair
+    };
+    next_steps_for(finding, staged, None)
 }
 
-fn next_steps_for(waiting: bool, staged: Staged, firmware: Option<&str>) -> String {
-    let finding = if waiting {
-        "  4. This command is waiting for it, and will print its address when it\n\
-         \x20    appears. Ctrl-C stops the wait; nothing on the reader depends on it."
-    } else {
-        "  4. Find it with 'kobo devices', then 'kobo deploy' works from here on."
+/// How the reader is found once it is back on Wi-Fi, which decides step 4.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Finding {
+    /// This command waits for it and saves it.
+    Waiting,
+    /// SSH is on but nothing is waiting, so the owner saves it with pair.
+    Pair,
+    /// SSH was left off, so no computer command can reach it.
+    NoSsh,
+}
+
+fn next_steps_for(finding: Finding, staged: Staged, firmware: Option<&str>) -> String {
+    let finding = match finding {
+        Finding::Waiting => {
+            "  4. This command is waiting for it, and saves it when it comes back on\n\
+             \x20    Wi-Fi. Ctrl-C stops the wait; nothing on the reader depends on it."
+        }
+        Finding::Pair => {
+            "  4. Once it is back on Wi-Fi, save it with 'kobo pair' so the computer\n\
+             \x20    commands find it without an address."
+        }
+        Finding::NoSsh => {
+            "  4. Computer commands cannot reach it, because SSH was left off. Run\n\
+             \x20    'kobo setup' again without --no-ssh when an app needs them."
+        }
     };
     let menu = firmware.map_or_else(
         || "Open the Kobo menu and choose Cobalt.".to_owned(),
@@ -1471,24 +1605,30 @@ boot. To undo all of it: 'kobo setup --undo'.
 /// What was written, when the reader already had the plugin.
 const KEY_SCOPE: &str = "
 One archive was staged for the firmware to extract as root at the next restart:
-this machine's public key, and nothing else. It becomes root's authorized_keys
-(written to both /root/.ssh and /.ssh, so it is found whether the reader keeps
-root's home at /root or at /), which is the file the reader's SSH server reads
-to decide who may log in. Everything else was written to the book partition. To
-undo all of it: 'kobo setup --undo'.
+this machine's public key, and the firmware's own first-login marker. The key
+becomes root's authorized_keys (written to both /root/.ssh and /.ssh, so it is
+found whether the reader keeps root's home at /root or at /), which is the file
+the reader's SSH server reads to decide who may log in. The marker,
+/.login_pass_set, is an empty file whose absence makes some firmware demand an
+interactive password change on the first login, which a computer command
+cannot answer. Everything else was written to the book partition. To undo all
+of it: 'kobo setup --undo'.
 ";
 
 /// What was written, on a reader receiving both. The usual first-time case.
 const PLUGIN_AND_KEY_SCOPE: &str = "
 One archive was staged for the firmware to extract as root at the next restart,
-holding two things, because the firmware extracts one archive and both had to
-travel in it: NickelMenu, checked first to contain nothing but its own plugin
-and its own documentation, and this machine's public key, which becomes root's
-authorized_keys (written to both /root/.ssh and /.ssh, so it is found whether
-root's home is /root or /) and is the file the reader's SSH server reads to
-decide who may log in. Everything else was written to the book partition.
-NickelMenu removes itself if it fails to start, so it cannot leave the reader
-unable to boot. To undo all of it: 'kobo setup --undo'.
+holding three things, because the firmware extracts one archive and all of them
+had to travel in it: NickelMenu, checked first to contain nothing but its own
+plugin and its own documentation; this machine's public key, which becomes
+root's authorized_keys (written to both /root/.ssh and /.ssh, so it is found
+whether root's home is /root or /) and is the file the reader's SSH server
+reads to decide who may log in; and the firmware's own first-login marker,
+/.login_pass_set, an empty file whose absence makes some firmware demand an
+interactive password change on the first login, which a computer command cannot
+answer. Everything else was written to the book partition. NickelMenu removes
+itself if it fails to start, so it cannot leave the reader unable to boot. To
+undo all of it: 'kobo setup --undo'.
 ";
 
 /// Everything above the step that differs.
@@ -1560,6 +1700,20 @@ pub enum Verdict {
     /// It could not be asked yet. A reader accepts connections while it is
     /// still booting, well before it will hold a conversation.
     Unknown,
+}
+
+/// What an answer at a new address says about the reader being waited for.
+///
+/// Only the serial the USB volume gave counts as the reader. Another Kobo on
+/// the same network is a reader, but not this one, and saving it in this
+/// one's place would send every later command to somebody else's device.
+#[must_use]
+pub fn verdict_for(identity: &crate::connect::Identity, serial: &str) -> Verdict {
+    if identity.is_kobo() && identity.serial == serial {
+        Verdict::Reader
+    } else {
+        Verdict::Other
+    }
 }
 
 /// What came back from waiting for a restarted reader.
@@ -1645,11 +1799,13 @@ pub fn wait_for_reader(
 mod tests {
     #[cfg(target_os = "linux")]
     use super::mount_roots;
+    use super::{candidates, drive_letter_roots};
     use super::{
         carry_trust_from, clear_setting, install_profile, is_kobo_serial, next_steps,
-        next_steps_for, parse_version, set_setting, wait_for_reader, Arrival, Mounted, Report, Ssh,
-        Staged, Verdict, INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
+        next_steps_for, parse_version, set_setting, wait_for_reader, Arrival, Finding, Mounted,
+        Report, Ssh, Staged, Verdict, INSTALL_FOLDER, SETTINGS_APPLIED, SSH_DISABLED, SSH_ENABLED,
     };
+    use kobo_profile::Standing;
     use std::net::Ipv4Addr;
     use std::path::{Path, PathBuf};
 
@@ -1888,12 +2044,18 @@ mod tests {
 
     #[test]
     fn menu_instructions_follow_the_firmware_generation() {
-        assert!(next_steps_for(false, Staged::Nothing, Some("4.45.23697"))
-            .contains("bottom-right Kobo menu"));
-        assert!(next_steps_for(false, Staged::Nothing, Some("4.22.15190"))
-            .contains("top-left Kobo menu"));
-        assert!(next_steps_for(false, Staged::Nothing, Some("4.45.23697"))
-            .contains("leave the home screen alone for one minute"));
+        assert!(
+            next_steps_for(Finding::Pair, Staged::Nothing, Some("4.45.23697"))
+                .contains("bottom-right Kobo menu")
+        );
+        assert!(
+            next_steps_for(Finding::Pair, Staged::Nothing, Some("4.22.15190"))
+                .contains("top-left Kobo menu")
+        );
+        assert!(
+            next_steps_for(Finding::Pair, Staged::Nothing, Some("4.45.23697"))
+                .contains("leave the home screen alone for one minute")
+        );
     }
 
     #[test]
@@ -1960,8 +2122,13 @@ mod tests {
     #[test]
     fn the_reader_is_not_told_to_go_looking_for_it_while_this_is_looking_for_it() {
         assert!(next_steps(true, Staged::Nothing).contains("waiting for it"));
-        assert!(!next_steps(true, Staged::Nothing).contains("Find it with"));
-        assert!(next_steps(false, Staged::Nothing).contains("Find it with 'kobo devices'"));
+        assert!(next_steps(true, Staged::Nothing).contains("saves it"));
+        assert!(!next_steps(true, Staged::Nothing).contains("kobo pair"));
+        assert!(next_steps(false, Staged::Nothing).contains("save it with 'kobo pair'"));
+        assert!(
+            next_steps_for(Finding::NoSsh, Staged::Nothing, None).contains("without --no-ssh"),
+            "a reader left without SSH is not sent to pair, which cannot reach it"
+        );
         for waiting in [true, false] {
             let text = next_steps(waiting, Staged::Nothing);
             assert!(text.contains("kobo setup --undo"), "undo is always offered");
@@ -2010,54 +2177,130 @@ mod tests {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: "N365410043013".to_owned(),
             firmware: "4.45.23697".to_owned(),
+            product_id: None,
         };
-        let profile = install_profile(&reader).expect("supported");
+        let identified = install_profile(&reader).expect("supported");
+        assert_eq!(identified.standing, Standing::Measured);
+        assert_eq!(identified.untested(&reader), None);
+        let profile = identified.profile.expect("a profile claims the N365");
         assert_eq!(profile.model, "Kobo Clara BW");
         assert_eq!(profile.device_code, 391);
         assert_eq!(profile.id, "clara-bw-391");
 
+        // A profile still awaiting review installs, as the runtime starts on
+        // it, and the owner hears that before agreeing.
         let tolino = Mounted {
             serial: "T302000000000".to_owned(),
             ..reader
         };
-        let refusal = install_profile(&tolino).expect_err("T302 awaiting review");
-        assert!(refusal.contains("not enabled for installation"));
-        // Removal is not gated on review: an owner can always get back to stock.
+        let identified = install_profile(&tolino).expect("T302 installs while awaiting review");
         assert_eq!(
-            super::undo_profile(&tolino).map(|profile| profile.id),
-            Ok("tolino-shine-5-t302")
+            identified.profile.map(|profile| profile.id),
+            Some("tolino-shine-5-t302")
+        );
+        assert_eq!(identified.standing, Standing::AwaitingReview);
+        let note = identified
+            .untested(&tolino)
+            .expect("awaiting review is said");
+        assert!(note.starts_with("awaiting review."), "{note}");
+        assert_eq!(
+            super::undo_profile(&tolino)
+                .profile
+                .map(|profile| profile.id),
+            Some("tolino-shine-5-t302")
         );
         let moved_on = Mounted {
             firmware: "4.46.23836".to_owned(),
+            product_id: None,
             ..tolino
         };
         assert_eq!(
-            super::undo_profile(&moved_on).map(|profile| profile.id),
-            Ok("tolino-shine-5-t302")
+            super::undo_profile(&moved_on)
+                .profile
+                .map(|profile| profile.id),
+            Some("tolino-shine-5-t302")
         );
     }
 
     #[test]
-    fn unsupported_hardware_and_firmware_are_refused_before_writes() {
+    fn untested_models_and_firmware_install_and_say_what_is_untested() {
         let reader = |serial: &str, firmware: &str| Mounted {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: serial.to_owned(),
             firmware: firmware.to_owned(),
+            product_id: None,
         };
-        assert!(install_profile(&reader("N999000000000", "4.45.23697"))
-            .expect_err("hardware")
-            .contains("unsupported Kobo hardware"));
+        let unknown = reader("N999000000000", "4.45.23697");
+        let identified = install_profile(&unknown).expect("an untested model installs");
+        assert_eq!(identified.profile, None);
+        assert_eq!(identified.standing, Standing::Unmeasured);
+        assert!(identified.describe(&unknown).contains("N999"));
+        let note = identified
+            .untested(&unknown)
+            .expect("an untested model is said");
+        assert!(note.contains("two taps on a dot"), "{note}");
+        assert!(note.contains("asks before Cobalt first starts"), "{note}");
+        // Whatever setup will install onto, it must also be able to remove.
+        assert_eq!(super::undo_profile(&unknown).profile, None);
+
         // A branch this model was never measured on, but one NickelMenu can
         // still hook. Held at 4.x deliberately: a version from another
         // generation is refused earlier and for a different reason, and using
-        // one here would test that refusal twice and this one never.
-        let refusal =
-            install_profile(&reader("N365000000000", "4.20.11000")).expect_err("firmware");
-        assert!(refusal.contains("unsupported firmware"));
-        assert!(
-            refusal.contains("4.45"),
-            "a refusal has to name the branch that would have been taken: {refusal}"
+        // one here would test that refusal and never this note.
+        let older = reader("N365000000000", "4.20.11000");
+        let identified = install_profile(&older).expect("an untested branch installs");
+        assert_eq!(identified.standing, Standing::UntestedFirmware);
+        assert_eq!(
+            identified.profile.map(|profile| profile.id),
+            Some("clara-bw-391")
         );
+        let note = identified
+            .untested(&older)
+            .expect("an untested branch is said");
+        assert!(
+            note.contains("4.45") && note.contains("4.20.11000"),
+            "the note names the branch that was tested and the one in hand: {note}"
+        );
+    }
+
+    #[test]
+    fn a_model_family_cobalt_cannot_drive_is_refused_before_anything_is_installed() {
+        let reader = |serial: &str, product_id: Option<u16>| Mounted {
+            volume: PathBuf::from("/Volumes/KOBOeReader"),
+            serial: serial.to_owned(),
+            firmware: "4.38.23697".to_owned(),
+            product_id,
+        };
+        let sage = install_profile(&reader("N778000000000", Some(383))).expect_err("Sage");
+        assert_eq!(
+            sage,
+            kobo_profile::provisional::UnsupportedFamily::Allwinner.reason()
+        );
+        let aura_one = install_profile(&reader("N709000000000", Some(373))).expect_err("Aura One");
+        assert_eq!(
+            aura_one,
+            kobo_profile::provisional::UnsupportedFamily::OlderImx.reason()
+        );
+        // A provisional i.MX6SLL reader and a reader whose version file had
+        // no product id both install, leaving the reader to check itself.
+        assert!(install_profile(&reader("N506000000000", Some(386))).is_ok());
+        assert!(install_profile(&reader("N778000000000", None)).is_ok());
+    }
+
+    #[test]
+    fn the_product_id_is_read_from_the_end_of_the_version_file() {
+        let volume = std::env::temp_dir().join(format!("cobalt-setup-pid-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&volume);
+        std::fs::create_dir_all(volume.join(".kobo")).expect("create");
+        std::fs::write(
+            volume.join(".kobo").join("version"),
+            "N778000000000,4.1.15,4.38.23697,4.1.15,4.1.15,00000000-0000-0000-0000-000000000383\n",
+        )
+        .expect("write");
+        let mounted = super::read_reader(&volume).expect("a reader");
+        assert_eq!(mounted.product_id, Some(383));
+        assert!(install_profile(&mounted).is_err());
+        let _ = std::fs::remove_dir_all(volume);
     }
 
     #[test]
@@ -2069,10 +2312,18 @@ mod tests {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: "N365410043013".to_owned(),
             firmware: "5.0.24000".to_owned(),
+            product_id: None,
         };
         let refusal = install_profile(&reader).expect_err("5.x cannot be launched");
         assert!(refusal.contains("NickelMenu"), "{refusal}");
-        assert!(!refusal.contains("reviewed branches"), "{refusal}");
+        // No profile is needed to know this, so an untested model on 5.x is
+        // refused for the same reason rather than installed behind a notice.
+        let untested = Mounted {
+            serial: "N999000000000".to_owned(),
+            ..reader
+        };
+        let refusal = install_profile(&untested).expect_err("5.x cannot be launched");
+        assert!(refusal.contains("NickelMenu"), "{refusal}");
     }
 
     #[test]
@@ -2085,10 +2336,13 @@ mod tests {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: "N365410043013".to_owned(),
             firmware: "4.45.23792".to_owned(),
+            product_id: None,
         };
+        let identified = install_profile(&reader).expect("supported");
+        assert_eq!(identified.standing, Standing::Measured);
         assert_eq!(
-            install_profile(&reader).expect("supported").id,
-            "clara-bw-391"
+            identified.profile.map(|profile| profile.id),
+            Some("clara-bw-391")
         );
     }
 
@@ -2116,6 +2370,31 @@ mod tests {
     #[test]
     fn linux_mount_discovery_includes_wsl_drive_roots() {
         assert!(mount_roots().contains(&PathBuf::from("/mnt")));
+    }
+
+    #[test]
+    fn drive_letter_roots_cover_a_through_z() {
+        let roots = drive_letter_roots();
+        assert_eq!(roots.len(), 26);
+        assert_eq!(roots.first(), Some(&PathBuf::from("A:\\")));
+        assert!(roots.contains(&PathBuf::from("E:\\")));
+        assert_eq!(roots.last(), Some(&PathBuf::from("Z:\\")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_mount_discovery_probes_every_drive_letter_root() {
+        assert_eq!(candidates(), drive_letter_roots());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn unix_mount_discovery_scans_the_children_of_the_mount_roots() {
+        // The Windows arm probes drive-letter roots themselves; everywhere
+        // else the candidates are the entries inside the mount roots.
+        assert!(!candidates()
+            .iter()
+            .any(|volume| volume == Path::new("/media")));
     }
 
     #[test]
@@ -2357,7 +2636,7 @@ mod tests {
             text.contains("another archive is already waiting"),
             "{text}"
         );
-        assert!(text.contains("--enable-ssh --no-menu"), "{text}");
+        assert!(text.contains("'kobo setup --no-menu'"), "{text}");
         // Nothing of ours was staged, so the claim is still true.
         assert!(text.contains("nothing was extracted as\nroot"), "{text}");
     }
@@ -2512,8 +2791,20 @@ mod tests {
     }
 
     fn transaction_fixture(name: &str) -> PathBuf {
+        // Debug-formatted step names carry quotes, which Windows filenames
+        // forbid; the label only has to be unique and readable.
+        let label: String = name
+            .chars()
+            .map(|character| {
+                if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                    character
+                } else {
+                    '-'
+                }
+            })
+            .collect();
         let root = std::env::temp_dir().join(format!(
-            "kobo-setup-transaction-{name}-{}",
+            "kobo-setup-transaction-{label}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -2679,6 +2970,7 @@ mod tests {
             volume: PathBuf::from("/Volumes/KOBOeReader"),
             serial: "N365410043013".to_owned(),
             firmware: "4.45.23697".to_owned(),
+            product_id: None,
         };
         assert_eq!(reader.model_code(), "N365");
         assert!(reader.summary().contains("/Volumes/KOBOeReader"));

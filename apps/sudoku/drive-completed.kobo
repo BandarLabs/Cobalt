@@ -1,0 +1,143 @@
+# Solving Easy 1 square by square, the last one revealed, then what the end offers.
+wait-for-id game-more
+expect Sudoku · Easy 1
+tap-id cell-0
+tap-id digit-1
+tap-id cell-1
+tap-id digit-6
+tap-id cell-3
+tap-id digit-9
+tap-id cell-7
+tap-id digit-3
+tap-id cell-8
+tap-id digit-8
+tap-id cell-9
+tap-id digit-8
+tap-id cell-10
+tap-id digit-3
+tap-id cell-12
+tap-id digit-2
+tap-id cell-14
+tap-id digit-6
+tap-id cell-16
+tap-id digit-4
+tap-id cell-18
+tap-id digit-4
+tap-id cell-19
+tap-id digit-7
+tap-id cell-20
+tap-id digit-9
+tap-id cell-21
+tap-id digit-3
+tap-id cell-22
+tap-id digit-5
+tap-id cell-24
+tap-id digit-1
+tap-id cell-26
+tap-id digit-2
+tap-id cell-28
+tap-id digit-4
+tap-id cell-31
+tap-id digit-6
+tap-id cell-32
+tap-id digit-1
+tap-id cell-33
+tap-id digit-2
+tap-id cell-34
+tap-id digit-9
+tap-id cell-35
+tap-id digit-5
+tap-id cell-36
+tap-id digit-2
+tap-id cell-37
+tap-id digit-1
+tap-id cell-38
+tap-id digit-6
+tap-id cell-39
+tap-id digit-5
+tap-id cell-40
+tap-id digit-9
+tap-id cell-41
+tap-id digit-7
+tap-id cell-43
+tap-id digit-8
+tap-id cell-49
+tap-id digit-3
+tap-id cell-51
+tap-id digit-6
+tap-id cell-52
+tap-id digit-7
+tap-id cell-53
+tap-id digit-1
+tap-id cell-54
+tap-id digit-5
+tap-id cell-57
+tap-id digit-1
+tap-id cell-58
+tap-id digit-4
+tap-id cell-59
+tap-id digit-3
+tap-id cell-60
+tap-id digit-8
+tap-id cell-61
+tap-id digit-2
+tap-id cell-63
+tap-id digit-3
+tap-id cell-64
+tap-id digit-2
+tap-id cell-65
+tap-id digit-1
+tap-id cell-66
+tap-id digit-6
+tap-id cell-67
+tap-id digit-8
+tap-id cell-68
+tap-id digit-9
+tap-id cell-72
+tap-id digit-6
+tap-id cell-74
+tap-id digit-4
+tap-id cell-75
+tap-id digit-7
+tap-id cell-76
+tap-id digit-2
+tap-id cell-78
+tap-id digit-3
+tap-id cell-79
+tap-id digit-1
+expect 1 left
+tap-id cell-80
+tap-id game-more
+tap-id hint
+tap-id confirm-hint
+wait-idle
+expect Puzzle complete with 1 hint. New game is in More.
+clean
+shot sudoku-completed
+# A full board takes no more digits or notes.
+tap-id cell-80
+tap-id digit-1
+expect Puzzle complete with 1 hint.
+tap-id pencil
+tap-id digit-1
+expect Puzzle complete with 1 hint.
+tap-id pencil
+# Nothing is lost by moving on, so New game does not warn.
+tap-id game-more
+tap-id game-new
+expect Choose a difficulty.
+expect-missing Replaces this game
+clean
+shot sudoku-completed-new-game
+tap Keep playing
+# The finished board is still finished after a restart.
+restart
+wait-for Puzzle complete with 1 hint.
+clean
+shot sudoku-completed-resumed
+# A stray Erase should not reopen a finished puzzle either; the digits and
+# Notes already refuse to change it.
+tap-id cell-80
+tap-id erase
+expect Puzzle complete with 1 hint.
+expect-missing 1 left

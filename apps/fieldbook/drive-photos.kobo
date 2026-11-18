@@ -1,0 +1,39 @@
+# A pack with photos: each species page shows its photo and who took it.
+wait-for 2 packs, 10 species.
+companion fieldbook push scripts/fixtures/fieldbook/photo-pack --sim
+lifecycle background
+lifecycle foreground
+wait-for 3 packs, 12 species.
+tap Packs
+wait-for Garden Birds
+expect GB-ENG · issued 2026-10-01 · 2 species
+expect legacy-pack.csv: unknown format
+# A pack tapped from the list opens the search and becomes the outing's tally.
+tap Garden Birds
+wait-for Find
+type sparrow
+tap Find
+wait-for House Sparrow
+tap House Sparrow
+wait-for Passer domesticus
+wait-idle
+expect Photo: Fixture Maker · CC0
+clean
+shot photos-species
+tap Back
+wait-for House Sparrow
+expect Search packs
+tap Today
+wait-for Start an outing
+tap Start an outing
+wait-for Name this place
+type hedge
+tap Save
+wait-for hedge
+expect House Sparrow
+expect European Robin
+expect-missing American Robin
+clean
+shot photos-tally
+tap House Sparrow
+wait-for 1 logged

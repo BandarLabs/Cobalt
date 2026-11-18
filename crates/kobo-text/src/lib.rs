@@ -38,7 +38,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use fontdue::{Font, FontSettings};
 use kobo_ui::{BreakOpportunity, DisplayMetrics, Face, FontSize, Typesetter};
@@ -115,6 +115,16 @@ pub const SERIF_FONT: &[u8] = include_bytes!("../fonts/Literata-Regular.ttf");
 
 /// The semibold cut of the same serif, for the size that heads a screen.
 pub const SERIF_HEADING_FONT: &[u8] = include_bytes!("../fonts/Literata-SemiBold.ttf");
+
+/// The italic cut of the same serif, for emphasis in prose.
+///
+/// Emphasis used to be the upright letters leant over as they were drawn,
+/// which is how a typewriter would do it: the shapes stay upright and only
+/// slide. A real italic is drawn differently, narrower and with its own
+/// letterforms, and a poem's title or a book's stressed word reads as set
+/// rather than as faked. Only paired with the bundled regular: set beside a
+/// different serif it would be a third face on the page.
+pub const SERIF_ITALIC_FONT: &[u8] = include_bytes!("../fonts/Literata-Italic.ttf");
 
 /// Bold is looked for on the device first, so a firmware that carries the cut
 /// is used rather than the compiled-in copy, exactly as the regular is.
@@ -323,6 +333,11 @@ impl Typeface {
         Self::bundled_serif(metrics, false).map_or_else(|| Self::discover(metrics), Ok)
     }
 
+    /// The compiled-in interface bold.
+    fn bundled_display(metrics: DisplayMetrics) -> Result<Self, Error> {
+        Self::from_bytes(DISPLAY_FONT, "AtkinsonHyperlegible-Bold.ttf", metrics)
+    }
+
     /// The compiled-in serif.
     fn bundled_serif(metrics: DisplayMetrics, heading: bool) -> Option<Self> {
         let (bytes, name) = if heading {
@@ -424,6 +439,15 @@ impl Typeface {
         self.font.lookup_glyph_index(character) != 0
     }
 
+    /// Whether [`Self::pick`] would look in another face for `character`.
+    fn lacks(&self, character: char) -> bool {
+        !self.has(character)
+            && !is_invisible(character)
+            && substitute(character)
+                .filter(|glyph| self.has(*glyph))
+                .is_none()
+    }
+
     /// Which face draws `character`, and what it draws.
     ///
     /// Returns the character in this face when it has a glyph for it, a near
@@ -466,6 +490,11 @@ impl Typeface {
     }
 
     /// The distance from the top of a line to the baseline.
+    /// The em at which this face's capitals stand `cap` pixels tall.
+    fn pixels_for_cap(&self, cap: i32) -> f32 {
+        (cap.max(1) as f32 / self.cap_share()).max(1.0)
+    }
+
     fn ascent(&self, pixels: f32) -> i32 {
         self.font
             .horizontal_line_metrics(pixels)
@@ -501,6 +530,14 @@ impl Typeface {
             return (cells.saturating_mul(cell), self.height(size, face));
         }
         let pixels = self.pixels(size, face);
+        (
+            self.advance(text, pixels, fallback).round() as i32,
+            self.height(size, face),
+        )
+    }
+
+    /// How far a proportional run at `pixels` to the em moves the pen.
+    fn advance(&self, text: &str, pixels: f32, fallback: Option<&Self>) -> f32 {
         let mut width = 0f32;
         let mut previous: Option<(&Self, char)> = None;
         for character in text.chars() {
@@ -517,7 +554,19 @@ impl Typeface {
             width += face.font.metrics(glyph, pixels).advance_width;
             previous = Some((face, glyph));
         }
-        (width.round() as i32, self.height(size, face))
+        width
+    }
+
+    /// A capital's height as a share of the em: what turns "capitals this
+    /// tall" into a size to set the face at.
+    fn cap_share(&self) -> f32 {
+        let reference = 1000.0;
+        let height = self.font.metrics('H', reference).height as f32 / reference;
+        if height > 0.1 {
+            height
+        } else {
+            0.7
+        }
     }
 
     /// The baseline-to-baseline distance for this face.
@@ -556,6 +605,21 @@ impl Typeface {
         // glyph, so a letter borrowed from another face sits on the same line
         // as the letters around it instead of a line of its own.
         let baseline = y.saturating_add(self.ascent(pixels));
+        self.draw_on_baseline(text, x, baseline, pixels, cell, fallback, plot);
+    }
+
+    /// Draws one run at `pixels` to the em, standing on `baseline`.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_on_baseline(
+        &self,
+        text: &str,
+        x: i32,
+        baseline: i32,
+        pixels: f32,
+        cell: Option<i32>,
+        fallback: Option<&Self>,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
         let mut pen = x as f32;
         let mut previous: Option<(&Self, char)> = None;
         for character in text.chars() {
@@ -631,12 +695,23 @@ impl Typeface {
 /// same moment: a screen laid out with one face and drawn with another is a
 /// screen that overlaps itself.
 pub struct SystemFonts {
+    metrics: DisplayMetrics,
     text: Typeface,
-    legacy_display: Typeface,
-    display_title: Typeface,
+    /// Parsed the first time an application on the old typography asks for a
+    /// title. Nothing else uses it.
+    legacy_display: OnceLock<Typeface>,
+    /// The same face as `reading` wherever both come from one file, which is
+    /// every reader with a serif of its own and every jail without one.
+    display_title: Arc<Typeface>,
     display_heading: Typeface,
-    mono: Typeface,
-    reading: Typeface,
+    /// Parsed the first time a grid is laid out or a letter falls back to it.
+    /// Its outlines are about two thirds of what the whole set costs to hold,
+    /// and most processes never draw a grid or a letter outside Latin.
+    mono: OnceLock<Typeface>,
+    reading: Arc<Typeface>,
+    /// The reading face's italic, parsed the first time emphasis is set.
+    /// Absent when the reading face is not the bundled serif.
+    italic: OnceLock<Option<Typeface>>,
 }
 
 /// A bounded publisher face used only for book prose.
@@ -716,48 +791,111 @@ impl Typesetter for BookFont {
 }
 
 impl SystemFonts {
-    /// Finds the reader's own face for prose and compiles in the one for grids.
+    /// The faces every process on the reader lays text out in.
+    ///
+    /// Only the compiled-in faces, never the reader's own. Applications run in
+    /// a jail that holds their binary and nothing else, so the reader's font
+    /// directory is not there for them to find and they measure in the copies
+    /// compiled into them. The runtime used to look in that directory first
+    /// and set books in Bitter, which is shorter in the line than the Literata
+    /// every application had paginated in: each page was cut for one face and
+    /// drawn in the other, and ended a quarter of the panel early. A face only
+    /// one side of the socket can see cannot be the face either side uses.
+    ///
+    /// `KOBO_FONT` and `KOBO_READING_FONT` still choose a face, for a developer
+    /// who sets them on both sides.
     ///
     /// # Errors
     ///
-    /// Returns an error only when a face that was found cannot be read or
-    /// parsed. A machine with no fonts at all still gets the compiled-in
-    /// pair.
+    /// Returns an error only when an override names a face that cannot be read
+    /// or parsed. Without one, the compiled-in set always loads.
     pub fn discover(metrics: DisplayMetrics) -> Result<Self, Error> {
-        let text = Typeface::discover(metrics)?;
-        // Typography is the one thing here that must never be load-bearing. A
-        // prose face that cannot be loaded means books are set in the interface
-        // face, which is a slightly worse read; letting it fail the whole set
-        // means *nothing* is installed and `kobo-ui` falls back to its built-in
-        // bitmap for every character on the device, which is a far worse one.
-        // That is not hypothetical -- it is what shipped, because the first
-        // prose candidate turned out not to be a font.
-        let reading = match Typeface::discover_reading(metrics) {
-            Ok(face) => face,
-            Err(_) => Typeface::discover(metrics)?,
+        let text = match std::env::var_os(FONT_OVERRIDE) {
+            Some(path) => Typeface::load(PathBuf::from(path), metrics)?,
+            None => Typeface::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)?,
+        };
+        let reading = Arc::new(match std::env::var_os(READING_FONT_OVERRIDE) {
+            Some(path) => Typeface::load(PathBuf::from(path), metrics)?,
+            None => match Typeface::bundled_serif(metrics, false) {
+                Some(face) => face,
+                None => {
+                    Typeface::from_bytes(TEXT_FONT, "AtkinsonHyperlegible-Regular.ttf", metrics)?
+                }
+            },
+        });
+        // The title face is the prose face wherever that is the bundled serif,
+        // so the one face is parsed once rather than twice.
+        let display_title = if reading.source() == Path::new("Literata-Regular.ttf") {
+            Arc::clone(&reading)
+        } else {
+            Arc::new(
+                Typeface::bundled_serif(metrics, false)
+                    .map_or_else(|| Typeface::bundled_display(metrics), Ok)?,
+            )
         };
         Ok(Self {
+            metrics,
             text,
-            legacy_display: Typeface::discover_display(metrics)
-                .or_else(|_| Typeface::discover(metrics))?,
-            // The panel's own serif, then the bundled one, then Atkinson Bold.
-            display_title: Typeface::discover_display_serif(
-                metrics,
-                DISPLAY_SERIF_REGULAR_CANDIDATES,
-            )
-            .ok()
-            .or_else(|| Typeface::bundled_serif(metrics, false))
-            .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
-            display_heading: Typeface::discover_display_serif(
-                metrics,
-                DISPLAY_SERIF_BOLD_CANDIDATES,
-            )
-            .ok()
-            .or_else(|| Typeface::bundled_serif(metrics, true))
-            .map_or_else(|| Typeface::discover_display(metrics), Ok)?,
-            mono: Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", metrics)?,
+            legacy_display: OnceLock::new(),
+            display_title,
+            display_heading: Typeface::bundled_serif(metrics, true)
+                .map_or_else(|| Typeface::bundled_display(metrics), Ok)?,
+            mono: OnceLock::new(),
             reading,
+            italic: OnceLock::new(),
         })
+    }
+
+    /// The italic of the reading face, when there is one to pair with it.
+    fn italic(&self) -> Option<&Typeface> {
+        self.italic
+            .get_or_init(|| {
+                (self.reading.source() == Path::new("Literata-Regular.ttf"))
+                    .then(|| {
+                        Typeface::from_bytes(SERIF_ITALIC_FONT, "Literata-Italic.ttf", self.metrics)
+                            .ok()
+                    })
+                    .flatten()
+            })
+            .as_ref()
+    }
+
+    /// Where the grid face comes from, without building it to ask.
+    fn mono_source(&self) -> &Path {
+        self.mono
+            .get()
+            .map_or(Path::new("DejaVuSansMono.ttf"), Typeface::source)
+    }
+
+    /// Where the old interface bold comes from, without building it to ask.
+    fn legacy_display_source(&self) -> &Path {
+        if let Some(face) = self.legacy_display.get() {
+            return face.source();
+        }
+        Path::new("AtkinsonHyperlegible-Bold.ttf")
+    }
+
+    /// The grid face, parsed on first use. The compiled-in bytes are checked by
+    /// a test, so the interface face standing in is a backstop, not a path.
+    fn mono(&self) -> &Typeface {
+        if let Some(face) = self.mono.get() {
+            return face;
+        }
+        match Typeface::from_bytes(MONO_FONT, "DejaVuSansMono.ttf", self.metrics) {
+            Ok(face) => self.mono.get_or_init(|| face),
+            Err(_) => &self.text,
+        }
+    }
+
+    /// The old interface bold, parsed on first use.
+    fn legacy_display(&self) -> &Typeface {
+        if let Some(face) = self.legacy_display.get() {
+            return face;
+        }
+        match Typeface::bundled_display(self.metrics) {
+            Ok(face) => self.legacy_display.get_or_init(|| face),
+            Err(_) => &self.text,
+        }
     }
 
     /// The file the proportional face was read from.
@@ -769,7 +907,7 @@ impl SystemFonts {
     fn face(&self, face: Face) -> &Typeface {
         match face {
             Face::Text => &self.text,
-            Face::Mono => &self.mono,
+            Face::Mono => self.mono(),
             Face::Reading => &self.reading,
         }
     }
@@ -791,7 +929,7 @@ impl SystemFonts {
             && face == Face::Text
             && matches!(size, FontSize::Title | FontSize::Heading)
         {
-            return &self.legacy_display;
+            return self.legacy_display();
         }
         match (face, size) {
             (Face::Text, FontSize::Title) => &self.display_title,
@@ -819,22 +957,109 @@ impl SystemFonts {
     ///
     /// Nothing stands behind the grid face itself. It is the end of the chain,
     /// and there is nothing here that covers more than it does.
-    const fn fallback(&self, face: Face) -> Option<&Typeface> {
+    ///
+    /// It is offered only for text with a letter `chosen` cannot draw. Every
+    /// run asks, and most runs are Latin the interface face carries, so asking
+    /// must not build the grid face: that would cost its outlines in every
+    /// process for text that never borrows a letter from it.
+    fn fallback(&self, chosen: &Typeface, text: &str, face: Face) -> Option<&Typeface> {
         match face {
-            Face::Text | Face::Reading => Some(&self.mono),
-            Face::Mono => None,
+            Face::Text | Face::Reading if text.chars().any(|letter| chosen.lacks(letter)) => {
+                Some(self.mono())
+            }
+            Face::Text | Face::Reading | Face::Mono => None,
         }
     }
 }
 
 impl Typesetter for SystemFonts {
+    fn has_italic(&self, face: Face) -> bool {
+        face == Face::Reading && self.italic().is_some()
+    }
+
+    fn cap_height(&self, size: FontSize, face: Face) -> Option<i32> {
+        let chosen = self.cut(size, face);
+        Some((chosen.cap_share() * chosen.pixels(size, face)).round() as i32)
+    }
+
+    fn ascent(&self, size: FontSize, face: Face) -> Option<i32> {
+        let chosen = self.cut(size, face);
+        Some(chosen.ascent(chosen.pixels(size, face)))
+    }
+
+    fn measure_initial(&self, text: &str, face: Face, cap: i32) -> Option<i32> {
+        let chosen = self.face(face);
+        let pixels = chosen.pixels_for_cap(cap);
+        Some(
+            chosen
+                .advance(text, pixels, self.fallback(chosen, text, face))
+                .round() as i32,
+        )
+    }
+
+    fn draw_initial(
+        &self,
+        text: &str,
+        x: i32,
+        baseline: i32,
+        face: Face,
+        cap: i32,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        let chosen = self.face(face);
+        let pixels = chosen.pixels_for_cap(cap);
+        chosen.draw_on_baseline(
+            text,
+            x,
+            baseline,
+            pixels,
+            None,
+            self.fallback(chosen, text, face),
+            plot,
+        );
+    }
+
+    fn measure_italic(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
+        match self.italic().filter(|_| face == Face::Reading) {
+            Some(italic) => {
+                italic.measure_run(text, size, face, None, self.fallback(italic, text, face))
+            }
+            None => self.measure(text, size, face),
+        }
+    }
+
+    fn draw_italic(
+        &self,
+        text: &str,
+        x: i32,
+        y: i32,
+        size: FontSize,
+        face: Face,
+        plot: &mut dyn FnMut(i32, i32, u8),
+    ) {
+        match self.italic().filter(|_| face == Face::Reading) {
+            Some(italic) => italic.draw_run(
+                text,
+                x,
+                y,
+                size,
+                face,
+                None,
+                self.fallback(italic, text, face),
+                plot,
+            ),
+            None => self.draw(text, x, y, size, face, plot),
+        }
+    }
+
     fn measure(&self, text: &str, size: FontSize, face: Face) -> (i32, i32) {
-        self.cut(size, face).measure_run(
+        let chosen = self.cut(size, face);
+        chosen.measure_run(
             text,
             size,
             face,
             self.cell(size, face),
-            self.fallback(face),
+            self.fallback(chosen, text, face),
         )
     }
 
@@ -866,14 +1091,15 @@ impl Typesetter for SystemFonts {
         face: Face,
         plot: &mut dyn FnMut(i32, i32, u8),
     ) {
-        self.cut(size, face).draw_run(
+        let chosen = self.cut(size, face);
+        chosen.draw_run(
             text,
             x,
             y,
             size,
             face,
             self.cell(size, face),
-            self.fallback(face),
+            self.fallback(chosen, text, face),
             plot,
         );
     }
@@ -885,8 +1111,12 @@ impl Typesetter for SystemFonts {
         // reporting it as missing would condemn text that comes out perfectly
         // readable.
         let typeface = self.face(face);
+        let mut letter = [0; 4];
         typeface
-            .pick(character, self.fallback(face))
+            .pick(
+                character,
+                self.fallback(typeface, character.encode_utf8(&mut letter), face),
+            )
             .is_none_or(|(drawn, glyph)| drawn.has(glyph))
     }
 
@@ -911,10 +1141,10 @@ impl Typesetter for SystemFonts {
     fn cell_width(&self, size: FontSize) -> i32 {
         // Falls back to measuring rather than refusing, so a future face that
         // is very nearly fixed pitch still produces a usable grid.
-        self.mono
+        self.mono()
             .fixed_advance(size, Face::Mono)
             .unwrap_or_else(|| {
-                self.mono
+                self.mono()
                     .measure_run("0", size, Face::Mono, None, None)
                     .0
                     .max(1)
@@ -963,8 +1193,8 @@ fn substitute(character: char) -> Option<char> {
         | '\u{205f}'
         | '\u{3000}' => ' ',
         '\u{2022}' | '\u{2023}' | '\u{2043}' | '\u{25cf}' | '\u{25aa}' => '*',
-        '\u{2190}' | '\u{27f5}' => '<',
-        '\u{2192}' | '\u{27f6}' => '>',
+        // No arrows: "e7 →" set as "e7 >" reads as a comparison. The
+        // compiled-in grid face draws real arrows, and is borrowed for them.
         '\u{2044}' | '\u{2215}' | '\u{ff0f}' => '/',
         '\u{02dc}' | '\u{ff5e}' => '~',
         _ => return None,
@@ -976,6 +1206,57 @@ fn kern(font: &Font, previous: char, current: char, pixels: f32) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// One character in the interface's bold face, set so its capitals stand
+/// `cap_height` pixels tall, as grey bytes on paper: the width, the height and
+/// the pixels.
+///
+/// For a letter meant to be read across a room, larger than any size the
+/// interface sets text at. Drawn from the outlines at that size, so the
+/// curves stay curves, where a small letter blown up came out as blocks. The
+/// box is the same for every character at one size, three quarters as wide as
+/// it is tall with the baseline a sixth up from the foot, so letters drawn one
+/// after another sit in the same place. `None` for a character the face has
+/// no shape for, and for a size of zero.
+#[must_use]
+pub fn display_letter(character: char, cap_height: u32) -> Option<(u32, u32, Vec<u8>)> {
+    static FACE: OnceLock<Option<Font>> = OnceLock::new();
+    let font = FACE
+        .get_or_init(|| Font::from_bytes(DISPLAY_FONT, FontSettings::default()).ok())
+        .as_ref()?;
+    if cap_height == 0 || (character != ' ' && !font.has_glyph(character)) {
+        return None;
+    }
+    // The capital H stands on the baseline and reaches the cap height, so its
+    // height at one size gives the size whose capitals are as tall as asked.
+    let probe = 1000.0_f32;
+    let capitals = u16::try_from(font.metrics('H', probe).height.max(1)).ok()?;
+    let pixels = f32::from(u16::try_from(cap_height).ok()?) * probe / f32::from(capitals);
+    let height = cap_height * 3 / 2;
+    let width = height * 3 / 4;
+    let (width_px, height_px) = (usize::try_from(width).ok()?, usize::try_from(height).ok()?);
+    let baseline = i64::from(height - height / 6);
+    let mut grey = vec![255_u8; width_px * height_px];
+    if character != ' ' {
+        let (metrics, coverage) = font.rasterize(character, pixels);
+        let glyph_width = i64::try_from(metrics.width).ok()?;
+        let glyph_height = i64::try_from(metrics.height).ok()?;
+        let left = (i64::from(width) - glyph_width) / 2;
+        let top = baseline - i64::from(metrics.ymin) - glyph_height;
+        for (index, ink) in coverage.iter().enumerate() {
+            let column = i64::try_from(index % metrics.width.max(1)).ok()?;
+            let row = i64::try_from(index / metrics.width.max(1)).ok()?;
+            let (Ok(x), Ok(y)) = (usize::try_from(left + column), usize::try_from(top + row))
+            else {
+                continue;
+            };
+            if x < width_px && y < height_px {
+                grey[y * width_px + x] = 255 - ink;
+            }
+        }
+    }
+    Some((width, height, grey))
+}
+
 /// Installs the best available face into `kobo-ui`.
 ///
 /// Returns the path that was loaded, or an error explaining why the built-in
@@ -985,22 +1266,29 @@ fn kern(font: &Font, previous: char, current: char, pixels: f32) -> f32 {
 ///
 /// Returns an error when no face can be found or loaded.
 pub fn install(metrics: DisplayMetrics) -> Result<PathBuf, Error> {
+    // Installed once per process, whoever asks. An application start reaches
+    // here three times on its way to the first screen, and each of the later
+    // calls used to discover and parse the whole set again only to lose the
+    // race for the slot and throw it away: three times the allocations and the
+    // peak memory of the one set that is kept.
+    if let Some(source) = INSTALLED_PATH.get() {
+        return Ok(source.clone());
+    }
     let fonts = SystemFonts::discover(metrics)?;
     let source = fonts.text_source().to_path_buf();
     let sources = [
-        ("interface", &fonts.text),
-        ("display-title", &fonts.display_title),
-        ("display-heading", &fonts.display_heading),
-        ("display-bold", &fonts.legacy_display),
-        ("reading", &fonts.reading),
-        ("mono", &fonts.mono),
+        ("interface", fonts.text.source()),
+        ("display-title", fonts.display_title.source()),
+        ("display-heading", fonts.display_heading.source()),
+        ("display-bold", fonts.legacy_display_source()),
+        ("reading", fonts.reading.source()),
+        ("mono", fonts.mono_source()),
     ]
     .into_iter()
-    .map(|(role, face)| {
+    .map(|(role, path)| {
         (
             role.to_owned(),
-            face.source()
-                .file_name()
+            path.file_name()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .into_owned(),
@@ -1010,11 +1298,14 @@ pub fn install(metrics: DisplayMetrics) -> Result<PathBuf, Error> {
     // Only the successfully installed font set may describe captures.
     if kobo_ui::install_typesetter(Box::new(fonts)).is_ok() {
         let _ = INSTALLED_SOURCES.set(sources);
+        let _ = INSTALLED_PATH.set(source.clone());
     }
     Ok(source)
 }
 
-static INSTALLED_SOURCES: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+static INSTALLED_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+static INSTALLED_SOURCES: OnceLock<Vec<(String, String)>> = OnceLock::new();
 
 /// Sources of the font set installed by this crate. Unknown for a custom
 /// externally installed typesetter, rather than guessing the bundled fonts.
@@ -1185,7 +1476,9 @@ mod tests {
         let screen = kobo_ui::Screen {
             page_turns: screen
                 .page_turns
-                .map(|turns| turns.with_position(1, pages.len() as u16)),
+                // At least two: "1 of 1" draws no strip, and the strip is
+                // what this checks the rows against.
+                .map(|turns| turns.with_position(1, pages.len().max(2) as u16)),
             ..screen
         };
         let layout = screen.layout();
@@ -1227,6 +1520,73 @@ mod tests {
             }
         }
         None
+    }
+
+    #[test]
+    fn latin_text_never_builds_the_grid_face_and_a_cyrillic_name_does() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        let _ = fonts.measure("Settings and Wi-Fi", FontSize::Body, Face::Text);
+        let _ = fonts.has_glyph('e', Face::Text);
+        assert!(fonts.mono.get().is_none(), "Latin needs nothing borrowed");
+        let _ = fonts.measure("Евгений Онегин", FontSize::Body, Face::Text);
+        assert!(
+            fonts.mono.get().is_some(),
+            "Cyrillic borrows from the grid face"
+        );
+    }
+
+    /// The interface face's zero is a plain oval. The slash it was drawn
+    /// with crossed its middle, and set in every clock, date and score it
+    /// made the interface read as a code editor.
+    #[test]
+    fn the_interface_zero_is_open_in_the_middle() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        for size in [FontSize::Body, FontSize::Heading] {
+            let mut inked = std::collections::BTreeSet::new();
+            fonts.draw("0", 0, 0, size, Face::Text, &mut |x, y, coverage| {
+                if coverage > 128 {
+                    inked.insert((x, y));
+                }
+            });
+            let left = inked.iter().map(|(x, _)| *x).min().expect("a zero");
+            let right = inked.iter().map(|(x, _)| *x).max().expect("a zero");
+            let top = inked.iter().map(|(_, y)| *y).min().expect("a zero");
+            let bottom = inked.iter().map(|(_, y)| *y).max().expect("a zero");
+            let middle = ((left + right) / 2, (top + bottom) / 2);
+            assert!(!inked.contains(&middle), "{size:?} zero is struck through");
+        }
+    }
+
+    #[test]
+    fn the_bundled_serif_sets_emphasis_in_its_own_narrower_italic() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        assert!(fonts.has_italic(Face::Reading));
+        assert!(!fonts.has_italic(Face::Text), "the interface face has none");
+        let line = "That time of year thou mayst in me behold";
+        let upright = fonts.measure(line, FontSize::Body, Face::Reading).0;
+        let italic = fonts.measure_italic(line, FontSize::Body, Face::Reading).0;
+        assert!(
+            italic < upright,
+            "an italic is drawn narrower: {italic} against {upright}"
+        );
+        let mut inked = 0;
+        fonts.draw_italic(
+            line,
+            0,
+            0,
+            FontSize::Body,
+            Face::Reading,
+            &mut |_, _, coverage| {
+                inked += usize::from(coverage > 0);
+            },
+        );
+        assert!(inked > 0, "the italic draws");
+    }
+
+    #[test]
+    fn the_prose_and_title_faces_are_one_parse_when_they_are_one_file() {
+        let fonts = SystemFonts::discover(CLARA).expect("fonts");
+        assert!(Arc::ptr_eq(&fonts.reading, &fonts.display_title));
     }
 
     #[test]
@@ -1581,6 +1941,19 @@ mod tests {
             );
         }
         assert!(checked > 20, "only {checked} substitutions were examined");
+    }
+
+    /// An arrow is drawn as an arrow, borrowed from the grid face, rather
+    /// than stood in for by a greater-than sign.
+    #[test]
+    fn an_arrow_is_drawn_as_an_arrow_and_not_as_a_comparison() {
+        let text = Typeface::from_bytes(TEXT_FONT, "text", CLARA).expect("text face");
+        let mono = Typeface::from_bytes(MONO_FONT, "mono", CLARA).expect("grid face");
+        for arrow in ['\u{2192}', '\u{2190}'] {
+            let (face, drawn) = text.pick(arrow, Some(&mono)).expect("drawn");
+            assert_eq!(drawn, arrow);
+            assert!(face.has(arrow), "U+{:04X} has no shape", arrow as u32);
+        }
     }
 
     /// Nothing in ordinary web text should reach the panel as an empty box.
@@ -1969,6 +2342,8 @@ mod tests {
         let inked = |clock: &str| {
             let chrome = kobo_ui::Chrome {
                 back: false,
+                notice: None,
+                appearance: kobo_ui::Appearance::Grey,
                 status: Some(kobo_ui::Status::standard(
                     clock,
                     Some(kobo_ui::Percent::new(50)),
@@ -2141,12 +2516,42 @@ mod tests {
     fn legacy_screens_select_atkinson_display_metrics_inside_their_scope() {
         let fonts = SystemFonts::discover(CLARA).expect("fonts");
         let atkinson = Typeface::from_bytes(DISPLAY_FONT, "legacy", CLARA).expect("Atkinson");
-        let expected =
-            atkinson.measure_run("Existing app", FontSize::Heading, Face::Text, None, None);
-        let measured = kobo_ui::with_legacy_typography(true, || {
-            fonts.measure("Existing app", FontSize::Heading, Face::Text)
+        // Both inside the scope: the edition chooses the size as well as the
+        // cut, and outside it a heading is the current edition's size.
+        let (expected, measured) = kobo_ui::with_legacy_typography(true, || {
+            (
+                atkinson.measure_run("Existing app", FontSize::Heading, Face::Text, None, None),
+                fonts.measure("Existing app", FontSize::Heading, Face::Text),
+            )
         });
         assert_eq!(measured, expected);
         assert!(!kobo_ui::legacy_typography(), "the v11 selection leaked");
+    }
+}
+
+#[cfg(test)]
+mod display_letter_tests {
+    use super::display_letter;
+
+    #[test]
+    fn a_display_letter_stands_as_tall_as_asked_in_a_box_every_letter_shares() {
+        let (width, height, grey) = display_letter('H', 400).expect("a capital");
+        assert_eq!((width, height), (450, 600));
+        let rows_with_ink = (0..height as usize)
+            .filter(|row| {
+                grey[row * width as usize..(row + 1) * width as usize]
+                    .iter()
+                    .any(|pixel| *pixel < 128)
+            })
+            .count();
+        assert!(
+            (390..=410).contains(&rows_with_ink),
+            "{rows_with_ink} rows of ink"
+        );
+        let (other_width, other_height, _) = display_letter('I', 400).expect("a capital");
+        assert_eq!((other_width, other_height), (width, height));
+        let (_, _, blank) = display_letter(' ', 400).expect("a space");
+        assert!(blank.iter().all(|pixel| *pixel == 255));
+        assert!(display_letter('A', 0).is_none());
     }
 }

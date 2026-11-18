@@ -1,6 +1,6 @@
 # Settings
 
-Wi-Fi, Bluetooth, battery details and Cobalt updates.
+Wi-Fi, Bluetooth, battery details, the time zone and Cobalt updates.
 
 <table>
 <tr>
@@ -16,25 +16,35 @@ Wi-Fi, Bluetooth, battery details and Cobalt updates.
 
 - Each row shows its state, such as **Wi-Fi: Connected** or **Battery: 95%,
   discharging**, so you can check at a glance.
-- **Wi-Fi**: turn the radio on or off, scan, join and disconnect. Disconnecting
-  ends any session that reaches the reader over Wi-Fi.
-- **Bluetooth**: scan for devices and connect to them by name. When
-  Bluetooth is off, the screen says so rather than showing an empty list.
+- **Wi-Fi**: turn the radio on or off with its switch, scan, join and
+  disconnect. Disconnecting ends any session that reaches the reader over
+  Wi-Fi.
+- **Bluetooth**: turn it on or off with its switch, scan for devices and
+  connect to them by name. When Bluetooth is off, the screen says so rather
+  than showing an empty list.
 - **Battery**: charge, status and time remaining, plus capacity, chemistry,
   temperature, voltage, current and charge figures from the fuel gauge.
   **Read again** refreshes them.
-- **Software update**: checks for and installs Cobalt updates, and switches
-  between the Stable and Beta channels.
+- **Time zone**: pick a region, then your city. Cobalt's clock, and every
+  app's, follows it, daylight saving included. With none picked yet, a city
+  is suggested from the network the reader is on.
+- **Software update**: checks for and installs Cobalt updates. A check with
+  no network offers **Join Wi-Fi**. **Channel and automatic updates** picks
+  the Stable or Beta channel and has switches for updating Cobalt and apps on
+  their own.
+- **About**: the model and versions, the reader's Wi-Fi address when the
+  runtime provides it, and how `kobo` on a computer finds the reader.
 
-Brightness, time zone, accounts and firmware stay in the Kobo's own settings.
+Brightness, accounts and firmware stay in the Kobo's own settings.
 
 ## Development
 
 ```sh
 cargo test -p kobo-settings
-kobo run --sim --app settings      # in the browser simulator
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo dev --runtime --apps settings   # the launcher and this app in the browser simulator
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
+
 Network names in the screenshots are hidden with `scripts/redact-ssids.py`.
 
 ---

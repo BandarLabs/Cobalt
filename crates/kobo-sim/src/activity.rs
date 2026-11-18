@@ -111,6 +111,8 @@ impl Activity {
                 | Message::ShellEvent(_)
                 | Message::CoverChanged { .. }
                 | Message::PageTurn { .. }
+                | Message::Notices(_)
+                | Message::OpenDocument { .. }
         ) {
             self.callbacks = self.callbacks.saturating_add(1);
             self.revision = self.revision.saturating_add(1);

@@ -64,6 +64,21 @@ impl Snapshot {
         }
         None
     }
+    /// Days since 1 January 1970 on the reader's own calendar.
+    ///
+    /// A streak, a due date or "today's puzzle" turns over at the owner's
+    /// midnight, not Greenwich's. Counting in UTC put an evening check-in in
+    /// Sydney on tomorrow and one in California on the day before.
+    #[must_use]
+    pub fn local_day(self) -> Option<i64> {
+        if !self.valid() {
+            return None;
+        }
+        let local = i64::try_from(self.unix_millis / 1000)
+            .ok()?
+            .checked_add(i64::from(self.utc_offset_minutes) * 60)?;
+        Some(local.div_euclid(86_400))
+    }
     #[must_use]
     pub fn hour_minute(self) -> Option<(u8, u8)> {
         self.date()?;
@@ -104,6 +119,9 @@ pub trait Clock: Send + Sync {
 pub struct SystemClock {
     started: Instant,
     offset: i16,
+    /// Wall time at `started`, when a simulator chose it instead of the
+    /// computer's clock.
+    origin: Option<u64>,
 }
 impl SystemClock {
     /// # Errors
@@ -115,21 +133,29 @@ impl SystemClock {
         Ok(Self {
             started: Instant::now(),
             offset: utc_offset_minutes,
+            origin: None,
         })
     }
 }
 impl Clock for SystemClock {
     fn now(&self) -> Result<Snapshot, Error> {
-        let snapshot = Snapshot {
-            unix_millis: u64::try_from(
+        let monotonic_millis =
+            u64::try_from(self.started.elapsed().as_millis()).map_err(|_| Error::OutOfRange)?;
+        let unix_millis = match self.origin {
+            Some(origin) => origin
+                .checked_add(monotonic_millis)
+                .ok_or(Error::OutOfRange)?,
+            None => u64::try_from(
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_err(|_| Error::OutOfRange)?
                     .as_millis(),
             )
             .map_err(|_| Error::OutOfRange)?,
-            monotonic_millis: u64::try_from(self.started.elapsed().as_millis())
-                .map_err(|_| Error::OutOfRange)?,
+        };
+        let snapshot = Snapshot {
+            unix_millis,
+            monotonic_millis,
             utc_offset_minutes: self.offset,
         };
         if snapshot.valid() {
@@ -139,6 +165,85 @@ impl Clock for SystemClock {
         }
     }
 }
+/// The variable the runtime sets on every application to the reader's own
+/// offset from UTC, in minutes east.
+///
+/// Applications start with an empty environment, so the firmware's `TZ` never
+/// reaches them. The runtime reads it once at launch and hands over the
+/// number, which is all an application needs and cannot be misparsed twice.
+pub const READER_OFFSET_VARIABLE: &str = "KOBO_UTC_OFFSET_MINUTES";
+
+/// The variable a simulator sets to start the wall clock at a chosen moment,
+/// in milliseconds since 1970.
+///
+/// The simulator's own clock already follows it, but an application read the
+/// computer's clock, so two runs meant to fall a day apart showed the same
+/// day's puzzle or poem. Read only by [`SystemClock::reader`]; the runtime
+/// starts applications with an empty environment, so a reader never sets it.
+pub const SIMULATED_START_VARIABLE: &str = "KOBO_SIM_CLOCK_MILLIS";
+
+/// Minutes east of UTC for a POSIX `TZ` value such as `EST5` or `IST-5:30`.
+///
+/// POSIX inverts the sign from what everyone expects: `EST5` is five hours
+/// *behind* UTC. Only the standard-time offset is read. A daylight rule is
+/// ignored rather than guessed at, which leaves a clock an hour out for half
+/// the year instead of a whole timezone out all year. Anything not understood
+/// is `None`, so a caller can tell "UTC" from "unknown".
+#[must_use]
+pub fn posix_offset_minutes(tz: &str) -> Option<i16> {
+    let tz = tz.trim();
+    // A name that is not plain letters is quoted, as in `<+0545>-5:45`.
+    let rest = match tz.strip_prefix('<') {
+        Some(quoted) => quoted.get(quoted.find('>')? + 1..)?,
+        None => tz.trim_start_matches(|character: char| character.is_ascii_alphabetic()),
+    };
+    let (sign, digits) = match rest.strip_prefix('-') {
+        Some(digits) => (1, digits),
+        None => (-1, rest.strip_prefix('+').unwrap_or(rest)),
+    };
+    let digits = digits
+        .split(|character: char| !character.is_ascii_digit() && character != ':')
+        .next()?;
+    let mut parts = digits.split(':');
+    let hours = parts.next()?.parse::<i16>().ok()?;
+    let minutes = match parts.next() {
+        Some(part) => part.parse::<i16>().ok()?,
+        None => 0,
+    };
+    let total = sign * hours.checked_mul(60)?.checked_add(minutes)?;
+    (-840..=840).contains(&total).then_some(total)
+}
+
+/// The reader's offset from UTC as the runtime passed it, or UTC when the
+/// runtime is too old to pass one or the value is out of range.
+#[must_use]
+pub fn reader_offset_minutes() -> i16 {
+    std::env::var(READER_OFFSET_VARIABLE)
+        .ok()
+        .and_then(|value| value.trim().parse::<i16>().ok())
+        .filter(|minutes| (-840..=840).contains(minutes))
+        .unwrap_or(0)
+}
+
+impl SystemClock {
+    /// The wall clock at the reader's own offset.
+    ///
+    /// Never fails: an offset the runtime should not have sent falls back to
+    /// UTC, because a day boundary a few hours out is a smaller harm than an
+    /// application that cannot tell the time at all.
+    #[must_use]
+    pub fn reader() -> Self {
+        Self {
+            started: Instant::now(),
+            offset: reader_offset_minutes(),
+            origin: std::env::var(SIMULATED_START_VARIABLE)
+                .ok()
+                .and_then(|value| value.trim().parse::<u64>().ok())
+                .filter(|&millis| millis <= LAST_MILLISECOND),
+        }
+    }
+}
+
 /// Only advances when explicitly requested. Reading it has no side effects.
 #[derive(Debug)]
 pub struct ManualClock {
@@ -235,6 +340,45 @@ mod tests {
         }
         .date()
         .is_none());
+    }
+    #[test]
+    fn posix_offsets_read_with_the_sign_posix_gives_them() {
+        assert_eq!(posix_offset_minutes("EST5"), Some(-300));
+        assert_eq!(posix_offset_minutes("EST5EDT,M3.2.0,M11.1.0"), Some(-300));
+        assert_eq!(posix_offset_minutes("IST-5:30"), Some(330));
+        assert_eq!(
+            posix_offset_minutes("AEST-10AEDT,M10.1.0,M4.1.0/3"),
+            Some(600)
+        );
+        assert_eq!(posix_offset_minutes("UTC0"), Some(0));
+        assert_eq!(posix_offset_minutes("<+0545>-5:45"), Some(345));
+        assert_eq!(posix_offset_minutes("Europe/London"), None);
+        assert_eq!(posix_offset_minutes("XYZ-15"), None);
+    }
+    #[test]
+    fn a_clock_started_at_a_chosen_moment_runs_on_from_it() {
+        let clock = SystemClock {
+            started: Instant::now(),
+            offset: 0,
+            origin: Some(1_704_067_200_000),
+        };
+        let now = clock.now().unwrap();
+        assert!(now.unix_millis >= 1_704_067_200_000);
+        assert!(now.unix_millis - 1_704_067_200_000 < 60_000);
+        assert_eq!(now.date().unwrap().to_string(), "2024-01-01");
+    }
+    #[test]
+    fn the_local_day_turns_over_at_the_readers_midnight() {
+        // 23:30 UTC on 1 January 2024 is still the 1st in London and already
+        // the 2nd in Sydney.
+        let late = |offset| Snapshot {
+            unix_millis: (1_704_067_200 + 23 * 3600 + 1800) * 1000,
+            monotonic_millis: 0,
+            utc_offset_minutes: offset,
+        };
+        assert_eq!(late(0).local_day(), Some(19_723));
+        assert_eq!(late(600).local_day(), Some(19_724));
+        assert_eq!(late(-480).local_day(), Some(19_723));
     }
     #[test]
     fn wall_corrections_do_not_change_elapsed_time_and_overflow_is_atomic() {

@@ -1,8 +1,22 @@
-wait 800
-expect Flashcards
+# The deck list's menu: review settings and the licences page, after the
+# sample deck is started.
+wait-for No collection yet
+tap Start with the sample
+wait-for Choose a deck
 clean
 shot decks
-tap Transfer
-expect Import paused
+tap-id more
+tap Review settings
+wait-for Card details
+expect Information shown during review
 clean
-shot transfer
+shot settings
+tap Back
+wait-for Choose a deck
+tap-id more
+tap Licences & about
+wait-for On this device
+clean
+shot about
+tap Done
+wait-for Choose a deck

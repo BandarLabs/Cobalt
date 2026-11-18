@@ -1,4 +1,12 @@
 wait-for Play with friends
+# A failed download is said on Home at its level, with the control that
+# fixes it, rather than in the same grey as a fresh pack.
+scenario offline
+tap Get more questions
+wait-for not on Wi-Fi
+clean
+shot home-offline
+scenario normal
 tap About the questions
 expect opentdb.com
 clean

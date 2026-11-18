@@ -6,10 +6,10 @@ on your Kobo.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/inbox.png" alt="The inbox, newest first"><br>The inbox, newest first</td>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/post/post-reply-sent.png" alt="A letter with its reply state"><br>A letter with its reply state</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reply-sent.png" alt="A letter with its reply delivered"><br>A letter with its reply delivered</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="../../docs/quality/evidence/post/post-draft-restored.png" alt="An unsent draft restored after a restart"><br>An unsent draft restored after a restart</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/draft.png" alt="An unsent draft restored after a restart"><br>An unsent draft restored after a restart</td>
 </tr>
 </table>
 
@@ -25,15 +25,19 @@ sends your replies.
 
 ## Setup
 
-From your computer:
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. Sign in from your computer:
 
-```sh
-kobo post login --gateway <https-address> --token-file <path> --device <reader>
-```
+   ```sh
+   kobo connect post
+   ```
 
-This installs a token that only works with that gateway. The runtime attaches
-it, so it never appears in the app's storage, URLs, requests or logs.
-`kobo secret set hermes-post --device <reader>` also works.
+   It asks for the gateway and its token, checks them, and sends both to the
+   reader. Open Post, or tap **Check again** on its setup screen.
+
+`kobo post login --gateway URL --token-file PATH` does the same for scripts.
+The token only works with that gateway. The runtime attaches it, so it never
+appears in the app's storage, URLs, requests or logs.
 
 ## Gateway API
 

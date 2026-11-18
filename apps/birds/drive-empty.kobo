@@ -1,0 +1,20 @@
+# sweep: --bare
+# Before the computer has sent anything, Birds says what to run there.
+wait-for No birds yet
+expect kobo birds listen --source http://localhost:8080
+expect Refresh
+clean
+shot birds-empty
+# Refresh with nothing sent keeps the same page.
+tap Refresh
+wait-idle
+wait-for No birds yet
+# The first push shows the art without leaving the app.
+companion birds push scripts/fixtures/birds/older.json scripts/fixtures/birds/older.png --sim
+tap Refresh
+wait-idle
+expect-missing No birds yet
+tap-at 536,724
+wait-for Shed Pi
+clean
+shot birds-first-push

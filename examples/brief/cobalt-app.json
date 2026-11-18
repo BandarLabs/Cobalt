@@ -2,11 +2,12 @@
   "id": "brief",
   "display_name": "Daily Brief",
   "short_label": "Daily Brief",
-  "summary": "Build a daily news brief in the background while you use other apps.",
-  "version": "1.0.9",
-  "glyph": "clock",
+  "summary": "A daily news brief that fetches a fresh one when you open it and keeps every story for offline reading.",
+  "version": "1.0.18",
+  "glyph": "sunrise",
   "capabilities": [
-    "network"
+    "network",
+    "scheduled-wake"
   ],
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for."
+  "release_notes": "A saved brief now has a check that it comes back with its source and the time it was fetched after a restart. Nothing changes on screen."
 }

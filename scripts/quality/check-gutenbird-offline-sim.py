@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Download an original book and verify a complete offline simulator restart."""
+"""Download an original book and verify a complete offline simulator restart.
+
+The catalog answers the way Project Gutenberg does, with the book twice: an
+edition with pictures and one without. Gutenbird must open the book's page
+directly rather than asking which edition, download it with one tap, list it
+under On this device, and go straight back into it after a restart with no
+connection.
+"""
 import argparse
 import io
 import json
@@ -59,7 +66,9 @@ def main():
     cli, provenance = build_cli(ROOT, target)
     book = book_bytes()
     requests = []
-    catalog = json.dumps({"metadata": {"title": "Walking Library"}, "publications": [{"metadata": {"title": "Walking Notes", "author": "A. Walker", "language": "en"}, "links": [{"rel": "http://opds-spec.org/acquisition/open-access", "href": f"https://{HOST}/walking.epub", "type": "application/epub+zip", "length": len(book)}]}]}).encode()
+    editions = ("images", "noimages")
+    catalog = json.dumps({"metadata": {"title": "Walking Library"}, "publications": [{"metadata": {"title": "Walking Notes", "author": "A. Walker", "language": "en"}, "links": [{"rel": "http://opds-spec.org/acquisition/open-access", "href": f"https://{HOST}/walking.epub.{edition}", "type": "application/epub+zip", "length": len(book)}]} for edition in editions]}).encode()
+    books = {f"/walking.epub.{edition}" for edition in editions}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -67,10 +76,10 @@ def main():
 
         def do_GET(self):
             requests.append(self.path)
-            if self.path not in ("/ebooks.opds/", "/library/", "/walking.epub"):
+            if self.path not in ("/ebooks.opds/", "/library/") and self.path not in books:
                 self.send_error(404)
                 return
-            body = book if self.path == "/walking.epub" else catalog
+            body = book if self.path in books else catalog
             start, end = 0, len(body) - 1
             if self.headers.get("Range"):
                 match = re.fullmatch(r"bytes=(\d+)-(\d*)", self.headers["Range"])
@@ -79,7 +88,7 @@ def main():
                 if match.group(2):
                     end = min(end, int(match.group(2)))
             self.send_response(206 if self.headers.get("Range") else 200)
-            self.send_header("Content-Type", "application/epub+zip" if self.path == "/walking.epub" else "application/opds+json")
+            self.send_header("Content-Type", "application/epub+zip" if self.path in books else "application/opds+json")
             if self.headers.get("Range"):
                 self.send_header("Content-Range", f"bytes {start}-{end}/{len(body)}")
             self.send_header("Content-Length", str(len(body[start:end + 1])))
@@ -138,7 +147,11 @@ def main():
 
             try:
                 start()
-                drive("wait-for-id read")
+                # Two editions of one book open as that book's page, not as a
+                # shelf asking which edition to take.
+                drive("wait-for-id read", "expect-missing With images", "expect-missing No images", "expect Choose download")
+                capture("00-book-page")
+                result["checks"].append("two editions of one book open as one book page")
                 if args.setup:
                     drive("tap Back", "tap Back", "tap-id add-catalog")
                     capture("00-setup")
@@ -162,6 +175,8 @@ def main():
                     assert requests.count("/library/") == 1, "Checked catalog was fetched twice"
                     result["checks"].append("catalog saved only after shared setup check and reused without refetch")
                 drive("tap-id read", "wait-for Note 1.")
+                assert "/walking.epub.images" in requests, "The edition with pictures was not the one downloaded"
+                assert "/walking.epub.noimages" not in requests, "Both editions were downloaded"
                 initial = capture("01-reading")
                 next_button = next(node for node in initial["nodes"] if node["kind"].startswith("PageNext("))
                 point = next_button["centre"]
@@ -174,15 +189,36 @@ def main():
                 positions = list(state.glob("place-*"))
                 assert positions, "Reading position was not stored"
                 result["checks"].append("reading position stored")
+                # Back on its page the book is on the device and partway read.
+                drive("tap Back", "wait-for-id read", "expect Already on this device.", "expect Continue reading")
+                # The first screen counts it, names no test catalog and shows no
+                # raw addresses, and the list of books on the device opens it.
+                drive("tap Back", "tap Back", "wait-for On this device", "expect Ready offline: 1 book",
+                      "expect-missing OPDS 2.0 Test Catalog", "expect-missing https://")
+                capture("03-home")
+                drive("tap On this device", "wait-for Walking Notes", "expect A. Walker")
+                capture("04-on-this-device")
+                drive("tap-id device-0", "wait-for Note")
+                from_device = capture("05-opened-from-device")
+                # A place is kept as the paragraph at the top of the page, so a
+                # page that begins inside a paragraph reopens on the page where
+                # that paragraph starts. Partway is what is checked here, not the
+                # exact page.
+                page = lambda screen: next((" ".join(node["lines"]) for node in screen["nodes"] if node["kind"].startswith("PagePosition")), "")
+                assert not page(from_device).startswith("1 of"), "Opening from the device lost the reading position"
+                result["checks"].append("listed under On this device and opened from there partway through")
                 stop()
                 env["KOBO_SIM_OFFLINE"] = "1"
                 before = len(requests)
                 start()
-                drive("wait-for-id read", "tap-id read", "wait-for Note")
-                reopened = capture("03-offline-reopened")
-                assert text(reopened) == text(progress), "Offline reopen lost reading position"
+                # The book was open when the simulator stopped, so starting goes
+                # straight back into it rather than to its catalog.
+                drive("wait-for Note")
+                reopened = capture("06-offline-reopened")
+                assert text(reopened) == text(from_device), "Offline reopen lost reading position"
+                assert not any(node.get("action") is not None and "Read" == " ".join(node["lines"]) for node in reopened["nodes"]), "Restart showed the book page instead of the book"
                 assert len(requests) == before, "Offline restart contacted the fixture"
-                result["checks"].append("reopened after full offline process restart")
+                result["checks"].append("reopened straight into the book after a full offline process restart")
                 verify_cli(cli, provenance)
                 result["status"] = "passed"
             except Exception as error:

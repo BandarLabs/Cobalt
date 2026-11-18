@@ -12,7 +12,7 @@ jobs:
   host:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The reviewed-change check compares Cargo.lock against the blob that
           # was reviewed, which a depth-1 clone does not contain. Without the
@@ -25,6 +25,9 @@ jobs:
         with:
           toolchain: 1.85.1
           components: clippy, rustfmt
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
       - name: Install the ARM cross-compiler the packaging tests look for
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       - run: cargo fmt --all -- --check
@@ -44,15 +47,21 @@ jobs:
   simulator:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Every route of every app is more than one runner can drive in half an
+    # hour, so the sweep is split three ways and the slices run at once.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
       - name: Test simulator runner failure and cleanup behavior
         run: python3 -B -m unittest discover -s scripts -p 'test_check_apps_sim.py'
       - name: Launch every catalog app and run every committed route
-        run: python3 scripts/check-apps-sim.py --out target/sim-check
+        run: python3 scripts/check-apps-sim.py --all-routes --shard ${{ matrix.shard }}/3 --out target/sim-check
       - name: Record simulator results
         if: always()
         run: |
@@ -69,14 +78,14 @@ jobs:
                       summary.write(f"| {result['app']} | {coverage} | {result['status']} |\n")
               for result in report["results"]:
                   if result["status"] != "pass":
-                      log = path.parent / (result["app"] + ".log")
+                      log = path.parent / (result["app"].replace(":", "-") + ".log")
                       print(log.read_text() if log.exists() else result)
           PYTHON
       - name: Upload simulator evidence
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: simulator-${{ github.sha }}
+          name: simulator-${{ github.sha }}-${{ matrix.shard }}
           path: target/sim-check
           retention-days: 7
           if-no-files-found: warn
@@ -84,8 +93,12 @@ jobs:
   flashcards-importer:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # rust-toolchain.toml at the root names the device compiler; the importer
+    # needs the newer one, and rustup reads this variable before the file.
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.88.0
@@ -94,16 +107,131 @@ jobs:
       - name: Test the standalone importer with its own lockfile
         run: cargo test --locked --manifest-path crates/kobo-flashcards-import/Cargo.toml
 
+  device-emulated:
+    # Runs the device-side suites under ARM user-mode emulation (qemu-arm).
+    # This verifies logic, syscalls and musl/ARM codegen for the companion
+    # binaries. It does not verify real device kernel behavior -
+    # framebuffer/input ioctls, Nickel integration, suspend timing, radio
+    # firmware - so hardware-coupled paths stay UNVERIFIED on real hardware;
+    # the matrix lives in docs/WINDOWS.md. Any test that cannot run under
+    # emulation gets an explicit named cfg skip with its reason, never a
+    # silent drop.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: 1.85.1
+          targets: armv7-unknown-linux-musleabihf
+      - name: Install qemu-arm user-mode emulation
+        run: sudo apt-get update && sudo apt-get install --yes qemu-user
+      # The same pinned Zig musl cross-compiler device-build uses; see that
+      # job for why the device C cannot come from the armhf glibc toolchain.
+      - name: Install the musl cross-compiler the device C needs
+        run: |
+          set -eu
+          zig_downloaded=false
+          for zig_url in \
+            'https://pkg.hexops.org/zig/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
+            'https://ziglang.freetls.fastly.net/zig-x86_64-linux-0.16.0.tar.xz?source=cobalt-ci' \
+            'https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz'; do
+            if curl -fL --connect-timeout 15 --max-time 120 \
+              --speed-limit 1024 --speed-time 20 -o /tmp/zig.tar.xz "$zig_url" \
+              && echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz" \
+                | sha256sum -c -; then
+              zig_downloaded=true
+              break
+            fi
+            echo "::warning::Could not obtain the pinned Zig archive from $zig_url"
+          done
+          if [ "$zig_downloaded" != true ]; then
+            echo "No source supplied the pinned Zig archive" >&2
+            exit 1
+          fi
+          sudo tar -xJf /tmp/zig.tar.xz -C /opt
+          sudo tee /usr/local/bin/armv7-musl-cc >/dev/null <<'CC'
+          #!/bin/sh
+          # cc-rs passes --target=armv7-unknown-linux-musleabihf. Zig spells the
+          # same machine arm-linux-musleabihf and refuses "armv7", so the triple
+          # comes from here and the one we are handed is dropped.
+          zig=/opt/zig-x86_64-linux-0.16.0/zig
+          count=$#
+          index=0
+          while [ "$index" -lt "$count" ]; do
+            argument="$1"
+            shift
+            case "$argument" in
+              --target=*) ;;
+              *) set -- "$@" "$argument" ;;
+            esac
+            index=$((index + 1))
+          done
+          # Zig instruments with UBSan by default and does not link its runtime,
+          # so sqlite3.c ends up referencing __ubsan_handle_* that nothing
+          # defines. The device build is not a sanitiser run.
+          exec "$zig" cc -target arm-linux-musleabihf -fno-sanitize=undefined "$@"
+          CC
+          sudo chmod +x /usr/local/bin/armv7-musl-cc
+          armv7-musl-cc --version
+      - name: Test the device-side suites under qemu-arm
+        run: >-
+          cargo test --locked --target armv7-unknown-linux-musleabihf
+          -p kobo-abi -p kobo-hal -p kobod
+          -p kobo-tap -p kobo-guard -p kobo-handoff -p kobo-smoke
+          --all-features --no-fail-fast
+        env:
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
+          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_RUNNER: qemu-arm
+          # Marks emulation so tests whose assumptions qemu-user cannot meet
+          # (no emulated devpts for posix_openpt) skip by name instead of
+          # failing; each skip prints its reason.
+          KOBO_QEMU_EMULATED: "1"
+      # Prove the shipped artifacts execute, not just link. An application
+      # error exit is a pass here - the binary ran; only an exec-level
+      # failure (127/126 or an emulator crash by signal) fails the step.
+      - name: Execute the device binaries under qemu-arm
+        run: |
+          set -u
+          cargo build --locked --target armv7-unknown-linux-musleabihf \
+            -p kobod -p kobo-tap -p kobo-guard -p kobo-handoff -p kobo-smoke \
+            --all-features
+          failed=false
+          for bin in kobod kobo-tap kobo-guard kobo-handoff kobo-smoke; do
+            artifact="target/armv7-unknown-linux-musleabihf/debug/$bin"
+            if [ ! -x "$artifact" ]; then
+              echo "missing artifact: $artifact" >&2
+              failed=true
+              continue
+            fi
+            echo "== $bin --help =="
+            # An application error exit (a usage answer is typically 1) means
+            # the binary ran; only exec-level failure counts. `|| status=$?`
+            # keeps the step's -e shell from aborting on that expected exit.
+            status=0
+            qemu-arm "$artifact" --help || status=$?
+            if [ "$status" -ge 126 ]; then
+              echo "$bin did not execute under qemu-arm (exit $status)" >&2
+              failed=true
+            fi
+          done
+          [ "$failed" = false ]
+        env:
+          CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
+
   device-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
           targets: armv7-unknown-linux-musleabihf
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .node-version
       - name: Install the ring C cross-compiler
         run: sudo apt-get update && sudo apt-get install --yes gcc-arm-linux-gnueabihf
       # The device target is musl, but the C in the dependency tree was being
@@ -194,12 +322,32 @@ jobs:
           set -o pipefail
           release_tag="$(node tools/app-catalog-channel.mjs)"
           echo "Checking app versions against the $release_tag channel."
+          # Forks publish no app-catalog channel, so a push to a fork has no
+          # base release to compare against and the gate skips there. The
+          # skip is keyed on the repository, not on the lookup failing: a
+          # rate limit or an outage upstream must stop the build, not wave
+          # an unversioned app change through.
+          if [ "$GITHUB_REPOSITORY" != "BandarLabs/Cobalt" ]; then
+            echo "$GITHUB_REPOSITORY publishes no $release_tag channel; skipping the app-version gate on this fork."
+            exit 0
+          fi
           mkdir -p published-state
+          # The catalog that names every mark is the one this tree describes.
+          # A channel last published before there were two catalogs has only
+          # the earlier one, and its provenance hashes that.
+          catalog_name=cobalt-app-catalog-v2.json
+          catalog_count="$(
+            gh release view "$release_tag" --json assets \
+              --jq '[.assets[] | select(.name == "cobalt-app-catalog-v2.json")] | length'
+          )"
+          if [ "$catalog_count" -eq 0 ]; then
+            catalog_name=cobalt-app-catalog.json
+          fi
           gh release download "$release_tag" \
             --dir published-state \
-            --pattern cobalt-app-catalog.json
+            --pattern "$catalog_name"
           catalog_sha256="$(
-            sha256sum published-state/cobalt-app-catalog.json | cut -d' ' -f1
+            sha256sum "published-state/$catalog_name" | cut -d' ' -f1
           )"
           provenance_count="$(
             gh release view "$release_tag" --json assets \
@@ -256,7 +404,7 @@ jobs:
           fi
           node tools/check-app-versions.mjs \
             --registry generated-app-registry.json \
-            --published-catalog published-state/cobalt-app-catalog.json \
+            --published-catalog "published-state/$catalog_name" \
             --base "$published_sha"
 
   host-release-build:
@@ -269,7 +417,7 @@ jobs:
             target: x86_64-apple-darwin
             cc: ""
           - platform: macos-arm64
-            runner: macos-14
+            runner: macos-15
             target: aarch64-apple-darwin
             cc: ""
           - platform: linux-x86_64
@@ -282,7 +430,7 @@ jobs:
             cc: musl-gcc
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
@@ -295,19 +443,25 @@ jobs:
           CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
           CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
         run: |
-          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          cargo build --locked --release -p kobo-cli -p kobo-sidekickd \
+            --target "${{ matrix.target }}"
           test -x "target/${{ matrix.target }}/release/kobo"
+          test -x "target/${{ matrix.target }}/release/kobo-sidekickd"
           echo "built ${{ matrix.platform }}"
 
   advisories:
     runs-on: ubuntu-latest
+    # cargo-audit is built with the newer compiler; rustup reads this variable
+    # before the root rust-toolchain.toml.
+    env:
+      RUSTUP_TOOLCHAIN: 1.88.0
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: RustSec/advisory-db
           path: advisory-db
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: RustSec/advisory-db
           ref: 309ad29d8fe448bf986019e05d47b9e0e29a2218
@@ -319,13 +473,106 @@ jobs:
         run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Audit dependencies
         run: |
+          # zip before 9.0.0 has three advisories, RUSTSEC-2026-0367, -0368 and
+          # -0369, all in ZipArchive::extract and ZipStreamReader::extract, which
+          # write an archive to disk keeping SUID and SGID bits and following
+          # symlinks out of the destination. Nothing audited here calls either.
+          # kobo-comic and the flashcards importer read entries into memory by
+          # index or name, and so does anki's rslib; only anki's own build
+          # runner extracts, and the importer does not depend on it. zip 9 needs
+          # rustc 1.88, newer than the device toolchain, and anki at the pinned
+          # revision requires zip 4. The ignores live here, not in
+          # .cargo/audit.toml, because check-app-versions counts every path
+          # under .cargo/ as a build input and would rebuild every Store app.
+          # Re-check when the device toolchain reaches 1.88 or the anki pin moves.
+          #
+          # RUSTSEC-2026-0429 is the same function again: ZipArchive::extract
+          # aborts the process on a symlink entry with a large declared size.
+          # Nothing audited here calls it, for the reasons above, and the fix
+          # is the same zip 9. Re-check on the same conditions.
+          #
+          # pulldown-cmark before 0.13.6 has RUSTSEC-2026-0433: nested image
+          # wikilinks parse in quadratic time, and only with
+          # Options::ENABLE_WIKILINKS. No parser here sets it. kobo-doc
+          # enables tables, strikethrough, footnotes and YAML metadata,
+          # kobo-cli's vault export tables, footnotes, strikethrough and task
+          # lists, and anki's rslib at the pinned revision calls Parser::new,
+          # which enables nothing. 0.13.6 is the real fix, but a lockfile
+          # change to a crate kobo-doc uses marks every Store app that reads
+          # documents as changed, so it belongs in a release, not here.
+          # Re-check if any parser turns wikilinks on, and take 0.13.6 with the
+          # next release that rebuilds the readers anyway.
+          #
+          # crypto-bigint before 0.7.6 has RUSTSEC-2026-0387: subtraction,
+          # division and Montgomery multiplication may branch on secret values.
+          # kobod reaches 0.5.5 through p256 0.13 for the app-link device key.
+          # The relay can time a poll, and by replaying an envelope a paired
+          # browser once signed it can make the device load that key and run
+          # ECDH as often as it likes, since the request id that refuses a
+          # replay is sealed inside. Of that work, crypto-bigint only checks
+          # the key against two constants, zero and the group order, so every
+          # replay runs it on the same values and the relay has nothing to
+          # vary. The multiplication reads the key as bytes in fixed four-bit
+          # windows and does its field arithmetic in p256's own limb code.
+          # ECDSA there verifies public values. The fix needs p256 0.14 and
+          # rustc 1.87, newer than the device toolchain.
+          # Re-check when the device toolchain reaches 1.87.
+          #
+          # slice-ring-buffer has RUSTSEC-2025-0044, with no fixed release: four
+          # methods can drop an element twice. minimp3 in kobo-hal holds a
+          # SliceRingBuffer<u8>, and a u8 has no destructor to run twice. It
+          # calls none of the four methods either. Re-check if kobo-hal stops
+          # using minimp3 or minimp3 changes its buffer.
+          #
+          # The flashcards importer reaches zstd 0.13 and zstd-safe 7 through
+          # anki's rslib, and anki at the pinned revision requires zstd 0.13,
+          # so the fixed zstd 0.14 and zstd-safe 8 cannot be taken. None of the
+          # three advisories is reachable from what the importer runs:
+          # - RUSTSEC-2026-0391 is in the raw encoder's and decoder's
+          #   with_context constructors. Neither anki nor async-compression
+          #   calls them.
+          # - RUSTSEC-2026-0398 is in zstd-safe's seekable module, and no
+          #   crate in that lockfile enables the seekable feature.
+          # - RUSTSEC-2026-0403 is in streaming decompression through
+          #   zstd::stream::write::Decoder. Importing a package decodes with
+          #   zstd::stream::copy_decode, which reads through read::Decoder,
+          #   and the advisory names that path as unaffected.
+          # Re-check when the anki pin moves.
+          #
+          # libsqlite3-sys before 0.39 bundles SQLite before 3.54, which has
+          # RUSTSEC-2026-0459: a database opened together with a crafted -wal
+          # file of another page size can return stale process memory. The
+          # fix needs rusqlite 0.41 and rustc 1.89, newer than both pinned
+          # toolchains. Neither use opens a WAL someone else wrote:
+          # - kobo-policy and kobo-cli open the stock reader's library
+          #   database read-only, on the reader or as copied off it. Whoever
+          #   can put files on the card can already replace Cobalt's own
+          #   binaries there, so a crafted pair gives them nothing more.
+          # - The flashcards importer writes only the package's collection,
+          #   to a scratch file it creates new after deleting any -wal, -shm
+          #   or -journal beside it. A package cannot supply the sibling.
+          # Re-check when either toolchain reaches 1.89.
+          ignore=(
+            --ignore RUSTSEC-2026-0367
+            --ignore RUSTSEC-2026-0368
+            --ignore RUSTSEC-2026-0369
+            --ignore RUSTSEC-2026-0429
+            --ignore RUSTSEC-2026-0433
+            --ignore RUSTSEC-2026-0387
+            --ignore RUSTSEC-2025-0044
+            --ignore RUSTSEC-2026-0391
+            --ignore RUSTSEC-2026-0398
+            --ignore RUSTSEC-2026-0403
+            --ignore RUSTSEC-2026-0459
+          )
           set +e
-          output="$(cargo audit --db advisory-db --no-fetch 2>&1)"
+          output="$(cargo audit "${ignore[@]}" --db advisory-db --no-fetch 2>&1)"
           status=$?
           set -e
           if [ "$status" -eq 0 ]; then
             printf '%s\n' "$output"
-            cargo audit --db advisory-db --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db --no-fetch --file fuzz/Cargo.lock
           elif printf '%s\n' "$output" | grep -Eq \
             'error loading advisory database|expected RUSTSEC-[0-9-]+ to be in'; then
             printf '%s\n' "$output" >&2
@@ -346,8 +593,9 @@ jobs:
               --record tools/advisory-db-fallback.json \
               --snapshot "$snapshot" \
               --today "$(date -u +%F)"
-            cargo audit --db advisory-db-fallback --no-fetch
-            cargo audit --db advisory-db-fallback --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db-fallback --no-fetch
+            cargo audit "${ignore[@]}" --db advisory-db-fallback --no-fetch --file crates/kobo-flashcards-import/Cargo.lock
+            cargo audit "${ignore[@]}" --db advisory-db-fallback --no-fetch --file fuzz/Cargo.lock
           else
             printf '%s\n' "$output" >&2
             exit "$status"

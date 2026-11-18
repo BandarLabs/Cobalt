@@ -310,6 +310,61 @@ pub fn plan(
 pub fn plan_prefixed(
     existing: &Manifest,
     incoming: Vec<IncomingNote>,
+    failures: Vec<ImportFailure>,
+    id_prefix: &str,
+) -> Result<Push, String> {
+    plan_mirroring(existing, incoming, failures, id_prefix)
+}
+
+/// The same plan for a push that adds: every note already on the shelf stays
+/// unless this push sends a note at the same path, which takes its place.
+///
+/// Adding is what a push means by default. A vault pushed a folder at a time,
+/// or from two computers, used to lose every note the latest push did not
+/// mention. A note sent again with the same content under a new path still
+/// counts as moved rather than copied, so a rename does not leave the old
+/// name behind beside the new one.
+pub fn plan_adding(
+    existing: &Manifest,
+    incoming: Vec<IncomingNote>,
+    failures: Vec<ImportFailure>,
+    id_prefix: &str,
+) -> Result<Push, String> {
+    let offered: BTreeSet<String> = incoming.iter().map(|offer| offer.path.clone()).collect();
+    let mut push = plan_mirroring(existing, incoming, failures, id_prefix)?;
+    let moved: BTreeSet<&str> = push
+        .renamed
+        .iter()
+        .map(|rename| rename.from.as_str())
+        .collect();
+    let mut notes: Vec<NoteEntry> = existing
+        .notes
+        .iter()
+        .filter(|old| !offered.contains(&old.path) && !moved.contains(old.path.as_str()))
+        .cloned()
+        .collect();
+    notes.append(&mut push.manifest.notes);
+    notes.sort_by(|left, right| left.path.cmp(&right.path));
+    if notes.len() > MAX_NOTES {
+        return Err(format!(
+            "Vault holds at most {MAX_NOTES} notes. Remove some with kobo vault rm, or push with --replace."
+        ));
+    }
+    let kept: BTreeSet<&str> = notes.iter().map(|note| note.id.as_str()).collect();
+    let mut gone = BTreeSet::new();
+    push.removed = existing
+        .notes
+        .iter()
+        .filter(|old| !kept.contains(old.id.as_str()) && gone.insert(old.id.clone()))
+        .cloned()
+        .collect();
+    push.manifest.notes = notes;
+    Ok(push)
+}
+
+fn plan_mirroring(
+    existing: &Manifest,
+    incoming: Vec<IncomingNote>,
     mut failures: Vec<ImportFailure>,
     id_prefix: &str,
 ) -> Result<Push, String> {
@@ -520,6 +575,78 @@ mod tests {
             plan(&first.manifest, vec![offer("a.md", "# A\n", 1)], Vec::new()).expect("plan");
         assert_eq!(second.removed.len(), 1);
         assert_eq!(second.removed[0].path, "b.md");
+    }
+
+    #[test]
+    fn an_adding_push_keeps_every_note_it_does_not_mention() {
+        let first = plan(
+            &Manifest::default(),
+            vec![offer("a.md", "# A\n", 1), offer("b.md", "# B\n", 1)],
+            Vec::new(),
+        )
+        .expect("plan");
+        let second = plan_adding(
+            &first.manifest,
+            vec![offer("c.md", "# C\n", 2)],
+            Vec::new(),
+            "note-",
+        )
+        .expect("plan");
+        let paths = second
+            .manifest
+            .notes
+            .iter()
+            .map(|note| note.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, ["a.md", "b.md", "c.md"]);
+        assert!(second.removed.is_empty());
+        assert_eq!(second.notes.len(), 1, "only the new note is sent");
+    }
+
+    #[test]
+    fn an_edited_note_replaces_its_old_copy_instead_of_standing_beside_it() {
+        let first = plan(
+            &Manifest::default(),
+            vec![offer("a.md", "# A\n", 1), offer("b.md", "# B\n", 1)],
+            Vec::new(),
+        )
+        .expect("plan");
+        let second = plan_adding(
+            &first.manifest,
+            vec![offer("a.md", "# A, edited\n", 2)],
+            Vec::new(),
+            "note-",
+        )
+        .expect("plan");
+        assert_eq!(second.manifest.notes.len(), 2);
+        assert_eq!(second.removed.len(), 1);
+        assert_eq!(second.removed[0].path, "a.md");
+        assert_ne!(second.removed[0].id, second.manifest.notes[0].id);
+    }
+
+    #[test]
+    fn a_renamed_note_in_an_adding_push_does_not_leave_its_old_name_behind() {
+        let first = plan(
+            &Manifest::default(),
+            vec![offer("old.md", "# Same\n", 1), offer("b.md", "# B\n", 1)],
+            Vec::new(),
+        )
+        .expect("plan");
+        let second = plan_adding(
+            &first.manifest,
+            vec![offer("new.md", "# Same\n", 2)],
+            Vec::new(),
+            "note-",
+        )
+        .expect("plan");
+        let paths = second
+            .manifest
+            .notes
+            .iter()
+            .map(|note| note.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, ["b.md", "new.md"]);
+        assert!(second.removed.is_empty(), "the moved note keeps its file");
     }
 
     #[test]

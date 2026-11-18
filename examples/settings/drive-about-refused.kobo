@@ -1,0 +1,8 @@
+# A refused read says so in the banner. The page under it should not also
+# say the details are still being read, since no reading is coming.
+wait-for Settings
+scenario permission-denied
+tap-paged Model and versions
+wait-for Cobalt did not allow Settings to do that.
+shot settings-about-refused-first
+expect-missing Reading this reader's details.

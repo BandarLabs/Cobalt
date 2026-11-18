@@ -117,7 +117,8 @@ fn assert_reachable(screen: &Screen, metrics: DisplayMetrics) {
             }
             LayoutKind::BarAction(action)
             | LayoutKind::NavDestination(action, _)
-            | LayoutKind::NavDestinationSelected(action, _) => Some(action),
+            | LayoutKind::NavDestinationSelected(action, _)
+            | LayoutKind::ActionBarEntry(action, _) => Some(action),
             LayoutKind::Back => Some(ActionId::BACK),
             _ => None,
         };

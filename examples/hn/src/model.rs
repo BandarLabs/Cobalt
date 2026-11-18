@@ -60,6 +60,14 @@ pub struct Story {
     /// title since the beginning, which is the evidence that it is the part
     /// people actually use.
     pub site: Option<String>,
+    /// A job advertisement rather than a submission.
+    ///
+    /// The site lists them among the stories but gives them no score and no
+    /// discussion, so "1 point · 0 comments" beside one is two numbers that
+    /// do not exist. Not written to the saved marks: the line format is read
+    /// by older versions of this app, and a saved advert drawn as a story
+    /// with no comments is a smaller wrong than a saved list that forgets it.
+    pub job: bool,
 }
 
 /// One comment, already flattened out of the tree and ready to draw.
@@ -103,6 +111,23 @@ impl Comment {
             line.push_str(" deep");
         }
         line.trim().to_owned()
+    }
+}
+
+/// The address an article is fetched from: a plain `http` link asked for
+/// over TLS instead.
+///
+/// The runtime refuses plain `http` outright, and plenty of stories are still
+/// submitted with it. Left alone, saving one fetched nothing and its Saved
+/// mark kept a promise the reader found broken on the train. A site that
+/// serves no TLS at all still fails, and says so.
+#[must_use]
+pub fn over_tls(url: &str) -> String {
+    match url.get(..7) {
+        Some(scheme) if scheme.eq_ignore_ascii_case("http://") => {
+            format!("https://{}", &url[7..])
+        }
+        _ => url.to_owned(),
     }
 }
 
@@ -184,8 +209,13 @@ impl Item {
             comments: self.descendants,
             created: self.time,
             text: (!self.text.is_empty()).then(|| self.text.clone()),
-            link: self.url.clone().filter(|url| !url.is_empty()),
+            link: self
+                .url
+                .as_deref()
+                .filter(|url| !url.is_empty())
+                .map(over_tls),
             site: self.url.as_deref().and_then(host_of),
+            job: self.kind == "job",
         })
     }
 
@@ -325,6 +355,9 @@ pub fn summary(story: &Story, now: i64) -> String {
     // is what tells a reader whether to bother) and on an Ask HN the submitter
     // is the person being asked, so they are the whole point.
     let who = story.site.clone().unwrap_or_else(|| story.author.clone());
+    if story.job {
+        return format!("{who} \u{b7} {}", age(now, story.created));
+    }
     format!(
         "{who} \u{b7} {} \u{b7} {}",
         plural(story.comments, "comment"),
@@ -339,6 +372,11 @@ pub fn summary(story: &Story, now: i64) -> String {
 /// what says which number this is.
 #[must_use]
 pub fn score(story: &Story) -> String {
+    // An advert has no score, and the column is where a reader looks to tell
+    // one row from the next, so it says what the row is instead.
+    if story.job {
+        return "Job".to_owned();
+    }
     plural(story.points, "point")
 }
 
@@ -348,7 +386,7 @@ pub fn score(story: &Story) -> String {
 /// they carry the site's own ordering rather than the best of all time, and
 /// "1 comments" beside it is the kind of small wrongness that makes a screen
 /// look machine-made.
-fn plural(count: u32, noun: &str) -> String {
+pub fn plural(count: u32, noun: &str) -> String {
     if count == 1 {
         format!("1 {noun}")
     } else {
@@ -498,8 +536,9 @@ impl Marks {
                         comments: comments.parse().unwrap_or_default(),
                         created: created.parse().unwrap_or_default(),
                         text: None,
-                        link: (!link.is_empty()).then(|| link.to_owned()),
+                        link: (!link.is_empty()).then(|| over_tls(link)),
                         site: (!site.is_empty()).then(|| site.to_owned()),
+                        job: false,
                     });
                 }
                 _ => {}
@@ -551,6 +590,25 @@ mod tests {
         assert_eq!(story.created, 1_785_189_829);
         assert_eq!(story.site.as_deref(), Some("anthropic.com"));
         assert_eq!(story.text, None, "a link post has no self text");
+    }
+
+    #[test]
+    fn a_story_submitted_with_a_plain_http_link_is_read_and_saved_over_tls() {
+        let mut item = read(STORY);
+        item.url = Some("http://example.blogspot.com/2022/12/x.html".to_owned());
+        let story = item.story().expect("a story is a row");
+        assert_eq!(
+            story.link.as_deref(),
+            Some("https://example.blogspot.com/2022/12/x.html")
+        );
+        assert_eq!(story.site.as_deref(), Some("example.blogspot.com"));
+        // A story saved before this was fixed reads back the same way.
+        let marks = Marks::decode(
+            "hn-marks-v1\nsaved\t1\tA title\tsomeone\t1\t0\t0\thttp://e.org/a\te.org\n",
+        );
+        assert_eq!(marks.saved[0].link.as_deref(), Some("https://e.org/a"));
+        assert_eq!(super::over_tls("HTTP://e.org/"), "https://e.org/");
+        assert_eq!(super::over_tls("https://e.org/"), "https://e.org/");
     }
 
     #[test]
@@ -752,6 +810,7 @@ mod tests {
             text: None,
             link: Some(format!("https://example.com/{id}")),
             site: Some("example.com".to_owned()),
+            job: false,
         }
     }
 
@@ -841,5 +900,31 @@ mod tests {
         assert_eq!(age(1_000, 1_000_000), "just now");
         // No arithmetic overflow at the ends of the range.
         assert_eq!(age(i64::MAX, i64::MIN), "292471208677y ago");
+    }
+
+    #[test]
+    fn a_job_posting_claims_no_score_and_no_discussion() {
+        let item = read(
+            r#"{"id": 9, "type": "job", "by": "yc", "score": 1, "time": 1700000000,
+                "title": "Acme (YC F25) Is Hiring", "url": "https://www.ycombinator.com/companies/acme"}"#,
+        );
+        let story = item.story().expect("a job is listed like a story");
+        assert!(story.job);
+        assert_eq!(score(&story), "Job");
+        let line = summary(&story, 1_700_000_000 + 3600);
+        assert!(!line.contains("comment"), "{line}");
+        assert!(line.starts_with("ycombinator.com"), "{line}");
+    }
+
+    #[test]
+    fn an_ordinary_story_keeps_its_score_and_comments() {
+        let item = read(
+            r#"{"id": 10, "type": "story", "by": "a", "score": 342, "descendants": 1,
+                "time": 1700000000, "title": "A story", "url": "https://example.com/a"}"#,
+        );
+        let story = item.story().expect("a story");
+        assert!(!story.job);
+        assert_eq!(score(&story), "342 points");
+        assert!(summary(&story, 1_700_000_000).contains("1 comment"));
     }
 }

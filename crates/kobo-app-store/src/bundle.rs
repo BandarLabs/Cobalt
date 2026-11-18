@@ -173,6 +173,24 @@ pub fn parse_public_bundle(
     Ok(bundle)
 }
 
+/// Verifies and parses a bundle as a reader does before installing it.
+///
+/// Accepts any well-formed glyph name, for the reason given on
+/// [`crate::Manifest::parse_installable`].
+///
+/// # Errors
+///
+/// Returns the same errors as [`parse_bundle`], and refuses a bundle that asks
+/// for shell access.
+pub fn parse_installable_bundle(
+    bytes: &[u8],
+    public_key: &Ed25519PublicKey,
+) -> Result<ParsedBundle, BundleError> {
+    let bundle = parse_bundle(bytes, public_key, crate::public_reserved_app_ids())?;
+    bundle.manifest.ensure_installable()?;
+    Ok(bundle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

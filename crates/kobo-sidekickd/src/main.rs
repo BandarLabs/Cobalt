@@ -20,6 +20,7 @@
 //! token so a neighbour on the network cannot answer for you.
 
 mod agents;
+mod articles;
 mod board;
 mod deck;
 mod hooks;
@@ -63,6 +64,12 @@ fn main() -> ExitCode {
         Some((verb, rest)) => match (verb.as_str(), rest) {
             ("--help" | "-h" | "help", []) => {
                 println!("{USAGE}");
+                Ok(())
+            }
+            // Asked by `kobo version --full` and by the release smoke test,
+            // neither of which should start listeners or touch a pairing.
+            ("--version" | "-V", []) => {
+                println!("kobo-sidekickd {}", env!("CARGO_PKG_VERSION"));
                 Ok(())
             }
             ("init" | "run" | "sample" | "setup" | "agents" | "hook", [flag])

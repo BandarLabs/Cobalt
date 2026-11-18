@@ -2,7 +2,7 @@ use super::*;
 use kobo_ui::{Chrome, DisplayMetrics, TextScale, CLARA_BW_METRICS};
 
 #[test]
-fn match_controls_and_complete_history_fit_every_text_size_and_pose() {
+fn match_settings_and_the_complete_history_fit_every_text_size_and_pose() {
     for (width, height) in [(1072, 1448), (1448, 1072)] {
         for text_scale in TextScale::STEPS {
             let metrics = DisplayMetrics {
@@ -33,7 +33,7 @@ fn match_controls_and_complete_history_fit_every_text_size_and_pose() {
                 "{metrics:?}"
             );
             let layout = screen.layout_with(&metrics, &chrome);
-            for name in ["how-to-play", "new-match", "turn-history", "close-match"] {
+            for name in ["mode-solo", "mode-pass", "close-match"] {
                 let action = action_id(name);
                 let rect = layout
                     .rect_of_action(action)
@@ -43,6 +43,13 @@ fn match_controls_and_complete_history_fit_every_text_size_and_pose() {
                     Some(action)
                 );
             }
+            for retired in ["how-to-play", "new-match", "turn-history"] {
+                assert!(
+                    layout.rect_of_action(action_id(retired)).is_none(),
+                    "{retired} has its one home in the menu"
+                );
+            }
+            runner.action(action_id("close-match"));
             runner.action(action_id("turn-history"));
             assert_eq!(runner.app().view, View::History);
             let pages = history_pages(runner.app(), &context);
@@ -87,7 +94,7 @@ fn match_controls_and_complete_history_fit_every_text_size_and_pose() {
             runner.action(action_id("roll"));
             assert_eq!(runner.app().encode(), before);
             runner.action(ActionId::BACK);
-            assert_eq!(runner.app().view, View::Match);
+            assert_eq!(runner.app().view, View::Board);
             assert_eq!(runner.app().encode(), before);
         }
     }

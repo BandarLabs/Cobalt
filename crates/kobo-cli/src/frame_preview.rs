@@ -21,9 +21,13 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     generate(
         Path::new(input),
         Path::new(output),
+        // The preview compares crop against pad, which is geometry, and it
+        // is written as files a person opens on a computer: grey keeps them
+        // PNGs whatever reader the profile names.
         Panel {
             width: profile.width,
             height: profile.height,
+            colour: false,
         },
     )
 }
@@ -124,6 +128,7 @@ mod tests {
             Panel {
                 width: 64,
                 height: 96,
+                colour: false,
             },
         )
         .unwrap();
@@ -140,7 +145,8 @@ mod tests {
             &output,
             Panel {
                 width: 64,
-                height: 96
+                height: 96,
+                colour: false
             }
         )
         .is_err());
@@ -153,7 +159,8 @@ mod tests {
             &rejected,
             Panel {
                 width: 64,
-                height: 96
+                height: 96,
+                colour: false
             }
         )
         .is_err());

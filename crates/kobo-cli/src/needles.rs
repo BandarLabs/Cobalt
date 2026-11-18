@@ -12,14 +12,29 @@ use std::process::{Command, Stdio};
 
 const MAX_PDF: usize = 32 * 1024 * 1024;
 const MAX_PATTERN: usize = 4 * 1024 * 1024;
+/// The single pattern file pushes wrote before each pattern had its own.
 const BLOB: &str = "pattern.md";
+/// Each pattern's own shelf file is `pattern-<name>.md`.
+const PATTERN_PREFIX: &str = "pattern-";
+/// One `file<TAB>title` line per pattern on the reader, in the order they
+/// were sent, so Needles can list real titles without opening each file.
+const INDEX: &str = "patterns.tsv";
+/// Shelf names stop at 64 characters; the prefix and `.md` take 11.
+const MAX_STEM: usize = 53;
 /// How much of the extracted pattern a printed preview shows against its source.
 const PREVIEW_LINES: usize = 12;
-const USAGE: &str = "usage: kobo needles converter status|install\n\
+const USAGE: &str = concat!(
+    "usage: kobo needles converter status|install\n\
                      \x20      kobo needles setup\n\
                      \x20      kobo needles prepare PATTERN.(pdf|md|txt) --out PATTERN.md [--title TITLE] [--section HEADING]\n\
                      \x20      kobo needles preview PATTERN.(pdf|md|txt) [--out DIRECTORY] [--title TITLE] [--section HEADING]\n\
-                     \x20      kobo needles push PATTERN.(pdf|md|txt) (--sim | --device IP | --out FILE) [--title TITLE] [--section HEADING]";
+                     \x20      kobo needles push PATTERN.(pdf|md|txt) ",
+    "[", crate::targets::target_flags!(), " | --out FILE]",
+    " [--title TITLE] [--section HEADING] [--replace]\n",
+    "A push adds the pattern to the ones already on the reader, replacing one of the same title.\n",
+    "--replace leaves only this pattern there.\n",
+    crate::targets::saved_reader_note!(),
+);
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
@@ -43,6 +58,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         target,
         title,
         section,
+        replace,
     } = parse_options(arguments)?;
     let input_path = Path::new(input);
     let report = prepare_any(input_path, title, section)?;
@@ -61,8 +77,8 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             }
         }
         "push" => match (target, out) {
-            (Some(""), None) => transfer_sim(&report, input_path),
-            (Some(host), None) => transfer(&report, input_path, host),
+            (Some(""), None) => transfer_sim(&report, input_path, replace),
+            (Some(host), None) => transfer(&report, input_path, host, replace),
             (None, Some(path)) => {
                 write_pattern(Path::new(path), &report.markdown, CopyState::Prepared)?;
                 if !report.charts.is_empty() {
@@ -85,6 +101,7 @@ struct Options<'a> {
     target: Option<&'a str>,
     title: Option<&'a str>,
     section: Option<&'a str>,
+    replace: bool,
 }
 
 fn parse_options(arguments: &[String]) -> Result<Options<'_>, String> {
@@ -94,6 +111,7 @@ fn parse_options(arguments: &[String]) -> Result<Options<'_>, String> {
     let mut target = None;
     let mut title = None;
     let mut section = None;
+    let mut replace = false;
     let mut index = 2;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -134,6 +152,10 @@ fn parse_options(arguments: &[String]) -> Result<Options<'_>, String> {
                 target = Some("");
                 index += 1;
             }
+            "--replace" => {
+                replace = true;
+                index += 1;
+            }
             flag if super::is_device_flag(flag) => {
                 if target.is_some() || out.is_some() {
                     return Err(USAGE.to_owned());
@@ -154,6 +176,9 @@ fn parse_options(arguments: &[String]) -> Result<Options<'_>, String> {
         "push" if target.is_some() || out.is_some() => {}
         _ => return Err(USAGE.to_owned()),
     }
+    if replace && target.is_none() {
+        return Err(USAGE.to_owned());
+    }
     Ok(Options {
         verb,
         input,
@@ -161,6 +186,7 @@ fn parse_options(arguments: &[String]) -> Result<Options<'_>, String> {
         target,
         title,
         section,
+        replace,
     })
 }
 
@@ -511,12 +537,110 @@ fn write_pattern(path: &Path, bytes: &[u8], state: CopyState) -> Result<(), Stri
     println!("{}", completion(state, path));
     Ok(())
 }
+/// The shelf file a pattern goes to, named after its title so a second
+/// push of the same pattern replaces it and a different pattern sits beside
+/// it. A title with no Latin letters or digits is named by its digest.
+fn pattern_file(title: &str) -> String {
+    let mut stem = String::new();
+    for character in title.to_lowercase().chars() {
+        if character.is_ascii_alphanumeric() {
+            stem.push(character);
+        } else if !stem.is_empty() && !stem.ends_with('-') {
+            stem.push('-');
+        }
+    }
+    let mut stem = stem.trim_end_matches('-').to_owned();
+    if stem.is_empty() {
+        kobo_net::sha256::hex_digest(title.as_bytes())[..16].clone_into(&mut stem);
+    }
+    stem.truncate(MAX_STEM);
+    let stem = stem.trim_end_matches('-');
+    format!("{PATTERN_PREFIX}{stem}.md")
+}
+
+fn is_pattern_file(name: &str) -> bool {
+    name == BLOB
+        || name
+            .strip_prefix(PATTERN_PREFIX)
+            .and_then(|rest| rest.strip_suffix(".md"))
+            .is_some_and(|stem| !stem.is_empty())
+}
+
+/// A title as one index field: no tabs or line breaks, and not empty.
+fn index_title(title: &str) -> String {
+    let title = title
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+    if title.is_empty() {
+        "Pattern".to_owned()
+    } else {
+        title
+    }
+}
+
+/// The index after sending `file`: earlier patterns keep their place, the
+/// one sent goes last, and `--replace` leaves only it.
+fn updated_index(existing: &str, file: &str, title: &str, replace: bool) -> String {
+    let mut out = String::new();
+    if !replace {
+        for line in existing.lines() {
+            if line
+                .split_once('\t')
+                .is_some_and(|(known, _)| known != file && is_pattern_file(known))
+            {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    out.push_str(&format!("{file}\t{}\n", index_title(title)));
+    out
+}
+
+/// The patterns on the reader, the way Needles lists them: in the index's
+/// order with its titles, then any file it does not name.
+fn patterns_on_reader(files: &[String], index: &str) -> Vec<String> {
+    let mut titled: Vec<(usize, String, String)> = files
+        .iter()
+        .filter(|file| is_pattern_file(file))
+        .map(|file| {
+            let known = index.lines().enumerate().find_map(|(position, line)| {
+                let (name, title) = line.split_once('\t')?;
+                (name == file).then(|| (position, title.trim().to_owned()))
+            });
+            match known {
+                Some((position, title)) => (position, file.clone(), title),
+                None => (usize::MAX, file.clone(), file.clone()),
+            }
+        })
+        .collect();
+    titled.sort();
+    titled.into_iter().map(|(_, _, title)| title).collect()
+}
+
+fn print_on_reader(titles: &[String]) {
+    match titles.len() {
+        0 => println!("No patterns are on the reader."),
+        1 => println!("On the reader: 1 pattern, {}.", titles[0]),
+        count => println!("On the reader: {count} patterns, {}.", titles.join(", ")),
+    }
+}
+
 /// Lays the pattern, and the charts that sit next to it, onto the
 /// simulator's shelf the way a device transfer would place them.
-fn transfer_sim(report: &Report, input: &Path) -> Result<(), String> {
+fn transfer_sim(report: &Report, input: &Path, replace: bool) -> Result<(), String> {
     let root = kobo_sim::simulated_data_root("needles");
     std::fs::create_dir_all(&root).map_err(|e| format!("create Needles shelf: {e}"))?;
-    write_blob(&root, BLOB, &report.markdown)?;
+    let file = pattern_file(&report.title);
+    write_blob(&root, &file, &report.markdown)?;
     let mut sent = 0;
     for chart in &report.charts {
         let Some(path) = chart_beside(input, chart) else {
@@ -527,14 +651,35 @@ fn transfer_sim(report: &Report, input: &Path) -> Result<(), String> {
         write_blob(&root, chart, &bytes)?;
         sent += 1;
     }
+    if replace {
+        for entry in std::fs::read_dir(&root).map_err(|e| format!("read Needles shelf: {e}"))? {
+            let name = entry
+                .map_err(|e| format!("read Needles shelf: {e}"))?
+                .file_name();
+            let name = name.to_string_lossy();
+            if is_pattern_file(&name) && name != file.as_str() {
+                std::fs::remove_file(root.join(name.as_ref()))
+                    .map_err(|e| format!("remove {name}: {e}"))?;
+            }
+        }
+    }
+    let existing = std::fs::read_to_string(root.join(INDEX)).unwrap_or_default();
+    let index = updated_index(&existing, &file, &report.title, replace);
+    write_blob(&root, INDEX, index.as_bytes())?;
+    let files = std::fs::read_dir(&root)
+        .map_err(|e| format!("read Needles shelf: {e}"))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
     if sent > 0 {
         println!(
             "Sent to simulator: {} and {sent} chart(s)\nAvailable offline in Needles.",
-            root.join(BLOB).display()
+            root.join(&file).display()
         );
     } else {
-        println!("{}", completion(CopyState::Simulator, &root.join(BLOB)));
+        println!("{}", completion(CopyState::Simulator, &root.join(&file)));
     }
+    print_on_reader(&patterns_on_reader(&files, &index));
     Ok(())
 }
 
@@ -716,10 +861,11 @@ fn read_limited(reader: &mut impl Read, limit: usize) -> Result<Vec<u8>, String>
     }
 }
 
-fn transfer(report: &Report, input: &Path, host: &str) -> Result<(), String> {
+fn transfer(report: &Report, input: &Path, host: &str, replace: bool) -> Result<(), String> {
+    let file = pattern_file(&report.title);
     let mut script =
         "set -e\nroot=/mnt/onboard/.adds/cobalt/data/needles\nmkdir -p \"$root\"\n".to_owned();
-    script.push_str(&blob_script(BLOB, &report.markdown));
+    script.push_str(&blob_script(&file, &report.markdown));
     let mut sent = 0;
     for chart in &report.charts {
         let Some(path) = chart_beside(input, chart) else {
@@ -730,11 +876,7 @@ fn transfer(report: &Report, input: &Path, host: &str) -> Result<(), String> {
         script.push_str(&blob_script(chart, &bytes));
         sent += 1;
     }
-    script.push_str("sync\nprintf 'Sent to reader: Needles pattern'\n");
-    if sent > 0 {
-        script.push_str(&format!(" && printf ' and {sent} chart(s)'"));
-    }
-    script.push_str(" && printf '\\nAvailable offline in Needles.\\n'\n");
+    script.push_str(&index_script(&file, &report.title, replace));
     let output = super::run_remote_shell(
         &format!("root@{host}"),
         &script,
@@ -747,8 +889,52 @@ fn transfer(report: &Report, input: &Path, host: &str) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    print!("{}", String::from_utf8_lossy(&output.stdout));
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let (files, index) = listing
+        .split_once("--index\n")
+        .unwrap_or((listing.as_ref(), ""));
+    let files = files
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && *line != "--files")
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if sent > 0 {
+        println!("Sent to reader: {} and {sent} chart(s).", report.title);
+    } else {
+        println!("Sent to reader: {}.", report.title);
+    }
+    print_on_reader(&patterns_on_reader(&files, index));
     Ok(())
+}
+
+/// Rewrites the reader's index the way [`updated_index`] does, and prints
+/// the shelf and the index back so the computer can say what is there now.
+fn index_script(file: &str, title: &str, replace: bool) -> String {
+    let line = super::base64_encode(format!("{file}\t{}\n", index_title(title)).as_bytes());
+    let clear = if replace {
+        format!(
+            "for old in \"$root\"/pattern.md \"$root\"/pattern-*.md; do\n\
+             \x20 if [ -e \"$old\" ] && [ \"$old\" != \"$root/{file}\" ]; then rm -f \"$old\"; fi\n\
+             done\n\
+             : > \"$root/{INDEX}.new\"\n"
+        )
+    } else {
+        format!(
+            "touch \"$root/{INDEX}\"\n\
+             awk -F '\\t' -v sent='{file}' '$1 != sent' \"$root/{INDEX}\" > \"$root/{INDEX}.new\"\n"
+        )
+    };
+    format!(
+        "{clear}printf '%s' '{line}' | base64 -d >> \"$root/{INDEX}.new\"\n\
+         chmod 600 \"$root/{INDEX}.new\"\n\
+         mv -f \"$root/{INDEX}.new\" \"$root/{INDEX}\"\n\
+         sync\n\
+         echo --files\n\
+         ls -1 \"$root\"\n\
+         echo --index\n\
+         cat \"$root/{INDEX}\"\n"
+    )
 }
 
 fn blob_script(name: &str, bytes: &[u8]) -> String {
@@ -836,8 +1022,9 @@ mod tests {
     }
 
     use super::{
-        command, completion, has_extension, has_text_extension, prepare_any, read_limited,
-        read_pattern, select_section, transfer_sim, CopyState, BLOB, USAGE,
+        command, completion, has_extension, has_text_extension, index_script, is_pattern_file,
+        pattern_file, patterns_on_reader, prepare_any, read_limited, read_pattern, select_section,
+        transfer_sim, updated_index, CopyState, BLOB, INDEX, USAGE,
     };
     use std::io::Cursor;
     use std::path::{Path, PathBuf};
@@ -976,18 +1163,76 @@ mod tests {
         let chart = path.parent().expect("parent").join("chart-cuff.png");
         std::fs::write(&chart, b"png-bytes").expect("chart fixture");
         let report = prepare_any(&path, None, None).expect("prepared");
-        transfer_sim(&report, &path).expect("transfer");
+        transfer_sim(&report, &path, false).expect("transfer");
         let root = kobo_sim::simulated_data_root("needles");
-        let written = std::fs::read(root.join(BLOB)).expect("shelf blob");
+        let written = std::fs::read(root.join("pattern-simmed.md")).expect("shelf blob");
         assert_eq!(written, report.markdown);
         assert_eq!(
             std::fs::read(root.join("chart-cuff.png")).expect("shelf chart"),
             b"png-bytes"
         );
+        assert!(std::fs::read_to_string(root.join(INDEX))
+            .expect("index")
+            .contains("pattern-simmed.md\tSimmed\n"));
         std::fs::remove_file(path).expect("cleanup");
         std::fs::remove_file(chart).expect("cleanup");
-        std::fs::remove_file(root.join(BLOB)).expect("cleanup");
+        std::fs::remove_file(root.join("pattern-simmed.md")).expect("cleanup");
         std::fs::remove_file(root.join("chart-cuff.png")).expect("cleanup");
+    }
+
+    #[test]
+    fn each_pattern_gets_its_own_shelf_file_named_after_its_title() {
+        assert_eq!(pattern_file("Winter Socks"), "pattern-winter-socks.md");
+        assert_eq!(
+            pattern_file("Hitchhiker's Shawl (v2)"),
+            "pattern-hitchhiker-s-shawl-v2.md"
+        );
+        assert!(pattern_file("編み物").starts_with("pattern-"));
+        let long = pattern_file(&"very long name ".repeat(10));
+        assert!(long.len() <= 64, "{long}");
+        assert!(is_pattern_file(&long));
+    }
+
+    #[test]
+    fn a_push_adds_to_the_index_and_replace_leaves_one_pattern() {
+        let existing = "pattern-winter-socks.md\tWinter Socks\npattern-lace.md\tLace\n";
+        assert_eq!(
+            updated_index(existing, "pattern-lace.md", "Lace Shawl", false),
+            "pattern-winter-socks.md\tWinter Socks\npattern-lace.md\tLace Shawl\n"
+        );
+        assert_eq!(
+            updated_index(existing, "pattern-hat.md", "Hat\tand\nscarf", false),
+            format!("{existing}pattern-hat.md\tHat and scarf\n")
+        );
+        assert_eq!(
+            updated_index(existing, "pattern-hat.md", "Hat", true),
+            "pattern-hat.md\tHat\n"
+        );
+        let files = [
+            "pattern.md",
+            "pattern-hat.md",
+            "pattern-winter-socks.md",
+            "chart-cuff.png",
+            "patterns.tsv",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            patterns_on_reader(
+                &files,
+                "pattern-winter-socks.md\tWinter Socks\npattern-hat.md\tHat\n"
+            ),
+            ["Winter Socks", "Hat", "pattern.md"]
+        );
+    }
+
+    #[test]
+    fn the_device_script_keeps_other_patterns_unless_told_to_replace() {
+        let adding = index_script("pattern-hat.md", "Hat", false);
+        assert!(adding.contains("awk -F"));
+        assert!(!adding.contains("rm -f"));
+        let replacing = index_script("pattern-hat.md", "Hat", true);
+        assert!(replacing.contains("rm -f \"$old\""));
+        assert!(replacing.contains("!= \"$root/pattern-hat.md\""));
     }
 
     #[test]

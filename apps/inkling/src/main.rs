@@ -1,13 +1,51 @@
 //! Inkling: a deterministic, offline five-letter daily puzzle.
+use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
+use kobo_sdk::game::{Menu, Tap};
 use kobo_sdk::keyboard::{Keyboard, Pressed};
-use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
+use kobo_sdk::{
+    action_id, ActionId, BandAlign, BannerLevel, CellTone, Context, Glyph, KoboApp, Screen,
+    ScreenBuilder, SlotWidth, Space, StoreResult,
+};
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 const STATE: &str = "inkling-state-v1";
 const EXPORT: &str = "export-result.txt";
 const SALT: &str = "inkling-offline-2026";
 const ARCHIVE_DAYS: i64 = 365;
 const ARCHIVE_PAGE: usize = 5;
+/// Widths to try for the board above the keyboard, in tenths of a
+/// millimetre, widest first.
+///
+/// A board is sized to the room left under it, and the keyboard is added
+/// after it, so a board left to size itself took the whole panel and the
+/// keys went off the bottom. The widest that leaves the keys whole on this
+/// panel at this text size is measured once and kept for the whole game, so
+/// the board never changes size between guesses.
+/// The narrowest is five squares of the smallest touch target. The keys of a
+/// word game are three rows rather than four, which is what lets the wider
+/// sizes fit over them on a Clara BW at the usual text size.
+const BOARD_WHILE_TYPING: [u16; 7] = [540, 500, 450, 420, 405, 390, 370];
+/// The same once the game is over and the keys are gone.
+const BOARD_AT_REST: [u16; 6] = [600, 540, 480, 420, 360, 300];
+type BoardSlot<'a> = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder + 'a>;
+/// The guess number beside each bar of the statistics, and the count after
+/// it, in tenths of a millimetre: wide enough for "6" and for "999".
+const STATS_LABEL_WIDTH: u16 = 50;
+/// The bars of the statistics, in tenths of a millimetre. The longest leaves
+/// room for its count on the narrowest panel either way up.
+const STATS_BAR_LONGEST: u16 = 500;
+const STATS_BAR_SHORTEST: u16 = 40;
+/// The width of the example guess on the rules screen, the narrowest whose
+/// squares are still a touch target wide.
+const EXAMPLE_WIDTH: u16 = 420;
+/// The guess on the rules screen that shows the three tones.
+const EXAMPLE: [(char, CellTone); 5] = [
+    ('S', CellTone::Solid),
+    ('T', CellTone::Shaded),
+    ('O', CellTone::Faded),
+    ('R', CellTone::Faded),
+    ('Y', CellTone::Faded),
+];
+const FIRST_NOTICE: &str = "Six guesses. Type a five-letter word, then tap Guess.";
 const ANSWERS: &[&str] = &[
     "crane", "stare", "piano", "flint", "woven", "mirth", "caper", "bloom", "quiet", "ridge",
     "slope", "charm", "about", "above", "abuse", "actor", "acute", "admit", "adopt", "adult",
@@ -410,11 +448,35 @@ fn short_date(date: &str) -> String {
         day
     )
 }
+/// Today's date on the reader's own calendar. Counted in UTC, the next
+/// day's puzzle arrived mid-afternoon in California and mid-morning in
+/// Sydney, and an evening game was saved against the wrong day.
 fn today() -> String {
-    let days = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs() / 86_400);
-    civil_date(i64::try_from(days).unwrap_or(i64::MAX))
+    civil_date(
+        SystemClock::reader()
+            .now()
+            .ok()
+            .and_then(Snapshot::local_day)
+            .unwrap_or_default(),
+    )
+}
+/// What the Hard mode switch says is true now, longest first. A switch's
+/// summary is one line, so a small panel at a large size takes the first
+/// that is drawn whole, and nothing where none is.
+const fn hard_summaries(hard: bool) -> [&'static str; 3] {
+    if hard {
+        [
+            "Each guess must use the letters found.",
+            "Guesses keep found letters.",
+            "",
+        ]
+    } else {
+        [
+            "Guesses can leave out letters found.",
+            "Found letters are optional.",
+            "",
+        ]
+    }
 }
 fn hard_allows(answer: &str, prior: &[String], guess: &str) -> bool {
     let guess_bytes = guess.as_bytes();
@@ -462,6 +524,14 @@ enum View {
     Archive,
 }
 
+/// How the statistics show the number of guesses each win took.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Guesses {
+    Bars,
+    Sentence,
+    Hidden,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ExportStatus {
     #[default]
@@ -469,6 +539,29 @@ enum ExportStatus {
     Writing,
     Saved,
     Failed,
+}
+
+/// How the board screen fits the panel and text size in use, measured once.
+#[derive(Clone, Copy, Debug)]
+struct Fit {
+    /// Board widths while typing, and at rest.
+    widths: (u16, u16),
+    /// Whether the board and the keys fit on one screen at all. At the very
+    /// largest text sizes they do not, and typing opens a screen of its own
+    /// whose keys carry what the board has found.
+    keys: bool,
+    measured_for: Option<kobo_sdk::DisplayMetrics>,
+}
+impl Default for Fit {
+    fn default() -> Self {
+        Self {
+            // Until the panel is measured, a board that fits over the keys of
+            // a Clara BW at the usual text size.
+            widths: (BOARD_WHILE_TYPING[2], BOARD_AT_REST[0]),
+            keys: true,
+            measured_for: None,
+        }
+    }
 }
 
 struct Game {
@@ -482,12 +575,21 @@ struct Game {
     notice: String,
     export_status: ExportStatus,
     hard: bool,
+    menu: Menu,
+    fit: Fit,
+    /// On the typing screen of its own, used only when the keys do not fit
+    /// under the board.
     typing: bool,
     view: View,
     load: LoadState,
     played: u32,
     wins: u32,
     dist: [u32; 6],
+    /// Daily puzzles solved one after another, ending on `last_won`.
+    streak: u32,
+    best_streak: u32,
+    /// The last day whose daily puzzle was solved, empty before the first.
+    last_won: String,
 }
 impl Default for Game {
     fn default() -> Self {
@@ -504,16 +606,21 @@ impl Game {
             archive_page: 0,
             daily: Vec::new(),
             archive_guesses: Vec::new(),
-            keyboard: Keyboard::new(),
-            notice: "Six guesses. Shapes, not color, carry the state.".into(),
+            keyboard: Keyboard::for_words(),
+            notice: FIRST_NOTICE.into(),
             export_status: ExportStatus::Idle,
             hard: false,
+            menu: Menu::default(),
+            fit: Fit::default(),
             typing: false,
             view: View::Board,
             load: LoadState::Pending,
             played: 0,
             wins: 0,
             dist: [0; 6],
+            streak: 0,
+            best_streak: 0,
+            last_won: String::new(),
         }
     }
     fn guesses(&self) -> &Vec<String> {
@@ -530,7 +637,7 @@ impl Game {
 impl Game {
     fn encode(&self) -> Vec<u8> {
         format!(
-            "2|{}|{}|{}|{}|{}|{}",
+            "3|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.today,
             u8::from(self.hard),
             self.played,
@@ -540,6 +647,9 @@ impl Game {
                 .map(u32::to_string)
                 .collect::<Vec<_>>()
                 .join(","),
+            self.streak,
+            self.best_streak,
+            self.last_won,
             self.daily.join(",")
         )
         .into_bytes()
@@ -553,9 +663,12 @@ impl Game {
         let version = match fields.first().copied() {
             Some("1") => 1,
             Some("2") => 2,
+            Some("3") => 3,
             _ => return false,
         };
-        if fields.len() != version + 5 {
+        // Version 3 added the streak, the best streak and the day of the last
+        // win, after the guess counts.
+        if fields.len() != if version == 3 { 10 } else { version + 5 } {
             return false;
         }
         let hard = match fields.get(2).copied() {
@@ -570,7 +683,7 @@ impl Game {
             return false;
         }
         let mut dist = [0_u32; 6];
-        if version == 2 {
+        if version >= 2 {
             let counts = fields[5].split(',').collect::<Vec<_>>();
             if counts.len() != 6 {
                 return false;
@@ -585,7 +698,22 @@ impl Game {
                 return false;
             }
         }
-        let guesses_field = fields[version + 4];
+        let (streak, best_streak, last_won) = if version == 3 {
+            let (Ok(streak), Ok(best)) = (fields[6].parse::<u32>(), fields[7].parse::<u32>())
+            else {
+                return false;
+            };
+            if streak > best
+                || best > wins
+                || !(fields[8].is_empty() || parse_date(fields[8]).is_some())
+            {
+                return false;
+            }
+            (streak, best, fields[8].to_owned())
+        } else {
+            (0, 0, String::new())
+        };
+        let guesses_field = fields[fields.len() - 1];
         let guesses = if guesses_field.is_empty() {
             Vec::new()
         } else {
@@ -616,6 +744,9 @@ impl Game {
         self.played = played;
         self.wins = wins;
         self.dist = dist;
+        self.streak = streak;
+        self.best_streak = best_streak;
+        self.last_won = last_won;
         self.hard = hard;
         if fields[1] == self.today {
             self.daily = guesses;
@@ -639,7 +770,9 @@ impl Game {
         if self.done() {
             return;
         }
-        let guess = self.keyboard.take().to_ascii_lowercase();
+        // A refused word stays on the board, so fixing one letter is one
+        // backspace rather than five letters typed again.
+        let guess = self.keyboard.text().to_ascii_lowercase();
         if guess.len() != 5 {
             self.notice = "Use five letters.".into();
             return;
@@ -649,9 +782,10 @@ impl Game {
             return;
         }
         if self.hard && !hard_allows(self.answer(), self.guesses(), &guess) {
-            self.notice = "Hard mode requires every revealed letter and position.".into();
+            self.notice = "Hard mode: use every letter you have found, in its right spot.".into();
             return;
         }
+        self.keyboard.clear();
         let answer = self.answer();
         if self.archive {
             self.archive_guesses.push(guess.clone());
@@ -664,6 +798,15 @@ impl Game {
                 self.wins = self.wins.saturating_add(1);
                 let slot = self.daily.len().saturating_sub(1).min(5);
                 self.dist[slot] = self.dist[slot].saturating_add(1);
+                self.streak = if self.last_won == shift_date(&self.today, -1) {
+                    self.streak.saturating_add(1)
+                } else {
+                    1
+                };
+                self.best_streak = self.best_streak.max(self.streak);
+                self.last_won.clone_from(&self.today);
+            } else {
+                self.streak = 0;
             }
         }
         self.notice = if guess == answer {
@@ -679,66 +822,77 @@ impl Game {
         };
     }
 
-    fn cell(&self, row: usize, col: usize) -> String {
+    /// One square of the board: its letter, and the tone it is printed in.
+    ///
+    /// Every square used to be the same grey key with brackets or a cross
+    /// typed beside the letter, so the state had to be read letter by letter.
+    /// A square is now printed the way a puzzle page prints it: solid black
+    /// for the right letter in the right place, grey in a heavy rule for a
+    /// letter that is in the word somewhere else, and a faint letter on paper
+    /// for one that is not in the word. The row being typed shows its letters
+    /// plain, on the row after the last guess.
+    fn cell(&self, row: usize, col: usize) -> (String, CellTone) {
         if let Some(guess) = self.guesses().get(row) {
             let letter = guess.chars().nth(col).unwrap_or(' ').to_ascii_uppercase();
-            match marks(self.answer(), guess)[col] {
-                Mark::Placed => format!("[{letter}]"),
-                Mark::Present => format!("({letter})"),
-                Mark::Absent => format!("{letter}\u{00d7}"),
-            }
+            let tone = match marks(self.answer(), guess)[col] {
+                Mark::Placed => CellTone::Solid,
+                Mark::Present => CellTone::Shaded,
+                Mark::Absent => CellTone::Faded,
+            };
+            (letter.to_string(), tone)
+        } else if row == self.guesses().len() && !self.done() {
+            let typed = self
+                .keyboard
+                .text()
+                .chars()
+                .nth(col)
+                .map_or_else(String::new, |letter| {
+                    letter.to_ascii_uppercase().to_string()
+                });
+            (typed, CellTone::Plain)
         } else {
-            " ".into()
+            (String::new(), CellTone::Plain)
         }
     }
 
-    fn knowledge(&self) -> String {
-        if self.guesses().is_empty() {
-            return "No letters known yet.".into();
-        }
+    /// The keyboard as it is drawn, each letter's key in the strongest tone
+    /// that letter has had on the board.
+    ///
+    /// This is what the line of found letters under the board used to spell
+    /// out, "Right spot: _RA__, Out: C E N". The keys are where the next
+    /// guess is chosen, so that is where it is shown.
+    fn keys(&self) -> Keyboard {
+        let mut keys = self.keyboard.clone();
+        keys.clear_tones();
         let answer = self.answer();
-        let mut slots = ['_'; 5];
-        let mut present = Vec::new();
-        let mut absent = Vec::new();
-        for letter in b'a'..=b'z' {
-            let mut best = Mark::Absent;
-            let mut seen = false;
-            for guess in self.guesses() {
-                for (index, mark) in marks(answer, guess).into_iter().enumerate() {
-                    if guess.as_bytes()[index] == letter {
-                        seen = true;
-                        best = match (best, mark) {
-                            (Mark::Placed, _) | (_, Mark::Placed) => Mark::Placed,
-                            (Mark::Present, _) | (_, Mark::Present) => Mark::Present,
-                            _ => Mark::Absent,
-                        };
-                        if mark == Mark::Placed {
-                            slots[index] = (letter as char).to_ascii_uppercase();
-                        }
-                    }
+        for guess in self.guesses() {
+            for (letter, mark) in guess.chars().zip(marks(answer, guess)) {
+                let tone = match mark {
+                    Mark::Placed => CellTone::Solid,
+                    Mark::Present => CellTone::Shaded,
+                    Mark::Absent => CellTone::Faded,
+                };
+                let stronger = match (keys.tone(letter), tone) {
+                    (CellTone::Solid, _) => false,
+                    (CellTone::Shaded, tone) => tone == CellTone::Solid,
+                    _ => true,
+                };
+                if stronger {
+                    keys.set_tone(letter, tone);
                 }
             }
-            if !seen {
-                continue;
-            }
-            let upper = (letter as char).to_ascii_uppercase();
-            match best {
-                Mark::Placed => {}
-                Mark::Present => present.push(upper.to_string()),
-                Mark::Absent => absent.push(upper.to_string()),
-            }
         }
-        let mut parts = Vec::new();
-        if slots.iter().any(|slot| *slot != '_') {
-            parts.push(format!("Placed: {}", slots.iter().collect::<String>()));
+        keys
+    }
+
+    /// The streak as it stands today: one that missed yesterday's puzzle is
+    /// over, though nothing is saved until the next win or loss says so.
+    fn current_streak(&self) -> u32 {
+        if self.last_won == self.today || self.last_won == shift_date(&self.today, -1) {
+            self.streak
+        } else {
+            0
         }
-        if !present.is_empty() {
-            parts.push(format!("In word: {}", present.join(" ")));
-        }
-        if !absent.is_empty() {
-            parts.push(format!("Out: {}", absent.join(" ")));
-        }
-        parts.join("  \u{00b7}  ")
     }
 
     fn export_text(&self) -> String {
@@ -785,94 +939,340 @@ impl Game {
         out
     }
 
+    /// Measures the widest board that fits this panel, once per panel and
+    /// text size, against the fullest board the game can show.
+    fn fit(&mut self, metrics: kobo_sdk::DisplayMetrics) {
+        if self.fit.measured_for == Some(metrics) {
+            return;
+        }
+        let chrome = kobo_sdk::Chrome::measuring(true);
+        let fits = |game: &Self, width: u16| {
+            game.board_at(width)
+                .diagnostics(&metrics, &chrome)
+                .issues
+                .is_empty()
+        };
+        let mut probe = Self::for_day(&self.today);
+        probe.notice = "Hard mode: use every letter you have found, in its right spot.".into();
+        probe.daily = ["crane", "stare", "piano", "flint", "woven"]
+            .map(String::from)
+            .to_vec();
+        probe.keyboard = Keyboard::for_words().typed("abcde");
+        let typing = BOARD_WHILE_TYPING
+            .into_iter()
+            .find(|width| fits(&probe, *width));
+        let keys_fit = typing.is_some();
+        let typing = typing.unwrap_or(BOARD_WHILE_TYPING[BOARD_WHILE_TYPING.len() - 1]);
+        probe.daily.push("bloom".into());
+        let resting = BOARD_AT_REST
+            .into_iter()
+            .find(|width| fits(&probe, *width))
+            .unwrap_or(BOARD_AT_REST[BOARD_AT_REST.len() - 1]);
+        self.fit = Fit {
+            widths: (typing, resting),
+            keys: keys_fit,
+            measured_for: Some(metrics),
+        };
+    }
+
+    fn show(&mut self, c: &mut Context) {
+        self.fit(c.metrics());
+        c.set_screen(self.screen());
+    }
+
     fn board(&self) -> Screen {
+        self.board_at(if self.done() || !self.fit.keys {
+            self.fit.widths.1
+        } else {
+            self.fit.widths.0
+        })
+    }
+
+    fn board_at(&self, width: u16) -> Screen {
         let title = if self.archive {
             format!("Archive \u{00b7} {}", short_date(&self.date))
         } else {
             format!("Inkling \u{00b7} {}", short_date(&self.today))
         };
-        let cells = (0..30).map(|i| (format!("cell-{i}"), self.cell(i / 5, i % 5)));
+        // Hard mode is a switch on the Rules screen. In this menu, which
+        // cannot hold one, "Hard mode: off" read as an order as easily as a
+        // report of the setting.
+        let mut more = vec![("stats", "Statistics")];
+        if self.archive {
+            more.push(("today", "Today's puzzle"));
+        }
+        let playing = !self.done();
         let builder = ScreenBuilder::new("inkling")
-            .top_bar(title)
-            .top_bar_glyph("how-to-play", "How to play", Glyph::Note)
-            .secondary(&self.notice)
-            .grid(5, false, cells);
-        let builder = if self.done() {
+            .game_top_bar(title, self.menu, more)
+            .secondary(&self.notice);
+        // Paper either side, so the board sits in the middle of the panel at
+        // the width it was given rather than against the left margin.
+        let slots: [(SlotWidth, BoardSlot<'_>); 3] = [
+            (SlotWidth::Fill, Box::new(|b| b)),
+            (
+                SlotWidth::Fixed(width),
+                Box::new(|b| {
+                    b.board_with_tones(
+                        5,
+                        (0..30).map(|i| {
+                            let (label, tone) = self.cell(i / 5, i % 5);
+                            (format!("cell-{i}"), label, tone)
+                        }),
+                    )
+                }),
+            ),
+            (SlotWidth::Fill, Box::new(|b| b)),
+        ];
+        // What the guesses have found is on the tiles and on the keys, so
+        // nothing under the board spells it out again.
+        let builder = builder.band(BandAlign::Top, slots);
+        if playing && self.fit.keys {
+            // A margin of paper keeps the board and its lines off the keys.
+            // The board is measured with it, so a panel without the room
+            // gets a narrower board rather than squares pressed on the keys.
             builder
+                .spacer(Space::Small)
+                .keyboard(&self.keys(), "Guess")
+                .build()
+        } else if playing {
+            builder.primary_button("enter", "Type a guess").build()
         } else {
-            builder.button("enter", "Enter guess")
-        };
-        builder
-            .action_bar([
-                (
-                    "hard",
-                    if self.hard {
-                        "Hard mode on"
-                    } else {
-                        "Hard mode off"
-                    },
-                ),
-                ("stats", "Stats"),
-                if self.archive {
-                    ("today", "Today")
-                } else {
-                    ("archive", "Archive")
-                },
-            ])
-            .build()
-    }
-
-    fn help_screen() -> Screen {
-        ScreenBuilder::new("inkling-help")
-            .top_bar("How to play")
-            .owns_back(true)
-            .text("Find the five-letter word in six guesses. Type, then tap Guess.")
-            .text("[A] Right spot. (A) Wrong spot. A\u{00d7} Absent.")
-            .text("Known letters show as you type. Hard mode keeps known letters.")
-            .bottom_action("close-help", "Play")
-            .build()
-    }
-
-    fn stats_screen(&self) -> Screen {
-        let mut builder = ScreenBuilder::new("inkling-stats")
-            .top_bar("Daily statistics")
-            .owns_back(true)
-            .text(format!("Played {}. Won {}.", self.played, self.wins));
-        if self.played > 0 && self.dist.iter().all(|count| *count == 0) {
-            builder = builder.text("Guess counts are recorded from version 0.2.0 on.");
-        }
-        for (pair, counts) in self.dist.chunks(2).enumerate() {
-            if counts.iter().any(|count| *count > 0) {
-                builder = builder.secondary(format!(
-                    "{} {}: {} · {} guesses: {}",
-                    pair * 2 + 1,
-                    if pair == 0 { "guess" } else { "guesses" },
-                    counts[0],
-                    pair * 2 + 2,
-                    counts[1]
-                ));
+            let builder = builder.spacer(Space::Small).button("stats", "Statistics");
+            if self.archive {
+                builder.button("today", "Today's puzzle").build()
+            } else {
+                builder
+                    .button(kobo_sdk::game::NEW_GAME, "Play an earlier day")
+                    .build()
             }
         }
-        builder = builder.secondary(format!("Today is {}.", full_date(&self.today)));
-        builder = match self.export_status {
-            ExportStatus::Idle => builder,
-            ExportStatus::Writing => builder.secondary("Writing results…"),
-            ExportStatus::Saved => builder.secondary(format!("Saved as {EXPORT}.")),
-            ExportStatus::Failed => {
-                builder.secondary("Results could not be saved. Check storage and try again.")
-            }
-        };
-        builder = if self.export_status == ExportStatus::Writing {
-            builder.disabled_button("export", "Exporting results")
-        } else {
-            builder.button(
-                "export",
-                if self.export_status == ExportStatus::Failed {
-                    "Try export again"
-                } else {
-                    "Export results"
-                },
+    }
+
+    /// The rules, with Hard mode as a switch under them: the rule it adds is
+    /// read in the same place it is turned on, and the switch says what is
+    /// true now before anything is tapped.
+    fn help_screen(&self) -> Screen {
+        // One guess printed the way the board prints it, so the three tones
+        // are learned from a picture of them rather than from their names.
+        let example = |b: ScreenBuilder| {
+            b.board_with_tones(
+                5,
+                EXAMPLE
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (letter, tone))| (format!("example-{i}"), letter.to_string(), *tone)),
             )
+        };
+        let build = |summary: &str, shown: bool| {
+            let builder = ScreenBuilder::new("inkling-help")
+                .top_bar(kobo_sdk::game::RULES_LABEL)
+                .owns_back(true)
+                .text("Find the five-letter word in six guesses.");
+            let builder = if shown {
+                builder
+                    .spacer(Space::Small)
+                    .band(
+                        BandAlign::Top,
+                        [
+                            (SlotWidth::Fill, Box::new(|b| b) as BoardSlot<'_>),
+                            (SlotWidth::Fixed(EXAMPLE_WIDTH), Box::new(example)),
+                            (SlotWidth::Fill, Box::new(|b| b)),
+                        ],
+                    )
+                    .spacer(Space::Small)
+            } else {
+                builder
+            };
+            builder
+                .text("Black: right spot. Grey: wrong spot. Faint: not in the word.")
+                .text("New game opens earlier days.")
+                .toggle("hard", "Hard mode", summary, self.hard)
+                .bottom_action("close-help", "Play")
+                .build()
+        };
+        let summaries = hard_summaries(self.hard);
+        let Some(metrics) = self.fit.measured_for else {
+            return build(summaries[0], true);
+        };
+        // The example goes before the switch's summary does: at the largest
+        // sizes the words alone say what the tones are, and the switch has
+        // to say what it does.
+        let chrome = kobo_sdk::Chrome::measuring(true);
+        for shown in [true, false] {
+            for summary in summaries {
+                if shown && summary.is_empty() {
+                    continue;
+                }
+                let screen = build(summary, shown);
+                let layout = screen.layout_with(&metrics, &chrome);
+                if screen.diagnostics(&metrics, &chrome).issues.is_empty()
+                    && (summary.is_empty()
+                        || layout
+                            .nodes
+                            .iter()
+                            .any(|node| node.text_lines.iter().any(|line| line == summary)))
+                {
+                    return screen;
+                }
+            }
+        }
+        build("", false)
+    }
+
+    /// The daily record, set out the way a scorecard is: four numbers large
+    /// with their names under them, then how many guesses each win took as a
+    /// row of bars.
+    fn stats_screen(&self) -> Screen {
+        let Some(metrics) = self.fit.measured_for else {
+            return self.stats_screen_with(true, Guesses::Bars);
+        };
+        // At the largest text sizes four figures as headings and six bars do
+        // not fit over the controls, and the figures give their room first:
+        // they are as clear set as a list of facts, and the bars are the
+        // part a list cannot say. On the smallest panel at the largest text
+        // the counts become one sentence, and then go, before the controls.
+        let chrome = kobo_sdk::Chrome::measuring(true);
+        [
+            (true, Guesses::Bars),
+            (false, Guesses::Bars),
+            (false, Guesses::Sentence),
+        ]
+        .into_iter()
+        .map(|(large, guesses)| self.stats_screen_with(large, guesses))
+        .find(|screen| screen.diagnostics(&metrics, &chrome).issues.is_empty())
+        .unwrap_or_else(|| self.stats_screen_with(false, Guesses::Hidden))
+    }
+
+    /// The four figures of the record: large, two to a row, or as two short
+    /// lists when the panel cannot spare the room.
+    fn stats_figures(&self, builder: ScreenBuilder, large_figures: bool) -> ScreenBuilder {
+        let percent = (self.wins * 100).checked_div(self.played).unwrap_or(0);
+        let figure = |value: String, name: &'static str| {
+            move |b: ScreenBuilder| b.heading(value).secondary(name)
+        };
+        if large_figures {
+            builder
+                .band(
+                    BandAlign::Top,
+                    [
+                        (SlotWidth::Fill, figure(self.played.to_string(), "Played")),
+                        (SlotWidth::Fill, figure(format!("{percent}%"), "Solved")),
+                    ],
+                )
+                .band(
+                    BandAlign::Top,
+                    [
+                        (
+                            SlotWidth::Fill,
+                            figure(self.current_streak().to_string(), "Streak"),
+                        ),
+                        (
+                            SlotWidth::Fill,
+                            figure(self.best_streak.to_string(), "Best streak"),
+                        ),
+                    ],
+                )
+        } else {
+            // Two short lists side by side where the panel is wide enough,
+            // which the band decides, so the four take two lines, not four.
+            let played = [
+                ("Played", self.played.to_string()),
+                ("Solved", format!("{percent}%")),
+            ];
+            let streaks = [
+                ("Streak", self.current_streak().to_string()),
+                ("Best streak", self.best_streak.to_string()),
+            ];
+            builder.band(
+                BandAlign::Top,
+                [
+                    (
+                        SlotWidth::Fill,
+                        Box::new(move |b: ScreenBuilder| b.facts(played)) as BoardSlot<'_>,
+                    ),
+                    (
+                        SlotWidth::Fill,
+                        Box::new(move |b: ScreenBuilder| b.facts(streaks)),
+                    ),
+                ],
+            )
+        }
+    }
+
+    fn stats_screen_with(&self, large_figures: bool, guesses: Guesses) -> Screen {
+        let builder = ScreenBuilder::new("inkling-stats")
+            .top_bar("Statistics")
+            .owns_back(true);
+        let builder = self.stats_figures(builder, large_figures);
+        let mut builder = builder;
+        if guesses != Guesses::Hidden {
+            builder = builder.section("Guesses");
+        }
+        if guesses == Guesses::Sentence {
+            let counts = self.dist.map(|count| count.to_string()).join(", ");
+            builder = builder.text(format!("Wins in 1 to 6 guesses: {counts}."));
+        }
+        if self.played > 0 && self.dist.iter().all(|count| *count == 0) {
+            builder = builder.secondary("Guess counts are recorded from version 0.2.0 on.");
+        }
+        // Each bar is measured against the longest, so the shape of the
+        // record shows however many games it holds, and its count is set at
+        // its end. A bar is a run of solid ink with no track behind it: a
+        // grey track the width of the page drew every empty row as a long
+        // grey bar, which read as the opposite of none.
+        let most = self.dist.iter().copied().max().unwrap_or(0).max(1);
+        for (index, count) in self
+            .dist
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|_| guesses == Guesses::Bars)
+        {
+            let label = (
+                SlotWidth::Fixed(STATS_LABEL_WIDTH),
+                Box::new(move |b: ScreenBuilder| b.text((index + 1).to_string())) as BoardSlot<'_>,
+            );
+            let figure = (
+                SlotWidth::Fill,
+                Box::new(move |b: ScreenBuilder| b.text(count.to_string())) as BoardSlot<'_>,
+            );
+            builder = if count == 0 {
+                builder.band(BandAlign::Middle, [label, figure])
+            } else {
+                let length = u16::try_from(
+                    u32::from(STATS_BAR_SHORTEST)
+                        + u32::from(STATS_BAR_LONGEST - STATS_BAR_SHORTEST) * count / most,
+                )
+                .unwrap_or(STATS_BAR_LONGEST);
+                builder.band(
+                    BandAlign::Middle,
+                    [
+                        label,
+                        (SlotWidth::Fixed(length), Box::new(|b| b.progress(100))),
+                        figure,
+                    ],
+                )
+            };
+        }
+        // A failed export is a banner carrying its retry, so it is not missed
+        // in muted type and there is one control for it rather than a second
+        // button under the words. A finished one says so at Success.
+        builder = match self.export_status {
+            ExportStatus::Idle => builder
+                .spacer(Space::Small)
+                .button("export", "Export results"),
+            ExportStatus::Writing => builder
+                .secondary("Writing results…")
+                .disabled_button("export", "Exporting results"),
+            ExportStatus::Saved => builder
+                .banner(BannerLevel::Success, format!("Saved as {EXPORT}."))
+                .button("export", "Export results"),
+            ExportStatus::Failed => builder
+                .banner(
+                    BannerLevel::Error,
+                    "Results could not be saved. Check storage.",
+                )
+                .banner_action("export", "Try again"),
         };
         builder.bottom_action("close-stats", "Play").build()
     }
@@ -915,8 +1315,7 @@ impl Game {
             .top_bar(if self.archive { "Archive" } else { "Inkling" })
             .owns_back(true)
             .typed(&self.keyboard, "Type five letters")
-            .text(self.knowledge())
-            .keyboard(&self.keyboard, "Guess")
+            .keyboard(&self.keys(), "Guess")
             .bottom_action("cancel", "Cancel")
             .build()
     }
@@ -926,6 +1325,7 @@ impl Game {
         self.date = shift_date(&self.today, -back);
         self.archive = true;
         self.archive_guesses.clear();
+        self.keyboard = Keyboard::for_words();
         self.notice = format!(
             "Archive puzzle from {}. Statistics count today's game only.",
             full_date(&self.date)
@@ -933,25 +1333,70 @@ impl Game {
         self.view = View::Board;
     }
 
+    /// A tap on the board screen that the shared controls did not take.
+    /// Returns whether to redraw and whether to save.
+    fn board_action(&mut self, a: ActionId) -> (bool, bool) {
+        if !self.fit.keys && !self.done() {
+            if !self.typing {
+                if a == action_id("enter") {
+                    self.typing = true;
+                    return (true, false);
+                }
+            } else if a == action_id("cancel") || a == ActionId::BACK {
+                self.typing = false;
+                return (true, false);
+            }
+        }
+        if !self.done() && (self.fit.keys || self.typing) {
+            // The board shows five squares a row, so a sixth letter would be
+            // typed somewhere nobody can see it.
+            if self.keyboard.resolves(a).is_some() && self.keyboard.text().chars().count() >= 5 {
+                return (false, false);
+            }
+            if let Some(pressed) = self.keyboard.press(a) {
+                if pressed == Pressed::Submitted {
+                    self.typing = false;
+                    self.submit();
+                    return (true, !self.archive);
+                }
+                return (true, false);
+            }
+        }
+        if a == action_id("stats") {
+            self.view = View::Stats;
+            return (true, false);
+        }
+        if a == action_id("today") && self.archive {
+            self.archive = false;
+            self.date = self.today.clone();
+            self.keyboard = Keyboard::for_words();
+            let answer = self.answer();
+            self.notice = if self.daily.last().is_some_and(|guess| *guess == answer) {
+                "Solved.".into()
+            } else if self.done() {
+                format!("Answer: {}", answer.to_ascii_uppercase())
+            } else {
+                "Back to today's puzzle.".into()
+            };
+            return (true, false);
+        }
+        (false, false)
+    }
+
     fn screen(&self) -> Screen {
         match self.view {
-            View::Help => Self::help_screen(),
+            View::Help => self.help_screen(),
             View::Stats => self.stats_screen(),
             View::Archive => self.archive_screen(),
-            View::Board => {
-                if self.typing {
-                    self.typing_screen()
-                } else {
-                    self.board()
-                }
-            }
+            View::Board if self.typing && !self.fit.keys => self.typing_screen(),
+            View::Board => self.board(),
         }
     }
 }
 impl KoboApp for Game {
     fn on_start(&mut self, c: &mut Context) {
         c.store().load(STATE);
-        c.set_screen(self.screen());
+        self.show(c);
     }
     fn on_store(&mut self, c: &mut Context, result: StoreResult) {
         match result {
@@ -969,7 +1414,7 @@ impl KoboApp for Game {
             }
             _ => return,
         }
-        c.set_screen(self.screen());
+        self.show(c);
     }
     fn on_save(&mut self, c: &mut Context, key: &str, result: StoreResult) {
         if key != EXPORT {
@@ -984,7 +1429,7 @@ impl KoboApp for Game {
             StoreResult::Denied(_) => ExportStatus::Failed,
             _ => return,
         };
-        c.set_screen(self.screen());
+        self.show(c);
     }
     fn on_action(&mut self, c: &mut Context, a: ActionId) {
         if self.load == LoadState::Pending {
@@ -997,6 +1442,12 @@ impl KoboApp for Game {
                 if a == action_id("close-help") || a == ActionId::BACK {
                     self.view = View::Board;
                     changed = true;
+                } else if a == action_id("hard") {
+                    // Applied on the tap and saved with the game, the way a
+                    // switch is expected to behave.
+                    self.hard = !self.hard;
+                    changed = true;
+                    save = true;
                 }
             }
             View::Stats => {
@@ -1011,7 +1462,13 @@ impl KoboApp for Game {
                 }
             }
             View::Archive => {
-                if a == action_id("close-archive") || a == ActionId::BACK {
+                if (a == action_id("close-archive") || a == ActionId::BACK) && self.archive_page > 0
+                {
+                    // Back retraces the pages Earlier puzzles turned, as it
+                    // does everywhere else, before it leaves the archive.
+                    self.archive_page -= 1;
+                    changed = true;
+                } else if a == action_id("close-archive") || a == ActionId::BACK {
                     self.view = View::Board;
                     changed = true;
                 } else if a == action_id("earlier") {
@@ -1024,62 +1481,25 @@ impl KoboApp for Game {
                     changed = true;
                 }
             }
-            View::Board => {
-                if self.typing {
-                    if let Some(p) = self.keyboard.press(a) {
-                        changed = true;
-                        if p == Pressed::Submitted && !self.done() {
-                            self.submit();
-                            save = !self.archive;
-                            self.typing = false;
-                        }
-                    } else if a == action_id("cancel") || a == ActionId::BACK {
-                        self.typing = false;
-                        changed = true;
-                    }
-                } else if a == action_id("enter") && !self.done() {
-                    self.typing = true;
-                    changed = true;
-                } else if a == action_id("hard") {
-                    save = true;
-                    self.hard = !self.hard;
-                    self.notice = if self.hard {
-                        "Hard mode on."
-                    } else {
-                        "Hard mode off."
-                    }
-                    .into();
-                    changed = true;
-                } else if a == action_id("stats") {
-                    self.view = View::Stats;
-                    changed = true;
-                } else if a == action_id("archive") {
-                    self.archive_page = 0;
-                    self.view = View::Archive;
-                    changed = true;
-                } else if a == action_id("today") && self.archive {
-                    self.archive = false;
-                    self.date = self.today.clone();
-                    let answer = self.answer();
-                    self.notice = if self.daily.last().is_some_and(|guess| *guess == answer) {
-                        "Solved.".into()
-                    } else if self.done() {
-                        format!("Answer: {}", answer.to_ascii_uppercase())
-                    } else {
-                        "Back to today's puzzle.".into()
-                    };
-                    changed = true;
-                } else if a == action_id("how-to-play") {
+            View::Board => match self.menu.read(a) {
+                Some(Tap::Menu | Tap::Undo) => changed = true,
+                Some(Tap::Rules) => {
                     self.view = View::Help;
                     changed = true;
                 }
-            }
+                Some(Tap::NewGame) => {
+                    self.archive_page = 0;
+                    self.view = View::Archive;
+                    changed = true;
+                }
+                None => (changed, save) = self.board_action(a),
+            },
         }
         if save {
             c.store().save(STATE, self.encode());
         }
         if changed {
-            c.set_screen(self.screen());
+            self.show(c);
         }
     }
 }
@@ -1170,28 +1590,97 @@ mod tests {
         assert!(!hard_allows("caper", &prior, "crown"));
     }
     #[test]
-    fn knowledge_lists_known_letters() {
-        // The pinned day's answer is deterministic, so the line is exact.
+    fn each_key_takes_the_strongest_tone_its_letter_has_had_on_the_board() {
+        // The pinned day's answer is GRAVY, so every tone here is exact.
         let mut game = Game::for_day("2026-09-01");
         game.archive = true;
         game.archive_guesses = vec!["crane".into()];
-        assert_eq!(game.knowledge(), "Placed: _RA__  \u{00b7}  Out: C E N");
-        game.archive_guesses.push("gravy".into());
-        assert_eq!(game.knowledge(), "Placed: GRAVY  \u{00b7}  Out: C E N");
+        let keys = game.keys();
+        assert_eq!(keys.tone('r'), CellTone::Solid);
+        assert_eq!(keys.tone('a'), CellTone::Solid);
+        for letter in ['c', 'n', 'e'] {
+            assert_eq!(keys.tone(letter), CellTone::Faded, "{letter}");
+        }
+        assert_eq!(keys.tone('g'), CellTone::Plain);
+        // RIVAL finds V elsewhere and moves R and A out of place, but a key
+        // already known to be in its place stays solid.
+        game.archive_guesses.push("rival".into());
+        let keys = game.keys();
+        assert_eq!(keys.tone('v'), CellTone::Shaded);
+        assert_eq!(keys.tone('r'), CellTone::Solid);
+        assert_eq!(keys.tone('a'), CellTone::Solid);
+        assert_eq!(keys.tone('i'), CellTone::Faded);
     }
     #[test]
-    fn knowledge_is_empty_before_guesses() {
+    fn every_key_is_plain_before_the_first_guess() {
         let game = Game::for_day("2026-09-01");
-        assert_eq!(game.knowledge(), "No letters known yet.");
+        let keys = game.keys();
+        assert!(('a'..='z').all(|letter| keys.tone(letter) == CellTone::Plain));
+    }
+    #[test]
+    fn a_streak_grows_on_consecutive_days_and_ends_on_a_loss_or_a_missed_day() {
+        let win = |day: &str, streak: &mut (u32, u32, String)| {
+            let mut game = Game::for_day(day);
+            (game.streak, game.best_streak, game.last_won) = streak.clone();
+            game.keyboard = Keyboard::for_words().typed(game.answer());
+            game.submit();
+            *streak = (game.streak, game.best_streak, game.last_won.clone());
+            game
+        };
+        let mut record = (0, 0, String::new());
+        win("2026-09-01", &mut record);
+        let game = win("2026-09-02", &mut record);
+        assert_eq!(game.current_streak(), 2);
+        // A day missed: the streak still reads two until the next game, and
+        // nothing on the day after next can call it current.
+        let mut later = Game::for_day("2026-09-04");
+        (later.streak, later.best_streak, later.last_won) = record.clone();
+        assert_eq!(later.current_streak(), 0);
+        let game = win("2026-09-04", &mut record);
+        assert_eq!((game.current_streak(), game.best_streak), (1, 2));
+        // Six wrong guesses end it outright.
+        let mut lost = Game::for_day("2026-09-05");
+        (lost.streak, lost.best_streak, lost.last_won) = record.clone();
+        let wrong = if lost.answer() == "crane" {
+            "stare"
+        } else {
+            "crane"
+        };
+        for _ in 0..6 {
+            lost.keyboard = Keyboard::for_words().typed(wrong);
+            lost.submit();
+        }
+        assert_eq!((lost.current_streak(), lost.best_streak), (0, 2));
+    }
+    #[test]
+    fn the_streak_survives_a_save_and_older_saves_start_without_one() {
+        let mut game = Game::for_day("2026-09-01");
+        game.keyboard = Keyboard::for_words().typed(game.answer());
+        game.submit();
+        let mut restored = Game::for_day("2026-09-01");
+        assert!(restored.restore(&game.encode()));
+        assert_eq!(
+            (
+                restored.streak,
+                restored.best_streak,
+                restored.last_won.as_str()
+            ),
+            (1, 1, "2026-09-01")
+        );
+        let mut old = Game::for_day("2026-09-01");
+        assert!(old.restore(b"2|2026-09-01|0|3|2|0,1,1,0,0,0|"));
+        assert_eq!((old.played, old.streak, old.best_streak), (3, 0, 0));
+        let mut broken = Game::for_day("2026-09-01");
+        assert!(!broken.restore(b"3|2026-09-01|0|3|2|0,1,1,0,0,0|4|3|2026-08-31|"));
     }
     #[test]
     fn statistics_count_daily_games_with_distribution() {
         let mut game = Game::for_day("2026-09-01");
         let answer = game.answer().to_owned();
         let filler = if answer == "grape" { "adore" } else { "grape" };
-        game.keyboard = Keyboard::with_text(filler);
+        game.keyboard = Keyboard::for_words().typed(filler);
         game.submit();
-        game.keyboard = Keyboard::with_text(answer);
+        game.keyboard = Keyboard::for_words().typed(answer);
         game.submit();
         assert_eq!((game.played, game.wins), (1, 1));
         assert_eq!(game.dist, [0, 1, 0, 0, 0, 0]);
@@ -1205,7 +1694,7 @@ mod tests {
             .find(|word| *word != answer)
             .expect("a filler word");
         for _ in 0..6 {
-            game.keyboard = Keyboard::with_text(filler);
+            game.keyboard = Keyboard::for_words().typed(filler);
             game.submit();
         }
         assert!(game.done());
@@ -1213,12 +1702,31 @@ mod tests {
         assert_eq!(game.dist, [0; 6]);
     }
     #[test]
+    fn back_on_an_earlier_archive_page_returns_to_the_page_before_it() {
+        let mut game = Game {
+            view: View::Archive,
+            load: LoadState::Ready,
+            ..Game::for_day("2026-09-01")
+        };
+        let mut context = Context::default();
+        game.on_action(&mut context, action_id("earlier"));
+        game.on_action(&mut context, action_id("earlier"));
+        assert_eq!(game.archive_page, 2);
+        game.on_action(&mut context, ActionId::BACK);
+        assert_eq!((game.view, game.archive_page), (View::Archive, 1));
+        game.on_action(&mut context, action_id("close-archive"));
+        assert_eq!((game.view, game.archive_page), (View::Archive, 0));
+        game.on_action(&mut context, ActionId::BACK);
+        assert_eq!(game.view, View::Board);
+    }
+
+    #[test]
     fn archive_games_never_touch_statistics() {
         let mut game = Game::for_day("2026-09-01");
         game.date = shift_date(&game.today, -1);
         game.archive = true;
         let answer = game.answer().to_owned();
-        game.keyboard = Keyboard::with_text(answer);
+        game.keyboard = Keyboard::for_words().typed(answer);
         game.submit();
         assert!(game.done());
         assert_eq!((game.played, game.wins), (0, 0));
@@ -1258,9 +1766,9 @@ mod tests {
         let mut game = Game::for_day("2026-09-01");
         let answer = game.answer().to_owned();
         let filler = if answer == "grape" { "adore" } else { "grape" };
-        game.keyboard = Keyboard::with_text(filler);
+        game.keyboard = Keyboard::for_words().typed(filler);
         game.submit();
-        game.keyboard = Keyboard::with_text(answer);
+        game.keyboard = Keyboard::for_words().typed(answer);
         game.submit();
         let text = game.export_text();
         assert!(text.contains("Inkling, September 1, 2026"), "{text}");
@@ -1294,19 +1802,18 @@ mod tests {
         let d = stats.diagnostics(&CLARA_BW_METRICS, &Chrome::default());
         assert!(d.issues.is_empty(), "stats: {:?}", d.issues);
         let mut typing = Game::for_day("2026-09-01");
-        typing.typing = true;
         typing.daily = vec!["crane".into(), "stare".into()];
         let screen = typing.screen();
         let d = screen.diagnostics(&CLARA_BW_METRICS, &Chrome::default());
         assert!(d.issues.is_empty(), "typing: {:?}", d.issues);
     }
     #[test]
-    fn how_to_play_is_short_and_reachable() {
+    fn the_rules_are_one_tap_from_the_board() {
         let mut game = Game::for_day("2026-09-01");
         let home = game.screen();
         assert!(home
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-            .rect_of_action(action_id("how-to-play"))
+            .rect_of_action(action_id(kobo_sdk::game::RULES))
             .is_some());
         game.view = View::Help;
         let help = game.screen();
@@ -1352,12 +1859,13 @@ mod persistence_tests {
     fn input_waits_for_saved_state_and_duplicate_load_cannot_erase_edits() {
         let mut runner = AppRunner::new(Game::for_day("2026-09-01"));
         runner.start();
-        runner.action(action_id("enter"));
-        assert!(!runner.app().typing);
+        runner.action(action_id("kb.r0c0"));
+        assert!(runner.app().keyboard.text().is_empty());
         runner.store_result(StoreResult::Loaded {
             key: STATE.into(),
             value: None,
         });
+        runner.action(action_id(kobo_sdk::game::RULES));
         runner.action(action_id("hard"));
         assert!(runner.app().hard);
         runner.store_result(StoreResult::Loaded {
@@ -1372,20 +1880,35 @@ mod persistence_tests {
 mod help_layout_tests {
     use super::*;
     #[test]
-    fn help_fits_supported_text_scales_and_geometries() {
+    fn help_and_the_board_with_its_keyboard_fit_supported_text_scales_and_geometries() {
         let mut game = Game::for_day("2026-09-01");
         game.view = View::Help;
-        let screens = [game.screen()];
-        for screen in screens {
-            for (width, height, pixels_per_inch) in [
-                (1072, 1448, 300),
-                (758, 1024, 212),
-                (1448, 1072, 300),
-                (1264, 1680, 300),
-                (1680, 1264, 300),
-                (1404, 1872, 227),
-                (1872, 1404, 227),
-            ] {
+        let mut playing = Game::for_day("2026-09-01");
+        playing.daily = ["crane", "stare", "piano", "flint", "woven"]
+            .map(String::from)
+            .to_vec();
+        playing.keyboard = Keyboard::for_words().typed("cra");
+        let mut finished = Game::for_day("2026-09-01");
+        finished.daily = vec!["crane".into(), answer_for("2026-09-01").into()];
+        // Inkling never asks for landscape, so its board and keys are only
+        // ever drawn upright. The rules are text and are checked both ways.
+        let upright = [
+            (1072, 1448, 300),
+            (758, 1024, 212),
+            (1264, 1680, 300),
+            (1404, 1872, 227),
+        ];
+        let turned = [(1448, 1072, 300), (1680, 1264, 300), (1872, 1404, 227)];
+        for (game, reachable, panels) in [
+            (
+                &mut game,
+                "close-help",
+                [&upright[..], &turned[..]].concat(),
+            ),
+            (&mut playing, "kb.enter", upright.to_vec()),
+            (&mut finished, "stats", upright.to_vec()),
+        ] {
+            for (width, height, pixels_per_inch) in panels {
                 for text_scale in kobo_ui::TextScale::STEPS {
                     let metrics = kobo_sdk::DisplayMetrics {
                         width,
@@ -1393,19 +1916,86 @@ mod help_layout_tests {
                         pixels_per_inch,
                         text_scale,
                     };
-                    let chrome = kobo_ui::Chrome::measuring(true);
-                    let diagnostics = screen.diagnostics(&metrics, &chrome);
-                    assert!(
-                        diagnostics.issues.is_empty(),
-                        "{metrics:?}: {:?}",
-                        diagnostics.issues
-                    );
-                    assert!(screen
-                        .layout_with(&metrics, &chrome)
-                        .rect_of_action(action_id("close-help"))
-                        .is_some());
+                    // A runner installs the face the runtime measures with, so
+                    // the board is fitted and checked in real type. Without
+                    // one, this test measured in the built-in fallback type
+                    // whenever it ran before any other test had made one.
+                    let _runner =
+                        kobo_sdk::AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
+                    game.fit(metrics);
+                    let mut screens = vec![(game.screen(), reachable)];
+                    if reachable == "kb.enter" && !game.fit.keys {
+                        // Too large for both: the board offers a way to the
+                        // keys, and the keys have a screen of their own.
+                        screens = vec![(game.screen(), "enter")];
+                        game.typing = true;
+                        screens.push((game.screen(), "kb.enter"));
+                        game.typing = false;
+                    }
+                    for (screen, reachable) in screens {
+                        let chrome = kobo_ui::Chrome::measuring(true);
+                        let diagnostics = screen.diagnostics(&metrics, &chrome);
+                        assert!(
+                            diagnostics.issues.is_empty(),
+                            "{reachable} {metrics:?}: {:?}",
+                            diagnostics.issues
+                        );
+                        assert!(
+                            screen
+                                .layout_with(&metrics, &chrome)
+                                .rect_of_action(action_id(reachable))
+                                .is_some(),
+                            "{metrics:?}: {reachable} is off the panel"
+                        );
+                    }
                 }
             }
+        }
+    }
+    #[test]
+    fn the_board_stays_put_when_a_guess_adds_a_line_and_paper_is_left_above_the_keys() {
+        let metrics = kobo_ui::CLARA_BW_METRICS;
+        let _runner = kobo_sdk::AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
+        let chrome = kobo_ui::Chrome::measuring(true);
+        let place = |game: &mut Game| {
+            game.fit(metrics);
+            let layout = game.screen().layout_with(&metrics, &chrome);
+            let top = layout.rect_of_action(action_id("cell-0")).unwrap().y;
+            let keys = layout.rect_of_action(action_id("kb.r0c0")).unwrap().y;
+            let above_keys = layout
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.rect.y < keys
+                        && matches!(
+                            node.kind,
+                            kobo_ui::LayoutKind::Secondary | kobo_ui::LayoutKind::Cell(..)
+                        )
+                })
+                .map(|node| node.rect.y + node.rect.height)
+                .max()
+                .unwrap();
+            (top, keys - above_keys)
+        };
+        let mut fresh = Game::for_day("2026-09-01");
+        let mut guessed = Game::for_day("2026-09-01");
+        guessed.keyboard = Keyboard::for_words().typed("crane");
+        guessed.submit();
+        let mut refused = Game::for_day("2026-09-01");
+        refused.daily = vec!["crane".into()];
+        refused.keyboard = Keyboard::for_words().typed("zzzzz");
+        refused.submit();
+        let mut archive = Game::for_day("2026-09-01");
+        archive.open_archive_day(0);
+        let (first, _) = place(&mut fresh);
+        for game in [&mut fresh, &mut guessed, &mut refused, &mut archive] {
+            let (top, gap) = place(game);
+            assert_eq!(top, first, "the board moved under {:?}", game.notice);
+            assert!(
+                gap >= metrics.space(Space::Small),
+                "{gap} pixels between the keys and what is above them under {:?}",
+                game.notice
+            );
         }
     }
 }
@@ -1436,28 +2026,85 @@ mod feedback_tests {
     }
 
     #[test]
-    fn typing_back_preserves_the_draft_without_consuming_a_guess() {
+    fn letters_typed_on_the_keyboard_appear_on_the_board_row_they_will_fill() {
         let mut runner = ready();
         assert!(!runner.app().screen().owns_back);
-        runner.action(action_id("enter"));
-        runner.app_mut().keyboard = Keyboard::with_text("cra");
-        assert!(runner.app().screen().owns_back);
-        runner.action(ActionId::BACK);
-        assert!(!runner.app().typing);
-        assert_eq!(runner.app().keyboard.text(), "cra");
+        for key in ["kb.r0c0", "kb.r0c1", "kb.r0c2"] {
+            runner.action(action_id(key));
+        }
+        assert_eq!(runner.app().keyboard.text(), "qwe");
+        assert_eq!(runner.app().cell(0, 0), ("Q".to_owned(), CellTone::Plain));
+        assert_eq!(runner.app().cell(0, 2), ("E".to_owned(), CellTone::Plain));
+        assert_eq!(runner.app().cell(0, 3), (String::new(), CellTone::Plain));
         assert!(runner.app().daily.is_empty());
-        assert!(!runner.app().screen().owns_back);
-        runner.action(action_id("enter"));
-        assert_eq!(runner.app().keyboard.text(), "cra");
-        runner.action(action_id("cancel"));
-        assert!(!runner.app().typing);
-        assert!(runner.app().daily.is_empty());
+        for key in ["kb.r0c3", "kb.r0c4", "kb.r0c5"] {
+            runner.action(action_id(key));
+        }
+        assert_eq!(
+            runner.app().keyboard.text(),
+            "qwert",
+            "a sixth letter went somewhere the board does not show"
+        );
+    }
+
+    #[test]
+    fn a_word_that_is_refused_stays_typed_so_one_letter_can_be_fixed() {
+        let mut game = Game::for_day("2026-09-01");
+        game.keyboard = Keyboard::for_words().typed("zzzzz");
+        game.submit();
+        assert_eq!(game.notice, "Not in the word list.");
+        assert_eq!(game.keyboard.text(), "zzzzz");
+        assert!(game.daily.is_empty());
+        game.keyboard = Keyboard::for_words().typed("crane");
+        game.submit();
+        assert_eq!(game.daily, ["crane"]);
+        assert!(game.keyboard.text().is_empty());
+    }
+
+    #[test]
+    fn a_letter_in_the_right_place_is_solid_one_elsewhere_is_shaded_and_one_unused_is_faded() {
+        let mut game = Game::for_day("2026-09-01");
+        let answer = answer_for("2026-09-01");
+        let wrong = if answer.starts_with('z') {
+            "crane"
+        } else {
+            "zzzzz"
+        };
+        game.daily = vec![answer.to_owned(), wrong.to_owned()];
+        for col in 0..5 {
+            assert_eq!(
+                game.cell(0, col).1,
+                CellTone::Solid,
+                "a right letter was not solid"
+            );
+            assert_eq!(
+                game.cell(0, col).0.len(),
+                1,
+                "a tile carries its letter alone"
+            );
+        }
+        assert_ne!(game.cell(1, 0).1, CellTone::Solid);
+        // GRAVY is the pinned answer: RIVAL has R, V and A in the word but
+        // each in another place, and I and L not in it at all.
+        game.daily = vec!["rival".to_owned()];
+        let tones = (0..5).map(|col| game.cell(0, col).1).collect::<Vec<_>>();
+        assert_eq!(
+            tones,
+            [
+                CellTone::Shaded,
+                CellTone::Faded,
+                CellTone::Shaded,
+                CellTone::Shaded,
+                CellTone::Faded
+            ]
+        );
     }
 
     #[test]
     fn export_acknowledgements_are_visible_and_only_one_write_is_pending() {
         let mut runner = ready();
         runner.action(action_id("stats"));
+        assert_eq!(runner.app().view, View::Stats);
         assert_eq!(saves(&runner.action(action_id("export"))), 1);
         assert_eq!(runner.app().export_status, ExportStatus::Writing);
         assert_eq!(saves(&runner.action(action_id("export"))), 0);
@@ -1477,7 +2124,9 @@ mod feedback_tests {
     #[test]
     fn an_unrelated_game_save_cannot_settle_the_export() {
         let mut runner = ready();
+        runner.action(action_id(kobo_sdk::game::RULES));
         runner.action(action_id("hard"));
+        runner.action(action_id("close-help"));
         runner.action(action_id("stats"));
         runner.action(action_id("export"));
         runner.store_result(StoreResult::Denied(StoreError::TooFull));
@@ -1499,10 +2148,16 @@ mod feedback_tests {
                 };
                 let mut runner = AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
                 let app = runner.app_mut();
+                // The statistics are fitted to the panel they are shown on,
+                // as every screen of the game is before it is drawn.
+                app.fit(metrics);
                 app.view = View::Stats;
                 app.played = 600;
                 app.wins = 600;
                 app.dist = [100; 6];
+                app.streak = 365;
+                app.best_streak = 365;
+                app.last_won = app.today.clone();
                 for state in [
                     ExportStatus::Idle,
                     ExportStatus::Writing,
@@ -1518,12 +2173,196 @@ mod feedback_tests {
                         "{text_scale:?} {state:?}: {:?}",
                         diagnostics.issues
                     );
-                    assert!(screen
-                        .layout_with(&metrics, &chrome)
-                        .rect_of_action(action_id("close-stats"))
-                        .is_some());
+                    let layout = screen.layout_with(&metrics, &chrome);
+                    assert!(layout.rect_of_action(action_id("close-stats")).is_some());
+                    if state != ExportStatus::Writing {
+                        assert!(
+                            layout.rect_of_action(action_id("export")).is_some(),
+                            "{text_scale:?} {state:?}: no way to export"
+                        );
+                    }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod p16_tests {
+    use super::*;
+    use kobo_sdk::{AppRunner, Command, StoreError};
+    use kobo_ui::{Chrome, Node, TextScale};
+
+    fn ready() -> AppRunner<Game> {
+        let mut runner = AppRunner::new(Game::for_day("2026-09-01"));
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: STATE.into(),
+            value: None,
+        });
+        runner
+    }
+
+    fn banners(screen: &Screen) -> Vec<(BannerLevel, String, Option<String>)> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Banner {
+                    level,
+                    text,
+                    action,
+                    ..
+                } => Some((
+                    *level,
+                    text.clone(),
+                    action.as_ref().map(|action| action.label.clone()),
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Hard mode is a switch on the Rules screen, not a "Hard mode: off"
+    /// entry in the menu. The tap applies it there and then and saves it,
+    /// and the menu over the board no longer offers it.
+    #[test]
+    fn hard_mode_is_a_switch_on_the_rules_that_applies_and_saves_on_the_tap() {
+        let mut runner = ready();
+        runner.action(action_id(kobo_sdk::game::MORE));
+        let menu = format!("{:?}", runner.app().screen().overlay);
+        assert!(!menu.contains("Hard mode"), "{menu}");
+        runner.action(ActionId::BACK);
+        runner.action(action_id(kobo_sdk::game::RULES));
+        assert_eq!(runner.app().view, View::Help);
+        let toggle = |game: &Game| {
+            game.screen()
+                .nodes
+                .iter()
+                .find_map(|node| match node {
+                    Node::Toggle {
+                        label, summary, on, ..
+                    } if label == "Hard mode" => Some((summary.clone(), *on)),
+                    _ => None,
+                })
+                .expect("a Hard mode switch on the rules")
+        };
+        assert_eq!(
+            toggle(runner.app()),
+            (hard_summaries(false)[0].to_owned(), false)
+        );
+        let commands = runner.action(action_id("hard"));
+        assert!(runner.app().hard);
+        assert_eq!(runner.app().view, View::Help);
+        assert_eq!(
+            toggle(runner.app()),
+            (hard_summaries(true)[0].to_owned(), true)
+        );
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == STATE
+        )));
+        runner.action(action_id("hard"));
+        assert!(!runner.app().hard);
+    }
+
+    /// Both states of the switch keep their summary whole on one line and
+    /// Play on the panel, on every supported panel at every size, held
+    /// either way, since the rules are text and are drawn both ways.
+    #[test]
+    fn the_hard_mode_switch_reads_whole_at_every_size_either_way_up() {
+        for (width, height, pixels_per_inch) in [
+            (1072, 1448, 300),
+            (1448, 1072, 300),
+            (758, 1024, 212),
+            (1264, 1680, 300),
+            (1680, 1264, 300),
+            (1404, 1872, 227),
+            (1872, 1404, 227),
+        ] {
+            for text_scale in TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let _runner = AppRunner::with_metrics(Game::for_day("2026-09-01"), metrics);
+                for hard in [false, true] {
+                    let mut game = Game::for_day("2026-09-01");
+                    game.view = View::Help;
+                    game.hard = hard;
+                    game.fit(metrics);
+                    let screen = game.screen();
+                    let chrome = Chrome::measuring(true);
+                    let issues = screen.diagnostics(&metrics, &chrome).issues;
+                    assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
+                    let layout = screen.layout_with(&metrics, &chrome);
+                    for name in ["hard", "close-help"] {
+                        assert!(
+                            layout.rect_of_action(action_id(name)).is_some(),
+                            "{metrics:?}: {name}"
+                        );
+                    }
+                    let summary = screen
+                        .nodes
+                        .iter()
+                        .find_map(|node| match node {
+                            Node::Toggle { summary, .. } => Some(summary.clone()),
+                            _ => None,
+                        })
+                        .expect("the switch");
+                    // Every supported panel keeps a summary, drawn whole; the
+                    // empty one is only a guard for a smaller panel.
+                    assert!(
+                        layout
+                            .nodes
+                            .iter()
+                            .any(|node| node.text_lines.iter().any(|line| *line == summary))
+                            && !summary.is_empty(),
+                        "{metrics:?}: the summary was cut or dropped"
+                    );
+                    if pixels_per_inch == 300 && text_scale == TextScale::Default {
+                        assert_eq!(summary, hard_summaries(hard)[0], "{metrics:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A refused export is an Error banner whose one action exports again,
+    /// with no second button for it; a finished one is a Success banner.
+    #[test]
+    fn a_refused_export_carries_its_retry_on_an_error_banner() {
+        let mut runner = ready();
+        runner.action(action_id("stats"));
+        runner.action(action_id("export"));
+        runner.store_result(StoreResult::Denied(StoreError::TooFull));
+        let screen = runner.app().screen();
+        assert_eq!(
+            banners(&screen),
+            [(
+                BannerLevel::Error,
+                "Results could not be saved. Check storage.".to_owned(),
+                Some("Try again".to_owned())
+            )]
+        );
+        assert!(!format!("{screen:?}").contains("Try export again"));
+        let buttons = screen
+            .nodes
+            .iter()
+            .filter(|node| matches!(node, Node::Button { .. }))
+            .count();
+        assert_eq!(buttons, 0, "a second control for the same retry");
+        let commands = runner.action(action_id("export"));
+        assert!(commands.iter().any(|command| matches!(
+            command,
+            Command::Store(kobo_sdk::StoreRequest::Save { key, .. }) if key == EXPORT
+        )));
+        runner.store_result(StoreResult::Saved { key: EXPORT.into() });
+        assert_eq!(
+            banners(&runner.app().screen()),
+            [(BannerLevel::Success, format!("Saved as {EXPORT}."), None)]
+        );
     }
 }

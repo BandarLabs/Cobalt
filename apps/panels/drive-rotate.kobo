@@ -1,0 +1,28 @@
+# Rotate page turns the comic sideways. The controls have to fit the turned
+# panel, Reading options included, so the page can be turned back.
+wait-for Try a sample comic
+tap Try a sample comic
+wait-for CBZ
+tap-at 536,1378
+wait-for Available on this reader
+tap Open
+wait-for-id comic-next
+wait-idle
+tap-at 536,724
+wait-for Fit page
+tap Reading options
+wait-for Rotate page
+tap Rotate page
+wait-idle
+clean
+shot rotated-page
+tap-id comic-controls
+wait-for Fit page
+expect Reading options
+expect Move page
+clean
+shot rotated-controls
+tap Reading options
+wait-for Rotate page
+tap Rotate page
+wait-idle

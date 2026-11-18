@@ -12,7 +12,7 @@ use kobo_flashcards_format::{
 };
 use std::collections::BTreeMap;
 
-const CARDS: [(&str, &str); 6] = [
+pub const CARDS: [(&str, &str); 6] = [
     (
         "What does a compass needle point toward?",
         "Magnetic north.",

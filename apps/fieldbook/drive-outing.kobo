@@ -1,0 +1,135 @@
+# An outing from the first tap to the checklist the computer fetches.
+wait-for 2 packs, 10 species.
+tap Start an outing
+wait-for Name this place
+type pier
+tap Save
+wait-for pier
+expect 0 species, 0 birds
+# A bird no pack lists is logged by its name from the search.
+tap Type a species
+wait-for Find
+type kingfisher
+tap Find
+wait-for No species in your packs matches
+clean
+shot outing-no-match
+tap Log “kingfisher” by name
+wait-for 1 species, 1 bird
+# The species page logs into the open outing too.
+tap Type a species
+wait-for Find
+type gull
+tap Find
+wait-for Western Gull
+tap Western Gull
+wait-for Larus occidentalis
+expect Log in the open outing
+tap Log in the open outing
+wait-for 2 species, 2 birds
+# Two taps on one row are two birds of one species.
+tap American Robin
+tap American Robin
+wait-for 2 logged
+expect 3 species, 4 birds
+clean
+shot outing-tally
+# The tally turns back as well as forward.
+tap-id outing-next
+wait-for 2 of
+tap-id outing-back
+wait-for 1 of
+tap Review sightings
+wait-for American Robin ×2
+expect kingfisher ×1
+expect Western Gull ×1
+# Clear unticks without deleting anything.
+tap kingfisher ×1
+tap Western Gull ×1
+wait-for 2 selected
+tap Clear
+expect-missing selected
+expect kingfisher ×1
+# Several ticked rows go together and come back together.
+tap kingfisher ×1
+tap Western Gull ×1
+wait-for 2 selected
+tap-id delete-ticked
+wait-for Delete 2 sightings?
+clean
+shot outing-confirm-two
+tap-id delete-sighting
+wait-for 2 sightings deleted.
+expect-missing kingfisher ×1
+expect American Robin ×2
+tap Undo delete
+wait-for kingfisher ×1
+expect Western Gull ×1
+clean
+shot outing-sightings
+# Back from the review goes to the outing it reviews.
+tap Back
+wait-for Review sightings
+expect 3 species, 4 birds
+# A finished outing stays on Today and opens again with its birds.
+tap Finish outing
+wait-for Start an outing
+expect 3 species
+tap pier ·
+wait-for Review sightings
+expect pier
+expect 3 species, 4 birds
+tap Finish outing
+wait-for Start an outing
+# The life list counts every bird logged on this reader.
+tap Life list
+wait-for 3 species on this reader.
+expect AMRO · 2 birds
+clean
+shot outing-life
+tap American Robin
+wait-for Turdus migratorius
+expect-missing Log in the open outing
+# Back from a species goes to the list that opened it.
+tap Back
+wait-for 3 species on this reader.
+# Export writes the checklist for kobo fieldbook export to fetch. The fetch
+# refuses to overwrite a file, so a route cannot repeat it; it is checked by hand.
+tap Export
+wait-for 1 outing, 3 sightings.
+tap Write checklist file
+wait-for Checklist written. Run kobo fieldbook export on your computer to fetch it.
+clean
+shot outing-export-written
+# Outings and sightings are still there after the app restarts.
+restart
+wait-for Start an outing
+expect pier ·
+tap Life list
+wait-for 3 species on this reader.
+# A write the reader refuses is said in words, and the next good one clears it.
+tap Today
+wait-for Start an outing
+scenario storage-full
+tap Start an outing
+wait-for Name this place
+type dunes
+tap Save
+wait-for Not saved. The last write failed.
+clean
+shot outing-not-saved
+scenario normal
+tap American Robin
+wait-for 1 logged
+expect-missing Not saved. The last write failed.
+# A bird logged by name has no banding code, and its page says nothing about one.
+tap Back
+wait-for Open outing: dunes
+tap Life list
+wait-for kingfisher
+expect-missing 1 birds
+tap kingfisher
+wait-for Species
+clean
+shot outing-life-by-name
+expect-missing Banding code

@@ -1,0 +1,136 @@
+# sweep: --bare --seed-root apps/homepanel/fixtures/tiles
+# A panel with twelve saved tiles and readings from an earlier poll, on a
+# reader whose token is missing, so every request fails the same way.
+wait-for kitchen · on
+# Readings from another day say which day.
+expect Offline since 1 Sep at 06:40. Readings may be stale.
+expect Showing readings from 1 Sep at 06:40.
+expect living room · 20.5°
+expect humidity · 48 %
+clean
+shot homepanel-tiles
+# A light toggles through Home Assistant. When that fails the tile keeps
+# its last reading and the banner names the tile.
+tap kitchen · on
+wait-for Couldn't update kitchen.
+expect kitchen · on
+clean
+shot homepanel-toggle-failed
+# A sensor only shows its reading.
+tap outdoor temperature
+wait-for This tile only shows its reading.
+expect State: 12.5 °C
+expect sensor.outdoor_temperature
+clean
+shot homepanel-reading
+tap-id 4294967295
+wait-for kitchen · on
+# A thermostat opens its own screen with the room and target temperature.
+tap living room
+wait-for Target: 21°
+expect Room: 20.5°
+expect State: heat
+expect Cooler
+expect Power
+clean
+shot homepanel-climate
+tap Warmer
+wait-for Couldn't set the temperature.
+expect Target: 21°
+tap Cooler
+wait-for Couldn't set the temperature.
+tap Power
+wait-for Couldn't update living room.
+clean
+shot homepanel-climate-failed
+tap-id 4294967295
+wait-for kitchen · on
+# Twelve is the limit, and Add says so instead of opening the picker.
+tap Add tile
+wait-for Home Panel can show up to 12 tiles.
+expect-missing Finding devices
+clean
+shot homepanel-tile-limit
+# Settings counts the tiles. Edit tiles lists them six to a page.
+tap Settings
+wait-for 12 of 12
+# The grid's banners stay on the grid.
+expect-missing Home Panel can show up to 12 tiles.
+expect-missing No Home Assistant account
+tap Edit tiles
+wait-for front door
+expect More tiles (1/2)
+expect-missing porch
+clean
+shot homepanel-edit-page-one
+tap More tiles (1/2)
+wait-for porch
+expect More tiles (2/2)
+expect-missing front door
+# Move up swaps a tile with the one before it, in the list and on the grid.
+tap heater
+wait-for switch.heater
+expect State: off
+expect Move up
+clean
+shot homepanel-tile-screen
+tap Move up
+wait-for More tiles (2/2)
+tap-id 4294967295
+wait-for Wall panel
+tap-id 4294967295
+wait-for heater · off
+# Remove takes the tile off; the first tile has no Move up. The note says
+# which tile went, and the grid's outage is not repeated here.
+tap Settings
+wait-for 12 of 12
+tap Edit tiles
+wait-for kitchen
+tap kitchen
+wait-for light.kitchen
+expect-missing Move up
+tap Remove
+wait-for kitchen removed.
+expect coffee maker
+expect-missing light.kitchen
+expect-missing No Home Assistant account
+clean
+shot homepanel-removed
+tap-id 4294967295
+wait-for 11 of 12
+# Both changes survive a restart.
+restart
+wait-for coffee maker · off
+expect-missing kitchen · on
+tap Settings
+wait-for 11 of 12
+tap Edit tiles
+wait-for coffee maker
+tap More tiles (1/2)
+wait-for heater
+tap-id 4294967295
+tap-id 4294967295
+wait-for coffee maker · off
+# With room again, Add asks Home Assistant for its devices and says why
+# it could not get them. The picker stays open on adding a device by its ID.
+tap Add tile
+wait-for No Home Assistant account is on this reader yet
+expect Add a device by its ID
+clean
+shot homepanel-add-failed
+tap-id 4294967295
+wait-for coffee maker · off
+# With a token on the reader, a reader off Wi-Fi says so, and a Home
+# Assistant that does not answer is told apart from it.
+companion secret set homeassistant --from apps/homepanel/fixtures/token --sim
+scenario offline
+tap heater
+wait-for Couldn't update heater. This reader is not on Wi-Fi.
+expect heater · off
+clean
+shot homepanel-offline
+scenario host-down
+tap heater
+wait-for Couldn't update heater. Home Assistant did not answer
+clean
+shot homepanel-host-down

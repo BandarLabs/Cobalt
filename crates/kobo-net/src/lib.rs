@@ -29,10 +29,12 @@ pub mod fixture;
 pub mod gzip;
 mod lines;
 pub mod pem;
+pub mod refusal;
 pub mod serve;
 pub mod sha256;
 
 pub use lines::{LineStreamAction, LineStreamOwner, LineStreams, MAX_RETAINED_STREAMS};
+pub use refusal::Refusal;
 
 use kobo_protocol::TaskError;
 use std::borrow::Cow;
@@ -549,8 +551,10 @@ pub fn fetch(url: &str, max_bytes: u32) -> Result<Vec<u8>, TaskError> {
         None,
         &[],
         RequestOptions::default(),
+        false,
         &cancel,
     )
+    .map(|fetched| fetched.body)
 }
 
 /// Fetches `url` starting `offset` bytes in, returning at most `max_bytes`.
@@ -618,6 +622,85 @@ pub fn fetch_from_controlled(
     options: RequestOptions,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, TaskError> {
+    fetch_checked(
+        url, offset, max_bytes, credential, headers, options, false, cancel,
+    )
+    .map(|fetched| fetched.body)
+}
+
+/// A body, and the address it was served from once redirects were followed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Fetched {
+    pub body: Vec<u8>,
+    pub address: String,
+}
+
+/// [`fetch_from_controlled`], also answering where the body finally came
+/// from.
+///
+/// A caller that resolves addresses written inside the body, as a web page's
+/// pictures and links are, needs the address after redirects: a page asked
+/// for at `/go` and served from `/articles/story/` names its `photo.jpg`
+/// relative to the second.
+///
+/// # Errors
+///
+/// The same failures as [`fetch_from_controlled`].
+pub fn fetch_from_controlled_at(
+    url: &str,
+    offset: u32,
+    max_bytes: u32,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Fetched, TaskError> {
+    fetch_checked(
+        url, offset, max_bytes, credential, headers, options, false, cancel,
+    )
+}
+
+/// [`fetch_from_controlled`], but a 4xx answer comes back as a [`Refusal`]
+/// status envelope holding the start of its body, instead of being flattened
+/// into a [`TaskError`].
+///
+/// For a caller that has to tell refusals apart by what the server said,
+/// such as "slow down" from "out of credit", which share a status. Read the
+/// bytes with [`Refusal::parse_envelope`] before treating them as a body.
+///
+/// # Errors
+/// The same failures as [`fetch_from_controlled`], except that a 4xx is not
+/// one of them.
+pub fn fetch_from_with_refusals(
+    url: &str,
+    offset: u32,
+    max_bytes: u32,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
+    fetch_checked(
+        url, offset, max_bytes, credential, headers, options, true, cancel,
+    )
+    .map(|fetched| fetched.body)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    clippy::fn_params_excessive_bools,
+    reason = "the two public fetch forms differ only in whether refusals are reported"
+)]
+fn fetch_checked(
+    url: &str,
+    offset: u32,
+    max_bytes: u32,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    options: RequestOptions,
+    refusals: bool,
+    cancel: &AtomicBool,
+) -> Result<Fetched, TaskError> {
     // The last gate before the socket, and the same one `post` applies to its
     // own headers: both names and values may ultimately originate outside the
     // runtime, so grammar is checked here rather than trusted from upstream.
@@ -641,11 +724,17 @@ pub fn fetch_from_controlled(
         credential,
         headers,
         options,
+        refusals,
         cancel,
     )
 }
 
 /// The one implementation behind [`fetch`] and [`fetch_from`].
+#[allow(
+    clippy::too_many_arguments,
+    clippy::fn_params_excessive_bools,
+    reason = "one private implementation behind every public fetch form"
+)]
 fn get(
     url: &str,
     offset: Option<u32>,
@@ -653,8 +742,9 @@ fn get(
     credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
     options: RequestOptions,
+    refusals: bool,
     cancel: &AtomicBool,
-) -> Result<Vec<u8>, TaskError> {
+) -> Result<Fetched, TaskError> {
     let mut target = url.to_string();
     let mut forwarded = headers;
     for _ in 0..=MAX_REDIRECTS {
@@ -670,9 +760,22 @@ fn get(
             max_bytes,
             cancel,
         )?;
+        if refusals {
+            if let Some(refusal) =
+                Refusal::from_response(&response, &refusal::secrets_of(credential))?
+            {
+                return Ok(Fetched {
+                    body: refusal.envelope(),
+                    address: target,
+                });
+            }
+        }
         if options.report_rate_limit {
             if let RateLimit::Limited(delay) = rate_limit(&response)? {
-                return Ok(rate_limit_envelope(delay));
+                return Ok(Fetched {
+                    body: rate_limit_envelope(delay),
+                    address: target,
+                });
             }
         }
         match split_response(&response, max_bytes)? {
@@ -680,7 +783,10 @@ fn get(
                 return if body.len() > max_bytes as usize {
                     Err(TaskError::TooLarge)
                 } else {
-                    Ok(body.to_vec())
+                    Ok(Fetched {
+                        body: body.to_vec(),
+                        address: target,
+                    })
                 };
             }
             Response::Redirect(location) => {
@@ -869,6 +975,76 @@ pub fn write_controlled(
     options: RequestOptions,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, TaskError> {
+    let write = WriteRequest {
+        method,
+        url,
+        body,
+        content_type,
+        credential,
+        headers,
+    };
+    write_checked(&write, max_bytes, options, false, cancel)
+}
+
+/// [`write_controlled`], but a 4xx answer comes back as a [`Refusal`] status
+/// envelope holding the start of its body, as [`fetch_from_with_refusals`]
+/// does for a fetch. A retained POST that is refused keeps only its status,
+/// because its body is never read.
+///
+/// # Errors
+/// The same failures as [`write_controlled`], except that a 4xx is not one
+/// of them.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "explicit authorized HTTP transport boundary"
+)]
+pub fn write_with_refusals(
+    method: WriteMethod,
+    url: &str,
+    body: &[u8],
+    content_type: &str,
+    credential: Option<(&str, &str)>,
+    headers: &[(&str, &str)],
+    max_bytes: u32,
+    options: RequestOptions,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
+    let write = WriteRequest {
+        method,
+        url,
+        body,
+        content_type,
+        credential,
+        headers,
+    };
+    write_checked(&write, max_bytes, options, true, cancel)
+}
+
+/// One body request, as the public write forms receive it.
+struct WriteRequest<'a> {
+    method: WriteMethod,
+    url: &'a str,
+    body: &'a [u8],
+    content_type: &'a str,
+    credential: Option<(&'a str, &'a str)>,
+    headers: &'a [(&'a str, &'a str)],
+}
+
+fn write_checked(
+    write: &WriteRequest<'_>,
+    max_bytes: u32,
+    options: RequestOptions,
+    refusals: bool,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>, TaskError> {
+    let WriteRequest {
+        method,
+        url,
+        body,
+        content_type,
+        credential,
+        headers,
+    } = *write;
     if method != WriteMethod::Post && options.wait_until_cancelled {
         return Err(TaskError::Denied);
     }
@@ -901,6 +1077,7 @@ pub fn write_controlled(
             credential,
             headers,
             options,
+            refusals,
             cancel,
         );
     }
@@ -916,6 +1093,12 @@ pub fn write_controlled(
         max_bytes,
         cancel,
     )?;
+    if refusals {
+        if let Some(refusal) = Refusal::from_response(&response, &refusal::secrets_of(credential))?
+        {
+            return Ok(refusal.envelope());
+        }
+    }
     if options.report_rate_limit {
         if let RateLimit::Limited(delay) = rate_limit(&response)? {
             return Ok(rate_limit_envelope(delay));
@@ -933,6 +1116,10 @@ pub fn write_controlled(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the retained POST keeps the same explicit transport boundary as every write"
+)]
 fn post_until_cancelled(
     address: &Address,
     body: &[u8],
@@ -940,6 +1127,7 @@ fn post_until_cancelled(
     credential: Option<(&str, &str)>,
     headers: &[(&str, &str)],
     options: RequestOptions,
+    refusals: bool,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>, TaskError> {
     let method = Method::Body {
@@ -1009,6 +1197,9 @@ fn post_until_cancelled(
     match status {
         (200..=299, _, true) => return Ok(Vec::new()),
         (200..=299, _, false) => {}
+        (status @ 400..=499, delay, _) if refusals => {
+            return Ok(retained_refusal(status, delay.flatten()));
+        }
         (401 | 403, _, _) => return Err(TaskError::Unauthorized),
         (429, Some(delay), _) if options.report_rate_limit => {
             return Ok(rate_limit_envelope(delay));
@@ -1046,6 +1237,16 @@ fn post_until_cancelled(
             Err(_) => return Err(TaskError::Unreachable),
         }
     }
+}
+
+/// A refused retained POST, whose body is never read: its status alone.
+fn retained_refusal(status: u16, retry_after: Option<u32>) -> Vec<u8> {
+    Refusal {
+        status,
+        retry_after,
+        excerpt: String::new(),
+    }
+    .envelope()
 }
 
 /// Builds the request line and headers.

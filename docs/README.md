@@ -3,7 +3,7 @@
 ## Using Cobalt
 
 - [Installing Cobalt](INSTALL.md): browser, terminal and manual installs, updates, recovery and removal.
-- [Using Cobalt from your computer](companion-cli.md): sync folders, feed files, credentials, Sidekick and Deck setup.
+- [Using Cobalt from your computer](companion-cli.md): sending files, sync folders, feed files, credentials, Sidekick and Deck setup.
 - [Offline dictionaries](DICTIONARIES.md)
 - [Flashcards package compatibility](FLASHCARDS_COMPATIBILITY.md)
 
@@ -23,6 +23,8 @@
 - [Release train](RELEASE-TRAIN.md): how `beta` and stable releases are published.
 - [Publishing the SDK crates](../PUBLISHING.md)
 - [Wi-Fi handoff trace](WIFI_HANDOFF_TRACE.md): an attended diagnostic mode.
+- [Credential routes declared by the app](CREDENTIAL_ROUTES.md): a proposal
+  for moving per-service credential policy out of the platform.
 
 ## Project
 

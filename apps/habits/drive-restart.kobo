@@ -1,0 +1,9 @@
+# sweep: after-main
+# A fresh start on the main route's store: the habit it added and the
+# weekday schedule it chose are still there.
+wait-for Habits
+tap Manage
+wait-for tea
+expect weekdays
+tap Streaks
+wait-for tea

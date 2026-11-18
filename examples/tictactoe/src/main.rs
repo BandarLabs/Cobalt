@@ -9,6 +9,7 @@
 //! The rules are the ones people actually play at a table: whoever is holding
 //! the device taps, and the mark alternates. Nought goes first.
 
+use kobo_sdk::game::{Menu, Tap, RULES_LABEL};
 use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
 use std::process::ExitCode;
 
@@ -149,6 +150,8 @@ struct Game {
     turn: Mark,
     outcome: Outcome,
     help: bool,
+    /// The shared game menu: New game first, then the opponent and the score.
+    menu: Menu,
     mode: Mode,
     score: Score,
     /// Whether this game has already been added to the score. A won board
@@ -165,6 +168,7 @@ impl Default for Game {
             turn: Mark::Nought,
             outcome: Outcome::Playing,
             help: false,
+            menu: Menu::default(),
             mode: Mode::default(),
             score: Score::default(),
             counted: false,
@@ -318,7 +322,7 @@ const NAMES: [&str; CELLS] = [
 fn screen(game: &Game) -> Screen {
     if game.help {
         return ScreenBuilder::new("tictactoe-help")
-            .top_bar("How to play")
+            .top_bar(RULES_LABEL)
             .owns_back(true)
             .heading("Make three in a row")
             .text("O goes first. Players take turns tapping an empty square.")
@@ -336,27 +340,25 @@ fn screen(game: &Game) -> Screen {
         .zip(game.board.iter())
         .enumerate()
         .map(|(index, (name, mark))| (*name, mark.label(), mark.glyph(), winning.contains(&index)));
-    ScreenBuilder::new("tictactoe")
-        .top_bar("Tic-tac-toe")
+    // Rules and the menu sit where every game on this platform keeps them.
+    // There is no undo here: a tap is a move, and the game is nine taps long.
+    let screen = ScreenBuilder::new("tictactoe")
+        .game_top_bar(
+            "Tic-tac-toe",
+            game.menu,
+            [
+                ("mode", game.mode.other().label()),
+                ("clear-score", "Clear score"),
+            ],
+        )
         .heading(game.status())
         .secondary(game.tally())
-        .board_with_selection(COLUMNS, cells)
-        .buttons([
-            (
-                "reset",
-                if game.outcome == Outcome::Playing {
-                    "Start again"
-                } else {
-                    "Next game"
-                },
-            ),
-            ("mode", game.mode.other().label()),
-        ])
-        .action_bar([
-            ("how-to-play", "How to play"),
-            ("clear-score", "Clear score"),
-        ])
-        .build()
+        .board_with_selection(COLUMNS, cells);
+    if game.outcome == Outcome::Playing {
+        screen.build()
+    } else {
+        screen.game_actions(false, [("reset", "Next game")]).build()
+    }
 }
 
 impl KoboApp for Game {
@@ -384,10 +386,22 @@ impl KoboApp for Game {
             }
             return;
         }
-        if action == action_id("how-to-play") {
-            self.help = true;
-            context.set_screen(screen(self));
-            return;
+        match self.menu.read(action) {
+            Some(Tap::Menu | Tap::Undo) => {
+                context.set_screen(screen(self));
+                return;
+            }
+            Some(Tap::Rules) => {
+                self.help = true;
+                context.set_screen(screen(self));
+                return;
+            }
+            Some(Tap::NewGame) => {
+                self.rematch();
+                context.set_screen(screen(self));
+                return;
+            }
+            None => {}
         }
         if action == action_id("reset") {
             self.rematch();
@@ -578,13 +592,22 @@ mod tests {
     #[test]
     fn the_whole_board_fits_on_the_panel() {
         let layout = screen(&Game::default()).layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        let reset = layout
-            .rect_of_action(action_id("reset"))
-            .expect("a reset button");
+        let corner = layout
+            .rect_of_action(action_id(NAMES[CELLS - 1]))
+            .expect("the last square");
         assert!(
-            reset.y + reset.height <= CLARA_BW_METRICS.height,
-            "the reset button is off the bottom of the panel"
+            corner.y + corner.height <= CLARA_BW_METRICS.height,
+            "the board runs off the bottom of the panel"
         );
+        let mut won = Game::default();
+        for cell in [0, 3, 1, 4, 2] {
+            won.play(cell);
+        }
+        let layout = screen(&won).layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let next = layout
+            .rect_of_action(action_id("reset"))
+            .expect("a finished game offers the next one at the foot");
+        assert!(next.y + next.height <= CLARA_BW_METRICS.height);
         assert_eq!(CELLS, SIZE * SIZE);
     }
 
@@ -744,11 +767,11 @@ mod tests {
     }
 
     #[test]
-    fn how_to_play_is_short_and_reachable() {
+    fn the_rules_are_one_tap_away_in_the_top_bar_like_every_game() {
         let mut game = Game::default();
         assert!(screen(&game)
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-            .rect_of_action(action_id("how-to-play"))
+            .rect_of_action(action_id(kobo_sdk::game::RULES))
             .is_some());
         game.help = true;
         assert!(screen(&game)

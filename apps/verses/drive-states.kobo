@@ -1,4 +1,11 @@
-wait-for Today's poem
+# The poem is on the page as soon as the side taps that turn it are.
+wait-for-id poem-menu
+# Today's poem is drawn again when PoetryDB answers, and a screen drawn
+# again starts with its bar out of sight, so the touch waits for it.
+wait-idle 3000
+tap-at 536,12
+wait-idle
+expect Today's poem
 clean
 shot today
 tap Browse
@@ -10,3 +17,13 @@ expect Search poetry
 expect Poets to start with
 clean
 shot search
+# The search box raises the reader's keyboard, asking for what the scope looks in.
+tap-id scope-poet
+tap-id search-field
+wait-for Type here
+expect A poet's name
+clean
+shot search-keyboard
+tap Back
+wait-for Poets to start with
+expect-missing Type here

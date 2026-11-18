@@ -26,8 +26,10 @@ def main():
     args = parser.parse_args()
     cli = str(args.cli.resolve())
     with tempfile.TemporaryDirectory(prefix='paperterm-stop-', dir='/tmp') as private:
-        env = dict(os.environ, KOBO_STREAM_CONFIG_DIR=private, HOME=private, SHELL="/bin/sh")
-        subprocess.run([cli, 'stream', 'init', '--host', '127.0.0.1'], env=env,
+        env = dict(os.environ, KOBO_STREAM_CONFIG_DIR=private, HOME=private, SHELL="/bin/sh",
+                   TMPDIR=private)
+        # --sim mints the identity without looking for a reader on the network.
+        subprocess.run([cli, 'stream', 'init', '--sim', '--host', '127.0.0.1'], env=env,
                        capture_output=True, check=True, timeout=30)
         for preset, finished in [("demo", False), ("demo", True), ("terminal", False), ("monitor", False)]:
             with socket.socket() as probe:

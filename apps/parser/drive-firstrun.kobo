@@ -1,3 +1,4 @@
+# sweep: --bare
 # First run on an empty shelf (run with --bare): the bundled tutorial seeds
 # itself, and the walkthrough plays it from the gatehouse to the ending.
 wait-for Interactive fiction
@@ -34,7 +35,12 @@ tap Run
 wait-for flame.
 type north
 tap Run
-wait-for moves
+# The ending lands on its last page. With the keys open at larger text sizes
+# that page holds only the closing line, so the keys are put away to read the
+# score with it.
 wait-for ended
+tap Close keys
+wait-for moves
+expect ended
 clean
 shot parser-firstrun-ending

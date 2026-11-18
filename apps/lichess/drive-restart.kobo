@@ -1,0 +1,50 @@
+# sweep: --bare
+# What the app keeps when it closes: the side, clock and rated choices
+# are kept; a game against the computer is not, as the README says.
+expect Play the computer
+tap-id play-computer
+wait-for Start game
+# A fresh install plays White with no clock.
+expect-state /layout#/nodes/14/kind "Chip(ActionId(975042484), true)"
+expect-state /layout#/nodes/18/kind "Chip(ActionId(281882440), true)"
+tap-id computer-side-black
+tap-id computer-clock-30
+expect-state /layout#/nodes/12/kind "Chip(ActionId(1250108498), true)"
+expect-state /layout#/nodes/20/kind "Chip(ActionId(1877999865), true)"
+clean
+shot setup-black-30
+tap-id start-computer
+wait-for Black · Your move · Casual
+expect 30:00
+# A clocked game has no Undo: there is no time to put back.
+expect-missing Undo
+# Leaving the app for a moment and coming back keeps the game.
+lifecycle background
+lifecycle foreground
+wait-for Black · Your move · Casual
+tap Back
+wait-for Resume your game
+tap-id play-online
+wait-for 10 minutes each
+tap-id seek-casual
+expect-state /layout#/nodes/12/kind "Chip(ActionId(1096427573), true)"
+restart
+wait-for Play the computer
+expect-missing Resume your game
+tap-id play-computer
+wait-for Start game
+expect-state /layout#/nodes/12/kind "Chip(ActionId(1250108498), true)"
+expect-state /layout#/nodes/20/kind "Chip(ActionId(1877999865), true)"
+clean
+shot setup-kept-after-restart
+tap Back
+wait-for Play the computer
+tap-id play-online
+wait-for 10 minutes each
+expect-state /layout#/nodes/12/kind "Chip(ActionId(1096427573), true)"
+expect-state /layout#/nodes/11/kind "Chip(ActionId(1841932870), false)"
+clean
+shot online-casual-kept
+# Rated goes back the same way.
+tap-id seek-rated
+expect-state /layout#/nodes/11/kind "Chip(ActionId(1841932870), true)"

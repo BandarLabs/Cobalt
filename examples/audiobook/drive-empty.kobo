@@ -1,0 +1,19 @@
+# sweep: --bare
+# A reader with no audiobooks on it says what to copy where, and offers the
+# sample, which is saved to the reader and then plays like any book.
+wait-for Audiobooks
+expect No audiobooks yet
+expect folder called Audiobooks
+clean
+shot audiobook-empty
+tap-id sample
+wait-for Now playing
+expect The Quiet Shelf
+clean
+shot audiobook-sample
+tap back
+wait-for Audiobooks
+expect The Quiet Shelf
+expect-missing No audiobooks yet
+clean
+shot audiobook-shelf

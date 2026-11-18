@@ -12,11 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 kobo-sdk = { path = "../../crates/kobo-sdk" }
+kobo-ui = { path = "../../crates/kobo-ui" }
 qrcodegen = "1.8"
 
 [dev-dependencies]
 kobo-catalog = { path = "../../crates/kobo-catalog" }
-kobo-ui = { path = "../../crates/kobo-ui" }
 
 [lints]
 workspace = true

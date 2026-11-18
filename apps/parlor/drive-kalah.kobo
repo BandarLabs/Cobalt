@@ -1,0 +1,146 @@
+# Kalah from setup to the end of a best-of-three match against the Casual
+# computer. The computer plays the same move for the same position, so
+# these pits win both rounds every time.
+expect Board games
+tap Kalah
+expect Sow four stones from each of six pits.
+expect Moves first
+tap Rules
+expect Your six pits are the row nearest you
+expect When one side is empty, most stones in the stores wins.
+clean
+shot kalah-rules
+tap Back
+expect Computer strength
+tap Casual
+tap Start game
+expect Your move
+expect Tap one of your six non-empty pits to sow counter-clockwise.
+expect You 0 · Computer 0
+# A store and the computer's pits are not the player's to sow.
+tap-id cell-6
+expect Choose a non-empty pit on your side. Stores cannot be selected.
+tap-id cell-9
+expect Choose a non-empty pit on your side.
+tap-id game-undo
+expect Nothing to undo yet.
+# Four stones from the third pit end in the store, which earns another turn.
+tap-id cell-2
+expect Last stone in your store: take the extra turn.
+clean
+shot kalah-extra-turn
+tap-id cell-3
+tap-id cell-4
+tap-id cell-1
+tap-id cell-4
+tap-id cell-0
+tap-id cell-3
+tap-id cell-4
+tap-id cell-5
+tap-id cell-5
+clean
+shot kalah-mid-game
+# A game in progress is saved on every move and offered back on reopening.
+restart
+wait-for Resume Kalah
+expect Board games
+clean
+shot kalah-resume-offered
+tap Resume Kalah
+expect Game resumed.
+expect You 0 · Computer 0
+tap-id cell-2
+tap-id cell-5
+tap-id cell-3
+tap-id cell-5
+tap-id cell-4
+tap-id cell-5
+tap-id cell-1
+tap-id cell-5
+tap-id cell-2
+tap-id cell-3
+tap-id cell-5
+tap-id cell-4
+tap-id cell-5
+tap-id cell-0
+tap-id cell-0
+tap-id cell-1
+tap-id cell-2
+expect You win
+expect You 1 · Computer 0
+expect The match is the best of three rounds. Next round plays on.
+expect Next round
+clean
+shot kalah-round-won
+tap-id cell-0
+expect The round is over. Next round plays another.
+tap Moves
+expect 1. You: sowed pit 3
+expect 3. Computer: sowed pit 2
+clean
+shot kalah-moves
+tap-id record-next
+expect 20. You: sowed pit 6
+clean
+shot kalah-moves-page-two
+tap-id record-previous
+expect 1. You: sowed pit 3
+tap-id 4294967295
+expect Next round
+tap Next round
+expect Tap one of your six non-empty pits to sow counter-clockwise.
+expect You 1 · Computer 0
+tap-id cell-2
+tap-id cell-3
+tap-id cell-4
+tap-id cell-1
+tap-id cell-4
+tap-id cell-0
+tap-id cell-3
+tap-id cell-4
+tap-id cell-5
+tap-id cell-5
+tap-id cell-2
+tap-id cell-5
+tap-id cell-3
+tap-id cell-5
+tap-id cell-4
+tap-id cell-5
+tap-id cell-1
+tap-id cell-5
+tap-id cell-2
+tap-id cell-3
+tap-id cell-5
+tap-id cell-4
+tap-id cell-5
+tap-id cell-0
+tap-id cell-0
+tap-id cell-1
+tap-id cell-2
+expect You win
+expect You 2 · Computer 0
+expect Match over, 2–0. New game, in the menu at the top, starts another.
+expect-missing Next round
+clean
+shot kalah-match-won
+tap-id cell-0
+expect The match is over. New game, in the menu at the top, starts another.
+# Undo reopens the deciding round and takes the point back with it.
+tap Undo
+expect Your last move and the computer's reply are taken back.
+expect You 1 · Computer 0
+tap-id cell-2
+expect You 2 · Computer 0
+expect Match over, 2–0.
+restart
+wait-for Resume Kalah
+tap Resume Kalah
+expect You win
+expect You 2 · Computer 0
+tap-id game-more
+tap New game
+expect Computer strength
+expect-missing Starting replaces
+tap Start game
+expect You 0 · Computer 0
+expect Your move

@@ -127,7 +127,7 @@ def main():
             try:
                 start()
                 drive("wait-for Add an AO3 work", "wait-idle", timeout=300)
-                drive("tap Add", "wait-for Enter its web address")
+                drive("tap Add", "wait-for Work address or number")
                 # The tap is delivered even if the live work-page fetch keeps
                 # the app busy past the step's handling window; wait_until
                 # below settles and gates on the parsed title.

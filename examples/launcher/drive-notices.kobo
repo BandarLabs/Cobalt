@@ -1,0 +1,52 @@
+# A notice raised the way the clip companion raises one appears over the
+# launcher without taking it over, leaves on its own, and is kept in the
+# Notifications list behind the bell until it is cleared.
+wait-for Cobalt
+wait-for 1 of
+expect-missing 1 new
+notice How the river found its way to the sea, and what the town beside it learnt
+wait-for Article arrived
+expect How the river
+shot notice-one
+# About four seconds, then gone, and the bell says one is new.
+wait 5000
+expect-missing Article arrived
+expect 1 new
+expect App Store
+shot notice-gone
+# Several at once are one card, which grows rather than queues.
+notice A walk in the hills
+notice The lighthouse keeper
+notice Notes on bread
+wait-for 3 articles arrived
+expect and 2 more
+shot notice-collapsed
+# Tapping a card that stands for several opens the list, newest first, by
+# day, with what was new still marked for this visit.
+tap 3 articles arrived
+wait-for Notifications
+expect Today
+expect Notes on bread
+expect New
+expect Clear all
+shot notifications
+# Back on the launcher, opening the list has marked everything read.
+tap Back
+wait-for Cobalt
+expect-missing 4 new
+# Clearing asks first, and keeping changes nothing.
+tap-id notifications
+wait-for Notifications
+tap Clear all
+wait-for Clear all notifications?
+shot notifications-clear
+tap Keep
+wait-for Notes on bread
+tap Clear all
+wait-for Clear all notifications?
+tap-id clear-notifications-confirmed
+wait-for Nothing new
+expect Articles you send from your computer show up here.
+shot notifications-empty
+tap Back
+wait-for Cobalt

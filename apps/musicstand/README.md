@@ -5,7 +5,7 @@ turns.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/stand.png" alt="A full page at reading size"><br>A full page at reading size</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/stand.png" alt="The top half of a page at reading size"><br>The top half of a page at reading size</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/half-turn.png" alt="A half-page turn keeps the current line in view"><br>A half-page turn keeps the current line in view</td>
 </tr>
 <tr>
@@ -17,30 +17,48 @@ turns.
 ## Features
 
 - Keeps the screen on while you play.
+- The score has the whole panel. Touch the top edge for the title, or the
+  middle of the page for the menu.
 - Turn pages with the page buttons or by tapping the screen.
 - Half-page turns: each page is split into two overlapping halves, so the line
   you are reading stays in view after a turn.
-- Staff-width zoom for dense passages.
+- **Staff width** in the menu crops the margins so the staves are larger,
+  for dense passages.
+- **Corner mark** flags a score in your library.
 - Each score remembers its page, zoom and corner mark.
 - Setlists keep rehearsal order and continue from one piece's last page to the
-  next piece.
+  next piece. Add scores from your library, move them up or down, or take them
+  off from the menu beside each one. Deleting a setlist keeps its scores.
+- Scores you send appear the next time you come back to Music Stand.
 
 ## Setup
 
-Scores are prepared on your computer and sent over USB or SSH:
+1. To send PDF scores, install Poppler on your computer: `brew install
+   poppler` on a Mac, or `sudo apt install poppler-utils` on Debian or Ubuntu.
+   Music Stand uses its `pdftoppm` to turn each page into a picture. Folders
+   of page images do not need it.
+2. Set up the reader once over USB, if you have not already: `kobo setup`.
+3. Send scores:
 
 ```sh
-kobo musicstand init --device IP
-kobo musicstand plan score.pdf --device IP   # what a push would send
-kobo musicstand push score.pdf --device IP
-kobo musicstand ls --device IP
-kobo musicstand rm ID --device IP
+kobo musicstand push Prelude.pdf Sarabande.pdf
+kobo musicstand push ~/Scores            # every PDF in the folder
+kobo musicstand plan ~/Scores            # what a push would send
+kobo musicstand ls
+kobo musicstand rm ID
 ```
 
-Use `--sim` instead of `--device IP` for the simulator.
+Commands use the reader `kobo setup` saved. Add `--device IP` for another
+reader, or `--sim` to try a command on the simulator.
 
-PDFs are rendered page by page with `pdftoppm`. Folders of PNG or JPEG images
-are sent as they are. Only send scores you have the right to use.
+- A push adds to your library. Sending a score again under the same name
+  replaces the old copy. `--replace` makes the library exactly what you sent
+  and removes every other score.
+- Each PDF in a folder becomes its own score. Page images directly in a folder
+  become one score named after the folder.
+- A push ends by listing every score now on the reader.
+
+Only send scores you have the right to use.
 
 ## Permissions
 

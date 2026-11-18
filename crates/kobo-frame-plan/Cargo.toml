@@ -1,0 +1,15 @@
+[package]
+name = "kobo-frame-plan"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Panel update planning shared by the Cobalt runtime and simulator"
+
+[dependencies]
+kobo-ui = { path = "../kobo-ui" }
+
+[lints]
+workspace = true

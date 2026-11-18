@@ -7,6 +7,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shutil
 import signal
 import socket
 import subprocess
@@ -47,9 +48,13 @@ def main():
                    KOBO_STREAM_CONFIG_DIR=str(config), KOBO_SIM_TRUST_DIR=str(config/'trust'),
                    KOBO_SIM_PROFILE=args.profile, KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_FIXTURE='live-paperterm-pty', KOBO_SIM_SEED='0')
-        init = subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'],
+        # --sim mints the identity without looking for a reader on the network.
+        init = subprocess.run([str(cli), 'stream', 'init', '--sim', '--host', '127.0.0.1'],
                               env=env, cwd=ROOT, capture_output=True, text=True, timeout=30)
         assert init.returncode == 0, init.stderr
+        # This check seeds, breaks or types its own pairing, so the one the
+        # simulator init just wrote is taken away again.
+        shutil.rmtree(private/'cobalt-sim-state', ignore_errors=True)
         assert (config/'stream/cert.pem').is_file(), 'Use a rebuilt CLI with private stream config support'
         with socket.socket() as port_socket:
             port_socket.bind(('127.0.0.1', 0))

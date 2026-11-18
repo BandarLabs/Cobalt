@@ -31,6 +31,7 @@ others. A branch that is not listed still runs, behind the notice.
 | Kobo Libra Colour | N428, code 390, firmware 4.45.23697, kernel 4.9.77 | Read-only probe, measured touch transform, all four bounded display stages, wait timing, guardian restoration, an end-to-end tap, page-button presses (upper 193 pages back, lower 194 forward, the Libra 2's mapping), and a clean stock-reader restart with no watchdog reset all complete on the owner's device. Evidence on [issue #28](https://github.com/BandarLabs/Cobalt/issues/28) and [PR #49](https://github.com/BandarLabs/Cobalt/pull/49). Colour path and suspend/resume not exercised | Fully tested |
 | Kobo Libra Colour | N428, code 390, firmware 4.46.23836, kernel 4.9.77 | Read-only doctor and physical touch match; all four bounded display stages, wait timing, guardian restoration, and a launcher hand-back test complete. Page buttons, colour path, and suspend/resume remain untested | Fully tested |
 | Kobo Libra H2O | N873, code 384, firmware 4.38.23697, kernel 4.1.15-00417-g0c800cffe1f9 | Read-only doctor match, measured touch transform across both verified rotations, all five bounded display stages, wait timing, guardian restoration, and a clean stock-reader restart with no kernel reset all complete on the owner's device. Evidence on [issue #184](https://github.com/BandarLabs/Cobalt/issues/184) and [PR #185](https://github.com/BandarLabs/Cobalt/pull/185) | Fully tested |
+| Kobo Nia | N306, code 382, firmware 4.38.23684, kernel 4.1.15-00463-g38afd5cea756 | Read-only doctor match, a measured touch, and owner footage of the launcher and apps running on the physical device ([PR #45](https://github.com/BandarLabs/Cobalt/pull/45)). The measured unit is `PCB='E60U20'`, `PCB_REV=0x10`, `PCB_LVL='A'`, `PMIC='RC5T619'`, `FL_PWM='LM3630x1a'`. Sandbox results and refresh timing with the completion wait bypassed are not yet recorded. A BD71828 revision ships under the same device code and is unmeasured | Supported (owner video) |
 
 `Read-only doctor match complete` means the profile describes the observed
 identity, framebuffer, and touch ranges. It does not prove the physical touch
@@ -40,9 +41,12 @@ fixture results are not substitutes.
 
 Firmware branches not listed here have not been reviewed on that model, and
 neither have devices missing from the table. Both still start, after the owner
-has been told what is untested and has agreed. What that notice cannot do is
-turn either into tested hardware: adding a row still takes a read-only probe
-and the applicable attended evidence.
+has been told what is untested and has agreed. `kobo setup` installs on them
+too, and says what is untested before asking to continue. Apart from the
+display families listed under *Which families* below, only firmware 5.x is
+refused, because NickelMenu cannot start Cobalt there. What that notice cannot
+do is turn either into tested hardware: adding a row still takes a read-only
+probe and the applicable attended evidence.
 
 ### Elipsa 2E portrait orientations
 
@@ -58,6 +62,117 @@ Cobalt again. This change does not add live autorotation within a session.
 
 See the [N605 acceptance record](testing/elipsa-rotation-89/README.md) for
 attended results in both portrait poses and device framebuffer captures.
+
+## Models without a profile
+
+Every row above is a reader somebody held while Cobalt ran on it. A Kobo that
+is not in the table still runs, on a profile built from what it reports about
+itself, provided its display driver is one Cobalt speaks. This section says
+which readers that covers, what such a session needs, and what a volunteer can
+check to move a model into the table.
+
+### Which families
+
+| Family | Display driver | Examples | Status |
+|---|---|---|---|
+| MediaTek MT8110 / MT8113 | HWTCON | Clara BW, Clara Colour, Libra Colour, Elipsa 2E | Measured profiles above; other models in the family run provisionally |
+| i.MX6SLL | EPDC v2, 32-bit pixels | Clara HD, Libra H2O, Libra 2, Forma, Clara 2E | Clara HD, Libra H2O and Libra 2 are measured; the rest run provisionally |
+| i.MX6ULL | EPDC v2, 32-bit pixels | Nia | Runs provisionally |
+| Allwinner | sunxi display engine | Elipsa, Sage | Not supported yet |
+| i.MX50 and i.MX6SL | EPDC v1, 16-bit pixels | Most readers released before the Clara HD | Not supported yet |
+
+The last two families are refused with a message that says the model is not
+supported yet and why. `kobo setup` refuses them before installing anything,
+going by the product id at the end of the reader's `.kobo/version` file, and
+the reader refuses them again at launch, before it is stopped, in case Cobalt
+reached it some other way. Their display
+drivers take a different update request from the ones Cobalt sends, and a
+request the driver misreads is not an error anything can catch, so neither is
+attempted.
+
+### Provisional support
+
+A reader with no profile gets one derived from its own probe: framebuffer
+geometry and pixel layout, the touch controller and its ranges, the firmware
+and kernel. The density is borrowed from a measured profile with the same
+resolution, or taken as 300 ppi. Two things cannot be derived and are handled
+on the device:
+
+- **How the digitiser is mounted.** Before the first real screen the reader
+  shows "Touch the dot" with one dot near the top-left corner, then one near
+  the top-right. From the two taps Cobalt works out whether the touch axes are
+  swapped and whether each is mirrored, and remembers the answer in
+  `.adds/cobalt/state/touch-calibration` for that reader, controller and pose.
+  The dots share an edge on purpose: two dots at opposite corners cannot tell
+  swapped axes from unswapped ones. Missing three times, leaving the dots for
+  two minutes, or pressing the power button hands the reader back. A measured
+  profile's transform is never replaced by a calibration. To calibrate again,
+  delete that file.
+- **Whether the owner wants to run untested.** After calibration the reader
+  says it has not been tested and asks before continuing, as before.
+
+The touch panel is found by what it reports rather than by name: a node with
+multi-touch position axes, or with `ABS_X`, `ABS_Y` and `BTN_TOUCH` for a
+single-touch controller. Nodes named for buttons, the power key or the cover
+are skipped. Controllers that send no tracking id, single-touch controllers,
+and controllers that never send a tracking id of -1 all decode.
+
+On i.MX readers three more differences apply:
+
+- On a reader with no profile, the front light is driven through
+  `mxc_msp430.0` where it exists, and the warmth control
+  (`lm3630a_led/color`, which runs the other way on these readers) is never
+  written. Whatever brightness the reader had is put back on exit. The
+  measured Clara HD, Libra H2O and Libra 2 keep the control they were tested
+  with until someone confirms the new one on each of them and changes the
+  profile's `front_light` field.
+- The sleep cover is read on key 59 as well as key 35.
+- Some boards hold the wait for a panel update for about five seconds after the
+  update has finished. Cobalt stops waiting after two seconds and writes
+  `refresh: the panel had not confirmed update ...` to standard error, which
+  `start.sh` captures.
+
+The button node may be called `ntx_event0` on older kernels instead of
+`gpio-keys`. Cobalt falls back to that name, but no reader with it has been
+tested.
+
+### Volunteer checklist
+
+Run these on the reader and note the model, serial prefix (the first four
+characters) and firmware. Start the session with `KOBO_BLACKBOX=1` so
+`kobo logs` has something to show.
+
+Every family:
+
+1. `kobo doctor --device <address>` and keep the whole output. It is what a
+   new profile row is written from.
+2. Launch Cobalt. Tap both dots when asked. The log should say
+   `touch: calibrated as ...`.
+3. Tap near each of the four corners of the launcher and check that each tap
+   lands where your finger was, not mirrored or rotated.
+4. If the reader has page keys, open a book and press each one. Each should
+   turn the page the way the key points.
+5. Close and open the sleep cover, if you have one, and check the session
+   notices.
+6. Change the brightness from Cobalt. The light should change visibly. Exit,
+   and check the brightness and the warmth are exactly what the Kobo had
+   before.
+7. With Wi-Fi on before launch, exit and check Wi-Fi is still connected in the
+   Kobo reader.
+8. Launch and exit three times in a row. The reader should come back each
+   time without a restart.
+
+i.MX readers (Clara HD, Forma, Libra H2O, Libra 2, Clara 2E, Nia):
+
+- Watch for screens that take about five seconds to settle, and note whether
+  the stall line above appears in the captured standard error.
+- Check warmth by eye after exit, not only brightness. Warmth that moved is a
+  bug.
+
+MediaTek readers:
+
+- Run the whole list once off the charger. Some faults in the hand-back only
+  show on battery.
 
 ## Connecting a device
 
@@ -162,45 +277,65 @@ kobo setup            # with the reader connected by USB and showing 'Connected'
 It finds the mounted reader, copies Cobalt into `.adds/cobalt`, reads every
 file back to prove it arrived intact, sets
 `DeveloperSettings/ForceWifiOn` and `PowerOptions/AutoSleepMinutes=90`, adds a
-**Cobalt** entry to the reader's own menu, and ejects. It leaves the firmware's
-root SSH server disabled.
+**Cobalt** entry to the reader's own menu, turns on the firmware's SSH server
+with this computer's key as the only way in, and ejects. Then it waits for the
+reader to come back on Wi-Fi and saves it, so every companion command after
+that needs no `--device` and no separate `kobo pair`.
 
-Developers who need Wi-Fi deployment may opt in explicitly:
+SSH is on by default because every app set up from a computer needs it, and
+leaving it off sent owners back to the cable for a second run. `kobo setup
+--no-ssh` leaves the server off for a reader that will only be used on its
+own; the older `--enable-ssh` is still accepted and changes nothing.
 
-```
-kobo setup --enable-ssh
-```
+How the reader is reached, and who else can reach it:
 
-That enables the firmware's **own root SSH server** and makes the setup
-reproducible. It creates or reuses the dedicated `~/.ssh/kobo_cobalt` key and
-stages only its public half inside Cobalt. After the restart, open Cobalt once
-from the reader menu: its root-owned start script appends the key to
-`/root/.ssh/authorized_keys` exactly once and deletes the staged copy. The
-private key never leaves the computer and no password is created or weakened.
-`kobo setup --undo` disables the server again. A plain `kobo setup` remains the
-recommended owner-facing installation.
+- Setup creates or reuses the dedicated `~/.ssh/kobo_cobalt` key (Ed25519, no
+  passphrase, never used for anything else) and stages only its public half,
+  in the one `KoboRoot.tgz` the firmware extracts at the next restart. It
+  becomes root's `authorized_keys`. The private key never leaves the computer.
+- Every `kobo` command connects with `BatchMode=yes`, `IdentitiesOnly=yes` and
+  that key, so it never offers or asks for a password.
+- The firmware's own server is not key-only. Its `sshd_config` permits root
+  login by password, including an empty one, and some firmware clears root's
+  password at boot. So when setup sees the reader come back, it closes
+  password login for root over a connection that may authenticate by the key
+  and nothing else: it appends a marked `Match User root` /
+  `PasswordAuthentication no` block to `sshd_config`, checks it with `sshd -t`
+  and `sshd -T`, reloads the server, and keeps the change only when a second,
+  fresh key login gets in. If that second login never arrives, the reader puts
+  the old file back by itself after five minutes, so a key that does not work
+  cannot lock anyone out.
+- `--no-key` skips the key and therefore the hardening, because without this
+  computer's key there is no proof a key works. That leaves the firmware's
+  password login as it shipped.
+- The archive also carries the firmware's empty first-login marker,
+  `/.login_pass_set`. Without it some firmware (a Libra Colour on 4.45.23697)
+  runs an interactive `passwd` on the first login, which swallows the script a
+  computer command sends.
 
-With `--enable-ssh`, it then waits. The restart is the one step that has to happen on the reader,
-its SSH server only starts at boot, and nothing on this side can press the
-power button, so the command asks for it and then watches the network for the
-reader to come back. Open Cobalt once after the reboot to install the staged
-public key; the command then prints the address and exact `kobo deploy` line.
-It identifies the reader first by *change*: it records which addresses answer
-on port 22 before the wait, and only ones that were not answering and now are
-candidates. It then authenticates with the new dedicated key and asks the same
-read-only identity script every other device command uses.
+The restart is the one step that has to happen on the reader: its SSH server
+only starts at boot, and nothing on this side can press the power button, so
+the command asks for it and then watches the network. The reader is
+recognised by the serial the USB volume gave: an address that was not answering on port 22 before the wait, and now answers, is asked who it
+is over the same read-only identity script every other command uses, and only
+the serial that was on the cable counts. Another Kobo waking on the same
+network is passed over and named at the end, never saved in its place. An
+address that accepts a connection but cannot answer yet is asked again next
+round, because a booting reader does exactly that.
 
-Change alone was not enough. A laptop waking from sleep mid-wait was reported
-as the reader, and a confident wrong address is worse than none. The obvious
-second test was the SSH banner, and it was wrong: this firmware runs
-**OpenSSH** rather than Dropbear, so a banner check rejected the very device it
-was written to find. What each newcomer gets asked instead is
-who it is, over the same identity script every other command uses. A reader
-says so. Anything else is passed over and named at the end. An address that
-accepts a connection but answers neither way is asked again next round rather
-than written off, because a booting reader does exactly that.
+The reader is saved exactly as `kobo pair` saves one: under the name `kobo`,
+or the first free `kobo-N`, or the name it already had when setup is run again
+to update Cobalt. `kobo pair NAME` renames it, and saves a reader prepared
+from another computer.
 
-`--no-wait` skips that SSH wait and `--no-menu` skips the menu entry.
+Change alone was not enough to recognise the reader. A laptop waking from sleep
+mid-wait was reported as the reader, and a confident wrong address is worse
+than none. The obvious second test was the SSH banner, and it was wrong: this
+firmware runs **OpenSSH** rather than Dropbear, so a banner check rejected the
+very device it was written to find.
+
+`--no-wait` skips the wait (save the reader later with `kobo pair`) and
+`--no-menu` skips the menu entry.
 `kobo setup --undo` removes the managed trees, stable launcher, and exact
 Cobalt NickelMenu entry. It preserves owner folders under
 `.adds/cobalt.recovery.N` and reports any `.adds/cobalt.unusable[.N]`
@@ -215,8 +350,8 @@ uses, and for the same reason: the suspend is requested by nickel itself, so
 nickel's timer is the only thing that can prevent it. It costs battery, and the
 reader's Energy saving screen overrides it at any time.
 
-The optional SSH server is the part worth explaining, because it is not ours. Firmware
-4.42 and later ship one, switched off, gated on the name of a file on the book
+The SSH server is the part worth explaining, because it is not ours. Recent
+firmware ships one, switched off, gated on the name of a file on the book
 partition: `.kobo/ssh-disabled`. Renaming it to `ssh-enabled` is the firmware's
 documented mechanism, and the file says so in its own text. Renaming it back
 is the whole of the uninstall. This was found on a factory-reset Clara BW
@@ -225,7 +360,7 @@ running 4.45.23697, and it replaces the worse answer that came before it:
 password at all** and still does not give you `kobo deploy`.
 
 > [!NOTE]
-> The firmware version this toggle first shipped in is not 4.42, and may be model-dependent: a Libra 2 on firmware 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware really lacks the toggle, install an SSH server manually (like Dropbear via NickelMenu) and copy your public key (from `~/.ssh/kobo_cobalt.pub`) into `authorized_keys` under root's home directory yourself, which is `/.ssh/authorized_keys` on readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, not `/root/.ssh/`.
+> Which firmware first shipped the toggle may depend on the model: a Libra 2 on 4.38.23697 ships `.kobo/ssh-disabled`, and renaming it brings up a working OpenSSH. If your firmware lacks the toggle, install an SSH server yourself and copy your public key (`~/.ssh/kobo_cobalt.pub`) into root's `authorized_keys`. On readers whose `/etc/passwd` gives root a home of `/`, such as the i.MX6 models, that is `/.ssh/authorized_keys`, not `/root/.ssh/`.
 
 ### Why Cobalt itself is not a `KoboRoot.tgz`
 
@@ -312,9 +447,14 @@ off while it is awake; its address has changed; or nothing is listening on port
 power button.
 
 The last one is worth stating plainly. **Cobalt does not install an SSH server.**
-It enables the one the firmware already ships, and only when you ask it to with
-`kobo setup`. Nothing the platform does on the reader involves SSH; it is only
-how a developer's machine reaches the device.
+It enables the one the firmware already ships, as part of `kobo setup` unless
+`--no-ssh` is given, and closes its password login so only this computer's
+key gets in. Nothing the platform does on the reader involves SSH; it is only
+how a computer reaches the device.
+
+A saved reader that does not answer gets a minute: the command says
+`Wake "kobo" (press power) and check Wi-Fi in Cobalt Settings.`, keeps looking,
+and carries on as soon as the reader is back.
 
 ## Talking to a device
 
@@ -429,8 +569,8 @@ working safety net either.
 The watchdogs above are only nameable because there is a record of what the
 session was doing when one of them fired. Standard output is not that record.
 It lives on a tmpfs a reboot empties, and the copy on `/mnt/onboard` is VFAT
-with buffered writes, so the last several seconds -- exactly the seconds that
-matter -- are never on the card when the device comes back.
+with buffered writes, so the last several seconds, exactly the ones that
+matter, are never on the card when the device comes back.
 
 So `crates/kobod/src/blackbox.rs` writes to the book partition and calls
 `fsync` after every single line. That is expensive, and it is the
@@ -470,6 +610,14 @@ it. This is also why a trace that simply stops, with no `session finished` line
 before it, is the signature of a hardware reset rather than an ordinary exit:
 nothing got the chance to write a last line.
 
+The excerpt above is the whole method in three lines. A reader that had returned
+to the stock interface looks identical whether the session ended cleanly or the
+`SoC` watchdog reset the device, and the two have completely different causes.
+Here the session announced its own end at its lease expiry and the next line is
+`alive`, so it was a timed handback and there is nothing to fix. Had it been a
+reset there would be no `session finished` at all, and the following line would
+carry a kernel clock of a few seconds.
+
 Anything an application logs goes to the trace too, prefixed `app`, so a hang
 inside an application can be read back the same way. This is the reason to
 reach for `context.log(...)` around work you suspect: an application logs to
@@ -481,23 +629,17 @@ took the reader down with it.
 One line per painted frame on standard error, off unless `KOBO_FRAME_TIMING=1`:
 
 ```text
-frame 1264x1680 wf=2 convert=41ms write=18ms submit=214us wait=401ms
+frame 1264x1680 marker=1207959553 backend=Mxcfb requested=TextContent applied=TextContent wf=2 translated=2 convert=41ms write=18ms submit=214us fence=401ms completed=1 pending=0
 ```
 
-It separates the grayscale conversion, the framebuffer write and the two
-ioctls, and names the waveform the panel was actually given. This is what found
+It separates the grayscale conversion, the framebuffer write, the submit ioctl
+and the wait for the panel (`fence`), and names the waveform that was asked for
+and the one the panel was actually given. The same switch also prints one JSON
+refresh record per update to standard error. This is what found
 the Libra 2 tap delay, and it is the fastest way to tell a slow conversion apart
 from a slow panel. It goes to standard error rather than the black box because
 the black box costs an `fsync` per line, which would swamp the thing being
 measured; `start.sh` captures standard error already.
-
-The excerpt above is the whole method in three lines. A reader that had returned
-to the stock interface looks identical whether the session ended cleanly or the
-`SoC` watchdog reset the device, and the two have completely different causes.
-Here the session announced its own end at its lease expiry and the next line is
-`alive`, so it was a timed handback and there is nothing to fix. Had it been a
-reset there would be no `session finished` at all, and the following line would
-carry a kernel clock of a few seconds.
 
 ### If you have shipped for Android or iOS
 
@@ -539,10 +681,13 @@ the boot environment to recovery first and puts it back afterwards, so an
 interrupted install lands somewhere designed for it. No terminal, no SSH, no
 IP address.
 
-Everything lands in `.adds/cobalt` on the same partition as the books. That
+Everything lands in `.adds/cobalt`, plus the stable launcher
+`.adds/cobalt-launch.sh` beside it, on the same partition as the books. That
 partition is vfat mounted without `noexec`, so the binaries run from where they
-land, which is why no rootfs file and no boot script is needed. Uninstall is
-deleting the folder, over USB, from any computer.
+land, which is why no rootfs file and no boot script is needed. `kobo setup
+--undo` is the complete uninstall: it removes the managed trees, the launcher and
+the Cobalt menu entry, and moves owner folders to `.adds/cobalt.recovery.N`
+first.
 
 The archive is incapable of writing anywhere else. Members are checked before
 they are written and then read back out of the finished bytes, so `kobo inspect`
@@ -553,7 +698,7 @@ uid/gid 0) so the printed SHA-256 is worth comparing.
 
 Two things are worth knowing before blaming the package. The reader's installer
 is gated on battery level and fails silently, so an install that appears to do
-nothing usually means charge it first. And nothing yet starts Cobalt at boot:
+nothing usually means charge it first. And nothing starts Cobalt at boot:
 run `.adds/cobalt/start.sh`, or add the single NickelMenu line the packaged
 `README.txt` gives you. Boot takeover is permanently out of scope, so a reboot
 always returns to the stock reader.
@@ -600,6 +745,16 @@ failure; a Todo session rendered at 1404×1872 with physical taps reaching UI
 actions; release of panel and touch followed by a successful stock-reader
 restart; and suspend/resume with monotonic device uptime and no Cobalt process
 left running.
+
+[KOReader marks its KoboLuna/Nia profile](https://github.com/koreader/koreader/blob/master/frontend/device/kobo/device.lua#L372-L383)
+as having an unreliable `MXCFB_WAIT_FOR_UPDATE_COMPLETE` ioctl, and
+[FBInk carries the same quirk](https://github.com/NiLuJe/FBInk/blob/master/fbink_device_id.c#L974-L982)
+for device code 382. The Nia profile therefore never enters that ioctl: each
+completion fence pauses for the
+[2.5 ms KOReader's stub wait uses](https://github.com/koreader/koreader-base/blob/master/ffi/framebuffer_mxcfb.lua#L239-L244)
+and retires the marker. The frame-timing records name these `paced`, not
+`completed`, because a pause is not evidence the panel finished. Sustained
+timing over several hundred physical refreshes has not been recorded yet.
 
 Update markers are random and at least `0x40000000`, because markers are a
 global namespace shared with the stock reader and a low fixed marker could be

@@ -1,0 +1,27 @@
+# sweep: --bare
+# A source chosen before the first refresh is the list the brief comes from,
+# and the time it came reads as a time of day. What a restart reads back is
+# checked by a_saved_brief_reads_back_with_its_source_and_its_time_after_a_restart,
+# and on live sites by drive-source-restart.kobo.
+wait-for Nothing yet
+tap Source
+wait-for All four are public Hacker News lists
+expect Top stories
+expect Ask Hacker News
+tap-id source-show
+wait-idle
+tap Brief
+wait-for Show Hacker News selected. Refresh to fetch it.
+clean
+shot source-chosen
+tap Refresh
+# Saving every story for offline reading goes on behind the list, and takes
+# as long as today's story sites do, so the route waits for the list only.
+wait-for Show Hacker News · as of
+expect-missing as of 20
+clean
+shot brief-show
+tap Source
+wait-for All four are public Hacker News lists
+clean
+shot sources-chosen

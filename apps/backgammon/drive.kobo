@@ -1,23 +1,121 @@
 expect Backgammon
-tap Match
-expect Turn history
-tap How to play
-expect Bring all 15 checkers home
+expect You play White against the computer. Tap Roll to begin.
+expect-missing Computer move
+expect-missing How to play
+expect-missing Match
+clean
+shot backgammon-opening
+tap Rules
+expect Tap the checker again to put it back.
 wait 250
 clean
 shot backgammon-help
 tap Play
+expect Opening roll
 tap Roll
-expect opened with
+expect Computer opened with 4 and 6 and played 1/7 1/5.
+expect-missing Computer move
 clean
-shot backgammon-opening
+shot backgammon-computer
+tap Roll
+expect You rolled 3 and 2. Tap a checker to pick it up.
+tap-id point-0
+expect Tap a point with one of your checkers on it.
+tap-id point-12
+expect Tap a marked point to move it there.
+expect Point 11 empty, open
+expect Point 10 empty, open
+clean
+shot backgammon-selected
+tap-id point-15
+expect That point is closed to this checker.
+tap-id point-10
+expect 3 left to play.
+tap Undo
+expect Move taken back.
+tap Undo
+expect Nothing to undo yet.
+tap-id point-12
+tap-id point-10
+tap-id point-12
+tap-id point-9
+expect Computer rolled double 1s and played 17/18 17/18 17/18 18/19.
+expect Your move
+tap Double
+expect Offer the cube at 2?
+expect The opponent may take or drop. This cannot be undone.
+clean
+shot backgammon-double
+tap Cancel
+expect Your move
 scenario storage-full
-tap Computer move
+tap Roll
 expect Progress is not saved
 clean
 shot backgammon-save-refused
 scenario normal
-tap Roll
+tap-id point-12
+tap-id point-6
+expect 2 left to play.
 expect-missing Progress is not saved
+expect Bar · Black 1
+tap-id point-12
+tap-id point-10
+expect Computer rolled
+expect Your move
 clean
 shot backgammon-save-kept
+# The computer hit a checker. Black holds the 6 entry point, so double 6s
+# cannot come in, and the turn passes without a tap.
+tap Roll
+expect You rolled double 6s and cannot move.
+expect Bar · White 2
+tap Roll
+expect You rolled double 6s and cannot move.
+tap Roll
+expect You rolled double 3s. Only one move is legal. Tap Bar to bring a checker in.
+tap Roll
+expect The dice are already rolled. 3, 3, 3 and 3 left to play.
+tap-id point-5
+expect A checker on the bar has to come in first. Tap Bar.
+tap Bar
+expect Tap a marked point to bring the checker in.
+clean
+shot backgammon-bar-entry
+tap Bar
+expect Checker put back on the bar.
+tap Bar
+tap-id point-21
+expect 3, 3 and 3 left to play.
+tap Bar
+tap-id point-21
+expect-missing Bar · White
+tap-id point-23
+tap-id point-20
+tap-id point-10
+tap-id point-7
+expect Computer rolled 4 and 1 and played 12/16 12/13.
+tap-id game-more
+expect Turn history
+tap Turn history
+expect You bar/22 bar/22 24/21 11/8
+# A turn with no legal move is kept in the record, not skipped.
+expect You rolled double 6s and could not move
+clean
+shot backgammon-history
+tap Back
+tap-id game-more
+tap Match settings
+expect This match plays to 5 points.
+tap Play
+tap-id game-more
+tap New game
+expect Start a new game?
+tap Keep playing
+expect You 0 · Computer 0
+expect-missing Opening roll
+tap-id game-more
+tap New game
+tap Start new game
+expect Opening roll
+expect You play White against the computer. Tap Roll to begin.

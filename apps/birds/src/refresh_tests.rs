@@ -167,12 +167,7 @@ fn a_corrupt_update_keeps_the_last_complete_image_and_metadata() {
     assert_eq!(runner.app().snapshot, previous);
     assert_eq!(runner.app().picture, picture);
     assert_eq!(runner.app().image_bytes.as_deref(), Some(COLLAGE));
-    assert!(runner
-        .app()
-        .notice
-        .as_deref()
-        .unwrap()
-        .contains("last complete view"));
+    assert_eq!(runner.app().notice, Some(Notice::Incomplete));
     let mut queue = VecDeque::new();
     accept_commands(runner.action(action_id(REFRESH)), &mut queue, &mut pictures);
     settle(&mut runner, &mut queue, &mut pictures);

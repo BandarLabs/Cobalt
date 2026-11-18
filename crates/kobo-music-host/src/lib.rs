@@ -211,10 +211,18 @@ pub fn fit_page(page: &Picture, panel: Panel) -> Result<Picture, String> {
 /// Merge incoming scores into the existing shelf: unchanged digests are kept,
 /// new scores get fresh page files, and failures ride the manifest so the app
 /// can report them honestly.
+///
+/// A push adds to the shelf unless `replace` asks for the shelf to become
+/// exactly what was sent. Adding is the default because sending one more
+/// score is what a push nearly always means, and a shelf that silently lost
+/// every other score to a push of one was the opposite of what anybody
+/// expected. A score sent again under the same title takes the place of the
+/// one it updates rather than standing beside it.
 pub fn plan(
     existing: &Manifest,
     incoming: Vec<IncomingScore>,
     mut failures: Vec<ImportFailure>,
+    replace: bool,
 ) -> Result<Push, String> {
     let old_by_digest: BTreeMap<&str, &Score> = existing
         .scores
@@ -280,6 +288,23 @@ pub fn plan(
         });
         if scores.len() > MAX_SCORES {
             return Err(format!("Music Stand holds at most {MAX_SCORES} scores"));
+        }
+    }
+    if !replace {
+        let sent: BTreeSet<&str> = scores.iter().map(|score| score.title.as_str()).collect();
+        let kept: Vec<Score> = existing
+            .scores
+            .iter()
+            .filter(|old| {
+                !sent.contains(old.title.as_str()) && !scores.iter().any(|score| score.id == old.id)
+            })
+            .cloned()
+            .collect();
+        scores.splice(0..0, kept);
+        if scores.len() > MAX_SCORES {
+            return Err(format!(
+                "Music Stand holds at most {MAX_SCORES} scores. Remove some with kobo musicstand rm, or send this push with --replace."
+            ));
         }
     }
     let wanted: BTreeSet<&str> = scores.iter().map(|score| score.id.as_str()).collect();
@@ -386,7 +411,7 @@ mod tests {
                 pages: vec![grey_page(2144, 2800, 2), grey_page(2144, 2800, 3)],
             },
         ];
-        let push = plan(&existing, incoming, Vec::new()).expect("plan");
+        let push = plan(&existing, incoming, Vec::new(), true).expect("plan");
         assert_eq!(push.manifest.scores.len(), 2);
         assert_eq!(push.manifest.scores[0].id, "score-old");
         assert_eq!(push.manifest.scores[1].id, "score-brand-new-digest");
@@ -394,6 +419,73 @@ mod tests {
         assert_eq!(Push::page_name("score-x", 7), "score-x-007.png");
         assert_eq!(push.removed.len(), 1);
         assert_eq!(push.removed[0].id, "score-gone");
+    }
+
+    fn score(id: &str, title: &str, digest: &str) -> Score {
+        Score {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            digest: digest.to_owned(),
+            pages: 1,
+            width: 2144,
+            height: 3000,
+            added: 1,
+        }
+    }
+
+    #[test]
+    fn a_push_adds_to_the_shelf_and_keeps_every_score_it_did_not_mention() {
+        let existing = Manifest {
+            scores: vec![score("score-a", "Prelude", "aaaa-digest-padded")],
+            failures: Vec::new(),
+        };
+        let push = plan(
+            &existing,
+            vec![IncomingScore {
+                title: "Sarabande".to_owned(),
+                digest: "bbbb-digest-padded".to_owned(),
+                added: 2,
+                pages: vec![grey_page(2144, 2800, 1)],
+            }],
+            Vec::new(),
+            false,
+        )
+        .expect("plan");
+        let titles = push
+            .manifest
+            .scores
+            .iter()
+            .map(|score| score.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(titles, ["Prelude", "Sarabande"]);
+        assert!(push.removed.is_empty());
+    }
+
+    #[test]
+    fn a_score_sent_again_under_its_title_replaces_the_old_copy_instead_of_doubling() {
+        let existing = Manifest {
+            scores: vec![
+                score("score-a", "Prelude", "aaaa-digest-padded"),
+                score("score-c", "Gigue", "cccc-digest-padded"),
+            ],
+            failures: Vec::new(),
+        };
+        let push = plan(
+            &existing,
+            vec![IncomingScore {
+                title: "Prelude".to_owned(),
+                digest: "dddd-digest-padded".to_owned(),
+                added: 2,
+                pages: vec![grey_page(2144, 2800, 1)],
+            }],
+            Vec::new(),
+            false,
+        )
+        .expect("plan");
+        assert_eq!(push.manifest.scores.len(), 2);
+        assert_eq!(push.removed.len(), 1);
+        assert_eq!(push.removed[0].id, "score-a");
+        assert!(push.manifest.scores.iter().any(|s| s.title == "Gigue"));
     }
 
     #[test]
@@ -407,6 +499,7 @@ mod tests {
                 pages: Vec::new(),
             }],
             Vec::new(),
+            false,
         )
         .expect("plan");
         assert!(push.manifest.scores.is_empty());

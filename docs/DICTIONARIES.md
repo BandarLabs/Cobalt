@@ -28,7 +28,9 @@ reading	The act or practice of interpreting written text.
 
 Higher priority dictionaries are shown first; ties are ordered by dictionary
 name. Language tags use short BCP 47-style values such as `en`, `fr`, or
-`pt-BR`. Files, entries, definitions, results, and the total index are bounded.
+`pt-BR`. Up to 32 files are read, each at most 8 MiB and 64 MiB in all; a
+headword is at most 128 bytes, a definition at most 4 KiB, and a lookup shows
+at most eight entries.
 A malformed line or file is skipped without disabling other dictionaries.
 
 Lookup performs Unicode compatibility normalization, case folding, surrounding

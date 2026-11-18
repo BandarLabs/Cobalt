@@ -1,19 +1,19 @@
 # Review capture drivers
 
-Capture-only Python and Rust fixtures live here, outside the production apps. Normal app regression tests stay in their original source modules. Output images, large diagnostics, and historical manifests live on the immutable evidence branch, linked from each original packet README. `relocation-*.json` maps original driver paths to their new locations.
+Capture-only Python and Rust fixtures live here, outside the production apps, so ordinary workspace tests never compile them. App regression tests stay in their own source modules. Output images, large diagnostics and historical manifests live on the archived evidence branch, linked from each packet's README. `relocation-*.json` maps each original driver path to its location here.
 
-Run from the repository root with Python 3.11+, Cargo, and the repository's Rust toolchain/dependency cache. Native captures exercise real app screen builders and renderer/font code in an isolated temporary Cargo package. They do not prove interactive runtime navigation or physical hardware behavior.
+Run from the repository root with Python 3.11+, Cargo and the repository's Rust toolchain. Builds run with `--offline`, so the dependency cache must already be filled. Native captures exercise the real app screen builders and the renderer and font code in a temporary Cargo package. They do not prove interactive navigation in the runtime or behaviour on hardware.
 
-For an app with `src/review_capture.rs` under this directory, the common runner copies the current app and overlays the relocated capture files only in a temporary package:
+For an app with `src/review_capture.rs` under this directory, `run.py` copies the current app, overlays the capture files in the temporary package, and runs the ignored capture tests:
 
 ```sh
 python3 tools/review-captures/run.py apps/parser --out /tmp/parser-captures
 python3 tools/review-captures/run.py apps/backgammon --out /tmp/backgammon-captures
 ```
 
-Use whichever app exists in the checked-out PR. This runner includes ignored capture tests; ordinary workspace tests no longer compile these capture-only modules. App dependencies and the workspace lockfile remain unchanged. App fixtures and shared test fixtures remain available in the temporary mirror.
+`--filter` narrows the tests run (default `capture_`). App dependencies and the workspace lockfile are left unchanged, and app and shared test fixtures are available in the temporary copy.
 
-Other existing drivers retain their command-line interface. Prefix the old script and scenario paths with `tools/review-captures/`. For example:
+The other drivers keep their original command lines, with `tools/review-captures/` in front of the script and scenario paths. For example:
 
 ```sh
 COBALT_REVIEW_CAPTURE_DIR=/tmp/birds-captures \
@@ -23,12 +23,12 @@ python3 tools/review-captures/examples/chat/screenshots/ui-review/capture.py \
 python3 tools/review-captures/docs/reviews/audit-five-fixes/capture.py --help
 ```
 
-Only use drivers present in the current checkout. `--baseline` options retain their explicitly pinned historical source; they are not aliases for today's beta. Archived packet notes give each scenario's original source hashes and output environment variables.
+A `--baseline` option builds the historical source pinned in its driver, not today's beta. The archived packet notes give each scenario's original source hashes and output variables.
 
-Lightweight syntax, relocation, and injection checks run through `node --test tools/*.test.mjs` in existing CI. Run them alone with:
+CI checks the harness structure, relocation and injection through `node --test tools/*.test.mjs`. To run that check alone:
 
 ```sh
 python3 -B tools/review-captures/test_relocation.py
 ```
 
-These checks validate the harness structure, not pixels. Run a native capture and inspect its images when changing a scenario or production screen builder. Full nine-profile and interactive-runtime evidence remains separately identified in the archived packets.
+These checks do not look at pixels. When you change a scenario or a production screen builder, run a native capture and inspect the images. Full nine-profile and interactive-runtime evidence stays in the archived packets.

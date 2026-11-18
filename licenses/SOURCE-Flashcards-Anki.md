@@ -48,7 +48,7 @@ test -z "$(git status --porcelain --untracked-files=normal)"
 source_commit=$(git rev-parse HEAD)
 COBALT_SOURCE_COMMIT="$source_commit" \
 CARGO_TARGET_DIR="$target_root/host-target" \
-  cargo build --locked --release \
+  cargo +1.88.0 build --locked --release \
     --manifest-path crates/kobo-flashcards-import/Cargo.toml
 printf '%s\n' "$source_commit" > \
   "$target_root/artifacts/flashcards-import.source-commit.txt"

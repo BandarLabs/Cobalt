@@ -48,6 +48,7 @@ def main():
     parser.add_argument('--shelf-previews', action='store_true', help='Check saved shelf progress and cover-cache eviction with the original sample; requires --onboarding')
     parser.add_argument('--download-recovery', action='store_true', help='Recover a completed original CBZ checkpoint offline, including storage failure')
     parser.add_argument('--cbr', action='store_true', help='Check explicit CBR refusal')
+    parser.add_argument('--sent', action='store_true', help='Push two comics with the real CLI while Panels runs, then --replace')
     parser.add_argument('--colour', action='store_true', help='Inspect original RGB artwork on color and grayscale profiles')
     args = parser.parse_args()
     if args.shelf_previews and not args.onboarding:
@@ -67,7 +68,8 @@ def main():
         storage = Path(private)/'cobalt-sim-data/panels'
         storage.mkdir(parents=True)
         fixture = b'Rar!\x1a\x07\x01\x00' if args.cbr else comic_bytes(args.colour)
-        (storage/'volume.cbz').write_bytes(fixture)
+        if not args.sent:
+            (storage/'volume.cbz').write_bytes(fixture)
         comic_key = hashlib.sha256(fixture).hexdigest()
         if args.download_recovery:
             completed = (ROOT/'apps/panels/assets/a-small-garden.cbz').read_bytes()
@@ -153,6 +155,61 @@ def main():
                     assert not errors, f'{label}: {errors}'
                     return '\n'.join(' '.join(node.get('lines', [])) for node in layout['nodes'])
 
+                if args.sent:
+                    def push(*names, replace=False):
+                        command = [str(binary), 'panels', 'push', *map(str, names), '--sim']
+                        if replace:
+                            command.append('--replace')
+                        result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
+                                                text=True, timeout=60)
+                        assert result.returncode == 0, result.stdout + result.stderr
+                        return result.stdout
+                    garden = Path(private)/'Garden Walk.cbz'
+                    garden.write_bytes((ROOT/'apps/panels/assets/a-small-garden.cbz').read_bytes())
+                    shapes = Path(private)/'Shapes at Night.cbz'
+                    shapes.write_bytes(fixture)
+                    third = Path(private)/'Third Volume.cbz'
+                    third.write_bytes(comic_bytes(True))
+                    wait_for('Add comic')
+                    first = push(shapes)
+                    assert 'Waiting in Panels: 1 comic.' in first, first
+                    drive('lifecycle background')
+                    drive('lifecycle foreground')
+                    # A pushed comic goes on the shelf on return by itself.
+                    drive('wait-for-id kept-' + hashlib.sha256(fixture).hexdigest())
+                    wait_for('Shapes at Night')
+                    capture('50-first-on-shelf')
+                    second = push(garden)
+                    assert 'Shapes at Night' not in second, 'an added comic is still listed as waiting'
+                    assert 'Waiting in Panels: 1 comic.' in second, second
+                    drive('lifecycle background')
+                    drive('lifecycle foreground')
+                    drive('wait-for-id kept-' + hashlib.sha256(garden.read_bytes()).hexdigest())
+                    layout = capture('51-both-on-shelf')
+                    assert 'Shapes at Night' in layout, 'the second push lost the first comic'
+                    assert 'Added comic' not in layout, 'a sent title was lost'
+                    assert not list(storage.glob('sent-*.cbz')), 'added comics left their sent files'
+                    drive('tap-id load-sideload')
+                    wait_for('Sent from your computer')
+                    layout = capture('52-sent-list')
+                    # The first comic's sent file went once it was added, so
+                    # the second push dropped it from the list; the second
+                    # is listed as already on the shelf.
+                    assert layout.count('On your shelf') == 1 and 'A small garden' in layout, layout
+                    drive('tap Back')
+                    replaced = push(third, replace=True)
+                    assert 'Waiting in Panels: 1 comic.' in replaced and 'Third Volume' in replaced, replaced
+                    drive('lifecycle background')
+                    drive('lifecycle foreground')
+                    drive('wait-for-id kept-' + hashlib.sha256(third.read_bytes()).hexdigest())
+                    capture('53-third-on-shelf')
+                    (args.output/'result.json').write_text(json.dumps(dict(status='passed', profile=args.profile,
+                        scale=args.scale, sent=True, checks=[
+                            'a comic pushed while Panels runs goes on the shelf on return without a restart',
+                            'a second push keeps the first comic, each under its own title',
+                            'added comics leave no sent files behind and are marked on the shelf in the list',
+                            '--replace sends only the new comic, which is added on return']), indent=2)+'\n')
+                    return
                 if args.download_recovery:
                     drive('wait-for-id retry')
                     wait_for('Download complete')

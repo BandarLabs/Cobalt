@@ -12,56 +12,66 @@ Turn a Kobo into a low-power black-and-white photo frame.
 ## Features
 
 - Two modes:
-  - **Frame mode** keeps the reader awake and changes photo every 5, 15 or 60
-    minutes.
+  - **Frame mode** changes photo every 5, 15 or 60 minutes while Frame is
+    open.
   - **Slow slideshow** wakes the reader every 1, 6 or 24 hours to change the
     photo, and lets it sleep in between.
-- Shuffle or date order. Settings and the current position are remembered.
+- The photo fills the screen inside a narrow white mat, with nothing over it.
+- Shuffle or date order. Tap the top edge for the bar, then the gear for
+  **Settings**: the mode, the interval and the order. Settings and the current
+  position are remembered.
 - Tap either side to move between photos. Tap the centre for the photo's file,
   album, date and transfer state.
+- New photos appear on their own: Frame looks at its shelf again whenever it
+  changes photo, wakes, or you come back to it.
 - Every photo is checked against the digest recorded when it was sent.
-  Changed or damaged photos are skipped and listed on the home screen.
+  Changed or damaged photos are skipped, and the centre tap says so.
 - Each photo change uses a full-quality screen refresh.
 
 Frame does not replace the Kobo's own sleep screen.
 
 ## Setup
 
-Frame receives photos over the SSH connection set up by
-`kobo setup --enable-ssh`. Prepare and send photos from your computer:
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. Send photos:
 
 ```sh
-kobo frame init --device 192.168.1.42
-kobo frame push ~/Pictures/family --device 192.168.1.42
-kobo frame push portrait.jpg --fit pad --device 192.168.1.42
-kobo frame ls --device 192.168.1.42
-kobo frame rm photo-0123456789abcdef --device 192.168.1.42
+kobo frame push ~/Pictures/family
+kobo frame push portrait.jpg --fit pad
+kobo frame ls
+kobo frame rm photo-0123456789abcdef
 ```
 
+Commands use the reader `kobo setup` saved. Add `--device IP` for another
+reader, or `--sim` to try a command on the simulator.
+
 - JPEG, PNG, GIF and WebP are accepted, and camera orientation is applied.
-- Photos are cropped to fill the screen by default. `--fit pad` keeps the
-  whole photo with white borders.
-- `push` adds to the album. `--album NAME` names the album; otherwise the
+- On a Clara Colour or Libra Colour, photos keep their colour. On other
+  readers they are reduced to grey on the computer before they are sent.
+- Photos are cropped to fill the mat by default. `--fit pad` keeps the whole
+  photo, and the mat widens on its short sides.
+- Each push adds to the frame. `--album NAME` names the album; otherwise the
   folder name is used. Photos already on the reader are not sent again.
-- `--delete` replaces the album and removes photos not in the new set.
-- Every command accepts `--sim` to try it on the simulator.
+- `--replace` makes the frame hold only this push, and removes every other
+  photo.
+- A push ends by listing what is now on the reader, album by album.
 
 ### Preview and plan
 
 ```sh
 kobo frame preview ~/Pictures/family --out ./frame-preview
-kobo frame plan ~/Pictures/family --device 192.168.1.42 --album "Summer holiday"
+kobo frame plan ~/Pictures/family --album "Summer holiday"
 ```
 
 `preview` writes an `index.html` comparing crop and pad for each photo, for
 the Clara BW or another reader with `--profile`. `plan` lists what a push
-would add, keep and remove without changing anything. Run it with `--delete`
+would add, keep and remove without changing anything. Run it with `--replace`
 before a replacement.
 
 ### Undo
 
 ```sh
-kobo frame restore --device 192.168.1.42
+kobo frame restore
 ```
 
 Before any change to a non-empty album, Frame saves a copy of it. `restore`
@@ -77,7 +87,10 @@ from the reader and checking every photo.
 - Up to 500 photos and 150 MB of prepared images.
 - Source files up to 32 MB and 50 million pixels.
 - HEIC and HEIF are not supported. Convert them to JPEG first.
-- Photos are shown in greyscale.
+- Cobalt cannot yet keep a reader awake for Frame mode or wake it for the
+  slow slideshow, and Frame says so in **Settings**. Until it can, keep the
+  reader on its charger in Frame mode: a charging reader does not go back to
+  the Kobo home screen when left alone.
 
 ## Permissions
 
@@ -98,4 +111,6 @@ The simulator check builds the app, opens it in a fresh simulator and plays
 
 Images are prepared and decoded with the `image` crate (MIT or Apache-2.0).
 The sample photograph is [Blue Marble](https://svs.gsfc.nasa.gov/30613) by the
-NASA Johnson Space Center Earth Science and Remote Sensing Unit.
+NASA Johnson Space Center Earth Science and Remote Sensing Unit. The screenshots
+show Ansel Adams's The Tetons and the Snake River (1942), a public-domain
+photograph from the U.S. National Archives.

@@ -1,8 +1,13 @@
 expect 10+5
 expect Rapid · Rated
-expect Waiting
+expect Finding an opponent
 expect Cancel pairing
 shot waiting
 tap Cancel pairing
 wait-for Cancelling
+# The heading names the seek being cancelled until Lichess confirms it,
+# not a different time.
+expect 10+5
+expect-missing 10+0
+expect Cancelling the search
 shot cancellation-requested

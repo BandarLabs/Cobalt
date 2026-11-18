@@ -1,0 +1,38 @@
+# sweep: --bare
+# Logging works before any pack arrives, and a pack pushed later fills the tally.
+wait-for No field pack yet
+tap Start an outing
+wait-for Name this place
+type back garden
+tap Save
+wait-for back garden
+expect 0 species, 0 birds
+expect Type the first bird you see.
+clean
+shot nopack-outing
+# With no pack the search asks only for the name.
+tap Type a species
+wait-for Type the species you see.
+type wren
+tap Find
+wait-for Log “wren” by name
+expect-missing No species in your packs matches
+clean
+shot nopack-log-by-name
+tap Log “wren” by name
+wait-for 1 species, 1 bird
+# The bird logged by name is now one tap away in the tally.
+wait-for wren
+tap wren
+wait-for 1 species, 2 birds
+# A pack pushed while the outing is open joins the tally when Fieldbook comes back.
+companion fieldbook push scripts/fixtures/fieldbook/packs.v1 --sim
+lifecycle background
+lifecycle foreground
+wait-for American Robin
+expect-missing Type the first bird you see.
+clean
+shot nopack-pack-arrived
+tap Back
+wait-for 2 packs, 10 species.
+expect Open outing: back garden

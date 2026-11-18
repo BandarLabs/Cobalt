@@ -275,6 +275,10 @@ pub enum ApplyState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "rated, check, a departed opponent and an unclocked game are independent facts about one board"
+)]
 pub struct Game {
     pub id: String,
     pub my_color: Color,
@@ -289,6 +293,11 @@ pub struct Game {
     pub check: bool,
     pub opponent_gone: bool,
     pub claim_win_seconds: Option<u32>,
+    /// False only for an offline game the owner chose to play without a
+    /// clock. Every Lichess game has one, but against the computer a clock is
+    /// pressure the owner did not ask for, and a ticking clock repaints the
+    /// panel every second for nothing.
+    pub timed: bool,
 }
 
 impl Game {
@@ -308,6 +317,7 @@ impl Game {
             check: replayed.check,
             opponent_gone: false,
             claim_win_seconds: None,
+            timed: true,
         })
     }
 
@@ -376,7 +386,7 @@ impl Game {
     }
 
     pub fn expire_clock(&mut self, elapsed_ms: u64) -> bool {
-        let Some(turn) = self.turn().filter(|_| self.active()) else {
+        let Some(turn) = self.turn().filter(|_| self.active() && self.timed) else {
             return false;
         };
         if self.clock_ms_elapsed(turn, elapsed_ms) > 0 {
@@ -389,7 +399,7 @@ impl Game {
     }
 
     pub fn commit_turn_time(&mut self, elapsed_ms: u64) -> bool {
-        let Some(turn) = self.turn().filter(|_| self.active()) else {
+        let Some(turn) = self.turn().filter(|_| self.active() && self.timed) else {
             return false;
         };
         let remaining = self.clock_ms_elapsed(turn, elapsed_ms);
@@ -585,6 +595,17 @@ mod tests {
         game.apply(moved).expect("legal move");
         assert_eq!(game.clock_ms(Color::White, 20), 598_750);
         assert_eq!(game.clock_ms(Color::Black, 20), 580_000);
+    }
+
+    #[test]
+    fn a_game_without_a_clock_never_runs_out_of_time() {
+        let mut game = game("e2e4");
+        game.timed = false;
+        game.state.black_ms = 0;
+
+        assert!(!game.commit_turn_time(60_000));
+        assert!(!game.expire_clock(60_000));
+        assert!(game.active());
     }
 
     #[test]

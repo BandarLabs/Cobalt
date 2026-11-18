@@ -6,12 +6,18 @@ use std::env;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use kobo_protocol::channel;
+
 static VERIFIED_DEVICE_METRICS: OnceLock<kobo_ui::DisplayMetrics> = OnceLock::new();
+/// Whether the verified device's panel has a colour filter, remembered beside
+/// its metrics for the same reason: an application is told once, at the
+/// handshake, and the answer must not change under it.
+static VERIFIED_COLOUR_PANEL: OnceLock<bool> = OnceLock::new();
 
 fn metrics_for_profile(
     profile: &kobo_profile::DeviceProfile,
@@ -61,21 +67,43 @@ fn remember_device_profile(profile: &kobo_profile::DeviceProfile) -> Result<(), 
     }
     VERIFIED_DEVICE_METRICS
         .set(metrics)
-        .map_err(|_| "the verified device metrics could not be retained".to_owned())
+        .map_err(|_| "the verified device metrics could not be retained".to_owned())?;
+    VERIFIED_COLOUR_PANEL
+        .set(profile.colour_panel)
+        .map_err(|_| "the verified panel kind could not be retained".to_owned())
+}
+
+/// Whether the panel applications are told about at the handshake shows
+/// colour: the verified device's answer once a session has started, and the
+/// simulated profile's before then.
+pub fn device_colour_panel() -> bool {
+    VERIFIED_COLOUR_PANEL
+        .get()
+        .copied()
+        .unwrap_or_else(|| simulated_appearance() == kobo_ui::Appearance::Colour)
 }
 
 use std::process::ExitCode;
 
+// The daemon's subsystems serve the device-write entry points, which a
+// Windows host build does not compile. Keep the dead-code lint live on unix
+// and silence the noise in the Windows CI job's build.
+#[cfg_attr(not(unix), allow(dead_code))]
 mod app_link;
 mod app_store;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod consent;
 #[cfg(feature = "device-write")]
 mod device;
-mod frame;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod syncthing;
+#[cfg_attr(not(unix), allow(dead_code))]
+mod touch_calibration;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod update;
 
 fn main() -> ExitCode {
@@ -276,7 +304,9 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
 
     let snapshot = kobo_hal::probe_device()?;
-    let profile = kobo_profile::write_ready_profile(&snapshot)
+    // An attended probe, so a firmware branch nobody measured is not a reason
+    // to refuse: the touch node sits beneath the stock reader.
+    let profile = kobo_profile::attended_write_profile(&snapshot)
         .map_err(|blockers| format!("device write refused: {}", blockers.join("; ")))?;
     let touch_path = snapshot
         .touch
@@ -704,12 +734,15 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     if socket_path.exists() {
         return Err(format!("socket already exists: {}", socket_path.display()).into());
     }
-    let listener = UnixListener::bind(socket_path)?;
+    let listener = channel::Listener::bind(socket_path)?;
+    // The Unix socket needs owner-only mode bits; the Windows address file
+    // inherits the user profile ACL (see kobo_protocol::channel).
+    #[cfg(unix)]
     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))?;
     let _socket_guard = SocketGuard(socket_path.to_owned());
     println!("simulation socket ready: {}", socket_path.display());
 
-    let (mut stream, _) = listener.accept()?;
+    let mut stream = listener.accept()?;
     let hello = kobo_protocol::read_from(&mut stream)?;
     let Message::Hello { name } = hello.message else {
         return Err("first application message must be Hello".into());
@@ -721,6 +754,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             version: hello.version,
             request_id: hello.request_id,
             message: Message::Welcome {
+                colour_panel: simulated_appearance() == kobo_ui::Appearance::Colour,
                 width: u16::try_from(metrics.width)?,
                 height: u16::try_from(metrics.height)?,
                 pixels_per_inch: u16::try_from(metrics.pixels_per_inch)?,
@@ -737,26 +771,16 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
 /// host-side credentials, so `kobo-sidekick init` can drop a certificate in
 /// and every host runtime finds it without being told.
 fn host_trust_directory() -> PathBuf {
-    env::var_os("HOME").map_or_else(
+    kobo_abi::home_directory().map_or_else(
         || PathBuf::from(".kobo-trust"),
-        |home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("kobo")
-                .join("trust")
-        },
+        |home| home.join(".config").join("kobo").join("trust"),
     )
 }
 
 fn host_dictionary_directory() -> PathBuf {
-    env::var_os("HOME").map_or_else(
+    kobo_abi::home_directory().map_or_else(
         || PathBuf::from(".kobo-dictionaries"),
-        |home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("kobo")
-                .join("dictionaries")
-        },
+        |home| home.join(".config").join("kobo").join("dictionaries"),
     )
 }
 
@@ -808,7 +832,7 @@ fn apply_preview_orientation<E>(
     reason = "one arm per message type; splitting the dispatch hides it"
 )]
 fn serve_application(
-    stream: &mut UnixStream,
+    stream: &mut channel::Stream,
     frame_path: &Path,
     name: &str,
     metrics: kobo_ui::DisplayMetrics,
@@ -1042,6 +1066,8 @@ fn serve_application(
             | Message::ScheduledWake { .. }
             | Message::CoverChanged { .. }
             | Message::PageTurn { .. }
+            | Message::Notices(_)
+            | Message::OpenDocument { .. }
             | Message::ShellEvent(_) => {
                 return Err("application sent a daemon-only message".into());
             }
@@ -1055,7 +1081,7 @@ fn serve_application(
 /// write to the same socket and two frames interleaved on a stream protocol is
 /// a stream that can never be read again.
 fn write_shared(
-    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    writer: &std::sync::Arc<std::sync::Mutex<channel::Stream>>,
     frame: &Frame,
 ) -> Result<(), Box<dyn Error>> {
     let mut stream = writer.lock().map_err(|_| "the writer lock was poisoned")?;
@@ -1066,7 +1092,7 @@ fn write_shared(
 /// Hands every finished task to the application, from its own thread.
 fn deliver_outcomes(
     tasks: &std::sync::Arc<std::sync::Mutex<TaskRunner>>,
-    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    writer: &std::sync::Arc<std::sync::Mutex<channel::Stream>>,
     peer_version: u8,
 ) {
     loop {
@@ -1112,6 +1138,23 @@ fn deliver_outcomes(
 /// title on real hardware while every frame rendered here looked right.
 fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
     kobo_ui::Chrome::for_screen(screen, name == HOME_APPLICATION, Some(simulated_status()))
+        .with_appearance(simulated_appearance())
+}
+
+/// Colour when the simulated reader's panel has it, so a frame written for a
+/// Clara Colour shows the bar and controls that reader would show, and one
+/// written for a Clara BW shows what it always did.
+fn simulated_appearance() -> kobo_ui::Appearance {
+    let colour = env::var("KOBO_SIM_PROFILE").is_ok_and(|requested| {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .any(|profile| profile.id == requested && profile.colour_panel)
+    });
+    if colour {
+        kobo_ui::Appearance::Colour
+    } else {
+        kobo_ui::Appearance::Grey
+    }
 }
 
 /// Everything the band shows, invented and fixed.
@@ -1217,9 +1260,14 @@ fn validate_simulation_paths(socket: &Path, frame: &Path) -> Result<(), Box<dyn 
     {
         return Err("simulation directory must be a kobo-sim-* directory under temp".into());
     }
-    let mode = fs::metadata(&parent)?.permissions().mode();
-    if mode & 0o077 != 0 {
-        return Err("simulation directory must not be accessible by group or others".into());
+    // Mode-bit privacy is a Unix check; on Windows the directory inherits
+    // the user profile ACL, which is the same account boundary.
+    #[cfg(unix)]
+    {
+        let mode = fs::metadata(&parent)?.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err("simulation directory must not be accessible by group or others".into());
+        }
     }
     if frame.exists() {
         return Err(format!("frame already exists: {}", frame.display()).into());
@@ -1380,8 +1428,10 @@ mod tests {
         let left = kobo_ui::ensure_way_back(bare, &chrome, "Cobalt");
         assert!(left.top_bar.is_none());
     }
+    #[cfg(unix)]
     use super::validate_simulation_paths;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     /// Killing the daemon outright brought the reader back on hardware and
@@ -1441,6 +1491,9 @@ mod tests {
         assert!(!root.exists());
     }
 
+    // Mode-bit privacy checks are Unix-only; Windows validates paths
+    // without them.
+    #[cfg(unix)]
     #[test]
     fn simulation_paths_require_private_temp_directory() {
         let root = std::env::temp_dir().join(format!("kobo-sim-test-{}", std::process::id()));

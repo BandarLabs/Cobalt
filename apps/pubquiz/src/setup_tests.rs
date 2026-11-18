@@ -152,8 +152,12 @@ fn setup_page_edges_and_empty_question_sets_remain_safe() {
         .is_empty());
     quiz.setup_party = false;
     quiz.setup_action(action_id("continue-setup"), &context);
-    assert_eq!(quiz.view, View::Home);
-    assert!(quiz.note.as_deref().unwrap().contains("No questions match"));
+    assert_eq!(quiz.view, View::Setup);
+    assert!(quiz
+        .setup_note
+        .as_deref()
+        .unwrap()
+        .contains("No questions match"));
 }
 
 #[test]

@@ -159,6 +159,7 @@ def main():
 
                 # A long rule, read to its last page.
                 drive('tap Back', 'tap Back', 'tap-id rules', 'tap-id search')
+                assert says(get('layout'), 'Type the start of a name.')
                 drive('type traps', 'tap-id kb.enter')
                 found = capture('04-rule-search')
                 reach('Traps')
@@ -172,8 +173,10 @@ def main():
                 assert position(last) == (total, total), position(last)
                 checks.append(f'a {total}-page rule is reachable to its last page')
 
-                # A category this edition does not hold explains itself.
-                drive('tap Back', 'tap Back', 'tap-id spells', 'tap-id edition-2024')
+                # A category this edition does not hold explains itself. The
+                # second Back lets go of the search, the third leaves the list.
+                drive('tap Back', 'tap Back', 'tap Back', 'tap-id spells',
+                      'tap-id edition-2024')
                 missing = capture('07-edition-without-spells')
                 assert says(missing, 'No spells in the 2024 reference'), missing
                 assert says(missing, '2014'), missing
@@ -193,13 +196,15 @@ def main():
                 drive('tap Back', 'tap Back', 'tap-id initiative')
                 order = capture('10-initiative')
                 assert says(order, 'Round 1 · turn 1 of 5'), order
-                # The initiative roll needs the keyboard's other layer, the way
-                # it does for anyone entering a number on this device.
+                # The steps after the name are numbers and open on the digits;
+                # a combatant typed in can be given hit points.
                 drive('tap-id init-add', 'type goblin', 'tap-id kb.enter',
-                      'tap-id kb.layer', 'type 7', 'tap-id kb.enter')
+                      'type 7', 'tap-id kb.enter', 'type 12', 'tap-id kb.enter')
                 six = capture('11-six-combatants')
                 assert says(six, 'Round 1 · turn 1 of 6'), six
                 reach('goblin')
+                assert says(get('layout'), 'Initiative 7 · HP 12/12')
+                checks.append('a typed combatant keeps hit points')
                 drive('tap-id turn-next', 'tap-id turn-next')
                 third = capture('12-third-turn')
                 assert says(third, 'turn 3 of 6'), third
@@ -219,15 +224,19 @@ def main():
                 drive('tap Back', 'tap-id party')
                 capture('15-party')
                 reach('Delphine')
-                drive('tap Delphine', 'tap-id hp-down', 'tap-id hp-down', 'tap-id save-failure')
+                drive('tap Delphine', 'tap-id hp-down-5', 'tap-id hp-down', 'tap-id hp-down',
+                      'tap-id save-failure')
                 member = capture('16-party-member')
-                assert says(member, 'HP 24/26'), member
+                assert says(member, 'HP 19/26'), member
                 assert says(member, '0 success · 1 failure'), member
+                checks.append('hit points move five at a time')
                 # The slots are the second page of a member, where the end of a
-                # long rest goes looking for them.
-                drive('tap-id next', 'tap-id slot-2')
+                # long rest goes looking for them. A level holds several.
+                drive('tap-id next', 'tap-id slots-setup', 'tap-id slot-2', 'tap-id slot-2',
+                      'tap-id slots-spend', 'tap-id slot-2')
                 slots = capture('17-party-member-slots')
-                assert says(slots, 'Spell slots · 1 used'), slots
+                assert says(slots, '3rd · 1 of 2 left'), slots
+                checks.append('a spell level counts its slots')
 
                 stop()
                 address = start()
@@ -239,7 +248,7 @@ def main():
                 reach('Delphine')
                 drive('tap Delphine')
                 kept = capture('19-reopened-member')
-                assert says(kept, 'HP 24/26'), kept
+                assert says(kept, 'HP 19/26'), kept
                 assert says(kept, '0 success · 1 failure'), kept
                 checks.append('the table state of an evening survives a restart')
 

@@ -383,6 +383,55 @@ struct OwnerReviewRecord {
     grade: String,
     imported_due: i64,
     imported_reps: i64,
+    #[serde(default)]
+    day: Option<i64>,
+}
+
+/// The review-log record the reader writes today.
+///
+/// Format 3 adds the reader's calendar day to each grade, because the reader
+/// now schedules cards itself and a grade without a day cannot say when the
+/// card comes back. Format 2 records stay readable: they are the grades from
+/// before, and dropping them would put every card the owner already studied
+/// back in front of them.
+pub const REVIEW_LOG_FORMAT: u8 = 3;
+
+/// The last day a review record may carry: 31 December 9999.
+const LAST_REVIEW_DAY: i64 = 2_932_896;
+
+/// One grade from the owner-local review log.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReviewRecord {
+    pub bundle_sha256: String,
+    pub card_id: i64,
+    /// One of `again`, `hard`, `good` or `easy`.
+    pub grade: String,
+    /// The card's imported due and repetition count when it was graded.
+    /// Together they say whether a later bundle still carries the schedule
+    /// this grade was given against.
+    pub imported_due: i64,
+    pub imported_reps: i64,
+    /// Days since 1970 on the reader's calendar, absent from format 2.
+    pub day: Option<i64>,
+}
+
+impl ReviewRecord {
+    /// The record as one log line, without its newline.
+    #[must_use]
+    pub fn line(&self) -> String {
+        let day = self
+            .day
+            .map_or_else(String::new, |day| format!(",\"day\":{day}"));
+        format!(
+            "{{\"format\":{},\"bundle_sha256\":\"{}\",\"card_id\":{},\"grade\":\"{}\",\"imported_due\":{},\"imported_reps\":{}{day}}}",
+            if self.day.is_some() { REVIEW_LOG_FORMAT } else { 2 },
+            self.bundle_sha256,
+            self.card_id,
+            self.grade,
+            self.imported_due,
+            self.imported_reps,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1265,6 +1314,16 @@ fn validate_review_queue(
 /// Returns an error for truncation, unknown fields, unsupported versions or
 /// grades, invalid bundle digests, or records beyond the fixed bounds.
 pub fn validate_review_log(bytes: &[u8]) -> Result<usize, FormatError> {
+    parse_review_log(bytes).map(|records| records.len())
+}
+
+/// Reads every record of the owner-local review log, oldest first.
+///
+/// # Errors
+///
+/// Returns the same errors as [`validate_review_log`]: one bad record refuses
+/// the whole log rather than replaying the half that happens to parse.
+pub fn parse_review_log(bytes: &[u8]) -> Result<Vec<ReviewRecord>, FormatError> {
     if bytes.len() > MAX_REVIEW_LOG_BYTES {
         return Err(FormatError::InvalidReviewLog(
             "file exceeds the device export bound".to_owned(),
@@ -1277,7 +1336,7 @@ pub fn validate_review_log(bytes: &[u8]) -> Result<usize, FormatError> {
     }
     let text = std::str::from_utf8(bytes)
         .map_err(|_| FormatError::InvalidReviewLog("file is not UTF-8".to_owned()))?;
-    let mut records = 0_usize;
+    let mut records = Vec::new();
     for line in text.lines() {
         if line.is_empty() || line.len() > MAX_REVIEW_LOG_LINE_BYTES {
             return Err(FormatError::InvalidReviewLog(
@@ -1286,7 +1345,12 @@ pub fn validate_review_log(bytes: &[u8]) -> Result<usize, FormatError> {
         }
         let record: OwnerReviewRecord = serde_json::from_str(line)
             .map_err(|error| FormatError::InvalidReviewLog(error.to_string()))?;
-        if record.format != 2
+        let dated = match (record.format, record.day) {
+            (2, None) => true,
+            (3, Some(day)) => (0..=LAST_REVIEW_DAY).contains(&day),
+            _ => false,
+        };
+        if !dated
             || record.card_id <= 0
             || i32::try_from(record.imported_due).is_err()
             || i32::try_from(record.imported_reps).is_err()
@@ -1301,7 +1365,14 @@ pub fn validate_review_log(bytes: &[u8]) -> Result<usize, FormatError> {
                 "record has an unsupported shape".to_owned(),
             ));
         }
-        records = records.saturating_add(1);
+        records.push(ReviewRecord {
+            bundle_sha256: record.bundle_sha256,
+            card_id: record.card_id,
+            grade: record.grade,
+            imported_due: record.imported_due,
+            imported_reps: record.imported_reps,
+            day: record.day,
+        });
     }
     Ok(records)
 }
@@ -1478,6 +1549,40 @@ mod tests {
             b"{\"format\":2,\"bundle_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"card_id\":7,\"grade\":\"good\",\"imported_due\":3,\"imported_reps\":2147483648}\n"
         )
         .is_err());
+    }
+
+    #[test]
+    fn a_dated_grade_round_trips_and_an_undated_one_stays_readable() {
+        let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let dated = ReviewRecord {
+            bundle_sha256: digest.to_owned(),
+            card_id: 7,
+            grade: "again".to_owned(),
+            imported_due: 3,
+            imported_reps: 2,
+            day: Some(20_390),
+        };
+        let undated = ReviewRecord {
+            day: None,
+            grade: "good".to_owned(),
+            ..dated.clone()
+        };
+        let log = format!("{}\n{}\n", undated.line(), dated.line());
+        assert!(log.starts_with("{\"format\":2,"));
+        assert!(log.contains("{\"format\":3,"));
+        assert_eq!(parse_review_log(log.as_bytes()), Ok(vec![undated, dated]));
+    }
+
+    #[test]
+    fn a_grade_must_carry_a_day_exactly_when_its_format_says_so() {
+        let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        for line in [
+            format!("{{\"format\":3,\"bundle_sha256\":\"{digest}\",\"card_id\":7,\"grade\":\"good\",\"imported_due\":3,\"imported_reps\":2}}\n"),
+            format!("{{\"format\":2,\"bundle_sha256\":\"{digest}\",\"card_id\":7,\"grade\":\"good\",\"imported_due\":3,\"imported_reps\":2,\"day\":9}}\n"),
+            format!("{{\"format\":3,\"bundle_sha256\":\"{digest}\",\"card_id\":7,\"grade\":\"good\",\"imported_due\":3,\"imported_reps\":2,\"day\":-1}}\n"),
+        ] {
+            assert!(validate_review_log(line.as_bytes()).is_err(), "{line}");
+        }
     }
 
     #[test]

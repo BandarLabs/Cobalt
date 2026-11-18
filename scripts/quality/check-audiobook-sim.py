@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Drive Audiobook Studio end to end against three local TLS fixtures standing
 in for Exa, OpenAI and ElevenLabs: the free sample with no accounts at all,
-preflight that names every missing key while nothing is spent, a full
-researched-and-narrated creation, an in-session resume that spends only the
-failed part, a cancel whose checkpoint survives a simulator restart, and the
-library/player round trip. The fixtures record every request; no public
-provider is ever contacted (the simulator routes the three hostnames to
-loopback with URL, Host and TLS identity unchanged)."""
+a keys screen that names the exact command for every missing key while
+nothing is spent, keys installed with the real `kobo secret set` and picked
+up by Check again, the time and cost estimate before the first paid request,
+a full researched-and-narrated creation that leaves no narrated parts behind,
+an in-session resume that spends only the failed part, a cancel whose saved
+parts survive a simulator restart so Resume pays only for the rest, an
+offline failure that keeps the topic, and the library/player round trip.
+The fixtures record every request; no public provider is ever contacted (the
+simulator routes the three hostnames to loopback with URL, Host and TLS
+identity unchanged)."""
 import argparse
 import http.server
 import json
@@ -53,6 +57,7 @@ class Providers:
         self.calls = {'exa': [], 'openai': [], 'elevenlabs': []}
         self.tts_fail_at = None      # 1-based narration call to fail once
         self.tts_delay = 0.0         # seconds to hold the next TTS answer
+        self.tts_delay_at = None     # 1-based narration call to hold instead
         self.exa_delay = 0.0         # seconds to hold the next research answer
         self._failed = set()
 
@@ -108,7 +113,11 @@ def make_handler(providers, name):
                 return
             # elevenlabs
             call_number = len(providers.calls['elevenlabs'])
-            if providers.tts_delay:
+            if providers.tts_delay_at == call_number:
+                providers.tts_delay_at = None
+                time.sleep(providers.tts_delay)
+                providers.tts_delay = 0.0
+            elif providers.tts_delay and providers.tts_delay_at is None:
                 time.sleep(providers.tts_delay)
                 providers.tts_delay = 0.0
             if providers.tts_fail_at == call_number and call_number not in providers._failed:
@@ -190,7 +199,29 @@ def main():
                    KOBO_SIM_TRUST_DIR=str(trust), KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_PROFILE=args.profile)
         env.pop('KOBO_SIM_OFFLINE', None)
-        secrets = private / 'cobalt-sim-secrets/apps/audiobook'
+        # The setup steps say `kobo secret set NAME`, which reads the key from
+        # a file and writes the owner-wide copy. That command has no --sim, so
+        # its --volume target is pointed at the simulator's secret directory,
+        # and KOBO_SECRETS_DIR at fake key files rather than the owner's own.
+        keys = private / 'keys'
+        keys.mkdir()
+        for name, value in [('exa', EXA_KEY), ('openai', OPENAI_KEY),
+                            ('elevenlabs', ELEVEN_KEY)]:
+            (keys / name).write_text(value + '\n')
+        env['KOBO_SECRETS_DIR'] = str(keys)
+        volume = private / 'volume'
+        (volume / '.adds' / 'cobalt').mkdir(parents=True)
+        (private / 'cobalt-sim-secrets').mkdir()
+        os.symlink(private / 'cobalt-sim-secrets', volume / '.adds' / 'cobalt' / 'secrets')
+        shelf = private / 'cobalt-sim-data/audiobook'
+
+        def secret(verb, name):
+            with open(out / 'simulator.log', 'a') as sink:
+                subprocess.run([str(cli), 'secret', verb, name, '--volume', str(volume)],
+                               cwd=ROOT, env=env, stdout=sink, stderr=sink, check=True, timeout=60)
+
+        def parts_on_shelf():
+            return sorted(path.name for path in shelf.glob('*.part-*'))
 
         process = None
         address = None
@@ -238,7 +269,8 @@ def main():
 
             try:
                 # Phase A: no accounts at all. The sample still plays, and a
-                # creation attempt names every missing key while spending nil.
+                # creation attempt names the command for every missing key,
+                # keeps the topic, and spends nothing.
                 start()
                 drive('wait-for No audiobooks yet')
                 capture('audiobook-empty')
@@ -247,32 +279,48 @@ def main():
                 drive('tap back', 'wait-for The Quiet Shelf')
                 drive('tap Create', 'wait-for Your topic')
                 drive('tap Type any topic', 'type the moon', 'tap Create',
-                      'wait-for Account details')
-                capture('audiobook-preflight-missing')
+                      'wait-for Add your keys', 'expect kobo secret set exa',
+                      'expect kobo secret set openai', 'expect kobo secret set elevenlabs',
+                      'expect Nothing has been spent', 'expect-missing Try another topic')
+                capture('audiobook-keys-missing')
                 assert (providers.total('exa') == 0 and providers.total('openai') == 0
                     and providers.total('elevenlabs') == 0), \
                     f'a provider was called with no keys installed: {providers.calls}'
                 result['checks'].append(dict(
-                    name='sample and preflight without accounts',
+                    name='sample and missing keys without accounts',
                     detail='free sample saved and played with no secrets installed; a create '
-                           'attempt named research, writing and narration as missing and no '
-                           'fixture received any request',
+                           'attempt named kobo secret set exa, openai and elevenlabs, offered '
+                           'Check again, and no fixture received any request',
                     status='passed'))
-                drive('tap-id shelf', 'wait-for The Quiet Shelf')
 
-                # Phase B: all three accounts installed; a full creation.
-                stop()
-                secrets.mkdir(parents=True)
-                for name, value in [('exa', EXA_KEY), ('openai', OPENAI_KEY),
-                                    ('elevenlabs', ELEVEN_KEY)]:
-                    (secrets / name).write_text(value)
-                    os.chmod(secrets / name, 0o600)
-                start()
-                drive('wait-for The Quiet Shelf')
-                drive('tap Create', 'wait-for Your topic')
+                # Phase B: install the keys with the real command while the
+                # simulator runs. Check again names only what is still
+                # missing, then shows the estimate; nothing is spent.
+                secret('set', 'exa')
+                secret('set', 'openai')
+                drive('tap Check again', 'wait-for Add your keys',
+                      'expect kobo secret set elevenlabs',
+                      'expect-missing kobo secret set exa')
+                capture('audiobook-keys-one-missing')
+                secret('set', 'elevenlabs')
+                drive('tap Check again', 'wait-for Before you start', 'expect 3 to 8 minutes',
+                      'expect $1 to $5', 'expect 7 to 11 thousand ElevenLabs characters',
+                      'expect An estimate')
+                capture('audiobook-estimate')
+                drive('tap Edit topic', 'wait-for Your topic', 'expect the moon',
+                      'tap-id create', 'wait-for Before you start')
+                assert (providers.total('exa') == 0 and providers.total('openai') == 0
+                    and providers.total('elevenlabs') == 0), providers.calls
+                result['checks'].append(dict(
+                    name='keys installed with kobo secret set, then the estimate',
+                    detail='with two of three keys installed by the CLI, Check again named only '
+                           'the narration key; with all three it showed time, cost and '
+                           'narration characters before any request; Edit topic kept the topic',
+                    status='passed'))
+
+                # Phase C: a full creation from the estimate.
                 providers.exa_delay = 5.0
-                drive('tap Type any topic', 'type the moon', 'tap Create',
-                      'wait-for Researching the topic')
+                drive('tap-id start', 'wait-for Researching the topic')
                 capture('audiobook-researching')
                 providers.tts_delay = 5.0
                 drive('wait-for Narrating part 1 of 3')
@@ -287,20 +335,23 @@ def main():
                 for call in providers.calls['elevenlabs']:
                     assert call['xi-api-key'] == ELEVEN_KEY
                     assert f'/v1/text-to-speech/{ENGLISH_VOICE}' in call['path'], call
+                assert parts_on_shelf() == [], parts_on_shelf()
                 result['checks'].append(dict(
                     name='full creation over three fixture providers',
-                    detail='preflight passed, research (1 Exa SSE call), script (1 OpenAI '
-                           'responses call) and narration (3 ElevenLabs calls, English voice) '
-                           'ran in order with the right credentials; the packaged book saved to '
-                           'the shelf and opened in the player',
+                    detail='research (1 Exa SSE call), script (1 OpenAI responses call) and '
+                           'narration (3 ElevenLabs calls, English voice) ran in order with the '
+                           'keys the CLI installed; the packaged book saved to the shelf, opened '
+                           'in the player, and no narrated part was left behind',
                     status='passed'))
 
-                # Phase C: a narration call fails; Resume spends only that call.
+                # Phase D: a narration call fails; Resume spends only that call.
                 drive('tap back', 'wait-for The Moon Tonight')
                 drive('tap Create', 'wait-for Your topic')
                 providers.tts_fail_at = providers.total('elevenlabs') + 2
                 drive('tap Type any topic', 'type the tides', 'tap Create',
-                      'wait-for Could not create audiobook')
+                      'wait-for Before you start', 'tap-id start',
+                      'wait-for Could not create audiobook',
+                      'expect Resume carries on from part 2 of 3')
                 capture('audiobook-failed-resume')
                 before = providers.total('elevenlabs')
                 drive('tap-id resume', 'wait-for Now playing', 'wait 1500')
@@ -308,42 +359,75 @@ def main():
                     f'resume re-narrated too much: {before} -> {providers.total("elevenlabs")}'
                 result['checks'].append(dict(
                     name='in-session resume spends only the failed part',
-                    detail='part 2 of 3 failed once at the fixture; the failure screen led with '
-                           'Resume and one tap re-asked only part 2 (two further calls: the '
-                           'retry and part 3), then packaged and played',
+                    detail='part 2 of 3 failed once at the fixture; the failure screen said '
+                           'where Resume carries on, and one tap re-asked only part 2 (two '
+                           'further calls: the retry and part 3), then packaged and played',
                     status='passed'))
 
-                # Phase D: cancel mid-narration; the checkpoint survives a
-                # simulator restart and resumes the script from the top.
+                # Phase E: cancel once part 1 is saved; after a simulator
+                # restart, Resume reads part 1 back and pays for 2 and 3 only.
                 drive('tap back', 'wait-for Audiobooks')
                 drive('tap Create', 'wait-for Your topic')
-                providers.tts_delay = 6.0
+                providers.tts_delay_at = providers.total('elevenlabs') + 2
+                providers.tts_delay = 8.0
                 drive('tap Type any topic', 'type the stars', 'tap Create',
-                      'wait-for Narrating part 1 of 3')
-                mid = providers.total('elevenlabs')
+                      'wait-for Before you start', 'tap-id start',
+                      'wait-for Narrating part 2 of 3', 'wait 1500')
                 drive('tap Cancel', 'wait-for Audiobooks', 'wait 1500')
+                saved = parts_on_shelf()
+                assert saved == ['the-moon-tonight.part-001'], saved
                 stop()
+                time.sleep(9)
                 start()
                 drive('wait-for The Quiet Shelf')
-                drive('tap Create', 'wait-for Your topic')
+                drive('tap Create', 'wait-for Your topic', 'expect Resume part 2 of 3')
                 capture('audiobook-compose-resume')
                 restart_base = providers.total('elevenlabs')
                 drive('tap-id resume', 'wait-for Now playing', 'wait 1500')
-                assert providers.total('elevenlabs') == restart_base + 3, \
-                    'a restarted resume re-narrates the whole script, honestly'
+                spent = providers.total('elevenlabs') - restart_base
+                assert spent == 2, f'a restarted resume narrated {spent} parts; wanted 2'
+                assert parts_on_shelf() == [], parts_on_shelf()
                 result['checks'].append(dict(
-                    name='cancel and resume across a restart',
-                    detail='cancel mid-narration returned to the shelf; after a simulator '
-                           'restart the composer still offered Resume for the interrupted book, '
-                           'and resuming re-narrated the kept script from part 1 (3 calls)',
+                    name='cancel and resume across a restart without paying twice',
+                    detail='part 1 was written to the shelf as it arrived; after a cancel and a '
+                           'simulator restart the composer offered Resume part 2 of 3, and '
+                           'resuming read part 1 back and narrated parts 2 and 3 only (2 calls); '
+                           'the parts were removed once the book was saved',
                     status='passed'))
 
-                # Phase E: library and player are one path both ways.
-                drive('tap back', 'wait-for Audiobooks')
+                # Phase F: offline. The failure says so and Try again keeps
+                # the topic rather than asking for a new one.
+                drive('tap back', 'wait-for Audiobooks', 'scenario offline',
+                      'tap Create', 'wait-for Your topic', 'tap Type any topic', 'type the sea',
+                      'tap Create', 'wait-for Before you start', 'tap-id start',
+                      'wait-for Could not create audiobook', 'expect not on Wi-Fi',
+                      'expect Try again', 'expect-missing Try another topic')
+                capture('audiobook-offline')
+                drive('scenario normal', 'tap-id check', 'wait-for Before you start')
+                result['checks'].append(dict(
+                    name='offline failure keeps the topic',
+                    detail='with the simulator offline the research request failed with the '
+                           'Wi-Fi cause; Try again went back through the key check to the '
+                           'estimate with the same topic',
+                    status='passed'))
+
+                # Phase G: a key removed with the CLI is named again, alone.
+                secret('remove', 'elevenlabs')
+                drive('tap Edit topic', 'wait-for Your topic', 'tap-id create',
+                      'wait-for Add your keys', 'expect kobo secret set elevenlabs',
+                      'expect-missing kobo secret set exa')
+                capture('audiobook-keys-narration-missing')
+                result['checks'].append(dict(
+                    name='a removed key is named with its command',
+                    detail='kobo secret remove elevenlabs, then Create named only the narration '
+                           'key and its command',
+                    status='passed'))
+
+                # Phase H: library and player are one path both ways.
+                drive('tap Edit topic', 'wait-for Your topic', 'tap back', 'wait-for Audiobooks')
                 drive('tap The Moon Tonight', 'wait-for Now playing', 'wait 1500')
                 capture('audiobook-library-player')
                 drive('tap back', 'wait-for The Moon Tonight')
-                shelf = private / 'cobalt-sim-data/audiobook'
                 archives = sorted(shelf.glob('*.mp3z'))
                 names = [item.name for item in archives]
                 assert 'the-quiet-shelf.mp3z' in names, names

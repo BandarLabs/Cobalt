@@ -1,0 +1,115 @@
+# Each game's own rules at the board: a refused move says why, the
+# computer can open when the player takes the second side, and two players
+# can form a mill and force a capture, which no computer opponent would
+# set up on cue.
+expect Board games
+tap Reversi
+tap Start game
+expect Tap a dotted square.
+tap-id cell-0
+expect That square brackets no opposing discs. Tap a dotted square.
+clean
+shot reversi-refused
+tap-id cell-19
+expect The computer placed the marked disc
+tap-id game-more
+tap Change game
+expect Resume Reversi
+# Draughts as White against the strongest computer, which opens at once.
+tap Draughts
+expect Starting replaces your Reversi game in progress.
+tap Rules
+expect Reach the far side to crown a king.
+tap Back
+tap White, moves second
+tap Strong
+tap Start game
+expect Your move
+expect The computer moved a piece along the marked squares.
+clean
+shot draughts-second-side
+tap-id cell-1
+expect That piece has no legal move.
+tap-id cell-17
+expect Piece selected. Tap a dotted square.
+tap-id cell-26
+expect Your move
+expect-missing Piece selected
+tap Moves
+expect 1. Computer:
+expect 2. You:
+tap-id 4294967295
+# Between two players: Black offers a man, and White may move only the
+# piece that can take it.
+tap-id game-more
+tap New game
+tap Pass-and-play
+tap Start game
+expect Black to move
+tap-id cell-42
+tap-id cell-33
+expect White to move
+tap-id cell-21
+tap-id cell-28
+tap-id cell-46
+tap-id cell-37
+expect White to move
+tap-id cell-17
+expect Captures are mandatory. Select a piece that can capture.
+clean
+shot draughts-capture-forced
+tap-id cell-28
+tap-id cell-46
+expect Black to move
+expect Black 0 · White 0
+clean
+shot draughts-captured
+# Nine Men's Morris with the board held still between two players.
+tap-id game-more
+tap Change game
+tap Nine Men's Morris
+expect Place, form mills, move, fly, and remove.
+tap Pass-and-play
+tap Stays still
+tap Start game
+expect Placement: tap a dotted point.
+tap-id cell-1
+expect Tap one of the 24 marked intersections.
+tap-id cell-0
+expect Pass the reader to White.
+expect-missing Board turned
+tap-id cell-0
+expect Place on an empty marked intersection.
+tap-id cell-21
+tap-id cell-3
+tap-id cell-22
+tap-id cell-26
+# White completes the bottom row and takes a black piece.
+tap-id cell-23
+expect Mill formed. Tap a black piece to remove it.
+clean
+shot morris-mill-white
+tap-id cell-26
+expect Piece removed.
+tap-id cell-45
+tap-id cell-25
+# Black completes the top row. White's three in a row are protected while
+# White has a piece outside a mill.
+tap-id cell-6
+expect Mill formed. Tap a white piece to remove it.
+tap-id cell-21
+expect Remove an opposing piece outside a mill, unless every piece is in a mill.
+clean
+shot morris-protected
+tap-id cell-25
+expect Piece removed.
+expect White to move
+tap Moves
+expect Black: removed
+clean
+shot morris-moves
+tap-id 4294967295
+tap Rules
+expect A mill lets you remove one opposing piece.
+tap Back
+expect White to move

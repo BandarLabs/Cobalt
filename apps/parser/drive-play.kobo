@@ -1,0 +1,98 @@
+# Seeded with the Lamplight fixture. Playing by the palette and the keys:
+# a verb that asks which thing, cancelling it, typing it instead, tapping a
+# word on the page, a reply the story refuses, Again, and the library as a
+# detour that keeps the story where it was.
+wait-for Lamplight
+tap Lamplight
+wait-for light.
+expect Look
+expect Inventory
+expect North
+# Lamplight has no undo, so the palette does not offer one.
+expect-missing Undo
+tap Open
+wait-for Open what?
+expect Wooden crate
+expect Type it
+tap Cancel
+expect-missing Open what?
+# Back puts the question away before it leaves the story.
+tap Open
+wait-for Open what?
+tap-id 4294967295
+expect-missing Open what?
+expect Lamplight
+tap Open
+tap Wooden crate
+wait-for revealing a folded note.
+clean
+shot play-opened
+# Type it opens the keys with the verb already there.
+tap Take
+wait-for Take what?
+tap Type it
+expect Close keys
+expect take
+type note
+tap Run
+wait-for Taken.
+tap Close keys
+tap Inventory
+wait-for carrying a folded note.
+tap Again
+wait-for > again
+expect carrying a folded note.
+clean
+shot play-again
+# A word the story does not know is answered by the story itself.
+tap Keyboard
+type xyzzy
+tap Run
+wait-for not a verb I recognize.
+clean
+shot play-unknown-verb
+# A word tapped on the page joins the command being typed. Only words the
+# story knows are links, so "crate" is the third after "look" and "wooden".
+tap Close keys
+tap Look
+wait-for pool of light.
+tap-id noun-2
+expect Close keys
+expect crate
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type examine note
+tap Run
+wait-for A note folded small
+tap Close keys
+# The library is a detour: the open story is where it was.
+tap-id 4294967295
+wait-for Interactive fiction
+tap Lamplight
+wait-for A note folded small
+expect-missing Starting story
+# The thing a reply reveals is offered to the next verb.
+tap Keyboard
+type put note in crate
+tap Run
+wait-for into the wooden crate
+type close crate
+tap Run
+wait-for You close the wooden crate.
+tap Close keys
+tap Look
+wait-for pool of light.
+tap Open
+wait-for Open what?
+tap Wooden crate
+wait-for revealing a folded note.
+clean
+shot play-reopened
+tap Read
+wait-for Read what?
+expect Folded note
+tap Folded note
+wait-for A note folded small

@@ -34,7 +34,7 @@ jobs:
           echo "This workflow publishes the beta channel and only runs on refs/heads/beta." >&2
           echo "It was started on ${GITHUB_REF}; re-run it with the beta branch selected." >&2
           exit 1
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       # A beta tag is immutable, so the one outcome worth blocking is
@@ -120,7 +120,7 @@ jobs:
             "cobalt-host-manifest.txt",
             "cobalt-host-manifest.txt.sig",
             "cobalt-host-manifest.txt.sshsig",
-            ...["macos-x86_64", "macos-arm64", "linux-x86_64", "linux-arm64"]
+            ...["macos-x86_64", "macos-arm64", "linux-x86_64", "linux-arm64", "windows-x86_64"]
               .map(platform => `kobo-${version}-${platform}.tar.gz`),
           ].sort();
           const assets = release.assets.map(asset => asset.name).sort();
@@ -226,7 +226,7 @@ jobs:
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
@@ -307,7 +307,7 @@ jobs:
           CC_armv7_unknown_linux_musleabihf: armv7-musl-cc
           CFLAGS_armv7_unknown_linux_musleabihf: -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=0
         run: cargo run --locked -p kobo-cli -- package --out "dist/cobalt-${VERSION}-KoboRoot.tgz"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: device-package
           path: dist/cobalt-*-KoboRoot.tgz
@@ -325,24 +325,39 @@ jobs:
             target: x86_64-apple-darwin
             helper-target: x86_64-apple-darwin
             cc: ""
+            exe: ""
+            importer: "yes"
           - platform: macos-arm64
-            runner: macos-14
+            runner: macos-15
             target: aarch64-apple-darwin
             helper-target: aarch64-apple-darwin
             cc: ""
+            exe: ""
+            importer: "yes"
           - platform: linux-x86_64
             runner: ubuntu-22.04
             target: x86_64-unknown-linux-musl
             helper-target: x86_64-unknown-linux-musl
             cc: musl-gcc
+            exe: ""
+            importer: "yes"
           - platform: linux-arm64
             runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-musl
             helper-target: aarch64-unknown-linux-musl
             cc: musl-gcc
+            exe: ""
+            importer: "yes"
+          - platform: windows-x86_64
+            runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            helper-target: x86_64-pc-windows-msvc
+            cc: ""
+            exe: ".exe"
+            importer: "no"
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
@@ -364,8 +379,11 @@ jobs:
       # One release built its four host binaries with two different compilers,
       # and neither was chosen. The version here is the one the importer's own
       # CI job already builds and tests with, so what is tested and what is
-      # shipped now agree, and neither moves unless this line moves.
+      # shipped now agree, and neither moves unless this line moves. The
+      # Windows leg ships no importer, has no pinned protoc, and runs this
+      # step's shell in PowerShell, so it skips the step rather than fail it.
       - name: Install the protoc the importer schema needs
+        if: matrix.importer == 'yes'
         run: |
           set -eu
           case "${{ runner.os }}-$(uname -m)" in
@@ -407,38 +425,57 @@ jobs:
           echo "PROTOC_INCLUDE=$RUNNER_TEMP/protoc/include" >>"$GITHUB_ENV"
           "$RUNNER_TEMP/protoc/bin/protoc" --version
       - name: Build the host kobo command
+        shell: bash
         env:
           CC_x86_64_unknown_linux_musl: ${{ matrix.cc }}
           CC_aarch64_unknown_linux_musl: ${{ matrix.cc }}
         run: |
-          cargo build --locked --release -p kobo-cli --target "${{ matrix.target }}"
+          # The Sidekick helper ships beside kobo: `kobo sidekick init` and
+          # `run` look for it there, and without it Sidekick and Deck cannot
+          # be set up at all.
+          cargo build --locked --release -p kobo-cli -p kobo-sidekickd \
+            --target "${{ matrix.target }}"
           # The importer intentionally owns a separate Rust 1.88 workspace and
           # lockfile so Anki's host-only graph never enters the reader/CLI graph.
-          if [ "${{ runner.os }}" = macOS ]; then
-            export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+          # It is unix-only for now, so the Windows leg ships the CLI alone.
+          if [ "${{ matrix.importer }}" = "yes" ]; then
+            if [ "${{ runner.os }}" = macOS ]; then
+              export LIBCLANG_PATH="$(brew --prefix llvm)/lib"
+            fi
+            cargo +1.88.0 build --locked --release \
+              --manifest-path crates/kobo-flashcards-import/Cargo.toml \
+              --target "${{ matrix.helper-target }}"
           fi
-          cargo +1.88.0 build --locked --release \
-            --manifest-path crates/kobo-flashcards-import/Cargo.toml \
-            --target "${{ matrix.helper-target }}"
       - name: Stage the host binary
+        shell: bash
         run: |
           mkdir -p host
-          cp "target/${{ matrix.target }}/release/kobo" host/kobo
-          cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
-            host/flashcards-import
+          cp "target/${{ matrix.target }}/release/kobo${{ matrix.exe }}" \
+            "host/kobo${{ matrix.exe }}"
+          cp "target/${{ matrix.target }}/release/kobo-sidekickd${{ matrix.exe }}" \
+            "host/kobo-sidekickd${{ matrix.exe }}"
+          if [ "${{ matrix.importer }}" = "yes" ]; then
+            cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
+              host/flashcards-import
+          fi
       - name: Smoke the staged binaries
         # A file that exists is not a binary that runs: link errors show up
         # here, on CI, instead of on an owner's machine.
+        shell: bash
         run: |
-          file host/kobo host/flashcards-import
-          host/kobo --version
-          host/flashcards-import --version
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          if [ "${{ runner.os }}" != Windows ]; then
+            file "host/kobo${{ matrix.exe }}" "host/kobo-sidekickd${{ matrix.exe }}"
+          fi
+          "host/kobo${{ matrix.exe }}" --version
+          "host/kobo-sidekickd${{ matrix.exe }}" --version
+          if [ "${{ matrix.importer }}" = "yes" ]; then
+            file host/flashcards-import
+            host/flashcards-import --version
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: host-${{ matrix.platform }}
-          path: |
-            host/kobo
-            host/flashcards-import
+          path: host/
           if-no-files-found: error
 
   publish:
@@ -447,16 +484,19 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # To ask for the site build below. A release made with the workflow
+      # token fires no `release` trigger, so the rebuild is asked for by name.
+      actions: write
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           toolchain: 1.85.1
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: device-package
           path: dist
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: host-*
           path: dist/host-binaries
@@ -464,13 +504,23 @@ jobs:
         run: |
           for platform in macos-x86_64 macos-arm64 linux-x86_64 linux-arm64; do
             test -f "dist/host-binaries/host-${platform}/kobo"
+            test -f "dist/host-binaries/host-${platform}/kobo-sidekickd"
             test -f "dist/host-binaries/host-${platform}/flashcards-import"
             mkdir -p "dist/host-binaries/${platform}"
             mv "dist/host-binaries/host-${platform}/kobo" \
               "dist/host-binaries/${platform}/kobo"
+            mv "dist/host-binaries/host-${platform}/kobo-sidekickd" \
+              "dist/host-binaries/${platform}/kobo-sidekickd"
             mv "dist/host-binaries/host-${platform}/flashcards-import" \
               "dist/host-binaries/${platform}/flashcards-import"
           done
+          test -f "dist/host-binaries/host-windows-x86_64/kobo.exe"
+          test -f "dist/host-binaries/host-windows-x86_64/kobo-sidekickd.exe"
+          mkdir -p "dist/host-binaries/windows-x86_64"
+          mv "dist/host-binaries/host-windows-x86_64/kobo.exe" \
+            "dist/host-binaries/windows-x86_64/kobo.exe"
+          mv "dist/host-binaries/host-windows-x86_64/kobo-sidekickd.exe" \
+            "dist/host-binaries/windows-x86_64/kobo-sidekickd.exe"
       - name: Build deterministic host release assets
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -518,9 +568,20 @@ jobs:
             --field "ref=refs/tags/${tag}" --field "sha=${GITHUB_SHA}" \
             --jq '.object.sha' | grep -Fx "$GITHUB_SHA"
           find dist -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
-          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 12
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 13
           gh release create "$tag" dist/* \
             --title "Cobalt ${VERSION} beta" \
             --notes "Immutable prerelease built from the beta branch at ${GITHUB_SHA}." \
             --prerelease \
             --latest=false
+
+      # The site carries the newest beta beside the stable release, for the
+      # browser installer's Beta choice, and it is built from main. The site
+      # workflow listens for releases, but a release created with the
+      # workflow token fires no `release` event in any workflow, so the
+      # rebuild is asked for by name. The stable channel never needed this:
+      # promotion pushes to main, which the site workflow also listens for.
+      - name: Ask the site to publish this beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --ref main --repo "$GITHUB_REPOSITORY"

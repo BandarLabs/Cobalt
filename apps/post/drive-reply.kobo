@@ -1,0 +1,63 @@
+# sweep: --bare --seed-root apps/post/fixtures/inbox
+# Replies from the cached inbox: a saved draft, a reply the gateway
+# rejected, and a new reply queued while the gateway is out of reach.
+wait-for Tea notes
+# A letter with a draft offers to continue it, with the draft in the field.
+tap Tea notes
+wait-for First flush, two minutes, no milk.
+expect Continue your reply
+tap Continue your reply
+wait-for Sounds good, I will try it
+expect Send letter
+clean
+shot post-compose-draft
+# Each key saves the draft, so leaving and coming back keeps the words.
+tap space
+type soon
+tap-id 4294967295
+wait-for Tea notes
+tap Tea notes
+wait-for Continue your reply
+tap Continue your reply
+wait-for Sounds good, I will try it soon
+# Sending queues the reply. With no token it stays queued and says why.
+tap Send letter
+wait-for Your reply: Queued for the next connection.
+wait-for No Hermes account is on this reader yet
+expect Write a reply
+clean
+shot post-reply-queued
+tap-id 4294967295
+wait-for 1 reply waiting to be sent.
+clean
+shot post-inbox-queued
+# A rejected reply says so on its letter and opens for editing.
+tap Ghost letter
+wait-for Your reply: Rejected by the gateway.
+expect Edit your reply
+clean
+shot post-rejected
+tap Edit your reply
+wait-for Thanks for this one
+tap-id 4294967295
+wait-for Tea notes
+# The queue and the rejected reply survive a restart.
+restart
+wait-for 1 reply waiting to be sent.
+tap Ghost letter
+wait-for Your reply: Rejected by the gateway.
+tap-id 4294967295
+tap Tea notes
+wait-for Your reply: Queued for the next connection.
+tap-id 4294967295
+# A reply with nothing in it is refused for being empty, not for length.
+tap Garden plan
+wait-for Write a reply
+tap Write a reply
+wait-for Send letter
+tap Send letter
+wait-for Write a reply
+clean
+shot post-empty-reply
+expect-missing at most 32,000 characters
+expect This reply is empty.

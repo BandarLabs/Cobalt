@@ -18,19 +18,108 @@ To check selected apps:
 python3 scripts/check-apps-sim.py inkling pubquiz --out target/sim-check-games
 ```
 
+The runner passes `KOBO_SIM_PROFILE` through, so the same sweep can be run as
+a colour reader sees it:
+
+```sh
+KOBO_SIM_PROFILE=clara-colour-393 python3 scripts/check-apps-sim.py launcher hn --out target/sim-check-colour
+```
+
+Shots taken under a colour profile are in colour. Layout is identical on
+every profile of the same geometry, so a colour sweep checks how the accents
+and pictures read, not whether anything fits.
+
 `results.json` records the source commit, whether the checkout was dirty, and
 each app's launch and route result. The output directory also contains logs
-and route artifacts. CI runs the complete sweep and uploads the evidence.
+and route artifacts. CI runs the complete sweep with `--all-routes` (see
+Extra routes below) and uploads the evidence.
 
-The current catalog contains 44 apps and 36 committed routes. Audiobook,
-Brief, Chat, Gutenbird, HN, Magnet, RSS, and Zotero Reader have launch coverage
-only. A successful sweep verifies the committed simulator scenarios; it does
-not certify every app feature, external account integration, or physical Kobo
-behavior.
+Every app in the catalog has a committed route (`drive.kobo` or `drive.txt`),
+and `--all-routes` adds one run per extra route. A successful sweep
+verifies the committed simulator scenarios; it does not certify every app
+feature, external account integration, or physical Kobo behavior.
 
 The runner requires Python 3.9 or newer, Node.js, and the repository's Rust
 toolchain. `CARGO_TARGET_DIR` is supported for sharing an existing build cache.
 
+
+## Running more than one simulator
+
+Companion commands with `--sim` deliver to `$TMPDIR/cobalt-sim-data/<app>`,
+and `kobo dev` reads the same folder. Two simulators running at once share it
+and overwrite each other's pushes. Give each one its own folder by setting
+`KOBO_SIM_DATA` for both the simulator and its companion commands:
+
+```sh
+export KOBO_SIM_DATA="$PWD/target/sim-data-frame"
+kobo dev 127.0.0.1:8790 &
+kobo frame push ~/Pictures/family --sim
+```
+
+`kobo dev` prints the folder it is using when it starts. The same folder
+holds the library, each app's saved state (`.state/`) and the simulator's
+secrets (`.secrets/`), so a new folder is a fresh simulator. Without
+`KOBO_SIM_DATA` these live in `$TMPDIR` as before.
+
+## Local time
+
+The runtime tells every application the reader's offset from UTC in
+`KOBO_UTC_OFFSET_MINUTES`, and `kobo_sdk::clock::SystemClock::reader()` reads
+it. The simulator passes the computer's own offset, so "today" in an app is
+the developer's today. Set the variable before `kobo dev` to pin another zone,
+for example `KOBO_UTC_OFFSET_MINUTES=600` to check that an evening check-in in
+Sydney lands on the right day. The value is fixed for the life of the app
+process, as it is on a reader.
+
+On a reader the offset comes from the time zone picked in Settings, then from
+the firmware's `TZ` or zone file, then UTC. A zone picked in the simulator's
+Settings is kept only for that run and does not move the simulator's clock.
+
+`KOBO_SIM_CLOCK_MILLIS` starts the simulator's clock at a chosen moment, and
+an application that reads the time through `SystemClock::reader()` starts
+from the same moment, so a run can be placed on any day. The status bar
+follows `clock advance` steps; an application's clock does not, so restart
+the simulator to move an application to another day.
+
+## Built-in apps and the library
+
+Books, Settings, Terminal, Launcher and Store hold what the runtime gives
+them, so they can be checked like any Store app:
+`python3 scripts/check-apps-sim.py books settings`. Library apps read
+documents from the `library` folder beside the per-app shelves
+(`$KOBO_SIM_DATA/library`, or `$TMPDIR/cobalt-sim-data/library`). The sweep
+puts a sample EPUB there for Books.
+
+## Route steps for whole flows
+
+Beyond taps and typing, a route can do what an owner does around the app:
+
+- `restart` stops the app and starts it again, so "comes back after a
+  restart" can be checked; only what the app saved survives.
+- `companion <kobo arguments> --sim` runs a computer-side command between
+  steps, for example `companion frame push photo.jpg --sim`, followed by
+  `lifecycle background` and `lifecycle foreground` to check the app picks the
+  push up. The command must name `--sim`.
+- `page next` and `page back` press the reader's page keys.
+- `type` turns to the keyboard page a character is on by itself.
+
+## Extra routes
+
+An app's `drive.kobo` runs from the seeded state above. Any
+`drive-<flow>.kobo` beside it runs with `--all-routes`, in a fresh simulator,
+as its first line asks:
+
+```text
+# sweep: --bare
+# sweep: --bare --seed-root examples/chat/fixtures/cut-short
+# sweep: after-main
+# sweep: skip
+```
+
+`--bare` skips the default seed, `--seed-root` copies a prepared state in
+first, `after-main` runs in the state the main route left behind, and `skip`
+keeps a route for manual use. A route with no such line runs like the main
+one.
 
 ## Live Paperterm session
 
@@ -84,12 +173,14 @@ puzzles, switches between independent progress records, undoes moves after
 reopening, retries a full-store failure, and confirms and undoes a restart.
 It also checks first-mine relocation and loss undo, the committed drive route,
 both single-game and four-game legacy migrations, direct Kakuro digit entry,
-paged collections, difficulty guides and preservation of future-version records. The default is
-Clara BW at Extra-large; `--profile` and `--scale` select another supported
+paged collections, difficulty guides and preservation of future-version
+records. The default is Clara BW at Extra-large; `--profile` and `--scale` select another supported
 profile or text size. Captures include layout and source/font provenance and
 assert zero fetch/post effects. The route also checks shared pencil-board nodes
-for connected loops, circular islands and attached diagonal sum clues. The original generator separately verifies unique loop, bridge and cross-sum
-solutions and deterministic reproduction with `make-logicpack-collection.py --check`.
+for connected loops, circular islands and attached diagonal sum clues. The
+original generator separately verifies unique loop, bridge and cross-sum
+solutions and deterministic reproduction with
+`scripts/quality/make-logicpack-collection.py --check`.
 Mines difficulty describes field size and density; guess-free play is not promised.
 
 
@@ -114,7 +205,7 @@ server, credentials or device storage is used.
 ## Explicit HTTP updates
 
 The simulator handles `Task::Update` through the same policy and transport as
-Kobo. Offline, host-down, permission-denied, missing-secret and timeout scenarios
+the reader. Offline, host-down, permission-denied, missing-secret and timeout scenarios
 apply to PUT/PATCH as they do to other network tasks. Activity JSON reports
 separate `effects.put` and `effects.patch` counters; `effects.post` remains POST
 only. All update tasks participate in active-work and callback/idle accounting.
@@ -122,8 +213,7 @@ Counters never contain URLs, account names or bodies. Include all four network
 counters (`fetch`, `post`, `put`, `patch`) when asserting that a journey is offline.
 
 Rebuild `kobo-cli` after SDK, protocol, policy or simulator changes before running
-app fixtures. Protocol 14 task tag 4 requires a matching beta runtime. A server
-receiving a request is not proof that the app received its acknowledgement; test
+app fixtures. A server receiving a request is not proof that the app received its acknowledgement; test
 lost responses and reconciliation before calling a sync feature complete.
 
 ## Offline HTTP stream fixtures
@@ -139,7 +229,8 @@ use the normal runtime paths.
 The fixture server must present a certificate for the original hostname.
 Put its test CA in a private `KOBO_SIM_TRUST_DIR`, and use a private `TMPDIR`
 with synthetic credentials and stores. Do not set `KOBO_SIM_OFFLINE`: that
-separate switch disables requests altogether. Invalid fixture configuration
+separate switch starts the simulator with no network, so every request fails
+the way it does on a reader without Wi-Fi. Invalid fixture configuration
 also disables requests and prints a diagnostic. Release builds do not contain
 the routing hook and refuse fixture-mode networking. Restart the simulator to
 change the endpoint; configuration is fixed before the first TLS request.

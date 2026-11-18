@@ -17,8 +17,8 @@ Application contributions have their own guide:
 
 You do not need to write code to help support another Kobo.
 
-1. Find the matching porting issue linked from the README. If none exists,
-   open one before testing.
+1. Find the [issue](https://github.com/BandarLabs/Cobalt/issues) for your
+   model. If none exists, open one before testing.
 2. Comment with the exact model, firmware, and whether the device is available
    for attended testing. This also avoids duplicate ports.
 3. Begin with the read-only doctor report in
@@ -62,7 +62,9 @@ guess.
 ## Code changes
 
 Keep pull requests focused and explain any behavior or safety boundary they
-change. Add tests for changed behavior and run the relevant workspace checks:
+change. `rust-toolchain.toml` names the compiler CI uses, and rustup installs
+and selects it on its own, so the checks below see the same lints CI does. Add
+tests for changed behavior and run the relevant workspace checks:
 
 ```sh
 cargo fmt --all --check

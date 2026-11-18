@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Play original Sudoku fixtures through actual SDK IPC, including failed saves and restart."""
+"""Play original Sudoku fixtures through actual SDK IPC, including failed saves and restart.
+
+Drives the shared game chrome: Rules and the More dots in the top bar, Undo,
+Notes and Erase at the foot, and New game, Restart puzzle, Show mistakes,
+Reveal square and Use landscape under More.
+"""
 import argparse
 import hashlib
 import json
@@ -87,10 +92,14 @@ def main():
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait(timeout=5)
                     address = start()
-                    drive('wait-for-id more','wait-idle')
+                    drive('wait-for-id game-more','wait-idle')
 
-                drive('wait-for-id more','wait-idle')
+                drive('wait-for-id game-more','wait-idle','expect Sudoku · Easy 1')
                 capture('01-first-puzzle')
+                # Undo stays in place with nothing behind it and answers in words.
+                drive('tap-id game-undo','wait-idle','expect Nothing to undo yet.')
+                # Erase has no greyed-out state either, so it says why it did nothing.
+                drive('tap-id erase','wait-idle','expect Choose a square to erase.')
                 drive(f'tap-id cell-{cell}', 'tap-id pencil', 'tap-id digit-2', 'tap-id digit-9','wait-idle')
                 before = saved()
                 assert int(before['position']['notes'][cell*3:cell*3+3],16)==258
@@ -98,14 +107,14 @@ def main():
                 restart()
                 assert saved()==before
                 capture('03-restored-notes')
-                drive('tap-id undo','wait-idle')
+                drive('tap-id game-undo','wait-idle')
                 assert int(saved()['position']['notes'][cell*3:cell*3+3],16)==2
                 drive('scenario storage-full','tap-id digit-3','wait-idle','expect Not saved')
                 capture('04-unsaved-move')
                 assert int(saved()['position']['notes'][cell*3:cell*3+3],16)==2, 'Failed write replaced durable data'
-                drive('tap-id more','expect Retry save')
+                drive('expect Retry saving in More.','tap-id game-more','wait-idle','expect New game','expect Retry saving')
                 capture('05-save-recovery')
-                drive('scenario normal','tap-id retry-save','wait-idle','expect Saved','tap-id play')
+                drive('scenario normal','tap-id retry-save','wait-idle','expect-missing Not saved','expect-missing Retry saving')
                 assert int(saved()['position']['notes'][cell*3:cell*3+3],16)==6
                 restart()
                 assert int(saved()['position']['notes'][cell*3:cell*3+3],16)==6
@@ -113,28 +122,32 @@ def main():
                 assert saved()['position']['board'][cell]==str(int(solution[cell])%9+1)
                 assert not saved()['checking']
                 capture('06-unassisted-entry')
-                drive('tap-id more','tap-id checking','tap-id play','expect Check this answer')
+                drive('expect-missing Wrong answer','tap-id game-more','wait-idle','expect Show mistakes','expect-missing Check off')
+                drive('tap-id checking','wait-idle','expect Wrong answer')
+                assert saved()['checking']
                 capture('07-optional-checking')
-                drive('tap-id more','tap-id hint','expect Reveal answer?')
+                drive('tap-id game-more','wait-idle','expect Hide mistakes','tap-id hint','wait-idle','expect Reveal square?')
                 capture('08-reveal-confirmation')
-                drive('tap-id play')
+                drive('tap-id play','wait-idle','expect Wrong answer')
                 for index, (clue, answer) in enumerate(zip(puzzle,solution)):
                     if clue=='0':
                         drive(f'tap-id cell-{index}',f'tap-id digit-{answer}')
-                drive('wait-idle','expect Puzzle complete')
+                drive('wait-idle','expect Puzzle complete. New game is in More.')
                 assert saved()['position']['board']==solution
                 capture('09-completed-puzzle')
                 restart()
                 drive('expect Puzzle complete')
                 capture('10-completion-restored')
-                drive('tap-id undo','wait-idle')
+                drive('tap-id game-undo','wait-idle')
                 assert saved()['position']['board']!=solution
-                drive('tap-id more','tap-id new-game')
+                drive('tap-id game-more','tap-id game-new','wait-idle','expect Replaces this game and its history.')
                 capture('11-difficulty-choice')
-                drive('tap-id new-hard','wait-idle')
+                drive('tap-id new-hard','wait-idle','expect Sudoku · Hard 1')
                 assert 24<=int(saved()['puzzle'])<36
+                assert saved()['checking'], 'New game keeps the mistakes setting'
                 capture('12-hard-puzzle')
-                drive('tap-id more','tap-id view','tap-id how-to-play')
+                # Rules are one tap from the puzzle, with no menu in between.
+                drive('tap-id game-rules','wait-idle','expect Use 1–9 once')
                 for page in range(12):
                     capture(f'13-help-{page+1}')
                     before_help = json.loads(get('layout'))
@@ -143,7 +156,7 @@ def main():
                         break
                 else:
                     raise AssertionError('Help did not finish within 12 pages')
-                drive('tap Back','tap-id more','tap-id view','tap-id rotate','wait-idle','expect Choose a square')
+                drive('tap Back','wait-idle','tap-id game-more','tap-id rotate','wait-idle','expect Choose a square')
                 capture('14-landscape-full')
                 drive('tap-id cell-80','wait-idle','expect left')
                 capture('15-landscape-selected')
@@ -153,7 +166,7 @@ def main():
                 assert saved()==before_rotation_restart
                 drive('expect left')
                 capture('16-landscape-restored')
-                drive('tap-id more','tap-id view','tap-id how-to-play')
+                drive('tap-id game-rules','wait-idle')
                 for page in range(12):
                     capture(f'17-landscape-help-{page+1}')
                     before_help = json.loads(get('layout'))
@@ -162,13 +175,20 @@ def main():
                         break
                 else:
                     raise AssertionError('Landscape help did not finish within 12 pages')
-                drive('tap Back','tap-id more','tap-id view','tap-id rotate','tap-id more','tap-id new-game','tap-id new-easy','wait-idle')
+                drive('tap Back','wait-idle','tap-id game-more','wait-idle','expect Use portrait','tap-id rotate','tap-id game-more','tap-id game-new','tap-id new-easy','wait-idle')
+                # Each difficulty keeps its own place: Easy carries on from Easy 1
+                # rather than from the Hard puzzle that was on the board.
+                drive('expect Sudoku · Easy 2')
+                assert int(saved()['puzzle'])==1 and saved()['recent']=={'easy':'1','hard':'24'}
+                # The committed route starts from fresh storage, as CI runs it.
+                store.unlink()
+                restart()
                 subprocess.run([str(cli),'drive','--address',address,'--ideal','--shots',str(args.output/'route'),'--script',str(ROOT/'apps/sudoku/drive.kobo')],cwd=ROOT,env=env,stdout=log,stderr=log,check=True,timeout=45)
                 result = dict(status='passed',profile=args.profile,scale=args.scale,original_fixture=True,
-                              basis='simulator-sdk-ipc',puzzles=36,source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
+                              basis='simulator-sdk-ipc',puzzles=len(ROOT.joinpath('apps/sudoku/assets/puzzles.txt').read_text().splitlines()),source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                               source_dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT)),
                               pack_sha256=hashlib.sha256(ROOT.joinpath('apps/sudoku/assets/puzzles.txt').read_bytes()).hexdigest(),
-                              checks=['notes','exact restart','persistent undo','failed-save preservation','explicit retry','optional checking','reveal confirmation','full completion','completion restart','new difficulty','all help pages','landscape full board','landscape restart','landscape help','committed drive route'])
+                              checks=['nothing to undo','erase reason','notes','exact restart','persistent undo','failed-save preservation','retry save in More','show and hide mistakes','reveal confirmation','full completion','completion names New game','completion restart','new difficulty','rules in one tap','all help pages','landscape full board','landscape restart','landscape help','difficulty keeps its place','committed drive route'])
                 (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:

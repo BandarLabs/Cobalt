@@ -9,7 +9,7 @@ time.
 <td width="50%" valign="top"><img width="300" src="screenshots/cooking.png" alt="Cooking, one step at a time"><br>Cooking, one step at a time</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/ingredients.png" alt="Ingredients, one tap away"><br>Ingredients, one tap away</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/ingredients.png" alt="Ingredients, ticked off as you go"><br>Ingredients, ticked off as you go</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/browse.png" alt="Every synced recipe, available offline"><br>Every synced recipe, available offline</td>
 </tr>
 </table>
@@ -18,21 +18,28 @@ time.
 
 - Pick tonight's recipe and cook one large instruction at a time.
 - Tap the left or right side of the screen to move between steps. The
-  Ingredients tab is always one tap away.
+  Ingredients tab is always one tap away, and its lines tick off as you go.
+- Set the servings from 1 to 12 before you cook, and ingredient amounts
+  scale to match.
 - The chosen recipe and servings stay available offline.
 - Read-only. Kitchen Card does not edit recipes, meal plans or shopping lists.
 
 ## Setup
 
-1. In Mealie, create a long-lived API token.
-2. Save the token to a private file and install it on the reader under the
-   secret name `mealie`:
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. In Mealie, create an API token.
+3. Connect from your computer:
 
    ```sh
-   kobo secret set mealie --from TOKEN_FILE --device IP
+   kobo connect kitchencard
    ```
 
+   It asks for the Mealie address and the token, checks them, and sets the
+   app up. Open Kitchen Card, or tap **Check again**.
+
 The runtime attaches the token to requests itself, so the app never sees it.
+A refused token is reported as a token problem, never as a wrong address, and
+saved recipes keep cooking.
 
 ## Permissions
 

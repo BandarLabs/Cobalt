@@ -1,0 +1,17 @@
+# The sweep's seed puts a stock reader database on the simulated card: a
+# Kobo Store book whose file is on the card and one that is not downloaded.
+# Both sit on the Kobo reader shelf, and each says where it can be read.
+wait-for Kobo reader
+tap Kobo reader
+wait-for The Lighthouse Keeper
+expect A Winter Crossing
+expect Not downloaded
+shot books-kobo-reader
+tap A Winter Crossing
+wait-for not downloaded yet
+shot books-not-downloaded
+tap-id 4294967295
+wait-for The Lighthouse Keeper
+tap The Lighthouse Keeper
+wait-for Kobo Store open in the Kobo reader
+shot books-store-book

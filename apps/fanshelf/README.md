@@ -6,10 +6,10 @@ read them offline.
 <table>
 <tr>
 <td width="50%" valign="top"><img width="300" src="screenshots/shelf.png" alt="The shelf, with an unread update"><br>The shelf, with an unread update</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/work.png" alt="A work, with its last update check"><br>A work, with its last update check</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/work.png" alt="A work with new chapters found"><br>A work with new chapters found</td>
 </tr>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/updates.png" alt="Works with unread updates"><br>Works with unread updates</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/updates.png" alt="Each work with its update status"><br>Each work with its update status</td>
 <td width="50%" valign="top"><img width="300" src="screenshots/fandom-filter.png" alt="The shelf filtered to one fandom"><br>The shelf filtered to one fandom</td>
 </tr>
 <tr>
@@ -20,16 +20,20 @@ read them offline.
 
 ## Features
 
-- Add a work by pasting its link. Rating and archive warnings are shown before
-  you download.
+- Add a work by pasting its link. The author's summary, rating and archive
+  warnings are shown before you download. Where a large text size leaves no
+  room for the whole summary, **Whole summary** in the work's menu shows it
+  all.
 - Download works as EPUB and read them offline. Your place, highlights and
   notes survive a re-download.
-- Up to 96 works. The shelf marks works you have started.
+- Up to 96 works. The shelf marks works you have started and says how many are
+  ready offline and how much room they take.
 - **Filter** narrows the shelf by fandom.
-- **Manage** downloads every waiting update, or removes downloaded copies
-  while keeping the works and your place.
-- **Check updates** and **Check all** look for new chapters on works in
-  progress, and mark them unread.
+- **Check for new chapters** in a work's menu, or **Update all** on the
+  Updates screen, looks for new chapters and downloads them straight away for
+  works you have downloaded. Works with new chapters you have not opened yet are
+  marked on the shelf.
+- **Manage** removes downloaded copies while keeping the works and your place.
 - Follow up to 24 AO3 tags through their public feeds.
 - Adult content needs an explicit confirmation. Works restricted to logged-in
   users cannot be downloaded, and the app says so.
@@ -39,8 +43,9 @@ read them offline.
 Fanshelf is a personal reading tool, not a crawler.
 
 - Every request follows something you did: opening a work, downloading it,
-  opening a tag or checking for updates. There is no background checking,
-  prefetching, search scraping or mirroring.
+  opening a tag or checking for updates. Update all checks your works in
+  progress one at a time and downloads only the ones that changed. There is
+  no background checking, prefetching, search scraping or mirroring.
 - One request at a time, at least one second apart, identified as
   `kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)`.
 - When AO3 asks it to slow down, it waits as long as AO3 says, up to an hour.
@@ -89,5 +94,4 @@ requests to AO3.
 
 Fanshelf is unofficial and not affiliated with the Organization for
 Transformative Works. Works belong to their authors and Fanshelf never
-republishes them. [FanFicFare](https://github.com/JimmXinu/FanFicFare) was a
-behaviour reference; none of its code is used.
+republishes them.

@@ -1,0 +1,12 @@
+# The Battery page is read when it opens and when Settings comes back to the
+# front. Plugging in while it is open should show too, as the status bar
+# above it already does.
+wait-for Settings
+tap Battery
+wait-for Discharging
+expect 72%
+device battery 40 charging
+wait-idle
+shot settings-battery-plugged-in
+wait-for 40%
+expect Charging

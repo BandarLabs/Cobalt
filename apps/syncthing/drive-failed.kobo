@@ -1,0 +1,14 @@
+# sweep: --bare --seed-root apps/syncthing/fixtures/failed
+# A sync the engine could not run says why, at the top, before any sync
+# has finished; the setup guide is still offered.
+wait-for The Syncthing engine is missing.
+expect Could not start
+expect Once a day
+expect Set up Sync
+expect-missing Last sync
+clean
+shot syncthing-failed
+tap Set up Sync
+wait-for Pair one computer folder
+tap-id 4294967295
+wait-for Could not start

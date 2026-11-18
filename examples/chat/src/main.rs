@@ -26,10 +26,11 @@ mod conversation;
 
 use conversation::{Conversation, Provider, Reply, Role, Turn, PROVIDERS};
 use kobo_sdk::exports::{Export, Format as ExportFormat};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::failure;
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Failure, Glyph, KoboApp, LogLevel, Screen,
-    ScreenBuilder, Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, LogLevel, Screen, ScreenBuilder,
+    Space, StoreResult, Task, TaskError, TaskId, TaskOutcome,
 };
 use std::process::ExitCode;
 use unicode_segmentation::UnicodeSegmentation;
@@ -57,8 +58,20 @@ const SERVICE: &str = "service";
 /// Where the chosen provider is remembered between sessions.
 const CHOSEN: &str = "provider";
 const CHOICES: [&str; 3] = ["service-0", "service-1", "service-2"];
+/// The service list's page turns. Three services fit on one page at most
+/// sizes; held sideways at the largest text, they take two.
+const SERVICES_BACK: &str = "services-back";
+const SERVICES_NEXT: &str = "services-next";
 const CANCEL: &str = "cancel";
 const RETRY: &str = "retry";
+const CONTINUE: &str = "continue";
+/// What a tap on Continue says, in the reader's name.
+///
+/// Sent as an ordinary message rather than by asking the service to extend
+/// its last reply, because none of the three accepts the second kind any
+/// more, and shown in the transcript as what it is: the reader asking for
+/// the rest.
+const CONTINUE_MESSAGE: &str = "Continue where you stopped.";
 const MORE: &str = "more";
 const NEW: &str = "new";
 const CONFIRM_NEW: &str = "confirm-new";
@@ -86,23 +99,21 @@ enum View {
 }
 
 /// What the application calls itself, in the one place it says so.
-const TITLE: &str = "AI Command Center";
+const TITLE: &str = "Chat";
 
 /// The three destinations, in one place so that no screen can disagree with
 /// another about where the bar goes or what is on it.
 const DESTINATIONS: [(&str, &str); 3] =
     [(TALK, "Conversation"), (TYPE, "Type"), (SERVICE, "Service")];
 
-/// A provider's name, marked when it is the one in use.
-///
-/// The mark is a character rather than a tone: a chosen row drawn a shade
-/// darker is invisible on a panel that resolves sixteen greys under a reading
-/// light, and this is the only way to tell which key a request will use.
 #[derive(Default)]
 struct Chat {
     conversation: Conversation,
-    keyboard: Keyboard,
+    /// The message being typed, on the reader's own keyboard.
+    entry: TextEntry,
     view: View,
+    /// Which page of the service list is showing.
+    service_page: u16,
     /// Which service the next request goes to.
     ///
     /// The application still never sees a key. This picks the endpoint, the
@@ -123,6 +134,9 @@ struct Chat {
     pages_back: usize,
     /// A copy being prepared for the paired computer, when asked for one.
     export: Option<Export>,
+    /// Whether the saved choice of service has been read back, so replies
+    /// saved without their writer are signed with the right one.
+    chosen_known: bool,
 }
 
 impl Chat {
@@ -232,8 +246,8 @@ impl Chat {
                 [(NEW, "New conversation"), (EXPORT, "Save a copy")],
             );
         }
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+        if let Some((level, notice)) = self.notice() {
+            screen = screen.banner(level, notice);
         }
 
         // Nothing scrolls on this panel, so a long transcript is paged
@@ -246,11 +260,23 @@ impl Chat {
             // Centred under a mark rather than ranged left at the top: this
             // is the first thing anybody sees, and a lone paragraph in the
             // corner of a 1448-pixel panel reads as a page that failed.
+            //
+            // The key comes first because without it nothing here works,
+            // and the reader used to learn that only after typing a whole
+            // question on this keyboard and waiting for it to be refused.
+            // The command sits in the sentence rather than in a command
+            // block: a splash centres itself above anything chained after
+            // it, which left the command alone at the foot of the panel.
             screen = screen.splash(
                 Some(Glyph::Chat),
                 "Nothing said yet",
-                "Tap Type to start. Answers you can tap appear as buttons, so most \
-                 turns need no typing at all.",
+                format!(
+                    "This uses your own {} key. Add it once from your computer with \
+                     kobo secret set {}, then tap Type. Answers you can tap appear as \
+                     buttons.",
+                    self.provider.label(),
+                    self.provider.key()
+                ),
             );
         }
 
@@ -301,23 +327,14 @@ impl Chat {
                     )
                     .or_type(TYPE, "Type something else...");
             }
-            _ => {
-                // A draft left in the keyboard is kept in sight here rather
-                // than only on the keyboard screen. Before this, a message
-                // half-typed and then navigated away from was gone, with
-                // nothing on the panel to say it had ever been started; the
-                // reader came back to a blank composer and retyped it.
-                let draft = self.keyboard.text();
-                if !draft.trim().is_empty() {
-                    screen = screen
-                        .section("Draft")
-                        .field(TYPE, draft, "Tap to keep typing.");
-                }
-            }
+            _ => {}
         }
 
         if on_latest && self.view != View::Waiting && self.can_retry() {
             screen = screen.button(RETRY, "Try again");
+        }
+        if on_latest && self.view != View::Waiting && self.conversation.reply_cut_short() {
+            screen = screen.button(CONTINUE, "Continue the answer");
         }
         if self.confirming_new {
             screen = screen.confirm(
@@ -330,36 +347,65 @@ impl Chat {
         screen.build()
     }
 
-    /// The keyboard, and what has been typed on it so far.
+    /// The message, typed on the reader's own keyboard.
+    ///
+    /// The runtime draws the field and the keys over this screen and keeps
+    /// its title, so the hint is the one place left to say which service
+    /// the message goes to while it is being written.
     fn compose(&self) -> Screen {
         ScreenBuilder::new("chat-compose")
-            .top_bar("Type a message")
-            .nav_bar(1, DESTINATIONS)
-            .typed(&self.keyboard, "Your message appears here.")
-            .spacer(Space::Small)
-            .keyboard(&self.keyboard, "Send")
+            .top_bar(TITLE)
+            .owns_back(true)
+            .text_entry_with_hint(
+                &self.entry,
+                "Type a message",
+                &format!("Goes to {}.", self.provider.label()),
+                "Send",
+            )
             .build()
     }
 
     /// The service chooser.
+    ///
+    /// One answer from three, drawn by the runtime as an option list, so the
+    /// service in use carries the runtime's own mark rather than an icon
+    /// this application picked to stand for "chosen".
     fn choosing(&self) -> Screen {
+        let chosen = self.chosen_index();
         ScreenBuilder::new("chat-service")
             .top_bar("Service")
             .nav_bar(2, DESTINATIONS)
             .secondary("Add a service key from your computer, for example kobo secret set openai.")
-            .rows(PROVIDERS.iter().enumerate().map(|(index, provider)| {
-                (
-                    CHOICES[index],
-                    provider.label(),
-                    provider.model(),
-                    if *provider == self.provider {
-                        Glyph::Check
-                    } else {
-                        Glyph::Circle
-                    },
-                )
-            }))
+            .option_list(
+                "",
+                self.service_page,
+                SERVICES_BACK,
+                SERVICES_NEXT,
+                PROVIDERS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, provider)| (CHOICES[index], provider.label(), provider.model())),
+            )
+            .chosen(chosen)
             .build()
+    }
+
+    /// Where the service in use sits in the list.
+    fn chosen_index(&self) -> usize {
+        PROVIDERS
+            .iter()
+            .position(|provider| *provider == self.provider)
+            .unwrap_or(0)
+    }
+
+    /// How many pages the service list takes on this panel at this size.
+    fn service_pages(context: &Context) -> u16 {
+        u16::try_from(kobo_sdk::options_pages(
+            PROVIDERS.len(),
+            &context.metrics(),
+            true,
+        ))
+        .unwrap_or(1)
     }
 
     /// The answers the newest reply offered, if it offered any.
@@ -374,9 +420,6 @@ impl Chat {
         }
     }
 
-    /// Whether the last thing that happened was a question that never got an
-    /// answer, which is the only situation where resending is what the reader
-    /// means by trying again.
     /// How many estimated lines of transcript one page holds right now.
     ///
     /// The failure banner and its way back ride on the newest page and are
@@ -385,19 +428,41 @@ impl Chat {
     /// pushed one another's neighbours off the panel at the larger text
     /// scales, and the way back was exactly what was no longer visible.
     fn page_budget(&self) -> usize {
-        if self.trouble.is_some() {
+        if self.notice().is_some() {
             TRANSCRIPT_LINES.saturating_sub(5)
         } else {
             TRANSCRIPT_LINES
         }
     }
 
+    /// Whether the last thing that happened was a question that never got an
+    /// answer, which is the only situation where resending is what the reader
+    /// means by trying again.
+    ///
+    /// Read off the transcript rather than off the failure: the failure is
+    /// not saved, and a visit to the keyboard or the service list used to
+    /// clear it and take Try again with it, leaving a question with no way
+    /// to send it again.
     fn can_retry(&self) -> bool {
-        self.trouble.is_some()
+        self.task.is_none()
             && self
                 .conversation
                 .last()
                 .is_some_and(|turn| turn.role == Role::You)
+    }
+
+    /// The banner over the transcript: what went wrong, or, for a question
+    /// left unanswered when the failure itself is no longer known, that much.
+    fn notice(&self) -> Option<(BannerLevel, String)> {
+        if let Some(trouble) = &self.trouble {
+            return Some((BannerLevel::Attention, trouble.clone()));
+        }
+        self.can_retry().then(|| {
+            (
+                BannerLevel::Info,
+                "Your last message has not been answered.".to_owned(),
+            )
+        })
     }
 
     fn say(&mut self, context: &mut Context, text: impl AsRef<str>) {
@@ -457,7 +522,7 @@ impl Chat {
             self.confirming_new = false;
         } else if action == action_id(EXPORT) {
             let text = self.conversation.transcript_text(self.provider.label());
-            match Export::new("chat-conversation", ExportFormat::Text, text.into_bytes()) {
+            match Export::new("Chat conversation", ExportFormat::Text, text.into_bytes()) {
                 Ok(mut export) => {
                     export.begin(context);
                     self.export = Some(export);
@@ -471,28 +536,49 @@ impl Chat {
         true
     }
 
-    /// Handles a tap while the keyboard is up. Returns whether it was one.
-    fn typing(&mut self, context: &mut Context, action: ActionId) -> bool {
-        if action == action_id(TALK) {
-            self.view = View::Talking;
-            self.show(context);
-            return true;
+    /// Opens the service list and turns its pages. Returns whether the
+    /// action was one of those.
+    fn services(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if action == action_id(SERVICE) {
+            // Opens on the page holding the service in use, so its mark is
+            // on the panel rather than a page turn away.
+            let per_page = kobo_sdk::options_per_page(&context.metrics(), true).max(1);
+            self.service_page = u16::try_from(self.chosen_index() / per_page).unwrap_or(0);
+            self.view = View::Choosing;
+        } else if self.view == View::Choosing
+            && (action == action_id(SERVICES_BACK) || action == action_id(SERVICES_NEXT))
+        {
+            let last = Self::service_pages(context).saturating_sub(1);
+            self.service_page = if action == action_id(SERVICES_BACK) {
+                self.service_page.saturating_sub(1)
+            } else {
+                self.service_page.saturating_add(1).min(last)
+            };
+        } else {
+            return false;
         }
-        let Some(pressed) = self.keyboard.press(action) else {
+        self.show(context);
+        true
+    }
+
+    /// Handles the answer from the reader's keyboard. Returns whether it
+    /// was one.
+    ///
+    /// Sending nothing comes back as backing out, and both return to the
+    /// transcript, because the runtime hands back no text for either.
+    fn typing(&mut self, context: &mut Context, action: ActionId) -> bool {
+        let Some(typing) = self.entry.handle(action) else {
             return false;
         };
-        match pressed {
-            Pressed::Edited | Pressed::Shifted => self.show(context),
-            Pressed::Submitted => {
-                let text = self.keyboard.text().trim().to_owned();
-                // Nothing typed means nothing changed, so nothing is
-                // repainted. A refresh that redraws the same pixels is the
-                // most visible thing this application could do for no reason.
-                if !text.is_empty() {
-                    self.keyboard.clear();
-                    self.view = View::Talking;
-                    self.say(context, text);
-                }
+        match typing {
+            Typing::Submitted(text) => {
+                self.view = View::Talking;
+                self.say(context, text);
+            }
+            Typing::Changed => self.show(context),
+            Typing::Cancelled | Typing::Saved | Typing::Refused(_) => {
+                self.view = View::Talking;
+                self.show(context);
             }
         }
         true
@@ -538,11 +624,11 @@ fn display_text(turn: &Turn) -> String {
     }
 }
 
-fn draw_turn(screen: ScreenBuilder, turn: &Turn, text: &str, assistant: &str) -> ScreenBuilder {
+fn draw_turn(screen: ScreenBuilder, turn: &Turn, text: &str, unsigned: &str) -> ScreenBuilder {
     match turn.role {
         Role::You => screen.byline(0, "You").quote(0, text),
         Role::Assistant => text.split("\n\n").fold(
-            screen.byline(1, assistant.to_owned()),
+            screen.byline(1, turn.by.map_or(unsigned, |by| by.label()).to_owned()),
             |screen, paragraph| screen.quote(1, paragraph),
         ),
     }
@@ -609,20 +695,34 @@ fn label(option: &str) -> String {
 /// request. Every one of these leaves the conversation intact and something to
 /// tap, because a chat client that dead-ends on a flat battery or a lapsed key
 /// is a chat client that has to be restarted to be used again.
+///
+/// The shared account wording is used for everything but two causes, where
+/// this application knows more than the SDK can. The endpoints here are
+/// fixed, so a refusal that is not about the key is never "check the server
+/// address": what does arrive as a 404 is a model the service has retired,
+/// fixed by an update to this app, and some services answer an empty balance
+/// with a 400. A bad key is answered with a 401, so the key is not among the
+/// causes named for either.
 fn explain(error: TaskError, provider: Provider) -> String {
-    match error {
-        // The one failure this application can say more about than the SDK
-        // can: the service's key is not installed, and installing it is a
-        // command the reader can run rather than a mystery to contemplate.
-        TaskError::NoCredential => format!(
-            "No key is installed for {}. Install one from your computer: kobo secret set {}.",
-            provider.label(),
-            provider.key()
+    let service = provider.label();
+    let fix = format!(
+        "Add a key from your computer: kobo secret set {}.",
+        provider.key()
+    );
+    let problem = failure::Service::new(service).fixed_by(&fix).explain(error);
+    match problem.cause {
+        failure::Cause::NotFound => format!(
+            "{service} turned the request down. It may have retired the model this app asks \
+             for, or the account may be out of credit. Check Store for an update, or choose \
+             another service."
         ),
-        TaskError::NotFound => {
-            "The service refused the request. The key may be wrong or spent.".to_owned()
-        }
-        other => Failure::of(other).advice.to_owned(),
+        // A spent balance arrives as "slow down" from some services, so the
+        // second sentence is the one that matters when waiting does not help.
+        failure::Cause::RateLimited => format!(
+            "{service} is turning requests away for now. Wait a minute and try again. If it \
+             keeps happening, check the account has credit."
+        ),
+        _ => problem.message,
     }
 }
 
@@ -659,12 +759,19 @@ impl KoboApp for Chat {
                     .and_then(|bytes| std::str::from_utf8(bytes).ok())
                     .map(Provider::from_key)
                     .unwrap_or_default();
+                self.chosen_known = true;
                 if restored != self.provider {
                     self.provider = restored;
                     self.show(context);
                 }
+                self.conversation.sign_unsigned(self.provider);
             } else if key == conversation::STATE {
-                if let Some(restored) = value.as_deref().and_then(Conversation::restore) {
+                if let Some(mut restored) = value.as_deref().and_then(Conversation::restore) {
+                    // Signed now only if the service in use is known; if it
+                    // has not loaded yet, it signs them when it does.
+                    if self.chosen_known {
+                        restored.sign_unsigned(self.provider);
+                    }
                     self.conversation = restored;
                     self.pages_back = 0;
                     self.show(context);
@@ -683,6 +790,8 @@ impl KoboApp for Chat {
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if action == ActionId::BACK {
+            // From the keyboard, Back puts it away and goes no further.
+            self.entry.close();
             // A menu, a confirmation and an export are layers over the
             // transcript; the keyboard and the service list are destinations
             // reached from it. Back lifts or leaves one layer at a time.
@@ -736,21 +845,25 @@ impl KoboApp for Chat {
         }
 
         if action == action_id(TYPE) {
+            // The failure stays: backing out of the keyboard returns to the
+            // same unanswered question, still saying why.
             self.view = View::Composing;
-            self.trouble = None;
+            self.entry.open();
             self.show(context);
             return;
         }
 
-        if action == action_id(SERVICE) {
-            self.view = View::Choosing;
-            self.trouble = None;
-            self.show(context);
+        if self.services(context, action) {
             return;
         }
 
         if let Some(index) = CHOICES.iter().position(|name| action == action_id(name)) {
             if let Some(&provider) = PROVIDERS.get(index) {
+                // Replies saved before their writer was kept are signed with
+                // the service that wrote them before another takes over.
+                if self.conversation.sign_unsigned(self.provider) {
+                    self.persist(context);
+                }
                 self.provider = provider;
                 context
                     .store()
@@ -771,6 +884,11 @@ impl KoboApp for Chat {
 
         if action == action_id(RETRY) && self.can_retry() {
             self.submit(context);
+            return;
+        }
+
+        if action == action_id(CONTINUE) && self.conversation.reply_cut_short() {
+            self.say(context, CONTINUE_MESSAGE);
             return;
         }
 
@@ -808,7 +926,7 @@ impl KoboApp for Chat {
             TaskOutcome::Completed(bytes) => {
                 match conversation::read_completion(&bytes, self.provider) {
                     Ok(reply) => {
-                        self.conversation.push(Role::Assistant, reply);
+                        self.conversation.push_reply(reply, self.provider);
                         self.pages_back = 0;
                         self.persist(context);
                         self.trouble = None;
@@ -842,14 +960,14 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    use super::PROVIDERS;
     use super::{
         conversation::Provider,
         conversation::{Role, Turn},
-        transcript_pages, Chat, View, CHOICES, CHOSEN, COLUMNS, EARLIER, OPTIONS, SERVICE, TALK,
-        TRANSCRIPT_LINES, TYPE,
+        transcript_pages, Chat, View, CHOICES, CHOSEN, COLUMNS, CONTINUE, CONTINUE_MESSAGE,
+        EARLIER, OPTIONS, RETRY, SERVICE, TALK, TRANSCRIPT_LINES, TYPE,
     };
-    use super::{Glyph, PROVIDERS};
-    use kobo_sdk::keyboard::Keyboard;
+    use kobo_sdk::keyboard::testing::{asked, cancel_text, type_text};
     use kobo_sdk::{
         action_id, ActionId, Command, Context, KoboApp, Screen, StoreRequest, StoreResult, Task,
         TaskId, TaskOutcome,
@@ -923,11 +1041,12 @@ mod tests {
         TaskOutcome::Completed(body.into_bytes())
     }
 
-    /// Types `text` on the on-screen keyboard and taps send.
+    /// Types `text` on the reader's keyboard and taps send.
     fn type_and_send(chat: &mut Chat, text: &str) -> Vec<Command> {
         act(chat, TYPE);
-        chat.keyboard = Keyboard::with_text(text);
-        act(chat, "kb.enter")
+        let mut context = Context::default();
+        type_text(chat, &mut context, text);
+        context.take_commands()
     }
 
     #[test]
@@ -944,29 +1063,35 @@ mod tests {
     }
 
     #[test]
-    fn a_draft_stays_in_sight_after_leaving_the_keyboard() {
-        // The defect: a message half-typed and then navigated away from was
-        // gone, with nothing on the panel to say it had ever been started, so
-        // the reader came back to a blank composer and typed it a second time.
+    fn backing_out_of_the_keyboard_returns_to_the_conversation_and_sends_nothing() {
         let (mut chat, _) = started();
         act(&mut chat, TYPE);
-        chat.keyboard = Keyboard::with_text("half a thought");
-        act(&mut chat, TALK);
+        let mut context = Context::default();
+        cancel_text(&mut chat, &mut context);
+        let commands = context.take_commands();
         assert_eq!(chat.view, View::Talking);
-        let screen = chat.screen();
-        assert!(
-            screen
-                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-                .rect_of_action(action_id(TYPE))
-                .is_some(),
-            "the draft was not left tappable to keep typing"
-        );
-        assert!(
-            shown(&screen)
-                .iter()
-                .any(|line| line.contains("half a thought")),
-            "the draft vanished when the keyboard closed"
-        );
+        assert!(!chat.entry.is_open(), "the keyboard was left open");
+        assert!(posted(&commands).is_none(), "backing out sent a message");
+    }
+
+    #[test]
+    fn the_message_is_typed_on_the_reader_s_keyboard_and_says_which_service_it_goes_to() {
+        let (mut chat, _) = started();
+        act(&mut chat, SERVICE);
+        act(&mut chat, CHOICES[1]);
+        let commands = act(&mut chat, TYPE);
+        let Some(kobo_sdk::DeviceRequest::TypeText {
+            prompt,
+            hint,
+            submit,
+            ..
+        }) = asked(&commands)
+        else {
+            panic!("the reader's keyboard was not asked for")
+        };
+        assert_eq!(prompt, "Type a message");
+        assert_eq!(hint, "Goes to Anthropic.");
+        assert_eq!(submit, "Send");
     }
 
     #[test]
@@ -1047,9 +1172,11 @@ mod tests {
         let screen = last_screen(&context.take_commands());
         // Asserted against the SDK's own wording rather than a copy of it, so
         // this test cannot pass while the reader is shown something else.
-        let expected = kobo_sdk::Failure::of(kobo_sdk::TaskError::Unreachable).advice;
+        let expected = kobo_sdk::failure::Service::new("OpenAI")
+            .explain(kobo_sdk::TaskError::Unreachable)
+            .message;
         assert!(
-            shown(&screen).iter().any(|line| line.contains(expected)),
+            shown(&screen).join(" ").contains(&expected),
             "the banner did not carry {expected:?}"
         );
         let retry = screen
@@ -1058,6 +1185,69 @@ mod tests {
         assert!(retry.is_some(), "there is no way back from a failed send");
         let commands = act(&mut chat, "retry");
         assert!(posted(&commands).is_some(), "trying again sent nothing");
+    }
+
+    /// Looking at the keyboard or the service list and coming back leaves
+    /// the unanswered question with its Try again, and a restart does too.
+    /// Both used to clear it, and the question could not be sent again.
+    #[test]
+    fn an_unanswered_question_keeps_try_again_through_the_keyboard_the_service_list_and_a_restart()
+    {
+        let (mut chat, _) = started();
+        let commands = type_and_send(&mut chat, "hello");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        chat.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Failed(kobo_sdk::TaskError::Unreachable),
+        );
+        for (opened, left) in [(TYPE, "back"), (SERVICE, TALK)] {
+            let _opened = act(&mut chat, opened);
+            let mut context = Context::default();
+            let back = if left == "back" {
+                kobo_sdk::ActionId::BACK
+            } else {
+                action_id(left)
+            };
+            chat.on_action(&mut context, back);
+            assert!(chat.can_retry(), "{opened} took Try again away");
+            assert!(chat.trouble.is_some(), "{opened} took away what went wrong");
+        }
+
+        let mut restarted = Chat::default();
+        let mut context = Context::default();
+        restarted.on_start(&mut context);
+        restarted.on_store(
+            &mut context,
+            StoreResult::Loaded {
+                key: super::conversation::STATE.to_owned(),
+                value: Some(chat.conversation.encode()),
+            },
+        );
+        let screen = last_screen(&context.take_commands());
+        let words = shown(&screen).join(" ");
+        assert!(words.contains("has not been answered"), "{words}");
+        assert!(screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .rect_of_action(action_id(RETRY))
+            .is_some());
+    }
+
+    /// A reply is by-lined with the service that wrote it, whichever is
+    /// chosen afterwards.
+    #[test]
+    fn choosing_another_service_leaves_earlier_replies_by_lined_as_they_were() {
+        let (mut chat, _) = started();
+        let commands = type_and_send(&mut chat, "hello");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        chat.on_task(&mut context, task, reply("Hello there."));
+        let _chosen = act(&mut chat, CHOICES[2]);
+        assert_eq!(chat.provider, Provider::Gemini);
+        let words = shown(&chat.screen()).join(" ");
+        assert!(words.contains("OpenAI"), "{words}");
+        assert!(!words.contains("Google Gemini"), "{words}");
     }
 
     #[test]
@@ -1075,16 +1265,11 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_message_is_not_sent_and_does_not_repaint_the_panel() {
+    fn an_empty_message_is_not_sent_and_returns_to_the_conversation() {
         let (mut chat, _) = started();
-        act(&mut chat, TYPE);
-        chat.keyboard = Keyboard::with_text("   ");
-        let commands = act(&mut chat, "kb.enter");
+        let commands = type_and_send(&mut chat, "   ");
         assert!(posted(&commands).is_none());
-        assert!(
-            commands.is_empty(),
-            "an empty send repainted the panel for nothing"
-        );
+        assert_eq!(chat.view, View::Talking);
     }
 
     #[test]
@@ -1151,6 +1336,7 @@ mod tests {
             .map(|index| Turn {
                 role: Role::You,
                 text: format!("message {index} {}", "x".repeat(COLUMNS)),
+                by: None,
             })
             .collect::<Vec<_>>();
         let pages = transcript_pages(&turns, TRANSCRIPT_LINES);
@@ -1165,9 +1351,8 @@ mod tests {
     #[test]
     fn every_page_fits_its_panel_at_every_text_scale() {
         // The promise the pages make: no turn is dropped off the top of an
-        // overfull page. The fullest page is the one to check, and the
-        // estimate behind it is conservative enough that it is also the
-        // oldest page by construction.
+        // overfull page. Every page is checked, because which one is fullest
+        // depends on where the measured split falls at each size.
         let mut chat = Chat::default();
         for index in 0..24 {
             chat.conversation
@@ -1181,34 +1366,42 @@ mod tests {
         // The fullest page is the one carrying a failure: the banner and the
         // way to try again take room the turns budget has to give back.
         chat.conversation.push(Role::You, "question that failed");
-        chat.trouble = Some(super::explain(
+        // Every failure this application words for itself, because the
+        // longest of them is the one that decides whether the page fits.
+        for error in [
             kobo_sdk::TaskError::NoCredential,
-            Provider::OpenAi,
-        ));
-        assert!(
-            chat.can_retry(),
-            "the worst page is the one with a way back"
-        );
-        let pages = transcript_pages(chat.conversation.turns(), chat.page_budget());
-        for scale in [
-            kobo_ui::TextScale::Default,
-            kobo_ui::TextScale::Large,
-            kobo_ui::TextScale::ExtraLarge,
+            kobo_sdk::TaskError::NotFound,
+            kobo_sdk::TaskError::Unauthorized,
+            kobo_sdk::TaskError::RateLimited(60),
         ] {
-            let mut metrics = CLARA_BW_METRICS;
-            metrics.text_scale = scale;
-            for page in 0..pages.len() {
-                chat.pages_back = pages.len() - 1 - page;
-                let layout = chat
-                    .screen()
-                    .layout_with(&metrics, &Chrome::measuring(true));
-                for node in &layout.nodes {
-                    assert!(
-                        node.rect.y + node.rect.height <= metrics.height,
-                        "page {page} at {scale:?} overflows: {:?} past {}",
-                        node.kind,
-                        metrics.height
-                    );
+            chat.trouble = Some(super::explain(error, Provider::Gemini));
+            assert!(
+                chat.can_retry(),
+                "the worst page is the one with a way back"
+            );
+            for scale in kobo_ui::TextScale::STEPS {
+                let mut metrics = CLARA_BW_METRICS;
+                metrics.text_scale = scale;
+                // The pages are split by measuring against the context the
+                // screen is built with, so they are built for the size they
+                // are checked at. A default context split them for the
+                // default size, and the larger sizes were checked against
+                // pages nobody had split for them.
+                let context = kobo_sdk::AppRunner::with_metrics(Chat::default(), metrics).context();
+                let pages = chat.measured_pages(&context).len();
+                for page in 0..pages {
+                    chat.pages_back = pages - 1 - page;
+                    let layout = chat
+                        .screen_for(&context)
+                        .layout_with(&metrics, &Chrome::measuring(true));
+                    for node in &layout.nodes {
+                        assert!(
+                            node.rect.y + node.rect.height <= metrics.height,
+                            "page {page} at {scale:?} with {error:?} overflows: {:?} past {}",
+                            node.kind,
+                            metrics.height
+                        );
+                    }
                 }
             }
         }
@@ -1221,6 +1414,7 @@ mod tests {
         let turns = vec![Turn {
             role: Role::You,
             text: "y".repeat(COLUMNS * TRANSCRIPT_LINES * 4),
+            by: None,
         }];
         assert_eq!(transcript_pages(&turns, TRANSCRIPT_LINES).len(), 1);
     }
@@ -1337,6 +1531,76 @@ mod tests {
     }
 
     #[test]
+    fn the_key_a_conversation_needs_is_named_before_anything_is_typed() {
+        // The reader used to learn that a key was needed only after typing a
+        // whole question on this keyboard and waiting for it to be refused.
+        let (_, mut context) = started();
+        let lines = shown(&last_screen(&context.take_commands())).join(" ");
+        assert!(lines.contains("OpenAI key"), "{lines}");
+        assert!(lines.contains("kobo secret set openai"), "{lines}");
+    }
+
+    #[test]
+    fn a_refused_request_names_the_retired_model_and_never_blames_the_key() {
+        for provider in PROVIDERS {
+            let advice = super::explain(kobo_sdk::TaskError::NotFound, provider);
+            assert!(!advice.contains("key"), "{provider:?}: {advice}");
+            assert!(advice.contains("retired"), "{provider:?}: {advice}");
+            assert!(advice.contains("Store"), "{provider:?}: {advice}");
+            assert!(advice.starts_with(provider.label()), "{advice}");
+        }
+        // A 401 is the one refusal that really is the key, and it says how
+        // to replace it rather than how to check it.
+        let advice = super::explain(kobo_sdk::TaskError::Unauthorized, Provider::Anthropic);
+        assert!(advice.contains("kobo secret set anthropic"), "{advice}");
+    }
+
+    #[test]
+    fn a_reply_that_reached_its_length_limit_offers_to_continue_and_continue_asks_for_the_rest() {
+        let (mut chat, _) = started();
+        let commands = type_and_send(&mut chat, "how do I make bread");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        let cut = kobo_json::ObjectBuilder::new()
+            .set(
+                "choices",
+                vec![kobo_json::ObjectBuilder::new()
+                    .set(
+                        "message",
+                        kobo_json::ObjectBuilder::new()
+                            .set("role", "assistant")
+                            .set("content", "First you mix the flour and"),
+                    )
+                    .set("finish_reason", "length")],
+            )
+            .build()
+            .to_json();
+        chat.on_task(&mut context, task, TaskOutcome::Completed(cut.into_bytes()));
+        let screen = last_screen(&context.take_commands());
+        assert!(
+            screen
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+                .rect_of_action(action_id(CONTINUE))
+                .is_some(),
+            "a cut-off answer had no way on"
+        );
+        let commands = act(&mut chat, CONTINUE);
+        let (body, _) = posted(&commands).expect("continue sent a message");
+        assert!(body.contains(CONTINUE_MESSAGE), "{body}");
+        let task = spawned(&commands);
+        let mut context = Context::default();
+        chat.on_task(&mut context, task, reply("the water, then knead it."));
+        let screen = last_screen(&context.take_commands());
+        assert!(
+            screen
+                .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+                .rect_of_action(action_id(CONTINUE))
+                .is_none(),
+            "a finished answer still offered to continue"
+        );
+    }
+
+    #[test]
     fn a_copy_of_the_conversation_is_prepared_for_the_computer() {
         let (mut chat, _) = started();
         let commands = type_and_send(&mut chat, "hello");
@@ -1349,6 +1613,11 @@ mod tests {
         let export = chat.export.as_ref().expect("a copy was prepared");
         assert_eq!(export.offer().format, super::ExportFormat::Text);
         assert!(export.offer().bytes > 0);
+        // Its page names it in words, not by a file name with a hyphen in it.
+        assert_eq!(export.offer().title, "Chat conversation");
+        assert!(shown(&chat.screen())
+            .iter()
+            .any(|line| line.contains("Chat conversation")));
         // Back lifts the export layer and returns the transcript.
         let mut context = Context::default();
         chat.on_action(&mut context, ActionId::BACK);
@@ -1370,34 +1639,6 @@ mod tests {
             Command::Store(StoreRequest::Save { key, .. })
                 if key == super::conversation::STATE
         )));
-    }
-
-    #[test]
-    fn every_key_of_the_compose_screen_is_reachable_on_this_panel() {
-        // The compose screen is the one that can run off the bottom, because
-        // the keyboard is four rows of controls under whatever has been typed.
-        let chat = Chat {
-            view: View::Composing,
-            keyboard: Keyboard::with_text(
-                "a message long enough to wrap onto a second line of the panel, \
-                 which is what a real one does",
-            ),
-            ..Chat::default()
-        };
-        let layout = chat
-            .screen()
-            .layout_with(&CLARA_BW_METRICS, &Chrome::default());
-        let send = layout
-            .rect_of_action(action_id("kb.enter"))
-            .expect("a send key");
-        assert!(
-            send.y + send.height <= CLARA_BW_METRICS.height,
-            "the send key is off the bottom of the panel: {send:?}"
-        );
-        assert!(
-            send.height >= CLARA_BW_METRICS.touch_target_minimum(),
-            "the send key is too small to tap: {send:?}"
-        );
     }
 
     #[test]
@@ -1460,24 +1701,6 @@ mod tests {
         let commands = act(&mut chat, TALK);
         assert_eq!(chat.view, View::Talking);
         assert!(!commands.is_empty(), "the way back repainted nothing");
-    }
-
-    #[test]
-    fn the_keyboard_screen_offers_the_way_back_in_the_same_place() {
-        let (mut chat, mut context) = started();
-        let talking = chat
-            .screen()
-            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-            .rect_of_action(action_id(TALK))
-            .expect("the transcript names where it already is");
-        act(&mut chat, TYPE);
-        let composing = chat
-            .screen()
-            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
-            .rect_of_action(action_id(TALK))
-            .expect("the keyboard offers the way back");
-        assert_eq!(talking, composing);
-        let _ = &mut context;
     }
 
     /// The identifier the application handed to `Context::spawn`.
@@ -1576,21 +1799,20 @@ mod tests {
         act(&mut chat, CHOICES[1]);
         act(&mut chat, SERVICE);
         let screen = chat.screen();
-        let [.., kobo_sdk::Node::Rows { rows, .. }] = &screen.nodes[..] else {
-            unreachable!("the chooser ends in service rows")
+        let Some(kobo_sdk::Node::Options {
+            options, selected, ..
+        }) = screen
+            .nodes
+            .iter()
+            .find(|node| matches!(node, kobo_sdk::Node::Options { .. }))
+        else {
+            unreachable!("the chooser is an option list")
         };
-        for (index, row) in rows.iter().enumerate() {
-            assert_eq!(row.title, PROVIDERS[index].label());
-            assert_eq!(row.summary, PROVIDERS[index].model());
-            assert_eq!(
-                row.lead,
-                kobo_sdk::RowLead::from(if index == 1 {
-                    Glyph::Check
-                } else {
-                    Glyph::Circle
-                })
-            );
-            assert!(row.title.is_ascii());
+        assert_eq!(*selected, Some(1), "the service in use is not marked");
+        for (index, option) in options.iter().enumerate() {
+            assert_eq!(option.label, PROVIDERS[index].label());
+            assert_eq!(option.summary, PROVIDERS[index].model());
+            assert!(option.label.is_ascii());
         }
     }
 
@@ -1652,6 +1874,38 @@ mod tests {
         assert_eq!(bar(&chat), empty, "the bar moved as the transcript grew");
     }
     #[test]
+    fn the_service_list_opens_on_the_page_that_holds_the_service_in_use() {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale: kobo_ui::TextScale::Largest,
+            width: 1448,
+            height: 1072,
+            pixels_per_inch: 300,
+        };
+        let mut runner = kobo_sdk::AppRunner::with_metrics(Chat::default(), metrics);
+        // Counted once the runner has put the reader's own faces in place,
+        // because the rows on a page are counted in them.
+        let per_page = kobo_sdk::options_per_page(&runner.context().metrics(), true).max(1);
+        runner.app_mut().provider = PROVIDERS[2];
+        runner.action(action_id(SERVICE));
+        assert_eq!(
+            usize::from(runner.app().service_page),
+            2 / per_page,
+            "the list opened away from the service in use"
+        );
+        runner.action(action_id(super::SERVICES_BACK));
+        runner.action(action_id(super::SERVICES_BACK));
+        assert_eq!(runner.app().service_page, 0);
+        for _ in 0..4 {
+            runner.action(action_id(super::SERVICES_NEXT));
+        }
+        assert_eq!(
+            usize::from(runner.app().service_page),
+            (PROVIDERS.len() - 1) / per_page,
+            "the list turned past its last page"
+        );
+    }
+
+    #[test]
     fn service_rows_fit_and_select_their_provider_at_every_text_size() {
         // Exercise the 300ppi panel geometries in portrait and logical landscape.
         // The Elipsa 227ppi profile is verified in its own native-renderer
@@ -1670,9 +1924,14 @@ mod tests {
                     pixels_per_inch,
                 };
                 let mut runner = kobo_sdk::AppRunner::with_metrics(Chat::default(), metrics);
+                let per_page = kobo_sdk::options_per_page(&metrics, true).max(1);
                 for (index, provider) in PROVIDERS.iter().enumerate() {
                     runner.app_mut().view = View::Choosing;
-                    let screen = runner.app().screen().with_own_back(true);
+                    runner.app_mut().service_page = u16::try_from(index / per_page).unwrap();
+                    let screen = runner
+                        .app()
+                        .screen_for(&runner.context())
+                        .with_own_back(true);
                     let chrome = kobo_ui::Chrome::for_screen(
                         &screen,
                         false,
@@ -1729,6 +1988,47 @@ mod large_text_tests {
             "{metrics:?}: {:#?}",
             diagnostics.issues
         );
+    }
+
+    #[test]
+    fn the_first_screen_with_its_key_command_fits_every_panel() {
+        for metrics in panels() {
+            for provider in conversation::PROVIDERS {
+                let app = Chat {
+                    provider,
+                    ..Chat::default()
+                };
+                let runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
+                let pages = runner.app().measured_pages(&runner.context());
+                fits(&runner.app().transcript_page(&pages, 0), metrics);
+            }
+        }
+    }
+
+    #[test]
+    fn a_long_answer_that_was_cut_short_keeps_its_continue_on_every_panel() {
+        for metrics in panels() {
+            let mut app = Chat::default();
+            app.conversation.push(Role::You, "how do I make bread");
+            app.conversation.push_reply(
+                conversation::Completion {
+                    text: "Mix the flour, water, salt and yeast, then knead it. ".repeat(30),
+                    cut_short: true,
+                },
+                Provider::OpenAi,
+            );
+            let runner = kobo_sdk::AppRunner::with_metrics(app, metrics);
+            let pages = runner.app().measured_pages(&runner.context());
+            let latest = runner.app().transcript_page(&pages, 0);
+            fits(&latest, metrics);
+            assert!(
+                latest
+                    .layout_with(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .rect_of_action(action_id(CONTINUE))
+                    .is_some(),
+                "{metrics:?}: Continue fell off the newest page"
+            );
+        }
     }
 
     #[test]

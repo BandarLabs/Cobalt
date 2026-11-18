@@ -561,6 +561,9 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
     if let Some(shapes) = game_piece_shapes(glyph) {
         return shapes;
     }
+    if let Some(shapes) = drawn_shapes(glyph) {
+        return shapes;
+    }
     let width = if matches!(
         glyph,
         Glyph::ChessBlackKing
@@ -583,6 +586,203 @@ pub fn shapes(glyph: Glyph) -> Vec<Shape> {
         .collect()
 }
 
+/// A glyph's "on" form: its outline filled as well as stroked.
+///
+/// Only for the marks whose filled form is the convention for a state, a
+/// bookmarked page and a favorite. Filling any other outline would draw a
+/// different picture rather than the same one switched on.
+#[must_use]
+pub fn held(glyph: Glyph) -> Option<Vec<Shape>> {
+    if !matches!(glyph, Glyph::Bookmark | Glyph::Heart) {
+        return None;
+    }
+    let mut filled: Vec<Shape> = tabler::outline(glyph)
+        .iter()
+        .map(|commands| Shape::Fill(Path::from_commands(commands)))
+        .collect();
+    filled.extend(shapes(glyph));
+    Some(filled)
+}
+
+/// The marks drawn here rather than imported: the four puzzles, the comic
+/// and the board games.
+///
+/// Each puzzle is played on a grid, and drawn as Tabler draws a grid they were
+/// four squares of lines a glance could not tell apart. So each is drawn as
+/// the grid only its own puzzle has, in Tabler's terms: the frame of its
+/// `square` (four to twenty on its grid of twenty-four, with a corner of two)
+/// at the stroke weight of every other icon.
+///
+/// - Noughts and crosses is the open board with a cross and a nought in two
+///   of its corners, drawn to the edge of the box so the marks can be read.
+/// - The crossword is nine cells with two black squares in opposite
+///   corners, as a printed grid sets them.
+/// - The number puzzle is nine boxes with a nine drawn in the middle one
+///   and no black squares, so it is not the crossword.
+/// - The nonogram is nine cells with four filled as a shape and its clues
+///   counted off above the columns, which no other grid has.
+/// - The comic is a page cut into panels of unequal size, one gutter slanted.
+/// - The board games are a board of four squares with a black piece and a
+///   white one.
+fn drawn_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
+    const LOW: i32 = 167;
+    const HIGH: i32 = 833;
+    const CORNER: i32 = 83;
+    let stroke = |path| Shape::Stroke {
+        path,
+        width: WEIGHT,
+    };
+    let frame = || stroke(Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, CORNER));
+    match glyph {
+        Glyph::NoughtsCrosses => {
+            // The board's lines run nearly to the edge of the box and are
+            // lighter than the marks, and the outer cells are the larger, so
+            // the cross and the nought in two corners are big enough to read
+            // as a game in play rather than as specks on a grid.
+            const SPAN: (i32, i32) = (80, 920);
+            const LINES: [i32; 2] = [360, 640];
+            let mut shapes = Vec::new();
+            for at in LINES {
+                for path in [
+                    Path::line(at, SPAN.0, at, SPAN.1),
+                    Path::line(SPAN.0, at, SPAN.1, at),
+                ] {
+                    shapes.push(Shape::Stroke { path, width: 44 });
+                }
+            }
+            let (cross, nought, arm) = (190, 810, 100);
+            shapes.push(stroke(Path::line(
+                cross - arm,
+                cross - arm,
+                cross + arm,
+                cross + arm,
+            )));
+            shapes.push(stroke(Path::line(
+                cross + arm,
+                cross - arm,
+                cross - arm,
+                cross + arm,
+            )));
+            shapes.push(stroke(Path::circle(nought, nought, 105)));
+            Some(shapes)
+        }
+        Glyph::CrosswordGrid => {
+            // Nine cells in a frame a little inside the usual one, with two
+            // black squares in opposite corners. The cell walls are lighter
+            // than the frame and the black squares stand off them, so the
+            // grid carries about as much ink as the line icons beside it
+            // instead of reading as a blot.
+            const LOW: i32 = 200;
+            const HIGH: i32 = 800;
+            const CELL: i32 = (HIGH - LOW) / 3;
+            const INSET: i32 = 40;
+            let mut shapes = Vec::new();
+            for (row, column) in [(0, 2), (2, 0)] {
+                shapes.push(Shape::Fill(Path::rounded(
+                    LOW + column * CELL + INSET,
+                    LOW + row * CELL + INSET,
+                    CELL - 2 * INSET,
+                    CELL - 2 * INSET,
+                    12,
+                )));
+            }
+            shapes.push(stroke(Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, 75)));
+            for at in [LOW + CELL, HIGH - CELL] {
+                for path in [Path::line(at, LOW, at, HIGH), Path::line(LOW, at, HIGH, at)] {
+                    shapes.push(Shape::Stroke { path, width: 40 });
+                }
+            }
+            Some(shapes)
+        }
+        Glyph::CellGrid => {
+            // Nine boxes in the crossword's frame, with no black squares and
+            // a nine drawn in the middle one as the other marks are drawn: a
+            // ring and a tail at one stroke weight, rather than a display
+            // digit. Cell walls inside the boxes made a mesh nearly twice the
+            // weight of the marks around it, so there are none.
+            const LOW: i32 = 200;
+            const HIGH: i32 = 800;
+            const BOX: i32 = (HIGH - LOW) / 3;
+            let mut shapes = vec![stroke(Path::rounded(LOW, LOW, HIGH - LOW, HIGH - LOW, 75))];
+            for at in [LOW + BOX, HIGH - BOX] {
+                for path in [Path::line(at, LOW, at, HIGH), Path::line(LOW, at, HIGH, at)] {
+                    shapes.push(Shape::Stroke { path, width: 34 });
+                }
+            }
+            // The nine, in units of its box: a ring above, and a stem down
+            // the right of it that turns under to the left.
+            let at = |x: i32, y: i32| {
+                (
+                    500 + (x - 500) * BOX * 115 / 20_000,
+                    500 + (y - 500) * BOX * 115 / 20_000,
+                )
+            };
+            let (ring, radius) = (at(500, 476), 40 * BOX * 115 / 20_000);
+            let tail = [
+                at(540, 476),
+                at(540, 520),
+                at(540, 566),
+                at(496, 566),
+                at(472, 560),
+            ];
+            for path in [
+                Path::circle(ring.0, ring.1, radius),
+                Path::new()
+                    .move_to(tail[0].0, tail[0].1)
+                    .line_to(tail[1].0, tail[1].1)
+                    .quad_to(tail[2].0, tail[2].1, tail[3].0, tail[3].1)
+                    .line_to(tail[4].0, tail[4].1),
+            ] {
+                shapes.push(Shape::Stroke { path, width: 40 });
+            }
+            Some(shapes)
+        }
+        Glyph::CluedGrid => {
+            // Nine cells in a frame, four of them filled as an L, with a clue
+            // mark above each column. Nothing else: the clues along the left
+            // and the cell walls made it noise at launcher size.
+            const X: i32 = 245;
+            const Y: i32 = 323;
+            const CELL: i32 = 170;
+            const INSET: i32 = 20;
+            let mut shapes = Vec::new();
+            for (row, column) in [(0, 0), (1, 0), (2, 0), (2, 1)] {
+                shapes.push(Shape::Fill(Path::rounded(
+                    X + column * CELL + INSET,
+                    Y + row * CELL + INSET,
+                    CELL - 2 * INSET,
+                    CELL - 2 * INSET,
+                    12,
+                )));
+            }
+            shapes.push(stroke(Path::rounded(X, Y, 3 * CELL, 3 * CELL, 50)));
+            for column in 0..3 {
+                let at = X + column * CELL + CELL / 2;
+                shapes.push(stroke(Path::line(at, LOW, at, 245)));
+            }
+            Some(shapes)
+        }
+        Glyph::ComicPanels => Some(vec![
+            frame(),
+            stroke(Path::line(LOW, 458, HIGH, 458)),
+            stroke(Path::line(542, LOW, 542, 458)),
+            stroke(Path::line(417, 458, 354, HIGH)),
+        ]),
+        Glyph::BoardPieces => Some(vec![
+            frame(),
+            stroke(Path::line(500, LOW, 500, HIGH)),
+            stroke(Path::line(LOW, 500, HIGH, 500)),
+            Shape::Fill(Path::circle(333, 333, 96)),
+            stroke(Path::circle(667, 667, 92)),
+        ]),
+        _ => None,
+    }
+}
+
+/// A game piece is drawn the way a printed diagram draws it, seen from
+/// above: a disc, solid for black and a heavy ring for white, nearly filling
+/// its square. A king is the same piece with a ring set inside it, which on a
+/// black piece is cut out of the ink by [`king_inlay`].
 fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
     let (black, king) = match glyph {
         Glyph::BlackDisc => (true, false),
@@ -591,8 +791,10 @@ fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
         Glyph::WhiteDraughtsKing => (false, true),
         Glyph::BlackDraughtsMan => (true, false),
         Glyph::WhiteDraughtsMan => (false, false),
+        // An empty point on a board of lines: a small dot where the lines
+        // meet, so it is never taken for a piece.
         Glyph::BoardPoint => {
-            return Some(vec![Shape::Fill(Path::circle(500, 500, 55))]);
+            return Some(vec![Shape::Fill(Path::circle(500, 500, 90))]);
         }
         Glyph::Mill => {
             // Three points on a rule: the line a player is trying to make.
@@ -609,31 +811,97 @@ fn game_piece_shapes(glyph: Glyph) -> Option<Vec<Shape>> {
                 Shape::Fill(Path::circle(830, 500, 105)),
             ]);
         }
+        // Where a move may go: a solid dot a third the size of a piece. A
+        // ring the size of a small piece was too easily read as a white one.
+        // The renderer sets it in grey.
         Glyph::LegalPoint => {
-            return Some(vec![Shape::Stroke {
-                path: Path::circle(500, 500, 175),
-                width: 54,
-            }]);
+            return Some(vec![Shape::Fill(Path::circle(500, 500, 150))]);
         }
         _ => return None,
     };
-    let paths = if king {
-        vec![Path::circle(500, 590, 270), Path::circle(500, 385, 215)]
+    let piece = if black {
+        Shape::Fill(Path::circle(500, 500, 400))
     } else {
-        vec![Path::circle(500, 500, 300)]
+        Shape::Stroke {
+            path: Path::circle(500, 500, 365),
+            width: 70,
+        }
     };
-    Some(
-        paths
-            .into_iter()
-            .map(|path| {
-                if black {
-                    Shape::Fill(path)
-                } else {
-                    Shape::Stroke { path, width: 64 }
-                }
-            })
-            .collect(),
+    let mut shapes = vec![piece];
+    if king && !black {
+        shapes.push(Shape::Stroke {
+            path: Path::circle(500, 500, 200),
+            width: 60,
+        });
+    }
+    Some(shapes)
+}
+
+/// The paper inside a white piece, drawn before its ink.
+///
+/// A white piece is a ring of ink, and without a ground the square under it
+/// shows through: on a grey square a white man read as an empty outline
+/// rather than a piece standing on the board. A real white piece is solid,
+/// so it covers what it stands on, and a white checker in a stack covers the
+/// one beneath it.
+#[must_use]
+pub fn piece_ground(glyph: Glyph) -> Option<Vec<Shape>> {
+    matches!(
+        glyph,
+        Glyph::WhiteDisc | Glyph::WhiteDraughtsMan | Glyph::WhiteDraughtsKing
     )
+    .then(|| vec![Shape::Fill(Path::circle(500, 500, 365))])
+}
+
+/// A flag on a mine field square: a pole on a short foot, with a pennant
+/// that fills the top half of it. Heavy enough to read on the grey of a
+/// covered square from arm's length.
+#[must_use]
+pub fn flag() -> Vec<Shape> {
+    vec![
+        Shape::Stroke {
+            path: Path::line(420, 150, 420, 840),
+            width: 90,
+        },
+        Shape::Stroke {
+            path: Path::line(270, 840, 660, 840),
+            width: 90,
+        },
+        Shape::Fill(
+            Path::new()
+                .move_to(420, 110)
+                .line_to(840, 310)
+                .line_to(420, 510)
+                .close(),
+        ),
+    ]
+}
+
+/// A mine: a round body with eight spikes, as a printed field draws one.
+#[must_use]
+pub fn mine() -> Vec<Shape> {
+    let mut shapes = vec![Shape::Fill(Path::circle(500, 500, 290))];
+    for (x0, y0, x1, y1) in [
+        (500, 110, 500, 890),
+        (110, 500, 890, 500),
+        (250, 250, 750, 750),
+        (250, 750, 750, 250),
+    ] {
+        shapes.push(Shape::Stroke {
+            path: Path::line(x0, y0, x1, y1),
+            width: 110,
+        });
+    }
+    shapes
+}
+
+/// The ring cut out of a black king, drawn over it in paper.
+#[must_use]
+pub fn king_inlay() -> Vec<Shape> {
+    vec![Shape::Stroke {
+        path: Path::circle(500, 500, 200),
+        width: 60,
+    }]
 }
 
 /// The back control, drawn rather than typed.
@@ -658,6 +926,60 @@ pub fn back_arrow() -> Vec<Shape> {
             .line_to(625, 750),
         width: WEIGHT,
     }]
+}
+
+/// What a notice is about, as the mark ahead of its words.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NoticeMark {
+    /// Something worth knowing: a lower-case i in a ring.
+    Note,
+    /// Something the reader may want to deal with: a stroke and a point in a
+    /// triangle, the sign a road or a manual uses for care.
+    Caution,
+    /// Something that went wrong: a stroke and a point in a ring.
+    Fault,
+}
+
+/// The mark a notice sets ahead of its words.
+///
+/// Not a [`Glyph`], because these belong to the runtime's notices and an
+/// application has no reason to draw one anywhere else. An error used to wear
+/// the cross that closes things, which beside a sentence read as a button
+/// that would put the notice away, and an attention notice wore nothing at
+/// all. These are drawn on the same box and at the same weight as the icons,
+/// so a notice's mark and a row's icon look like one set.
+#[must_use]
+pub fn notice(mark: NoticeMark) -> Vec<Shape> {
+    let stroke = |path| Shape::Stroke {
+        path,
+        width: WEIGHT,
+    };
+    // A point is a stroke with no length: its round cap is a dot exactly as
+    // heavy as the lines beside it.
+    let point = |x, y| stroke(Path::line(x, y, x + 1, y));
+    match mark {
+        NoticeMark::Note => vec![
+            stroke(Path::circle(500, 500, 375)),
+            point(500, 333),
+            stroke(Path::line(500, 458, 500, 667)),
+        ],
+        NoticeMark::Caution => vec![
+            stroke(
+                Path::new()
+                    .move_to(500, 145)
+                    .line_to(85, 840)
+                    .line_to(915, 840)
+                    .close(),
+            ),
+            stroke(Path::line(500, 400, 500, 580)),
+            point(500, 715),
+        ],
+        NoticeMark::Fault => vec![
+            stroke(Path::circle(500, 500, 375)),
+            stroke(Path::line(500, 312, 500, 520)),
+            point(500, 678),
+        ],
+    }
 }
 
 /// A battery showing how much is left, rather than a battery.

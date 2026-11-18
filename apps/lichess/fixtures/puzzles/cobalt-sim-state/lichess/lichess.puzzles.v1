@@ -1,0 +1,1 @@
+{"version":2,"current":0,"wrong":0,"puzzles":[{"id":"backRank","fen":"2r3k1/5ppp/8/8/8/8/4RPPP/4R1K1 w - - 0 1","solution":["e2e8","c8e8","e1e8"],"cursor":0},{"id":"oneMove","fen":"6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1","solution":["a1a8"],"cursor":0},{"id":"blackMove","fen":"1r4k1/5ppp/8/8/8/8/5PPP/6K1 b - - 0 1","solution":["b8b1"],"cursor":0}]}

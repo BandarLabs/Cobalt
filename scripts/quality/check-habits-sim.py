@@ -38,11 +38,17 @@ def main():
         env = dict(os.environ, TMPDIR=str(private), RUSTUP_TOOLCHAIN="1.85.1",
                    CARGO_TARGET_DIR=str(target), CARGO_PROFILE_DEV_DEBUG="0",
                    CARGO_INCREMENTAL="0", CARGO_BUILD_JOBS="1",
-                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE="clara-bw-391")
+                   KOBO_TEXT_SCALE=args.scale, KOBO_SIM_PROFILE="clara-bw-391",
+                   KOBO_UTC_OFFSET_MINUTES="600")
         env.pop("KOBO_SIM_OFFLINE", None)
 
         store = private / "cobalt-sim-state" / "habits"
-        today = int(time.time() // 86400)
+        # The simulator hands apps the reader's offset from UTC, and Habits
+        # counts days on that calendar. Sydney's offset puts the reader's day
+        # ahead of Greenwich for ten hours of every day, so the seeded history
+        # below has to be counted on the same calendar to line up.
+        offset_minutes = 600
+        today = int((time.time() + offset_minutes * 60) // 86400)
         process = None
         address = None
         result = dict(provenance=provenance, scale=args.scale, checks=[])
@@ -106,6 +112,20 @@ def main():
                     name="skip, unskip, complete",
                     detail="Skip marked the row Skipped; tapping a skipped row undid the "
                            "skip (plain schedule label again) and the next tap completed it",
+                    status="passed"))
+
+                # A habit forgotten yesterday is marked for yesterday and the
+                # streak counts it; a second tap takes it back.
+                drive("tap Yesterday", "wait-for Tap a habit you did yesterday.",
+                      "tap read", "wait-for Done")
+                capture("habits-yesterday")
+                drive("tap Streaks", "wait-for 2 current, 2 best")
+                drive("tap Today", "tap Yesterday", "tap read", "wait-for daily",
+                      "tap-id show-today", "wait-for Tap a habit when it is done.")
+                result["checks"].append(dict(
+                    name="mark yesterday",
+                    detail="at a +10 hour offset, Yesterday marked the habit done for the "
+                           "day before, Streaks counted 2, and a second tap took it back",
                     status="passed"))
 
                 # Edit: rename, schedule, archive and put back.

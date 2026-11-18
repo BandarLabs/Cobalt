@@ -35,13 +35,15 @@ marked as stale.
 | A computer with a microphone | macOS on Apple Silicon, or Linux on x86-64 or arm64 |
 | [BirdNET-Go](https://github.com/tphakala/birdnet-go/releases) | Listens and identifies birds |
 | [Fugleramme](https://github.com/arnegiacomo/fugleramme) | Draws the collage |
-| A Kobo running Cobalt | With SSH enabled: `kobo setup --enable-ssh` |
+| A Kobo running Cobalt | Set up once over USB with `kobo setup` |
 
 BirdNET-Go has no Intel Mac build. Windows is not supported.
 
 ## Setup
 
-Install in this order. Each step depends on the one before.
+BirdNET-Go and Fugleramme must be installed and running on your computer
+before Birds can show anything. Install in this order. Each step depends on
+the one before.
 
 ### 1. BirdNET-Go
 
@@ -82,27 +84,38 @@ When `curl http://127.0.0.1:8080/state` returns a token, that address is your
 
 ### 3. Birds
 
+Set up the reader once over USB, if you have not already: `kobo setup`.
 Install Birds from the Store on the reader, then start the companion:
 
 ```sh
-kobo birds listen --source http://garden-computer.local:8080 --device 192.168.1.42
+kobo birds listen --source http://localhost:8080
 kobo birds status
 kobo birds stop
 ```
+
+`listen` uses the reader `kobo setup` saved; add `--device IP` for another
+reader. It sends the first collage before it starts, so if Fugleramme or the
+reader does not answer, it says which one and does not start. `status` says
+when the last collage reached the reader, or, when the station or the reader
+stopped answering, since when and why.
 
 This works before any bird has been heard, so you can test the whole chain
 indoors.
 
 ## Limits
 
-Fugleramme does not publish recent detections in a machine-readable form, so
-the automatic companion leaves the detection list empty. A snapshot sent by
-hand with `kobo birds push SNAPSHOT.json IMAGE.png --device IP` can include one.
+- Fugleramme does not publish recent detections in a machine-readable form,
+  so the automatic companion leaves the detection list empty. A snapshot sent
+  by hand with `kobo birds push SNAPSHOT.json IMAGE.png` can include one.
+- Birds asks the reader to stay awake while it is open. Cobalt cannot hold a
+  reader awake yet, so after an hour without a touch a reader on battery goes
+  back to the Kobo home screen. Birds says so in its menu. Keep the reader on
+  its charger to leave the birds on screen.
 
 ## Permissions
 
-None. Birds reads the collages sent to the reader and does not use the
-network.
+- `keep-awake`: keeps the screen on while Birds is open. Birds reads the
+  collages sent to the reader and does not use the network.
 
 ## Development
 

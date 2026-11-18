@@ -1,11 +1,100 @@
 expect Lichess
+# The first screen leads with the one thing that needs no account, and lists
+# the rest under it. The times are a tap further, on Play online.
+expect Play the computer
+expect Play online
+expect Your games
 expect Puzzles
+expect How to play
+expect-missing 10+0
+expect-missing Rated
+expect-missing home-next
+clean
+shot home
 tap How to play
 expect Chess on Lichess
+expect Outlined squares show the last move.
+# How to play turns a page at the larger text sizes; at the default size it
+# is one page and draws no pager.
+maybe-tap-id help-next
+expect Play online lists the times
 wait 250
 clean
 shot lichess-help
 tap Play
-expect Computer
+expect Play the computer
+tap Puzzles
+wait-for Download 32 puzzles
+expect-missing Resume puzzle
+tap Back
+expect Play the computer
+tap-id play-online
+wait-for Not connected
+expect 10 minutes each
+expect Plus 5 seconds a move
+expect No time added
+expect Rated
+expect Casual
 clean
-shot home
+shot play-online
+tap-id seek-10-0
+wait-for Connect Lichess
+expect Connect a Lichess account to play people. Playing the computer and Puzzles work without one.
+expect-missing Challenge player
+clean
+shot time-tile-without-account
+tap Connect Lichess
+wait-for Account key
+expect lichess.org/account/oauth/token
+expect Use phone
+clean
+shot connect-prompt
+tap Use phone
+wait-for Opens the Lichess token page
+clean
+shot connect-phone
+tap Back
+wait-for Account key
+tap Back
+wait-for Connect Lichess
+tap Back
+wait-for Play the computer
+tap-id play-online
+wait-for 10 minutes each
+tap-id seek-casual
+tap Back
+wait-for Play the computer
+tap-id play-online
+wait-for 10 minutes each
+clean
+shot online-casual
+tap Back
+wait-for Play the computer
+tap-id play-computer
+wait-for Start game
+expect No clock
+expect Random
+tap-id computer-side-black
+tap-id start-computer
+wait-for Kobo
+expect Black · Your move · Casual · Nc3
+expect-missing 10:00
+clean
+shot computer-black-untimed
+tap-id square-e7
+expect e7 →
+tap-id square-e5
+wait-for Black · Your move · Casual · Nf3
+expect-missing e7 →
+expect-missing Move sent
+clean
+shot computer-reply-outlined
+tap-id game-menu
+tap-id confirm-resign
+tap-id resign
+wait-for New game
+expect See the board
+clean
+shot computer-result
+tap-id computer-again
+wait-for Start game

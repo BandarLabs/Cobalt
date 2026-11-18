@@ -4,7 +4,7 @@ Browse your Zotero collections and read papers on your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading a paper with its Zotero details"><br>Reading a paper with its Zotero details</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading the indexed text of a book from a Zotero library"><br>Reading the indexed text of a book from a Zotero library</td>
 </tr>
 </table>
 
@@ -13,22 +13,29 @@ Browse your Zotero collections and read papers on your Kobo.
 - Browse several collections. **Collections** in the header switches between
   them.
 - Read each paper's details, abstract and Zotero's indexed full text.
-- Search locally, keep papers available offline, and keep your reading
-  position and annotations.
+- **Search** looks through the papers already on the reader. **Keep offline**
+  saves a paper for reading without Wi-Fi. Your reading position and
+  annotations are kept.
 - Read-only. Stacks never changes your Zotero library.
 
 ## Setup
 
-1. Open [Zotero's API key settings](https://www.zotero.org/settings/keys).
-2. Create a key with read-only access to your personal library, and note your
-   numeric user ID on the same page.
-3. Install the key on the reader:
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. Open [Zotero's API key settings](https://www.zotero.org/settings/keys) and
+   create a key with read-only access to your personal library.
+3. Connect from your computer:
 
    ```sh
-   kobo secret set zotero --device <address>
+   kobo connect zotero-reader
    ```
 
-4. Open Stacks, enter your user ID and choose a collection.
+   It checks the key with Zotero and fills in your numeric user ID, so
+   nothing is typed on the reader. Open Stacks, or tap **Check again**.
+4. Choose a collection.
+
+To set it up on the reader instead, enter the numeric user ID (the keyboard
+opens on the digits) and add the key from the account screen, which counts
+the characters typed and has **Show**.
 
 The runtime keeps the key and sends it only to Zotero's read-only API routes.
 The app never sees it.
@@ -37,14 +44,6 @@ The app never sees it.
 
 Zotero's indexed full text is plain text, so the original PDF layout, tables,
 figures and formulas are lost.
-
-For structured papers with headings, tables, figures and formulas, a
-self-hosted conversion service is available at
-[andreclerigo/cobalt-zotero-reader](https://github.com/andreclerigo/cobalt-zotero-reader).
-It needs a custom build of Cobalt, because the Store build only sends
-credentials to Zotero. See its
-[setup guide](https://andreclerigo.github.io/cobalt-zotero-reader/setup.html)
-and [self-hosting guide](https://andreclerigo.github.io/cobalt-zotero-reader/self-hosting.html).
 
 ## Permissions
 
@@ -55,10 +54,13 @@ and [self-hosting guide](https://andreclerigo.github.io/cobalt-zotero-reader/sel
 
 ```sh
 cargo test -p kobo-zotero-reader
-cargo run -p kobo-cli -- run --sim --app zotero-reader
+python3 scripts/check-apps-sim.py zotero-reader
 ```
 
-The test fixtures are synthetic and contain no account data.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. To try it by hand in the browser simulator, run `kobo dev` in
+`apps/zotero-reader`. The test fixtures are synthetic and contain no account
+data.
 
 ## Credits
 

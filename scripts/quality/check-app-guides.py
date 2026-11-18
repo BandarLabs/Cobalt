@@ -33,7 +33,23 @@ for app_id in ids:
         (args.output / (app_id + '.txt')).write_text(result.stdout)
 search = run('apps', 'search', 'CHESS')
 assert search.returncode == 0 and 'lichess' in search.stdout
-assert run('apps', 'setup', 'missing-app-fixture').returncode != 0
+missing = run('apps', 'setup', 'missing-app-fixture')
+assert missing.returncode == 2 and 'kobo apps search WORD' in missing.stderr, missing
+# The names an owner reads in the Store, and the commands that serve them,
+# find the same guide the id does.
+found_by_name = {}
+for typed, app_id, title in (('feeds', 'rss', 'Feeds'), ('sync', 'syncthing', 'Sync'),
+                             ('library', 'calibre-web', 'Library'),
+                             ('Music Stand', 'musicstand', 'Music Stand'),
+                             ('stream', 'paperterm', 'Paperterm')):
+    result = run('apps', 'setup', *typed.split())
+    assert result.returncode == 0 and result.stdout.startswith(title + '\n'), (typed, result)
+    assert result.stdout == run('apps', 'setup', app_id).stdout, typed
+    found_by_name[typed] = app_id
+near = run('apps', 'setup', 'lichss')
+assert near.returncode == 2 and 'Did you mean Lichess (kobo apps setup lichess)?' in near.stderr, near
+help_after_verb = run('apps', 'setup', '--help')
+assert help_after_verb.returncode == 0 and 'kobo apps setup APP' in help_after_verb.stdout
 master, slave = pty.openpty()
 child = subprocess.Popen([cli], stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
 transcript = bytearray()
@@ -52,7 +68,7 @@ try:
     match = re.search(rb'(\d+)\. Lichess\r?\n', transcript)
     assert match
     os.write(master, b'0\n')
-    until(b'Choose an app number from the list.')
+    until(b'Enter a number from 1 to')
     os.write(master, match.group(1) + b'\n')
     until(b'This guide does not check installation or account access.')
     assert child.wait(timeout=5) == 0
@@ -69,6 +85,10 @@ finally:
     'status': 'passed', 'guides_checked': len(ids),
     'cli_sha256': hashlib.sha256(Path(cli).read_bytes()).hexdigest(),
     'checks': ['every bundled app renders a setup guide', 'case-insensitive purpose search',
-               'unknown app fails', 'real terminal menu retries invalid app number',
+               'unknown app fails as a usage mistake with a search hint',
+               'Store names, labels and companion commands find the guide: ' +
+               ', '.join(f'{typed} -> {app}' for typed, app in found_by_name.items()),
+               'a near miss suggests the app', 'help after a verb exits 0',
+               'real terminal menu retries invalid app number',
                'terminal selection opens Lichess guide with account scope and command'],
 }, indent=2)+'\n')

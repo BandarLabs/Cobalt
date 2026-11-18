@@ -16,10 +16,12 @@
 //! exactly where the reliability is wanted.
 
 use kobo_sdk::{
-    action_id, ActionId, AppInfo, Context, DeviceIdentity, DeviceRequest, DeviceResult, Glyph,
-    KoboApp, ScreenBuilder, Tile, TileShape,
+    action_id, ActionId, AppInfo, Capability, Context, DeviceIdentity, DeviceRequest, DeviceResult,
+    Glyph, KoboApp, ScreenBuilder, Tile, TileShape,
 };
 use std::process::ExitCode;
+
+mod notices;
 
 /// One entry in the launcher.
 ///
@@ -41,6 +43,12 @@ struct Entry {
     /// while it starts -- which is the last moment it is still useful.
     needs: &'static str,
     glyph: Glyph,
+    /// Reached from the bar at the foot of every page rather than from a tile.
+    ///
+    /// Settings and Books each have a tab there. A tile as well was a second
+    /// door to the same room, and it spent two of the first page's places on
+    /// things the owner could already reach without turning a page.
+    on_tab_bar: bool,
 }
 
 /// Where Settings sits in [`ENTRIES`].
@@ -62,6 +70,7 @@ const ENTRIES: &[Entry] = &[
         summary: "Connect Wi-Fi, headphones, speakers and keyboards.",
         needs: "Changes the device's Wi-Fi and Bluetooth radios.",
         glyph: Glyph::Settings,
+        on_tab_bar: true,
     },
     Entry {
         name: "books",
@@ -70,6 +79,7 @@ const ENTRIES: &[Entry] = &[
         summary: "The documents already on this device.",
         needs: "Reads the books already on the card. It does not write.",
         glyph: Glyph::Book,
+        on_tab_bar: true,
     },
     Entry {
         name: "store",
@@ -78,6 +88,7 @@ const ENTRIES: &[Entry] = &[
         summary: "Install, update and remove public Cobalt apps over Wi-Fi.",
         needs: "Uses Wi-Fi to refresh Cobalt's signed GitHub app catalog.",
         glyph: Glyph::Download,
+        on_tab_bar: false,
     },
     Entry {
         name: "terminal",
@@ -86,6 +97,7 @@ const ENTRIES: &[Entry] = &[
         summary: "A shell on the panel, with keys that send rather than collect.",
         needs: "Runs commands on this device. File changes can survive a reboot.",
         glyph: Glyph::Terminal,
+        on_tab_bar: false,
     },
 ];
 
@@ -98,6 +110,12 @@ enum View {
     /// visible answer reads as a tap that was missed.
     Starting(usize),
     Leaving,
+    /// The Notifications list, on this page, perhaps asking whether to clear
+    /// it.
+    Notices {
+        page: usize,
+        asking: bool,
+    },
 }
 
 /// The action a tile carries.
@@ -129,6 +147,15 @@ struct Launcher {
     installed: Vec<AppInfo>,
     /// Runtime-owned model and version facts, absent until the daemon replies.
     identity: Option<DeviceIdentity>,
+    /// The runtime's notices, absent until it sends them. Absent also means
+    /// a runtime that keeps none, so no bell is drawn and nothing about
+    /// notices is ever asked of it.
+    notices: Option<kobo_sdk::NoticeList>,
+    /// What was new when the owner opened the list, marked as new for the
+    /// rest of that visit though the runtime has been told it was seen.
+    fresh: Vec<u64>,
+    /// Why the last row tapped could not be opened, said over the list.
+    notice_trouble: Option<&'static str>,
 }
 
 impl Launcher {
@@ -137,6 +164,16 @@ impl Launcher {
             View::Home => self.home(context),
             View::Starting(index) => self.starting(index),
             View::Leaving => Self::leaving(),
+            View::Notices { page, asking } => notices::screen(
+                context,
+                self.notices
+                    .as_ref()
+                    .unwrap_or(&kobo_sdk::NoticeList::default()),
+                &self.fresh,
+                page,
+                asking,
+                self.notice_trouble,
+            ),
         };
         context.set_screen(screen);
     }
@@ -147,12 +184,22 @@ impl Launcher {
     /// a Sage, and an application that picked a number would be wrong on every
     /// panel but one.
     fn pages(&self, context: &Context) -> Vec<Vec<usize>> {
-        let pages = context.paginate_tiles(self.entry_count(), TileShape::Square, true);
+        let tiles = self.tiles();
+        let pages = context.paginate_tiles(tiles.len(), TileShape::Square, true);
         if pages.is_empty() {
-            vec![Vec::new()]
-        } else {
-            pages
+            return vec![Vec::new()];
         }
+        pages
+            .into_iter()
+            .map(|page| page.into_iter().map(|place| tiles[place]).collect())
+            .collect()
+    }
+
+    /// The entries that get a tile, in the order they are drawn.
+    fn tiles(&self) -> Vec<usize> {
+        (0..self.entry_count())
+            .filter(|&index| ENTRIES.get(index).is_none_or(|entry| !entry.on_tab_bar))
+            .collect()
     }
 
     fn app_grid(screen: ScreenBuilder, entries: Vec<(DisplayEntry, bool)>) -> ScreenBuilder {
@@ -163,13 +210,11 @@ impl Launcher {
                     opening(&entry.name),
                     entry.label,
                     entry.glyph,
-                    move |tile: Tile| {
-                        if busy {
-                            tile.with_caption("Resume")
-                        } else {
-                            tile
-                        }
-                    },
+                    // Every tile carries a caption line, blank but for the
+                    // one left running. A grid reserves the line for all its
+                    // tiles once any has one, so a caption that came and went
+                    // moved the whole grid each time an app was left open.
+                    move |tile: Tile| tile.with_caption(if busy { "Resume" } else { " " }),
                 )
             }),
         )
@@ -204,15 +249,22 @@ impl Launcher {
         self.page = self.page.min(pages.len() - 1);
         let page = self.page;
         let page_count = u16::try_from(pages.len()).unwrap_or(u16::MAX);
-        let page_index = u16::try_from(page).unwrap_or(u16::MAX);
         let page_number = u16::try_from(page.saturating_add(1)).unwrap_or(u16::MAX);
         let entries = pages[page]
             .iter()
             .map(|&index| (self.entry(index), self.working == Some(index)))
             .collect();
-        let screen = ScreenBuilder::new("launcher")
-            .top_bar("Cobalt")
-            .page_rail(page_index, page_count);
+        // "1 of 5" and its arrows say where the reader is and how to turn.
+        // A rail down the side said the first again and narrowed the grid.
+        let mut screen = ScreenBuilder::new("launcher").top_bar("Cobalt");
+        // The bell first, so it holds the trailing edge, and the count of new
+        // ones beside it, so the place the owner looks never moves.
+        if let Some(list) = &self.notices {
+            screen = screen.top_bar_glyph(notices::OPEN_LIST, "Notifications", Glyph::Bell);
+            if let Some(label) = notices::unread_label(list) {
+                screen = screen.top_bar_action(notices::OPEN_LIST, label);
+            }
+        }
         Self::app_grid(screen, entries)
             .page_turns("previous", "next")
             .page_position(page_number, page_count)
@@ -289,14 +341,32 @@ impl Launcher {
             title: entry.title.clone(),
             label: entry.label.clone(),
             summary: entry.summary.clone(),
-            needs: if entry.capabilities.is_empty() {
-                "Needs no additional capabilities.".to_owned()
-            } else {
-                format!("Uses {}.", entry.capabilities.join(", "))
-            },
+            needs: needs(&entry.capabilities),
             glyph: entry.glyph,
         }
     }
+}
+
+/// What a Store app will reach for, in the words the Store used for it.
+///
+/// This used to print the manifest's own identifiers, so the splash under a
+/// newly installed app read "Uses keep-awake, scheduled-wake." The wording
+/// now comes from the runtime's policy crate, the same sentences the Store
+/// and `kobo apps` show.
+fn needs(capabilities: &[String]) -> String {
+    if capabilities.is_empty() {
+        return "It needs no special permissions.".to_owned();
+    }
+    capabilities
+        .iter()
+        .map(|name| {
+            Capability::parse(name).map_or_else(
+                || format!("Another permission ({name})."),
+                |capability| format!("{}.", capability.plain_wording()),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[derive(Clone)]
@@ -310,6 +380,12 @@ struct DisplayEntry {
 }
 
 impl KoboApp for Launcher {
+    /// The platform's own blue: this screen is Cobalt itself rather than an
+    /// application running on it, and it wears the colour of the logo.
+    fn accent(&self) -> Option<kobo_sdk::Accent> {
+        Some(kobo_sdk::Accent::Cobalt)
+    }
+
     fn on_start(&mut self, context: &mut Context) {
         context.applications().installed();
         context.device().read_identity();
@@ -352,7 +428,7 @@ impl KoboApp for Launcher {
     /// The catalogue can have changed while the panel was elsewhere: the Store
     /// is one of the applications the owner can leave for, and it installs.
     fn on_foreground(&mut self, context: &mut Context) {
-        if !matches!(self.view, View::Home) {
+        if !matches!(self.view, View::Home | View::Notices { .. }) {
             self.view = View::Home;
         }
         context.applications().installed();
@@ -361,7 +437,15 @@ impl KoboApp for Launcher {
     }
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
+        if self.notice_action(context, action) {
+            return;
+        }
         if action == action_id("home") {
+            // Apps tapped while already on Apps goes to its first page, as
+            // the tab a reader is on does everywhere else.
+            if matches!(self.view, View::Home) {
+                self.page = 0;
+            }
             self.view = View::Home;
             self.show(context);
             return;
@@ -419,12 +503,31 @@ impl KoboApp for Launcher {
         }
     }
 
+    fn on_notices(&mut self, context: &mut Context, list: kobo_sdk::NoticeList) {
+        let open = list.open;
+        self.notices = Some(list);
+        if open {
+            self.open_notices(context);
+            return;
+        }
+        if let View::Notices { .. } = self.view {
+            // Something arrived while the list was open: it has been seen.
+            self.note_fresh(context);
+        }
+        self.show(context);
+    }
+
     fn on_device_result(
         &mut self,
         context: &mut Context,
         request: DeviceRequest,
         result: DeviceResult,
     ) {
+        if let (DeviceRequest::OpenNotice { .. }, DeviceResult::Failed(_)) = (&request, &result) {
+            self.notice_trouble = Some("That article is no longer on this reader.");
+            self.show(context);
+            return;
+        }
         match (request, result) {
             (DeviceRequest::ListInstalledApps, DeviceResult::Apps { mut entries }) => {
                 entries.sort_by(|left, right| {
@@ -446,6 +549,112 @@ impl KoboApp for Launcher {
     }
 }
 
+impl Launcher {
+    /// Opens the list and tells the runtime it has been seen.
+    fn open_notices(&mut self, context: &mut Context) {
+        self.fresh.clear();
+        self.notice_trouble = None;
+        self.note_fresh(context);
+        self.view = View::Notices {
+            page: 0,
+            asking: false,
+        };
+        self.show(context);
+    }
+
+    /// Keeps the mark on whatever is new for this visit and tells the
+    /// runtime it has been seen.
+    fn note_fresh(&mut self, context: &mut Context) {
+        let Some(list) = &self.notices else {
+            return;
+        };
+        let unread: Vec<u64> = list
+            .entries
+            .iter()
+            .filter(|notice| notice.unread)
+            .map(|notice| notice.id)
+            .collect();
+        if !unread.is_empty() {
+            self.fresh.extend(unread);
+            context.notices().mark_read();
+        }
+    }
+
+    /// Everything the list does. Returns whether `action` was one of its own.
+    fn notice_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if self.notices.is_none() {
+            return false;
+        }
+        if action == action_id(notices::OPEN_LIST) {
+            self.open_notices(context);
+            return true;
+        }
+        let View::Notices { page, asking } = self.view else {
+            return false;
+        };
+        let list = self.notices.clone().unwrap_or_default();
+        if action == ActionId::BACK || (action == action_id(notices::KEEP) && !asking) {
+            self.view = View::Home;
+        } else if action == action_id(notices::KEEP) {
+            self.view = View::Notices {
+                page,
+                asking: false,
+            };
+        } else if action == action_id(notices::CLEAR) {
+            self.view = View::Notices { page, asking: true };
+        } else if action == action_id(notices::CLEAR_CONFIRMED) {
+            context.notices().clear();
+            self.fresh.clear();
+            if let Some(list) = &mut self.notices {
+                list.entries.clear();
+            }
+            self.view = View::Notices {
+                page: 0,
+                asking: false,
+            };
+        } else if action == action_id(notices::NEXT) || action == action_id(notices::PREVIOUS) {
+            let pages = notices::pages(context, &list, &self.fresh).len();
+            let page = if action == action_id(notices::NEXT) {
+                (page + 1).min(pages.saturating_sub(1))
+            } else {
+                page.saturating_sub(1)
+            };
+            self.view = View::Notices {
+                page,
+                asking: false,
+            };
+        } else if let Some(notice) = list
+            .entries
+            .iter()
+            .find(|notice| action == action_id(&notices::opening(notice.id)))
+        {
+            // A row whose article is gone already says so, and one with
+            // nothing to open is news and nothing more; neither goes anywhere.
+            if notice.target != kobo_sdk::NoticeTarget::Ready {
+                return true;
+            }
+            // Read now, so the row no longer says New when Back from the
+            // article comes to this list again.
+            let id = notice.id;
+            self.fresh.retain(|fresh| *fresh != id);
+            if let Some(held) = self
+                .notices
+                .as_mut()
+                .and_then(|held| held.entries.iter_mut().find(|held| held.id == id))
+            {
+                held.unread = false;
+            }
+            self.notice_trouble = None;
+            context.notices().open(id);
+            return true;
+        } else {
+            return false;
+        }
+        self.show(context);
+        true
+    }
+}
+
 fn main() -> ExitCode {
     match kobo_sdk::run("launcher", Launcher::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -458,7 +667,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{opening, Launcher, View, BOOKS, ENTRIES};
+    use super::{opening, Entry, Launcher, View, BOOKS, ENTRIES, SETTINGS};
     use kobo_sdk::{
         action_id, AppInfo, AppRunner, Command, DeviceRequest, DeviceResult, Glyph, Lifecycle,
     };
@@ -466,6 +675,14 @@ mod tests {
         render_with, tone, Chrome, DisplayMetrics, LayoutKind, Node, Surface, TextScale, TileShape,
         CLARA_BW_METRICS,
     };
+
+    /// Where the App Store sits in [`ENTRIES`]: the first entry with a tile.
+    const STORE: usize = 2;
+
+    /// The entries the grid draws, which is every one without a tab.
+    fn tiled() -> Vec<&'static Entry> {
+        ENTRIES.iter().filter(|entry| !entry.on_tab_bar).collect()
+    }
 
     fn panels() -> Vec<(String, DisplayMetrics)> {
         kobo_profile::SUPPORTED_PROFILES
@@ -649,11 +866,11 @@ mod tests {
                 if let Some(next) = repainted(runner.action(action_id("next"))) {
                     screen = next;
                 }
-                let first = ENTRIES
+                let first = tiled()
                     .first()
                     .map(|entry| action_id(&opening(entry.name)))
                     .expect("the catalogue is not empty");
-                if found.contains(&first) && found.len() >= ENTRIES.len() {
+                if found.contains(&first) && found.len() >= tiled().len() {
                     break;
                 }
             }
@@ -661,10 +878,10 @@ mod tests {
             found.dedup();
             assert_eq!(
                 found.len(),
-                ENTRIES.len(),
+                tiled().len(),
                 "{name}: {} of {} entries were reachable",
                 found.len(),
-                ENTRIES.len()
+                tiled().len()
             );
         }
     }
@@ -727,7 +944,7 @@ mod tests {
                 })
                 .count();
             assert_eq!(sections, 0, "{name}: the compact home grid grew a section");
-            assert_eq!(tiles, ENTRIES.len(), "{name}: a home tile was dropped");
+            assert_eq!(tiles, tiled().len(), "{name}: a home tile was dropped");
             assert_eq!(destinations, 4, "{name}: launcher navigation changed");
         }
     }
@@ -736,7 +953,7 @@ mod tests {
     fn launcher_home_uses_a_compact_resume_mark() {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
-        runner.action(action_id(&opening(ENTRIES[0].name)));
+        runner.action(action_id(&opening(ENTRIES[STORE].name)));
         // The list the runtime holds while the panel is elsewhere, which is
         // the one it repaints when the owner comes back.
         let screen = painted(runner.lifecycle(Lifecycle::Background));
@@ -766,9 +983,11 @@ mod tests {
             );
         }
         assert!(runner
-            .action(action_id(&opening(ENTRIES[0].name)))
+            .action(action_id(&opening(ENTRIES[STORE].name)))
             .iter()
-            .any(|command| matches!(command, Command::Launch(name) if name == ENTRIES[0].name)));
+            .any(
+                |command| matches!(command, Command::Launch(name) if name == ENTRIES[STORE].name)
+            ));
     }
 
     #[test]
@@ -827,14 +1046,14 @@ mod tests {
     fn tapping_a_tile_starts_the_entry_and_says_what_is_starting() {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
-        let commands = runner.action(action_id(&opening(ENTRIES[0].name)));
+        let commands = runner.action(action_id(&opening(ENTRIES[STORE].name)));
         assert!(
-            commands
-                .iter()
-                .any(|command| matches!(command, Command::Launch(name) if name == ENTRIES[0].name)),
+            commands.iter().any(
+                |command| matches!(command, Command::Launch(name) if name == ENTRIES[STORE].name)
+            ),
             "a tile tap did not start the application"
         );
-        assert!(matches!(runner.app().view, View::Starting(0)));
+        assert!(matches!(runner.app().view, View::Starting(STORE)));
         let shown = painted(commands);
         let layout = shown.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         let words = layout
@@ -850,17 +1069,17 @@ mod tests {
                 .join(" ")
         };
         assert!(
-            words.contains(ENTRIES[0].title),
+            words.contains(ENTRIES[STORE].title),
             "the splash did not name what is starting: {words}"
         );
         assert!(
-            words.contains(&head(ENTRIES[0].summary)),
+            words.contains(&head(ENTRIES[STORE].summary)),
             "the description was not shown: {words}"
         );
         // What it will reach for is the one thing worth knowing before it is
         // running, so it does not get dropped along with the intermediate screen.
         assert!(
-            words.contains(&head(ENTRIES[0].needs)),
+            words.contains(&head(ENTRIES[STORE].needs)),
             "what it needs was not shown: {words}"
         );
     }
@@ -1004,7 +1223,7 @@ mod tests {
     fn the_active_app_is_marked_for_resume_on_home() {
         let mut runner = AppRunner::new(Launcher::default());
         runner.start();
-        runner.action(action_id(&opening(ENTRIES[0].name)));
+        runner.action(action_id(&opening(ENTRIES[STORE].name)));
         let home = painted(runner.lifecycle(Lifecycle::Background));
         let home_layout = home.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false));
         let home_text = home_layout
@@ -1103,5 +1322,382 @@ mod tests {
         assert_eq!(terminal.name, "terminal");
         assert!(terminal.needs.contains("File changes can survive a reboot"));
         assert!(!terminal.needs.contains("Nothing it does survives"));
+    }
+
+    #[test]
+    fn settings_and_books_are_reached_from_their_tabs_and_not_also_from_tiles() {
+        for (name, metrics) in panels() {
+            let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+            let mut screen = painted(runner.start());
+            for _ in 0..=ENTRIES.len() {
+                let layout = screen.layout_with(&metrics, &Chrome::with_back(false));
+                for duplicate in [SETTINGS, BOOKS] {
+                    let tile = action_id(&opening(ENTRIES[duplicate].name));
+                    assert!(
+                        !layout
+                            .nodes
+                            .iter()
+                            .any(|node| matches!(node.kind, LayoutKind::Tile(action, _) if action == tile)),
+                        "{name}: {} has a tile as well as a tab",
+                        ENTRIES[duplicate].title
+                    );
+                }
+                match repainted(runner.action(action_id("next"))) {
+                    Some(next) => screen = next,
+                    None => break,
+                }
+            }
+        }
+    }
+
+    /// Names of catalog apps long enough to test a tile at large sizes.
+    const LONG_NAMES: [&str; 4] = ["Backgammon", "Flashcards", "Kitchen card", "Nonograms"];
+
+    /// The runtime's answer listing `names` as installed apps.
+    fn installed(names: &[&str]) -> DeviceResult {
+        DeviceResult::Apps {
+            entries: names
+                .iter()
+                .map(|name| AppInfo {
+                    id: name.to_lowercase().replace(' ', "-"),
+                    title: (*name).to_owned(),
+                    label: (*name).to_owned(),
+                    summary: "An app.".to_owned(),
+                    version: "1.0.0".to_owned(),
+                    minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    glyph: Glyph::App,
+                    capabilities: Vec::new(),
+                    installed_version: Some("1.0.0".to_owned()),
+                })
+                .collect(),
+        }
+    }
+
+    /// Each tile name on every page, as the panel draws it at `metrics`,
+    /// with [`LONG_NAMES`] installed.
+    fn drawn_names(metrics: DisplayMetrics) -> Vec<Vec<String>> {
+        let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+        runner.start();
+        let mut screen = painted(runner.device_result(installed(&LONG_NAMES)));
+        let mut names = Vec::new();
+        loop {
+            let layout = kobo_ui::with_text_scale(metrics.text_scale, || {
+                screen.layout_with(&metrics, &Chrome::with_back(false))
+            });
+            names.extend(
+                layout
+                    .nodes
+                    .iter()
+                    .filter(|node| matches!(node.kind, LayoutKind::TileLabel))
+                    .map(|node| node.text_lines.clone()),
+            );
+            match repainted(runner.action(action_id("next"))) {
+                Some(next) if next != screen => screen = next,
+                _ => break,
+            }
+        }
+        names
+    }
+
+    #[test]
+    fn no_tile_name_is_broken_part_way_through_a_word_at_any_text_size() {
+        let labels: Vec<&str> = tiled()
+            .iter()
+            .map(|entry| entry.label)
+            .chain(LONG_NAMES)
+            .collect();
+        for scale in TextScale::STEPS {
+            let metrics = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            for lines in drawn_names(metrics) {
+                let joined = lines.join(" ");
+                assert!(
+                    labels.contains(&joined.as_str()) || joined.ends_with('\u{2026}'),
+                    "{scale:?}: {lines:?} splits a word"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_page_of_the_grid_raises_a_layout_warning() {
+        // Every page past the first used to be warned of a fifth ink, counted
+        // from tile cells that draw nothing of their own.
+        let mut runner = AppRunner::with_metrics(Launcher::default(), CLARA_BW_METRICS);
+        runner.start();
+        let mut screen = painted(runner.device_result(installed(&LONG_NAMES)));
+        loop {
+            let issues = screen
+                .diagnostics(&CLARA_BW_METRICS, &Chrome::with_back(false))
+                .issues;
+            assert!(issues.is_empty(), "{issues:?}");
+            match repainted(runner.action(action_id("next"))) {
+                Some(next) if next != screen => screen = next,
+                _ => break,
+            }
+        }
+    }
+
+    #[test]
+    fn leaving_an_app_running_moves_no_tile_on_home() {
+        let tiles = |screen: &kobo_sdk::Screen| {
+            screen
+                .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.kind, LayoutKind::TileLabel))
+                .map(|node| node.rect)
+                .collect::<Vec<_>>()
+        };
+        let mut runner = AppRunner::new(Launcher::default());
+        let before = tiles(&painted(runner.start()));
+        runner.action(action_id(&opening(ENTRIES[STORE].name)));
+        let after = tiles(&painted(runner.lifecycle(Lifecycle::Background)));
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn tapping_apps_while_on_apps_goes_back_to_its_first_page() {
+        let metrics = DisplayMetrics {
+            text_scale: TextScale::Default,
+            ..CLARA_BW_METRICS
+        };
+        let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: (0..12)
+                .map(|index| AppInfo {
+                    id: format!("app-{index}"),
+                    title: format!("App {index}"),
+                    label: format!("App {index}"),
+                    summary: "An app.".to_owned(),
+                    version: "1.0.0".to_owned(),
+                    minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
+                    glyph: Glyph::App,
+                    capabilities: Vec::new(),
+                    installed_version: Some("1.0.0".to_owned()),
+                })
+                .collect(),
+        });
+        runner.action(action_id("next"));
+        assert_eq!(
+            runner.app().page,
+            1,
+            "the grid has a second page to turn to"
+        );
+        runner.action(action_id("home"));
+        assert_eq!(runner.app().page, 0);
+    }
+
+    #[test]
+    fn a_store_app_says_what_it_needs_in_words_rather_than_identifiers() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.device_result(DeviceResult::Apps {
+            entries: vec![AppInfo {
+                id: "frame".to_owned(),
+                title: "Frame".to_owned(),
+                label: "Frame".to_owned(),
+                summary: "Show photos from your computer.".to_owned(),
+                version: "1.0.0".to_owned(),
+                minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
+                glyph: Glyph::App,
+                capabilities: vec!["keep-awake".to_owned(), "scheduled-wake".to_owned()],
+                installed_version: Some("1.0.0".to_owned()),
+            }],
+        });
+        let shown = painted(runner.action(action_id(&opening("frame"))));
+        let words = shown
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(words.contains("Can keep the reader awake"), "{words}");
+        assert!(!words.contains("keep-awake"), "{words}");
+    }
+
+    fn notice(
+        id: u64,
+        title: &str,
+        unread: bool,
+        target: kobo_sdk::NoticeTarget,
+    ) -> kobo_sdk::Notice {
+        kobo_sdk::Notice {
+            id,
+            heading: "Article arrived".to_owned(),
+            title: title.to_owned(),
+            detail: "example.com".to_owned(),
+            glyph: Glyph::Book,
+            at: kobo_sdk::clock::Clock::now(&kobo_sdk::clock::SystemClock::reader())
+                .map_or(0, |now| now.unix_millis),
+            unread,
+            target,
+        }
+    }
+
+    fn kept(open: bool) -> kobo_sdk::NoticeList {
+        kobo_sdk::NoticeList {
+            entries: vec![
+                notice(2, "Notes on bread", true, kobo_sdk::NoticeTarget::Ready),
+                notice(
+                    1,
+                    "A walk in the hills",
+                    false,
+                    kobo_sdk::NoticeTarget::Gone,
+                ),
+            ],
+            open,
+        }
+    }
+
+    fn says(screen: &kobo_sdk::Screen, words: &str) -> bool {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::with_back(false))
+            .nodes
+            .iter()
+            .any(|node| node.text_lines.iter().any(|line| line.contains(words)))
+    }
+
+    #[test]
+    fn the_bell_appears_only_once_the_runtime_has_said_it_keeps_notices() {
+        let mut runner = AppRunner::new(Launcher::default());
+        let home = painted(runner.start());
+        assert!(
+            !says(&home, "Notifications"),
+            "a bell under a runtime that keeps none"
+        );
+        let home = painted(runner.notices(kept(false)));
+        assert!(says(&home, "Notifications"));
+        assert!(says(&home, "1 new"));
+        // Nothing was asked of the runtime just for being told.
+        assert!(!runner
+            .notices(kept(false))
+            .iter()
+            .any(|command| matches!(command, Command::Device(_))));
+    }
+
+    #[test]
+    fn opening_the_list_marks_it_read_but_keeps_what_was_new_marked_for_this_visit() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.notices(kept(false));
+        let commands = runner.action(action_id("notifications"));
+        assert!(commands
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::MarkNoticesRead))));
+        let list = painted(commands);
+        assert!(says(&list, "Today"));
+        assert!(says(&list, "Notes on bread"));
+        assert!(says(&list, "New"));
+        assert!(says(&list, "No longer on this reader"));
+        // The runtime answers with everything read, and the screen does not
+        // move: the mark stays for the rest of this visit.
+        let mut read = kept(false);
+        for entry in &mut read.entries {
+            entry.unread = false;
+        }
+        assert!(repainted(runner.notices(read)).is_none());
+    }
+
+    #[test]
+    fn a_card_standing_for_several_opens_the_list_from_anywhere_in_the_launcher() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        let list = painted(runner.notices(kept(true)));
+        assert!(says(&list, "Clear all"));
+        assert!(matches!(runner.app().view, View::Notices { .. }));
+    }
+
+    #[test]
+    fn a_row_opens_its_article_and_a_row_whose_article_is_gone_does_nothing() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.notices(kept(true));
+        assert!(runner.app().fresh.contains(&2));
+        let opened = runner.action(action_id(&super::notices::opening(2)));
+        assert!(opened.iter().any(|command| matches!(
+            command,
+            Command::Device(DeviceRequest::OpenNotice { id: 2 })
+        )));
+        // Back from the article finds the row no longer marked New.
+        assert!(!runner.app().fresh.contains(&2));
+        assert!(runner
+            .app()
+            .notices
+            .as_ref()
+            .and_then(|list| list.entries.iter().find(|notice| notice.id == 2))
+            .is_some_and(|notice| !notice.unread));
+        let gone = runner.action(action_id(&super::notices::opening(1)));
+        assert!(!gone
+            .iter()
+            .any(|command| matches!(command, Command::Device(_))));
+    }
+
+    #[test]
+    fn clearing_the_list_asks_first_and_keeping_changes_nothing() {
+        let mut runner = AppRunner::new(Launcher::default());
+        runner.start();
+        runner.notices(kept(true));
+        let asking = painted(runner.action(action_id("clear-notifications")));
+        assert!(says(&asking, "Clear all notifications?"));
+        let kept_list = runner.action(action_id("keep-notifications"));
+        assert!(!kept_list
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::ClearNotices))));
+        assert!(says(&painted(kept_list), "Notes on bread"));
+        runner.action(action_id("clear-notifications"));
+        let cleared = runner.action(action_id("clear-notifications-confirmed"));
+        assert!(cleared
+            .iter()
+            .any(|command| matches!(command, Command::Device(DeviceRequest::ClearNotices))));
+        assert!(says(&painted(cleared), "Nothing new"));
+    }
+
+    #[test]
+    fn the_list_and_the_bell_fit_every_panel_at_the_largest_text() {
+        for (name, metrics) in panels() {
+            let metrics = DisplayMetrics {
+                text_scale: TextScale::Largest,
+                ..metrics
+            };
+            let mut runner = AppRunner::with_metrics(Launcher::default(), metrics);
+            runner.start();
+            let home = painted(runner.notices(kept(false)));
+            let layout = home.layout_with(&metrics, &Chrome::with_back(false));
+            let bell = action_id("notifications");
+            assert!(
+                layout
+                    .nodes
+                    .iter()
+                    .any(|node| node.kind.acts_on() == Some(bell)),
+                "{name}: no bell"
+            );
+            assert!(
+                layout
+                    .nodes
+                    .iter()
+                    .any(|node| node.kind == LayoutKind::TopBarTitle
+                        && node.text_lines.iter().any(|line| line == "Cobalt")),
+                "{name}: the bell pushed the title out"
+            );
+            let list = painted(runner.action(bell));
+            let layout = list.layout_with(&metrics, &Chrome::with_back(true));
+            for action in [
+                action_id("clear-notifications"),
+                action_id(&super::notices::opening(2)),
+            ] {
+                assert!(
+                    layout
+                        .nodes
+                        .iter()
+                        .any(|node| node.kind.acts_on() == Some(action)),
+                    "{name}: {action:?} is not reachable"
+                );
+            }
+        }
     }
 }

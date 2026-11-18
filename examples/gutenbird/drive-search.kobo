@@ -1,0 +1,66 @@
+# Live like the main route: searching every catalog, the recent searches,
+# and connecting a catalog of your own.
+tap Back
+wait-for Catalogs
+tap Project Gutenberg
+wait-for Popular
+tap-id search
+wait-for Search every catalog
+expect Only this catalog
+tap-id search-all
+wait-for Every catalog in the list
+tap-id query
+wait-for-id kb.enter
+type austen
+tap-id kb.enter
+wait-for every catalog
+# Every catalog answers in its own time over the live network.
+wait-idle 30000
+wait-for Jane Austen
+clean
+shot gutenbird-search-every
+# The search is remembered as a recent search on the search screen.
+tap-id search
+wait-for Recent searches
+expect austen
+expect Every catalog in the list
+clean
+shot gutenbird-search-recent
+tap Back
+wait-for every catalog
+# A catalog of your own: an empty address is refused with the reason, an
+# address is typed on the keyboard, and a server that does not answer says so.
+tap-id catalogs
+wait-for Catalogs
+tap-id add-catalog
+wait-for Connect catalog
+tap Check connection
+wait-for HTTPS address
+clean
+shot gutenbird-add-empty
+tap Add server address
+wait-for-id kb.enter
+type https://opds.invalid
+tap-id kb.enter
+wait-for https://opds.invalid
+scenario host-down
+tap Check connection
+wait-for did not answer
+clean
+shot gutenbird-add-host-down
+scenario normal
+tap Back
+wait-for Catalogs
+expect-missing opds.invalid
+# A recent search should run the way the switch beside it says: across
+# every catalog when that is on.
+tap Project Gutenberg
+wait-for Popular
+tap-id search
+wait-for Recent searches
+expect Every catalog in the list
+tap-id recent-0
+wait-for every catalog
+wait-idle 30000
+wait-for Jane Austen
+expect every catalog

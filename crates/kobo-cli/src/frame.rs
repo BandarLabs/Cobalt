@@ -2,7 +2,7 @@
 
 use kobo_frame_host::{
     decode_digest_map, decode_fit_map, encode_digest_map, encode_fit_map, prepare_for_panel, Fit,
-    Manifest, Panel, Push, DIGEST_MANIFEST, FIT_MANIFEST, MANIFEST, MAX_FRAME_CAPACITY,
+    Manifest, Panel, Photo, Push, DIGEST_MANIFEST, FIT_MANIFEST, MANIFEST, MAX_FRAME_CAPACITY,
 };
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -13,13 +13,28 @@ use std::time::Duration;
 const ROOT: &str = "/mnt/onboard/.adds/cobalt/data/frame";
 const KOBOD: &str = "/mnt/onboard/.adds/cobalt/bin/kobod";
 const TRANSFER_TIMEOUT: Duration = Duration::from_secs(300);
-const USAGE: &str = "usage: kobo frame preview INPUT --out DIRECTORY [--profile PROFILE]\n\
-                     \x20      kobo frame init (--sim | --device IP)\n\
-                     \x20      kobo frame push INPUT (--sim | --device IP) [--fit crop|pad] [--album NAME] [--delete]\n\
-                     \x20      kobo frame plan INPUT (--sim | --device IP) [--fit crop|pad] [--album NAME] [--delete]\n\
-                     \x20      kobo frame restore (--sim | --device IP)\n\
-                     \x20      kobo frame ls (--sim | --device IP)\n\
-                     \x20      kobo frame rm ID (--sim | --device IP)";
+const USAGE: &str = concat!(
+    "usage: kobo frame preview INPUT --out DIRECTORY [--profile PROFILE]\n\
+                     \x20      kobo frame init ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo frame push INPUT ",
+    crate::targets::target_choice!(),
+    " [--fit crop|pad] [--album NAME] [--replace]\n\
+                     \x20      kobo frame plan INPUT ",
+    crate::targets::target_choice!(),
+    " [--fit crop|pad] [--album NAME] [--replace]\n\
+                     \x20      kobo frame restore ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo frame ls ",
+    crate::targets::target_choice!(),
+    "\n\
+                     \x20      kobo frame rm ID ",
+    crate::targets::target_choice!(),
+    "\n",
+    crate::targets::saved_reader_note!(),
+);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Target {
@@ -85,7 +100,8 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
         Target::Device(host) => (read_manifest(host)?, reader_panel(host)?),
         Target::Sim => (read_local_manifest()?, sim_panel()),
     };
-    let mut push = prepare_for_panel(Path::new(input), fit, &existing, delete, panel)?;
+    let (shelf, lost) = on_shelf(&existing, &shelf_sizes(&target, &existing)?);
+    let mut push = prepare_for_panel(Path::new(input), fit, &shelf, delete, panel)?;
     if let Some(album) = album {
         for prepared in &mut push.photos {
             album.clone_into(&mut prepared.photo.album);
@@ -101,7 +117,10 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
     }
     let fits = merged_fits(&target, &push, fit)?;
     let digests = merged_digests(&target, &push)?;
+    print_lost(&lost);
     print_plan(&push);
+    // An empty file left behind for a lost photo is cleared with the rest.
+    push.removed.extend(lost);
     if plan_only {
         println!("Plan only. No photos were transferred or removed.");
         return Ok(());
@@ -112,7 +131,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
             if push.manifest != existing {
                 let script = format!(
                     "set -eu\nroot='{ROOT}'\n{}",
-                    super::frame_recovery::save_script(&existing)
+                    super::frame_recovery::save_script(&shelf)
                 );
                 remote(host, &script)?;
             }
@@ -129,7 +148,7 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
         Target::Sim => {
             enforce_local_capacity(&push)?;
             if push.manifest != existing {
-                super::frame_recovery::save(&sim_root(), &existing)?;
+                super::frame_recovery::save(&sim_root(), &shelf)?;
             }
             publish_local(&push, &fits, &digests)?;
             let actual = read_local_manifest()?;
@@ -143,15 +162,70 @@ fn push(arguments: &[String], plan_only: bool) -> Result<(), String> {
         }
     }
     println!(
-        "Frame transfer verified: {} photo(s), {} new, {} removed",
-        push.manifest.photos.len(),
+        "Frame transfer verified: {} new, {} removed.",
         push.photos
             .iter()
             .filter(|photo| photo.png.is_some())
             .count(),
         push.removed.len()
     );
+    print!("{}", on_the_reader(&push.manifest));
     Ok(())
+}
+
+/// Byte sizes of the listed photos that still have a file on the shelf.
+fn shelf_sizes(target: &Target, manifest: &Manifest) -> Result<BTreeMap<String, usize>, String> {
+    let ids = manifest
+        .photos
+        .iter()
+        .map(|photo| photo.id.as_str())
+        .collect::<Vec<_>>();
+    match target {
+        Target::Device(host) => frame_sizes(host, &ids),
+        Target::Sim => local_present_sizes(&ids),
+    }
+}
+
+/// A listed photo whose file is gone or empty can be neither shown nor kept
+/// for undo. Planning against the photos that are really there lets a push
+/// send such a photo again and lets `rm` drop the entry, so the shelf the
+/// app asks the owner to repair can be repaired.
+fn on_shelf(existing: &Manifest, sizes: &BTreeMap<String, usize>) -> (Manifest, Vec<Photo>) {
+    let (present, lost) = existing
+        .photos
+        .iter()
+        .cloned()
+        .partition(|photo| sizes.get(&photo.id).is_some_and(|size| *size > 0));
+    (Manifest { photos: present }, lost)
+}
+
+fn print_lost(lost: &[Photo]) {
+    for photo in lost {
+        println!(
+            "  Missing on the reader, dropped from the list: {} / {}",
+            photo.album, photo.name
+        );
+    }
+}
+
+/// What the frame now holds, album by album, so a push ends by saying what
+/// the reader will show rather than only what moved.
+fn on_the_reader(manifest: &Manifest) -> String {
+    let mut albums: BTreeMap<&str, usize> = BTreeMap::new();
+    for photo in &manifest.photos {
+        *albums.entry(photo.album.as_str()).or_default() += 1;
+    }
+    let photos = manifest.photos.len();
+    let mut text = format!(
+        "Now on the reader: {photos} photo{} in {} album{}.\n",
+        if photos == 1 { "" } else { "s" },
+        albums.len(),
+        if albums.len() == 1 { "" } else { "s" }
+    );
+    for (album, count) in albums {
+        let _ = writeln!(text, "  {album}: {count}");
+    }
+    text
 }
 
 fn verify_published(
@@ -194,6 +268,7 @@ fn reader_panel(host: &str) -> Result<Panel, String> {
     Ok(Panel {
         width: profile.width,
         height: profile.height,
+        colour: profile.colour_panel,
     })
 }
 
@@ -221,18 +296,23 @@ fn remove(arguments: &[String]) -> Result<(), String> {
         Target::Device(host) => read_manifest(host)?,
         Target::Sim => read_local_manifest()?,
     };
-    let mut manifest = existing.clone();
-    let index = manifest
-        .photos
-        .iter()
-        .position(|photo| photo.id == id)
-        .ok_or_else(|| format!("Frame has no photo with id {id:?}"))?;
-    let photo = manifest.photos.remove(index);
+    let (shelf, lost) = on_shelf(&existing, &shelf_sizes(&target, &existing)?);
+    if !existing.photos.iter().any(|photo| photo.id == id) {
+        return Err(format!("Frame has no photo with id {id:?}"));
+    }
+    let mut manifest = shelf.clone();
+    manifest.photos.retain(|photo| photo.id != id);
     let push = Push {
         manifest,
         photos: Vec::new(),
-        removed: vec![photo],
+        removed: existing
+            .photos
+            .iter()
+            .filter(|photo| photo.id == id || lost.contains(photo))
+            .cloned()
+            .collect(),
     };
+    print_lost(&lost);
     let mut fits = match &target {
         Target::Device(host) => read_fit_map(host)?,
         Target::Sim => read_local_fit_map()?,
@@ -249,13 +329,13 @@ fn remove(arguments: &[String]) -> Result<(), String> {
                 &host,
                 &format!(
                     "set -eu\nroot='{ROOT}'\n{}",
-                    super::frame_recovery::save_script(&existing)
+                    super::frame_recovery::save_script(&shelf)
                 ),
             )?;
             transfer(&host, &push, &fits, &digests)?;
         }
         Target::Sim => {
-            super::frame_recovery::save(&sim_root(), &existing)?;
+            super::frame_recovery::save(&sim_root(), &shelf)?;
             publish_local(&push, &fits, &digests)?;
         }
     }
@@ -382,7 +462,9 @@ fn parse_push(arguments: &[String]) -> Result<PushOptions<'_>, String> {
                 album = Some(name.as_str());
                 index += 2;
             }
-            "--delete" => {
+            // `--delete` was the first name for this and still works, so a
+            // script written against it keeps doing what it did.
+            "--replace" | "--delete" => {
                 delete = true;
                 index += 1;
             }
@@ -434,6 +516,7 @@ fn sim_panel() -> Panel {
     Panel {
         width: profile.width,
         height: profile.height,
+        colour: profile.colour_panel,
     }
 }
 
@@ -599,6 +682,16 @@ fn enforce_local_capacity(push: &Push) -> Result<(), String> {
 }
 
 fn local_sizes(ids: &[&str]) -> Result<BTreeMap<String, usize>, String> {
+    let sizes = local_present_sizes(ids)?;
+    match ids.iter().find(|id| !sizes.contains_key(**id)) {
+        Some(id) => Err(format!(
+            "Frame photo {id} is missing from the simulator shelf"
+        )),
+        None => Ok(sizes),
+    }
+}
+
+fn local_present_sizes(ids: &[&str]) -> Result<BTreeMap<String, usize>, String> {
     let root = sim_root();
     let mut sizes = BTreeMap::new();
     for id in ids {
@@ -612,11 +705,7 @@ fn local_sizes(ids: &[&str]) -> Result<BTreeMap<String, usize>, String> {
                     })?,
                 );
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Err(format!(
-                    "Frame photo {id} is missing from the simulator shelf"
-                ));
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("inspect Frame photo {id}: {error}")),
         }
     }
@@ -782,7 +871,7 @@ fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> 
     }
 }
 
-fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn base64_decode(text: &str) -> Result<Vec<u8>, String> {
     let cleaned = text
         .bytes()
         .filter(|byte| !byte.is_ascii_whitespace())
@@ -832,8 +921,8 @@ fn base64_value(byte: u8) -> Result<u8, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        base64_decode, capacity_bytes, merge_fit_map, parse_push, parse_remove, parse_target,
-        transfer_script, Target, MANIFEST,
+        base64_decode, capacity_bytes, merge_fit_map, on_shelf, on_the_reader, parse_push,
+        parse_remove, parse_target, transfer_script, Target, MANIFEST,
     };
     use kobo_frame_host::{Fit, Manifest, Photo, PreparedPhoto, Push, FIT_MANIFEST};
     use std::collections::BTreeMap;
@@ -857,6 +946,27 @@ mod tests {
                 delete: true,
                 album: None
             }
+        );
+    }
+
+    #[test]
+    fn a_push_adds_unless_it_is_asked_to_replace() {
+        let adding: Vec<String> = vec!["family".into(), "--sim".into()];
+        assert!(!parse_push(&adding).expect("parse").delete);
+        let replacing: Vec<String> = vec!["family".into(), "--replace".into(), "--sim".into()];
+        assert!(parse_push(&replacing).expect("parse").delete);
+    }
+
+    #[test]
+    fn a_push_ends_by_naming_every_album_now_on_the_reader() {
+        let mut summer = photo("photo-summer");
+        summer.album = "Summer holiday".to_owned();
+        let manifest = Manifest {
+            photos: vec![photo("photo-one"), photo("photo-two"), summer],
+        };
+        assert_eq!(
+            on_the_reader(&manifest),
+            "Now on the reader: 3 photos in 2 albums.\n  Album: 2\n  Summer holiday: 1\n"
         );
     }
 
@@ -1018,6 +1128,21 @@ mod tests {
             .is_err());
         }
         assert!(super::verify_published(&push, &push.manifest, &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn a_photo_whose_file_is_gone_or_empty_is_left_out_of_the_shelf_a_push_plans_against() {
+        let existing = Manifest {
+            photos: vec![
+                photo("photo-kept"),
+                photo("photo-gone"),
+                photo("photo-empty"),
+            ],
+        };
+        let sizes = BTreeMap::from([("photo-kept".to_owned(), 10), ("photo-empty".to_owned(), 0)]);
+        let (shelf, lost) = on_shelf(&existing, &sizes);
+        assert_eq!(shelf.photos, vec![photo("photo-kept")]);
+        assert_eq!(lost, vec![photo("photo-gone"), photo("photo-empty")]);
     }
 
     #[test]

@@ -4,15 +4,17 @@ A simple to-do list that stays on your Kobo.
 
 <table>
 <tr>
-<td width="50%" valign="top"><img width="300" src="screenshots/list.png" alt="The list, with an item still to do"><br>The list, with an item still to do</td>
-<td width="50%" valign="top"><img width="300" src="screenshots/compose.png" alt="Adding an item"><br>Adding an item</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/list.png" alt="The list, with four items to do and one done"><br>The list, with four items to do and one done</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/compose.png" alt="Adding items one after another"><br>Adding items one after another</td>
 </tr>
 </table>
 
 ## Features
 
-- Add items, tap to tick them off, and clear finished items. Clearing can be
-  undone until the next change.
+- Add items one after another: the keyboard stays up after each Add, and
+  **Done** puts it away. Tap an item to tick it off, and clear finished
+  items. Clearing can be undone until the next change.
+- Due dates are counted on the reader's own calendar.
 - Add `#tags` to items and filter by them with the chips above the list.
 - **Edit** opens the full list. Tap an item to rename it, move it, give it a
   due date or remove it. Dates read as "due tomorrow" or "3 days late".
@@ -28,9 +30,9 @@ None.
 
 ```sh
 cargo test -p kobo-todo
-kobo run --sim --app todo      # in the browser simulator
+(cd examples/todo && kobo dev)   # in the browser simulator
 python3 scripts/check-apps-sim.py todo
-kobo deploy --device <ip>       # onto a reader over Wi-Fi
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
 ```
 
 ---
