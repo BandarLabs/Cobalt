@@ -3,42 +3,42 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Settings for Kobo | Cobalt</title>
-<meta name="description" content="Connectivity, hardware and platform updates, kept separate from Store. Included with Cobalt on supported Kobo e-readers.">
+<title>Settings for Kobo e-readers | Cobalt</title>
+<meta name="description" content="Wi-Fi, device information and Cobalt updates. Included with Cobalt on supported Kobo e-readers.">
 <link rel="canonical" href="https://bandarlabs.github.io/Cobalt/apps/settings/">
 <link rel="icon" href="../../logo.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Settings for Kobo | Cobalt">
-<meta property="og:description" content="Connectivity, hardware and platform updates, kept separate from Store. Included with Cobalt on supported Kobo e-readers.">
+<meta property="og:title" content="Settings for Kobo e-readers | Cobalt">
+<meta property="og:description" content="Wi-Fi, device information and Cobalt updates. Included with Cobalt on supported Kobo e-readers.">
 <meta property="og:url" content="https://bandarlabs.github.io/Cobalt/apps/settings/">
 <meta property="og:site_name" content="Cobalt">
 <meta property="og:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/settings.png">
 <meta property="og:image:width" content="1072">
 <meta property="og:image:height" content="1448">
-<meta property="og:image:alt" content="Battery status and hardware information in Cobalt Settings">
+<meta property="og:image:alt" content="Cobalt Settings listing Bluetooth, Wi-Fi, Battery, Software update and About">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="Settings for Kobo | Cobalt">
-<meta name="twitter:description" content="Connectivity, hardware and platform updates, kept separate from Store. Included with Cobalt on supported Kobo e-readers.">
+<meta name="twitter:title" content="Settings for Kobo e-readers | Cobalt">
+<meta name="twitter:description" content="Wi-Fi, device information and Cobalt updates. Included with Cobalt on supported Kobo e-readers.">
 <meta name="twitter:image" content="https://bandarlabs.github.io/Cobalt/media/site/apps/settings.png">
-<meta name="twitter:image:alt" content="Battery status and hardware information in Cobalt Settings">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-XO1a9B0H6x6Puz0MzLnjH6ysLkSpqH8dWAQHUB9RFdw='; style-src 'self'; img-src 'self'; base-uri 'none'">
+<meta name="twitter:image:alt" content="Cobalt Settings listing Bluetooth, Wi-Fi, Battery, Software update and About">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-vNVuO/5PsfgXditDCqlOaxU6QrfQS8ufZ3KehPHUXlE='; style-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'">
 <script type="application/ld+json">{
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
       "name": "Settings",
-      "description": "Connectivity, hardware and platform updates, kept separate from Store.",
+      "description": "Wi-Fi, device information and Cobalt updates.",
       "url": "https://bandarlabs.github.io/Cobalt/apps/settings/",
       "image": {
         "@type": "ImageObject",
         "url": "https://bandarlabs.github.io/Cobalt/media/site/apps/settings.png",
         "width": 1072,
         "height": 1448,
-        "caption": "Battery status and hardware information in Cobalt Settings"
+        "caption": "Cobalt Settings listing Bluetooth, Wi-Fi, Battery, Software update and About"
       },
       "applicationSuite": "Cobalt",
-      "applicationCategory": "SoftwareApplication",
+      "applicationCategory": "UtilitiesApplication",
       "operatingSystem": "Cobalt on supported Kobo e-readers",
       "isAccessibleForFree": true,
       "offers": {
@@ -46,7 +46,8 @@
         "price": "0",
         "priceCurrency": "USD"
       },
-      "installUrl": "https://bandarlabs.github.io/Cobalt/apps/settings/"
+      "installUrl": "https://bandarlabs.github.io/Cobalt/apps/settings/",
+      "sameAs": "https://github.com/BandarLabs/Cobalt/tree/main/examples/settings"
     },
     {
       "@type": "BreadcrumbList",
@@ -73,7 +74,7 @@
     }
   ]
 }</script>
-<link rel="stylesheet" href="../install.css">
+<link rel="stylesheet" href="../../site.css">
 </head>
 <body>
 <header class="masthead">
@@ -81,44 +82,50 @@
     <a class="brand" href="../../"><img src="../../logo.svg" alt="Cobalt" width="81" height="34"></a>
     <nav class="top" aria-label="Main navigation">
       <a class="active" href="../../#apps">Apps</a>
+      <a href="../../install/">Install</a>
       <a href="../../developers.html">Developers</a>
       <a href="../../faq.html">FAQ</a>
-      <a href="../../#store">Store</a>
-      <a href="../../#install">Install</a>
-      <a href="../../#contributing">Contributing</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>
   </div>
 </header>
-<main class="wrap">
-  <div class="app-hero">
-    <div class="app-copy">
-      <p class="eyebrow">Cobalt system app</p>
+<main>
+  <div class="app-head wrap">
+    <div>
+      <p class="crumb"><a href="../../#apps">Apps</a> / <a href="../../#included">Included with Cobalt</a></p>
       <h1>Settings</h1>
-      <p class="summary">Connectivity, hardware and platform updates, kept separate from Store.</p>
-      <div class="meta"><span>Included with Cobalt</span></div>
+      <p class="lede">Wi-Fi, device information and Cobalt updates.</p>
+      <div class="actions">
+        <a class="btn primary" href="../../install/">Install Cobalt</a>
+        <a href="https://github.com/BandarLabs/Cobalt/tree/main/examples/settings">Source code on GitHub</a>
+      </div>
+      <dl class="facts">
+        <div><dt>Comes with</dt><dd>Cobalt, with nothing separate to install</dd></div>
+      </dl>
     </div>
-    <figure class="app-shot">
-      <img src="../../media/site/apps/settings.png" width="1072" height="1448" alt="Battery status and hardware information in Cobalt Settings">
+    <figure class="reader">
+      <div class="reader-body">
+        <div class="reader-screen">
+          <img src="../../media/site/apps/settings.png" width="1072" height="1448" alt="Cobalt Settings listing Bluetooth, Wi-Fi, Battery, Software update and About">
+        </div>
+      </div>
     </figure>
   </div>
-  <section class="panel setup">
-    <p class="eyebrow">No separate install needed</p>
-    <h2>Available after Cobalt setup</h2>
-    <p>Settings is part of the Cobalt platform and is installed automatically with Cobalt. It does not need a separate App Store download.</p>
-    <a class="button-link" href="../../#install">Set up Cobalt</a>
+  <div class="wrap">
+  <section class="section">
+    <p class="after-index">Want another Kobo app? Request it, suggest a feature or report a bug in <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.</p>
   </section>
-  <aside class="community">
-    <strong>Want another Kobo app?</strong>
-    Request it, suggest a feature or report a bug in
-    <a href="https://www.reddit.com/r/CobaltForKobo/">r/CobaltForKobo</a>.
-  </aside>
+  </div>
 </main>
 <footer>
   <div class="wrap">
-    <span>Cobalt · AGPL-3.0</span>
+    <div>
+      <p>Cobalt is an independent project, not affiliated with Rakuten Kobo. Bluetooth, Wi-Fi and Kobo are trademarks of their owners; see <a href="https://github.com/BandarLabs/Cobalt/blob/main/TRADEMARKS.md">trademarks</a>.</p>
+      <p>AGPL-3.0. Source at <a href="https://github.com/BandarLabs/Cobalt">BandarLabs/Cobalt</a>.</p>
+    </div>
     <nav aria-label="Footer navigation">
       <a href="../../">Home</a>
+      <a href="../../faq.html">FAQ</a>
       <a href="https://www.reddit.com/r/CobaltForKobo/">Community</a>
       <a href="https://github.com/BandarLabs/Cobalt">GitHub</a>
     </nav>

@@ -114,16 +114,19 @@ test("the contributor baseline binds provenance to the exact catalog bytes", () 
 test("the effective repository registry includes standalone contributions", () => {
   const registry = collectRegistry();
   assert.ok(registry.apps.length >= 4);
-  for (const id of ["arxiv", "morse", "sudoku", "zotero-reader"]) {
+  for (const id of ["arxiv", "morse", "zotero-reader"]) {
     const app = registry.apps.find(candidate => candidate.id === id);
     assert.ok(app, `missing ${id}`);
     assert.equal(app.package, `kobo-${id}`);
     assert.equal(app.minimum_cobalt_version, CURRENT_MINIMUM);
   }
-  assert.ok(
-    registry.apps.find(candidate => candidate.id === "chat")?.minimum_cobalt_version >=
-      CURRENT_MINIMUM
-  );
+  for (const id of ["chat", "sudoku"]) {
+    assert.ok(
+      registry.apps.find(candidate => candidate.id === id)?.minimum_cobalt_version >=
+        CURRENT_MINIMUM,
+      `${id} minimum`
+    );
+  }
 });
 
 test("the one-command plan resolves source manifest package and protocol", () => {

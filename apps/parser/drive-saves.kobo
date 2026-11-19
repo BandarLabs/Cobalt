@@ -1,0 +1,54 @@
+# Seeded with the Lamplight fixture. The ten save slots, a restore from one,
+# and the autosave carrying a story across a restart.
+wait-for Lamplight
+tap Lamplight
+wait-for light.
+tap Restore
+expect Restore game
+expect No saved games yet.
+clean
+shot saves-restore-empty
+tap-id 4294967295
+expect Lamplight
+tap Save
+expect Save game
+expect Keep this position in a slot.
+expect Empty: tap to save here
+clean
+shot saves-slots
+# Slots 7 to 10 are on the next page.
+page next
+expect Slot 10
+page back
+expect Slot 1
+tap Slot 1
+wait-for Saved in slot 1.
+tap-id 4294967295
+tap North
+wait-for Gravel crunches
+tap Restore
+expect Restore game
+expect Saved game: tap to restore
+expect-missing Slot 2
+clean
+shot saves-restore-one
+tap Slot 1
+wait-for Restored.
+wait-for pool of light.
+clean
+shot saves-restored
+# Saving over a slot says so.
+tap Save
+expect Saved game: tap to overwrite
+tap-id 4294967295
+# Every turn is kept, so the story opens where it stopped after a restart.
+tap North
+wait-for Gravel crunches
+restart
+wait-for Lamplight
+tap Lamplight
+wait-for Restored.
+wait-for Gravel crunches
+expect Garden Path
+clean
+shot saves-resumed

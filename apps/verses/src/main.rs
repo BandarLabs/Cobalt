@@ -1,6 +1,6 @@
 //! Daily public-domain poetry with an offline shelf and `PoetryDB` search.
-use kobo_sdk::clock::{Clock, ManualClock, Snapshot, SystemClock};
-use kobo_sdk::keyboard::{Keyboard, Pressed};
+use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, Glyph, Header, KoboApp, Screen, ScreenBuilder,
     StoreResult, Task, TaskError, TaskId, TaskOutcome,
@@ -8,11 +8,21 @@ use kobo_sdk::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
+use std::hash::{Hash, Hasher};
 use std::process::ExitCode;
 
 const SETTINGS: &str = "settings";
+/// The search box, which raises the reader's keyboard when it is tapped.
+const SEARCH_FIELD: &str = "search-field";
 const SEARCH_LIMIT: u32 = 512 * 1024;
 const USER_AGENT: &str = "Cobalt Verses/0.1";
+/// The quote card as it is shown while it is saved, in pixels and in the
+/// millimetres of panel it may take: half the panel, so its words still
+/// read and the line saying where it goes fits under it.
+const CARD_PREVIEW: kobo_sdk::PictureHandle = kobo_sdk::PictureHandle(1);
+const CARD_PREVIEW_WIDTH: u32 = 536;
+const CARD_PREVIEW_HEIGHT: u32 = 724;
+const CARD_PREVIEW_MM: u16 = 70;
 
 #[derive(Clone, Copy)]
 struct Poem {
@@ -39,6 +49,7 @@ struct Poem {
 }
 
 impl Poem {
+    #[cfg(test)]
     fn lines(self) -> impl Iterator<Item = &'static str> {
         self.stanzas
             .iter()
@@ -73,7 +84,7 @@ const CORPUS: &[Poem] = &[
                 "That kept so many warm.",
             ],
             &[
-                "I 've heard it in the chillest land,",
+                "I've heard it in the chillest land,",
                 "And on the strangest sea;",
                 "Yet, never, in extremity,",
                 "It asked a crumb of me.",
@@ -190,16 +201,1204 @@ const CORPUS: &[Poem] = &[
             ],
         ],
     },
+    Poem {
+        id: "shakespeare-sonnet-18",
+        title: "Sonnet 18",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "Shall I compare thee to a summer's day?",
+                "Thou art more lovely and more temperate:",
+                "Rough winds do shake the darling buds of May,",
+                "And summer's lease hath all too short a date;",
+                "Sometime too hot the eye of heaven shines,",
+                "And often is his gold complexion dimm'd;",
+                "And every fair from fair sometime declines,",
+                "By chance or nature's changing course untrimm'd;",
+                "But thy eternal summer shall not fade,",
+                "Nor lose possession of that fair thou ow'st;",
+                "Nor shall Death brag thou wander'st in his shade,",
+                "When in eternal lines to time thou grow'st:",
+                "So long as men can breathe or eyes can see,",
+                "So long lives this, and this gives life to thee.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shakespeare-sonnet-29",
+        title: "Sonnet 29",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "When, in disgrace with fortune and men's eyes,",
+                "I all alone beweep my outcast state,",
+                "And trouble deaf heaven with my bootless cries,",
+                "And look upon myself and curse my fate,",
+                "Wishing me like to one more rich in hope,",
+                "Featured like him, like him with friends possess'd,",
+                "Desiring this man's art and that man's scope,",
+                "With what I most enjoy contented least;",
+                "Yet in these thoughts myself almost despising,",
+                "Haply I think on thee, and then my state,",
+                "Like to the lark at break of day arising",
+                "From sullen earth, sings hymns at heaven's gate;",
+                "For thy sweet love remember'd such wealth brings",
+                "That then I scorn to change my state with kings.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shakespeare-sonnet-73",
+        title: "Sonnet 73",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "age · a minute",
+        stanzas: &[
+            &[
+                "That time of year thou mayst in me behold",
+                "When yellow leaves, or none, or few, do hang",
+                "Upon those boughs which shake against the cold,",
+                "Bare ruin'd choirs, where late the sweet birds sang.",
+                "In me thou see'st the twilight of such day",
+                "As after sunset fadeth in the west,",
+                "Which by and by black night doth take away,",
+                "Death's second self, that seals up all in rest.",
+                "In me thou see'st the glowing of such fire",
+                "That on the ashes of his youth doth lie,",
+                "As the death-bed whereon it must expire,",
+                "Consumed with that which it was nourish'd by.",
+                "This thou perceivest, which makes thy love more strong,",
+                "To love that well which thou must leave ere long.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shakespeare-sonnet-116",
+        title: "Sonnet 116",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "Let me not to the marriage of true minds",
+                "Admit impediments. Love is not love",
+                "Which alters when it alteration finds,",
+                "Or bends with the remover to remove:",
+                "O no! it is an ever-fixed mark",
+                "That looks on tempests and is never shaken;",
+                "It is the star to every wandering bark,",
+                "Whose worth's unknown, although his height be taken.",
+                "Love's not Time's fool, though rosy lips and cheeks",
+                "Within his bending sickle's compass come;",
+                "Love alters not with his brief hours and weeks,",
+                "But bears it out even to the edge of doom.",
+                "If this be error and upon me proved,",
+                "I never writ, nor no man ever loved.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shakespeare-sonnet-130",
+        title: "Sonnet 130",
+        author: "William Shakespeare",
+        year: 1609,
+        source: "Shake-speares Sonnets, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "My mistress' eyes are nothing like the sun;",
+                "Coral is far more red than her lips' red;",
+                "If snow be white, why then her breasts are dun;",
+                "If hairs be wires, black wires grow on her head.",
+                "I have seen roses damask'd, red and white,",
+                "But no such roses see I in her cheeks;",
+                "And in some perfumes is there more delight",
+                "Than in the breath that from my mistress reeks.",
+                "I love to hear her speak, yet well I know",
+                "That music hath a far more pleasing sound;",
+                "I grant I never saw a goddess go;",
+                "My mistress, when she walks, treads on the ground:",
+                "And yet, by heaven, I think my love as rare",
+                "As any she belied with false compare.",
+            ],
+        ],
+    },
+    Poem {
+        id: "wordsworth-westminster",
+        title: "Composed upon Westminster Bridge",
+        author: "William Wordsworth",
+        year: 1807,
+        source: "Poems, in Two Volumes, via Project Gutenberg",
+        tags: "cities · a minute",
+        stanzas: &[
+            &[
+                "Earth has not anything to show more fair:",
+                "Dull would he be of soul who could pass by",
+                "A sight so touching in its majesty:",
+                "This City now doth, like a garment, wear",
+                "The beauty of the morning; silent, bare,",
+                "Ships, towers, domes, theatres, and temples lie",
+                "Open unto the fields, and to the sky;",
+                "All bright and glittering in the smokeless air.",
+                "Never did sun more beautifully steep",
+                "In his first splendour, valley, rock, or hill;",
+                "Ne'er saw I, never felt, a calm so deep!",
+                "The river glideth at his own sweet will:",
+                "Dear God! the very houses seem asleep;",
+                "And all that mighty heart is lying still!",
+            ],
+        ],
+    },
+    Poem {
+        id: "wordsworth-world",
+        title: "The World Is Too Much with Us",
+        author: "William Wordsworth",
+        year: 1807,
+        source: "Poems, in Two Volumes, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "The world is too much with us; late and soon,",
+                "Getting and spending, we lay waste our powers;",
+                "Little we see in Nature that is ours;",
+                "We have given our hearts away, a sordid boon!",
+                "This Sea that bares her bosom to the moon;",
+                "The winds that will be howling at all hours,",
+                "And are up-gathered now like sleeping flowers;",
+                "For this, for everything, we are out of tune;",
+                "It moves us not. Great God! I'd rather be",
+                "A Pagan suckled in a creed outworn;",
+                "So might I, standing on this pleasant lea,",
+                "Have glimpses that would make me less forlorn;",
+                "Have sight of Proteus rising from the sea;",
+                "Or hear old Triton blow his wreathed horn.",
+            ],
+        ],
+    },
+    Poem {
+        id: "wordsworth-rainbow",
+        title: "My Heart Leaps Up",
+        author: "William Wordsworth",
+        year: 1807,
+        source: "Poems, in Two Volumes, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "My heart leaps up when I behold",
+                "A rainbow in the sky:",
+                "So was it when my life began;",
+                "So is it now I am a man;",
+                "So be it when I shall grow old,",
+                "Or let me die!",
+                "The Child is father of the Man;",
+                "And I could wish my days to be",
+                "Bound each to each by natural piety.",
+            ],
+        ],
+    },
+    Poem {
+        id: "wordsworth-lucy",
+        title: "She Dwelt among the Untrodden Ways",
+        author: "William Wordsworth",
+        year: 1800,
+        source: "Lyrical Ballads, via Project Gutenberg",
+        tags: "loss · a minute",
+        stanzas: &[
+            &[
+                "She dwelt among the untrodden ways",
+                "Beside the springs of Dove,",
+                "A Maid whom there were none to praise",
+                "And very few to love:",
+            ],
+            &[
+                "A violet by a mossy stone",
+                "Half hidden from the eye!",
+                "Fair as a star, when only one",
+                "Is shining in the sky.",
+            ],
+            &[
+                "She lived unknown, and few could know",
+                "When Lucy ceased to be;",
+                "But she is in her grave, and, oh,",
+                "The difference to me!",
+            ],
+        ],
+    },
+    Poem {
+        id: "keats-chapman",
+        title: "On First Looking into Chapman's Homer",
+        author: "John Keats",
+        year: 1816,
+        source: "Poems, via Project Gutenberg",
+        tags: "discovery · a minute",
+        stanzas: &[
+            &[
+                "Much have I travell'd in the realms of gold,",
+                "And many goodly states and kingdoms seen;",
+                "Round many western islands have I been",
+                "Which bards in fealty to Apollo hold.",
+                "Oft of one wide expanse had I been told",
+                "That deep-brow'd Homer ruled as his demesne;",
+                "Yet did I never breathe its pure serene",
+                "Till I heard Chapman speak out loud and bold:",
+                "Then felt I like some watcher of the skies",
+                "When a new planet swims into his ken;",
+                "Or like stout Cortez when with eagle eyes",
+                "He star'd at the Pacific, and all his men",
+                "Look'd at each other with a wild surmise,",
+                "Silent, upon a peak in Darien.",
+            ],
+        ],
+    },
+    Poem {
+        id: "keats-fears",
+        title: "When I Have Fears",
+        author: "John Keats",
+        year: 1848,
+        source: "Life, Letters, and Literary Remains, via Project Gutenberg",
+        tags: "time · a minute",
+        stanzas: &[
+            &[
+                "When I have fears that I may cease to be",
+                "Before my pen has glean'd my teeming brain,",
+                "Before high-piled books, in charactery,",
+                "Hold like rich garners the full ripen'd grain;",
+                "When I behold, upon the night's starr'd face,",
+                "Huge cloudy symbols of a high romance,",
+                "And think that I may never live to trace",
+                "Their shadows, with the magic hand of chance;",
+                "And when I feel, fair creature of an hour,",
+                "That I shall never look upon thee more,",
+                "Never have relish in the faery power",
+                "Of unreflecting love; then on the shore",
+                "Of the wide world I stand alone, and think",
+                "Till love and fame to nothingness do sink.",
+            ],
+        ],
+    },
+    Poem {
+        id: "rossetti-remember",
+        title: "Remember",
+        author: "Christina Rossetti",
+        year: 1862,
+        source: "Goblin Market and Other Poems, via Project Gutenberg",
+        tags: "loss · a minute",
+        stanzas: &[
+            &[
+                "Remember me when I am gone away,",
+                "Gone far away into the silent land;",
+                "When you can no more hold me by the hand,",
+                "Nor I half turn to go yet turning stay.",
+                "Remember me when no more day by day",
+                "You tell me of our future that you plann'd:",
+                "Only remember me; you understand",
+                "It will be late to counsel then or pray.",
+                "Yet if you should forget me for a while",
+                "And afterwards remember, do not grieve:",
+                "For if the darkness and corruption leave",
+                "A vestige of the thoughts that once I had,",
+                "Better by far you should forget and smile",
+                "Than that you should remember and be sad.",
+            ],
+        ],
+    },
+    Poem {
+        id: "rossetti-birthday",
+        title: "A Birthday",
+        author: "Christina Rossetti",
+        year: 1862,
+        source: "Goblin Market and Other Poems, via Project Gutenberg",
+        tags: "joy · a minute",
+        stanzas: &[
+            &[
+                "My heart is like a singing bird",
+                "Whose nest is in a water'd shoot;",
+                "My heart is like an apple-tree",
+                "Whose boughs are bent with thickset fruit;",
+                "My heart is like a rainbow shell",
+                "That paddles in a halcyon sea;",
+                "My heart is gladder than all these",
+                "Because my love is come to me.",
+            ],
+            &[
+                "Raise me a dais of silk and down;",
+                "Hang it with vair and purple dyes;",
+                "Carve it in doves and pomegranates,",
+                "And peacocks with a hundred eyes;",
+                "Work it in gold and silver grapes,",
+                "In leaves and silver fleurs-de-lys;",
+                "Because the birthday of my life",
+                "Is come, my love is come to me.",
+            ],
+        ],
+    },
+    Poem {
+        id: "rossetti-wind",
+        title: "Who Has Seen the Wind?",
+        author: "Christina Rossetti",
+        year: 1872,
+        source: "Sing-Song, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "Who has seen the wind?",
+                "Neither I nor you:",
+                "But when the leaves hang trembling,",
+                "The wind is passing through.",
+            ],
+            &[
+                "Who has seen the wind?",
+                "Neither you nor I:",
+                "But when the trees bow down their heads,",
+                "The wind is passing by.",
+            ],
+        ],
+    },
+    Poem {
+        id: "blake-lamb",
+        title: "The Lamb",
+        author: "William Blake",
+        year: 1789,
+        source: "Songs of Innocence and of Experience, via Project Gutenberg",
+        tags: "faith · a minute",
+        stanzas: &[
+            &[
+                "Little Lamb, who made thee?",
+                "Dost thou know who made thee?",
+                "Gave thee life, and bid thee feed,",
+                "By the stream and o'er the mead;",
+                "Gave thee clothing of delight,",
+                "Softest clothing, woolly, bright;",
+                "Gave thee such a tender voice,",
+                "Making all the vales rejoice?",
+                "Little Lamb, who made thee?",
+                "Dost thou know who made thee?",
+            ],
+            &[
+                "Little Lamb, I'll tell thee,",
+                "Little Lamb, I'll tell thee:",
+                "He is called by thy name,",
+                "For He calls Himself a Lamb.",
+                "He is meek, and He is mild;",
+                "He became a little child.",
+                "I a child, and thou a lamb,",
+                "We are called by His name.",
+                "Little Lamb, God bless thee!",
+                "Little Lamb, God bless thee!",
+            ],
+        ],
+    },
+    Poem {
+        id: "blake-rose",
+        title: "The Sick Rose",
+        author: "William Blake",
+        year: 1794,
+        source: "Songs of Innocence and of Experience, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "O Rose, thou art sick!",
+                "The invisible worm",
+                "That flies in the night,",
+                "In the howling storm,",
+            ],
+            &[
+                "Has found out thy bed",
+                "Of crimson joy:",
+                "And his dark secret love",
+                "Does thy life destroy.",
+            ],
+        ],
+    },
+    Poem {
+        id: "blake-sunflower",
+        title: "Ah! Sun-flower",
+        author: "William Blake",
+        year: 1794,
+        source: "Songs of Innocence and of Experience, via Project Gutenberg",
+        tags: "longing · a minute",
+        stanzas: &[
+            &[
+                "Ah, Sun-flower! weary of time,",
+                "Who countest the steps of the Sun:",
+                "Seeking after that sweet golden clime",
+                "Where the traveller's journey is done:",
+            ],
+            &[
+                "Where the Youth pined away with desire,",
+                "And the pale Virgin shrouded in snow:",
+                "Arise from their graves, and aspire",
+                "Where my Sun-flower wishes to go.",
+            ],
+        ],
+    },
+    Poem {
+        id: "burns-rose",
+        title: "A Red, Red Rose",
+        author: "Robert Burns",
+        year: 1794,
+        source: "The Poetical Works of Robert Burns, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "O my Luve's like a red, red rose,",
+                "That's newly sprung in June:",
+                "O my Luve's like the melodie,",
+                "That's sweetly play'd in tune.",
+            ],
+            &[
+                "As fair art thou, my bonnie lass,",
+                "So deep in luve am I;",
+                "And I will luve thee still, my dear,",
+                "Till a' the seas gang dry.",
+            ],
+            &[
+                "Till a' the seas gang dry, my dear,",
+                "And the rocks melt wi' the sun;",
+                "And I will luve thee still, my dear,",
+                "While the sands o' life shall run.",
+            ],
+            &[
+                "And fare thee weel, my only Luve!",
+                "And fare thee weel a while!",
+                "And I will come again, my Luve,",
+                "Tho' it were ten thousand mile!",
+            ],
+        ],
+    },
+    Poem {
+        id: "byron-beauty",
+        title: "She Walks in Beauty",
+        author: "Lord Byron",
+        year: 1815,
+        source: "Hebrew Melodies, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "She walks in beauty, like the night",
+                "Of cloudless climes and starry skies;",
+                "And all that's best of dark and bright",
+                "Meet in her aspect and her eyes:",
+                "Thus mellow'd to that tender light",
+                "Which heaven to gaudy day denies.",
+            ],
+            &[
+                "One shade the more, one ray the less,",
+                "Had half impair'd the nameless grace",
+                "Which waves in every raven tress,",
+                "Or softly lightens o'er her face;",
+                "Where thoughts serenely sweet express",
+                "How pure, how dear their dwelling-place.",
+            ],
+            &[
+                "And on that cheek, and o'er that brow,",
+                "So soft, so calm, yet eloquent,",
+                "The smiles that win, the tints that glow,",
+                "But tell of days in goodness spent,",
+                "A mind at peace with all below,",
+                "A heart whose love is innocent!",
+            ],
+        ],
+    },
+    Poem {
+        id: "tennyson-bar",
+        title: "Crossing the Bar",
+        author: "Alfred Tennyson",
+        year: 1889,
+        source: "Demeter and Other Poems, via Project Gutenberg",
+        tags: "time · a minute",
+        stanzas: &[
+            &[
+                "Sunset and evening star,",
+                "And one clear call for me!",
+                "And may there be no moaning of the bar,",
+                "When I put out to sea,",
+            ],
+            &[
+                "But such a tide as moving seems asleep,",
+                "Too full for sound and foam,",
+                "When that which drew from out the boundless deep",
+                "Turns again home.",
+            ],
+            &[
+                "Twilight and evening bell,",
+                "And after that the dark!",
+                "And may there be no sadness of farewell,",
+                "When I embark;",
+            ],
+            &[
+                "For tho' from out our bourne of Time and Place",
+                "The flood may bear me far,",
+                "I hope to see my Pilot face to face",
+                "When I have crost the bar.",
+            ],
+        ],
+    },
+    Poem {
+        id: "tennyson-eagle",
+        title: "The Eagle",
+        author: "Alfred Tennyson",
+        year: 1851,
+        source: "Poems, via Project Gutenberg",
+        tags: "nature · a minute",
+        stanzas: &[
+            &[
+                "He clasps the crag with crooked hands;",
+                "Close to the sun in lonely lands,",
+                "Ring'd with the azure world, he stands.",
+            ],
+            &[
+                "The wrinkled sea beneath him crawls;",
+                "He watches from his mountain walls,",
+                "And like a thunderbolt he falls.",
+            ],
+        ],
+    },
+    Poem {
+        id: "tennyson-break",
+        title: "Break, Break, Break",
+        author: "Alfred Tennyson",
+        year: 1842,
+        source: "Poems, via Project Gutenberg",
+        tags: "loss · a minute",
+        stanzas: &[
+            &[
+                "Break, break, break,",
+                "On thy cold gray stones, O Sea!",
+                "And I would that my tongue could utter",
+                "The thoughts that arise in me.",
+            ],
+            &[
+                "O well for the fisherman's boy,",
+                "That he shouts with his sister at play!",
+                "O well for the sailor lad,",
+                "That he sings in his boat on the bay!",
+            ],
+            &[
+                "And the stately ships go on",
+                "To their haven under the hill;",
+                "But O for the touch of a vanish'd hand,",
+                "And the sound of a voice that is still!",
+            ],
+            &[
+                "Break, break, break,",
+                "At the foot of thy crags, O Sea!",
+                "But the tender grace of a day that is dead",
+                "Will never come back to me.",
+            ],
+        ],
+    },
+    Poem {
+        id: "shelley-music",
+        title: "Music, When Soft Voices Die",
+        author: "Percy Bysshe Shelley",
+        year: 1824,
+        source: "Posthumous Poems, via Project Gutenberg",
+        tags: "memory · a minute",
+        stanzas: &[
+            &[
+                "Music, when soft voices die,",
+                "Vibrates in the memory;",
+                "Odours, when sweet violets sicken,",
+                "Live within the sense they quicken.",
+            ],
+            &[
+                "Rose leaves, when the rose is dead,",
+                "Are heaped for the beloved's bed;",
+                "And so thy thoughts, when thou art gone,",
+                "Love itself shall slumber on.",
+            ],
+        ],
+    },
+    Poem {
+        id: "stevenson-requiem",
+        title: "Requiem",
+        author: "Robert Louis Stevenson",
+        year: 1887,
+        source: "Underwoods, via Project Gutenberg",
+        tags: "rest · a minute",
+        stanzas: &[
+            &[
+                "Under the wide and starry sky,",
+                "Dig the grave and let me lie.",
+                "Glad did I live and gladly die,",
+                "And I laid me down with a will.",
+            ],
+            &[
+                "This be the verse you grave for me:",
+                "Here he lies where he longed to be;",
+                "Home is the sailor, home from sea,",
+                "And the hunter home from the hill.",
+            ],
+        ],
+    },
+    Poem {
+        id: "whitman-captain",
+        title: "O Captain! My Captain!",
+        author: "Walt Whitman",
+        year: 1865,
+        source: "Leaves of Grass, via Project Gutenberg",
+        tags: "loss · two minutes",
+        stanzas: &[
+            &[
+                "O Captain! my Captain! our fearful trip is done,",
+                "The ship has weather'd every rack, the prize we sought is won,",
+                "The port is near, the bells I hear, the people all exulting,",
+                "While follow eyes the steady keel, the vessel grim and daring;",
+                "But O heart! heart! heart!",
+                "O the bleeding drops of red,",
+                "Where on the deck my Captain lies,",
+                "Fallen cold and dead.",
+            ],
+            &[
+                "O Captain! my Captain! rise up and hear the bells;",
+                "Rise up, for you the flag is flung, for you the bugle trills,",
+                "For you bouquets and ribbon'd wreaths, for you the shores a-crowding,",
+                "For you they call, the swaying mass, their eager faces turning;",
+                "Here Captain! dear father!",
+                "This arm beneath your head!",
+                "It is some dream that on the deck,",
+                "You've fallen cold and dead.",
+            ],
+            &[
+                "My Captain does not answer, his lips are pale and still,",
+                "My father does not feel my arm, he has no pulse nor will,",
+                "The ship is anchor'd safe and sound, its voyage closed and done,",
+                "From fearful trip the victor ship comes in with object won;",
+                "Exult O shores, and ring O bells!",
+                "But I with mournful tread,",
+                "Walk the deck my Captain lies,",
+                "Fallen cold and dead.",
+            ],
+        ],
+    },
+    Poem {
+        id: "whitman-astronomer",
+        title: "When I Heard the Learn'd Astronomer",
+        author: "Walt Whitman",
+        year: 1865,
+        source: "Leaves of Grass, via Project Gutenberg",
+        tags: "stars · a minute",
+        stanzas: &[
+            &[
+                "When I heard the learn'd astronomer,",
+                "When the proofs, the figures, were ranged in columns before me,",
+                "When I was shown the charts and diagrams, to add, divide, and measure them,",
+                "When I sitting heard the astronomer where he lectured with much applause in the lecture-room,",
+                "How soon unaccountable I became tired and sick,",
+                "Till rising and gliding out I wander'd off by myself,",
+                "In the mystical moist night-air, and from time to time,",
+                "Look'd up in perfect silence at the stars.",
+            ],
+        ],
+    },
+    Poem {
+        id: "longfellow-arrow",
+        title: "The Arrow and the Song",
+        author: "Henry Wadsworth Longfellow",
+        year: 1845,
+        source: "The Belfry of Bruges and Other Poems, via Project Gutenberg",
+        tags: "friendship · a minute",
+        stanzas: &[
+            &[
+                "I shot an arrow into the air,",
+                "It fell to earth, I knew not where;",
+                "For, so swiftly it flew, the sight",
+                "Could not follow it in its flight.",
+            ],
+            &[
+                "I breathed a song into the air,",
+                "It fell to earth, I knew not where;",
+                "For who has sight so keen and strong,",
+                "That it can follow the flight of song?",
+            ],
+            &[
+                "Long, long afterward, in an oak",
+                "I found the arrow, still unbroke;",
+                "And the song, from beginning to end,",
+                "I found again in the heart of a friend.",
+            ],
+        ],
+    },
+    Poem {
+        id: "poe-eldorado",
+        title: "Eldorado",
+        author: "Edgar Allan Poe",
+        year: 1849,
+        source: "The Works of Edgar Allan Poe, via Project Gutenberg",
+        tags: "quests · two minutes",
+        stanzas: &[
+            &[
+                "Gaily bedight,",
+                "A gallant knight,",
+                "In sunshine and in shadow,",
+                "Had journeyed long,",
+                "Singing a song,",
+                "In search of Eldorado.",
+            ],
+            &[
+                "But he grew old,",
+                "This knight so bold,",
+                "And o'er his heart a shadow",
+                "Fell as he found",
+                "No spot of ground",
+                "That looked like Eldorado.",
+            ],
+            &[
+                "And, as his strength",
+                "Failed him at length,",
+                "He met a pilgrim shadow;",
+                "\u{201c}Shadow,\u{201d} said he,",
+                "\u{201c}Where can it be,",
+                "This land of Eldorado?\u{201d}",
+            ],
+            &[
+                "\u{201c}Over the Mountains",
+                "Of the Moon,",
+                "Down the Valley of the Shadow,",
+                "Ride, boldly ride,\u{201d}",
+                "The shade replied,",
+                "\u{201c}If you seek for Eldorado!\u{201d}",
+            ],
+        ],
+    },
+    Poem {
+        id: "donne-death",
+        title: "Death, Be Not Proud",
+        author: "John Donne",
+        year: 1633,
+        source: "Poems, via Project Gutenberg",
+        tags: "faith · a minute",
+        stanzas: &[
+            &[
+                "Death, be not proud, though some have called thee",
+                "Mighty and dreadful, for thou art not so;",
+                "For those whom thou think'st thou dost overthrow",
+                "Die not, poor Death, nor yet canst thou kill me.",
+                "From rest and sleep, which but thy pictures be,",
+                "Much pleasure; then from thee much more must flow,",
+                "And soonest our best men with thee do go,",
+                "Rest of their bones, and soul's delivery.",
+                "Thou art slave to fate, chance, kings, and desperate men,",
+                "And dost with poison, war, and sickness dwell,",
+                "And poppy or charms can make us sleep as well",
+                "And better than thy stroke; why swell'st thou then?",
+                "One short sleep past, we wake eternally",
+                "And death shall be no more; Death, thou shalt die.",
+            ],
+        ],
+    },
+    Poem {
+        id: "herrick-rosebuds",
+        title: "To the Virgins, to Make Much of Time",
+        author: "Robert Herrick",
+        year: 1648,
+        source: "Hesperides, via Project Gutenberg",
+        tags: "time · a minute",
+        stanzas: &[
+            &[
+                "Gather ye rosebuds while ye may,",
+                "Old Time is still a-flying;",
+                "And this same flower that smiles today",
+                "Tomorrow will be dying.",
+            ],
+            &[
+                "The glorious lamp of heaven, the sun,",
+                "The higher he's a-getting,",
+                "The sooner will his race be run,",
+                "And nearer he's to setting.",
+            ],
+            &[
+                "That age is best which is the first,",
+                "When youth and blood are warmer;",
+                "But being spent, the worse, and worst",
+                "Times still succeed the former.",
+            ],
+            &[
+                "Then be not coy, but use your time,",
+                "And while ye may, go marry;",
+                "For having lost but once your prime,",
+                "You may forever tarry.",
+            ],
+        ],
+    },
+    Poem {
+        id: "jonson-celia",
+        title: "Song: To Celia",
+        author: "Ben Jonson",
+        year: 1616,
+        source: "The Forest, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "Drink to me only with thine eyes,",
+                "And I will pledge with mine;",
+                "Or leave a kiss but in the cup,",
+                "And I'll not look for wine.",
+                "The thirst that from the soul doth rise",
+                "Doth ask a drink divine;",
+                "But might I of Jove's nectar sup,",
+                "I would not change for thine.",
+            ],
+            &[
+                "I sent thee late a rosy wreath,",
+                "Not so much honouring thee",
+                "As giving it a hope that there",
+                "It could not withered be;",
+                "But thou thereon didst only breathe,",
+                "And sent'st it back to me;",
+                "Since when it grows, and smells, I swear,",
+                "Not of itself, but thee.",
+            ],
+        ],
+    },
+    Poem {
+        id: "marlowe-shepherd",
+        title: "The Passionate Shepherd to His Love",
+        author: "Christopher Marlowe",
+        year: 1600,
+        source: "England's Helicon, via Project Gutenberg",
+        tags: "love · two minutes",
+        stanzas: &[
+            &[
+                "Come live with me and be my love,",
+                "And we will all the pleasures prove,",
+                "That valleys, groves, hills, and fields,",
+                "Woods, or steepy mountain yields.",
+            ],
+            &[
+                "And we will sit upon the rocks,",
+                "Seeing the shepherds feed their flocks,",
+                "By shallow rivers to whose falls",
+                "Melodious birds sing madrigals.",
+            ],
+            &[
+                "And I will make thee beds of roses",
+                "And a thousand fragrant posies,",
+                "A cap of flowers, and a kirtle",
+                "Embroidered all with leaves of myrtle;",
+            ],
+            &[
+                "A gown made of the finest wool",
+                "Which from our pretty lambs we pull;",
+                "Fair lined slippers for the cold,",
+                "With buckles of the purest gold;",
+            ],
+            &[
+                "A belt of straw and ivy buds,",
+                "With coral clasps and amber studs:",
+                "And if these pleasures may thee move,",
+                "Come live with me, and be my love.",
+            ],
+            &[
+                "The shepherds' swains shall dance and sing",
+                "For thy delight each May morning:",
+                "If these delights thy mind may move,",
+                "Then live with me and be my love.",
+            ],
+        ],
+    },
+    Poem {
+        id: "hunt-jenny",
+        title: "Jenny Kiss'd Me",
+        author: "Leigh Hunt",
+        year: 1838,
+        source: "The Monthly Chronicle, via Project Gutenberg",
+        tags: "joy · a minute",
+        stanzas: &[
+            &[
+                "Jenny kiss'd me when we met,",
+                "Jumping from the chair she sat in;",
+                "Time, you thief, who love to get",
+                "Sweets into your list, put that in!",
+                "Say I'm weary, say I'm sad,",
+                "Say that health and wealth have miss'd me,",
+                "Say I'm growing old, but add,",
+                "Jenny kiss'd me.",
+            ],
+        ],
+    },
+    Poem {
+        id: "browning-count",
+        title: "How Do I Love Thee?",
+        author: "Elizabeth Barrett Browning",
+        year: 1850,
+        source: "Sonnets from the Portuguese, via Project Gutenberg",
+        tags: "love · a minute",
+        stanzas: &[
+            &[
+                "How do I love thee? Let me count the ways.",
+                "I love thee to the depth and breadth and height",
+                "My soul can reach, when feeling out of sight",
+                "For the ends of Being and ideal Grace.",
+                "I love thee to the level of everyday's",
+                "Most quiet need, by sun and candle-light.",
+                "I love thee freely, as men strive for Right;",
+                "I love thee purely, as they turn from Praise.",
+                "I love thee with the passion put to use",
+                "In my old griefs, and with my childhood's faith.",
+                "I love thee with a love I seemed to lose",
+                "With my lost saints, I love thee with the breath,",
+                "Smiles, tears, of all my life! and, if God choose,",
+                "I shall but love thee better after death.",
+            ],
+        ],
+    },
+    Poem {
+        id: "dickinson-success",
+        title: "Success Is Counted Sweetest",
+        author: "Emily Dickinson",
+        year: 1878,
+        source: "Poems, First Series, via Project Gutenberg",
+        tags: "longing · a minute",
+        stanzas: &[
+            &[
+                "Success is counted sweetest",
+                "By those who ne'er succeed.",
+                "To comprehend a nectar",
+                "Requires sorest need.",
+            ],
+            &[
+                "Not one of all the purple host",
+                "Who took the flag to-day",
+                "Can tell the definition,",
+                "So clear, of victory,",
+            ],
+            &[
+                "As he, defeated, dying,",
+                "On whose forbidden ear",
+                "The distant strains of triumph",
+                "Break, agonized and clear!",
+            ],
+        ],
+    },
+    Poem {
+        id: "dickinson-moor",
+        title: "I Never Saw a Moor",
+        author: "Emily Dickinson",
+        year: 1890,
+        source: "Poems, First Series, via Project Gutenberg",
+        tags: "faith · a minute",
+        stanzas: &[
+            &[
+                "I never saw a moor,",
+                "I never saw the sea;",
+                "Yet know I how the heather looks,",
+                "And what a wave must be.",
+            ],
+            &[
+                "I never spoke with God,",
+                "Nor visited in heaven;",
+                "Yet certain am I of the spot",
+                "As if the chart were given.",
+            ],
+        ],
+    },
+    Poem {
+        id: "lear-owl",
+        title: "The Owl and the Pussy-cat",
+        author: "Edward Lear",
+        year: 1871,
+        source: "Nonsense Songs, Stories, Botany, and Alphabets, via Project Gutenberg",
+        tags: "nonsense · two minutes",
+        stanzas: &[
+            &[
+                "The Owl and the Pussy-cat went to sea",
+                "In a beautiful pea-green boat,",
+                "They took some honey, and plenty of money,",
+                "Wrapped up in a five-pound note.",
+                "The Owl looked up to the stars above,",
+                "And sang to a small guitar,",
+                "\u{201c}O lovely Pussy! O Pussy, my love,",
+                "What a beautiful Pussy you are,",
+                "You are,",
+                "You are!",
+                "What a beautiful Pussy you are!\u{201d}",
+            ],
+            &[
+                "Pussy said to the Owl, \u{201c}You elegant fowl!",
+                "How charmingly sweet you sing!",
+                "O let us be married! too long we have tarried:",
+                "But what shall we do for a ring?\u{201d}",
+                "They sailed away, for a year and a day,",
+                "To the land where the Bong-tree grows,",
+                "And there in a wood a Piggy-wig stood,",
+                "With a ring at the end of his nose,",
+                "His nose,",
+                "His nose,",
+                "With a ring at the end of his nose.",
+            ],
+            &[
+                "\u{201c}Dear Pig, are you willing to sell for one shilling",
+                "Your ring?\u{201d} Said the Piggy, \u{201c}I will.\u{201d}",
+                "So they took it away, and were married next day",
+                "By the Turkey who lives on the hill.",
+                "They dined on mince, and slices of quince,",
+                "Which they ate with a runcible spoon;",
+                "And hand in hand, on the edge of the sand,",
+                "They danced by the light of the moon,",
+                "The moon,",
+                "The moon,",
+                "They danced by the light of the moon.",
+            ],
+        ],
+    },
 ];
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, Hash)]
 struct OnlinePoem {
     title: String,
     author: String,
     #[serde(default)]
     lines: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "count_text")]
     linecount: String,
+}
+
+/// `PoetryDB` sends a poem's line count as a string for some poems and as a
+/// number for others, Emily Dickinson's among them. Read as a string only, one
+/// numeric count failed the whole list, so searching for the most read poet in
+/// the collection reported that it held nothing by her.
+fn count_text<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Count {
+        Text(String),
+        Number(u64),
+    }
+    Ok(match Count::deserialize(deserializer)? {
+        Count::Text(text) => text,
+        Count::Number(number) => number.to_string(),
+    })
+}
+
+/// Orders titles the way a reader counts: "Sonnet 2" before "Sonnet 10",
+/// where a plain comparison of the text put every sonnet in the teens between
+/// the first and the second.
+fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
+    fn chunks(text: &str) -> Vec<(bool, &str)> {
+        let mut chunks = Vec::new();
+        let mut start = 0;
+        let mut digits = None;
+        for (index, character) in text.char_indices() {
+            let digit = character.is_ascii_digit();
+            if digits != Some(digit) {
+                if let Some(was) = digits {
+                    chunks.push((was, &text[start..index]));
+                }
+                start = index;
+                digits = Some(digit);
+            }
+        }
+        if let Some(was) = digits {
+            chunks.push((was, &text[start..]));
+        }
+        chunks
+    }
+    // Quotation marks and apostrophes that open a title are not where it
+    // files: "Whose are the little beds" belongs under W.
+    fn file(text: &str) -> &str {
+        text.trim_start_matches(|c: char| !c.is_alphanumeric())
+    }
+    let (left, right) = (chunks(file(a)), chunks(file(b)));
+    for ((left_digits, left), (right_digits, right)) in left.iter().zip(&right) {
+        let order = if *left_digits && *right_digits {
+            let (l, r) = (left.trim_start_matches('0'), right.trim_start_matches('0'));
+            l.len().cmp(&r.len()).then_with(|| l.cmp(r))
+        } else {
+            left.to_lowercase().cmp(&right.to_lowercase())
+        };
+        if order != std::cmp::Ordering::Equal {
+            return order;
+        }
+    }
+    left.len().cmp(&right.len())
+}
+
+/// Where a search looks: everywhere, or in one field.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Scope {
+    #[default]
+    Anything,
+    Title,
+    Poet,
+    Line,
+}
+
+impl Scope {
+    const ALL: [(Self, &'static str, &'static str); 4] = [
+        (Self::Anything, "scope-any", "Anything"),
+        (Self::Title, "scope-title", "Title"),
+        (Self::Poet, "scope-poet", "Poet"),
+        (Self::Line, "scope-line", "Line"),
+    ];
+
+    const fn fields(self) -> &'static str {
+        match self {
+            Self::Anything => "author,title,lines",
+            Self::Title => "title",
+            Self::Poet => "author",
+            Self::Line => "lines",
+        }
+    }
+}
+
+/// Poets to start from, offered while the search box is empty. All of them
+/// are well represented in `PoetryDB`, so a tap never lands on an empty page.
+const SUGGESTED_POETS: [&str; 6] = [
+    "Emily Dickinson",
+    "William Blake",
+    "John Keats",
+    "Christina Rossetti",
+    "Walt Whitman",
+    "William Shakespeare",
+];
+
+/// "a minute", "three minutes": how long a poem takes, at a reading pace of
+/// about twenty lines a minute aloud.
+fn reading_time(lines: &str) -> String {
+    let lines = lines.trim().parse::<u32>().unwrap_or(0);
+    match lines.div_ceil(20).max(1) {
+        1 => "a minute".to_owned(),
+        2 => "two minutes".to_owned(),
+        3 => "three minutes".to_owned(),
+        4 => "four minutes".to_owned(),
+        minutes => format!("{minutes} minutes"),
+    }
+}
+
+#[derive(Clone, Debug)]
+struct OnlineLine {
+    text: String,
+    stanza_start: bool,
+}
+
+type OnlinePages = Vec<Vec<OnlineLine>>;
+/// A bundled poem's pages, with the poem and panel they were measured for and
+/// the size its verse is set at.
+type PoemLayout = (
+    usize,
+    kobo_ui::DisplayMetrics,
+    kobo_ui::TextScale,
+    Vec<Vec<VerseRun>>,
+);
+type OnlineLayout = (kobo_sdk::DisplayMetrics, u64, OnlinePages);
+
+#[derive(Clone)]
+struct PoemRow {
+    section: Option<String>,
+    action: String,
+    title: String,
+    detail: String,
+    glyph: Glyph,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -208,7 +1407,49 @@ struct Saved {
     #[serde(default)]
     favorites: BTreeSet<String>,
     online_favorites: Vec<OnlinePoem>,
+    /// Written by a sleep-screen setting that never reached the sleep screen.
+    ///
+    /// The runtime has no way for an application to draw while the reader
+    /// sleeps, so the setting was a switch wired to nothing and is gone. The
+    /// field stays so a reader who goes back to an earlier version still has
+    /// their favourites read back.
+    #[serde(default)]
     sleep: bool,
+    /// Today's poem from `PoetryDB`, and the day it was chosen for.
+    #[serde(default)]
+    daily: Option<DailyPoem>,
+}
+
+/// A poem fetched for one day, kept so the day's poem is the same poem all
+/// day and still there when the reader goes offline.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct DailyPoem {
+    day: (u16, u8, u8),
+    poem: OnlinePoem,
+}
+
+/// Lengths a daily poem is drawn from, so it is a poem for a page or two and
+/// never one of `PoetryDB`'s thousand line epics.
+const DAILY_LENGTHS: [u16; 5] = [12, 14, 16, 20, 24];
+
+/// A ceiling on what is accepted as a daily poem, whatever the service sends.
+const MAX_DAILY_LINES: usize = 60;
+
+/// Asks `PoetryDB` for one poem of a readable length. A random one, so each
+/// reader meets a different poem from the thousands it holds rather than the
+/// same few bundled ones on rotation.
+fn daily_task(day: (u16, u8, u8)) -> Task {
+    let (year, month, date) = day;
+    let length = DAILY_LENGTHS[daily_index(year, month, date) % DAILY_LENGTHS.len()];
+    Task::Fetch {
+        url: format!(
+            "https://poetrydb.org/linecount,random/{length};1/author,title,lines,linecount"
+        ),
+        offset: 0,
+        max_bytes: SEARCH_LIMIT,
+        credential: None,
+        headers: vec![Header::new("User-Agent", USER_AGENT)],
+    }
 }
 
 /// What the shelf wrote before poems had names: favourites as positions.
@@ -230,6 +1471,28 @@ struct LegacySaved {
 /// line, which is what a printed book of verse leaves.
 const STANZA_AIR: u16 = 75;
 
+/// Verse leading, as a percentage of the reading face's line height.
+const VERSE_LEADING: u16 = 88;
+
+/// The size verse is set at: one step above whatever the reader chose.
+///
+/// A poem is a page looked at rather than moved through, and these are short
+/// lines with wide margins either side, so verse carries a step more than
+/// prose would. It is a step above the reader's own setting rather than a
+/// fixed size, because a fixed one is an override: a reader who asked for the
+/// smallest type got three steps more than they asked for, and at that size
+/// a sonnet no longer fits the panel it is measured against.
+///
+/// Pagination is measured at this size too. A page measured at one size and
+/// set at another loses its last lines.
+///
+/// The step is given back when it is the only thing splitting a short poem:
+/// see [`Verses::poem_pages`].
+fn poem_scale(context: &Context) -> kobo_ui::TextScale {
+    let chosen = context.metrics().text_scale;
+    chosen.larger().unwrap_or(chosen)
+}
+
 /// The lines of one stanza that belong on one page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VerseRun {
@@ -248,8 +1511,10 @@ enum View {
     Search,
     Results,
     Online,
-    Settings,
 }
+
+/// The middle of a poem's page.
+const POEM_MENU: &str = "poem-menu";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Pending {
@@ -261,10 +1526,28 @@ struct Verses {
     view: View,
     poem: usize,
     online: Option<usize>,
+    online_page: usize,
+    online_layout: std::cell::RefCell<Option<OnlineLayout>>,
+    /// The pages of the bundled poem last measured, and what they were
+    /// measured for. Paging lays each page out to see what fits, which is
+    /// worth doing once per poem and panel rather than on every repaint of a
+    /// single core reader.
+    poem_layout: std::cell::RefCell<Option<PoemLayout>>,
+    browse_page: usize,
+    results_page: usize,
+    online_from: View,
+    card_from: View,
     saved: Saved,
-    keyboard: Keyboard,
+    /// The words of a search, typed on the reader's own keyboard.
+    entry: TextEntry,
     results: Vec<OnlinePoem>,
+    /// Where the next search looks, and what the last one asked for.
+    scope: Scope,
+    query: String,
     task: Option<TaskId>,
+    /// The fetch for today's poem, separate from searches so a search does
+    /// not cancel it and it does not hold up a search.
+    daily_task: Option<TaskId>,
     pending: Option<Pending>,
     notice: Option<String>,
     loaded: bool,
@@ -278,12 +1561,22 @@ struct Verses {
     day: Option<(u16, u8, u8)>,
     /// A card on its way to a paired computer.
     export: Option<kobo_sdk::exports::Export>,
+    /// The card being saved, drawn small, and the poem it was made from.
+    card: Option<(Option<kobo_sdk::TilePicture>, String)>,
     /// Whether a favourite is still waiting for storage to confirm it.
     ///
     /// Marking a poem used to write and walk away. A write that failed took
     /// the favourite with it and said nothing, so a reader found their poem
     /// unmarked the next time they opened the shelf and had no idea why.
     saving: bool,
+    /// The favourites as storage last held them, while a write of them is
+    /// unanswered, and how many such writes there are. A refused write puts
+    /// them back: the heart and the shelf used to keep the change until the
+    /// next start, when it quietly vanished.
+    before_write: Option<Vec<u8>>,
+    writes: u8,
+    /// Whether the panel a tap in the middle of a poem opens is up.
+    poem_menu: bool,
 }
 
 impl Default for Verses {
@@ -292,23 +1585,42 @@ impl Default for Verses {
             view: View::Today,
             poem: poem_for_today(reader_clock().as_ref()),
             online: None,
+            online_page: 0,
+            online_layout: std::cell::RefCell::new(None),
+            poem_layout: std::cell::RefCell::new(None),
+            browse_page: 0,
+            results_page: 0,
+            online_from: View::Results,
+            card_from: View::Today,
             saved: Saved::default(),
-            keyboard: Keyboard::new(),
+            entry: TextEntry::new().opened_by(SEARCH_FIELD),
             results: Vec::new(),
+            scope: Scope::Anything,
+            query: String::new(),
             task: None,
+            daily_task: None,
             pending: None,
             notice: None,
             loaded: false,
             poem_page: 0,
             export: None,
+            card: None,
             day: reader_clock()
                 .now()
                 .ok()
                 .and_then(Snapshot::date)
                 .map(|date| (date.year, date.month, date.day)),
             saving: false,
+            before_write: None,
+            writes: 0,
+            poem_menu: false,
         }
     }
+}
+
+/// The name a poet is filed under: the last word of how they are credited.
+fn surname(author: &str) -> &str {
+    author.rsplit(' ').next().unwrap_or(author)
 }
 
 fn daily_index(year: u16, month: u8, day: u8) -> usize {
@@ -330,26 +1642,13 @@ fn poem_for_today(clock: &dyn Clock) -> usize {
         .map_or(0, |date| daily_index(date.year, date.month, date.day))
 }
 
-/// The reader's clock, at the offset the runtime was started with.
+/// The reader's clock, on the reader's own day.
+///
+/// The SDK's, which takes the offset the runtime hands every application and
+/// never fails, so the day a poem is chosen for is the day on the status bar.
 fn reader_clock() -> Box<dyn Clock> {
-    let minutes = std::env::var("KOBO_UTC_OFFSET_MINUTES")
-        .ok()
-        .and_then(|value| value.parse::<i16>().ok())
-        .unwrap_or(0);
-    SystemClock::new(minutes)
-        .or_else(|_| SystemClock::new(0))
-        .map_or_else(
-            |_| Box::new(ManualClock::new(EPOCH).expect("a valid fixed clock")) as Box<dyn Clock>,
-            |clock| Box::new(clock) as Box<dyn Clock>,
-        )
+    Box::new(SystemClock::reader())
 }
-
-/// A clock that cannot be read is not a reason to refuse to draw a poem.
-const EPOCH: Snapshot = Snapshot {
-    unix_millis: 0,
-    monotonic_millis: 0,
-    utc_offset_minutes: 0,
-};
 
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -366,12 +1665,8 @@ fn escape(text: &str) -> String {
     out
 }
 
-fn search_task(query: &str, author_only: bool) -> Task {
-    let fields = if author_only {
-        "author"
-    } else {
-        "author,title,lines"
-    };
+fn search_task(query: &str, scope: Scope) -> Task {
+    let fields = scope.fields();
     Task::Fetch {
         url: format!(
             "https://poetrydb.org/{fields}/{}/author,title,linecount",
@@ -400,160 +1695,444 @@ fn poem_task(title: &str) -> Task {
 impl Verses {
     /// One page of a poem, set the way a poem is set.
     ///
-    /// The whole thing used to be handed over as one block of text with the
-    /// poet's name and the word "Today" pushed into the top of it, in the same
-    /// face and size as the verse, so the page opened with two lines that were
-    /// not part of the poem. The lines are centred on the page now, a stanza
-    /// keeps the space the poet put after it, and who wrote it and where it
-    /// comes from sit under the poem rather than in it.
+    /// The title and the poet head the first page in the display serif, and
+    /// the poem follows flush left in the book face, a stanza to a paragraph
+    /// with the poet's space between stanzas and none between their lines.
+    /// Where it came from closes the last page. A poem that fits on one page
+    /// sits in the middle of it: hung from the top it left half the panel
+    /// empty beneath twelve lines, which read as a page that had failed to
+    /// load the rest.
     fn local_poem(&self, context: &Context) -> Screen {
-        let poem = CORPUS[self.poem];
-        let pages = self.poem_pages(context);
+        let (scale, pages) = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
-        let mut screen = ScreenBuilder::new("verses-poem").top_bar(poem.title);
+        self.poem_page_screen(&pages[page], page, pages.len(), scale)
+    }
+
+    fn poem_page_screen(
+        &self,
+        runs: &[VerseRun],
+        page: usize,
+        count: usize,
+        scale: kobo_ui::TextScale,
+    ) -> Screen {
+        let poem = CORPUS[self.poem];
+        let mut screen = ScreenBuilder::new("verses-poem").top_bar(if self.view == View::Today {
+            "Today's poem"
+        } else {
+            poem.author
+        });
         if self.view == View::Today {
             screen = screen.top_bar_glyph("browse", "Browse", Glyph::Grid);
         }
-        screen = screen.top_bar_glyph(
-            "favorite",
-            if self.saved.favorites.contains(CORPUS[self.poem].id) {
-                "Remove favorite"
-            } else {
-                "Favorite"
-            },
-            Glyph::Heart,
-        );
-        if self.view == View::Today {
-            screen = screen.secondary("Today");
+        let centred = count == 1;
+        if centred {
+            screen = screen.fill();
         }
-        screen = screen.reading(true);
-        for (index, run) in pages[page].iter().enumerate() {
-            for (line, text) in poem.stanzas[run.stanza][run.from..run.to]
-                .iter()
-                .enumerate()
-            {
-                screen = screen.rich_text(
-                    (*text).to_owned(),
-                    Vec::new(),
-                    kobo_sdk::ParagraphPresentation {
-                        alignment: kobo_sdk::ParagraphAlignment::Center,
-                        // The space a poet leaves between stanzas, and none
-                        // between the lines inside one. A stanza carried over
-                        // from the page before opens without one. The unit is
-                        // hundredths of an em, so a whole line of air is 100
-                        // and the 1 this first carried was invisible.
-                        margin_before_em: if index > 0 && line == 0 && run.from == 0 {
-                            STANZA_AIR
-                        } else {
-                            0
-                        },
-                        ..kobo_sdk::ParagraphPresentation::default()
-                    },
-                );
-            }
-        }
-        // Who wrote it, when, and which edition this text is taken from. A
-        // reader who meets a poem here can go and find it.
-        if page + 1 == pages.len() {
-            screen = screen.secondary(format!("{} · {} · {}", poem.author, poem.year, poem.source));
-        }
-        // The card sits at the foot rather than in the bar: the bar holds two
-        // controls at most, for the reason the platform gives, and a card is
-        // something a reader does with a poem they have just read rather than
-        // chrome that belongs beside its title.
-        if pages.len() > 1 {
+        if page == 0 {
             screen = screen
-                .page_position(
-                    u16::try_from(page + 1).unwrap_or(1),
-                    u16::try_from(pages.len()).unwrap_or(1),
-                )
-                .action_bar([
-                    ("poem-previous", "Previous"),
-                    ("card", "Quote card"),
-                    ("poem-next", "Next"),
-                ]);
-        } else {
-            screen = screen.action_bar([("card", "Quote card")]);
+                .heading_at_level(2, poem.title)
+                .secondary(format!("{} · {}", poem.author, poem.year));
         }
-        screen.build()
+        screen = screen.reading(true).text_scale(scale);
+        screen = set_verse(screen, poem, runs);
+        if page + 1 == count {
+            screen = screen.secondary(format!("From {}", poem.source));
+        }
+        if centred {
+            screen = screen.fill();
+        }
+        // A poem is read the way a book is: the sides of the page turn it,
+        // the middle opens what can be done with it, and the bar stays out
+        // of sight until a touch at the top calls it back over the page.
+        screen = screen
+            .page_turns("poem-previous", "poem-next")
+            .reading_menu(POEM_MENU);
+        // A poem that runs on says how far it runs, as a book's page does.
+        if count > 1 {
+            screen = screen.page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(count).unwrap_or(u16::MAX),
+            );
+        }
+        self.with_poem_menu(screen, poem.title)
+            .build()
+            .with_auto_hidden_top_bar(true)
     }
 
-    /// Which lines fit on a page, measured against the panel.
+    /// The panel a tap in the middle of a poem opens.
     ///
-    /// A page is a list of runs, each a stanza and the lines of it that belong
-    /// on this page. Breaks are taken at stanza boundaries wherever the panel
-    /// allows, because a stanza is the unit a poem is written in. A stanza too
-    /// tall for one page is carried over rather than dropped: a fourteen line
-    /// sonnet does not fit a six inch panel at the larger text settings, and
-    /// Ozymandias was drawn through the bottom edge until this said so.
-    ///
-    /// Measured a line at a time rather than a stanza at a time. Handing the
-    /// poem over as prose and counting paragraphs put four lines of The Tiger
-    /// under the bottom edge at the smallest text size, because prose wrapping
-    /// says nothing about how many separate verse lines fit: each line here is
-    /// its own paragraph on the screen, so each line is its own paragraph in
-    /// the measurement too.
-    fn poem_pages(&self, context: &Context) -> Vec<Vec<VerseRun>> {
-        let poem = CORPUS[self.poem];
-        let one_per_paragraph = poem.lines().collect::<Vec<_>>().join("\n\n");
-        let measured = context.paginate_reading(&one_per_paragraph, true);
-        // The fullest page the panel offered, less the line the day's label or
-        // the attribution takes on the first and last pages. Taking the
-        // smallest instead read the remainder page as the panel's capacity and
-        // put one stanza on each of six pages with four fifths of every page
-        // empty.
-        let capacity = measured
-            .iter()
-            .map(Vec::len)
-            .max()
-            .unwrap_or(1)
-            .saturating_sub(1)
-            .max(1);
+    /// Making a card used to be a button under every page of every poem,
+    /// which cost a line of verse on each one to offer something done once
+    /// in a while.
+    fn with_poem_menu(&self, screen: ScreenBuilder, title: &str) -> ScreenBuilder {
+        if !self.poem_menu {
+            return screen;
+        }
+        let favorite = self.is_favorite();
+        // A refused favourite is said here, beside the heart it undid. A
+        // fetched poem already carries it on its page.
+        let refused = self
+            .notice
+            .as_deref()
+            .filter(|notice| notice.contains("favourite") && self.current_online().is_none());
+        screen.modal(title.to_owned(), |panel| {
+            // The heart sits where its state can be drawn: in a row of
+            // controls it is filled for a favourite. In the bar it looked the
+            // same either way, and only a label nobody sees changed.
+            let panel = panel
+                .controls(
+                    1,
+                    [(
+                        "favorite",
+                        if favorite {
+                            "Remove favorite"
+                        } else {
+                            "Favorite"
+                        },
+                        Glyph::Heart,
+                    )],
+                )
+                .control_on("favorite", favorite);
+            let panel = match refused {
+                Some(notice) => panel.banner(BannerLevel::Attention, notice),
+                None => panel,
+            };
+            panel.button("card", "Make a quote card")
+        })
+    }
 
+    /// Which lines go on which page, measured against the panel, and the size
+    /// they are set at.
+    ///
+    /// Each page is filled by laying it out and keeping whatever still fits,
+    /// a whole stanza at a time, so the measure is the page the reader will
+    /// see rather than an estimate of it. The estimate this replaced held a
+    /// line back for the attribution, charged every gap between stanzas a
+    /// whole line, and moved a stanza that did not fit the remainder to the
+    /// next page: Hope, twelve lines in three stanzas, came out as two pages
+    /// with four lines on the second and the bottom half of the first empty.
+    ///
+    /// A poem that fits one page is measured as the one page it is, without
+    /// the page-position strip a longer poem carries. Measured as the first
+    /// page of two, a sonnet lost its closing couplet to a strip it would
+    /// never have had, and read eleven lines and then three. If the poem fits
+    /// only at the reader's own size rather than a step above it, it is set
+    /// at their size: a sonnet whole is worth more than a sonnet large.
+    ///
+    /// A stanza is only split when it is taller than a page on its own, which
+    /// a long one is at the largest text sizes, and then line by line so
+    /// nothing is lost.
+    fn poem_pages(&self, context: &Context) -> (kobo_ui::TextScale, Vec<Vec<VerseRun>>) {
+        let metrics = context.metrics();
+        if let Some((poem, measured, scale, pages)) = self.poem_layout.borrow().as_ref() {
+            if *poem == self.poem && *measured == metrics {
+                return (*scale, pages.clone());
+            }
+        }
+        let (scale, pages) = self.measure_poem_pages(context);
+        *self.poem_layout.borrow_mut() = Some((self.poem, metrics, scale, pages.clone()));
+        (scale, pages)
+    }
+
+    fn page_fits(context: &Context, screen: &Screen) -> bool {
+        // Measured with the chrome it is drawn with: a reading screen has no
+        // status band, and its bar, when called back, lies over the page.
+        let chrome =
+            kobo_sdk::Chrome::for_screen(screen, false, kobo_sdk::Chrome::measuring(true).status);
+        screen
+            .diagnostics(&context.metrics(), &chrome)
+            .issues
+            .is_empty()
+    }
+
+    fn measure_poem_pages(&self, context: &Context) -> (kobo_ui::TextScale, Vec<Vec<VerseRun>>) {
+        let poem = CORPUS[self.poem];
+        let whole: Vec<VerseRun> = poem
+            .stanzas
+            .iter()
+            .enumerate()
+            .map(|(stanza, lines)| VerseRun {
+                stanza,
+                from: 0,
+                to: lines.len(),
+            })
+            .collect();
+        let larger = poem_scale(context);
+        let own = context.metrics().text_scale;
+        for scale in [larger, own] {
+            if Self::page_fits(context, &self.poem_page_screen(&whole, 0, 1, scale)) {
+                return (scale, vec![whole]);
+            }
+        }
+        let scale = larger;
+        // Measured as a page of a longer poem, with the page position and the
+        // attribution both present, so a page that fits here fits wherever it
+        // lands.
+        let fits = |runs: &[VerseRun], first: bool| {
+            Self::page_fits(
+                context,
+                &self.poem_page_screen(runs, usize::from(!first), 2, scale),
+            )
+        };
         let mut pages: Vec<Vec<VerseRun>> = Vec::new();
         let mut current: Vec<VerseRun> = Vec::new();
-        let mut used = 0usize;
         for (stanza, lines) in poem.stanzas.iter().enumerate() {
-            let mut from = 0usize;
+            let mut from = 0;
             while from < lines.len() {
-                let gap = usize::from(!current.is_empty());
-                let room = capacity.saturating_sub(used + gap);
-                let left = lines.len() - from;
-                // Start a new page rather than split a stanza that would fit
-                // whole on one. Splitting whenever the current page happened
-                // to be nearly full left a single line stranded at the foot.
-                let splittable = left > capacity;
-                if !current.is_empty() && (room == 0 || (left > room && !splittable)) {
-                    pages.push(std::mem::take(&mut current));
-                    used = 0;
-                    continue;
-                }
-                let take = left.min(room.max(1));
-                used += take + gap;
-                current.push(VerseRun {
+                let first = pages.is_empty();
+                let mut whole = current.clone();
+                whole.push(VerseRun {
                     stanza,
                     from,
-                    to: from + take,
+                    to: lines.len(),
                 });
-                from += take;
+                if fits(&whole, first) {
+                    current = whole;
+                    break;
+                }
+                if !current.is_empty() {
+                    pages.push(std::mem::take(&mut current));
+                    continue;
+                }
+                // Alone on a page and still too tall: take as many lines as
+                // fit, and never fewer than one, so the poem always moves on.
+                let mut to = from + 1;
+                while to < lines.len()
+                    && fits(
+                        &[VerseRun {
+                            stanza,
+                            from,
+                            to: to + 1,
+                        }],
+                        first,
+                    )
+                {
+                    to += 1;
+                }
+                // Shared out evenly over the pages it needs, rather than
+                // filling the first and leaving the last with a couplet. Every
+                // share is no longer than what was just measured to fit.
+                let left = lines.len() - from;
+                let share = left.div_ceil(left.div_ceil(to - from));
+                let to = from + share;
+                pages.push(vec![VerseRun { stanza, from, to }]);
+                from = to;
             }
         }
         if !current.is_empty() {
             pages.push(current);
         }
+        // Packed as the first of several, a page carries no attribution. It
+        // only comes out as one page when the whole poem did not fit as one,
+        // with its attribution, so the last stanza (or, alone, the last line)
+        // goes over, rather than be drawn under the attribution it left no
+        // room for.
+        if pages.len() == 1 {
+            let page = &mut pages[0];
+            let moved = if page.len() > 1 {
+                page.pop()
+            } else {
+                page.first_mut()
+                    .filter(|run| run.to - run.from > 1)
+                    .map(|run| {
+                        run.to -= 1;
+                        VerseRun {
+                            stanza: run.stanza,
+                            from: run.to,
+                            to: run.to + 1,
+                        }
+                    })
+            };
+            pages.extend(moved.map(|run| vec![run]));
+        }
         if pages.is_empty() {
-            vec![vec![VerseRun {
+            pages.push(vec![VerseRun {
                 stanza: 0,
                 from: 0,
                 to: poem.stanzas.first().map_or(0, |lines| lines.len()),
-            }]]
-        } else {
-            pages
+            }]);
         }
+        (scale, pages)
     }
 
-    fn online_poem(&self) -> Screen {
-        let Some(index) = self.online else {
+    fn online_prefix(&self, context: &Context, poem: &OnlinePoem, page: usize) -> ScreenBuilder {
+        let today = self.view == View::Today;
+        let mut screen = ScreenBuilder::new("verses-online").top_bar(if today {
+            "Today's poem".to_owned()
+        } else {
+            context.clamped_row(&poem.author, 1, false)
+        });
+        screen = if today {
+            screen.top_bar_glyph("browse", "Browse", Glyph::Grid)
+        } else {
+            screen.top_bar_glyph("more-by-author", "More by this poet", Glyph::Person)
+        };
+        if let Some(notice) = &self.notice {
+            screen = screen.banner(BannerLevel::Attention, notice);
+        }
+        if page == 0 {
+            // The same head as a bundled poem: its title in the display serif
+            // and who wrote it beneath, instead of the title squeezed into the
+            // bar and the poet set as the first line of the page.
+            screen = screen
+                .heading_at_level(2, context.clamped_row(&poem.title, 2, true))
+                .secondary(context.clamped_row(&poem.author, 2, false));
+        }
+        screen.reading(true)
+    }
+
+    fn online_page_screen(
+        &self,
+        context: &Context,
+        poem: &OnlinePoem,
+        lines: &[OnlineLine],
+        page: usize,
+        count: usize,
+    ) -> Screen {
+        let mut screen = self.online_prefix(context, poem, page);
+        screen = set_online_verse(screen, lines);
+        if page + 1 == count {
+            screen = screen.secondary("From PoetryDB");
+        }
+        screen = screen
+            .page_turns("online-previous", "online-next")
+            .reading_menu(POEM_MENU);
+        if count > 1 {
+            screen = screen.page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(count).unwrap_or(u16::MAX),
+            );
+        }
+        // A fetched poem makes a card as a bundled one does: today's poem
+        // used to lose the card the day it began to come from PoetryDB.
+        self.with_poem_menu(screen, &poem.title)
+            .build()
+            .with_auto_hidden_top_bar(true)
+    }
+
+    /// Keep verse lines and stanza gaps, measuring the same rich-text nodes
+    /// the reader sees. Cache the result so each page turn stays cheap.
+    ///
+    /// A poem that fits one page is one page, measured as that page rather
+    /// than as the first of several. Otherwise a stanza moves to the next
+    /// page whole when it does not fit the rest of this one, and is cut line
+    /// by line only when it is taller than a page by itself. Filling every
+    /// page to the last line it could hold set the closing couplet of a
+    /// sonnet on a page of its own.
+    fn online_pages(&self, context: &Context, poem: &OnlinePoem) -> OnlinePages {
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        poem.hash(&mut hash);
+        self.notice.hash(&mut hash);
+        let key = hash.finish();
+        if let Some((metrics, saved_key, pages)) = self.online_layout.borrow().as_ref() {
+            if *metrics == context.metrics() && *saved_key == key {
+                return pages.clone();
+            }
+        }
+        let mut pending = std::collections::VecDeque::new();
+        let mut stanza_start = false;
+        for text in &poem.lines {
+            if text.trim().is_empty() {
+                stanza_start = true;
+                continue;
+            }
+            pending.push_back(OnlineLine {
+                text: text.clone(),
+                stanza_start,
+            });
+            stanza_start = false;
+        }
+        let metrics = context.metrics();
+        let all: Vec<OnlineLine> = pending.iter().cloned().collect();
+        if !all.is_empty()
+            && Self::page_fits(context, &self.online_page_screen(context, poem, &all, 0, 1))
+        {
+            let pages = vec![all];
+            *self.online_layout.borrow_mut() = Some((metrics, key, pages.clone()));
+            return pages;
+        }
+        // Each page is the page the reader will see, laid out and kept while
+        // it fits, a stanza at a time. The estimate this replaced measured
+        // every line as a screen of its own, top margin and all, at the
+        // default leading rather than the verse's, and charged a gap per line
+        // where the page has one per stanza. Every line came out taller than
+        // it is drawn, and a poem of five short stanzas was set two to a
+        // page over three pages, each half empty.
+        let fits = |lines: &[OnlineLine], first: bool| {
+            Self::page_fits(
+                context,
+                &self.online_page_screen(context, poem, lines, usize::from(!first), 2),
+            )
+        };
+        let mut pages: Vec<Vec<OnlineLine>> = Vec::new();
+        let mut page: Vec<OnlineLine> = Vec::new();
+        let mut stanza: Vec<OnlineLine> = Vec::new();
+        while let Some(line) = pending.pop_front() {
+            stanza.push(line);
+            if pending.front().is_some_and(|next| !next.stanza_start) {
+                continue;
+            }
+            // A whole stanza, onto this page if it fits, or the next.
+            let mut rest: std::collections::VecDeque<OnlineLine> =
+                std::mem::take(&mut stanza).into();
+            let placed = loop {
+                if let Some(first) = rest.front_mut() {
+                    first.stanza_start = !page.is_empty();
+                }
+                let mut whole = page.clone();
+                whole.extend(rest.iter().cloned());
+                if fits(&whole, pages.is_empty()) {
+                    page = whole;
+                    break true;
+                }
+                if page.is_empty() {
+                    break false;
+                }
+                pages.push(std::mem::take(&mut page));
+            };
+            // Taller than a page by itself: line by line, splitting a line
+            // only when it is too long to stand on an empty page.
+            if !placed {
+                while let Some(mut line) = rest.pop_front() {
+                    line.stanza_start = line.stanza_start && !page.is_empty();
+                    let mut more = page.clone();
+                    more.push(line.clone());
+                    if fits(&more, pages.is_empty()) {
+                        page = more;
+                    } else if !page.is_empty() {
+                        pages.push(std::mem::take(&mut page));
+                        line.stanza_start = false;
+                        rest.push_front(line);
+                    } else if let Some((left, right)) = split_online_line(&line.text, context) {
+                        rest.push_front(OnlineLine {
+                            text: right,
+                            stanza_start: false,
+                        });
+                        rest.push_front(OnlineLine {
+                            text: left,
+                            stanza_start: false,
+                        });
+                    } else {
+                        // One glyph that cannot be split further, on a panel
+                        // too small for a single line under the heading.
+                        pages.push(vec![line]);
+                    }
+                }
+            }
+        }
+        if !page.is_empty() {
+            pages.push(page);
+        }
+        spill_last_stanza(&mut pages);
+        if pages.is_empty() {
+            pages.push(Vec::new());
+        }
+        *self.online_layout.borrow_mut() = Some((context.metrics(), key, pages.clone()));
+        pages
+    }
+
+    fn online_poem(&self, context: &Context) -> Screen {
+        let Some(poem) = self.current_online() else {
             return ScreenBuilder::new("verses-online")
                 .top_bar("Verses")
                 .splash(
@@ -563,169 +2142,310 @@ impl Verses {
                 )
                 .build();
         };
-        let poem = &self.results[index];
-        let favorite = self
-            .saved
-            .online_favorites
-            .iter()
-            .any(|saved| saved.title == poem.title && saved.author == poem.author);
-        ScreenBuilder::new("verses-online")
-            .top_bar(poem.title.clone())
-            .top_bar_glyph("more-by-author", "More by this poet", Glyph::Person)
-            .top_bar_glyph(
-                "favorite",
-                if favorite {
-                    "Remove favorite"
-                } else {
-                    "Favorite"
-                },
-                Glyph::Heart,
-            )
-            .secondary(poem.author.clone())
-            .reading(true)
-            .text(poem.lines.join("\n"))
-            .build()
+        let pages = self.online_pages(context, poem);
+        let page = self.online_page.min(pages.len().saturating_sub(1));
+        self.online_page_screen(context, poem, &pages[page], page, pages.len())
     }
 
-    fn browse(&self) -> Screen {
+    fn paged_poems(
+        context: &Context,
+        screen: ScreenBuilder,
+        rows: &[PoemRow],
+        page: usize,
+    ) -> (Screen, usize) {
+        let labels = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.section.as_deref(),
+                    row.title.as_str(),
+                    row.detail.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let pages = context.paginate_rows_in_sections_under(
+            &labels,
+            false,
+            kobo_sdk::Position::AtTheFoot,
+            &screen.clone().build(),
+        );
+        let count = pages.len().max(1);
+        let page = page.min(count - 1);
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        let mut screen = screen;
+        // Keep rows from each group in one node, so their separators match the
+        // SDK's section-aware measurement exactly.
+        let mut start = 0;
+        while start < visible.len() {
+            let first = &rows[visible[start]];
+            if let Some(section) = &first.section {
+                screen = screen.section(section);
+            }
+            let end = ((start + 1)..visible.len())
+                .find(|&i| rows[visible[i]].section.is_some())
+                .unwrap_or(visible.len());
+            screen = screen.rows(visible[start..end].iter().map(|&index| {
+                let row = &rows[index];
+                (
+                    row.action.clone(),
+                    row.title.clone(),
+                    row.detail.clone(),
+                    row.glyph,
+                )
+            }));
+            start = end;
+        }
+        if count > 1 {
+            screen = screen
+                .page_turns("list-previous", "list-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(count).unwrap_or(u16::MAX),
+                );
+        }
+        (screen.build(), count)
+    }
+
+    fn browse(&self, context: &Context) -> (Screen, usize) {
         let mut screen = ScreenBuilder::new("verses-browse")
             .top_bar("Browse")
             .top_bar_glyph("search", "Search", Glyph::Search);
         if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice.clone());
+            screen = screen.banner(BannerLevel::Attention, notice);
         }
-        if !self.saved.favorites.is_empty() || !self.saved.online_favorites.is_empty() {
-            let mut favorites = self
-                .saved
-                .favorites
+        let mut rows = self
+            .saved
+            .favorites
+            .iter()
+            .filter_map(|id| {
+                CORPUS
+                    .iter()
+                    .position(|poem| poem.id == id.as_str())
+                    .map(|index| {
+                        let poem = CORPUS[index];
+                        PoemRow {
+                            section: None,
+                            action: format!("poem-{index}"),
+                            title: context.clamped_row(poem.title, 2, false),
+                            detail: poem.author.into(),
+                            glyph: Glyph::Heart,
+                        }
+                    })
+            })
+            .collect::<Vec<_>>();
+        rows.extend(
+            self.saved
+                .online_favorites
                 .iter()
-                .filter_map(|id| {
-                    CORPUS
-                        .iter()
-                        .position(|poem| poem.id == id.as_str())
-                        .map(|index| {
-                            let poem = CORPUS[index];
-                            (
-                                format!("poem-{index}"),
-                                poem.title.to_owned(),
-                                poem.author.to_owned(),
-                                Glyph::Heart,
-                            )
-                        })
-                })
-                .collect::<Vec<_>>();
-            favorites.extend(self.saved.online_favorites.iter().enumerate().map(
-                |(index, poem)| {
-                    (
-                        format!("saved-online-{index}"),
-                        poem.title.clone(),
-                        poem.author.clone(),
-                        Glyph::Heart,
-                    )
-                },
-            ));
-            screen = screen.section("Favorites").rows(favorites);
+                .enumerate()
+                .map(|(index, poem)| PoemRow {
+                    section: None,
+                    action: format!("saved-online-{index}"),
+                    title: context.clamped_row(&poem.title, 2, false),
+                    detail: poem.author.clone(),
+                    glyph: Glyph::Heart,
+                }),
+        );
+        if let Some(first) = rows.first_mut() {
+            first.section = Some("Favorites".to_owned());
         }
-        screen
-            .section("Poems")
-            .rows(CORPUS.iter().enumerate().map(|(index, poem)| {
-                (
-                    format!("poem-{index}"),
-                    poem.title,
-                    format!("{} · {}", poem.author, poem.tags),
-                    Glyph::Note,
-                )
-            }))
-            .build()
+        // By poet, so the shelf reads like the contents of an anthology and
+        // a reader after Keats finds his two together. In the order the
+        // poems were written down it was seven pages to search by eye.
+        let mut by_poet: Vec<usize> = (0..CORPUS.len()).collect();
+        by_poet.sort_by_key(|index| (surname(CORPUS[*index].author), CORPUS[*index].year));
+        rows.extend(by_poet.iter().enumerate().map(|(place, &index)| {
+            let poem = CORPUS[index];
+            PoemRow {
+                section: (place == 0).then(|| "Poems".to_owned()),
+                action: format!("poem-{index}"),
+                title: context.clamped_row(poem.title, 2, false),
+                detail: format!("{} · {}", poem.author, poem.tags),
+                glyph: Glyph::Note,
+            }
+        }));
+        Self::paged_poems(context, screen, &rows, self.browse_page)
     }
 
+    /// What the search box asks for, which follows where the search looks.
+    const fn search_prompt(&self) -> &'static str {
+        match self.scope {
+            Scope::Anything => "A title, a poet, or a line you remember",
+            Scope::Title => "A poem's title",
+            Scope::Poet => "A poet's name",
+            Scope::Line => "Words from a line",
+        }
+    }
+
+    /// Where a search looks, which poets to start from, and the box that
+    /// raises the reader's keyboard.
+    ///
+    /// The box is a field rather than keys on this screen: the scope and the
+    /// suggested poets are taps, and a search that needs neither typing nor
+    /// a third of the panel given to keys should not pay for them.
     fn search(&self) -> Screen {
         let mut screen = ScreenBuilder::new("verses-search").top_bar("Search poetry");
+        if self.entry.is_open() {
+            return screen
+                .text_entry(&self.entry, self.search_prompt(), "Search")
+                .build();
+        }
         if let Some(notice) = &self.notice {
             screen = screen.banner(BannerLevel::Attention, notice.clone());
         }
+        let selected = Scope::ALL
+            .iter()
+            .position(|&(scope, _, _)| scope == self.scope)
+            .unwrap_or(0);
+        screen = screen
+            .segmented(
+                selected,
+                Scope::ALL.iter().map(|&(_, name, label)| (name, label)),
+            )
+            .field(SEARCH_FIELD, "", self.search_prompt());
+        // Somewhere to start: the whole of PoetryDB is behind this box and an
+        // empty one says nothing about it.
         screen
-            .typed(&self.keyboard, "Title, poet, or a line")
-            .keyboard(&self.keyboard, "Search")
+            .section("Poets to start with")
+            .chips(
+                SUGGESTED_POETS
+                    .iter()
+                    .map(|poet| (format!("suggest-{poet}"), *poet, false)),
+            )
             .build()
     }
 
-    fn results(&self) -> Screen {
+    fn results(&self, context: &Context) -> (Screen, usize) {
         let mut screen = ScreenBuilder::new("verses-results")
             .top_bar("Search")
             .top_bar_glyph("search", "New search", Glyph::Search);
+        if self.task.is_some() {
+            return (
+                screen
+                    .activity(
+                        if matches!(self.pending, Some(Pending::Open(_))) {
+                            "Opening poem…"
+                        } else {
+                            "Searching poetry…"
+                        },
+                        None,
+                    )
+                    .build(),
+                1,
+            );
+        }
         if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice.clone());
+            screen = screen.banner(BannerLevel::Attention, notice);
         }
         if self.results.is_empty() {
-            screen
-                .splash(
-                    Some(Glyph::Search),
-                    "No poems found",
-                    "Try a poet, title, or memorable line.",
-                )
-                .build()
-        } else {
-            screen
-                .rows(
-                    self.results
-                        .iter()
-                        .take(40)
-                        .enumerate()
-                        .map(|(index, poem)| {
-                            (
-                                format!("result-{index}"),
-                                poem.title.clone(),
-                                poem.author.clone(),
-                                Glyph::Note,
-                            )
-                        }),
-                )
-                .build()
+            return (
+                screen
+                    .splash(
+                        Some(Glyph::Search),
+                        "No poems found",
+                        "Try a poet, title, or memorable line.",
+                    )
+                    .build(),
+                1,
+            );
         }
+        // Grouped by poet, the way an anthology's contents are, so a search
+        // for a word that several poets used reads as who used it rather than
+        // as a list where the poet is the small print under every title.
+        let mut order: Vec<usize> = (0..self.results.len()).collect();
+        order.sort_by(|&a, &b| {
+            let (a, b) = (&self.results[a], &self.results[b]);
+            a.author
+                .cmp(&b.author)
+                .then_with(|| natural_order(&a.title, &b.title))
+        });
+        let mut previous: Option<&str> = None;
+        let rows = order
+            .into_iter()
+            .map(|index| {
+                let poem = &self.results[index];
+                let first = previous != Some(poem.author.as_str());
+                previous = Some(poem.author.as_str());
+                PoemRow {
+                    section: first.then(|| poem.author.clone()),
+                    action: format!("result-{index}"),
+                    title: context.clamped_row(&poem.title, 2, false),
+                    detail: if poem.linecount.trim().is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "{} lines · {}",
+                            poem.linecount.trim(),
+                            reading_time(&poem.linecount)
+                        )
+                    },
+                    glyph: Glyph::Note,
+                }
+            })
+            .collect::<Vec<_>>();
+        screen = screen.secondary(format!(
+            "{} for \u{201c}{}\u{201d}",
+            match self.results.len() {
+                1 => "1 poem".to_owned(),
+                count => format!("{count} poems"),
+            },
+            self.query
+        ));
+        Self::paged_poems(context, screen, &rows, self.results_page)
     }
 
-    fn settings(&self) -> Screen {
-        ScreenBuilder::new("verses-settings")
-            .top_bar("Sleep screen")
-            .splash(
-                Some(Glyph::Note),
-                if self.saved.sleep {
-                    "Daily poem on"
-                } else {
-                    "Daily poem off"
-                },
-                if self.saved.sleep {
-                    "Tomorrow's poem will appear when the reader sleeps."
-                } else {
-                    "Show tomorrow's poem while the reader sleeps."
-                },
-            )
-            .primary_button(
-                "sleep",
-                if self.saved.sleep {
-                    "Turn off"
-                } else {
-                    "Turn on"
-                },
-            )
-            .build()
+    fn turn_list(&mut self, context: &Context, forward: bool) {
+        let count = match self.view {
+            View::Browse => self.browse(context).1,
+            View::Results => self.results(context).1,
+            _ => return,
+        };
+        let page = if self.view == View::Browse {
+            &mut self.browse_page
+        } else {
+            &mut self.results_page
+        };
+        let last = count.saturating_sub(1);
+        *page = if forward {
+            page.saturating_add(1).min(last)
+        } else {
+            (*page).min(last).saturating_sub(1)
+        };
+    }
+
+    fn turn_online(&mut self, context: &Context, forward: bool) {
+        let Some(poem) = self.current_online() else {
+            return;
+        };
+        let last = self.online_pages(context, poem).len().saturating_sub(1);
+        self.online_page = if forward {
+            self.online_page.saturating_add(1).min(last)
+        } else {
+            self.online_page.min(last).saturating_sub(1)
+        };
+    }
+
+    fn cancel_request(&mut self, context: &mut Context) {
+        if let Some(task) = self.task.take() {
+            context.cancel(task);
+        }
+        self.pending = None;
     }
 
     fn screen(&self, context: &Context) -> Screen {
         match self.view {
+            View::Today if self.daily_poem().is_some() => self.online_poem(context),
             View::Today | View::Reading => self.local_poem(context),
             // The export's own screen: what is being written, where it goes,
             // and a way to try again if the computer is not listening.
             View::Card => self.export.as_ref().map_or_else(
                 || self.local_poem(context),
-                kobo_sdk::exports::Export::screen,
+                |export| self.card_screen(export),
             ),
-            View::Browse => self.browse(),
+            View::Browse => self.browse(context).0,
             View::Search => self.search(),
-            View::Results => self.results(),
-            View::Online => self.online_poem(),
-            View::Settings => self.settings(),
+            View::Results => self.results(context).0,
+            View::Online => self.online_poem(context),
         }
     }
 
@@ -744,18 +2464,24 @@ impl Verses {
     fn show(&self, context: &mut Context) {
         let screen = self
             .screen(context)
-            .with_own_back(!matches!(self.view, View::Today));
+            .with_own_back(self.poem_menu || !matches!(self.view, View::Today));
         context.set_screen(screen);
     }
 
-    fn begin_search(&mut self, context: &mut Context, query: &str, author_only: bool) {
+    fn begin_search(&mut self, context: &mut Context, query: &str, scope: Scope) {
         if query.trim().is_empty() {
             self.notice = Some("Type something to search for.".into());
             return;
         }
+        self.cancel_request(context);
         self.notice = Some("Searching…".into());
         self.results.clear();
-        self.task = context.spawn(search_task(query.trim(), author_only));
+        self.online = None;
+        self.online_page = 0;
+        self.results_page = 0;
+        self.view = View::Results;
+        query.trim().clone_into(&mut self.query);
+        self.task = context.spawn(search_task(query.trim(), scope));
         self.pending = self.task.map(|_| Pending::Search);
         if self.task.is_none() {
             self.notice = Some("Search is busy. Try again in a moment.".into());
@@ -770,35 +2496,94 @@ impl Verses {
     /// taken from, so a card can be passed on without stripping the poem of
     /// its provenance on the way.
     fn quote_card(&self, context: &Context) -> Screen {
+        if let Some(poem) = self.current_online().filter(|_| self.card_from_online()) {
+            let pages = self.online_pages(context, poem);
+            let page = self.online_page.min(pages.len().saturating_sub(1));
+            let lines = &pages[page];
+            let card = |shown: usize| {
+                let screen = ScreenBuilder::new("verses-card")
+                    .top_bar(context.clamped_row(&poem.title, 1, false))
+                    .reading(true);
+                set_online_verse(screen, &lines[..shown])
+                    .secondary(context.clamped_row(&poem.author, 1, false))
+                    .secondary("From PoetryDB")
+                    .build()
+                    .with_auto_hidden_top_bar(true)
+            };
+            return Self::fitted_card(context, lines.len(), card);
+        }
         let poem = CORPUS[self.poem];
-        let pages = self.poem_pages(context);
+        let (scale, pages) = self.poem_pages(context);
         let page = self.poem_page.min(pages.len().saturating_sub(1));
-        let mut screen = ScreenBuilder::new("verses-card")
-            .top_bar(poem.title)
-            .reading(true);
-        for (index, run) in pages[page].iter().enumerate() {
-            for (line, text) in poem.stanzas[run.stanza][run.from..run.to]
-                .iter()
-                .enumerate()
-            {
-                screen = screen.rich_text(
-                    (*text).to_owned(),
-                    Vec::new(),
-                    kobo_sdk::ParagraphPresentation {
-                        alignment: kobo_sdk::ParagraphAlignment::Center,
-                        margin_before_em: if index > 0 && line == 0 && run.from == 0 {
-                            STANZA_AIR
-                        } else {
-                            0
-                        },
-                        ..kobo_sdk::ParagraphPresentation::default()
-                    },
-                );
+        // The card is a picture of the poem, so it is set at the size the poem
+        // is set at. It also shares the poem's pagination, and pagination is
+        // measured at that size: a card measured at one size and drawn at
+        // another breaks its lines where the poem does not.
+        let runs = &pages[page];
+        let total: usize = runs.iter().map(|run| run.to - run.from).sum();
+        let card = |shown: usize| {
+            let mut screen = ScreenBuilder::new("verses-card")
+                .top_bar(poem.title)
+                .reading(true)
+                .text_scale(scale);
+            screen = set_verse(screen, poem, &first_lines(runs, shown));
+            screen
+                .secondary(format!("{} · {}", poem.author, poem.year))
+                .secondary(poem.source.to_owned())
+                .build()
+                // The card is set on the poem's own pages, which are the whole
+                // panel, and it is the card that is shown, not the bar.
+                .with_auto_hidden_top_bar(true)
+        };
+        Self::fitted_card(context, total, card)
+    }
+
+    /// The card with as many of the page's lines as leave room for whose
+    /// poem it is and where it came from.
+    ///
+    /// A page of verse fills the panel, and the card sets the same page with
+    /// two lines of attribution under it, so a full page loses its last
+    /// lines rather than its provenance.
+    fn fitted_card(context: &Context, lines: usize, card: impl Fn(usize) -> Screen) -> Screen {
+        let whole = card(lines);
+        if Self::page_fits(context, &whole) {
+            return whole;
+        }
+        // Fewer lines never fit worse, so the most that fit is found by
+        // halving rather than by measuring the card once per line.
+        let (mut fits, mut over) = (0, lines);
+        while over - fits > 1 {
+            let middle = (fits + over) / 2;
+            if Self::page_fits(context, &card(middle)) {
+                fits = middle;
+            } else {
+                over = middle;
             }
         }
+        card(fits.max(1))
+    }
+
+    /// The card being saved: the card itself, the poem it came from, and
+    /// where the copy is going.
+    ///
+    /// Until the copy is ready, and if it fails, the export's own screen
+    /// says what is happening and offers to try again.
+    fn card_screen(&self, export: &kobo_sdk::exports::Export) -> Screen {
+        let Some((picture, poem)) = self.card.as_ref().filter(|_| export.is_ready()) else {
+            return export.screen();
+        };
+        let mut screen = ScreenBuilder::new("verses-card")
+            .top_bar("Quote card")
+            .owns_back(true);
+        if let Some(picture) = picture {
+            screen = screen.picture(*picture, CARD_PREVIEW_MM);
+        }
         screen
-            .secondary(format!("{} · {}", poem.author, poem.year))
-            .secondary(poem.source.to_owned())
+            .text(poem.clone())
+            .secondary(
+                "Saved for your computer. Open Cobalt there to receive it. The card stays on \
+                 this reader too.",
+            )
             .build()
     }
 
@@ -819,19 +2604,38 @@ impl Verses {
             u32::try_from(metrics.height).unwrap_or(0),
             &surface.pixels,
         );
-        let poem = CORPUS[self.poem];
+        let (title, author) = match self.current_online().filter(|_| self.card_from_online()) {
+            Some(poem) => (poem.title.clone(), poem.author.clone()),
+            None => (
+                CORPUS[self.poem].title.to_owned(),
+                CORPUS[self.poem].author.to_owned(),
+            ),
+        };
+        let name = format!("{title} by {author}");
+        // The card itself, at a size that leaves room for what is said
+        // about it. Saving one used to show its file name and size and
+        // nothing of what had been made.
+        let shown = kobo_image::Picture::from_grey(
+            u32::try_from(metrics.width).unwrap_or(0),
+            u32::try_from(metrics.height).unwrap_or(0),
+            surface.pixels.clone(),
+        )
+        .and_then(|picture| picture.fit(CARD_PREVIEW_WIDTH, CARD_PREVIEW_HEIGHT))
+        .ok()
+        .and_then(|picture| {
+            let (width, height) = (picture.width(), picture.height());
+            context.put_picture(CARD_PREVIEW, width, height, picture.into_grey())
+        });
+        self.card = Some((shown, format!("{title}, {author}")));
         match picture
             .map_err(|error| format!("{error:?}"))
             .and_then(|bytes| {
-                kobo_sdk::exports::Export::new(
-                    &format!("{} by {}", poem.title, poem.author),
-                    kobo_sdk::exports::Format::Png,
-                    bytes,
-                )
+                kobo_sdk::exports::Export::new(&name, kobo_sdk::exports::Format::Png, bytes)
             }) {
             Ok(mut export) => {
                 export.begin(context);
                 self.export = Some(export);
+                self.card_from = self.view;
                 self.view = View::Card;
             }
             Err(reason) => {
@@ -860,10 +2664,81 @@ impl Verses {
         }
     }
 
+    /// Whether the card being made is of a fetched poem rather than a bundled
+    /// one: the screen it was asked for from shows one.
+    fn card_from_online(&self) -> bool {
+        let from = if self.view == View::Card {
+            self.card_from
+        } else {
+            self.view
+        };
+        from == View::Online || (from == View::Today && self.daily_poem().is_some())
+    }
+
+    /// Today's poem from `PoetryDB`, if one has arrived for today.
+    fn daily_poem(&self) -> Option<&OnlinePoem> {
+        self.saved
+            .daily
+            .as_ref()
+            .filter(|daily| Some(daily.day) == self.day)
+            .map(|daily| &daily.poem)
+    }
+
+    /// Whether today's poem is on screen, itself or as the card made of it.
+    fn showing_today(&self) -> bool {
+        self.view == View::Today || (self.view == View::Card && self.card_from == View::Today)
+    }
+
+    /// Moves to `view`, starting today's poem at its first page when the
+    /// reader comes to it from somewhere else.
+    ///
+    /// Today's poem and a poem opened from a search turn on the same page
+    /// cursor, so arriving at Today from a searched poem's fifth page used to
+    /// open today's poem at its fifth page too. Coming back from today's own
+    /// card is not arriving from somewhere else, and keeps its page.
+    fn arrive_at(&mut self, view: View) {
+        if view == View::Today && !self.showing_today() {
+            self.online_page = 0;
+        }
+        self.view = view;
+    }
+
+    /// The fetched poem on screen: today's, or one opened from a search.
+    fn current_online(&self) -> Option<&OnlinePoem> {
+        if self.showing_today() {
+            self.daily_poem()
+        } else {
+            self.online.and_then(|index| self.results.get(index))
+        }
+    }
+
+    /// Asks for today's poem once the shelf has loaded and the day has none.
+    /// Offline it simply fails, and the day keeps its bundled poem.
+    fn fetch_daily(&mut self, context: &mut Context) {
+        let Some(day) = self.day else { return };
+        if !self.loaded || self.daily_task.is_some() || self.daily_poem().is_some() {
+            return;
+        }
+        self.daily_task = context.spawn(daily_task(day));
+    }
+
+    /// Whether the poem on screen is a favourite.
+    fn is_favorite(&self) -> bool {
+        match self.current_online() {
+            Some(poem) => self
+                .saved
+                .online_favorites
+                .iter()
+                .any(|saved| saved.title == poem.title && saved.author == poem.author),
+            None => self.saved.favorites.contains(CORPUS[self.poem].id),
+        }
+    }
+
     fn toggle_favorite(&mut self) {
-        if self.view == View::Online {
-            let Some(index) = self.online else { return };
-            let poem = self.results[index].clone();
+        if self.view == View::Online || (self.view == View::Today && self.daily_poem().is_some()) {
+            let Some(poem) = self.current_online().cloned() else {
+                return;
+            };
             if let Some(saved) = self
                 .saved
                 .online_favorites
@@ -881,6 +2756,21 @@ impl Verses {
             }
         }
     }
+}
+
+/// The poems a search found, or `None` for an answer that is not a search
+/// answer at all.
+///
+/// The poetry service says it found nothing with a success and a body of
+/// `{"status":404,"reason":"Not found"}` rather than an empty list. Read as a
+/// broken answer, a search for a word no poem has said "Poetry search
+/// couldn't open these results." over "No poems found".
+fn search_results(bytes: &[u8]) -> Option<Vec<OnlinePoem>> {
+    if let Ok(poems) = serde_json::from_slice::<Vec<OnlinePoem>>(bytes) {
+        return Some(poems);
+    }
+    let answer = serde_json::from_slice::<serde_json::Value>(bytes).ok()?;
+    (answer.get("status").and_then(serde_json::Value::as_u64) == Some(404)).then(Vec::new)
 }
 
 impl KoboApp for Verses {
@@ -917,8 +2807,12 @@ impl KoboApp for Verses {
         // Storage answers every write, and a refusal is the one answer that
         // has to reach the reader: the favourite is not kept.
         match &result {
-            StoreResult::Saved { .. } => {
+            StoreResult::Saved { key } if key == SETTINGS => {
                 self.saving = false;
+                self.writes = self.writes.saturating_sub(1);
+                if self.writes == 0 {
+                    self.before_write = None;
+                }
                 if self
                     .notice
                     .as_deref()
@@ -929,6 +2823,14 @@ impl KoboApp for Verses {
             }
             StoreResult::Denied(_) => {
                 self.saving = false;
+                self.writes = 0;
+                if let Some(saved) = self
+                    .before_write
+                    .take()
+                    .and_then(|bytes| serde_json::from_slice::<Saved>(&bytes).ok())
+                {
+                    self.saved = saved;
+                }
                 self.notice = Some(
                     "This reader would not keep that favourite. Try marking it again.".to_owned(),
                 );
@@ -953,65 +2855,126 @@ impl KoboApp for Verses {
                         .collect(),
                     online_favorites: legacy.online_favorites,
                     sleep: legacy.sleep,
+                    daily: None,
                 };
             }
         }
         self.loaded = true;
+        self.fetch_daily(context);
         self.show(context);
     }
 
+    #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         self.advance_day(reader_clock().as_ref());
+        self.fetch_daily(context);
+        // The search box first: while it is open the runtime holds the panel,
+        // and its answer arrives as an action like any other. Backing out of
+        // it leaves the search screen as it was.
         if self.view == View::Search {
-            if let Some(Pressed::Submitted) = self.keyboard.press(action) {
-                let query = self.keyboard.take();
-                self.begin_search(context, &query, false);
+            if let Some(typing) = self.entry.handle(action) {
+                if let Typing::Submitted(query) = typing {
+                    self.begin_search(context, &query, self.scope);
+                }
+                self.show(context);
+                return;
+            }
+        }
+        if self.view == View::Search && action != ActionId::BACK {
+            if let Some(&(scope, _, _)) = Scope::ALL
+                .iter()
+                .find(|(_, name, _)| action == action_id(name))
+            {
+                self.scope = scope;
+            } else if let Some(poet) = SUGGESTED_POETS
+                .iter()
+                .find(|poet| action == action_id(&format!("suggest-{poet}")))
+            {
+                self.begin_search(context, poet, Scope::Poet);
             }
             self.show(context);
             return;
         }
 
+        // Whatever is tapped next puts the poem's panel away; Back does only
+        // that, and the middle of the page opens it.
+        if std::mem::take(&mut self.poem_menu) && action == ActionId::BACK {
+            self.show(context);
+            return;
+        }
+        if action == action_id(POEM_MENU) {
+            self.poem_menu = true;
+            self.show(context);
+            return;
+        }
         if action == ActionId::BACK {
-            self.view = match self.view {
-                View::Online | View::Results | View::Search => View::Browse,
+            self.cancel_request(context);
+            self.notice = None;
+            let back = match self.view {
+                View::Online => self.online_from,
+                View::Reading | View::Results | View::Search => View::Browse,
                 View::Card => {
                     self.export = None;
-                    View::Reading
+                    if self
+                        .card
+                        .take()
+                        .is_some_and(|(picture, _)| picture.is_some())
+                    {
+                        context.drop_picture(CARD_PREVIEW);
+                    }
+                    self.card_from
                 }
                 _ => View::Today,
             };
+            self.arrive_at(back);
         } else if action == action_id("today") {
-            self.view = View::Today;
+            self.cancel_request(context);
+            self.arrive_at(View::Today);
         } else if action == action_id("browse") {
+            self.cancel_request(context);
             self.view = View::Browse;
         } else if action == action_id("search") {
-            self.keyboard = Keyboard::new();
+            self.cancel_request(context);
+            self.entry.close();
             self.notice = None;
             self.view = View::Search;
         } else if action == action_id("favorite") {
+            // What storage last held, to put back if it refuses this write.
+            if self.before_write.is_none() {
+                self.before_write = serde_json::to_vec(&self.saved).ok();
+            }
+            self.writes += 1;
             self.toggle_favorite();
             self.save(context);
+            // The heart is in the poem's panel; it stays open so the heart
+            // can be seen to fill or empty.
+            self.poem_menu = true;
         } else if action == action_id("more-by-author") {
             if let Some(index) = self.online {
                 let author = self.results[index].author.clone();
-                self.begin_search(context, &author, true);
+                self.begin_search(context, &author, Scope::Poet);
             }
-        } else if action == action_id("card") {
+        } else if action == action_id("card")
+            && matches!(self.view, View::Today | View::Reading | View::Online)
+        {
             self.export_card(context);
         } else if action == action_id("export-confirm") || action == action_id("export-retry") {
             if let Some(export) = self.export.as_mut() {
                 export.begin(context);
             }
+        } else if action == action_id("list-next") {
+            self.turn_list(context, true);
+        } else if action == action_id("list-previous") {
+            self.turn_list(context, false);
+        } else if action == action_id("online-next") {
+            self.turn_online(context, true);
+        } else if action == action_id("online-previous") {
+            self.turn_online(context, false);
         } else if action == action_id("poem-next") {
-            let last = self.poem_pages(context).len().saturating_sub(1);
+            let last = self.poem_pages(context).1.len().saturating_sub(1);
             self.poem_page = (self.poem_page + 1).min(last);
         } else if action == action_id("poem-previous") {
             self.poem_page = self.poem_page.saturating_sub(1);
-        } else if action == action_id("sleep") {
-            self.saved.sleep = !self.saved.sleep;
-            self.save(context);
-        } else if action == action_id("settings") {
-            self.view = View::Settings;
         } else if let Some(index) =
             (0..CORPUS.len()).find(|index| action == action_id(&format!("poem-{index}")))
         {
@@ -1021,6 +2984,11 @@ impl KoboApp for Verses {
         } else if let Some(index) =
             (0..self.results.len()).find(|index| action == action_id(&format!("result-{index}")))
         {
+            if self.task.is_some() {
+                return;
+            }
+            self.online_page = 0;
+            self.online_from = View::Results;
             if self.results[index].lines.is_empty() {
                 self.notice = Some("Opening poem…".into());
                 self.task = context.spawn(poem_task(&self.results[index].title));
@@ -1035,14 +3003,63 @@ impl KoboApp for Verses {
         } else if let Some(index) = (0..self.saved.online_favorites.len())
             .find(|index| action == action_id(&format!("saved-online-{index}")))
         {
+            self.cancel_request(context);
             self.results = vec![self.saved.online_favorites[index].clone()];
             self.online = Some(0);
+            self.online_page = 0;
+            self.online_from = View::Browse;
             self.view = View::Online;
         }
         self.show(context);
     }
 
+    fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        match self.view {
+            View::Browse | View::Results => self.turn_list(context, forward),
+            View::Online => self.turn_online(context, forward),
+            View::Today if self.daily_poem().is_some() => self.turn_online(context, forward),
+            View::Today | View::Reading => {
+                let last = self.poem_pages(context).1.len().saturating_sub(1);
+                self.poem_page = if forward {
+                    self.poem_page.saturating_add(1).min(last)
+                } else {
+                    self.poem_page.saturating_sub(1)
+                };
+            }
+            _ => return,
+        }
+        self.show(context);
+    }
+
     fn on_task(&mut self, context: &mut Context, id: TaskId, outcome: TaskOutcome) {
+        if self.daily_task == Some(id) {
+            self.daily_task = None;
+            let fetched = match outcome {
+                TaskOutcome::Completed(bytes) => serde_json::from_slice::<Vec<OnlinePoem>>(&bytes)
+                    .ok()
+                    .and_then(|poems| {
+                        poems.into_iter().find(|poem| {
+                            !poem.lines.is_empty() && poem.lines.len() <= MAX_DAILY_LINES
+                        })
+                    }),
+                _ => None,
+            };
+            if let (Some(poem), Some(day)) = (fetched, self.day) {
+                self.saved.daily = Some(DailyPoem { day, poem });
+                // The cursor is shared with a poem opened from a search, and
+                // this answer arrives whenever the network gets round to it.
+                // Starting today's poem at its first page is right only when
+                // today's poem is what the reader is looking at; anywhere
+                // else it would throw a searched poem back to page one under
+                // the reader's thumb.
+                if self.showing_today() {
+                    self.online_page = 0;
+                }
+                self.save(context);
+                self.show(context);
+            }
+            return;
+        }
         if self.task != Some(id) {
             return;
         }
@@ -1051,7 +3068,7 @@ impl KoboApp for Verses {
         match outcome {
             TaskOutcome::Completed(bytes) => match pending {
                 Some(Pending::Search) => {
-                    if let Ok(results) = serde_json::from_slice::<Vec<OnlinePoem>>(&bytes) {
+                    if let Some(results) = search_results(&bytes) {
                         self.results = results;
                         self.notice = None;
                         self.online = None;
@@ -1126,6 +3143,134 @@ impl KoboApp for Verses {
     }
 }
 
+/// Split an exceptional line at the renderer's own line/grapheme boundaries.
+/// Sets fetched lines as stanzas, the way [`set_verse`] sets a bundled poem.
+///
+/// Lines of one stanza go together as one paragraph at verse leading. A page
+/// was measured a line at a time with paragraph spacing between, so it always
+/// has the room this takes.
+fn set_online_verse(mut screen: ScreenBuilder, lines: &[OnlineLine]) -> ScreenBuilder {
+    let mut stanza: Vec<&str> = Vec::new();
+    let mut opens = false;
+    let flush = |screen: ScreenBuilder, stanza: &mut Vec<&str>, opens: bool| {
+        if stanza.is_empty() {
+            return screen;
+        }
+        let text = stanza.join("\n");
+        stanza.clear();
+        screen.rich_text(
+            text,
+            Vec::new(),
+            kobo_sdk::ParagraphPresentation {
+                margin_before_em: if opens { STANZA_AIR } else { 0 },
+                line_height_percent: VERSE_LEADING,
+                ..kobo_sdk::ParagraphPresentation::default()
+            },
+        )
+    };
+    for line in lines {
+        if line.stanza_start {
+            screen = flush(screen, &mut stanza, opens);
+            opens = true;
+        }
+        stanza.push(&line.text);
+    }
+    flush(screen, &mut stanza, opens)
+}
+
+/// Sets the runs of a poem as stanzas: one paragraph each, a printed poem's
+/// leading inside it and the poet's space between them. The page and the card
+/// share this so a card is the page it was made from, line for line.
+/// The first `lines` lines of a page's runs.
+fn first_lines(runs: &[VerseRun], lines: usize) -> Vec<VerseRun> {
+    let mut left = lines;
+    let mut kept = Vec::new();
+    for run in runs {
+        if left == 0 {
+            break;
+        }
+        let take = (run.to - run.from).min(left);
+        kept.push(VerseRun {
+            to: run.from + take,
+            ..*run
+        });
+        left -= take;
+    }
+    kept
+}
+
+fn set_verse(mut screen: ScreenBuilder, poem: Poem, runs: &[VerseRun]) -> ScreenBuilder {
+    for (index, run) in runs.iter().enumerate() {
+        let lines = &poem.stanzas[run.stanza][run.from..run.to];
+        screen = screen.rich_text(
+            lines.join("\n"),
+            Vec::new(),
+            kobo_sdk::ParagraphPresentation {
+                // A stanza carried over from the page before opens without
+                // the space. The unit is hundredths of an em.
+                margin_before_em: if index > 0 && run.from == 0 {
+                    STANZA_AIR
+                } else {
+                    0
+                },
+                // A printed poem's leading rather than a novel's. The reading
+                // face opens lines up for an hour of prose, which set a short
+                // stanza almost double spaced and pushed the last stanza of
+                // Hope onto a page of its own.
+                line_height_percent: VERSE_LEADING,
+                ..kobo_sdk::ParagraphPresentation::default()
+            },
+        );
+    }
+    screen
+}
+
+/// One page of a fetched poem means it did not fit as one page with its
+/// attribution, so its last stanza goes over rather than be drawn under the
+/// attribution it left no room for.
+fn spill_last_stanza(pages: &mut Vec<Vec<OnlineLine>>) {
+    if pages.len() != 1 || pages[0].len() < 2 {
+        return;
+    }
+    let page = &mut pages[0];
+    let start = page
+        .iter()
+        .rposition(|line| line.stanza_start)
+        .filter(|at| *at > 0)
+        .unwrap_or(page.len() - 1);
+    let mut rest = page.split_off(start);
+    rest[0].stanza_start = false;
+    pages.push(rest);
+}
+
+fn split_online_line(text: &str, context: &Context) -> Option<(String, String)> {
+    let metrics = context.metrics();
+    let lines = kobo_ui::with_text_scale(metrics.text_scale, || {
+        kobo_ui::with_reading_scale(metrics.text_scale, || {
+            kobo_ui::wrap_text_in(
+                text,
+                metrics.readable_width(),
+                kobo_ui::FontSize::Body,
+                kobo_ui::Face::Reading,
+            )
+        })
+    });
+    if lines.len() < 2 {
+        return None;
+    }
+    let mut split = 0;
+    for line in lines.iter().take(lines.len() / 2) {
+        let start = text[split..].find(line)?;
+        split += start + line.len();
+    }
+    (split > 0 && split < text.len()).then(|| {
+        (
+            text[..split].trim_end().to_owned(),
+            text[split..].trim_start().to_owned(),
+        )
+    })
+}
+
 fn main() -> ExitCode {
     kobo_sdk::run("verses", Verses::default()).map_or_else(
         |error| {
@@ -1139,6 +3284,7 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kobo_sdk::clock::ManualClock;
     use kobo_sdk::AppRunner;
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
@@ -1235,9 +3381,9 @@ mod tests {
             );
             // Not a proof of completeness, which no test can give: a floor
             // that the four line excerpts this corpus used to carry could not
-            // have cleared.
+            // have cleared. The shortest whole poem here is The Eagle, at six.
             assert!(
-                poem.line_count() >= 12,
+                poem.line_count() >= 6,
                 "{} is {} lines, which is an excerpt rather than a poem",
                 poem.title,
                 poem.line_count()
@@ -1260,7 +3406,7 @@ mod tests {
                     poem: index,
                     ..Verses::default()
                 };
-                let pages = app.poem_pages(&context);
+                let (_, pages) = app.poem_pages(&context);
                 let seen: Vec<(usize, usize)> = pages
                     .iter()
                     .flatten()
@@ -1285,7 +3431,6 @@ mod tests {
 
     #[test]
     fn every_page_of_every_poem_fits_at_every_text_size() {
-        let chrome = Chrome::measuring(true);
         for scale in kobo_ui::TextScale::STEPS {
             let metrics = kobo_ui::DisplayMetrics {
                 text_scale: scale,
@@ -1298,12 +3443,11 @@ mod tests {
                     view: View::Reading,
                     ..Verses::default()
                 };
-                for page in 0..app.poem_pages(&context).len() {
+                for page in 0..app.poem_pages(&context).1.len() {
                     app.poem_page = page;
-                    let issues = app
-                        .local_poem(&context)
-                        .diagnostics(&metrics, &chrome)
-                        .issues;
+                    let screen = app.local_poem(&context);
+                    let chrome = Chrome::for_screen(&screen, false, Chrome::measuring(true).status);
+                    let issues = screen.diagnostics(&metrics, &chrome).issues;
                     assert!(
                         issues.is_empty(),
                         "{:?} {} page {page}: {issues:?}",
@@ -1315,25 +3459,280 @@ mod tests {
         }
     }
 
+    fn pages_at(index: usize, scale: kobo_ui::TextScale) -> Vec<Vec<VerseRun>> {
+        let metrics = kobo_ui::DisplayMetrics {
+            text_scale: scale,
+            ..CLARA_BW_METRICS
+        };
+        let context = AppRunner::with_metrics(Verses::default(), metrics).context();
+        let app = Verses {
+            poem: index,
+            view: View::Reading,
+            ..Verses::default()
+        };
+        app.poem_pages(&context).1
+    }
+
     #[test]
-    fn poem_actions_are_icons_in_the_header() {
+    fn a_sonnet_is_one_page_rather_than_eleven_lines_and_then_three() {
+        for (index, poem) in CORPUS.iter().enumerate() {
+            if poem.stanzas.len() == 1 && poem.line_count() == 14 {
+                assert_eq!(
+                    pages_at(index, kobo_ui::TextScale::default()).len(),
+                    1,
+                    "{} is split at the default size",
+                    poem.title
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_sonnet_too_tall_for_one_page_is_shared_out_rather_than_left_a_couplet() {
+        let sonnet = CORPUS
+            .iter()
+            .position(|poem| poem.id == "shakespeare-sonnet-18")
+            .expect("a sonnet");
+        let pages = pages_at(sonnet, kobo_ui::TextScale::Largest);
+        assert!(pages.len() > 1);
+        let sizes: Vec<usize> = pages
+            .iter()
+            .map(|runs| runs.iter().map(|run| run.to - run.from).sum())
+            .collect();
+        let (least, most) = (
+            sizes.iter().min().copied().unwrap_or(0),
+            sizes.iter().max().copied().unwrap_or(0),
+        );
+        assert!(most - least <= 1, "uneven pages: {sizes:?}");
+    }
+
+    #[test]
+    fn a_short_poem_is_one_page_and_a_longer_one_never_breaks_a_stanza() {
+        for (index, poem) in CORPUS.iter().enumerate() {
+            let pages = pages_at(index, kobo_ui::TextScale::default());
+            if poem.line_count() <= 14 {
+                assert_eq!(pages.len(), 1, "{} is split", poem.title);
+            }
+            for run in pages.iter().flatten() {
+                assert!(
+                    run.from == 0 && run.to == poem.stanzas[run.stanza].len(),
+                    "{} breaks a stanza at the default size",
+                    poem.title
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_offline_shelf_has_a_month_of_different_poems() {
+        assert!(CORPUS.len() >= 30, "only {} poems offline", CORPUS.len());
+        let ids: BTreeSet<&str> = CORPUS.iter().map(|poem| poem.id).collect();
+        assert_eq!(ids.len(), CORPUS.len(), "two poems share a name");
+        let month: BTreeSet<usize> = (1..=30).map(|day| daily_index(2026, 11, day)).collect();
+        assert!(month.len() >= 25, "a month offline repeats itself");
+        for poem in CORPUS {
+            for line in poem.lines() {
+                assert!(
+                    !line.contains('\u{2014}') && !line.contains('\u{2013}'),
+                    "{}: a dash the panel sets badly",
+                    poem.title
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_page_of_a_poem_from_poetrydb_holds_every_stanza_that_fits() {
+        // Burns' "A Prayer in the Prospect of Death" came out as three pages of
+        // two stanzas each, every page half empty.
         let context = AppRunner::new(Verses::default()).context();
-        let screen = Verses::default().screen(&context);
-        let debug = format!("{screen:?}");
-        assert!(debug.contains("Heart"), "{debug}");
-        assert!(debug.contains("Grid"), "{debug}");
-        assert!(!debug.contains("Save favorite"), "{debug}");
+        let app = Verses::default();
+        let mut lines = Vec::new();
+        for stanza in 1..=5 {
+            if stanza > 1 {
+                lines.push(String::new());
+            }
+            for line in 1..=4 {
+                lines.push(format!("Stanza {stanza}, line {line}, of a prayer"));
+            }
+        }
+        let poem = OnlinePoem {
+            title: "A Prayer".into(),
+            author: "A Poet".into(),
+            lines,
+            linecount: "20".into(),
+        };
+        let pages = app.online_pages(&context, &poem);
+        let set = pages.iter().map(Vec::len).sum::<usize>();
+        assert_eq!(set, 20, "every line is set once");
+        // Any page but the last could not have taken the stanza after it.
+        for page in 0..pages.len().saturating_sub(1) {
+            let mut more = pages[page].clone();
+            more.extend(
+                pages[page + 1]
+                    .iter()
+                    .take_while(|line| !line.stanza_start)
+                    .cloned(),
+            );
+            let screen = app.online_page_screen(&context, &poem, &more, usize::from(page > 0), 2);
+            assert!(
+                !Verses::page_fits(&context, &screen),
+                "page {page} ended a stanza early: {} lines",
+                pages[page].len()
+            );
+        }
+        assert!(
+            pages.len() <= 2,
+            "{} pages for twenty short lines",
+            pages.len()
+        );
+    }
+
+    #[test]
+    fn a_short_poem_from_poetrydb_is_one_page_and_a_long_one_breaks_between_stanzas() {
+        let context = AppRunner::new(Verses::default()).context();
+        let app = Verses::default();
+        let sonnet = OnlinePoem {
+            title: "Sonnet".into(),
+            author: "A Poet".into(),
+            lines: (1..=14)
+                .map(|line| format!("The line numbered {line} of the poem"))
+                .collect(),
+            linecount: "14".into(),
+        };
+        assert_eq!(app.online_pages(&context, &sonnet).len(), 1);
+        let mut lines = Vec::new();
+        for stanza in 1..=8 {
+            if stanza > 1 {
+                lines.push(String::new());
+            }
+            for line in 1..=4 {
+                lines.push(format!("Stanza {stanza}, line {line}, of a long poem"));
+            }
+        }
+        let long = OnlinePoem {
+            title: "Long".into(),
+            author: "A Poet".into(),
+            lines,
+            linecount: "32".into(),
+        };
+        let pages = app.online_pages(&context, &long);
+        assert!(pages.len() > 1);
+        for page in &pages {
+            let first = page.first().expect("a page with lines");
+            assert!(
+                first.text.ends_with("line 1, of a long poem"),
+                "a stanza was broken: {}",
+                first.text
+            );
+        }
+    }
+
+    #[test]
+    fn the_heart_in_the_poems_panel_is_drawn_filled_only_for_a_favourite() {
+        let context = AppRunner::new(Verses::default()).context();
+        let mut app = Verses {
+            poem_menu: true,
+            ..Verses::default()
+        };
+        let heart = |app: &Verses| {
+            let screen = app.screen(&context);
+            let overlay = format!("{:?}", screen.overlay);
+            assert!(overlay.contains("Heart"), "{overlay}");
+            overlay.contains("selected: true")
+        };
+        assert!(!heart(&app), "an ordinary poem shows a filled heart");
+        app.toggle_favorite();
+        assert!(heart(&app), "a favourite shows an empty heart");
+        let bar = format!("{:?}", app.screen(&context).top_bar);
+        assert!(
+            !bar.contains("Heart"),
+            "the bar still carries a heart: {bar}"
+        );
+    }
+
+    #[test]
+    fn a_favourite_the_reader_would_not_keep_is_taken_back() {
+        let mut runner = AppRunner::new(Verses::default());
+        let before = runner.app().is_favorite();
+        runner.action(action_id("favorite"));
+        assert_ne!(runner.app().is_favorite(), before);
+        runner.store_result(StoreResult::Denied(kobo_sdk::StoreError::Unwritable));
+        assert_eq!(
+            runner.app().is_favorite(),
+            before,
+            "the refused change stayed"
+        );
+        assert!(runner.app().poem_menu, "the panel with the heart closed");
+        let overlay = format!("{:?}", runner.app().screen(&runner.context()).overlay);
+        assert!(overlay.contains("would not keep"), "{overlay}");
+    }
+
+    #[test]
+    fn a_search_poetrydb_found_nothing_for_is_no_results_rather_than_a_broken_answer() {
+        assert_eq!(
+            search_results(br#"{"status":404,"reason":"Not found"}"#).map(|found| found.len()),
+            Some(0)
+        );
+        assert!(search_results(b"<html>").is_none());
     }
 
     #[test]
     fn poetrydb_searches_titles_authors_and_lines() {
-        let Task::Fetch { url, .. } = search_task("hope & spring", false) else {
+        let Task::Fetch { url, .. } = search_task("hope & spring", Scope::Anything) else {
             panic!("search must use the network");
         };
         assert_eq!(
             url,
             "https://poetrydb.org/author,title,lines/hope%20%26%20spring/author,title,linecount"
         );
+    }
+
+    #[test]
+    fn every_card_of_every_poem_fits_at_every_text_size() {
+        // The card shares the poem's pagination, so it has to share the size
+        // that pagination was measured at. It did not: the poem gained a size
+        // override and the card kept drawing at the reader's own, so pages
+        // measured for one were set in the other and the card broke its lines
+        // where the poem did not. Only the poem had a test like this, which is
+        // why nothing said so.
+        for scale in kobo_ui::TextScale::STEPS {
+            let metrics = kobo_ui::DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            for (index, poem) in CORPUS.iter().enumerate() {
+                let context = AppRunner::with_metrics(Verses::default(), metrics).context();
+                let mut app = Verses {
+                    poem: index,
+                    view: View::Reading,
+                    ..Verses::default()
+                };
+                for page in 0..app.poem_pages(&context).1.len() {
+                    app.poem_page = page;
+                    let card = app.quote_card(&context);
+                    let chrome = Chrome::for_screen(&card, false, Chrome::measuring(true).status);
+                    let issues = card.diagnostics(&metrics, &chrome).issues;
+                    assert!(
+                        issues.is_empty(),
+                        "{:?} {} card page {page}: {issues:?}",
+                        scale,
+                        poem.title
+                    );
+                    // The size it is set at, not merely that it fits. A card
+                    // measured large and drawn small still fits: it under-fills
+                    // and breaks its lines where the poem does not, which no
+                    // overflow diagnostic reports.
+                    assert_eq!(
+                        card.text_scale,
+                        app.local_poem(&context).text_scale,
+                        "{:?} {} card page {page} is set at another size than the poem it copies",
+                        scale,
+                        poem.title
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -1430,6 +3829,210 @@ mod tests {
         assert!(notice.to_lowercase().contains("favourite"), "{notice}");
     }
 
+    // These start on the reader's real day rather than a fixed one. Every tap
+    // moves the app on to the clock's day before handling it, so a test pinned
+    // to the day it was written passed on that day only, and on every later
+    // one asked for a second poem and lost the first.
+    #[test]
+    fn todays_poem_comes_from_poetrydb_and_stays_for_the_day() {
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let task = runner.app().daily_task.expect("today's poem was asked for");
+        let Task::Fetch { url, .. } = daily_task(runner.app().day.expect("the reader's day"))
+        else {
+            panic!("a fetch");
+        };
+        assert!(url.contains("linecount,random/"), "{url}");
+        let body = br#"[{"title":"A Fetched Poem","author":"A Poet","lines":["One line,","another.","","A second stanza."],"linecount":"3"}]"#;
+        runner.task_outcome(task, TaskOutcome::Completed(body.to_vec()));
+        let shown = format!("{:?}", runner.app().screen(&runner.context()));
+        assert!(shown.contains("A Fetched Poem"), "{shown}");
+        assert!(shown.contains("From PoetryDB"));
+        assert!(shown.contains("Today's poem"));
+        // Kept for the day: a later action asks for nothing more.
+        runner.action(action_id("poem-next"));
+        assert!(runner.app().daily_task.is_none());
+    }
+
+    #[test]
+    fn todays_fetched_poem_still_makes_a_quote_card() {
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let task = runner.app().daily_task.expect("asked");
+        let body = br#"[{"title":"A Fetched Poem","author":"A Poet","lines":["One line,","another."],"linecount":"2"}]"#;
+        runner.task_outcome(task, TaskOutcome::Completed(body.to_vec()));
+        runner.action(action_id(POEM_MENU));
+        assert!(
+            format!("{:?}", runner.app().screen(&runner.context())).contains("Make a quote card")
+        );
+        let card = runner.app().quote_card(&runner.context());
+        let drawn = format!("{card:?}");
+        assert!(
+            drawn.contains("A Fetched Poem") && drawn.contains("A Poet"),
+            "{drawn}"
+        );
+        assert!(drawn.contains("One line,"));
+        runner.action(action_id("card"));
+        assert_eq!(runner.app().view, View::Card);
+        assert!(runner.app().card_from_online());
+        // The card itself is kept, drawn small, to be shown while it saves.
+        let (picture, poem) = runner.app().card.clone().expect("the card is kept to show");
+        assert_eq!(poem, "A Fetched Poem, A Poet");
+        let picture = picture.expect("the card was handed over as a picture");
+        assert!(picture.source.0 <= CARD_PREVIEW_WIDTH && picture.source.1 <= CARD_PREVIEW_HEIGHT);
+        runner.action(ActionId::BACK);
+        assert!(runner.app().card.is_none());
+    }
+
+    /// A reader on the second page of a long poem opened from a search, with
+    /// today's poem still on its way.
+    fn a_searched_poem_on_its_second_page() -> (AppRunner<Verses>, TaskId) {
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let daily = runner.app().daily_task.expect("today's poem was asked for");
+        runner.app_mut().results = vec![OnlinePoem {
+            title: "A Long Searched Poem".into(),
+            author: "A Poet".into(),
+            lines: (1..=200)
+                .map(|line| format!("Line {line} of the poem"))
+                .collect(),
+            linecount: "200".into(),
+        }];
+        runner.action(action_id("result-0"));
+        assert_eq!(runner.app().view, View::Online);
+        runner.action(action_id("online-next"));
+        assert_eq!(runner.app().online_page, 1, "the poem has a second page");
+        (runner, daily)
+    }
+
+    const DAILY_BODY: &[u8] = br#"[{"title":"A Fetched Poem","author":"A Poet","lines":["One line,","another."],"linecount":"2"}]"#;
+
+    #[test]
+    fn todays_poem_arriving_late_does_not_move_a_searched_poem_back_to_its_first_page() {
+        let (mut runner, daily) = a_searched_poem_on_its_second_page();
+        runner.task_outcome(daily, TaskOutcome::Completed(DAILY_BODY.to_vec()));
+        assert!(runner.app().daily_poem().is_some(), "today's poem was kept");
+        assert_eq!(runner.app().view, View::Online);
+        assert_eq!(runner.app().online_page, 1);
+
+        // Arriving while the searched poem's card is up, it leaves the card's
+        // poem where it was too, so going back lands on the same page.
+        let (mut runner, daily) = a_searched_poem_on_its_second_page();
+        runner.action(action_id("card"));
+        assert_eq!(runner.app().view, View::Card);
+        runner.task_outcome(daily, TaskOutcome::Completed(DAILY_BODY.to_vec()));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Online);
+        assert_eq!(runner.app().online_page, 1);
+
+        // Today's poem, opened afterwards, starts at its own first page rather
+        // than at the page the searched poem was left on.
+        runner.action(action_id("today"));
+        assert_eq!(runner.app().view, View::Today);
+        assert_eq!(runner.app().online_page, 0);
+    }
+
+    #[test]
+    fn todays_poem_arriving_on_the_today_screen_starts_at_its_first_page() {
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let daily = runner.app().daily_task.expect("today's poem was asked for");
+        assert_eq!(runner.app().view, View::Today);
+        runner.app_mut().online_page = 3;
+        runner.task_outcome(daily, TaskOutcome::Completed(DAILY_BODY.to_vec()));
+        assert_eq!(runner.app().online_page, 0);
+    }
+
+    #[test]
+    fn offline_the_day_keeps_its_bundled_poem() {
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: SETTINGS.into(),
+            value: None,
+        });
+        let task = runner.app().daily_task.expect("asked once");
+        runner.task_outcome(task, TaskOutcome::Failed(TaskError::Offline));
+        let shown = format!("{:?}", runner.app().screen(&runner.context()));
+        assert!(shown.contains(CORPUS[runner.app().poem].title));
+        assert!(
+            runner.app().notice.is_none(),
+            "offline is not an error here"
+        );
+    }
+
+    #[test]
+    fn a_numeric_line_count_does_not_empty_the_results() {
+        let body = br#"[{"title":"I'm nobody!  Who are you?","author":"Emily Dickinson","linecount":8},{"title":"Ozymandias","author":"Percy Bysshe Shelley","linecount":"14"}]"#;
+        let poems: Vec<OnlinePoem> = serde_json::from_slice(body).expect("both forms read");
+        assert_eq!(poems[0].linecount, "8");
+        assert_eq!(poems[1].linecount, "14");
+    }
+
+    #[test]
+    fn search_looks_where_the_reader_asked_and_groups_by_poet() {
+        for (scope, fields) in [
+            (Scope::Anything, "/author,title,lines/"),
+            (Scope::Title, "/title/"),
+            (Scope::Poet, "/author/"),
+            (Scope::Line, "/lines/"),
+        ] {
+            let Task::Fetch { url, .. } = search_task("sea", scope) else {
+                panic!("a fetch");
+            };
+            assert!(url.contains(fields), "{url}");
+        }
+        let mut runner = AppRunner::new(Verses::default());
+        runner.start();
+        runner.action(action_id("browse"));
+        runner.action(action_id("search"));
+        runner.action(action_id("scope-poet"));
+        assert_eq!(runner.app().scope, Scope::Poet);
+        assert!(format!("{:?}", runner.app().screen(&runner.context())).contains("Emily Dickinson"));
+        runner.action(action_id("suggest-John Keats"));
+        assert_eq!(runner.app().view, View::Results);
+        let app = runner.app_mut();
+        app.task = None;
+        app.pending = None;
+        app.notice = None;
+        app.results = vec![
+            OnlinePoem {
+                title: "Ode to a Nightingale".into(),
+                author: "John Keats".into(),
+                lines: Vec::new(),
+                linecount: "80".into(),
+            },
+            OnlinePoem {
+                title: "Bright Star".into(),
+                author: "John Keats".into(),
+                lines: Vec::new(),
+                linecount: "14".into(),
+            },
+        ];
+        let shown = format!("{:?}", runner.app().screen(&runner.context()));
+        assert!(shown.contains("2 poems for"), "{shown}");
+        assert!(shown.contains("14 lines · a minute"));
+        assert!(shown.contains("80 lines · four minutes"));
+        // Sorted within the poet: Bright Star before the Nightingale.
+        assert!(shown.find("Bright Star") < shown.find("Ode to a Nightingale"));
+    }
+
     #[test]
     fn a_service_that_is_down_is_not_reported_as_an_empty_search() {
         // The poetry service answered with its framework's error page for a
@@ -1491,9 +4094,16 @@ mod tests {
     fn reading_and_browse_screens_fit() {
         let app = Verses::default();
         let context = AppRunner::new(Verses::default()).context();
-        for screen in [app.local_poem(&context), app.browse(), app.search()] {
+        for screen in [
+            app.local_poem(&context),
+            app.browse(&context).0,
+            app.search(),
+        ] {
             let diagnostics = screen.diagnostics(&CLARA_BW_METRICS, &Chrome::default());
             assert!(diagnostics.issues.is_empty(), "{:?}", diagnostics.issues);
         }
     }
 }
+
+#[cfg(test)]
+mod navigation_tests;

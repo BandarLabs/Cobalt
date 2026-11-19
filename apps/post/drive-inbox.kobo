@@ -1,0 +1,53 @@
+# sweep: --bare --seed-root apps/post/fixtures/inbox
+# Fourteen cached letters on a reader with no token: every check fails the
+# same way, and the cache is what the owner reads.
+wait-for A long letter
+wait-for No Hermes account is on this reader yet
+expect Your cached letters are still here.
+expect Tea notes
+clean
+shot post-cached-inbox
+# Older and Newer page through the list a page at a time.
+tap Older
+wait-for Short note 6
+expect-missing A long letter
+expect Page 2
+tap Older
+wait-for Short note 14
+expect Page 3
+clean
+shot post-inbox-last-page
+tap Older
+expect Short note 14
+tap Newer
+wait-for Short note 6
+tap Newer
+wait-for A long letter
+expect Page 1
+# A long letter is paged, and reopening it comes back to the same page.
+tap A long letter
+wait-for The kettle takes its time
+expect 1 of
+expect Write a reply
+clean
+shot post-letter
+tap-id next-page
+wait-for 2 of
+expect-missing The kettle takes its time
+tap-id previous-page
+wait-for The kettle takes its time
+tap-id next-page
+wait-for 2 of
+tap-id 4294967295
+wait-for Tea notes
+tap A long letter
+wait-for 2 of
+# The place in the letter survives a restart.
+restart
+wait-for Tea notes
+tap A long letter
+wait-for 2 of
+tap-id 4294967295
+wait-for Tea notes
+# The count beside the page number is the inbox size, kept with the cache.
+expect 14 letters

@@ -1,0 +1,10 @@
+{
+  "status": "source-validated",
+  "checks": [
+    "compact help is 43 columns or narrower",
+    "ASCII and escape-free content",
+    "acceptance checks 32/48-column TERM=dumb NO_COLOR output equality after rebuild"
+  ],
+  "maximum_line_columns": 43,
+  "runtime_rebuild_required": true
+}

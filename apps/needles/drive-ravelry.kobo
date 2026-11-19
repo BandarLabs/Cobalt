@@ -1,0 +1,52 @@
+# The Ravelry library is reached from More. Without an account on the
+# reader, a sync says which computer command fixes it.
+wait-for Row 0
+tap More
+wait-for Ravelry library
+tap Ravelry library
+wait-for Library
+expect Queue
+expect Favorites
+expect Not synced yet
+expect Sync to bring your Ravelry library to this reader.
+expect Sync Library
+clean
+shot library-empty
+tap Sync Library
+wait-for No Ravelry account is on this reader yet.
+expect kobo secret set ravelry
+clean
+shot library-no-account
+# Each tab is its own collection with its own Sync.
+tap Queue
+wait-for Sync to bring your Ravelry queue to this reader.
+expect Sync Queue
+tap Favorites
+wait-for Sync to bring your Ravelry favorites to this reader.
+# With a key on the reader and no Wi-Fi, the sync waits and then says the
+# reader is not on Wi-Fi, with the way to join.
+companion secret set ravelry --from apps/needles/fixtures/ravelry-sim-key --sim
+scenario offline
+tap Sync Favorites
+wait-for Reading your Ravelry favorites.
+expect Syncing Favorites
+wait 6000
+wait-for not on Wi-Fi
+expect Join Wi-Fi
+expect Sync Favorites
+clean
+shot library-offline
+# A server that does not answer offers Try again on its banner, in place
+# of the Sync at the foot.
+scenario host-down
+tap Sync Favorites
+wait-for did not answer
+expect Try again
+expect-missing Sync Favorites
+expect Not synced yet
+clean
+shot library-host-down
+scenario normal
+tap-id 4294967295
+wait-for Row 0
+expect Read a pattern

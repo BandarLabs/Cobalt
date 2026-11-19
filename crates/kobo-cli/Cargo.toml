@@ -11,7 +11,9 @@ name = "kobo"
 path = "src/main.rs"
 
 [dependencies]
+kobo-abi = { path = "../kobo-abi" }
 kobo-sdk = { path = "../kobo-sdk", default-features = false }
+kobo-article = { path = "../kobo-article" }
 kobo-catalog = { path = "../kobo-catalog" }
 kobo-ui = { path = "../kobo-ui" }
 kobo-app-store = { path = "../kobo-app-store" }
@@ -19,17 +21,28 @@ kobo-opml = { path = "../kobo-opml" }
 kobo-sim = { path = "../kobo-sim" }
 kobo-image = { path = "../kobo-image" }
 kobo-json = { path = "../kobo-json" }
+kobo-zstory = { path = "../kobo-zstory" }
+kobo-comic = { path = "../kobo-comic" }
 kobo-net = { path = "../kobo-net" }
 kobo-stream = { path = "../kobo-stream" }
 kobo-doc = { path = "../kobo-doc" }
 kobo-frame-host = { path = "../kobo-frame-host" }
+kobo-music-host = { path = "../kobo-music-host" }
+kobo-vault-host = { path = "../kobo-vault-host" }
+kobo-html = { path = "../kobo-html" }
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 kobo-profile = { path = "../kobo-profile" }
 kobo-protocol = { path = "../kobo-protocol" }
+kobo-policy = { path = "../kobo-policy" }
 kobod = { path = "../kobod" }
 kobo-wifi-trace = { path = "../kobo-wifi-trace" }
 ring = "0.17"
 rusqlite = { version = "0.37.0", features = ["bundled", "serialize"] }
 serde_json = "1.0"
+
+# Windows has no system gzip to pipe through; see `gzip` in main.rs.
+[target.'cfg(windows)'.dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 [features]
 default = []

@@ -1,138 +1,108 @@
-# Coding Agents Sidekick
+# Sidekick
 
-The permission prompt, moved to the armchair.
+Answer your coding agents' permission prompts from your Kobo.
 
-A coding agent on the desk stops to ask "may I run this?" and the asking goes
-wherever this reader is. The [sidekick daemon](../../crates/kobo-sidekickd)
-on the computer catches the question through the agent's own hook system --
-Claude Code and Codex both call the event `PermissionRequest` -- and holds
-it; this application collects it over one long-polled fetch, prints the
-command in full, and offers the answers under a thumb: **Allow**, **Deny**,
-and **Leave it for the terminal**.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/asking.png" alt="A command waiting for approval"><br>A command waiting for approval</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/question.png" alt="A question with its own answers"><br>A question with its own answers</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/board.png" alt="Several terminals waiting"><br>Several terminals waiting</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/watching.png" alt="Paired and watching"><br>Paired and watching</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/pairing.png" alt="Pairing with a computer"><br>Pairing with a computer</td>
+</tr>
+</table>
 
-| A permission, as Claude Code asked it | Nothing to decide |
-| --- | --- |
-| ![Claude Code asks, the tool Bash, a shell command wrapped over three lines, and buttons reading Allow, Deny and Leave it for the terminal](screenshots/asking.png) | ![A circle over the word Watching, a line saying questions appear here the moment they ask, the paired address, and a Change pairing button](screenshots/watching.png) |
+When Claude Code or Codex stops to ask "may I run this?", Sidekick shows the
+question on your Kobo. The [sidekick daemon](../../crates/kobo-sidekickd) on
+your computer catches it through the agent's own hooks.
 
-Some questions come with their own answers instead. An agent asking which
-approach to take, or offering to allow this command every time from now on,
-sends the options it would have shown at the keyboard; each becomes a row
-with the label it was given and the sentence underneath. The reader shows
-what the terminal would have shown rather than a decision it invented.
+## Features
 
-![Claude Code asks, the byline Severity, the question what severity bar
-should the final report use, and three options each with a sentence under it:
-High confidence only, Medium and above, Everything found. A Leave it for the
-terminal button sits underneath](screenshots/question.png)
-
-The design rule is that the panel earns its repaints. An empty poll asks
-again without drawing anything; a question repaints once and the panel then
-holds it at zero power for as long as the decision takes, which is the one
-thing this screen does better than the phone it replaces.
-
-## Setting it up
-
-On the computer, once:
-
-```sh
-kobo-sidekickd init                  # certificate, pairing code, address
-kobo trust set sidekick --device IP  # the reader learns to verify the daemon
-kobo-sidekickd setup                 # finds your agents and writes their hooks
-kobo-sidekickd run
-```
-
-`setup` with no argument registers every agent it finds; name one to do just
-that one, `--dry-run` to see what it would touch, `--print` to get the JSON
-to paste yourself, and `agents` to list what it found. It keeps a `.bak`,
-leaves every unrelated setting where it was, joins another tool's hook
-rather than replacing it, and refuses outright to rewrite a configuration
-file it could not parse.
-
-On the reader, open Sidekick and type the two things `init` printed: the
-address, then the six-character pairing code. Both are remembered; pairing is
-typed once. The first screen names `kobo-sidekickd init` rather than telling
-you to open something, because what has to happen is that a daemon is running
-on the computer, and that is the command that starts it.
-
-## What the screens hold
-
-Three screens after pairing, and nothing on any of them that is not needed:
-
-- **Watching** -- a splash saying questions will appear, who the reader is
-  paired with, and the last answer given, so a glance says the tap counted.
-- **Asking** -- who asks, which terminal on which computer, the command as a
-  quote, and the answers. With one agent the tool was enough; with three of
-  them on two machines, "shell asks" is not a question anybody can answer.
-  Usually Allow and Deny; a question that brought its own answers shows one
-  row each, with the sentence the agent wrote underneath. Back is not an
-  escape hatch here: dismissing a question sends "leave it for the
-  terminal", said out loud instead of left dangling on the daemon.
-- **Sending** -- stated once with `activity`, because a tap with no visible
-  answer on a slow panel reads as a tap that was missed.
-
-A question that takes several answers ticks rather than answers, and sends
-what is ticked with a button of its own. An agent asking four questions at
-once has them put one at a time, so the panel never holds more than one
-thing to decide.
-
-## More than one terminal
-
-When one question waits, Sidekick still opens it directly. When several wait,
-the reader instead shows one board row per question: agent, project/session,
-tool, and the beginning of its request. Selecting a row opens the same
-decision screen, so an answer always returns to its originating terminal.
-The daemon's `GET /pending?all=true` snapshot carries every waiting question
-and a revision number; the ordinary long poll remains compatible with older
-readers.
-
-![Sidekick board with separate Claude Code and Codex terminal sessions](screenshots/board.png)
+- Shows the full command, which agent is asking, and from which terminal on
+  which computer.
+- Answer **Allow**, **Deny** or **Leave it for the terminal**. Pressing Back
+  also leaves it for the terminal.
+- Questions that come with their own options, such as choosing an approach,
+  show each option with its description. Questions that allow several choices
+  let you tick them, then send.
+- When several questions are waiting, a board lists them all. Each answer
+  returns to the terminal that asked.
+- The screen redraws only when a question arrives.
 
 | Agent | Status |
 | --- | --- |
-| Claude Code | Wired: permission requests and `AskUserQuestion` |
-| Codex | Wired: permission requests |
-| Gemini CLI | Watched, not wired: its permission-moment hook contract has not been verified |
-| OpenCode | Watched, not wired: its plugin/decision contract has not been verified |
-| GitHub Copilot CLI | Watched, not wired: no compatible hook surface has been verified |
-| Cursor CLI | Watched, not wired: no compatible hook surface has been verified |
+| Claude Code | Permission requests and `AskUserQuestion` |
+| Codex | Permission requests |
 
-![Sidekick pairing](screenshots/pairing.png)
+## Setup
 
-## Trust
+Sidekick needs your computer. On it:
 
-The connection is TLS against a root the owner installed with `kobo trust
-set`; the runtime verifies the daemon exactly as it verifies any public
-host. The pairing code rides every request so nobody else on the network can
-watch the questions or answer them. And the failure mode is honest: when the
-daemon is unreachable, the agents' own terminal prompts work exactly as they
-did before this application existed.
+1. Set up the reader once over USB, if you have not already:
+
+   ```sh
+   kobo setup
+   ```
+
+2. Pair this computer with the reader. This writes the pairing for Sidekick,
+   [Deck](../../apps/deck/) and [Paperterm](../../apps/paperterm/) onto the
+   reader over Wi-Fi, so there is nothing to type there. The first time, close
+   Cobalt on the reader and open it again afterwards so it trusts the computer.
+
+   ```sh
+   kobo sidekick init
+   ```
+
+3. Let your agent ask through Sidekick. Use `codex` instead of `claude` for
+   Codex.
+
+   ```sh
+   kobo sidekick setup claude
+   ```
+
+4. Start the helper and leave it running, then open Sidekick on the reader.
+
+   ```sh
+   kobo sidekick run
+   ```
+
+`kobo sidekick test` sends the reader a harmless question and waits for your
+answer. `kobo sidekick status` says whether the helper is running and whether
+a reader is watching.
+
+If `init` cannot reach the reader, it prints an address and a six-character
+code. Enter them in Sidekick; they are remembered. **Change pairing** on the
+watching screen starts again.
+
+The top of the screen says **Watching** only while the computer answers. When
+it does not, Sidekick says **Not connected** and why, and your agents ask at
+their terminals as usual. A question asked while no reader has been in touch
+for a minute goes straight back to the terminal instead of waiting.
+
+## Security
+
+The connection uses TLS with the certificate `init` installed on the reader,
+and every request carries the pairing code, so no one else on the network can
+see or answer questions. If the helper is unreachable, the agents' own
+terminal prompts work as usual.
+
+## Permissions
+
+- `network`: connects to the daemon on your computer.
+
+## Development
+
+```sh
+cargo test -p kobo-sidekick
+(cd examples/sidekick && kobo dev)   # in the browser simulator
+python3 scripts/check-apps-sim.py sidekick
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
+```
 
 ---
 
-Built with the [Cobalt SDK](../../README.md), which
-[installs on a Kobo](../../README.md#install-it-on-your-kobo) with one
-command over USB. The other apps:
-[Launcher](../launcher/README.md) ·
-[Audiobook Studio](../audiobook/README.md) ·
-[Gutenbird](../gutenbird/README.md) ·
-[Hacker News](../hn/README.md) ·
-[RSS Reader](../rss/README.md) ·
-[Daily Brief](../brief/README.md) ·
-[AI Chat](../chat/README.md) ·
-[Terminal](../terminal/README.md) ·
-[UI Components Showcase](../gallery/README.md) ·
-[Settings](../settings/README.md) ·
-[Todo](../todo/README.md) ·
-[Tic-tac-toe](../tictactoe/README.md) ·
-[Magnet Sensor](../magnet/README.md)
-
-
-## Connection sample
-
-With pairing initialized and the normal daemon stopped, run
-`kobo-sidekickd sample`. Open Sidekick and choose **Received**. The reader's
-last-answer line records the selected answer; the computer confirms receipt.
-The sample does not run commands or need an agent integration.
-
-![Sample question](../../docs/quality/evidence/sidekick-sample/default/sample-question.png)
-![Sample answered at larger text size](../../docs/quality/evidence/sidekick-sample/170/sample-answered.png)
+Part of [Cobalt](../../README.md). See [all apps](../../README.md#apps).

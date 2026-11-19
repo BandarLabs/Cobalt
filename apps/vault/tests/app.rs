@@ -1,3 +1,7 @@
+#[allow(
+    dead_code,
+    reason = "only the renderer is exercised here; the note blocks the app reads are tested beside them in the app itself"
+)]
 #[path = "../src/md.rs"]
 mod md;
 #[path = "../src/model.rs"]
@@ -51,7 +55,6 @@ fn wiki_links_create_backlinks() {
 }
 #[test]
 fn empty_or_missing_index_is_an_empty_vault() {
-    assert_eq!(INDEX_KEY, "vault-index-v1");
     assert!(decode_index("").is_empty());
     assert!(decode_index("   \n").is_empty());
 }

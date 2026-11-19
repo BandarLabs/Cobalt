@@ -1,32 +1,79 @@
 # Vault
 
-A read-only, offline reader for Obsidian vaults. It keeps browsing, note text,
-tags, backlinks, and a case-insensitive search on the reader. It is unofficial
-and not affiliated with Dynalist Inc.; the UI is named simply **Vault**.
+A read-only, offline reader for your Obsidian notes.
+
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/home.png" alt="Home: Browse, Tags, Recent and Search"><br>Home: Browse, Tags, Recent and Search</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/browse.png" alt="Folders with note counts"><br>Folders with note counts</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/note.png" alt="A long note, paged"><br>A long note, paged</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/tags.png" alt="Tags with note counts"><br>Tags with note counts</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/search.png" alt="Search results with the matching line"><br>Search results with the matching line</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/backlinks.png" alt="Notes linking to the open note"><br>Notes linking to the open note</td>
+</tr>
+</table>
+
+## Features
+
+- Browse folders, filter by tag, see recent notes and search every note's
+  text.
+- Headings are set as headings, and lists, tables and code keep their
+  bullets, cells and lines.
+- Wiki links (`[[Note]]` and `[[Note|label]]`) open the note they name when it
+  is on the reader. Back returns to the page you followed the link from. **Links**
+  in a note's top bar lists the notes that link to it.
+- A note has the whole panel. Tap the sides of the page or use the page
+  buttons to turn it, and touch the top to bring the bar back. Each note
+  reopens where you left off.
+- Notes you push appear the next time you come back to Vault.
+
+## Setup
+
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. Send a folder of notes:
 
 ```sh
-kobo vault init --device 192.168.1.42
-kobo vault push ~/Notes --device 192.168.1.42
+kobo vault push ~/Notes
 ```
 
-For the simulator, push the same folder into the host store the app reads:
+Push again whenever your notes change. Only changed notes are sent, a renamed
+note keeps its place, and the push ends by counting the notes on the reader.
+Commands use the reader `kobo setup` saved. Add `--device IP` for another
+reader, or `--sim` to try a command on the simulator.
+
+Other commands:
 
 ```sh
-kobo vault init --sim
-kobo vault push ~/Notes --sim
+kobo vault plan ~/Notes                   # what a push would change
+kobo vault preview NOTE.md                # roughly how one note will page
+kobo vault ls                             # notes on the reader
+kobo vault rm ID                          # remove one note
 ```
 
-`kobo sync setup DIR --folder vault` copies files onto the reader under
-`sync/vault`. Vault does not read that folder. It loads one packed index
-(`vault-index-v1`) from the app store, so the companion that writes that key
-is `kobo vault push`.
+- A push adds to what is on the reader. `--replace` makes the reader hold
+  exactly this folder, and removes pushed notes it no longer has.
+- `--exclude TEXT` skips matching files, and can be repeated.
+- Vault is for reading. Edits are made on your computer and pushed again.
 
-<img width="300" src="screenshots/home.png" alt="Vault on a Clara BW explaining how to push a vault">
+## Permissions
 
-## Dependencies
+None. Vault runs offline.
 
-The app quarantines `pulldown-cmark` (MIT) in `src/md.rs` and sends its HTML
-through Cobalt's `kobo-html` renderer. Wiki links (`[[Note]]`) resolve to
-notes in the packed index. PDF, audio, video, canvas, and image attachments
-are not rendered; they are skipped when packing. The packed index must fit
-in the 256 KB app-store value limit.
+## Development
+
+```sh
+cargo test -p kobo-vault
+python3 scripts/check-apps-sim.py vault
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
+
+## Credits
+
+Markdown is parsed with `pulldown-cmark` (MIT). Vault is unofficial and not
+affiliated with Obsidian or Dynalist Inc.

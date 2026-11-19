@@ -9,10 +9,15 @@ use kobo_net::{has_origin, parse};
 use kobo_protocol::{Credential, CredentialUse, SecretHeader};
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
 #[path = "miniflux_credentials.rs"]
 mod miniflux;
+#[path = "post_credentials.rs"]
+mod post;
+#[path = "readeck_credentials.rs"]
+mod readeck;
 #[path = "credential_servers.rs"]
 pub mod servers;
 use std::path::{Path, PathBuf};
@@ -56,6 +61,44 @@ pub fn handle_install(
         _ => return None,
     };
     Some(result.map_or_else(DeviceResult::Failed, |()| DeviceResult::Done))
+}
+
+/// Answer a presence check against real storage, names and booleans only.
+///
+/// The companion to [`handle_install`]: a value can be written but never
+/// read back, so "is it there?" is the only question an application may
+/// ask, and only about names its reviewed policy may set. `None` means
+/// this request belongs to another device service.
+///
+/// A key counts wherever a request would find it, including the owner-wide
+/// copy `kobo secret set` writes. That command is what every app's README
+/// tells the owner to run, and it removes the app's own copy as it goes.
+#[must_use]
+pub fn handle_check(
+    root: &Path,
+    app: &str,
+    request: &kobo_protocol::DeviceRequest,
+) -> Option<kobo_protocol::DeviceResult> {
+    use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+    let DeviceRequest::CheckSecrets { names } = request else {
+        return None;
+    };
+    // A server-bound account (Readeck, Library, Digest, Post) is the app's own
+    // as much as a plain key is. Refusing to say whether one is installed left
+    // "Check again" unable to notice a sign-in made from the computer.
+    if names.is_empty()
+        || names
+            .iter()
+            .any(|name| !may_set(app, name) && !servers::may_set(app, name))
+    {
+        return Some(DeviceResult::Denied(DenyReason::PolicyRejected));
+    }
+    let present = names
+        .iter()
+        .filter(|name| crate::tasks::secret_resolves(root, app, name))
+        .cloned()
+        .collect();
+    Some(DeviceResult::Secrets { present })
 }
 
 /// Validate an account request before either real storage or an injected fault.
@@ -141,16 +184,21 @@ fn write_private_record(
         fs::remove_file(&temporary).map_err(|_| kobo_protocol::DeviceError::Backend)?;
     }
     let result: std::io::Result<()> = (|| {
-        let mut file = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(0o600)
-            .open(&temporary)?;
+        let mut options = fs::OpenOptions::new();
+        options.create_new(true).write(true);
+        // Unix mode bits keep the record owner-only. Windows has no mode bits;
+        // a file under the user profile is restricted to the owning account by
+        // its ACL instead, which is the same privacy outcome by the platform's
+        // own mechanism.
+        #[cfg(unix)]
+        options.mode(0o600);
+        let mut file = options.open(&temporary)?;
+        #[cfg(unix)]
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
         file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&temporary, &destination)?;
-        fs::File::open(directory)?.sync_all()
+        crate::persistence::sync_directory(directory)
     })();
     if result.is_err() {
         let _ignored = fs::remove_file(&temporary);
@@ -162,24 +210,27 @@ fn private_directory(path: &Path) -> Result<(), kobo_protocol::DeviceError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_dir() => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::DirBuilder::new()
-                .mode(0o700)
+            #[allow(unused_mut)] // Windows has no mode bits to set.
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            builder.mode(0o700);
+            builder
                 .create(path)
                 .map_err(|_| kobo_protocol::DeviceError::Backend)?;
         }
         Ok(_) | Err(_) => return Err(kobo_protocol::DeviceError::Backend),
     }
+    #[cfg(unix)]
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
         .map_err(|_| kobo_protocol::DeviceError::Backend)?;
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| kobo_protocol::DeviceError::Backend)?;
+    // The directory flushes go through the persistence boundary, whose Windows
+    // half opens directories with FILE_FLAG_BACKUP_SEMANTICS.
+    crate::persistence::sync_directory(path).map_err(|_| kobo_protocol::DeviceError::Backend)?;
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
-        fs::File::open(parent)
-            .and_then(|directory| directory.sync_all())
+        crate::persistence::sync_directory(parent)
             .map_err(|_| kobo_protocol::DeviceError::Backend)?;
     }
     Ok(())
@@ -216,6 +267,7 @@ pub fn may_set(app: &str, name: &str) -> bool {
     match app {
         "audiobook" => matches!(name, "exa" | "openai" | "elevenlabs"),
         "chat" => matches!(name, "openai" | "anthropic" | "gemini"),
+        "lichess" => name == "lichess",
         "zotero-reader" => name == "zotero",
         _ => false,
     }
@@ -246,8 +298,14 @@ pub fn allowed_request_with_server(
     server.map_or_else(
         || allowed_request(app, credential, url, usage, body, content_type),
         |server| {
-            if app == "rss-miniflux" {
+            if app == "readeck" {
+                readeck::allowed(credential, server, url, usage, body, content_type)
+            } else if app == "readlater" {
+                readlater_server_allowed(credential, server, url, usage, body)
+            } else if app == "rss-miniflux" {
                 miniflux::allowed(credential, server, url, usage, body, content_type)
+            } else if app == "post" {
+                post::allowed(credential, server, url, usage, body, content_type)
             } else {
                 servers::allowed(app, credential, server, url, usage)
             }
@@ -275,7 +333,10 @@ pub fn allowed_request(
     if app == "zotero-reader" {
         return usage == CredentialUse::Fetch && zotero_credential_allowed(credential, url);
     }
-    if let Some(allowed) = store_app_credential_allowed(app, credential, url, usage) {
+    if app == "rss-miniflux" {
+        return miniflux::allowed_unbound(credential, url, usage, body, content_type);
+    }
+    if let Some(allowed) = store_app_credential_allowed(app, credential, url, usage, body) {
         return allowed;
     }
     // Historical fixed-provider policies predate update tasks. None grants
@@ -377,23 +438,51 @@ fn lichess_credential_allowed(
     }
 }
 
+/// The clocks the Lichess app offers, as minutes and increment seconds.
+///
+/// Seeks and challenges are matched against these exact bodies rather than a
+/// pattern, so a token handed to Lichess can start the games the app shows
+/// and nothing a crafted body could ask for.
+const LICHESS_CLOCKS: [(u32, u32); 9] = [
+    (3, 0),
+    (3, 2),
+    (5, 0),
+    (5, 3),
+    (10, 0),
+    (10, 5),
+    (15, 10),
+    (30, 0),
+    (30, 20),
+];
+
 fn lichess_post(path: &str, body: &str) -> bool {
     if path == "/api/board/seek" {
-        return [
-            "rated=true&time=3&increment=0&variant=standard&color=random",
-            "rated=true&time=3&increment=2&variant=standard&color=random",
-            "rated=true&time=5&increment=0&variant=standard&color=random",
-            "rated=true&time=5&increment=3&variant=standard&color=random",
-            "rated=true&time=10&increment=0&variant=standard&color=random",
-            "rated=true&time=10&increment=5&variant=standard&color=random",
-            "rated=true&time=15&increment=10&variant=standard&color=random",
-            "rated=true&time=30&increment=0&variant=standard&color=random",
-            "rated=true&time=30&increment=20&variant=standard&color=random",
-        ]
-        .contains(&body);
+        // Casual games as well as rated ones: an owner learning the game, or
+        // one who just wants a game, should not have to put a rating on it.
+        return LICHESS_CLOCKS.iter().any(|(minutes, increment)| {
+            ["true", "false"].iter().any(|rated| {
+                body == format!(
+                    "rated={rated}&time={minutes}&increment={increment}&variant=standard&color=random"
+                )
+            })
+        });
     }
     let parts = path.trim_start_matches('/').split('/').collect::<Vec<_>>();
     match parts.as_slice() {
+        // Challenging a named player. The app has always offered it, and the
+        // policy refused every one, so the button could only ever fail.
+        ["api", "challenge", username] => {
+            lichess_username(username)
+                && LICHESS_CLOCKS.iter().any(|(minutes, increment)| {
+                    ["white", "black", "random"].iter().any(|color| {
+                        body == format!(
+                            "rated=false&clock.limit={}&clock.increment={increment}\
+                             &variant=standard&color={color}",
+                            minutes * 60
+                        )
+                    })
+                })
+        }
         ["api", "board", "game", game, "move", movement] => {
             body.is_empty() && lichess_id(game) && uci_move(movement)
         }
@@ -410,6 +499,13 @@ fn lichess_post(path: &str, body: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn lichess_username(value: &str) -> bool {
+    (2..=30).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
 fn lichess_id(value: &str) -> bool {
@@ -435,6 +531,7 @@ fn store_app_credential_allowed(
     credential: &Credential,
     url: &str,
     usage: CredentialUse,
+    body: Option<&str>,
 ) -> Option<bool> {
     let allowed = match app {
         "calibre-web" => {
@@ -470,8 +567,14 @@ fn store_app_credential_allowed(
             credential.secret == "mealie"
                 && credential.header == SecretHeader::Bearer
                 && usage == CredentialUse::Fetch
-                && url == "https://mealie.local/api/recipes?perPage=20"
-                && has_origin(url, "mealie.local", 443)
+                && parsed_path(url).is_some_and(|path| {
+                    let path = clean_path(&path);
+                    path.ends_with("/api/recipes")
+                        || path
+                            .rsplit("/api/recipes/")
+                            .next()
+                            .is_some_and(|slug| !slug.is_empty() && !slug.contains('/'))
+                })
         }
         "needles" => {
             credential.secret == "ravelry"
@@ -511,25 +614,50 @@ fn store_app_credential_allowed(
                             || wallabag_entry_document(&path)
                     }
                     CredentialUse::Post => wallabag_entry_document(&path),
-                    CredentialUse::Put | CredentialUse::Patch => false,
-                })
-        }
-        "rss-miniflux" => {
-            credential.secret == "miniflux"
-                && matches!(
-                    &credential.header,
-                    SecretHeader::Named(header) if header.eq_ignore_ascii_case("x-auth-token")
-                )
-                && parsed_path(url).is_some_and(|path| match usage {
-                    CredentialUse::Fetch => {
-                        clean_path(&path).ends_with("/v1/entries") && path.contains("status=unread")
+                    // Wallabag updates an entry by PATCH; the outbox writes
+                    // only these four flag bodies.
+                    CredentialUse::Patch => {
+                        wallabag_entry_document(&path) && wallabag_flag_body(body)
                     }
-                    CredentialUse::Post | CredentialUse::Put | CredentialUse::Patch => false,
+                    CredentialUse::Put => false,
                 })
         }
         _ => return None,
     };
     Some(allowed)
+}
+
+/// A server-bound wallabag account keeps its bearer token on its own host:
+/// the same entry routes an owner-installed token may use, never another
+/// server, however the application was pointed at it.
+fn readlater_server_allowed(
+    credential: &Credential,
+    server: &str,
+    url: &str,
+    usage: CredentialUse,
+    body: Option<&str>,
+) -> bool {
+    credential.secret == "wallabag"
+        && credential.header == SecretHeader::Bearer
+        && servers::contains(server, url)
+        && parsed_path(url).is_some_and(|path| match usage {
+            CredentialUse::Fetch => {
+                (clean_path(&path).ends_with("/api/entries.json")
+                    && path.contains("detail=metadata"))
+                    || wallabag_entry_document(&path)
+            }
+            CredentialUse::Post => wallabag_entry_document(&path),
+            CredentialUse::Patch => wallabag_entry_document(&path) && wallabag_flag_body(body),
+            CredentialUse::Put => false,
+        })
+}
+
+/// The outbox's whole vocabulary: an entry's archive or star flag, either way.
+fn wallabag_flag_body(body: Option<&str>) -> bool {
+    matches!(
+        body,
+        Some(r#"{"archive":0}"# | r#"{"archive":1}"# | r#"{"starred":0}"# | r#"{"starred":1}"#)
+    )
 }
 
 fn wallabag_entry_document(path: &str) -> bool {
@@ -634,7 +762,10 @@ fn zotero_key(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{allowed, allowed_request, install_app_secret, may_set, AUDIOBOOK_VOICES};
+    use super::{
+        allowed, allowed_request, allowed_request_with_server, install_app_secret, may_set,
+        AUDIOBOOK_VOICES,
+    };
     use kobo_protocol::{Credential, CredentialUse};
 
     #[test]
@@ -671,12 +802,119 @@ mod tests {
     }
 
     #[test]
+    fn a_presence_check_names_only_what_the_calling_app_may_set() {
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+        let root =
+            std::env::temp_dir().join(format!("cobalt-credential-check-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        let request = DeviceRequest::CheckSecrets {
+            names: vec!["exa".into(), "openai".into(), "elevenlabs".into()],
+        };
+        // Nothing installed: an empty answer, which is a true answer.
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets { present: vec![] })
+        );
+        install_app_secret(&root, "audiobook", "openai", "synthetic-key")
+            .expect("install one credential");
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets {
+                present: vec!["openai".into()]
+            })
+        );
+        // A name outside the app's reviewed list is refused, not answered.
+        let nosy = DeviceRequest::CheckSecrets {
+            names: vec!["openai".into(), "zotero".into()],
+        };
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &nosy),
+            Some(DeviceResult::Denied(DenyReason::PolicyRejected))
+        );
+        // Another app asking about the same installed secret is refused too:
+        // presence of somebody else's credential is not its business.
+        let theirs = DeviceRequest::CheckSecrets {
+            names: vec!["openai".into()],
+        };
+        assert_eq!(
+            super::handle_check(&root, "zotero-reader", &theirs),
+            Some(DeviceResult::Denied(DenyReason::PolicyRejected))
+        );
+        // Requests for other services fall through.
+        let other = DeviceRequest::ReadBattery;
+        assert_eq!(super::handle_check(&root, "audiobook", &other), None);
+        // An app may ask after its own server-bound account, and only its own.
+        let account = DeviceRequest::CheckSecrets {
+            names: vec!["readeck".into()],
+        };
+        assert_eq!(
+            super::handle_check(&root, "readeck", &account),
+            Some(DeviceResult::Secrets { present: vec![] })
+        );
+        assert_eq!(
+            super::handle_check(&root, "post", &account),
+            Some(DeviceResult::Denied(DenyReason::PolicyRejected))
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_key_set_from_the_computer_counts_as_present_wherever_a_request_would_find_it() {
+        use kobo_protocol::{DeviceRequest, DeviceResult};
+        let root = std::env::temp_dir().join(format!(
+            "cobalt-credential-check-owner-{}",
+            std::process::id()
+        ));
+        let _ignored = std::fs::remove_dir_all(&root);
+        std::fs::create_dir(&root).unwrap();
+        let request = DeviceRequest::CheckSecrets {
+            names: vec!["exa".into(), "openai".into(), "elevenlabs".into()],
+        };
+        // `kobo secret set` writes the owner-wide file with a trailing newline
+        // and leaves no copy under the app.
+        std::fs::write(root.join("openai"), b"sk-owner\n").unwrap();
+        std::fs::write(root.join("elevenlabs"), b"xi-owner\n").unwrap();
+        // A file of nothing but whitespace is not a key to a request, so it is
+        // not one to the check either.
+        std::fs::write(root.join("exa"), b" \n").unwrap();
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets {
+                present: vec!["openai".into(), "elevenlabs".into()]
+            })
+        );
+        // A link is never followed by a request, so it never counts here.
+        // Making one on Windows needs a privilege, so only Unix plants it.
+        std::fs::remove_file(root.join("exa")).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("openai"), root.join("exa")).unwrap();
+        install_app_secret(&root, "audiobook", "exa", "typed-on-the-reader")
+            .expect("install the app's own copy");
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets {
+                present: vec!["exa".into(), "openai".into(), "elevenlabs".into()]
+            }),
+            "the app's own copy counts, ahead of the link beside it"
+        );
+        std::fs::remove_file(root.join("apps/audiobook/exa")).unwrap();
+        assert_eq!(
+            super::handle_check(&root, "audiobook", &request),
+            Some(DeviceResult::Secrets {
+                present: vec!["openai".into(), "elevenlabs".into()]
+            })
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn apps_can_install_only_the_credentials_their_policy_consumes() {
         assert!(may_set("zotero-reader", "zotero"));
         assert!(may_set("chat", "anthropic"));
         assert!(may_set("audiobook", "elevenlabs"));
+        assert!(may_set("lichess", "lichess"));
         assert!(!may_set("zotero-reader", "openai"));
-        assert!(!may_set("lichess", "lichess"));
+        assert!(!may_set("lichess", "zotero"));
         assert!(!may_set("other", "zotero"));
     }
 
@@ -700,6 +938,8 @@ mod tests {
         let _ignored = std::fs::remove_dir_all(root);
     }
 
+    // Symlink fixtures need Unix semantics.
+    #[cfg(unix)]
     #[test]
     fn app_identity_and_symlink_boundaries_fail_closed() {
         use std::os::unix::fs::symlink;
@@ -851,7 +1091,13 @@ mod tests {
             (
                 "kitchencard",
                 Credential::bearer("mealie"),
-                "https://mealie.local/api/recipes?perPage=20",
+                "https://mealie.example/api/recipes?perPage=24&page=1",
+                CredentialUse::Fetch,
+            ),
+            (
+                "kitchencard",
+                Credential::bearer("mealie"),
+                "https://mealie.example/api/recipes/lemon-chickpeas",
                 CredentialUse::Fetch,
             ),
             (
@@ -898,6 +1144,124 @@ mod tests {
                 "another app used {app}'s credential"
             );
         }
+    }
+
+    #[test]
+    fn readlater_patches_only_entry_flags() {
+        let credential = Credential::bearer("wallabag");
+        let url = "https://read.example/api/entries/7.json";
+        for body in [
+            r#"{"archive":1}"#,
+            r#"{"archive":0}"#,
+            r#"{"starred":1}"#,
+            r#"{"starred":0}"#,
+        ] {
+            assert!(
+                allowed_request(
+                    "readlater",
+                    &credential,
+                    url,
+                    CredentialUse::Patch,
+                    Some(body),
+                    Some("application/json")
+                ),
+                "{body}"
+            );
+        }
+        for body in [
+            r#"{"title":"overwrite"}"#,
+            r#"{"archive":1,"star":1}"#,
+            r#"{"archive":2}"#,
+        ] {
+            assert!(
+                !allowed_request(
+                    "readlater",
+                    &credential,
+                    url,
+                    CredentialUse::Patch,
+                    Some(body),
+                    Some("application/json")
+                ),
+                "{body}"
+            );
+        }
+        assert!(!allowed_request(
+            "readlater",
+            &credential,
+            "https://read.example/api/entries.json?detail=metadata",
+            CredentialUse::Patch,
+            Some(r#"{"starred":1}"#),
+            None
+        ));
+        assert!(allowed_request_with_server(
+            "readlater",
+            &credential,
+            url,
+            CredentialUse::Patch,
+            Some(r#"{"archive":1}"#),
+            Some("application/json"),
+            Some("https://read.example")
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &credential,
+            url,
+            CredentialUse::Patch,
+            Some(r#"{"title":"x"}"#),
+            Some("application/json"),
+            Some("https://read.example")
+        ));
+    }
+
+    #[test]
+    fn server_bound_wallabag_stays_on_its_server_and_routes() {
+        let credential = Credential::bearer("wallabag");
+        let server = "https://read.example";
+        assert!(allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://read.example/api/entries.json?detail=metadata&page=1",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://read.example/api/entries/7.json",
+            CredentialUse::Post,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://other.example/api/entries/7.json",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &credential,
+            "https://read.example/api/user.json",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
+        assert!(!allowed_request_with_server(
+            "readlater",
+            &Credential::basic("wallabag"),
+            "https://read.example/api/entries/7.json",
+            CredentialUse::Fetch,
+            None,
+            None,
+            Some(server)
+        ));
     }
 
     #[test]
@@ -997,6 +1361,49 @@ mod tests {
     }
 
     #[test]
+    fn lichess_allows_casual_seeks_and_challenges_only_with_the_apps_own_clocks() {
+        let token = Credential::bearer("lichess");
+        let post = |url: &str, body: &str| {
+            allowed_request(
+                "lichess",
+                &token,
+                url,
+                CredentialUse::Post,
+                Some(body),
+                Some("application/x-www-form-urlencoded"),
+            )
+        };
+        assert!(post(
+            "https://lichess.org/api/board/seek",
+            "rated=false&time=15&increment=10&variant=standard&color=random"
+        ));
+        assert!(post(
+            "https://lichess.org/api/challenge/Reader-Two",
+            "rated=false&clock.limit=600&clock.increment=5&variant=standard&color=white"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/board/seek",
+            "rated=false&time=1&increment=0&variant=standard&color=random"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/challenge/Reader-Two",
+            "rated=true&clock.limit=600&clock.increment=5&variant=standard&color=white"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/challenge/Reader-Two",
+            "rated=false&clock.limit=600&clock.increment=5&variant=chess960&color=white"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/challenge/a/b",
+            "rated=false&clock.limit=600&clock.increment=5&variant=standard&color=white"
+        ));
+        assert!(!post(
+            "https://lichess.org/api/challenge/x",
+            "rated=false&clock.limit=600&clock.increment=5&variant=standard&color=white"
+        ));
+    }
+
+    #[test]
     fn lichess_policy_refuses_origin_path_method_and_body_expansion() {
         let token = Credential::bearer("lichess");
         for url in [
@@ -1015,11 +1422,6 @@ mod tests {
             );
         }
         for (url, body, content_type) in [
-            (
-                "https://lichess.org/api/board/seek",
-                "rated=false&time=10&increment=0&variant=standard&color=random",
-                "application/x-www-form-urlencoded",
-            ),
             (
                 "https://lichess.org/api/board/seek",
                 "rated=true&time=10&increment=0&variant=standard&color=random&extra=1",

@@ -7,7 +7,7 @@ use super::{Address, TaskError, TLS_CONFIG};
 use std::net::SocketAddr;
 use std::sync::OnceLock;
 
-static ENDPOINT: OnceLock<Endpoint> = OnceLock::new();
+static ENDPOINTS: OnceLock<Vec<Endpoint>> = OnceLock::new();
 
 #[derive(Debug, Eq, PartialEq)]
 struct Endpoint {
@@ -45,27 +45,72 @@ impl Endpoint {
 
 /// Installs `hostname=127.0.0.1:port` (or an IPv6 loopback socket).
 ///
-/// Call before any network request. The fixture must present a certificate for
-/// the original hostname, trusted through the normal owner-root mechanism.
+/// Several endpoints install as one comma-separated specification, for an
+/// application whose work spans more than one provider host. Call before any
+/// network request. The fixture must present a certificate for the original
+/// hostname, trusted through the normal owner-root mechanism.
 ///
 /// # Errors
-/// Refuses non-loopback endpoints, malformed specifications, reconfiguration,
-/// and installation after TLS configuration has been used.
+/// Refuses non-loopback endpoints, malformed specifications, duplicate hosts,
+/// reconfiguration, and installation after TLS configuration has been used.
 pub fn install(specification: &str) -> Result<(), TaskError> {
-    let endpoint = Endpoint::parse(specification)?;
+    let endpoints = parse_specification(specification)?;
     if TLS_CONFIG.get().is_some() {
         return Err(TaskError::Denied);
     }
-    ENDPOINT.set(endpoint).map_err(|_| TaskError::Denied)
+    ENDPOINTS.set(endpoints).map_err(|_| TaskError::Denied)
+}
+
+fn parse_specification(specification: &str) -> Result<Vec<Endpoint>, TaskError> {
+    let mut endpoints = Vec::new();
+    for part in specification.split(',') {
+        let endpoint = Endpoint::parse(part)?;
+        if endpoints
+            .iter()
+            .any(|seen: &Endpoint| seen.host == endpoint.host)
+        {
+            return Err(TaskError::Denied);
+        }
+        endpoints.push(endpoint);
+    }
+    if endpoints.is_empty() {
+        return Err(TaskError::Denied);
+    }
+    Ok(endpoints)
 }
 
 pub(super) fn destination(address: &Address) -> Option<Result<SocketAddr, TaskError>> {
-    ENDPOINT.get().map(|endpoint| endpoint.destination(address))
+    ENDPOINTS.get().map(|endpoints| {
+        endpoints
+            .iter()
+            .find_map(|endpoint| endpoint.destination(address).ok())
+            .ok_or(TaskError::Denied)
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Endpoint;
+    use super::{parse_specification, Endpoint};
+
+    #[test]
+    fn several_endpoints_install_as_one_specification() {
+        let endpoints = parse_specification("api.example=127.0.0.1:8765,cdn.example=[::1]:8766")
+            .expect("valid");
+        assert_eq!(endpoints.len(), 2);
+        assert_eq!(endpoints[0].host, "api.example");
+        assert_eq!(endpoints[1].host, "cdn.example");
+        for specification in [
+            "",
+            "api.example=127.0.0.1:8765,api.example=127.0.0.1:8766",
+            "api.example=127.0.0.1:8765,",
+            "api.example=192.0.2.1:8765",
+        ] {
+            assert!(
+                parse_specification(specification).is_err(),
+                "{specification}"
+            );
+        }
+    }
 
     #[test]
     fn only_explicit_loopback_endpoints_are_accepted() {

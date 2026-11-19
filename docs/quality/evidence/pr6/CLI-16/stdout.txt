@@ -1,0 +1,3 @@
+0 new, 1 already present, 0 removed; 0 image bytes to send
+  Keep: send-photo.png / send-photo.png (photo-d50492a307dcde3c)
+Frame transfer verified: 1 photo(s), 0 new, 0 removed

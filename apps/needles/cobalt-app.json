@@ -3,10 +3,10 @@
   "display_name": "Needles",
   "short_label": "Needles",
   "summary": "Count rows, browse Ravelry collections, and read your synced patterns offline.",
-  "page_description": "A knuckle-sized row counter, Ravelry library browser, and offline pattern reader.",
-  "version": "0.1.3",
-  "release_notes": "Line up a table's columns under the headings that name them, typeset numbered equations, set figures apart from the prose, and carry a document's mathematics all the way through instead of stopping early.",
-  "glyph": "bookmark",
+  "page_description": "Count rows for each section of a project, browse your Ravelry library, and read patterns you own offline.",
+  "version": "0.1.16",
+  "release_notes": "A project started from a pattern now opens on the pattern's first section. The Ravelry tabs and the project list read more plainly.",
+  "glyph": "yarn",
   "capabilities": [
     "network",
     "keep-awake"
@@ -14,15 +14,16 @@
   "setup": {
     "steps": [
       {
-        "text": "Ravelry library sync requires an approved Ravelry API account and HTTP Basic credential."
+        "text": "Set up the reader once over USB, if you have not already. PDF patterns also need Poppler on this computer, which kobo needles setup installs.",
+        "command": "kobo setup"
       },
       {
-        "text": "Install the credential under the exact name ravelry.",
-        "command": "kobo secret set ravelry --device <address>"
+        "text": "Send a pattern you own. Each push adds a pattern; the ones already there stay.",
+        "command": "kobo needles push PATTERN.pdf"
       },
       {
-        "text": "Prepare and transfer a PDF you own with Poppler's pdftotext installed.",
-        "command": "kobo needles push PATTERN.pdf --device <address>"
+        "text": "Optional: Ravelry library sync needs an approved Ravelry API account. Install its credential under the name ravelry.",
+        "command": "kobo secret set ravelry"
       }
     ]
   }

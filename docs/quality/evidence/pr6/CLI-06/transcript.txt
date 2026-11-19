@@ -1,0 +1,9 @@
+$ kobo stream init --bogus   (usage shows the pairing surface, --reader NAME included)
+kobo: usage: kobo stream init [--device IP] [--reader NAME] [--host ADDRESS ...]
+exit: 2
+
+$ kobo wait --reader clara --timeout 1   (a saved name is the only way to pick among several readers; the binary never substitutes the first one answering)
+kobo: "clara" (serial N365…) is not answering at its saved address or anywhere on this network
+exit: 3
+
+Note: with several readers saved (clara, beckett in the store), every act command requires one explicit target; a name that matches no saved reader or no answering serial is a target error (CLI-05 transcript), never first-device fallback. The interactive chooser (kobo stream init without --device) likewise lists what answered and refuses to choose when several readers reply - see choose_reader in main.rs.

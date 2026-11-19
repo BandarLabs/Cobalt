@@ -1,0 +1,70 @@
+# The player's other controls on The Quiet Shelf, three two-second chapters:
+# chapter skips, the thirty-second skips and the page keys, volume, the
+# sleep timer at the end of a chapter, switching Bluetooth off and back on
+# by pressing Play, and the place kept across a restart.
+wait-for Audiobooks
+tap The Quiet Shelf
+wait-for Now playing
+tap Pause
+wait-for Play
+tap Next chapter
+wait-for 2 of 3
+tap Previous chapter
+wait-for 1 of 3
+tap Forward 30 sec
+wait-for 0:06 of 0:06
+tap Back 30 sec
+wait-for 0:00 of 0:06
+page next
+wait-for 0:06 of 0:06
+page back
+wait-for 0:00 of 0:06
+tap Louder
+wait-for 80%
+tap Quieter
+wait-for 70%
+clean
+shot audiobook-controls
+tap Sleep
+wait-for Sleep timer
+expect Not on a timer
+tap At the end of this chapter
+wait-for Now playing
+expect Pauses at the end of this chapter
+tap Sleep
+wait-for Sleep timer
+tap Not on a timer
+wait-for Now playing
+expect-missing Pauses at the end
+# With Bluetooth switched off the output says so, and Play turns it on and
+# finds the headphones again.
+tap Bluetooth audio output
+wait-for Bluetooth audio
+tap Bluetooth
+wait-for Turn on to find headphones and speakers
+expect-missing Simulated headphones
+clean
+shot audiobook-bluetooth-off
+tap-id 4294967295
+wait-for Now playing
+expect Not connected
+tap Play
+wait-for Simulated headphones
+wait-for Pause
+tap Pause
+wait-for Play
+# The place is kept: chapter two, after a restart.
+tap Next chapter
+wait-for 2 of 3
+tap-id 4294967295
+wait-for Audiobooks
+expect Paused
+expect 4 s left
+restart
+wait-for Audiobooks
+expect 4 s left
+tap The Quiet Shelf
+wait-for Now playing
+expect 2 of 3
+clean
+shot audiobook-resumed

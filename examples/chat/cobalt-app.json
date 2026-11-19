@@ -1,13 +1,30 @@
 {
   "id": "chat",
-  "display_name": "AI Command Center",
-  "short_label": "AI Chat",
-  "summary": "Ask a question, then read and navigate the answer with touch controls.",
-  "version": "1.0.11",
-  "minimum_cobalt_version": "0.3.4",
+  "display_name": "Chat",
+  "short_label": "Chat",
+  "summary": "Ask a question, then read and navigate the answer with touch controls. Needs an account.",
+  "version": "1.0.20",
   "glyph": "chat",
   "capabilities": [
     "network"
   ],
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for."
+  "release_notes": "Each reply keeps the name of the service that wrote it, and a question that was not answered keeps its Try again until it is.",
+  "setup": {
+    "steps": [
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Create an API key with OpenAI, Anthropic or Google Gemini. Save it in a private file named for the service: ~/.openai, ~/.anthropic or ~/.gemini."
+      },
+      {
+        "text": "Install the key on the reader under the same name: openai, anthropic or gemini.",
+        "command": "kobo secret set openai"
+      },
+      {
+        "text": "Open Chat. If the key is not for OpenAI, tap Service and choose its service, then tap Type and ask."
+      }
+    ]
+  }
 }

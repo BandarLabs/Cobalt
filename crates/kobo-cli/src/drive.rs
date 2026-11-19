@@ -63,10 +63,19 @@ const FRAME_HEIGHT: u32 = SIMULATED_PANEL.1;
 const CAPTURE_HEADER: &str = "capture-begin";
 const CAPTURE_FOOTER: &str = "capture-end";
 
+/// The screen's content area and page-turn declaration, as the simulator
+/// reports them alongside the layout nodes.
+#[derive(Clone, Copy, Debug)]
+struct Paging {
+    content: (i32, i32, i32, i32),
+    has_next: bool,
+}
+
 /// One node of the layout the renderer produced.
 #[derive(Clone, Debug)]
 pub struct Control {
     pub kind: String,
+    pub rect: (i32, i32, i32, i32),
     pub centre: (i32, i32),
     pub lines: Vec<String>,
     pub action: Option<u32>,
@@ -79,14 +88,37 @@ impl Control {
     /// shortened to fit -- "Return to Kobo reader" becomes "Return to Kobo…"
     /// on a narrow panel, and a script that had to know which panel it was
     /// running on would be a script nobody kept up to date.
+    ///
+    /// A line that ends on a word's own hyphen ("calibre-" over "web") is
+    /// joined to the next without a space, because the wrap broke the word
+    /// where it was allowed to, and a reader still reads "calibre-web".
     fn says(&self, needle: &str) -> bool {
+        // A command is drawn with its hyphens made unbreakable and a joiner
+        // after each slash, so a flag or a path is never split across two
+        // lines. A route names the command as it is typed, so both are read
+        // as the characters they stand for.
         let normalize = |text: &str| {
-            text.split_whitespace()
+            text.replace('\u{2011}', "-")
+                .replace('\u{2060}', "")
+                .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ")
                 .to_lowercase()
         };
-        normalize(&self.lines.join(" ")).contains(&normalize(needle))
+        let mut joined = String::new();
+        for line in &self.lines {
+            let broken_at_hyphen = joined.ends_with('-')
+                && joined
+                    .chars()
+                    .rev()
+                    .nth(1)
+                    .is_some_and(char::is_alphanumeric);
+            if !joined.is_empty() && !broken_at_hyphen {
+                joined.push(' ');
+            }
+            joined.push_str(line.trim());
+        }
+        normalize(&joined).contains(&normalize(needle))
     }
 
     /// Whether one of this node's lines is exactly `needle`.
@@ -101,6 +133,12 @@ impl Control {
     /// Whether a finger on the middle of this node would do anything.
     const fn tappable(&self) -> bool {
         self.action.is_some()
+    }
+
+    /// Whether the action is this node's own, rather than what a tap on the
+    /// page beneath it resolves to. A control names its action in its kind.
+    fn owns_action(&self) -> bool {
+        self.kind == "Back" || self.kind.contains("ActionId(")
     }
 }
 
@@ -125,7 +163,10 @@ pub struct CapturedFrame {
     pub metadata: serde_json::Value,
     pub width: u32,
     pub height: u32,
-    pub grey: Vec<u8>,
+    /// One byte a pixel of grey, or three of colour when `rgb` is set, which
+    /// a simulated colour panel's captures are.
+    pub pixels: Vec<u8>,
+    pub rgb: bool,
 }
 
 impl Driver {
@@ -183,15 +224,9 @@ impl Driver {
         let rest = rest.trim();
         let result = match verb {
             "tap" => self.tap(rest),
-            "tap-id" => {
-                let action = parse_action_id(rest)?;
-                let control = self
-                    .layout()?
-                    .into_iter()
-                    .find(|control| control.action == Some(action))
-                    .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
-                self.touch(control.centre.0, control.centre.1)
-            }
+            "tap-id" => self.tap_action_id(rest),
+            "maybe-tap-id" => self.maybe_tap_id(rest),
+            "tap-paged" => self.tap_paged(rest),
             "tap-at" => {
                 let (x, y) = parse_point(rest)?;
                 self.touch(x, y)
@@ -219,25 +254,19 @@ impl Driver {
             "expect-state" => self.expect_state(rest),
             "clean" => self.clean(),
             "lifecycle" => self.post("/lifecycle", rest),
+            "restart" => self.post_and_settle("/restart", rest),
+            "companion" => run_companion(rest),
+            "page" => self.post_and_settle("/input", &format!("page {rest}")),
             "scenario" => self.post("/scenario", rest),
-            "tasks" if rest == "cancel" => {
-                self.post("/tasks", rest)?;
-                self.wait_idle("")
-            }
+            // An article arriving, through the same inbox a companion writes.
+            "notice" => self.post_and_settle("/notice", rest),
+            "tasks" if rest == "cancel" => self.post_and_settle("/tasks", rest),
             "session" if rest == "disconnect" => self.post("/session", rest),
-            "input" => {
-                self.post("/input", rest)?;
-                self.wait_idle("")
-            }
+            "input" => self.post_and_settle("/input", rest),
             "panel" => self.post("/panel", rest),
-            "device" => {
-                self.post("/device", rest)?;
-                self.wait_idle("")
-            }
-            "clock" => {
-                self.post("/clock", rest)?;
-                self.wait_idle("")
-            }
+            "device" => self.post_and_settle("/device", rest),
+            "wifi" => self.post_and_settle("/wifi", rest),
+            "clock" => self.post_and_settle("/clock", rest),
             "wait" => {
                 let milliseconds: u64 = rest
                     .parse()
@@ -260,6 +289,8 @@ impl Driver {
             verb,
             "tap"
                 | "tap-id"
+                | "maybe-tap-id"
+                | "tap-paged"
                 | "tap-at"
                 | "type"
                 | "wait-for"
@@ -270,6 +301,7 @@ impl Driver {
                 | "tasks"
                 | "panel"
                 | "device"
+                | "wifi"
                 | "clock"
                 | "scenario"
                 | "lifecycle"
@@ -277,6 +309,133 @@ impl Driver {
             self.clean()?;
         }
         Ok(())
+    }
+
+    /// Taps the control carrying the named action.
+    ///
+    /// A page turn on a reading screen has no control: the sides of the page
+    /// are the control, and the words cover them. When the action is one the
+    /// screen declared as a page turn, the page key for that direction is
+    /// pressed instead, which is how an owner turns a page the words cover.
+    fn tap_action_id(&mut self, rest: &str) -> Result<(), String> {
+        let action = parse_action_id(rest)?;
+        // A control that carries the action first. Every node reports what a
+        // tap on it would do, so a heading on a reading page reports the
+        // middle column's action; tapping it at the top of the panel calls
+        // the bar back instead of doing what was asked.
+        let carrying = |controls: Vec<Control>, owned_only: bool| {
+            controls
+                .into_iter()
+                .filter(|control| control.action == Some(action))
+                .find(|control| !owned_only || control.owns_action())
+                .map(|control| control.centre)
+        };
+        if let Some((x, y)) = carrying(self.layout()?, true) {
+            return self.touch(x, y);
+        }
+        let [previous, next, menu] = self.declared_turns()?;
+        if next == action {
+            return self.post_and_settle("/input", "page next");
+        }
+        if previous == action {
+            return self.post_and_settle("/input", "page back");
+        }
+        if menu == action && menu != 0 {
+            let body = self.get("/layout")?;
+            let body = String::from_utf8_lossy(&body);
+            let content = body
+                .find("\"content\":{")
+                .map(|start| &body[start..])
+                .unwrap_or_default();
+            let number = |key: &str| json_number(content, key).unwrap_or(0);
+            let (x, y) = (
+                number("\"x\"") + number("\"width\"") / 2,
+                number("\"y\"") + number("\"height\"") / 2,
+            );
+            return self.touch(i32::try_from(x).unwrap_or(0), i32::try_from(y).unwrap_or(0));
+        }
+        // The control may be on a bar that is out of sight.
+        self.reveal_bar()?;
+        let (x, y) = carrying(self.layout()?, true)
+            .or(carrying(self.layout()?, false))
+            .ok_or_else(|| format!("action {action} is not reachable on this screen"))?;
+        self.touch(x, y)
+    }
+
+    /// Taps the control carrying `action` when this panel draws it, and
+    /// skips with a note when it does not. A pager that the whole catalogue
+    /// fits on one page never draws is not a failure; the page it would
+    /// have turned to does not exist on this panel.
+    fn maybe_tap_id(&mut self, rest: &str) -> Result<(), String> {
+        let action = parse_action_id(rest)?;
+        if let Some(control) = self
+            .layout()?
+            .into_iter()
+            .find(|control| control.action == Some(action))
+        {
+            return self.touch(control.centre.0, control.centre.1);
+        }
+        println!("maybe-tap-id {rest}: not on this screen, skipping");
+        Ok(())
+    }
+
+    /// Taps the first control saying `label`, turning pages to find it.
+    ///
+    /// Pagination is a function of profile and text scale: a catalogue that
+    /// fits one panel at one size spills onto a second page at a larger
+    /// one, so a route that assumes either layout is wrong on the other.
+    /// This looks for the label, and while it is missing and the screen
+    /// declared page-turn zones, taps the forward zone -- the empty right
+    /// edge of the content, where a reader's thumb goes -- and looks
+    /// again. The bound keeps a genuinely absent label a failure.
+    ///
+    /// A list whose rows run the full width of the content leaves no empty
+    /// spot in that zone, at the largest text size especially, so there the
+    /// reader's page key turns the page instead, as an owner would.
+    fn tap_paged(&mut self, label: &str) -> Result<(), String> {
+        const MAX_PAGES: u32 = 8;
+        for page in 0..=MAX_PAGES {
+            if let Some(control) = self.find(label)? {
+                let (x, y) = control.centre;
+                return self.touch(x, y);
+            }
+            if page == MAX_PAGES {
+                break;
+            }
+            let controls = self.layout()?;
+            let paging = self.paging()?;
+            if !paging.has_next {
+                break;
+            }
+            match forward_point(&controls, paging.content) {
+                Some((x, y)) => self.touch(x, y)?,
+                None => self.post_and_settle("/input", "page next")?,
+            }
+        }
+        Err(format!(
+            "{label:?} never appeared within {MAX_PAGES} page turns"
+        ))
+    }
+
+    /// The screen's content rectangle and whether it declared page-turn
+    /// zones, from the same layout payload the controls come from. Both
+    /// default to the old payload's absence: no reported area and no zones.
+    fn paging(&self) -> Result<Paging, String> {
+        let body = self.get("/layout")?;
+        let body = String::from_utf8_lossy(&body).into_owned();
+        let number = |key: &str| {
+            i32::try_from(json_number(&body, key).unwrap_or_default()).unwrap_or_default()
+        };
+        let content = (
+            number("\"x\""),
+            number("\"y\""),
+            number("\"width\""),
+            number("\"height\""),
+        );
+        Ok(Paging {
+            content,
+            has_next: body.contains("\"pageTurns\":{"),
+        })
     }
 
     /// Taps the control whose label carries `label`.
@@ -294,38 +453,89 @@ impl Driver {
     /// works -- the tappable node there is the row, whose own lines are the
     /// title, but a picture or a label inside it may be what matched.
     fn tap(&mut self, label: &str) -> Result<(), String> {
-        let controls = self.layout()?;
-        let control = controls
-            .iter()
-            .find(|control| control.tappable() && control.says_exactly(label))
-            .or_else(|| {
-                controls
-                    .iter()
-                    .find(|control| control.tappable() && control.says(label))
-            })
-            .or_else(|| controls.iter().find(|control| control.says_exactly(label)))
-            .or_else(|| controls.iter().find(|control| control.says(label)))
-            .ok_or_else(|| format!("nothing on the screen says {label:?}"))?;
-        let (x, y) = control.centre;
+        let find = |controls: &[Control]| {
+            controls
+                .iter()
+                .find(|control| control.tappable() && control.says_exactly(label))
+                .or_else(|| {
+                    controls
+                        .iter()
+                        .find(|control| control.tappable() && control.says(label))
+                })
+                .or_else(|| controls.iter().find(|control| control.says_exactly(label)))
+                .or_else(|| controls.iter().find(|control| control.says(label)))
+                .map(|control| control.centre)
+        };
+        if let Some((x, y)) = find(&self.layout()?) {
+            return self.touch(x, y);
+        }
+        // A reading screen keeps its bar out of sight until the top of the
+        // panel is touched, and Back is on the bar. A reader touches the top
+        // and looks again, and so does this.
+        self.reveal_bar()?;
+        let (x, y) =
+            find(&self.layout()?).ok_or_else(|| format!("nothing on the screen says {label:?}"))?;
         self.touch(x, y)
     }
 
-    /// Types through visible touch targets. Standard SDK key identities take
+    /// Touches the top of the panel, where a hidden bar is called back.
+    fn reveal_bar(&mut self) -> Result<(), String> {
+        let (content_x, _, content_width, _) = self.paging()?.content;
+        let x = if content_width > 0 {
+            content_x + content_width / 2
+        } else {
+            536
+        };
+        self.touch(x, 12)?;
+        self.wait_idle("")
+    }
+
+    /// Types through visible touch targets. Standard key identities, which
+    /// the runtime's keyboard and the keys an application draws share, take
     /// precedence over matching letters in a crossword or document. Custom
-    /// keyboards retain label matching when no SDK keyboard is present.
+    /// keyboards retain label matching when no standard keyboard is present.
     fn type_text(&mut self, text: &str) -> Result<(), String> {
         for character in text.chars() {
             let label = match character {
                 ' ' => "Space".to_owned(),
                 character => character.to_string(),
             };
-            let controls = self.layout()?;
-            let key = keyboard_key(&controls, &label).ok_or_else(|| {
-                format!("no key for {label:?}; is the right keyboard layer showing?")
-            })?;
-            self.touch(key.centre.0, key.centre.1)?;
+            self.press_key(&label)?;
         }
         Ok(())
+    }
+
+    /// Presses one key, turning to the keyboard page it is on first.
+    ///
+    /// A pairing code such as `dr2q29` mixes letters and digits, and an owner
+    /// taps the layer key to reach each digit. Refusing every character not on
+    /// the page showing made a script spell that out key by key. The
+    /// keyboard, whether the runtime draws it for a text field or an
+    /// application draws it for a terminal, has four pages, letters, symbols
+    /// and the shifted form of each, and the two toggles visit all of them
+    /// before coming back.
+    fn press_key(&mut self, label: &str) -> Result<(), String> {
+        let layer = parse_action_id("kb.layer").expect("fixed key");
+        let shift = parse_action_id("kb.shift").expect("fixed key");
+        for toggle in [None, Some(layer), Some(shift), Some(layer), Some(shift)] {
+            if let Some(toggle) = toggle {
+                let controls = self.layout()?;
+                let Some(control) = controls
+                    .iter()
+                    .find(|control| control.tappable() && control.action == Some(toggle))
+                else {
+                    break;
+                };
+                let (x, y) = control.centre;
+                self.touch(x, y)?;
+            }
+            let controls = self.layout()?;
+            if let Some(key) = keyboard_key(&controls, label) {
+                let (x, y) = key.centre;
+                return self.touch(x, y);
+            }
+        }
+        Err(format!("no key for {label:?} on any keyboard page"))
     }
 
     /// Asserts that something on the screen says this.
@@ -353,6 +563,29 @@ impl Driver {
         }
     }
 
+    /// The previous and next page turns the screen declared, and the middle
+    /// of the page when it opens something, or zeros.
+    ///
+    /// A reading page has no control for either: the sides of the page are
+    /// the control, so a script asks for the declared turn instead.
+    fn declared_turns(&self) -> Result<[u32; 3], String> {
+        let body = self.get("/layout")?;
+        let body = String::from_utf8_lossy(&body);
+        let declared = body
+            .find("\"pageTurns\":{")
+            .and_then(|start| {
+                let object = &body[start..];
+                object.find('}').map(|end| &object[..end])
+            })
+            .unwrap_or_default();
+        let turn = |key: &str| {
+            json_number(declared, key)
+                .and_then(|id| u32::try_from(id).ok())
+                .unwrap_or(0)
+        };
+        Ok([turn("\"previous\""), turn("\"next\""), turn("\"menu\"")])
+    }
+
     fn wait_for_id(&self, action: u32) -> Result<(), String> {
         let deadline = Instant::now() + APPEAR_TIMEOUT;
         loop {
@@ -360,6 +593,7 @@ impl Driver {
                 .layout()?
                 .iter()
                 .any(|control| control.action == Some(action))
+                || self.declared_turns()?.contains(&action)
             {
                 return Ok(());
             }
@@ -406,10 +640,17 @@ impl Driver {
             .ok_or("expect-state requires an endpoint and #JSON_POINTER")?;
         if !matches!(
             endpoint,
-            "/simulation" | "/activity" | "/layout" | "/clock" | "/device" | "/panel" | "/input"
+            "/simulation"
+                | "/activity"
+                | "/layout"
+                | "/clock"
+                | "/device"
+                | "/wifi"
+                | "/panel"
+                | "/input"
         ) || !pointer.starts_with('/')
         {
-            return Err("expect-state uses /simulation, /activity, /layout, /clock, /device, /panel or /input and a JSON pointer beginning with /".into());
+            return Err("expect-state uses /simulation, /activity, /layout, /clock, /device, /wifi, /panel or /input and a JSON pointer beginning with /".into());
         }
         let report: serde_json::Value = serde_json::from_slice(&self.get(endpoint)?)
             .map_err(|error| format!("read assertion state: {error}"))?;
@@ -498,15 +739,14 @@ impl Driver {
         } else {
             "/capture"
         })?;
-        let (metadata, width, height, grey) = parse_atomic_capture(&bytes)?;
-        if metadata["frame"]["format"] != "grey8" {
-            return Err("expected a grayscale recording frame".into());
-        }
+        let (metadata, width, height, pixels) = parse_atomic_capture(&bytes)?;
+        let rgb = metadata["frame"]["format"] == "rgb24";
         Ok(CapturedFrame {
             metadata,
             width,
             height,
-            grey: grey.to_vec(),
+            pixels: pixels.to_vec(),
+            rgb,
         })
     }
 
@@ -526,6 +766,16 @@ impl Driver {
             .into_iter()
             .map(|node| Control {
                 kind: json_field(&node, "kind").unwrap_or_default(),
+                rect: (
+                    i32::try_from(json_number(&node, "\"x\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                    i32::try_from(json_number(&node, "\"y\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                    i32::try_from(json_number(&node, "\"width\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                    i32::try_from(json_number(&node, "\"height\"").unwrap_or_default())
+                        .unwrap_or_default(),
+                ),
                 centre: json_point(&node, "centre"),
                 lines: json_array(&node, "lines"),
                 action: json_number(&node, "\"action\"")
@@ -600,6 +850,14 @@ impl Driver {
 
     fn post(&self, path: &str, body: &str) -> Result<(), String> {
         self.request("POST", path, body).map(|_| ())
+    }
+
+    /// Posts an event the app answers by drawing, then waits for that drawing
+    /// to finish, so the next step reads the screen the event produced rather
+    /// than the one before it.
+    fn post_and_settle(&self, path: &str, body: &str) -> Result<(), String> {
+        self.post(path, body)?;
+        self.wait_idle("")
     }
 
     /// One HTTP request, spoken by hand.
@@ -689,22 +947,26 @@ struct FrameLog {
 
 impl FrameLog {
     fn sample_capture(&mut self, millis: u32, capture: CapturedFrame) {
-        if self.sample(millis, capture.grey) {
+        if self.sample(millis, capture.pixels, capture.rgb) {
             self.provenance.push(capture.metadata);
         }
     }
 
     /// Offers one look at the panel, and says whether it was worth keeping.
-    fn sample(&mut self, millis: u32, grey: Vec<u8>) -> bool {
+    fn sample(&mut self, millis: u32, pixels: Vec<u8>, rgb: bool) -> bool {
         self.looked += 1;
         if self
             .frames
             .last()
-            .is_some_and(|last| last.grey.as_slice() == grey.as_slice())
+            .is_some_and(|last| last.pixels.as_slice() == pixels.as_slice())
         {
             return false;
         }
-        self.frames.push(RecordedFrame { millis, grey });
+        self.frames.push(RecordedFrame {
+            millis,
+            pixels,
+            rgb,
+        });
         true
     }
 }
@@ -1157,6 +1419,29 @@ fn json_number(object: &str, key: &str) -> Option<i64> {
     digits.parse().ok()
 }
 
+/// A spot in the forward page-turn zone -- the right edge of the content,
+/// where a reader's thumb goes -- that no drawn node covers, so the tap
+/// falls through to the zone instead of landing on a control drawn over it.
+/// The candidates favour the far right because a screen that split the
+/// content into turn columns still keeps that edge as the next page.
+fn forward_point(controls: &[Control], content: (i32, i32, i32, i32)) -> Option<(i32, i32)> {
+    let (cx, cy, cw, ch) = content;
+    for across in [90, 80] {
+        for down in [50, 25, 75, 12, 88] {
+            let x = cx + cw * across / 100;
+            let y = cy + ch * down / 100;
+            let covered = controls.iter().any(|control| {
+                let (nx, ny, nw, nh) = control.rect;
+                x >= nx && x < nx + nw && y >= ny && y < ny + nh
+            });
+            if !covered {
+                return Some((x, y));
+            }
+        }
+    }
+    None
+}
+
 fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[u8]), String> {
     let header: [u8; 4] = bytes
         .get(..4)
@@ -1202,12 +1487,55 @@ fn parse_atomic_capture(bytes: &[u8]) -> Result<(serde_json::Value, u32, u32, &[
     Ok((metadata, width, height, frame))
 }
 
+/// Runs a computer-side command between steps, as an owner would while the
+/// app is open: `companion frame push photo.jpg --sim`.
+///
+/// "A push is picked up when the app comes back" could only be checked by a
+/// script that drove the simulator and ran the command itself, because a
+/// route had no way to do the second half. This is the same `kobo` binary,
+/// started without a shell, and it must name `--sim`, so a committed route
+/// can never reach a real reader.
+fn run_companion(arguments: &str) -> Result<(), String> {
+    let arguments = arguments.split_whitespace().collect::<Vec<_>>();
+    // A clip kept for later goes to no reader at all, only to this
+    // computer's queue, which is what a route about Sync needs to fill.
+    let reaches_no_reader = arguments.first() == Some(&"clip") && arguments.contains(&"--later");
+    if !arguments.contains(&"--sim") && !reaches_no_reader {
+        return Err("companion runs only commands that name --sim".to_owned());
+    }
+    let program = std::env::current_exe().map_err(|error| format!("find kobo: {error}"))?;
+    let output = std::process::Command::new(program)
+        .args(&arguments)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| format!("run kobo {}: {error}", arguments.join(" ")))?;
+    print!("{}", String::from_utf8_lossy(&output.stdout));
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "kobo {} failed: {}",
+            arguments.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
 fn keyboard_key<'a>(controls: &'a [Control], label: &str) -> Option<&'a Control> {
     let mut keys = (0..3)
         .flat_map(|row| (0..10).map(move |column| format!("kb.r{row}c{column}")))
         .filter_map(|name| parse_action_id(&name).ok())
         .collect::<Vec<_>>();
-    keys.push(parse_action_id("kb.space").expect("fixed key"));
+    // The space bar, and the three keys an address keyboard has in its
+    // place, are on the bottom row of every page.
+    for name in [
+        kobo_ui::keyboard::SPACE,
+        kobo_ui::keyboard::AT,
+        kobo_ui::keyboard::SLASH,
+        kobo_ui::keyboard::DOT,
+    ] {
+        keys.push(parse_action_id(name).expect("fixed key"));
+    }
     let is_key = |control: &Control| control.action.is_some_and(|action| keys.contains(&action));
     let standard = controls.iter().any(is_key);
     controls.iter().find(|control| {
@@ -1322,6 +1650,7 @@ mod tests {
     fn typing_prefers_sdk_keys_over_existing_crossword_letters() {
         let control = |name: &str, label: &str| super::Control {
             kind: "Cell".into(),
+            rect: (0, 0, 0, 0),
             centre: (1, 1),
             lines: vec![label.into()],
             action: Some(super::parse_action_id(name).unwrap()),
@@ -1340,6 +1669,49 @@ mod tests {
             super::keyboard_key(&cells[..1], "n").unwrap().action,
             cells[0].action
         );
+    }
+
+    #[test]
+    fn typing_an_address_finds_the_marks_the_runtime_keyboard_has_beside_its_letters() {
+        let control = |name: &str, label: &str| super::Control {
+            kind: "Cell".into(),
+            rect: (0, 0, 0, 0),
+            centre: (1, 1),
+            lines: vec![label.into()],
+            action: Some(super::parse_action_id(name).unwrap()),
+        };
+        let cells = [
+            control("entry-3", "@"),
+            control("kb.r0c0", "q"),
+            control("kb.at", "@"),
+            control("kb.slash", "/"),
+            control("kb.dot", "."),
+        ];
+        for (label, at) in [("@", 2), ("/", 3), (".", 4)] {
+            assert_eq!(
+                super::keyboard_key(&cells, label).unwrap().action,
+                cells[at].action,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn forward_point_finds_uncovered_spot_in_the_turn_zone() {
+        let control = |x: i32, y: i32, width: i32, height: i32| super::Control {
+            kind: "Button".into(),
+            rect: (x, y, width, height),
+            centre: (x + width / 2, y + height / 2),
+            lines: Vec::new(),
+            action: Some(1),
+        };
+        let content = (0, 0, 600, 800);
+        // A button on the mid-right edge pushes the pick to another row.
+        let point = super::forward_point(&[control(520, 360, 80, 80)], content).unwrap();
+        assert!((point.0 - 540).abs() <= 60 && (point.1 - 400).abs() > 40);
+        // A wall of controls over every candidate leaves no spot at all.
+        let wall = [control(460, 0, 140, 800)];
+        assert_eq!(super::forward_point(&wall, content), None);
     }
 
     #[test]
@@ -1382,6 +1754,10 @@ mod tests {
                     }
                     Err(error) => panic!("accept driver: {error}"),
                 };
+                // On macOS an accepted socket inherits the listener's
+                // non-blocking flag, and a read that comes before the request
+                // fails instead of waiting for it.
+                stream.set_nonblocking(false).unwrap();
                 stream
                     .set_read_timeout(Some(std::time::Duration::from_secs(2)))
                     .unwrap();
@@ -1481,6 +1857,7 @@ mod tests {
     fn text_assertions_survive_wrapping_but_do_not_invent_clipped_words() {
         let text = super::Control {
             kind: "Banner".into(),
+            rect: (0, 0, 0, 0),
             centre: (50, 100),
             action: None,
             lines: vec![
@@ -1495,9 +1872,41 @@ mod tests {
     }
 
     #[test]
+    fn a_word_broken_at_its_own_hyphen_is_read_as_one_word() {
+        let text = super::Control {
+            kind: "Paragraph".into(),
+            rect: (0, 0, 0, 0),
+            centre: (50, 100),
+            action: None,
+            lines: vec![
+                "Run kobo connect calibre-".into(),
+                "web on your computer, or a -".into(),
+                "list".into(),
+            ],
+        };
+        assert!(text.says("kobo connect calibre-web on your computer"));
+        assert!(!text.says("calibre- web"));
+        // A dash standing alone is not a broken word.
+        assert!(text.says("or a - list"));
+    }
+
+    #[test]
+    fn a_command_is_read_as_it_is_typed_though_its_hyphens_cannot_break() {
+        let command = super::Control {
+            kind: "Quote".into(),
+            rect: (0, 0, 0, 0),
+            centre: (50, 100),
+            action: None,
+            lines: vec!["kobo connect zotero\u{2011}reader ~/\u{2060}Notes".into()],
+        };
+        assert!(command.says("kobo connect zotero-reader ~/Notes"));
+    }
+
+    #[test]
     fn back_is_addressable_without_painted_text() {
         let back = super::Control {
             kind: "Back".into(),
+            rect: (0, 0, 0, 0),
             centre: (50, 100),
             lines: vec![],
             action: Some(u32::MAX),
@@ -1635,10 +2044,10 @@ mod tests {
     #[test]
     fn a_screen_that_did_not_move_is_recorded_once() {
         let mut log = FrameLog::default();
-        assert!(log.sample(0, vec![0xff; 4]));
-        assert!(!log.sample(250, vec![0xff; 4]));
-        assert!(!log.sample(500, vec![0xff; 4]));
-        assert!(log.sample(750, vec![0x40; 4]));
+        assert!(log.sample(0, vec![0xff; 4], false));
+        assert!(!log.sample(250, vec![0xff; 4], false));
+        assert!(!log.sample(500, vec![0xff; 4], false));
+        assert!(log.sample(750, vec![0x40; 4], false));
         assert_eq!(log.looked, 4);
         assert_eq!(log.frames.len(), 2);
         assert_eq!(
@@ -1654,9 +2063,9 @@ mod tests {
     #[test]
     fn a_screen_that_comes_back_is_recorded_again() {
         let mut log = FrameLog::default();
-        log.sample(0, vec![0xff; 4]);
-        log.sample(100, vec![0x40; 4]);
-        assert!(log.sample(200, vec![0xff; 4]));
+        log.sample(0, vec![0xff; 4], false);
+        log.sample(100, vec![0x40; 4], false);
+        assert!(log.sample(200, vec![0xff; 4], false));
         assert_eq!(log.frames.len(), 3);
     }
 
@@ -1710,17 +2119,17 @@ mod tests {
             .unwrap();
             assert_eq!(
                 metadata["frame"]["sha256"],
-                kobo_net::sha256::hex_digest(&frame.grey)
+                kobo_net::sha256::hex_digest(&frame.pixels)
             );
             assert_eq!(metadata["mode"], "counter-demo");
             assert_eq!(
-                frame.grey.len(),
+                frame.pixels.len(),
                 (FRAME_WIDTH as usize) * (FRAME_HEIGHT as usize),
                 "a frame is not the size of the panel"
             );
-            let first = frame.grey[0];
+            let first = frame.pixels[0];
             assert!(
-                frame.grey.iter().any(|grey| *grey != first),
+                frame.pixels.iter().any(|grey| *grey != first),
                 "the frame is one flat shade, so nothing was drawn on it"
             );
         }

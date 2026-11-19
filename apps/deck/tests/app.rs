@@ -23,22 +23,22 @@ fn cli_assignment_round_trips_into_the_rendered_grid() {
     assert_eq!(deck.pages[0].keys[0].label, "Todo");
     assert_eq!(deck.pages[0].keys[1].label, "Example");
     let cells = pad_cells(&deck.pages[0]);
-    assert_eq!(cells.len(), PAD_COUNT);
+    assert_eq!(cells.len(), 2);
     assert!(
         cells
             .iter()
-            .any(|(name, label, _)| name.contains("pad-todo") && label == "Todo"),
+            .any(|(name, label, ..)| name.contains("pad-todo") && label == "Todo"),
         "{cells:?}"
     );
     assert!(
         cells
             .iter()
-            .any(|(name, label, _)| name.contains("pad-url") && label == "Example"),
+            .any(|(name, label, ..)| name.contains("pad-url") && label == "Example"),
         "{cells:?}"
     );
     let screen = ScreenBuilder::new("deck-grid")
         .top_bar("Deck")
-        .pads(cells)
+        .board_with_selection(PAD_COLUMNS, cells)
         .build();
     let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
     for name in ["press-pad-todo", "press-pad-url"] {
@@ -46,7 +46,8 @@ fn cli_assignment_round_trips_into_the_rendered_grid() {
         assert!(rect.height >= CLARA_BW_METRICS.touch_target_minimum());
         assert_eq!(rect.width, rect.height, "{name} should be square");
     }
-    // The two assigned pads are keys; the rest of the deck is places for one.
+    // The two assigned pads are keys; places nobody has assigned stay paper,
+    // so a deck with two commands is two keys, not thirteen ruled boxes.
     let keys = layout
         .nodes
         .iter()
@@ -58,7 +59,7 @@ fn cli_assignment_round_trips_into_the_rendered_grid() {
         .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::EmptyPad, _)))
         .count();
     assert_eq!(keys, 2);
-    assert_eq!(keys + places, PAD_COUNT);
+    assert_eq!(places, 0);
     let issues = screen
         .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
         .issues;
@@ -69,10 +70,13 @@ fn cli_assignment_round_trips_into_the_rendered_grid() {
 fn clara_bw_portrait_grid_is_tappable() {
     let screen = ScreenBuilder::new("deck-grid")
         .top_bar("Deck")
-        .pads([
-            ("press-a", "Test", Some(kobo_sdk::Glyph::Grid)),
-            ("press-b", "Deploy", Some(kobo_sdk::Glyph::Grid)),
-        ])
+        .board_with_selection(
+            PAD_COLUMNS,
+            [
+                ("press-a", "Test", Some(kobo_sdk::Glyph::Terminal), false),
+                ("press-b", "Deploy", Some(kobo_sdk::Glyph::Terminal), false),
+            ],
+        )
         .build();
     let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
     for name in ["press-a", "press-b"] {
@@ -81,9 +85,9 @@ fn clara_bw_portrait_grid_is_tappable() {
                 >= CLARA_BW_METRICS.touch_target_minimum()
         );
     }
-    // Two keys and thirteen places for one. A place is drawn in a hairline
-    // rather than the bezel a key gets, so a deck with three things on it
-    // does not read as a panel of twelve controls that do nothing.
+    // Two keys and nothing else. Unassigned places used to be drawn as
+    // hairline boxes, which a reader with three commands saw as a wall of
+    // grey squares that do nothing.
     let keys = layout
         .nodes
         .iter()
@@ -95,7 +99,7 @@ fn clara_bw_portrait_grid_is_tappable() {
         .filter(|node| matches!(node.kind, LayoutKind::Cell(_, CellStyle::EmptyPad, _)))
         .count();
     assert_eq!(keys, 2);
-    assert_eq!(keys + places, PAD_COUNT);
+    assert_eq!(places, 0);
     assert!(screen
         .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
         .issues

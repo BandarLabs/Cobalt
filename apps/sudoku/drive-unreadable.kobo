@@ -1,0 +1,29 @@
+# sweep: --seed-root scripts/fixtures/sudoku/unreadable-save
+# A save the app cannot read is kept and explained, never silently replaced.
+wait-for Cannot open game
+expect Your saved game has been kept.
+expect Try again
+expect-missing Sudoku · Easy 1
+clean
+shot sudoku-unreadable
+tap Try again
+wait-for Cannot open game
+expect-missing Sudoku · Easy 1
+# Start over is the way past it: it asks first, keeps a copy of the
+# unreadable game, and the fresh game is what a restart finds.
+expect Start over
+tap Start over
+wait-for Start over?
+expect Your saved game stays on the Kobo as a separate copy
+clean
+shot sudoku-unreadable-start-over
+tap Go back
+wait-for Cannot open game
+tap Start over
+wait-for Start over?
+tap-id confirm-start-over
+wait-for Sudoku · Easy 1
+expect 53 left
+restart
+wait-for Sudoku · Easy 1
+expect-missing Cannot open game

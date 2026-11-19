@@ -28,10 +28,9 @@
 //! largest type this platform sets is [`kobo_ui::FontSize::Heading`] at 5.4 mm,
 //! which is a heading and not a signal, and pictures are never enlarged to fit
 //! -- `fit_within` returns a small source untouched. So the letter is drawn
-//! here, at the size it will be seen, out of a five by seven block alphabet.
-//! Blocks rather than a real face because a glyph made of filled rectangles
-//! costs a memset and needs no typesetter, and at this size the difference is
-//! invisible.
+//! here, at the size it will be seen, from the outlines of the interface's
+//! bold face. It was a five by seven block alphabet, which at nine centimetres
+//! tall was a staircase of black rectangles rather than a letter.
 //!
 //! The picture is rebuilt when the *letter* changes, not when the light does.
 //! That is what keeps the panel calm: a message of ten letters repaints ten
@@ -40,11 +39,24 @@
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
     action_id, ActionId, BannerLevel, Context, DeviceRequest, DeviceResult, KoboApp, PictureHandle,
-    Screen, ScreenBuilder, Task, TaskId, TaskOutcome,
+    Position, RowLead, Screen, ScreenBuilder, Task, TaskId, TaskOutcome,
 };
 use kobo_ui::tone;
 use std::process::ExitCode;
 use std::time::Duration;
+
+/// Letters to a row of the letter reference.
+const REFERENCE_COLUMNS: usize = 3;
+
+/// A code as it is printed in a manual: a raised dot and a long dash with a
+/// space between, where the full stops and hyphens it is stored in read as
+/// punctuation.
+fn marks(code: &str) -> String {
+    code.chars()
+        .map(|mark| if mark == '-' { "\u{2014}" } else { "\u{2022}" })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 /// The one picture this application draws, reused for every letter.
 ///
@@ -269,83 +281,89 @@ fn spoken(seconds: usize) -> String {
     }
 }
 
-/// A five by seven block alphabet, one `u8` a row, the fifth bit leftmost.
-///
-/// Only the characters [`CODE`] can send, plus the space between words, because
-/// a shape with no code behind it could never reach the screen.
-fn glyph(character: char) -> Option<[u8; 7]> {
-    let rows = match character {
-        ' ' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-        'A' => [0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-        'B' => [0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E],
-        'C' => [0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E],
-        'D' => [0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E],
-        'E' => [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F],
-        'F' => [0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10],
-        'G' => [0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F],
-        'H' => [0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11],
-        'I' => [0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E],
-        'J' => [0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C],
-        'K' => [0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11],
-        'L' => [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F],
-        'M' => [0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11],
-        'N' => [0x11, 0x19, 0x19, 0x15, 0x13, 0x13, 0x11],
-        'O' => [0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-        'P' => [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10],
-        'Q' => [0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D],
-        'R' => [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11],
-        'S' => [0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E],
-        'T' => [0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
-        'U' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E],
-        'V' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04],
-        'W' => [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11],
-        'X' => [0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11],
-        'Y' => [0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04],
-        'Z' => [0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F],
-        '0' => [0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E],
-        '1' => [0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E],
-        '2' => [0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F],
-        '3' => [0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E],
-        '4' => [0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02],
-        '5' => [0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E],
-        '6' => [0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E],
-        '7' => [0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08],
-        '8' => [0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E],
-        '9' => [0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C],
-        '.' => [0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C],
-        ',' => [0x00, 0x00, 0x00, 0x00, 0x0C, 0x04, 0x08],
-        '?' => [0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
-        '/' => [0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10],
-        _ => return None,
-    };
-    Some(rows)
+/// The line under the message: how long it takes, or that there is nothing
+/// in the box yet. "Nothing to send to send." was the empty case read out
+/// through the same sentence as a real estimate.
+fn estimate(seconds: usize) -> String {
+    match seconds {
+        0 => "Nothing to send yet.".to_owned(),
+        seconds => format!("{} to send.", spoken(seconds)),
+    }
 }
 
-/// Paints one letter at the size it will be seen, as grey bytes.
-///
-/// Returns the width, the height and the pixels. The cell is whatever divides
-/// the room evenly, so the letter is always made of exact rectangles and never
-/// of a scaled bitmap with one row of blocks a pixel taller than its neighbour.
-fn paint(character: char, room: i32) -> Option<(u32, u32, Vec<u8>)> {
-    let rows = glyph(character)?;
-    let cell = usize::try_from((room / 7).max(1)).ok()?;
-    let width = cell * 5;
-    let height = cell * 7;
-    let mut pixels = vec![tone::PAPER; width * height];
-    for (index, bits) in rows.iter().enumerate() {
-        for column in 0..5 {
-            if bits & (0x10 >> column) == 0 {
-                continue;
-            }
-            for y in index * cell..(index + 1) * cell {
-                let start = y * width + column * cell;
-                pixels[start..start + cell].fill(tone::INK);
-            }
+/// The warning for characters in the message that Morse has no code for, or
+/// none when every one of them can be sent.
+fn left_out(dropped: &[char], tense: &str) -> Option<String> {
+    let mut list: Vec<char> = Vec::new();
+    for character in dropped {
+        if !list.contains(character) {
+            list.push(*character);
         }
     }
-    let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) else {
+    (!list.is_empty()).then(|| {
+        let list: String = list.into_iter().collect();
+        format!("Morse has no code for {list}, so it {tense} left out.")
+    })
+}
+
+/// Paints one letter at the size it will be seen, `room` pixels tall, as
+/// grey bytes: the width, the height and the pixels.
+///
+/// With `code`, the dots and dashes that carry the letter are drawn under it
+/// as dots and dashes, a sixth of the height given to them and the letter a
+/// little smaller to make the room. They were the full stops and hyphens of
+/// the code typed into the top bar, which read as an ellipsis.
+fn paint(character: char, room: i32, code: Option<&str>) -> Option<(u32, u32, Vec<u8>)> {
+    // Only what the code can send, and the space between words: a shape
+    // with no code behind it could never reach the screen.
+    if character != ' ' && !CODE.iter().any(|(sent, _)| *sent == character) {
         return None;
-    };
+    }
+    let room = u32::try_from(room).ok()?;
+    let strip = if code.is_some() { room / 6 } else { 0 };
+    let (width, letter_height, letter) =
+        kobo_text::display_letter(character, (room - strip) * 2 / 3)?;
+    let height = letter_height + strip;
+    let mut pixels = letter;
+    pixels.resize(
+        pixels.len() + usize::try_from(width * strip).ok()?,
+        tone::PAPER,
+    );
+    if let Some(code) = code {
+        let width = i64::from(width);
+        let unit = i64::from((strip / 3).max(2));
+        let marks: Vec<i64> = code
+            .chars()
+            .map(|mark| if mark == '-' { unit * 3 } else { unit })
+            .collect();
+        let span =
+            marks.iter().sum::<i64>() + unit * i64::try_from(marks.len().saturating_sub(1)).ok()?;
+        let mut x = (width - span) / 2;
+        let middle = i64::from(letter_height + strip / 2);
+        let radius = unit / 2;
+        for length in marks {
+            // A dot is a round mark and a dash is a bar with round ends, three
+            // dots long, as the code is printed in a manual.
+            for px in x..x + length {
+                for py in middle - radius..=middle + radius {
+                    let edge = (px - x - radius).min(x + length - 1 - radius - px);
+                    let inside = edge >= 0 || {
+                        let centre = if px - x < radius {
+                            x + radius
+                        } else {
+                            x + length - 1 - radius
+                        };
+                        (px - centre).pow(2) + (py - middle).pow(2) <= radius * radius
+                    };
+                    if inside && (0..width).contains(&px) && py >= 0 && py < i64::from(height) {
+                        let at = usize::try_from(py * width + px).ok()?;
+                        pixels[at] = tone::INK;
+                    }
+                }
+            }
+            x += length + unit;
+        }
+    }
     Some((width, height, pixels))
 }
 
@@ -356,8 +374,14 @@ enum View {
     Writing,
     /// Sending it.
     Beacon,
+    /// Every character the beacon can send, with the code that carries it.
+    Reference,
 }
 
+// The four flags are independent facts -- the beacon running, the light
+// carrying the message, learning mode, an open menu -- rather than states of
+// one thing, so a state machine would say less than they do.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug)]
 struct Morse {
     view: View,
@@ -381,7 +405,20 @@ struct Morse {
     /// Which signal the panel is currently showing, so the picture is rebuilt
     /// on a change of letter rather than on every beat.
     showing: Option<usize>,
+    /// Whether the beacon draws each letter's code under it as it sends.
+    ///
+    /// Off by default: somebody who reads Morse is watching the light, and the
+    /// code of a letter they already know is clutter on every panel. On, the
+    /// dots and dashes sit under the letter, so a learner can see the light
+    /// say what the screen spells.
+    learn: bool,
+    /// Whether the writing screen's overflow menu is open.
+    menu_open: bool,
+    /// The page of the letter reference the reader is on.
+    reference_page: usize,
     tick: Option<TaskId>,
+    /// A problem with the last thing the reader asked for, shown on the
+    /// screen it was raised on and dropped once they move on from it.
     trouble: Option<String>,
 }
 
@@ -399,6 +436,9 @@ impl Default for Morse {
             light: true,
             found_light: None,
             showing: None,
+            learn: false,
+            menu_open: false,
+            reference_page: 0,
             tick: None,
             trouble: None,
         }
@@ -410,9 +450,17 @@ const STOP: &str = "stop";
 const AGAIN: &str = "again";
 const EDIT: &str = "edit";
 const TOGGLE_LIGHT: &str = "light";
+const LEARN: &str = "learn";
+const MORE: &str = "more";
+const REFERENCE: &str = "reference";
+const PREVIOUS_PAGE: &str = "previous-page";
+const NEXT_PAGE: &str = "next-page";
 
 impl Morse {
-    /// The letters of the message, spelled out with their codes underneath.
+    /// The message as it went out, each letter followed by its code in the
+    /// dots and dashes of the letter reference. Bare codes in full stops and
+    /// hyphens read as punctuation, and with no letters there was nothing to
+    /// tell where one code ended and the next began.
     fn spelled(&self) -> String {
         self.signals
             .iter()
@@ -420,22 +468,44 @@ impl Morse {
                 if signal.code.is_empty() {
                     "/".to_owned()
                 } else {
-                    signal.code.to_owned()
+                    format!("{} {}", signal.character, marks(signal.code))
                 }
             })
             .collect::<Vec<_>>()
-            .join(" ")
+            .join("   ")
     }
 
-    /// How long the whole message takes, in words rather than a bare number.
-    fn duration(&self) -> String {
-        spoken(self.beats.len())
+    /// The message, what it will cost, and the Learning switch, over the
+    /// keys. Where a small panel at a large size cannot hold them all, the
+    /// switch's summary gives way first and then the line about the speed,
+    /// so the estimate, the switch and every key stay on the panel.
+    fn writing(&self, context: &Context) -> Screen {
+        let metrics = context.metrics();
+        let shapes = [(true, true), (false, true), (false, false)];
+        shapes
+            .into_iter()
+            .map(|(summary, speed)| self.writing_with(summary, speed))
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| self.writing_with(false, false))
     }
 
-    fn writing(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("morse-writing").top_bar("Morse");
-        if let Some(trouble) = &self.trouble {
-            screen = screen.banner(BannerLevel::Attention, trouble.clone());
+    fn writing_with(&self, summary: bool, speed: bool) -> Screen {
+        let mut screen = ScreenBuilder::new("morse-writing")
+            .top_bar("Morse")
+            .top_bar_overflow(MORE, self.menu_open, [(REFERENCE, "Letter reference")]);
+        // Characters with no code are named while they are in the box, and
+        // the warning goes as soon as they are deleted.
+        let (signals, dropped) = encode(self.keyboard.text());
+        if let Some(trouble) = self
+            .trouble
+            .clone()
+            .or_else(|| left_out(&dropped, "will be"))
+        {
+            screen = screen.banner(BannerLevel::Attention, trouble);
         }
         // The estimate belongs here, beside the Send key, rather than on the
         // screen that follows it. Send starts the beacon there and then, so
@@ -444,10 +514,28 @@ impl Morse {
         // the estimate exists to prevent. It is measured from what is in the
         // box rather than from the composed message, because at this point
         // nothing has been composed.
-        let (signals, _) = encode(self.keyboard.text());
-        screen
+        let screen = screen
             .typed(&self.keyboard, "A message to send in light")
-            .secondary(format!("{} to send.", spoken(beats(&signals).len())))
+            .secondary(estimate(beats(&signals).len()));
+        // The speed is the same for every message, so it is said once, in
+        // the units the light actually keeps. A reader who knows a dash is
+        // three seconds can follow the beacon letter by letter; one who does
+        // not learns it here, before anything has flashed.
+        let screen = if speed {
+            screen.secondary("A dot is one second of light, a dash three.")
+        } else {
+            screen
+        };
+        // The learning switch lives beside the message it changes: chosen
+        // here, it is the send that follows which narrates its letters. A
+        // switch rather than a lone chip, which read as a tag.
+        let said = match (summary, self.learn) {
+            (false, _) => "",
+            (true, true) => "Each letter shows its code underneath.",
+            (true, false) => "The bar counts letters only.",
+        };
+        screen
+            .toggle(LEARN, "Learning", said, self.learn)
             .keyboard(&self.keyboard, "Send")
             .build()
     }
@@ -457,9 +545,11 @@ impl Morse {
         // under the letter. It is the same fact either way, and a bar that
         // already exists costs the letter nothing, where a line of text under
         // it costs the letter that line on every panel.
+        // In learning mode the code is drawn under the letter as dots and
+        // dashes, so the bar only counts the letters off.
         let title = if self.running {
             format!(
-                "{} of {}",
+                "Letter {} of {}",
                 self.sent().min(self.signals.len().max(1)),
                 self.signals.len()
             )
@@ -476,31 +566,132 @@ impl Morse {
         // panel is an empty frame the size of the screen sitting where a letter
         // had just been. So the picture belongs to the run, and the resting
         // screen carries the code and the estimate in its place.
-        if let Some(character) = self
-            .showing
-            .and_then(|index| self.signals.get(index))
-            .map(|signal| signal.character)
-        {
+        if let Some(signal) = self.showing.and_then(|index| self.signals.get(index)) {
             let room = context.metrics().tenth_mm(LETTER_SENDING_TENTHS_MM);
-            if let Some(picture) = paint(character, room)
+            let code = (self.learn && !signal.code.is_empty()).then_some(signal.code);
+            if let Some(picture) = paint(signal.character, room, code)
                 .and_then(|(width, height, grey)| context.put_picture(LETTER, width, height, grey))
             {
                 let millimetres = u16::try_from(LETTER_SENDING_TENTHS_MM / 10).unwrap_or(u16::MAX);
-                screen = screen.picture(picture, millimetres);
+                screen = screen.unframed_picture(picture, millimetres);
             }
         }
         if !self.running {
             screen = screen
                 .text(self.spelled())
-                .secondary(format!("{} to send.", self.duration()));
+                .secondary(estimate(self.beats.len()));
         }
-        let light = if self.light { "Light on" } else { "Light off" };
-        if self.running {
-            screen.action_bar([(STOP, "Stop"), (TOGGLE_LIGHT, light)])
+        // A bar cannot hold a switch, so the entry names what the tap does.
+        // "Light on" stated the current value, which read as an order as
+        // easily as a report. A third of a six-inch panel at the largest
+        // size cannot hold "Turn light on" in two lines, so there, and only
+        // there, the entry says the same thing in fewer letters.
+        let bar = |short: bool| {
+            let light = match (self.light, short) {
+                (true, false) => "Turn light off",
+                (false, false) => "Turn light on",
+                (true, true) => "Go dark",
+                (false, true) => "Light up",
+            };
+            if self.running {
+                screen
+                    .clone()
+                    .action_bar([(STOP, "Stop"), (TOGGLE_LIGHT, light)])
+            } else {
+                // The message is already composed, so this key repeats it
+                // rather than sending something new; the label says so, or a
+                // repeat looks like a fresh send that happens to say the same
+                // thing.
+                screen.clone().action_bar([
+                    (AGAIN, "Send again"),
+                    (EDIT, "Edit"),
+                    (TOGGLE_LIGHT, light),
+                ])
+            }
+            .build()
+        };
+        let metrics = context.metrics();
+        let full = bar(false);
+        if full
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+        {
+            bar(true)
         } else {
-            screen.action_bar([(AGAIN, "Send"), (EDIT, "Edit"), (TOGGLE_LIGHT, light)])
+            full
         }
-        .build()
+    }
+
+    /// Every character the beacon can send, with the code that carries it.
+    ///
+    /// The chart is a paged list rather than one long screen, because a panel
+    /// that ran out of room would drop the tail of the alphabet with nothing
+    /// to say so. Paging is measured against this panel at this text size, so
+    /// the largest setting simply turns more pages.
+    fn reference(&self, context: &Context) -> Screen {
+        // The whole chart on one page where it fits, three letters to a row,
+        // as a printed card sets it: forty letters in seven pages of six
+        // was a chart nobody could look anything up in.
+        let metrics = context.metrics();
+        let chart = Self::reference_chart();
+        if !chart
+            .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+            .has_errors()
+        {
+            return chart;
+        }
+        let entries: Vec<(String, String)> = CODE
+            .iter()
+            .map(|(letter, code)| (letter.to_string(), marks(code)))
+            .collect();
+        let measuring: Vec<(&str, &str, &str)> = entries
+            .iter()
+            .map(|(letter, code)| (letter.as_str(), code.as_str(), ""))
+            .collect();
+        let pages =
+            context.paginate_rows_below_section(&measuring, true, Position::AtTheFoot, None);
+        let page = self.reference_page.min(pages.len().saturating_sub(1));
+        let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
+        ScreenBuilder::new("morse-reference")
+            .top_bar("Letter reference")
+            .section_with_value("The letters Morse can send", format!("{}", CODE.len()))
+            .rows(visible.iter().map(|&index| {
+                let (letter, code) = &entries[index];
+                (
+                    format!("letter-{letter}"),
+                    letter.clone(),
+                    code.clone(),
+                    RowLead::Number(u16::try_from(index + 1).unwrap_or(u16::MAX)),
+                )
+            }))
+            .page_turns(PREVIOUS_PAGE, NEXT_PAGE)
+            .page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
+            )
+            .build()
+    }
+
+    fn reference_chart() -> Screen {
+        let rows = CODE
+            .chunks(REFERENCE_COLUMNS)
+            .map(|row| kobo_ui::TableRow {
+                header: false,
+                cells: row
+                    .iter()
+                    .flat_map(|(letter, code)| [letter.to_string(), marks(code)])
+                    .chain(std::iter::repeat_n(
+                        String::new(),
+                        (REFERENCE_COLUMNS - row.len()) * 2,
+                    ))
+                    .collect(),
+            })
+            .collect();
+        ScreenBuilder::new("morse-reference")
+            .top_bar("Letter reference")
+            .section_with_value("The letters Morse can send", format!("{}", CODE.len()))
+            .table(rows, Vec::new())
+            .build()
     }
 
     /// How many letters have gone out, counting the one in flight.
@@ -512,10 +703,39 @@ impl Morse {
 
     fn show(&mut self, context: &mut Context) {
         let screen = match self.view {
-            View::Writing => self.writing(),
+            View::Writing => self.writing(context),
             View::Beacon => self.beacon(context),
+            View::Reference => self.reference(context),
         };
         context.set_screen(screen);
+    }
+
+    /// A key on the writing screen's keyboard.
+    fn on_key(&mut self, context: &mut Context, pressed: Pressed) {
+        self.menu_open = false;
+        match pressed {
+            Pressed::Submitted => {
+                let typed = self.keyboard.text().trim().to_owned();
+                self.compose(&typed);
+                if self.beats.is_empty() {
+                    // Nothing would flash, so the reader stays with the box
+                    // they need to type into rather than being sent to a
+                    // beacon with nothing on it.
+                    self.trouble = Some("There is nothing here to send.".to_owned());
+                    self.show(context);
+                    return;
+                }
+                self.view = View::Beacon;
+                self.start(context);
+            }
+            Pressed::Edited => {
+                // The message changed, so a warning about the old one no
+                // longer describes what is in the box.
+                self.trouble = None;
+                self.show(context);
+            }
+            Pressed::Shifted => self.show(context),
+        }
     }
 
     /// Takes the typed message and works out what it will look like in light.
@@ -525,12 +745,7 @@ impl Morse {
         self.beats = beats(&self.signals);
         self.at = 0;
         self.showing = None;
-        self.trouble = if dropped.is_empty() {
-            None
-        } else {
-            let list: String = dropped.iter().collect();
-            Some(format!("Morse has no code for {list}, so it was left out."))
-        };
+        self.trouble = left_out(&dropped, "was");
     }
 
     /// Starts sending, from the beginning.
@@ -611,33 +826,68 @@ impl KoboApp for Morse {
 
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.view == View::Writing {
-            match self.keyboard.press(action) {
-                Some(Pressed::Submitted) => {
-                    let typed = self.keyboard.text().trim().to_owned();
-                    self.compose(&typed);
-                    self.view = View::Beacon;
-                    self.start(context);
-                    return;
-                }
-                Some(Pressed::Edited | Pressed::Shifted) => {
-                    self.show(context);
-                    return;
-                }
-                None => {}
+            if let Some(pressed) = self.keyboard.press(action) {
+                self.on_key(context, pressed);
+                return;
             }
         }
 
+        if action == action_id(MORE) {
+            self.menu_open = true;
+            self.show(context);
+            return;
+        }
+
         if action == ActionId::BACK {
+            // An open menu takes the first Back, the way a scrim tap reads.
+            if self.menu_open {
+                self.menu_open = false;
+                self.show(context);
+                return;
+            }
             match self.view {
                 View::Writing => return,
                 View::Beacon => {
                     if self.running {
                         self.finish(context);
                     }
+                    self.trouble = None;
                     self.view = View::Writing;
                 }
+                View::Reference => self.view = View::Writing,
             }
             self.show(context);
+            return;
+        }
+
+        // Any tap past this point lands on the screen itself, so a menu left
+        // open is closed by it rather than held over whatever happens next.
+        self.menu_open = false;
+
+        if action == action_id(REFERENCE) {
+            self.reference_page = 0;
+            self.view = View::Reference;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(LEARN) {
+            self.learn = !self.learn;
+            self.show(context);
+            return;
+        }
+
+        if action == action_id(PREVIOUS_PAGE) || action == action_id(NEXT_PAGE) {
+            if self.view == View::Reference {
+                if action == action_id(NEXT_PAGE) {
+                    // Clamped against the real page count when the screen is
+                    // drawn, so a tap at the end stays on the last page.
+                    self.reference_page += 1;
+                } else {
+                    self.reference_page = self.reference_page.saturating_sub(1);
+                }
+                self.show(context);
+            }
             return;
         }
 
@@ -673,6 +923,9 @@ impl KoboApp for Morse {
             if self.running {
                 self.finish(context);
             }
+            // The beacon's warnings were about the message it sent; the
+            // writing screen names any problem with the text as it stands.
+            self.trouble = None;
             self.view = View::Writing;
             self.show(context);
         }
@@ -736,10 +989,11 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::{
-        beats, encode, glyph, letter_at, paint, Beat, Morse, AGAIN, CODE, MAX_MESSAGE, STOP,
-        TOGGLE_LIGHT,
+        beats, encode, letter_at, marks, paint, Beat, Morse, View, AGAIN, CODE, EDIT, LEARN,
+        MAX_MESSAGE, MORE, NEXT_PAGE, REFERENCE, STOP, TOGGLE_LIGHT,
     };
-    use kobo_sdk::{action_id, AppRunner, Command, DeviceRequest, TaskOutcome};
+    use kobo_sdk::keyboard::Keyboard;
+    use kobo_sdk::{action_id, ActionId, AppRunner, Command, DeviceRequest, TaskOutcome};
     use kobo_ui::{tone, Chrome, CLARA_BW_METRICS};
 
     /// Renders a run of beats as the light would show it, so a test can state
@@ -824,23 +1078,67 @@ mod tests {
     #[test]
     fn every_letter_the_beacon_can_send_has_a_shape_to_draw() {
         for (character, _) in CODE {
-            assert!(glyph(*character).is_some(), "no shape for {character}");
+            assert!(
+                paint(*character, 700, None).is_some(),
+                "no shape for {character}"
+            );
         }
-        assert!(glyph(' ').is_some(), "the gap between words needs a blank");
+        assert!(
+            paint(' ', 700, None).is_some(),
+            "the gap between words needs a blank"
+        );
     }
 
     #[test]
     fn a_painted_letter_is_the_size_it_says_it_is_and_has_ink_in_it() {
-        let (width, height, pixels) = paint('A', 700).expect("a letter");
+        let (width, height, pixels) = paint('A', 700, None).expect("a letter");
         assert_eq!(pixels.len(), (width * height) as usize);
-        assert_eq!(width * 7, height * 5, "the cell is not square");
+        assert!((698..=700).contains(&height), "{height} pixels tall");
         assert!(pixels.contains(&tone::INK));
         assert!(pixels.contains(&tone::PAPER));
+        // Drawn from outlines, so its edges are shaded rather than stepped.
+        assert!(pixels
+            .iter()
+            .any(|grey| *grey > tone::INK && *grey < tone::PAPER));
+    }
+
+    #[test]
+    fn learning_draws_the_code_as_dots_and_dashes_under_the_letter() {
+        let (width, height, plain) = paint('A', 700, None).expect("a letter");
+        let (coded_width, coded_height, coded) = paint('A', 700, Some(".-")).expect("a letter");
+        assert_eq!(
+            height, coded_height,
+            "the code took more than the letter gave up"
+        );
+        // The foot of the picture is empty without the code and carries one
+        // short and one long run of ink with it.
+        let row = usize::try_from(height - 700 / 12).unwrap();
+        let runs = |pixels: &[u8], width: u32| {
+            let line = &pixels[row * width as usize..(row + 1) * width as usize];
+            let mut runs = Vec::new();
+            let mut run = 0;
+            for grey in line.iter().chain([&tone::PAPER]) {
+                if *grey == tone::INK {
+                    run += 1;
+                } else if run > 0 {
+                    runs.push(run);
+                    run = 0;
+                }
+            }
+            runs
+        };
+        assert!(runs(&plain, width).is_empty());
+        let marks = runs(&coded, coded_width);
+        assert_eq!(marks.len(), 2, "{marks:?}");
+        assert!(
+            marks[1] > marks[0] * 2,
+            "the dash is no longer than the dot: {marks:?}"
+        );
     }
 
     #[test]
     fn the_gap_between_words_is_painted_as_nothing_at_all() {
-        let (_, _, pixels) = paint(' ', 700).expect("a blank");
+        let (_, _, pixels) = paint(' ', 700, None).expect("a blank");
         assert!(pixels.iter().all(|grey| *grey == tone::PAPER));
     }
 
@@ -909,7 +1207,7 @@ mod tests {
         );
         let drawn = format!("{screen:?}");
         assert!(
-            drawn.contains("... --- ..."),
+            drawn.contains(&format!("S {}", marks("..."))),
             "the code is not shown: {drawn}"
         );
         assert!(
@@ -999,7 +1297,7 @@ mod tests {
             .map(|(character, _)| *character)
             .chain([' '])
             .find(|character| {
-                paint(*character, room).is_some_and(|(drawn_width, drawn_height, pixels)| {
+                paint(*character, room, None).is_some_and(|(drawn_width, drawn_height, pixels)| {
                     drawn_width == width && drawn_height == height && pixels == grey
                 })
             })
@@ -1089,6 +1387,164 @@ mod tests {
         );
     }
 
+    /// The speed is a fact about the beacon rather than about the message, so
+    /// it is stated where the message is weighed: beside the estimate, on the
+    /// screen the Send key is on.
+    #[test]
+    fn the_speed_is_on_the_screen_the_send_key_is_on() {
+        let mut runner = AppRunner::new(Morse::default());
+        let commands = runner.start();
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a writing screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("one second of light"),
+            "the speed is not on the writing screen: {drawn}"
+        );
+    }
+
+    /// The resting key sends the same message out again, so it says that is
+    /// what it does. Labeled as a fresh send, a repeat would read as a
+    /// mistake: the same letters going out twice with nothing to say why.
+    #[test]
+    fn the_resting_key_says_it_repeats_the_message() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(AGAIN));
+        let commands = runner.action(action_id(STOP));
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a resting screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("Send again"),
+            "the resting key does not say it repeats: {drawn}"
+        );
+    }
+
+    /// The chart is the whole alphabet the beacon can send, paged so a panel
+    /// never drops the tail of it. Walked to the end, every code is there and
+    /// every page fits.
+    #[test]
+    fn the_reference_lists_every_letter_the_beacon_can_send() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(MORE));
+        let mut drawn = String::new();
+        let mut commands = runner.action(action_id(REFERENCE));
+        // Paged to the end: a page turn past the last page redraws it
+        // unchanged, the runner elides a screen it is already showing, and
+        // the empty answer says the walk is done. The cap only guards the
+        // loop against a chart that never ends.
+        for _ in 0..40 {
+            let Some(screen) = commands.iter().rev().find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            }) else {
+                break;
+            };
+            let issues = screen.diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true));
+            assert!(
+                !issues.has_errors(),
+                "a page of the reference does not fit: {issues:?}"
+            );
+            drawn.push_str(&format!("{screen:?}"));
+            commands = runner.action(action_id(NEXT_PAGE));
+        }
+        // Printed with dots and dashes, not the full stops and hyphens the
+        // codes are kept in.
+        for code in [".-", "-.--", "-----", ".-.-.-", "-..-."] {
+            assert!(drawn.contains(&marks(code)), "the code {code} is missing");
+        }
+        assert!(
+            !drawn.contains("\".-\""),
+            "a code is printed as punctuation"
+        );
+    }
+
+    /// Back from the chart returns to the message, with the typing untouched.
+    #[test]
+    fn the_reference_leads_back_to_the_message() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(MORE));
+        runner.action(action_id(REFERENCE));
+        let commands = runner.action(ActionId::BACK);
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a writing screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("one second of light"),
+            "back from the chart did not return to the message: {drawn}"
+        );
+    }
+
+    /// Learning mode draws the code under the letter, so the bar only counts
+    /// the letters off, the same with it as without.
+    #[test]
+    fn learning_mode_leaves_the_code_to_the_picture_and_the_count_to_the_bar() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(LEARN));
+        let commands = runner.action(action_id(AGAIN));
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a beacon screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            drawn.contains("Letter 1 of 3") && !drawn.contains("S ..."),
+            "the bar does not count the letters off on their own: {drawn}"
+        );
+    }
+
+    /// Without learning mode the bar counts letters off and says nothing
+    /// more: somebody reading the light fluently has no use for the code.
+    #[test]
+    fn the_bar_stays_a_plain_count_until_asked() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        let commands = runner.action(action_id(AGAIN));
+        let screen = commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(screen.clone()),
+                _ => None,
+            })
+            .expect("a beacon screen");
+        let drawn = format!("{screen:?}");
+        assert!(
+            !drawn.contains("S ..."),
+            "the bar names codes nobody asked for: {drawn}"
+        );
+        assert!(
+            drawn.contains("1 of 3"),
+            "the count is missing from the bar: {drawn}"
+        );
+    }
+
     /// The brightness the reader chose is theirs, and a beacon that ended on a
     /// dark beat would otherwise leave the device black.
     #[test]
@@ -1107,5 +1563,233 @@ mod tests {
             )),
             "{commands:?}"
         );
+    }
+
+    /// The writing screens Morse draws at this size, with Learning off and
+    /// on, as the runtime would be handed them.
+    fn writing_at(metrics: kobo_sdk::DisplayMetrics) -> Vec<kobo_sdk::Screen> {
+        let mut runner = AppRunner::with_metrics(Morse::default(), metrics);
+        let first = runner.start();
+        let toggled = runner.action(action_id(LEARN));
+        [first, toggled]
+            .iter()
+            .map(|commands| {
+                commands
+                    .iter()
+                    .rev()
+                    .find_map(|command| match command {
+                        Command::SetScreen(screen) => Some(screen.clone()),
+                        _ => None,
+                    })
+                    .expect("a writing screen")
+            })
+            .collect()
+    }
+
+    /// Learning is a switch, not a lone chip that read as a tag, and the
+    /// writing screen keeps it, the estimate and every key on the panel at
+    /// every text size. Morse never asks for landscape, so it is only ever
+    /// drawn upright.
+    #[test]
+    fn learning_is_a_switch_and_the_writing_screen_fits_every_size() {
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (758, 1024, 212), (1264, 1680, 300)]
+        {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                for (screen, on) in writing_at(metrics).into_iter().zip([false, true]) {
+                    let switch = screen.nodes.iter().find_map(|node| match node {
+                        kobo_ui::Node::Toggle { label, on, .. } if label == "Learning" => Some(*on),
+                        _ => None,
+                    });
+                    assert_eq!(switch, Some(on), "{metrics:?}");
+                    assert!(!format!("{screen:?}").contains("Chips"), "{metrics:?}");
+                    let chrome = Chrome::measuring(true);
+                    let issues = screen.diagnostics(&metrics, &chrome);
+                    assert!(!issues.has_errors(), "{metrics:?}: {issues:?}");
+                    let layout = screen.layout_with(&metrics, &chrome);
+                    for name in [LEARN, kobo_ui::keyboard::ENTER, "kb.backspace"] {
+                        assert!(
+                            layout.rect_of_action(action_id(name)).is_some(),
+                            "{metrics:?}: {name} is off the panel"
+                        );
+                    }
+                    assert!(
+                        format!("{screen:?}").contains("27 seconds"),
+                        "{metrics:?}: the estimate is gone"
+                    );
+                    // The summary and the speed give way only where the panel
+                    // forces it; a Clara at the default size has both.
+                    if pixels_per_inch == 300 && text_scale == kobo_ui::TextScale::Default {
+                        let drawn = format!("{screen:?}");
+                        assert!(drawn.contains("one second of light"), "{metrics:?}");
+                        let summary = if on {
+                            "Each letter shows its code underneath."
+                        } else {
+                            "The bar counts letters only."
+                        };
+                        assert!(drawn.contains(summary), "{metrics:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A bar cannot hold a switch, so the light's entry names what the tap
+    /// does, and both words fit beside Stop, and beside Send again and Edit,
+    /// at every text size.
+    #[test]
+    fn the_light_entry_names_what_the_tap_does_and_fits_every_bar() {
+        let last_screen = |commands: Vec<Command>| {
+            commands
+                .into_iter()
+                .rev()
+                .find_map(|command| match command {
+                    Command::SetScreen(screen) => Some(screen),
+                    _ => None,
+                })
+                .expect("a beacon screen")
+        };
+        for (width, height, pixels_per_inch) in [(1072, 1448, 300), (758, 1024, 212)] {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let mut runner = AppRunner::with_metrics(Morse::default(), metrics);
+                runner.start();
+                let running = last_screen(runner.action(action_id(AGAIN)));
+                let dark = last_screen(runner.action(action_id(TOGGLE_LIGHT)));
+                let resting = last_screen(runner.action(action_id(STOP)));
+                for (screen, (label, short), others) in [
+                    (running, ("Turn light off", "Go dark"), &[STOP][..]),
+                    (dark, ("Turn light on", "Light up"), &[STOP][..]),
+                    (resting, ("Turn light on", "Light up"), &[AGAIN, "edit"][..]),
+                ] {
+                    let bar = screen.nav_bar.as_ref().expect("an action bar");
+                    let entry = bar
+                        .destinations
+                        .iter()
+                        .find(|entry| entry.action == action_id(TOGGLE_LIGHT))
+                        .expect("the light entry");
+                    // The shorter words are only for a panel smaller than
+                    // a Clara, where the longer ones cannot fit the bar.
+                    if pixels_per_inch == 300 {
+                        assert_eq!(entry.label, label, "{metrics:?}");
+                    } else {
+                        assert!(entry.label == label || entry.label == short, "{metrics:?}");
+                    }
+                    let chrome = Chrome::measuring(true);
+                    let issues = screen.diagnostics(&metrics, &chrome);
+                    assert!(!issues.has_errors(), "{metrics:?} {label}: {issues:?}");
+                    let layout = screen.layout_with(&metrics, &chrome);
+                    for name in others.iter().copied().chain([TOGGLE_LIGHT]) {
+                        assert!(
+                            layout.rect_of_action(action_id(name)).is_some(),
+                            "{metrics:?}: {name} is off the panel"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The last screen a batch of commands set, drawn as text to search.
+    fn last_screen(commands: &[Command]) -> String {
+        commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                Command::SetScreen(screen) => Some(format!("{screen:?}")),
+                _ => None,
+            })
+            .expect("a screen")
+    }
+
+    /// The Learning switch's summary says what Learning does now: the code
+    /// is drawn under the letter, not named in the bar.
+    #[test]
+    fn the_learning_summary_says_the_code_is_drawn_under_each_letter() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        let drawn = last_screen(&runner.action(action_id(LEARN)));
+        assert!(
+            drawn.contains("Each letter shows its code underneath.")
+                && !drawn.contains("The bar names"),
+            "{drawn}"
+        );
+    }
+
+    /// An empty box says there is nothing to send once, not "nothing to send
+    /// to send".
+    #[test]
+    fn an_empty_message_says_there_is_nothing_to_send_once() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.app_mut().keyboard = Keyboard::with_text("S");
+        runner.start();
+        let drawn = last_screen(&runner.action(ActionId::from_name("kb.backspace")));
+        assert!(drawn.contains("Nothing to send yet."), "{drawn}");
+        assert!(!drawn.contains("to send to send"), "{drawn}");
+    }
+
+    /// Send with an empty box stays on the writing screen with a warning, and
+    /// the warning goes as soon as a letter is typed.
+    #[test]
+    fn sending_an_empty_message_stays_on_the_message_and_typing_clears_the_warning() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.app_mut().keyboard = Keyboard::with_text("");
+        runner.start();
+        let drawn = last_screen(&runner.action(ActionId::from_name(kobo_ui::keyboard::ENTER)));
+        assert_eq!(runner.app_mut().view, View::Writing);
+        assert!(!runner.app_mut().running);
+        assert!(drawn.contains("There is nothing here to send."), "{drawn}");
+        runner.app_mut().keyboard = Keyboard::with_text("TT");
+        let drawn = last_screen(&runner.action(ActionId::from_name("kb.backspace")));
+        assert!(!drawn.contains("There is nothing here to send."), "{drawn}");
+    }
+
+    /// A character with no code is named while it is in the box, and the
+    /// warning goes when it is deleted, including after a send and Edit.
+    #[test]
+    fn the_warning_about_a_character_with_no_code_goes_when_the_character_does() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.app_mut().keyboard = Keyboard::with_text("T!!");
+        runner.start();
+        let drawn = last_screen(&runner.action(ActionId::from_name("kb.backspace")));
+        assert!(
+            drawn.contains("Morse has no code for !, so it will be left out."),
+            "{drawn}"
+        );
+        let drawn = last_screen(&runner.action(ActionId::from_name(kobo_ui::keyboard::ENTER)));
+        assert!(drawn.contains("so it was left out."), "{drawn}");
+        runner.action(action_id(STOP));
+        runner.action(action_id(EDIT));
+        let drawn = last_screen(&runner.action(ActionId::from_name("kb.backspace")));
+        assert!(!drawn.contains("Morse has no code"), "{drawn}");
+    }
+
+    /// Resting after a send, the message is spelled in the same dots and
+    /// dashes as the letter reference, each code after its letter.
+    #[test]
+    fn the_resting_screen_spells_the_message_in_dots_and_dashes() {
+        let mut runner = AppRunner::new(Morse::default());
+        runner.start();
+        runner.action(action_id(AGAIN));
+        let drawn = last_screen(&runner.action(action_id(STOP)));
+        let spelled = format!(
+            "S {}   O {}   S {}",
+            marks("..."),
+            marks("---"),
+            marks("...")
+        );
+        assert!(drawn.contains(&spelled), "{drawn}");
+        assert!(!drawn.contains("... --- ..."), "{drawn}");
     }
 }

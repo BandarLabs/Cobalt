@@ -196,7 +196,7 @@ pub(super) fn layout(
     }
     for (vertical, clues) in [(false, &board.row_clues), (true, &board.column_clues)] {
         for (index, clue) in clues.iter().enumerate() {
-            if layout.nodes.len() + 2 > MAX_LAYOUT_NODES {
+            if layout.nodes.len() + 3 > MAX_LAYOUT_NODES {
                 break;
             }
             let rect = if vertical {
@@ -237,23 +237,6 @@ pub(super) fn layout(
                         cell / usize::from(board.columns) == index
                     }
             });
-            layout.nodes.push(LayoutNode {
-                id,
-                rect,
-                kind: LayoutKind::Cell(
-                    clue.action,
-                    if selected {
-                        CellStyle::Key
-                    } else {
-                        CellStyle::Plain
-                    },
-                    selected,
-                ),
-                text_lines: vec![format!(
-                    "{axis} {} clue: {all}",
-                    usize::from(start) + index + 1
-                )],
-            });
             let lines = if clue.values.is_empty() {
                 vec!["0".into()]
             } else if vertical {
@@ -267,11 +250,67 @@ pub(super) fn layout(
                     lines.push("…".into());
                 }
                 lines
-            } else if clue.values.len() == 1 {
-                vec![all]
             } else {
-                vec![format!("{} …", clue.values[0])]
+                // A row clue reads across its gutter, so it keeps as many of
+                // its numbers as the gutter holds and ends in an ellipsis only
+                // when some are left out. Cutting every clue after its first
+                // number hid "2 2" in a gutter with room for "64 …", and a
+                // nonogram cannot be read a row at a time through taps.
+                let room = rect.width - metrics.space(Space::Tight) * 2;
+                let fits = |line: &str| measure_text(line, FontSize::Caption).0 <= room;
+                if clue.values.len() == 1 || fits(&all) {
+                    vec![all.clone()]
+                } else {
+                    let shown = (1..clue.values.len())
+                        .rev()
+                        .map(|count| {
+                            let head = clue.values[..count]
+                                .iter()
+                                .map(u8::to_string)
+                                .collect::<Vec<_>>()
+                                .join(" ");
+                            format!("{head} …")
+                        })
+                        .find(|line| fits(line))
+                        .unwrap_or_else(|| format!("{} …", clue.values[0]));
+                    vec![shown]
+                }
             };
+            layout.nodes.push(LayoutNode {
+                id,
+                rect,
+                kind: LayoutKind::Cell(clue.action, CellStyle::Plain, selected),
+                text_lines: vec![format!(
+                    "{axis} {} clue: {all}",
+                    usize::from(start) + index + 1
+                )],
+            });
+            // The selected square's clues are marked with a chip sized to
+            // their numbers, not with a slab over the whole gutter: the tap
+            // target stays the full strip, but a gutter-wide field reads as a
+            // button and shouts over the grid it serves.
+            if selected {
+                let pad = metrics.space(Space::Tight);
+                let text_width = lines
+                    .iter()
+                    .map(|line| measure_text(line, FontSize::Caption).0)
+                    .max()
+                    .unwrap_or(0);
+                let text_height = FontSize::Caption.line_height() * lines.len().max(1) as i32;
+                let chip_width = (text_width + pad * 2).min(rect.width);
+                let chip_height = (text_height + pad * 2).min(rect.height);
+                layout.nodes.push(LayoutNode {
+                    id,
+                    rect: Rect {
+                        x: rect.x + (rect.width - chip_width).max(0) / 2,
+                        y: rect.y + (rect.height - chip_height).max(0) / 2,
+                        width: chip_width,
+                        height: chip_height,
+                    },
+                    kind: LayoutKind::BoardClueChip,
+                    text_lines: Vec::new(),
+                });
+            }
             layout.nodes.push(LayoutNode {
                 id,
                 rect,
@@ -411,6 +450,52 @@ mod tests {
         }
     }
 
+    fn row_clue_lines(values: Vec<u8>) -> (Vec<String>, i32) {
+        let surface = BoardSurface {
+            columns: 1,
+            row_start: 0,
+            column_start: 0,
+            cell_tenth_mm: 120,
+            cells: vec![BoardCell {
+                action: ActionId(7),
+                mark: BoardMark::Empty,
+                given: false,
+                selected: false,
+            }],
+            row_clues: vec![BoardClue {
+                action: ActionId(8),
+                values,
+            }],
+            column_clues: vec![],
+        };
+        let screen = Screen::new(
+            1,
+            vec![Node::Board {
+                id: NodeId(1),
+                surface,
+            }],
+        );
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        let clue = layout
+            .nodes
+            .iter()
+            .find(|node| node.kind == LayoutKind::BoardClue)
+            .unwrap();
+        (clue.text_lines.clone(), clue.rect.width)
+    }
+
+    #[test]
+    fn a_row_clue_shows_every_number_its_gutter_has_room_for() {
+        assert_eq!(row_clue_lines(vec![2, 2]).0, vec!["2 2".to_owned()]);
+        let (lines, width) = row_clue_lines((1..=12).collect());
+        let [line] = lines.as_slice() else {
+            panic!("one line: {lines:?}");
+        };
+        assert!(line.starts_with("1 2 ") && line.ends_with(" …"), "{line}");
+        let room = width - CLARA_BW_METRICS.space(Space::Tight) * 2;
+        assert!(measure_text(line, FontSize::Caption).0 <= room, "{line}");
+    }
+
     #[test]
     fn selected_square_highlights_only_its_matching_clue_targets() {
         for chosen in 0..6 {
@@ -452,7 +537,7 @@ mod tests {
                 .nodes
                 .iter()
                 .filter_map(|node| match node.kind {
-                    LayoutKind::Cell(action, CellStyle::Key, true) => Some(action.0),
+                    LayoutKind::Cell(action, CellStyle::Plain, true) => Some(action.0),
                     _ => None,
                 })
                 .collect();
@@ -469,6 +554,20 @@ mod tests {
                     layout.hit_test(rect.x + rect.width / 2, rect.y + rect.height / 2),
                     Some(ActionId(action))
                 );
+                let chip = layout
+                    .nodes
+                    .iter()
+                    .find(|node| {
+                        node.kind == LayoutKind::BoardClueChip
+                            && rect.x <= node.rect.x
+                            && node.rect.x + node.rect.width <= rect.x + rect.width
+                            && rect.y <= node.rect.y
+                            && node.rect.y + node.rect.height <= rect.y + rect.height
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("selected clue {action} has no chip inside {rect:?}")
+                    });
+                assert!(chip.rect.width < rect.width || chip.rect.height < rect.height);
             }
         }
     }

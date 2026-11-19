@@ -29,7 +29,6 @@ enum Route {
     Browser,
     Play,
     Gate,
-    Photo,
     PhotoHelp,
     Reveal,
     HowTo,
@@ -38,11 +37,49 @@ enum Route {
     Restart,
 }
 
+/// The browser's tabs: the drawn pictures, the sixty pattern puzzles that
+/// shipped first, and the owner's own photos.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum Pack {
     #[default]
     Pictures,
-    Earlier,
+    Patterns,
+    Photos,
+}
+
+impl Pack {
+    const ALL: [Self; 3] = [Self::Pictures, Self::Patterns, Self::Photos];
+
+    const fn action(self) -> &'static str {
+        match self {
+            Self::Pictures => "tab-pictures",
+            Self::Patterns => "tab-patterns",
+            Self::Photos => "tab-photos",
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Pictures => "Pictures",
+            Self::Patterns => "Patterns",
+            Self::Photos => "Photos",
+        }
+    }
+
+    fn holds(self, id: &str) -> bool {
+        match self {
+            Self::Pictures => !id.starts_with("pack-") && !id.starts_with("photo-"),
+            Self::Patterns => id.starts_with("pack-"),
+            Self::Photos => id.starts_with("photo-"),
+        }
+    }
+
+    fn of(id: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|pack| pack.holds(id))
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -88,6 +125,23 @@ impl Mark {
     }
 }
 
+/// One import in flight: the manifest entries, the puzzles read so far
+/// and the entries that could not be read or cut into fair puzzles.
+struct Import {
+    entries: Vec<photo::Entry>,
+    next: usize,
+    puzzles: Vec<(Puzzle, Picture)>,
+    skipped: Vec<String>,
+}
+
+/// Which read the outstanding photo task is for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PhotoRead {
+    Manifest,
+    Photo,
+    Entry,
+}
+
 #[allow(
     clippy::struct_excessive_bools,
     reason = "independent play preferences and storage lifecycle flags"
@@ -101,12 +155,18 @@ struct Game {
     guided: bool,
     done: bool,
     solved: BTreeSet<String>,
+    /// Puzzles with a saved board, so the shelf can say a puzzle is under
+    /// way rather than not started. Read from the store's list of records
+    /// at start and added to as boards are saved.
+    started: BTreeSet<String>,
     page: usize,
     notice: Option<String>,
     waiting: Option<TaskId>,
     photo_side: usize,
     reveal: Option<TilePicture>,
-    photo_reveal: Option<(String, Picture)>,
+    photo_reveals: Vec<(String, Picture)>,
+    import: Option<Import>,
+    reading: Option<PhotoRead>,
     run_entry: bool,
     run_start: Option<usize>,
     focus: Option<usize>,
@@ -133,12 +193,15 @@ impl Default for Game {
             guided: false,
             done: false,
             solved: BTreeSet::new(),
+            started: BTreeSet::new(),
             page: 0,
             notice: None,
             waiting: None,
             photo_side: 9,
             reveal: None,
-            photo_reveal: None,
+            photo_reveals: Vec::new(),
+            import: None,
+            reading: None,
             run_entry: false,
             run_start: None,
             focus: None,
@@ -186,7 +249,6 @@ impl Game {
                 .text("This grid is not supported. Choose a size from 5×5 to 25×25.")
                 .button("back-browser", "Puzzles")
                 .build(),
-            Route::Photo => self.photo(),
             Route::Reveal => self.reveal_screen(context),
             Route::HowTo | Route::PhotoHelp => self.help(context),
             Route::Menu => self.menu(),
@@ -203,7 +265,7 @@ impl Game {
         self.puzzles
             .iter()
             .enumerate()
-            .filter(|(_, puzzle)| puzzle.id.starts_with("pack-") == (self.pack == Pack::Earlier))
+            .filter(|(_, puzzle)| self.pack.holds(&puzzle.id))
             .map(|(index, _)| index)
             .collect()
     }
@@ -214,6 +276,8 @@ impl Game {
             "{} · {}×{} · {}",
             if self.solved.contains(&puzzle.id) {
                 "Solved"
+            } else if self.started.contains(&puzzle.id) {
+                "In progress"
             } else {
                 "Not started"
             },
@@ -227,6 +291,61 @@ impl Game {
         )
     }
 
+    /// The tabs and any news from an import.
+    fn browser_head(&self) -> ScreenBuilder {
+        let selected = Pack::ALL
+            .iter()
+            .position(|pack| *pack == self.pack)
+            .unwrap_or(0);
+        let mut screen = ScreenBuilder::new("nonograms-browser")
+            .top_bar("Nonograms")
+            .tabs(
+                selected,
+                Pack::ALL.map(|pack| (pack.action(), pack.label())),
+            );
+        if self.pack == Pack::Photos {
+            if let Some(notice) = &self.notice {
+                // News of new puzzles is not a warning; a photo that could
+                // not be read is.
+                let news = notice.ends_with(" new photo puzzle.")
+                    || notice.ends_with(" new photo puzzles.");
+                let level = if news {
+                    BannerLevel::Info
+                } else {
+                    BannerLevel::Attention
+                };
+                screen = screen.banner(level, notice);
+            }
+        }
+        screen
+    }
+
+    /// Everything above the list: the tabs, any news from an import, and
+    /// the count. Pagination measures this so the list never runs under it.
+    fn browser_prefix(&self) -> ScreenBuilder {
+        let count = self.visible_puzzles().len();
+        self.browser_head().section_with_value(
+            match self.pack {
+                Pack::Pictures => "Picture puzzles",
+                Pack::Patterns => "Pattern puzzles",
+                Pack::Photos => "Your photos",
+            },
+            if count == 1 {
+                "1 puzzle".to_owned()
+            } else {
+                format!("{count} puzzles")
+            },
+        )
+    }
+
+    fn browser_actions(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        if self.pack == Pack::Photos {
+            screen.action_bar([("how-to-play", "Help"), ("photo-help", "Add photos")])
+        } else {
+            screen.bottom_action("how-to-play", "How to play")
+        }
+    }
+
     fn browser_pages(&self, context: &Context) -> Vec<Vec<usize>> {
         let indices = self.visible_puzzles();
         let details: Vec<_> = indices
@@ -236,29 +355,29 @@ impl Game {
         let rows: Vec<_> = indices
             .iter()
             .zip(&details)
-            .map(|(&index, detail)| (self.puzzles[index].title.as_str(), detail.as_str(), ""))
+            .map(|(&index, detail)| (self.puzzles[index].title.as_str(), detail.as_str()))
             .collect();
         context
-            .paginate_rows_below_section(&rows, true, kobo_sdk::Position::AtTheFoot, None)
+            .paginate_rows_under(
+                &rows,
+                true,
+                kobo_sdk::Position::AtTheFoot,
+                &self.browser_prefix().build(),
+            )
             .into_iter()
             .map(|page| page.into_iter().map(|index| indices[index]).collect())
             .collect()
     }
 
     fn browser(&self, context: &Context) -> Screen {
+        if self.pack == Pack::Photos && self.visible_puzzles().is_empty() {
+            return self.empty_photos(context);
+        }
         let pages = self.browser_pages(context);
         let page = self.page.min(pages.len().saturating_sub(1));
         let visible = pages.get(page).map(Vec::as_slice).unwrap_or_default();
-        ScreenBuilder::new("nonograms-browser")
-            .top_bar("Nonograms")
-            .section_with_value(
-                if self.pack == Pack::Pictures {
-                    "Picture puzzles"
-                } else {
-                    "Earlier puzzles"
-                },
-                format!("{} puzzles", self.visible_puzzles().len()),
-            )
+        let screen = self
+            .browser_prefix()
             .rows(visible.iter().map(|&index| {
                 let puzzle = &self.puzzles[index];
                 (
@@ -272,34 +391,45 @@ impl Game {
             .page_position(
                 u16::try_from(page + 1).unwrap_or(u16::MAX),
                 u16::try_from(pages.len().max(1)).unwrap_or(u16::MAX),
-            )
-            .action_bar([
-                ("photo", "Photos"),
-                ("how-to-play", "Help"),
-                (
-                    "pack-toggle",
-                    if self.pack == Pack::Pictures {
-                        "Earlier"
-                    } else {
-                        "Pictures"
-                    },
-                ),
-            ])
-            .build()
+            );
+        self.browser_actions(screen).build()
     }
 
-    fn photo(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("nonograms-photo")
-            .top_bar("Photo puzzle")
-            .text("Choose the size used on your computer.")
-            .facts([("Grid", format!("{}×{}", self.photo_side, self.photo_side))]);
-        if let Some(notice) = &self.notice {
-            screen = screen.banner(BannerLevel::Attention, notice);
-        }
-        screen
-            .buttons([("photo-size", "Size"), ("photo-open", "Open")])
-            .action_bar([("photo-help", "Help"), ("back-browser", "Puzzles")])
+    /// The Photos shelf before anything has been pushed to it.
+    ///
+    /// No "Your photos · 0 puzzles" over a splash that says there are none,
+    /// and when a pushed photo appears is left to Add photos: with both, the
+    /// command ran off the panel at the largest text size, and the command is
+    /// the one thing here an owner acts on. Where even that is too tall, held
+    /// sideways or under news from an import, the picture goes first and then
+    /// the sentence the command already says, never the title or the command.
+    fn empty_photos(&self, context: &Context) -> Screen {
+        let screen = |glyph: Option<kobo_sdk::Glyph>, body: &str| {
+            self.browser_actions(
+                self.browser_head()
+                    .splash(glyph, "No photo puzzles yet", body)
+                    // Broken where a shell allows it, before the options,
+                    // so the panel never wraps it in the middle of one.
+                    .command("kobo nonograms push photo.jpg \\\n  --name Garden --size 9"),
+            )
             .build()
+        };
+        let body = "Turn a photo into a puzzle on your computer.";
+        let candidates = [
+            (Some(kobo_sdk::Glyph::Grid), body),
+            (None, body),
+            (None, ""),
+        ];
+        let metrics = context.metrics();
+        candidates
+            .iter()
+            .map(|(glyph, body)| screen(*glyph, body))
+            .find(|candidate| {
+                !candidate
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| screen(None, ""))
     }
 
     fn reveal_screen(&self, context: &Context) -> Screen {
@@ -344,11 +474,7 @@ impl Game {
         let Some(puzzle) = self.puzzles.get(index) else {
             return;
         };
-        self.pack = if puzzle.id.starts_with("pack-") {
-            Pack::Earlier
-        } else {
-            Pack::Pictures
-        };
+        self.pack = Pack::of(&puzzle.id);
         self.selected = Some(index);
         self.focus = Some(0);
         self.viewport = None;
@@ -360,13 +486,6 @@ impl Game {
         self.marks = vec![Mark::Blank; puzzle.side * puzzle.side];
         self.done = false;
         self.notice = None;
-        if self
-            .photo_reveal
-            .as_ref()
-            .is_some_and(|(id, _)| id != &puzzle.id)
-        {
-            self.photo_reveal = None;
-        }
         self.run_start = None;
         if !(5..=25).contains(&puzzle.side) {
             self.route = Route::Gate;
@@ -379,6 +498,9 @@ impl Game {
     }
 
     fn save_progress(&mut self, context: &mut Context) {
+        if let Some(puzzle) = self.puzzle() {
+            self.started.insert(puzzle.id.clone());
+        }
         let bytes = saved::encode(self).expect("bounded game");
         self.draft.replace(bytes).expect("bounded draft");
         self.pump(context);
@@ -503,9 +625,9 @@ impl Game {
 
     fn show_reveal(&mut self, context: &mut Context) {
         let picture = self
-            .photo_reveal
-            .as_ref()
-            .filter(|(id, _)| self.puzzle().is_some_and(|puzzle| puzzle.id == *id))
+            .photo_reveals
+            .iter()
+            .find(|(id, _)| self.puzzle().is_some_and(|puzzle| puzzle.id == *id))
             .map(|(_, picture)| picture.clone())
             .or_else(|| self.puzzle().and_then(reveal_for));
         self.reveal = picture.and_then(|picture| {
@@ -519,26 +641,68 @@ impl Game {
         self.route = Route::Reveal;
     }
 
+    /// Reads the photos a push left beside the app. It runs on start and on
+    /// every wake, in the background, so a push shows up without asking and
+    /// a puzzle being played is never interrupted.
     fn open_photo(&mut self, context: &mut Context) {
-        if !(5..=25).contains(&self.photo_side) {
-            self.notice = Some("Choose a photo grid between 5×5 and 25×25.".to_owned());
+        if self.waiting.is_some() {
             return;
         }
-        self.cancel_photo_task(context);
         if let Some(task) = context.spawn(Task::ReadFile {
-            path: PHOTO_FILE.to_owned(),
+            path: photo::MANIFEST_FILE.to_owned(),
         }) {
             self.waiting = Some(task);
-            self.notice = Some("Reading imported photo.".to_owned());
+            self.reading = Some(PhotoRead::Manifest);
         }
     }
 
-    fn cancel_photo_task(&mut self, context: &mut Context) {
-        if let Some(task) = self.waiting.take() {
-            context.cancel(task);
+    /// The one photo an early push left without a list of puzzles, cut at
+    /// the size those pushes used.
+    fn add_photo(&mut self, bytes: &[u8]) -> Option<String> {
+        let id = photo_id(bytes, self.photo_side);
+        match photo::from_photo(id, "Imported photo", bytes, self.photo_side) {
+            Ok(photo) => {
+                let id = photo.puzzle.id.clone();
+                let selected = self.selected_id();
+                let fresh = !self.puzzles.iter().any(|puzzle| puzzle.id == id);
+                self.puzzles
+                    .retain(|puzzle| !puzzle.id.starts_with("photo-"));
+                self.puzzles.push(photo.puzzle);
+                self.photo_reveals
+                    .retain(|(old, _)| !old.starts_with("photo-"));
+                self.photo_reveals.push((id.clone(), photo.reveal));
+                self.filter_solved();
+                self.reselect(selected);
+                if fresh {
+                    self.notice = Some("1 new photo puzzle.".to_owned());
+                }
+                Some(id)
+            }
+            Err(error) => {
+                self.notice = Some(error.to_string());
+                None
+            }
         }
     }
 
+    fn selected_id(&self) -> Option<String> {
+        self.puzzle().map(|puzzle| puzzle.id.clone())
+    }
+
+    /// Finds the puzzle being played again after the list changed under it.
+    /// A puzzle a push removed while it was open goes back to the list.
+    fn reselect(&mut self, id: Option<String>) {
+        let Some(id) = id else {
+            return;
+        };
+        self.selected = self.puzzles.iter().position(|puzzle| puzzle.id == id);
+        if self.selected.is_none() && self.route != Route::Browser {
+            self.route = Route::Browser;
+        }
+    }
+
+    /// Adds a single photo and opens it, for the tests of photo identity.
+    #[cfg(test)]
     fn load_photo(&mut self, context: &mut Context, bytes: &[u8]) {
         let id = photo_id(bytes, self.photo_side);
         match photo::from_photo(id, "Imported photo", bytes, self.photo_side) {
@@ -548,7 +712,7 @@ impl Game {
                     .retain(|puzzle| !puzzle.id.starts_with("photo-"));
                 self.puzzles.push(photo.puzzle);
                 self.filter_solved();
-                self.pack = Pack::Pictures;
+                self.pack = Pack::Photos;
                 self.selected = Some(self.puzzles.len() - 1);
                 self.focus = Some(0);
                 self.viewport = None;
@@ -563,7 +727,9 @@ impl Game {
                 self.route = Route::Play;
                 // The reveal remains in memory while the imported puzzle is
                 // solved; its source never needs to become a credential or log.
-                self.photo_reveal = Some((id, photo.reveal));
+                self.photo_reveals
+                    .retain(|(old, _)| !old.starts_with("photo-"));
+                self.photo_reveals.push((id, photo.reveal));
                 if let Some(key) = self.progress_key() {
                     context.store().load(key);
                 }
@@ -571,6 +737,118 @@ impl Game {
             }
             Err(error) => self.notice = Some(error.to_string()),
         }
+    }
+
+    fn read_next_entry(&mut self, context: &mut Context) {
+        let path = self
+            .import
+            .as_ref()
+            .and_then(|import| import.entries.get(import.next))
+            .map(|entry| entry.file.clone());
+        let Some(path) = path else {
+            self.finish_import();
+            return;
+        };
+        if let Some(task) = context.spawn(Task::ReadFile { path }) {
+            self.waiting = Some(task);
+            self.reading = Some(PhotoRead::Entry);
+        } else {
+            if let Some(import) = self.import.as_mut() {
+                import.next += 1;
+                import
+                    .skipped
+                    .push("A photo could not be queued.".to_owned());
+            }
+            self.read_next_entry(context);
+        }
+    }
+
+    fn load_entry(&mut self, context: &mut Context, bytes: &[u8]) {
+        let entry = self
+            .import
+            .as_ref()
+            .and_then(|import| import.entries.get(import.next))
+            .cloned();
+        let Some(entry) = entry else {
+            self.read_next_entry(context);
+            return;
+        };
+        if let Some(import) = self.import.as_mut() {
+            import.next += 1;
+        }
+        let id = photo_id(bytes, entry.side);
+        match photo::from_photo(id, entry.name.clone(), bytes, entry.side) {
+            Ok(photo) => {
+                if let Some(import) = self.import.as_mut() {
+                    import.puzzles.push((photo.puzzle, photo.reveal));
+                }
+            }
+            Err(error) => {
+                if let Some(import) = self.import.as_mut() {
+                    import.skipped.push(format!("{}: {error}", entry.name));
+                }
+            }
+        }
+        self.read_next_entry(context);
+    }
+
+    // The imported set becomes exactly what this push carried: puzzles with
+    // the same bytes and grid keep their identity, so their progress
+    // survives, and photos an earlier push left behind drop out.
+    fn finish_import(&mut self) {
+        let Some(import) = self.import.take() else {
+            return;
+        };
+        let selected = self.selected_id();
+        let landed: BTreeSet<String> = import
+            .puzzles
+            .iter()
+            .map(|(puzzle, _)| puzzle.id.clone())
+            .collect();
+        let fresh = landed
+            .iter()
+            .filter(|id| !self.puzzles.iter().any(|puzzle| &puzzle.id == *id))
+            .count();
+        self.puzzles
+            .retain(|puzzle| !puzzle.id.starts_with("photo-") || landed.contains(&puzzle.id));
+        self.photo_reveals
+            .retain(|(id, _)| !id.starts_with("photo-") || landed.contains(id));
+        for (puzzle, reveal) in import.puzzles {
+            let id = puzzle.id.clone();
+            if let Some(existing) = self
+                .puzzles
+                .iter_mut()
+                .find(|existing| existing.id == puzzle.id)
+            {
+                *existing = puzzle;
+            } else {
+                self.puzzles.push(puzzle);
+            }
+            self.photo_reveals.retain(|(old, _)| old != &id);
+            self.photo_reveals.push((id, reveal));
+        }
+        self.filter_solved();
+        self.reselect(selected);
+        let total = import.entries.len();
+        let word = |count: usize| {
+            if count == 1 {
+                "photo puzzle"
+            } else {
+                "photo puzzles"
+            }
+        };
+        self.notice = if !import.skipped.is_empty() {
+            Some(format!(
+                "{} of {total} {} could be read. {}",
+                landed.len(),
+                word(total),
+                import.skipped[0]
+            ))
+        } else if fresh > 0 {
+            Some(format!("{fresh} new {}.", word(fresh)))
+        } else {
+            None
+        };
     }
 
     fn filter_solved(&mut self) {
@@ -632,10 +910,30 @@ fn decode_solved(bytes: &[u8], puzzles: &[Puzzle]) -> BTreeSet<String> {
 impl KoboApp for Game {
     fn on_start(&mut self, context: &mut Context) {
         context.store().load(SOLVED);
+        context.store().list();
+        self.open_photo(context);
         self.show(context);
     }
 
+    /// A push made while the reader slept is picked up when it wakes.
+    fn on_resume(&mut self, context: &mut Context) {
+        self.open_photo(context);
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        self.open_photo(context);
+    }
+
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
+        if let StoreResult::Keys(keys) = &result {
+            self.started.extend(
+                keys.iter()
+                    .filter_map(|key| key.strip_prefix("progress-"))
+                    .map(str::to_owned),
+            );
+            self.show(context);
+            return;
+        }
         if let StoreResult::Loaded { key, value } = result {
             if key == SOLVED {
                 // Do not let a late index read overwrite a completed puzzle
@@ -743,18 +1041,17 @@ impl KoboApp for Game {
             self.show(context);
             return;
         }
-        if action == action_id("pack-toggle") && self.route == Route::Browser {
-            self.pack = if self.pack == Pack::Pictures {
-                Pack::Earlier
-            } else {
-                Pack::Pictures
-            };
+        if let Some(pack) = Pack::ALL
+            .into_iter()
+            .find(|pack| self.route == Route::Browser && action == action_id(pack.action()))
+        {
+            self.pack = pack;
             self.page = 0;
-        } else if action == action_id("photo-help") && self.route == Route::Photo {
+        } else if action == action_id("photo-help") && self.route == Route::Browser {
             self.route = Route::PhotoHelp;
             self.help_page = 0;
         } else if action == ActionId::BACK && self.route == Route::PhotoHelp {
-            self.route = Route::Photo;
+            self.route = Route::Browser;
         } else if action == action_id("retry-save") {
             self.draft.retry();
             self.solved_draft.retry();
@@ -786,7 +1083,6 @@ impl KoboApp for Game {
             || action == action_id("back-browser")
             || action == action_id("next-puzzle")
         {
-            self.cancel_photo_task(context);
             self.route = Route::Browser;
             self.notice = None;
         } else if action == action_id("previous-page") && self.page > 0 {
@@ -795,22 +1091,10 @@ impl KoboApp for Game {
             && self.page + 1 < self.browser_pages(context).len()
         {
             self.page += 1;
-        } else if action == action_id("photo") {
-            self.route = Route::Photo;
-            self.notice = None;
         } else if action == action_id("how-to-play") {
             self.route = Route::HowTo;
             self.help_page = 0;
             self.notice = None;
-        } else if action == action_id("photo-size") {
-            self.photo_side = match self.photo_side {
-                5 => 7,
-                7 => 9,
-                _ => 5,
-            };
-            self.notice = None;
-        } else if action == action_id("photo-open") {
-            self.open_photo(context);
         } else if action == action_id("policy") {
             self.guided = !self.guided;
             self.notice = self.guided_contradiction();
@@ -841,23 +1125,68 @@ impl KoboApp for Game {
     }
 
     fn on_task(&mut self, context: &mut Context, task: TaskId, outcome: TaskOutcome) {
-        if self.route != Route::Photo || self.waiting != Some(task) {
+        if self.waiting != Some(task) {
             return;
         }
         self.waiting = None;
-        match outcome {
-            TaskOutcome::Completed(bytes) => self.load_photo(context, &bytes),
-            TaskOutcome::Failed(kobo_sdk::TaskError::NotFound) => {
-                self.notice = Some(
-                    "No imported photo found. Run kobo nonograms push IMAGE --size 9 --device READER."
-                        .to_owned(),
-                );
+        let reading = self.reading.take();
+        if matches!(outcome, TaskOutcome::Cancelled) {
+            self.import = None;
+            self.notice = Some("The photo import was cancelled.".to_owned());
+            self.show(context);
+            return;
+        }
+        match (reading, outcome) {
+            (Some(PhotoRead::Manifest), TaskOutcome::Completed(bytes)) => {
+                match photo::parse_manifest(&bytes) {
+                    Ok(entries) => {
+                        self.import = Some(Import {
+                            entries,
+                            next: 0,
+                            puzzles: Vec::new(),
+                            skipped: Vec::new(),
+                        });
+                        self.read_next_entry(context);
+                    }
+                    Err(error) => self.notice = Some(error),
+                }
             }
-            TaskOutcome::Failed(error) => {
+            (Some(PhotoRead::Manifest), TaskOutcome::Failed(kobo_sdk::TaskError::NotFound)) => {
+                if let Some(task) = context.spawn(Task::ReadFile {
+                    path: PHOTO_FILE.to_owned(),
+                }) {
+                    self.waiting = Some(task);
+                    self.reading = Some(PhotoRead::Photo);
+                }
+            }
+            (Some(PhotoRead::Manifest), TaskOutcome::Failed(error)) => {
+                self.notice = Some(format!(
+                    "The list of photo puzzles could not be read: {error}"
+                ));
+            }
+            (Some(PhotoRead::Photo), TaskOutcome::Completed(bytes)) => {
+                let _ = self.add_photo(&bytes);
+            }
+            // No photos have been pushed: the Photos tab says how.
+            (Some(PhotoRead::Photo), TaskOutcome::Failed(kobo_sdk::TaskError::NotFound))
+            | (_, TaskOutcome::Cancelled)
+            | (None, _) => {}
+            (Some(PhotoRead::Photo), TaskOutcome::Failed(error)) => {
                 self.notice = Some(format!("The imported photo could not be read: {error}"));
             }
-            TaskOutcome::Cancelled => {
-                self.notice = Some("The photo import was cancelled.".to_owned());
+            (Some(PhotoRead::Entry), TaskOutcome::Completed(bytes)) => {
+                self.load_entry(context, &bytes);
+            }
+            (Some(PhotoRead::Entry), TaskOutcome::Failed(error)) => {
+                if let Some(import) = self.import.as_mut() {
+                    let name = import
+                        .entries
+                        .get(import.next)
+                        .map_or_else(|| "A photo".to_owned(), |entry| entry.name.clone());
+                    import.next += 1;
+                    import.skipped.push(format!("{name}: {error}"));
+                }
+                self.read_next_entry(context);
             }
         }
         self.show(context);
@@ -876,7 +1205,7 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::{action_id, corpus, photo_id, Cell, Game, Mark, Route, SOLVED};
+    use super::{action_id, corpus, photo_id, Cell, Game, Mark, Pack, Route, SOLVED};
     use kobo_sdk::{Context, KoboApp, StoreResult, TaskOutcome};
     use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
@@ -916,27 +1245,77 @@ mod tests {
                     text_scale,
                 };
                 let context = kobo_sdk::AppRunner::with_metrics(Game::default(), metrics).context();
-                let mut game = Game::default();
-                let pages = game.browser_pages(&context);
-                assert_eq!(
-                    pages.iter().flatten().copied().collect::<Vec<_>>(),
-                    game.visible_puzzles()
-                );
-                for (page, indices) in pages.iter().enumerate() {
-                    game.page = page;
-                    let screen = game.browser(&context);
-                    let chrome = Chrome::measuring(true);
-                    let issues = screen.diagnostics(&metrics, &chrome).issues;
-                    assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
-                    let layout = screen.layout_with(&metrics, &chrome);
-                    for action in ["photo".to_owned(), "how-to-play".to_owned()]
-                        .into_iter()
-                        .chain(indices.iter().map(|index| format!("puzzle-{index}")))
-                    {
+                // Every shelf, and the empty Photos shelf with and without the
+                // longest news an import can leave over it.
+                let shelves = [
+                    (Pack::Pictures, None),
+                    (Pack::Patterns, None),
+                    (Pack::Photos, None),
+                    (
+                        Pack::Photos,
+                        Some(
+                            "The list of photo puzzles could not be read: the file is damaged."
+                                .to_owned(),
+                        ),
+                    ),
+                ];
+                for (pack, notice) in shelves {
+                    let mut game = Game {
+                        pack,
+                        notice,
+                        ..Game::default()
+                    };
+                    let pages = game.browser_pages(&context);
+                    assert_eq!(
+                        pages.iter().flatten().copied().collect::<Vec<_>>(),
+                        game.visible_puzzles()
+                    );
+                    // The reader's face is installed once per test process,
+                    // at the density of the first runner, so the 212 ppi
+                    // panel here is measured with 300 ppi type. The empty
+                    // shelf under news is judged on the 300 ppi Clara held
+                    // either way; measured alone at its own density, the
+                    // 212 ppi panel fits it at every size.
+                    if game.visible_puzzles().is_empty() && pixels_per_inch == 300 {
+                        let screen = game.browser(&context);
+                        let chrome = Chrome::measuring(true);
+                        let issues = screen.diagnostics(&metrics, &chrome).issues;
                         assert!(
-                            layout.rect_of_action(action_id(&action)).is_some(),
-                            "{metrics:?}: {action}"
+                            issues.is_empty(),
+                            "{metrics:?} empty {pack:?} {:?}: {issues:?}",
+                            game.notice
                         );
+                        let layout = screen.layout_with(&metrics, &chrome);
+                        for action in ["tab-pictures", "how-to-play", "photo-help"] {
+                            assert!(
+                                layout.rect_of_action(action_id(action)).is_some(),
+                                "{metrics:?}: {action}"
+                            );
+                        }
+                        assert!(
+                            layout.nodes.iter().any(|node| node
+                                .text_lines
+                                .join(" ")
+                                .contains("kobo nonograms push")),
+                            "{metrics:?}: the command is not on the panel"
+                        );
+                    }
+                    for (page, indices) in pages.iter().enumerate() {
+                        game.page = page;
+                        let screen = game.browser(&context);
+                        let chrome = Chrome::measuring(true);
+                        let issues = screen.diagnostics(&metrics, &chrome).issues;
+                        assert!(issues.is_empty(), "{metrics:?}: {issues:?}");
+                        let layout = screen.layout_with(&metrics, &chrome);
+                        for action in ["tab-photos".to_owned(), "how-to-play".to_owned()]
+                            .into_iter()
+                            .chain(indices.iter().map(|index| format!("puzzle-{index}")))
+                        {
+                            assert!(
+                                layout.rect_of_action(action_id(&action)).is_some(),
+                                "{metrics:?}: {action}"
+                            );
+                        }
                     }
                 }
             }
@@ -1042,6 +1421,43 @@ mod tests {
     }
 
     #[test]
+    fn a_puzzle_with_a_saved_board_reads_in_progress_on_the_shelf() {
+        let mut game = Game::default();
+        let mut context = Context::default();
+        let first = game.puzzles[0].id.clone();
+        let second = game.puzzles[1].id.clone();
+        assert!(game.browser_detail(0).starts_with("Not started"));
+        // What the store already holds, read at start.
+        game.on_store(
+            &mut context,
+            StoreResult::Keys(vec![format!("progress-{second}"), SOLVED.to_owned()]),
+        );
+        assert!(game.browser_detail(1).starts_with("In progress"));
+        // And a board saved this session.
+        game.select(&mut context, 0);
+        game.toggle(&mut context, 0);
+        assert!(game.started.contains(&first));
+        assert!(game.browser_detail(0).starts_with("In progress"));
+        game.solved.insert(first);
+        assert!(game.browser_detail(0).starts_with("Solved"));
+    }
+
+    #[test]
+    fn the_play_bar_names_the_puzzle_and_add_photos_names_itself() {
+        let mut game = Game::default();
+        let mut context = Context::default();
+        game.select(&mut context, 0);
+        game.progress_loading = false;
+        let title = game.puzzles[0].title.clone();
+        let play = format!("{:?}", game.play(&context));
+        assert!(play.contains(&format!("{title:?}")), "{play}");
+        game.route = Route::PhotoHelp;
+        let help = format!("{:?}", game.help(&context));
+        assert!(help.contains("\"Add photos\""), "{help}");
+        assert!(!help.contains("\"Next\""), "{help}");
+    }
+
+    #[test]
     fn photo_progress_keys_are_bounded_and_content_specific() {
         let black = photo_png(0);
         let white = photo_png(u8::MAX);
@@ -1051,18 +1467,6 @@ mod tests {
         assert_ne!(identical, different);
         assert!(identical.len() <= 64);
         assert!(different.len() <= 64);
-    }
-
-    #[test]
-    fn photo_size_selector_only_cycles_playable_grids() {
-        let mut game = Game::default();
-        let mut context = Context::default();
-        game.route = Route::Photo;
-        game.photo_side = 5;
-        for expected in [7, 9, 5] {
-            game.on_action(&mut context, action_id("photo-size"));
-            assert_eq!(game.photo_side, expected);
-        }
     }
 
     #[test]
@@ -1147,12 +1551,12 @@ mod tests {
         game.load_photo(&mut context, &first);
         let selected = game.selected.expect("photo selection");
         let photo_id = game.puzzle().expect("photo").id.clone();
-        let source = game.photo_reveal.as_ref().expect("stored reveal").1.clone();
+        let source = game.photo_reveals.first().expect("stored reveal").1.clone();
 
         game.route = Route::Browser;
         game.select(&mut context, selected);
         assert_eq!(
-            game.photo_reveal.as_ref().map(|(id, _)| id.as_str()),
+            game.photo_reveals.first().map(|(id, _)| id.as_str()),
             Some(photo_id.as_str())
         );
         let answer = game.puzzle().expect("reselected photo").answer.clone();
@@ -1174,11 +1578,12 @@ mod tests {
 
         game.load_photo(&mut context, &photo_png(u8::MAX));
         assert_ne!(
-            game.photo_reveal.as_ref().map(|(id, _)| id.as_str()),
+            game.photo_reveals.first().map(|(id, _)| id.as_str()),
             Some(photo_id.as_str())
         );
         game.select(&mut context, 0);
-        assert!(game.photo_reveal.is_none());
+        let current = game.puzzle().expect("corpus puzzle").id.clone();
+        assert!(game.photo_reveals.iter().all(|(id, _)| id != &current));
     }
 
     #[test]
@@ -1233,43 +1638,194 @@ mod tests {
     }
 
     #[test]
-    fn leaving_photo_cancels_and_late_completion_cannot_change_routes() {
+    fn a_background_import_never_changes_the_screen_being_used() {
         let mut game = Game::default();
         let mut context = Context::default();
-        game.route = Route::Photo;
-        game.on_action(&mut context, action_id("photo-open"));
-        let task = game.waiting.expect("photo task");
-        let _ = context.take_commands();
-
-        game.on_action(&mut context, action_id("back-browser"));
-        assert_eq!(game.route, Route::Browser);
-        assert_eq!(game.waiting, None);
-        assert!(context
-            .take_commands()
-            .contains(&kobo_sdk::Command::Cancel(task)));
-
-        game.on_task(&mut context, task, TaskOutcome::Completed(vec![0]));
-        assert_eq!(game.route, Route::Browser);
-        assert!(game.puzzles.iter().all(|puzzle| puzzle.id != "photo"));
-        assert!(context.take_commands().is_empty());
-
-        game.waiting = Some(task);
-        game.route = Route::Play;
-        game.on_task(&mut context, task, TaskOutcome::Completed(vec![0]));
+        game.open_photo(&mut context);
+        let task = game.waiting.expect("manifest task");
+        game.select(&mut context, 60);
+        game.progress_loading = false;
+        game.on_task(
+            &mut context,
+            task,
+            TaskOutcome::Failed(kobo_sdk::TaskError::NotFound),
+        );
+        let legacy = game.waiting.expect("single photo task");
+        game.on_task(&mut context, legacy, TaskOutcome::Completed(vec![0]));
         assert_eq!(game.route, Route::Play);
-        assert!(game.puzzles.iter().all(|puzzle| puzzle.id != "photo"));
-        assert!(context.take_commands().is_empty());
+        assert_eq!(game.selected, Some(60));
+        assert!(game
+            .puzzles
+            .iter()
+            .all(|puzzle| !puzzle.id.starts_with("photo-")));
     }
 
     #[test]
     fn browser_and_photo_screens_have_no_layout_errors() {
         let game = Game::default();
-        for screen in [game.browser(&Context::default()), game.photo()] {
+        let photos = Game {
+            pack: Pack::Photos,
+            ..Game::default()
+        };
+        for screen in [
+            game.browser(&Context::default()),
+            photos.browser(&Context::default()),
+        ] {
             assert!(screen
                 .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
                 .issues
                 .is_empty());
         }
+    }
+
+    #[test]
+    fn manifest_import_lands_named_puzzles_and_syncs_out_stale_photos() {
+        let mut game = Game::default();
+        let mut context = Context::default();
+        game.puzzles.push(corpus::Puzzle {
+            id: "photo-9-deadbeef".to_owned(),
+            title: "Old import".to_owned(),
+            side: 9,
+            answer: vec![false; 81],
+        });
+        game.open_photo(&mut context);
+        let manifest_task = game.waiting.expect("manifest task");
+        let _ = context.take_commands();
+        game.on_task(
+            &mut context,
+            manifest_task,
+            TaskOutcome::Completed(b"moon.png\tThe Moon\t5\neclipse.png\tEclipse\t5\n".to_vec()),
+        );
+        let first = game.waiting.expect("first photo task");
+        game.on_task(&mut context, first, TaskOutcome::Completed(gradient_png()));
+        let second = game.waiting.expect("second photo task");
+        game.on_task(
+            &mut context,
+            second,
+            TaskOutcome::Completed(gradient_png_columns()),
+        );
+        assert_eq!(game.waiting, None);
+        assert_eq!(game.route, Route::Browser);
+        let imported: Vec<&str> = game
+            .puzzles
+            .iter()
+            .filter(|puzzle| puzzle.id.starts_with("photo-"))
+            .map(|puzzle| puzzle.title.as_str())
+            .collect();
+        assert_eq!(imported, ["The Moon", "Eclipse"]);
+        assert_eq!(game.photo_reveals.len(), 2);
+        assert_eq!(game.notice.as_deref(), Some("2 new photo puzzles."));
+    }
+
+    #[test]
+    fn manifest_reimport_keeps_progress_identity_for_unchanged_photos() {
+        let mut game = Game::default();
+        let mut context = Context::default();
+        game.open_photo(&mut context);
+        let manifest_task = game.waiting.expect("manifest task");
+        game.on_task(
+            &mut context,
+            manifest_task,
+            TaskOutcome::Completed(b"moon.png\tThe Moon\t5\n".to_vec()),
+        );
+        let first = game.waiting.expect("first photo task");
+        game.on_task(&mut context, first, TaskOutcome::Completed(gradient_png()));
+        let kept = game
+            .puzzles
+            .iter()
+            .find(|puzzle| puzzle.title == "The Moon")
+            .expect("moon")
+            .id
+            .clone();
+
+        game.open_photo(&mut context);
+        let manifest_task = game.waiting.expect("second manifest task");
+        game.on_task(
+            &mut context,
+            manifest_task,
+            TaskOutcome::Completed(b"moon.png\tThe Moon\t5\n".to_vec()),
+        );
+        let first = game.waiting.expect("reimport photo task");
+        game.on_task(&mut context, first, TaskOutcome::Completed(gradient_png()));
+        let reimported: Vec<&str> = game
+            .puzzles
+            .iter()
+            .filter(|puzzle| puzzle.id.starts_with("photo-"))
+            .map(|puzzle| puzzle.id.as_str())
+            .collect();
+        assert_eq!(reimported, [kept.as_str()]);
+    }
+
+    #[test]
+    fn a_missing_manifest_falls_back_to_the_single_photo() {
+        let mut game = Game::default();
+        let mut context = Context::default();
+        game.open_photo(&mut context);
+        let manifest_task = game.waiting.expect("manifest task");
+        game.on_task(
+            &mut context,
+            manifest_task,
+            TaskOutcome::Failed(kobo_sdk::TaskError::NotFound),
+        );
+        let photo_task = game.waiting.expect("legacy photo task");
+        game.on_task(
+            &mut context,
+            photo_task,
+            TaskOutcome::Completed(gradient_png()),
+        );
+        assert_eq!(game.route, Route::Browser);
+        assert!(game
+            .puzzles
+            .iter()
+            .any(|puzzle| puzzle.title == "Imported photo"));
+    }
+
+    #[test]
+    fn an_unreadable_manifest_entry_is_skipped_and_reported() {
+        let mut game = Game::default();
+        let mut context = Context::default();
+        game.open_photo(&mut context);
+        let manifest_task = game.waiting.expect("manifest task");
+        game.on_task(
+            &mut context,
+            manifest_task,
+            TaskOutcome::Completed(b"moon.png\tThe Moon\t5\neclipse.png\tEclipse\t5\n".to_vec()),
+        );
+        let first = game.waiting.expect("first photo task");
+        game.on_task(&mut context, first, TaskOutcome::Completed(gradient_png()));
+        let second = game.waiting.expect("second photo task");
+        game.on_task(
+            &mut context,
+            second,
+            TaskOutcome::Failed(kobo_sdk::TaskError::NotFound),
+        );
+        assert_eq!(game.waiting, None);
+        let imported: Vec<&str> = game
+            .puzzles
+            .iter()
+            .filter(|puzzle| puzzle.id.starts_with("photo-"))
+            .map(|puzzle| puzzle.title.as_str())
+            .collect();
+        assert_eq!(imported, ["The Moon"]);
+        assert!(game.notice.as_deref().is_some_and(
+            |notice| notice.starts_with("1 of 2 photo puzzles could be read. Eclipse:")
+        ));
+    }
+
+    fn gradient_png() -> Vec<u8> {
+        let grey = (0..100)
+            .map(|index| if index / 10 < 5 { 24 } else { 232 })
+            .collect();
+        let picture = kobo_image::Picture::from_grey(10, 10, grey).expect("picture");
+        kobo_image::encode_png_grey(picture.width(), picture.height(), picture.grey()).expect("png")
+    }
+
+    fn gradient_png_columns() -> Vec<u8> {
+        let grey = (0..100)
+            .map(|index| if index % 10 < 5 { 24 } else { 232 })
+            .collect();
+        let picture = kobo_image::Picture::from_grey(10, 10, grey).expect("picture");
+        kobo_image::encode_png_grey(picture.width(), picture.height(), picture.grey()).expect("png")
     }
 
     fn photo_png(grey: u8) -> Vec<u8> {

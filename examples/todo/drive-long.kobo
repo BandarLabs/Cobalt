@@ -1,0 +1,90 @@
+# sweep: --bare
+# A list longer than one panel pages, says which page it is on, and
+# Select and the Edit list page with it.
+wait-for Nothing to do
+tap Add a task
+wait-for New item
+type alpha
+tap Add
+wait-for Added
+type bravo
+tap Add
+wait-for Added
+type charlie
+tap Add
+wait-for Added
+type delta
+tap Add
+wait-for Added
+type echo
+tap Add
+wait-for Added
+type foxtrot
+tap Add
+wait-for Added
+type golf
+tap Add
+wait-for Added
+type hotel
+tap Add
+wait-for Added
+type india
+tap Add
+wait-for Added
+type juliet
+tap Add
+wait-for Added
+type kilo
+tap Add
+wait-for Added
+type lima
+tap Add
+wait-for Added
+type mike
+tap Add
+wait-for Added
+tap Back
+# The list turns to the page the last item landed on.
+wait-for mike
+expect 3 of 3
+expect-missing alpha
+clean
+shot todo-long-last-page
+tap-id previous
+wait-for 2 of 3
+tap-id previous
+wait-for alpha
+expect 1 of 3
+expect-missing mike
+clean
+shot todo-long-first-page
+tap-id next
+wait-for 2 of 3
+tap-id previous
+wait-for alpha
+# Select opens on the page the list was showing, and Select all ticks every
+# row on every page.
+tap Select
+wait-for Select items
+expect alpha
+tap Select all
+wait-for 13 selected
+tap-id select-next
+tap-id select-next
+wait-for mike
+tap-id select-previous
+tap-id select-previous
+wait-for alpha
+tap-id 4294967295
+wait-for alpha
+tap Edit
+wait-for Edit list
+expect alpha
+tap-id edit-next
+tap-id edit-next
+wait-for mike
+clean
+shot todo-long-edit-last-page
+tap-id edit-previous
+tap-id edit-previous
+wait-for alpha

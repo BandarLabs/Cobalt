@@ -3,9 +3,9 @@
   "display_name": "Habits",
   "short_label": "Habits",
   "summary": "Track daily and weekday habits with local streaks.",
-  "page_description": "An offline-first habit tracker that puts today's commitments and streaks on a calm paper display.",
-  "version": "0.1.4",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
-  "glyph": "check",
+  "page_description": "An offline habit tracker for daily and weekday habits, with streaks, weekly statistics and a backup you can copy to your computer.",
+  "version": "0.1.17",
+  "release_notes": "Import a backup now lists the backups you exported on this reader, by date, and says when a backup has been merged or has replaced your habits.",
+  "glyph": "calendar-check",
   "capabilities": []
 }

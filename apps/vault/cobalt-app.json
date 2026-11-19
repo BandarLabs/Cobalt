@@ -2,10 +2,22 @@
   "id": "vault",
   "display_name": "Vault",
   "short_label": "Vault",
-  "summary": "Browse your notes by folder, tag, link, and backlink.",
+  "summary": "Browse your notes by folder, tag, link, and backlink. Needs your computer.",
   "page_description": "Keep a searchable copy of your note library ready to read on your Kobo.",
-  "version": "0.1.2",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
-  "glyph": "note",
-  "capabilities": []
+  "version": "0.1.13",
+  "release_notes": "Search results now say what you searched for and show the words around each match, and opening a result goes straight to the page that holds them.",
+  "glyph": "lock",
+  "capabilities": [],
+  "setup": {
+    "steps": [
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Send a folder of Markdown notes. Push again whenever your notes change: only changed notes are sent.",
+        "command": "kobo vault push ~/Notes"
+      }
+    ]
+  }
 }

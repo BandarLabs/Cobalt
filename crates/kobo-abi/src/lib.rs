@@ -3,14 +3,20 @@
 //! Query operations are always available. Mutating panel requests are compiled
 //! only with the explicitly opt-in `device-write` feature.
 
-use std::ffi::{c_int, c_ulong, CString};
+use std::ffi::c_int;
+#[cfg(unix)]
+use std::ffi::{c_ulong, CString};
 use std::fs::File;
 use std::io;
+#[cfg(unix)]
 use std::mem::MaybeUninit;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Opens an existing file for reading without following a final symlink.
 ///
@@ -21,11 +27,109 @@ use std::path::Path;
 ///
 /// Returns the operating system error when the path cannot be opened or its
 /// final component is a symbolic link.
+#[cfg(unix)]
 pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
     File::options()
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
+}
+
+/// Windows has no open-time equivalent of `O_NOFOLLOW`, so this checks the
+/// final component first and then opens it. That is a check-then-open pair,
+/// not the kernel's atomic refusal: a symlink swapped in between the two calls
+/// is still followed. The protection matters on the device, where the stock
+/// reader's files sit next to ours; a Windows host running the CLI against a
+/// mounted device accepts the smaller window rather than faking the atomic
+/// guarantee.
+///
+/// # Errors
+///
+/// Returns the operating system error when the path cannot be inspected or
+/// opened, and `PermissionDenied` when its final component is a symbolic link.
+#[cfg(windows)]
+pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
+    if std::fs::symlink_metadata(path)?.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "final path component is a symbolic link",
+        ));
+    }
+    File::options().read(true).open(path)
+}
+
+/// Enables nonblocking I/O on a pipe or socket while preserving its flags.
+///
+/// # Errors
+/// Returns the underlying descriptor error. This does not bound sysfs reads.
+#[cfg(unix)]
+pub fn set_nonblocking(fd: &impl AsRawFd) -> io::Result<()> {
+    // SAFETY: fcntl only inspects/updates flags on the borrowed live descriptor.
+    let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+    if flags < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: F_SETFL takes these integer flags and does not retain a pointer.
+    if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// The account's home directory, where the host tools keep keys, readers and
+/// configuration.
+///
+/// Every Unix shell exports `HOME`, and on Unix this is that variable and
+/// nothing more. Windows does not set it: a Command Prompt, `PowerShell`, and
+/// any program a desktop application starts carry `USERPROFILE` instead, and
+/// `HOME` appears only under Git Bash or Cygwin. Reading `HOME` alone there
+/// refused every command that needs a key or a saved reader, and where a
+/// caller treated the missing variable as an empty path it wrote the owner's
+/// files into whatever directory the command happened to start in. An
+/// explicit `HOME` still wins on Windows, so a shell that sets one, and a
+/// test that points it at a scratch directory, behave as they do on Unix.
+#[must_use]
+pub fn home_directory() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        ["HOME", "USERPROFILE"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .find(|value| !value.is_empty())
+            .map(PathBuf::from)
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use std::path::PathBuf;
+
+    /// The only test in this crate that touches `HOME`, so changing it here
+    /// cannot race another test reading it.
+    #[test]
+    fn the_home_directory_is_home_when_set_and_the_profile_on_windows_when_not() {
+        let saved = std::env::var_os("HOME");
+        std::env::set_var("HOME", "/explicit/home");
+        assert_eq!(
+            super::home_directory(),
+            Some(PathBuf::from("/explicit/home"))
+        );
+        std::env::remove_var("HOME");
+        #[cfg(windows)]
+        assert_eq!(
+            super::home_directory(),
+            std::env::var_os("USERPROFILE").map(PathBuf::from)
+        );
+        #[cfg(not(windows))]
+        assert_eq!(super::home_directory(), None);
+        if let Some(home) = saved {
+            std::env::set_var("HOME", home);
+        }
+    }
 }
 
 /// How many bytes are still free on the filesystem `path` lives on.
@@ -42,6 +146,7 @@ pub fn open_read_nofollow(path: &Path) -> io::Result<File> {
 /// as "do not know" rather than as "no room": refusing every write on a device
 /// whose `statvfs` is unusual would be worse than the problem being avoided.
 #[must_use]
+#[cfg(unix)]
 pub fn free_space(path: &Path) -> Option<u64> {
     let path = CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut stats = MaybeUninit::<libc::statvfs>::zeroed();
@@ -65,6 +170,44 @@ pub fn free_space(path: &Path) -> Option<u64> {
     #[allow(clippy::unnecessary_fallible_conversions, clippy::useless_conversion)]
     let size = u64::try_from(stats.f_frsize).ok()?;
     blocks.checked_mul(size)
+}
+
+// `GetDiskFreeSpaceExW` answers the same question as `statvfs` and its
+// caller-available byte count matches `f_bavail` exactly: the reserve only
+// privileged accounts may use is already excluded.
+#[cfg(windows)]
+#[link(name = "kernel32")]
+// SAFETY: this declaration matches the documented Windows signature; the
+// call site below upholds what each pointer parameter requires.
+unsafe extern "system" {
+    fn GetDiskFreeSpaceExW(
+        directory: *const u16,
+        free_bytes_available_to_caller: *mut u64,
+        total_number_of_bytes: *mut u64,
+        total_number_of_free_bytes: *mut u64,
+    ) -> i32;
+}
+
+/// The Windows half of [`free_space`]. `None` still means "do not know".
+#[must_use]
+#[cfg(windows)]
+pub fn free_space(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut available: u64 = 0;
+    // SAFETY: `wide` is a NUL-terminated UTF-16 string that outlives the call.
+    // The output pointer names a live local of the ULARGE_INTEGER size, and a
+    // union of two u32 halves is written compatibly through it. The total
+    // counts are not asked for.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(available)
 }
 
 const IOC_NRBITS: u32 = 8;
@@ -99,14 +242,53 @@ pub const fn iowr(kind: u8, number: u8, size: u32) -> u64 {
     ioc(IOC_READ | IOC_WRITE, kind, number, size)
 }
 
+#[cfg(unix)]
 unsafe extern "C" {
     fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
 }
 
+#[cfg(unix)]
 fn ioctl_request(request: u64) -> c_ulong {
     c_ulong::try_from(request).unwrap_or(c_ulong::MAX)
 }
 
+/// Every ioctl this crate issues names a Linux or Kobo kernel interface:
+/// framebuffer geometry, input axes, panel refreshes. A Windows host has no
+/// such interface, so the honest answer is an explicit unsupported error
+/// rather than a pretend result.
+#[cfg(windows)]
+fn unsupported_ioctl(_request: u64) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "ioctl requests name Linux/Kobo kernel interfaces and have no Windows equivalent",
+    )
+}
+
+#[cfg(windows)]
+fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
+    let _ = file;
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(windows)]
+fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<()> {
+    let _ = (file, bytes);
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(all(windows, feature = "device-write"))]
+fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()> {
+    let _ = (file, value);
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(all(windows, feature = "device-write"))]
+fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
+    let _ = (file, value);
+    Err(unsupported_ioctl(request))
+}
+
+#[cfg(unix)]
 fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
     let mut value = MaybeUninit::<T>::zeroed();
     // SAFETY: request is a query ioctl whose kernel ABI writes exactly one T.
@@ -125,6 +307,7 @@ fn query_ioctl<T>(file: &File, request: u64) -> io::Result<T> {
     }
 }
 
+#[cfg(unix)]
 fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<()> {
     // SAFETY: bytes is a writable allocation of the size encoded in request.
     let result = unsafe {
@@ -141,7 +324,7 @@ fn query_ioctl_bytes(file: &File, request: u64, bytes: &mut [u8]) -> io::Result<
     }
 }
 
-#[cfg(feature = "device-write")]
+#[cfg(all(unix, feature = "device-write"))]
 fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()> {
     // SAFETY: callers supply the vendor request matching T; this is isolated
     // behind the non-default device-write feature.
@@ -162,7 +345,7 @@ fn mutating_ioctl<T>(file: &File, request: u64, value: &mut T) -> io::Result<()>
 /// Issues an ioctl whose argument is the integer itself rather than a pointer
 /// to it. `EVIOCGRAB` is the only such request we use, and passing a pointer
 /// instead would have the kernel interpret an address as a boolean.
-#[cfg(feature = "device-write")]
+#[cfg(all(unix, feature = "device-write"))]
 fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
     // SAFETY: this request takes its argument by value; no memory is read
     // through it.
@@ -181,7 +364,7 @@ fn value_ioctl(file: &File, request: u64, value: c_int) -> io::Result<()> {
 /// it is the only place we act on a process we do not own. Callers must verify
 /// the target's identity immediately before signalling, because process ids are
 /// reused; nothing here does that for them.
-#[cfg(feature = "device-write")]
+#[cfg(all(unix, feature = "device-write"))]
 pub mod process {
     use super::{c_int, io};
 
@@ -216,6 +399,29 @@ pub mod process {
     }
 }
 
+/// Signalling a process this program did not create is a `kill(2)` shaped
+/// operation with no honest Windows equivalent (`TerminateProcess` cannot
+/// deliver `SIGTERM`/`SIGCONT` semantics), so the device-write-only entry
+/// point fails explicitly.
+#[cfg(all(windows, feature = "device-write"))]
+pub mod process {
+    use super::{c_int, io};
+
+    pub const SIGTERM: c_int = 15;
+    pub const SIGKILL: c_int = 9;
+    pub const SIGCONT: c_int = 18;
+
+    /// Always fails on Windows: POSIX signal delivery to an arbitrary process
+    /// has no equivalent.
+    pub fn signal(pid: c_int, signal_number: c_int) -> io::Result<()> {
+        let _ = (pid, signal_number);
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "POSIX signals to another process have no Windows equivalent",
+        ))
+    }
+}
+
 /// Noticing that this process has been asked to stop.
 ///
 /// A panel session owns the display, the touch panel, the stock reader and the
@@ -245,14 +451,50 @@ pub mod stop {
     const NONE: i32 = 0;
     static REQUESTED: AtomicI32 = AtomicI32::new(NONE);
 
+    #[cfg(unix)]
     unsafe extern "C" {
         fn signal(number: c_int, handler: usize) -> usize;
     }
 
+    #[cfg(unix)]
     const SIG_ERR: usize = usize::MAX;
 
+    #[cfg(unix)]
     extern "C" fn record(number: c_int) {
         REQUESTED.store(number, Ordering::Relaxed);
+    }
+
+    // Windows console processes receive termination requests as console
+    // control events rather than signals. They are mapped onto the Unix
+    // numbers this module reports so callers keep one code path:
+    // Ctrl-C arrives as `SIGINT`, a closed console window as `SIGHUP`, and
+    // break/logoff/shutdown as `SIGTERM`.
+    #[cfg(windows)]
+    #[link(name = "kernel32")]
+    // SAFETY: this declaration matches the documented Windows signature; the
+    // handler and flag passed below are the ones the contract describes.
+    unsafe extern "system" {
+        fn SetConsoleCtrlHandler(
+            handler: Option<extern "system" fn(event: u32) -> i32>,
+            add: i32,
+        ) -> i32;
+    }
+
+    #[cfg(windows)]
+    extern "system" fn console_record(event: u32) -> i32 {
+        const CTRL_C: u32 = 0;
+        const CTRL_BREAK: u32 = 1;
+        const CTRL_CLOSE: u32 = 2;
+        const CTRL_LOGOFF: u32 = 5;
+        const CTRL_SHUTDOWN: u32 = 6;
+        let number = match event {
+            CTRL_C => SIGINT,
+            CTRL_CLOSE => SIGHUP,
+            CTRL_BREAK | CTRL_LOGOFF | CTRL_SHUTDOWN => SIGTERM,
+            _ => return 0,
+        };
+        REQUESTED.store(number, Ordering::Relaxed);
+        1
     }
 
     /// Asks the kernel to route termination signals here instead of killing
@@ -264,12 +506,22 @@ pub mod stop {
     /// should carry on regardless: without a handler the process dies the way
     /// it did before, which the recovery watchdog still covers.
     pub fn catch_requests() -> io::Result<()> {
+        #[cfg(unix)]
         for number in CAUGHT {
             // SAFETY: `record` is an `extern "C"` function of the right
             // signature that performs one relaxed atomic store, which is
             // async-signal-safe. The kernel keeps the handler installed.
             let previous = unsafe { signal(number, record as *const () as usize) };
             if previous == SIG_ERR {
+                return Err(io::Error::last_os_error());
+            }
+        }
+        #[cfg(windows)]
+        {
+            // SAFETY: `console_record` has the documented PHANDLER_ROUTINE
+            // shape and performs one relaxed atomic store, which is safe in a
+            // console control callback. The handler stays installed.
+            if unsafe { SetConsoleCtrlHandler(Some(console_record), 1) } == 0 {
                 return Err(io::Error::last_os_error());
             }
         }
@@ -398,6 +650,10 @@ pub mod input {
     use super::{ior, query_ioctl, query_ioctl_bytes, File};
     use std::io;
 
+    /// The single-touch axes. Older controllers report only these, with
+    /// `BTN_TOUCH` saying whether a finger is down.
+    pub const ABS_X: u16 = 0x00;
+    pub const ABS_Y: u16 = 0x01;
     pub const ABS_MT_SLOT: u16 = 0x2f;
     pub const ABS_MT_TRACKING_ID: u16 = 0x39;
     pub const ABS_MT_POSITION_X: u16 = 0x35;
@@ -418,6 +674,9 @@ pub mod input {
     pub const KEY_PAGE_193: u16 = 193;
     pub const KEY_PAGE_194: u16 = 194;
     pub const SYN_REPORT: u16 = 0;
+    /// Ends one contact inside a frame on a controller that reports contacts
+    /// as an anonymous list rather than in numbered slots.
+    pub const SYN_MT_REPORT: u16 = 2;
     pub const SYN_DROPPED: u16 = 3;
     pub const BTN_TOUCH: u16 = 330;
 
@@ -457,6 +716,41 @@ pub mod input {
     /// `/proc/bus/input/devices` confirms bit 35 is the only key that node has.
     /// A press means the magnet arrived, a release means it left.
     pub const KEY_COVER: u16 = 35;
+
+    /// The code most i.MX Kobos use for the same hall sensor.
+    ///
+    /// Linux calls 59 `KEY_F1`, and the NTX boards before the `MediaTek` ones
+    /// send the magnet on it instead of on 35. Nothing else on that node uses
+    /// it, so reading either code as the cover is safe on every reader.
+    pub const KEY_COVER_ALTERNATE: u16 = 59;
+
+    /// Builds an `EVIOCGBIT` query for the codes one event type supports.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the type or size cannot fit in the ioctl request.
+    #[must_use]
+    pub const fn eviocgbit(kind: u16, bytes: u32) -> u64 {
+        assert!(kind < 0x20 && bytes <= 0x3fff);
+        ior(b'E', 0x20 + kind.to_le_bytes()[0], bytes)
+    }
+
+    /// Whether the device declares that it can send `code` of event `kind`.
+    ///
+    /// Read from the kernel's own bitmap, one bit per code in little-endian
+    /// bytes, so the answer does not depend on how wide the kernel's `long`
+    /// is, which the text in `/proc/bus/input/devices` does.
+    ///
+    /// # Errors
+    ///
+    /// Returns the kernel error from `EVIOCGBIT`.
+    pub fn supports(file: &File, kind: u16, code: u16) -> io::Result<bool> {
+        let mut bitmap = [0_u8; 96];
+        let size = u32::try_from(bitmap.len()).unwrap_or(0);
+        query_ioctl_bytes(file, eviocgbit(kind, size), &mut bitmap)?;
+        let (byte, bit) = (usize::from(code) / 8, usize::from(code) % 8);
+        Ok(bitmap.get(byte).is_some_and(|byte| byte & (1 << bit) != 0))
+    }
 
     /// Builds an `EVIOCGKEY` query for a key bitmap of `bytes` bytes.
     ///
@@ -848,17 +1142,24 @@ pub mod mxcfb {
 /// with the daemon's root identity or view of the filesystem. The daemon
 /// prepares a root-owned directory containing only that binary and its Unix
 /// socket, then this enters it, drops all supplementary groups and changes to
-/// the unprivileged `nobody` identity. A seccomp filter permits local Unix
-/// sockets but refuses network sockets and prevents descendants from escaping
-/// their process group. If seccomp is unavailable, a private network namespace
-/// provides the network boundary instead. Older ARM vendor kernels that expose
-/// neither are supervised by an equivalent userspace syscall filter.
+/// an unprivileged identity of the application's own, so two applications
+/// hosted at once are kept apart by the kernel's ordinary permission checks as
+/// firmly as either is kept from the runtime. The application's address space
+/// is capped and it is first in line for the out-of-memory killer, so one that
+/// outgrows the reader fails alone instead of taking the panel with it. A
+/// seccomp filter permits local Unix sockets but refuses network sockets and
+/// prevents descendants from escaping their process group. If seccomp is
+/// unavailable, a private network namespace provides the network boundary
+/// instead. Older ARM vendor kernels that expose neither are supervised by a
+/// userspace syscall filter built from the same table, and the tests hold the
+/// two to the same verdicts.
 pub mod sandbox {
     #[cfg(target_os = "linux")]
     use std::fs;
     use std::io;
     #[cfg(target_os = "linux")]
     use std::os::unix::fs::MetadataExt;
+    #[cfg(unix)]
     use std::os::unix::process::CommandExt;
     use std::path::Path;
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
@@ -878,31 +1179,92 @@ pub mod sandbox {
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
     use std::time::{Duration, Instant};
 
+    /// The first identity an application may run as.
+    ///
+    /// Every hosted application gets a user and group id of its own from a
+    /// short range above this, chosen by the runtime from the slots nothing
+    /// alive is using. Sharing one `nobody` identity, as applications used
+    /// to, left the kernel no reason to refuse one application a `kill` or a
+    /// `ptrace` aimed at another: same user, same rights, and the seccomp
+    /// program below never named either call. The range sits far above any
+    /// account a Kobo's own password file carries.
+    pub const IDENTITY_BASE: u32 = 60_000;
+
+    /// How many identities the runtime may hand out at once. More than it
+    /// ever hosts, so a slot is not reused while the process that last held
+    /// it may still be on its way out.
+    pub const IDENTITY_SLOTS: u32 = 16;
+
+    /// The most address space one application may map.
+    ///
+    /// The reader has half a gigabyte and one core, shared between the runtime
+    /// that keeps the panel answering and every application it hosts. Without
+    /// a ceiling an application that leaks, or decodes one enormous picture,
+    /// takes the device down with it and the owner waits for the watchdog.
+    /// With one, the application's own allocation fails first. A quarter of
+    /// the machine is generous: the largest picture an application decodes is
+    /// a few tens of megabytes, and applications are single-threaded, so no
+    /// thread stacks count against it.
     #[cfg(target_os = "linux")]
-    const UNPRIVILEGED_ID: libc::uid_t = 65_534;
+    const APPLICATION_ADDRESS_SPACE: libc::rlim_t = 256 * 1024 * 1024;
+
+    /// What the out-of-memory killer is told about an application: the
+    /// highest preference there is. When memory runs out anyway it is an
+    /// application that goes, never the runtime hosting it. Written before the
+    /// identity drop, after which the application may only raise it further.
+    #[cfg(target_os = "linux")]
+    const OOM_SCORE_ADJ: &[u8] = b"1000";
+    #[cfg(target_os = "linux")]
+    const OOM_SCORE_ADJ_PATH: &std::ffi::CStr = c"/proc/self/oom_score_adj";
 
     /// Prepared, allocation-free state for a post-fork sandbox transition.
     pub struct Sandbox {
         #[cfg(target_os = "linux")]
         root: CString,
+        /// The user and group id the application runs as.
+        #[cfg(target_os = "linux")]
+        identity: libc::uid_t,
+        /// The seccomp program, assembled before the fork so that entering the
+        /// sandbox allocates nothing.
+        #[cfg(target_os = "linux")]
+        program: [libc::sock_filter; PROGRAM_LEN],
         #[cfg(all(target_os = "linux", target_arch = "arm"))]
         trace_syscalls: bool,
     }
 
     impl Sandbox {
-        /// Prepares a sandbox rooted at `root`.
+        /// Prepares a sandbox rooted at `root` for the application that will
+        /// run in identity slot `slot`.
         ///
         /// # Errors
         ///
-        /// Refuses a path containing a NUL byte.
-        pub fn new(root: &Path) -> io::Result<Self> {
+        /// Refuses a path containing a NUL byte and a slot that is not below
+        /// [`IDENTITY_SLOTS`].
+        pub fn new(root: &Path, slot: u32) -> io::Result<Self> {
+            if slot >= IDENTITY_SLOTS {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "sandbox identity slot is out of range",
+                ));
+            }
             #[cfg(target_os = "linux")]
             {
                 let root = CString::new(root.as_os_str().as_bytes()).map_err(|_| {
                     io::Error::new(io::ErrorKind::InvalidInput, "sandbox path has NUL")
                 })?;
+                let program =
+                    boundary_program(&denied_syscalls(), LOCAL_SOCKET_FAMILY).map(|instruction| {
+                        libc::sock_filter {
+                            code: instruction.code,
+                            jt: instruction.jt,
+                            jf: instruction.jf,
+                            k: instruction.k,
+                        }
+                    });
                 Ok(Self {
                     root,
+                    identity: IDENTITY_BASE + slot,
+                    program,
                     #[cfg(target_arch = "arm")]
                     // Kobo's 4.1 i.MX6SLL kernel exposes neither seccomp BPF
                     // nor network namespaces. An absent net namespace is a
@@ -939,10 +1301,19 @@ pub mod sandbox {
             unsafe {
                 command.pre_exec(move || self.enter());
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(all(unix, not(target_os = "linux")))]
             {
                 let _ = self;
                 command.process_group(0);
+            }
+            #[cfg(windows)]
+            {
+                // There is no fork/exec boundary to hook on Windows, so the
+                // sandbox transition cannot run. The caller treats the false
+                // return as "no sandbox" and spawns unsandboxed instead, which
+                // is the honest answer rather than a pretend boundary.
+                let _ = &self;
+                let _ = command;
             }
             #[cfg(target_os = "linux")]
             {
@@ -959,25 +1330,37 @@ pub mod sandbox {
         /// # Errors
         ///
         /// Returns the operating system's error when any step of the descent
-        /// is refused: the process group, the root change, the privilege
+        /// is refused: the process group, the memory ceiling, the standing
+        /// with the out-of-memory killer, the root change, the privilege
         /// ceiling, the syscall filter or the identity drop.
         ///
         /// # Safety
         ///
         /// This must only run from `Command::pre_exec`: it changes the process
-        /// root, identity, process group and syscall policy irreversibly.
+        /// root, identity, process group, resource limits and syscall policy
+        /// irreversibly, and it calls nothing that is unsafe between a fork
+        /// and an exec.
         #[cfg(target_os = "linux")]
         pub unsafe fn enter(&self) -> io::Result<()> {
             if libc::setpgid(0, 0) < 0 {
                 return Err(io::Error::last_os_error());
             }
+            let ceiling = libc::rlimit {
+                rlim_cur: APPLICATION_ADDRESS_SPACE,
+                rlim_max: APPLICATION_ADDRESS_SPACE,
+            };
+            if libc::setrlimit(libc::RLIMIT_AS, &raw const ceiling) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // Before the root changes: procfs is not in the jail.
+            prefer_for_oom_kill()?;
             if libc::chroot(self.root.as_ptr()) < 0 || libc::chdir(c"/".as_ptr()) < 0 {
                 return Err(io::Error::last_os_error());
             }
             if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0 {
                 return Err(io::Error::last_os_error());
             }
-            let filter = install_filter();
+            let filter = install_filter(&self.program);
             #[cfg(target_arch = "arm")]
             if self.trace_syscalls {
                 if libc::ptrace(
@@ -997,13 +1380,38 @@ pub mod sandbox {
                 return Err(io::Error::last_os_error());
             }
             if libc::setgroups(0, std::ptr::null()) < 0
-                || libc::setgid(UNPRIVILEGED_ID) < 0
-                || libc::setuid(UNPRIVILEGED_ID) < 0
+                || libc::setgid(self.identity) < 0
+                || libc::setuid(self.identity) < 0
             {
                 return Err(io::Error::last_os_error());
             }
             Ok(())
         }
+    }
+
+    /// Puts the application first in line for the out-of-memory killer.
+    ///
+    /// # Safety
+    ///
+    /// Runs in the forked child before `exec`, so it uses only calls that are
+    /// safe there: open, write and close, with nothing allocated.
+    #[cfg(target_os = "linux")]
+    unsafe fn prefer_for_oom_kill() -> io::Result<()> {
+        let file = libc::open(
+            OOM_SCORE_ADJ_PATH.as_ptr(),
+            libc::O_WRONLY | libc::O_CLOEXEC,
+        );
+        if file < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let written = libc::write(file, OOM_SCORE_ADJ.as_ptr().cast(), OOM_SCORE_ADJ.len());
+        let outcome = if usize::try_from(written).ok() == Some(OOM_SCORE_ADJ.len()) {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        };
+        libc::close(file);
+        outcome
     }
 
     /// A userspace syscall filter for ARM vendor kernels without seccomp BPF
@@ -1309,21 +1717,12 @@ pub mod sandbox {
 
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
     fn syscall_is_denied(number: u32, first_argument: u32) -> bool {
-        let syscall = |value| u32::try_from(value).unwrap_or(u32::MAX);
-        (number == syscall(libc::SYS_socket) && first_argument != libc::AF_UNIX as u32)
-            || [
-                libc::SYS_setsid,
-                libc::SYS_setpgid,
-                libc::SYS_unshare,
-                libc::SYS_setns,
-                libc::SYS_fork,
-                libc::SYS_vfork,
-                libc::SYS_clone,
-                libc::SYS_clone3,
-            ]
-            .into_iter()
-            .map(syscall)
-            .any(|denied| number == denied)
+        refused(
+            &denied_syscalls(),
+            number,
+            first_argument,
+            LOCAL_SOCKET_FAMILY,
+        )
     }
 
     #[cfg(all(target_os = "linux", target_arch = "arm"))]
@@ -1421,99 +1820,257 @@ pub mod sandbox {
         }
     }
 
+    /// One classic BPF instruction, laid out as `struct sock_filter` is on
+    /// every Linux target. It is a type of this crate's own rather than the
+    /// libc one so the program can be assembled, read back and run on a
+    /// development host that has no seccomp to hand it to.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct Instruction {
+        pub code: u16,
+        pub jt: u8,
+        pub jf: u8,
+        pub k: u32,
+    }
+
+    /// The syscall numbers the network and process boundary refuses.
+    ///
+    /// Carried as a value because the numbers differ by architecture, and
+    /// some architectures have no number at all for some of these calls. A
+    /// call the target lacks is given [`NO_SUCH_SYSCALL`], which matches
+    /// nothing, so the program keeps its shape everywhere.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct DeniedSyscalls {
+        /// Refused unless its first argument is the local socket family.
+        pub socket: u32,
+        /// The multiplexer old ABIs reach `socket` through. Its arguments
+        /// live behind a pointer the kernel program cannot follow, so it is
+        /// refused outright.
+        pub socketcall: u32,
+        pub setsid: u32,
+        pub setpgid: u32,
+        pub unshare: u32,
+        pub setns: u32,
+        pub fork: u32,
+        pub vfork: u32,
+        pub clone: u32,
+        pub clone3: u32,
+    }
+
+    impl DeniedSyscalls {
+        /// The calls refused whatever their arguments, in program order.
+        const fn unconditional(&self) -> [u32; UNCONDITIONAL_DENIALS] {
+            [
+                self.setsid,
+                self.setpgid,
+                self.unshare,
+                self.setns,
+                self.fork,
+                self.vfork,
+                self.clone,
+                self.clone3,
+                self.socketcall,
+            ]
+        }
+    }
+
+    /// A syscall number no kernel will ever report: the slot for a call the
+    /// target architecture does not have.
+    pub const NO_SUCH_SYSCALL: u32 = u32::MAX;
+
+    /// `AF_UNIX`, the one socket family an application may open: its socket
+    /// to the runtime is one. Linux has given it this number on every
+    /// architecture since the beginning, and a test checks it against libc.
+    pub const LOCAL_SOCKET_FAMILY: u32 = 1;
+
+    /// `SECCOMP_RET_ALLOW`.
+    pub const ALLOW: u32 = 0x7fff_0000;
+    /// `SECCOMP_RET_ERRNO` carrying `EPERM`: the call fails as if the
+    /// application lacked the right, which is the truth of it.
+    pub const REFUSE: u32 = 0x0005_0000 | 1;
+
+    /// `BPF_LD | BPF_W | BPF_ABS`: load a word of the syscall record.
+    const LD_W_ABS: u16 = 0x20;
+    /// `BPF_JMP | BPF_JEQ | BPF_K`: compare with a constant and skip ahead.
+    const JMP_JEQ_K: u16 = 0x15;
+    /// `BPF_RET | BPF_K`: return a verdict.
+    const RET_K: u16 = 0x06;
+    /// Where `seccomp_data` keeps the syscall number and the first argument.
+    /// The targets this workspace supports are all little-endian, so the low
+    /// word of the 64-bit argument is the one at its offset.
+    const NUMBER_OFFSET: u32 = 0;
+    const FIRST_ARGUMENT_OFFSET: u32 = 16;
+
+    // The program's layout, written out once so that every relative jump is
+    // computed from it rather than counted by hand. Dropping or adding an
+    // instruction used to silently retarget every jump above it.
+    const UNCONDITIONAL_DENIALS: usize = 9;
+    const LOAD_NUMBER: usize = 0;
+    const SOCKET: usize = 1;
+    const FIRST_UNCONDITIONAL: usize = 2;
+    const ALLOW_ANY: usize = FIRST_UNCONDITIONAL + UNCONDITIONAL_DENIALS;
+    const LOAD_FAMILY: usize = ALLOW_ANY + 1;
+    const FAMILY: usize = LOAD_FAMILY + 1;
+    const REFUSE_CALL: usize = FAMILY + 1;
+    const ALLOW_LOCAL: usize = REFUSE_CALL + 1;
+    /// The program's length, fixed so that it can be held inline and handed
+    /// to the kernel without an allocation after the fork.
+    pub const PROGRAM_LEN: usize = ALLOW_LOCAL + 1;
+
+    /// Assembles the seccomp program that puts a network and process boundary
+    /// around an application.
+    ///
+    /// The tests run it through an interpreter and hold it to the verdicts of
+    /// [`refused`], the function the ptrace supervisor applies on kernels
+    /// without seccomp: one table, two enforcers, and a check that they agree
+    /// on every syscall number.
+    #[must_use]
+    pub fn boundary_program(
+        denied: &DeniedSyscalls,
+        local_family: u32,
+    ) -> [Instruction; PROGRAM_LEN] {
+        let load = |offset| Instruction {
+            code: LD_W_ABS,
+            jt: 0,
+            jf: 0,
+            k: offset,
+        };
+        let verdict = |value| Instruction {
+            code: RET_K,
+            jt: 0,
+            jf: 0,
+            k: value,
+        };
+        // A jump at `from` that lands on `to` when the loaded word equals `k`
+        // and falls through otherwise. An offset a byte cannot hold becomes
+        // one the kernel refuses, so a mistake in the layout fails the launch
+        // rather than loosening the boundary.
+        let jump_if = |from: usize, to: usize, k: u32| Instruction {
+            code: JMP_JEQ_K,
+            jt: u8::try_from(to - from - 1).unwrap_or(u8::MAX),
+            jf: 0,
+            k,
+        };
+
+        let mut program = [verdict(REFUSE); PROGRAM_LEN];
+        program[LOAD_NUMBER] = load(NUMBER_OFFSET);
+        program[SOCKET] = jump_if(SOCKET, LOAD_FAMILY, denied.socket);
+        for (slot, number) in denied.unconditional().into_iter().enumerate() {
+            let at = FIRST_UNCONDITIONAL + slot;
+            program[at] = jump_if(at, REFUSE_CALL, number);
+        }
+        program[ALLOW_ANY] = verdict(ALLOW);
+        program[LOAD_FAMILY] = load(FIRST_ARGUMENT_OFFSET);
+        program[FAMILY] = jump_if(FAMILY, ALLOW_LOCAL, local_family);
+        program[REFUSE_CALL] = verdict(REFUSE);
+        program[ALLOW_LOCAL] = verdict(ALLOW);
+        program
+    }
+
+    /// The decision the program makes, as a function.
+    ///
+    /// This is what the ptrace supervisor applies on kernels without seccomp,
+    /// and what the tests hold the program to.
+    #[cfg(any(test, all(target_os = "linux", target_arch = "arm")))]
+    fn refused(
+        denied: &DeniedSyscalls,
+        number: u32,
+        first_argument: u32,
+        local_family: u32,
+    ) -> bool {
+        (number == denied.socket && first_argument != local_family)
+            || denied.unconditional().contains(&number)
+    }
+
+    /// The table for the kernel this process runs on.
     #[cfg(target_os = "linux")]
-    unsafe fn install_filter() -> io::Result<()> {
-        const LD_W_ABS: u16 = 0x20;
-        const JMP_JEQ_K: u16 = 0x15;
-        const RET_K: u16 = 0x06;
-        const ERRNO: u32 = libc::SECCOMP_RET_ERRNO | libc::EPERM as u32;
-
-        const fn statement(code: u16, value: u32) -> libc::sock_filter {
-            libc::sock_filter {
-                code,
-                jt: 0,
-                jf: 0,
-                k: value,
-            }
-        }
-
-        const fn jump(value: u32, yes: u8, no: u8) -> libc::sock_filter {
-            libc::sock_filter {
-                code: JMP_JEQ_K,
-                jt: yes,
-                jf: no,
-                k: value,
-            }
-        }
-
-        /// A syscall number as the 32-bit immediate a BPF instruction holds.
-        /// Every number this filter names is far below the ceiling; the
-        /// fallback matches no syscall, like the length clamp below it.
+    fn denied_syscalls() -> DeniedSyscalls {
+        /// A syscall number as the 32-bit value a BPF instruction holds. Every
+        /// number this table names is far below the ceiling; the fallback is
+        /// the slot for a call the target lacks.
         fn syscall(number: libc::c_long) -> u32 {
-            u32::try_from(number).unwrap_or(u32::MAX)
+            u32::try_from(number).unwrap_or(NO_SUCH_SYSCALL)
         }
 
         // Some architectures have no fork or vfork syscall at all, and libc
         // defines no number for them: the C library implements both by calling
-        // clone, which this filter blocks in its own right. The device is
-        // armv7, where both numbers exist and the filter below is unchanged.
-        // This arm exists only so the workspace builds on such a development
-        // machine, arm64 Linux being the one people actually hit.
-        //
-        // The two slots are kept rather than removed. Every jump in the filter
-        // carries a relative offset -- socket lands on the AF_UNIX check, the
-        // rest land on RET ERRNO -- so dropping an instruction would silently
-        // retarget every jump above it. u32::MAX matches no syscall, which is
-        // the same fallback syscall() already uses, and leaves the offsets and
-        // the meaning of the program exactly as they are elsewhere.
-        //
-        // The list names the architectures that lack the calls, so that an
-        // unlisted future one fails to compile here rather than quietly
-        // dropping two entries from the filter.
+        // clone, which this table refuses in its own right. The device is
+        // armv7, where both numbers exist. This arm exists only so the
+        // workspace builds on such a development machine, arm64 Linux being
+        // the one people actually hit. The list names the architectures that
+        // lack the calls, so that an unlisted future one fails to compile here
+        // rather than quietly dropping two entries from the table.
         #[cfg(any(
             target_arch = "aarch64",
             target_arch = "riscv64",
             target_arch = "loongarch64"
         ))]
-        let fork_calls: [u32; 2] = [u32::MAX, u32::MAX];
+        let (fork, vfork) = (NO_SUCH_SYSCALL, NO_SUCH_SYSCALL);
         #[cfg(not(any(
             target_arch = "aarch64",
             target_arch = "riscv64",
             target_arch = "loongarch64"
         )))]
-        let fork_calls: [u32; 2] = [syscall(libc::SYS_fork), syscall(libc::SYS_vfork)];
+        let (fork, vfork) = (syscall(libc::SYS_fork), syscall(libc::SYS_vfork));
 
-        // seccomp_data.nr is at byte 0 and args[0] at byte 16 on the little-
-        // endian ARM and x86 Linux targets supported by this workspace. SDK
-        // applications are single-process event loops; their asynchronous work
-        // is performed by the runtime broker. Refusing process/thread creation
-        // makes it impossible for an application to leave an untracked child
-        // behind without changing any shipped application.
-        let filter = [
-            statement(LD_W_ABS, 0),
-            jump(syscall(libc::SYS_socket), 9, 0),
-            jump(syscall(libc::SYS_setsid), 10, 0),
-            jump(syscall(libc::SYS_setpgid), 9, 0),
-            jump(syscall(libc::SYS_unshare), 8, 0),
-            jump(syscall(libc::SYS_setns), 7, 0),
-            jump(fork_calls[0], 6, 0),
-            jump(fork_calls[1], 5, 0),
-            jump(syscall(libc::SYS_clone), 4, 0),
-            jump(syscall(libc::SYS_clone3), 3, 0),
-            statement(RET_K, libc::SECCOMP_RET_ALLOW),
-            statement(LD_W_ABS, 16),
-            jump(libc::AF_UNIX as u32, 1, 0),
-            statement(RET_K, ERRNO),
-            statement(RET_K, libc::SECCOMP_RET_ALLOW),
-        ];
-        let program = libc::sock_fprog {
-            len: u16::try_from(filter.len()).unwrap_or(u16::MAX),
-            filter: filter.as_ptr().cast_mut(),
+        DeniedSyscalls {
+            socket: syscall(libc::SYS_socket),
+            socketcall: socketcall_number(),
+            setsid: syscall(libc::SYS_setsid),
+            setpgid: syscall(libc::SYS_setpgid),
+            unshare: syscall(libc::SYS_unshare),
+            setns: syscall(libc::SYS_setns),
+            fork,
+            vfork,
+            clone: syscall(libc::SYS_clone),
+            clone3: syscall(libc::SYS_clone3),
+        }
+    }
+
+    /// `socketcall` on 32-bit ARM, where the kernel might still answer it.
+    ///
+    /// The number is 102. The EABI syscall table lists the call as obsolete
+    /// and answers it with `ENOSYS`, which is why neither the C library
+    /// headers nor the `libc` crate define a constant for it there. A kernel
+    /// built with `CONFIG_OABI_COMPAT` still dispatches an old-ABI trap
+    /// carrying that number to the multiplexer, and the configuration of
+    /// every firmware's kernel is not something this crate can inspect.
+    /// Refusing the number costs one instruction; being sure would cost a
+    /// kernel configuration per device.
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    const fn socketcall_number() -> u32 {
+        102
+    }
+
+    /// 32-bit x86 keeps `socketcall` as an ordinary call, and libc names it.
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    fn socketcall_number() -> u32 {
+        u32::try_from(libc::SYS_socketcall).unwrap_or(NO_SUCH_SYSCALL)
+    }
+
+    /// Everywhere else the multiplexer does not exist.
+    #[cfg(all(
+        target_os = "linux",
+        not(any(target_arch = "arm", target_arch = "x86"))
+    ))]
+    const fn socketcall_number() -> u32 {
+        NO_SUCH_SYSCALL
+    }
+
+    /// Installs the boundary program as this process's seccomp filter.
+    ///
+    /// # Safety
+    ///
+    /// Must only run from `Command::pre_exec`: the filter is irreversible.
+    #[cfg(target_os = "linux")]
+    unsafe fn install_filter(program: &[libc::sock_filter; PROGRAM_LEN]) -> io::Result<()> {
+        let filter = libc::sock_fprog {
+            len: u16::try_from(PROGRAM_LEN).unwrap_or(u16::MAX),
+            filter: program.as_ptr().cast_mut(),
         };
         if libc::prctl(
             libc::PR_SET_SECCOMP,
             libc::SECCOMP_MODE_FILTER,
-            std::ptr::from_ref(&program),
+            std::ptr::from_ref(&filter),
         ) < 0
         {
             Err(io::Error::last_os_error())
@@ -1599,9 +2156,165 @@ pub mod sandbox {
 
     #[cfg(test)]
     mod tests {
-        use super::{advance_syscall_stop, ArmRegisters, SyscallStopState};
+        use super::{
+            advance_syscall_stop, boundary_program, refused, ArmRegisters, DeniedSyscalls,
+            Instruction, Sandbox, SyscallStopState, ALLOW, IDENTITY_SLOTS, LOCAL_SOCKET_FAMILY,
+            NO_SUCH_SYSCALL, PROGRAM_LEN, REFUSE,
+        };
         use std::cell::Cell;
         use std::io;
+        use std::path::Path;
+
+        /// The numbers 32-bit ARM EABI gives these calls, which is the machine
+        /// the program is written for.
+        const ARM: DeniedSyscalls = DeniedSyscalls {
+            socket: 281,
+            socketcall: 102,
+            setsid: 66,
+            setpgid: 57,
+            unshare: 337,
+            setns: 375,
+            fork: 2,
+            vfork: 190,
+            clone: 120,
+            clone3: 435,
+        };
+        const AF_INET: u32 = 2;
+        const AF_INET6: u32 = 10;
+        /// `read`, as an ordinary call the boundary has no opinion about.
+        const READ: u32 = 3;
+
+        /// Enough of classic BPF to run the program: the three instruction
+        /// kinds it is assembled from, over a syscall record holding the
+        /// number and the first argument. Anything else is a malformed
+        /// program, reported as no verdict at all.
+        fn run(program: &[Instruction], number: u32, first_argument: u32) -> Option<u32> {
+            let mut accumulator = 0;
+            let mut counter = 0;
+            loop {
+                let instruction = *program.get(counter)?;
+                match instruction.code {
+                    super::LD_W_ABS => {
+                        accumulator = match instruction.k {
+                            super::NUMBER_OFFSET => number,
+                            super::FIRST_ARGUMENT_OFFSET => first_argument,
+                            _ => return None,
+                        };
+                        counter += 1;
+                    }
+                    super::JMP_JEQ_K => {
+                        let skip = if accumulator == instruction.k {
+                            instruction.jt
+                        } else {
+                            instruction.jf
+                        };
+                        counter += 1 + usize::from(skip);
+                    }
+                    super::RET_K => return Some(instruction.k),
+                    _ => return None,
+                }
+            }
+        }
+
+        #[test]
+        fn the_program_and_the_tracer_refuse_exactly_the_same_calls() {
+            let program = boundary_program(&ARM, LOCAL_SOCKET_FAMILY);
+            for number in 0..1024 {
+                for family in [LOCAL_SOCKET_FAMILY, AF_INET, AF_INET6, 0, u32::MAX] {
+                    let expected = if refused(&ARM, number, family, LOCAL_SOCKET_FAMILY) {
+                        REFUSE
+                    } else {
+                        ALLOW
+                    };
+                    assert_eq!(
+                        run(&program, number, family),
+                        Some(expected),
+                        "syscall {number} with first argument {family}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn a_local_socket_is_the_only_socket_and_the_multiplexer_is_no_way_round_it() {
+            let program = boundary_program(&ARM, LOCAL_SOCKET_FAMILY);
+            assert_eq!(run(&program, ARM.socket, LOCAL_SOCKET_FAMILY), Some(ALLOW));
+            assert_eq!(run(&program, ARM.socket, AF_INET), Some(REFUSE));
+            assert_eq!(run(&program, ARM.socket, AF_INET6), Some(REFUSE));
+            assert_eq!(
+                run(&program, ARM.socketcall, LOCAL_SOCKET_FAMILY),
+                Some(REFUSE)
+            );
+            assert_eq!(run(&program, READ, AF_INET), Some(ALLOW));
+            for number in ARM.unconditional() {
+                assert_eq!(run(&program, number, LOCAL_SOCKET_FAMILY), Some(REFUSE));
+            }
+        }
+
+        #[test]
+        fn a_call_the_target_lacks_matches_nothing() {
+            let table = DeniedSyscalls {
+                fork: NO_SUCH_SYSCALL,
+                vfork: NO_SUCH_SYSCALL,
+                ..ARM
+            };
+            let program = boundary_program(&table, LOCAL_SOCKET_FAMILY);
+            assert_eq!(run(&program, ARM.fork, 0), Some(ALLOW));
+            assert_eq!(run(&program, ARM.vfork, 0), Some(ALLOW));
+            assert_eq!(run(&program, ARM.clone, 0), Some(REFUSE));
+            assert!(!refused(&table, ARM.fork, 0, LOCAL_SOCKET_FAMILY));
+        }
+
+        #[test]
+        fn every_jump_lands_inside_the_program_and_it_ends_in_a_verdict() {
+            let program = boundary_program(&ARM, LOCAL_SOCKET_FAMILY);
+            assert_eq!(program.len(), PROGRAM_LEN);
+            for (at, instruction) in program.iter().enumerate() {
+                if instruction.code == super::JMP_JEQ_K {
+                    assert_ne!(
+                        instruction.jt,
+                        u8::MAX,
+                        "the jump at {at} overflowed a byte"
+                    );
+                    assert!(
+                        at + 1 + usize::from(instruction.jt) < program.len(),
+                        "jump at {at}"
+                    );
+                    assert!(
+                        at + 1 + usize::from(instruction.jf) < program.len(),
+                        "jump at {at}"
+                    );
+                }
+            }
+            assert_eq!(program.last().map(|last| last.code), Some(super::RET_K));
+            let verdicts: Vec<u32> = program
+                .iter()
+                .filter(|instruction| instruction.code == super::RET_K)
+                .map(|instruction| instruction.k)
+                .collect();
+            assert!(verdicts.contains(&ALLOW) && verdicts.contains(&REFUSE));
+        }
+
+        #[cfg(target_os = "linux")]
+        #[test]
+        fn the_verdicts_and_the_family_are_the_kernel_s_own_numbers() {
+            assert_eq!(ALLOW, libc::SECCOMP_RET_ALLOW);
+            let eperm = u32::try_from(libc::EPERM).expect("EPERM is positive");
+            assert_eq!(REFUSE, libc::SECCOMP_RET_ERRNO | eperm);
+            let af_unix = u32::try_from(libc::AF_UNIX).expect("AF_UNIX is positive");
+            assert_eq!(LOCAL_SOCKET_FAMILY, af_unix);
+            let table = super::denied_syscalls();
+            assert_ne!(table.socket, NO_SUCH_SYSCALL);
+            assert_ne!(table.clone, NO_SUCH_SYSCALL);
+            assert_ne!(table.socket, table.clone);
+        }
+
+        #[test]
+        fn an_identity_slot_outside_the_pool_is_refused_before_anything_is_prepared() {
+            assert!(Sandbox::new(Path::new("/"), IDENTITY_SLOTS).is_err());
+            assert!(Sandbox::new(Path::new("/"), IDENTITY_SLOTS - 1).is_ok());
+            assert!(Sandbox::new(Path::new("/"), 0).is_ok());
+        }
 
         #[test]
         fn a_register_read_failure_does_not_resume_the_tracee() {
@@ -1668,6 +2381,9 @@ pub mod sandbox {
         }
 
         #[test]
+        // libc::AF_INET has no Windows analogue; the seccomp machinery this
+        // exercises is Unix-only anyway.
+        #[cfg(unix)]
         fn a_denied_syscall_is_replaced_then_reported_as_permission_denied() {
             let selected = Cell::new(None);
             let result = Cell::new(None);
@@ -1720,10 +2436,13 @@ pub mod sandbox {
 }
 
 /// Signals a child-owned process group rather than only its leader.
+pub mod entropy;
+
 pub mod process_group {
     #[cfg(target_os = "linux")]
     use std::fs;
     use std::io;
+    #[cfg(unix)]
     use std::os::unix::process::CommandExt;
     use std::process::Command;
 
@@ -1731,8 +2450,19 @@ pub mod process_group {
     pub const SIGKILL: i32 = 9;
 
     /// Makes `command` the leader of a new process group before exec.
+    ///
+    /// On Windows there is no POSIX process group; `CREATE_NEW_PROCESS_GROUP`
+    /// is the closest kernel concept and only matters to console CTRL event
+    /// routing, which this crate does not use. Group signalling stays
+    /// unsupported there rather than pretending the mapping is equivalent.
     pub fn configure(command: &mut Command) {
+        #[cfg(unix)]
         command.process_group(0);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt as _;
+            command.creation_flags(0x0000_0200); // CREATE_NEW_PROCESS_GROUP
+        }
     }
 
     /// Sends `signal` to every process in the group whose id is `leader`.
@@ -1742,14 +2472,29 @@ pub mod process_group {
     /// Returns an error when the process identifier cannot be represented by
     /// the platform API or the signal cannot be delivered.
     pub fn signal(leader: u32, signal: i32) -> io::Result<()> {
-        let leader = i32::try_from(leader)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "process id is too large"))?;
-        // SAFETY: a negative pid is the documented `kill(2)` process-group
-        // form. The caller created this group and supplies its leader.
-        if unsafe { libc::kill(-leader, signal) } < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
+        #[cfg(unix)]
+        {
+            let leader = i32::try_from(leader).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidInput, "process id is too large")
+            })?;
+            // SAFETY: a negative pid is the documented `kill(2)` process-group
+            // form. The caller created this group and supplies its leader.
+            if unsafe { libc::kill(-leader, signal) } < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        }
+        #[cfg(windows)]
+        {
+            // GenerateConsoleCtrlEvent can reach a console process group, but
+            // it delivers CTRL events, not termination guarantees; callers use
+            // this for SIGKILL-grade cleanup, so mapping would fake parity.
+            let _ = (leader, signal);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "POSIX process-group signalling has no Windows equivalent",
+            ))
         }
     }
 
@@ -1802,14 +2547,20 @@ pub mod process_group {
                 signal(leader, signal_number)
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(all(unix, not(target_os = "linux")))]
         {
+            signal(leader, signal_number)
+        }
+        #[cfg(windows)]
+        {
+            // The group signal already answers unsupported on Windows; a
+            // session-wide sweep has no wider meaning to fall back to.
             signal(leader, signal_number)
         }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod process_group_tests {
     use std::process::Command;
     use std::thread;
@@ -1851,6 +2602,7 @@ mod process_group_tests {
 /// `rustup target add`, and it forks behind the caller's back. The parts it is
 /// made of, `posix_openpt` through `TIOCSCTTY`, are all in plain libc on both
 /// the device and a development host.
+#[cfg(unix)]
 pub mod pty {
     use std::ffi::{c_char, c_int, c_ulong, c_void, CStr};
     use std::fs::File;
@@ -2154,10 +2906,765 @@ pub mod pty {
     }
 }
 
-#[cfg(test)]
+/// A pseudo-terminal on Windows is a `ConPTY` pair: two anonymous pipes joined
+/// by `CreatePseudoConsole`, the child started through an extended startup
+/// info whose attribute list names the console. Built on the documented
+/// kernel32 surface with the same shape as the Unix arm; runtime-verified by
+/// the windows-2022 CI job.
+#[cfg(windows)]
+pub mod pty {
+    use std::ffi::c_void;
+    use std::fs::File;
+    use std::io::{self, Read, Write};
+    use std::os::windows::ffi::OsStrExt as _;
+    use std::os::windows::io::{FromRawHandle as _, RawHandle};
+    use std::ptr;
+    use std::sync::mpsc::{self, Receiver};
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+
+    /// How much is taken from the program in one read. Same bound as Unix.
+    const CHUNK: usize = 4096;
+
+    type Bool = i32;
+    type Dword = u32;
+    type Handle = *mut c_void;
+
+    const EXTENDED_STARTUPINFO_PRESENT: Dword = 0x0008_0000;
+    const CREATE_UNICODE_ENVIRONMENT: Dword = 0x0000_0400;
+    const STARTF_USESTDHANDLES: Dword = 0x0000_0100;
+    /// ProcThreadAttributeValue(22, Thread: false, Input: true, Additive: false).
+    const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 22 | 0x0002_0000;
+    const HEAP_ZERO_MEMORY: Dword = 0x8;
+    const WAIT_OBJECT_0: Dword = 0;
+    const INFINITE: Dword = 0xFFFF_FFFF;
+    const DUPLICATE_SAME_ACCESS: Dword = 0x2;
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct Coord {
+        x: i16,
+        y: i16,
+    }
+
+    impl Coord {
+        /// A console grid is counted in signed 16-bit cells. A terminal wider
+        /// or taller than that does not exist, but a caller's `u16` could
+        /// still name one, and a wrapped negative size would make the console
+        /// call fail rather than draw at the largest size it can.
+        fn grid(columns: u16, rows: u16) -> Self {
+            Self {
+                x: i16::try_from(columns).unwrap_or(i16::MAX),
+                y: i16::try_from(rows).unwrap_or(i16::MAX),
+            }
+        }
+    }
+
+    #[repr(C)]
+    struct StartupInfoW {
+        cb: Dword,
+        reserved: *mut u16,
+        desktop: *mut u16,
+        title: *mut u16,
+        x: Dword,
+        y: Dword,
+        x_size: Dword,
+        y_size: Dword,
+        x_count: Dword,
+        y_count: Dword,
+        fill: Dword,
+        flags: Dword,
+        show_window: u16,
+        reserved2: u16,
+        reserved2_pointer: *mut u8,
+        std_input: Handle,
+        std_output: Handle,
+        std_error: Handle,
+    }
+
+    impl Default for StartupInfoW {
+        fn default() -> Self {
+            Self {
+                cb: 0,
+                reserved: ptr::null_mut(),
+                desktop: ptr::null_mut(),
+                title: ptr::null_mut(),
+                x: 0,
+                y: 0,
+                x_size: 0,
+                y_size: 0,
+                x_count: 0,
+                y_count: 0,
+                fill: 0,
+                flags: 0,
+                show_window: 0,
+                reserved2: 0,
+                reserved2_pointer: ptr::null_mut(),
+                std_input: ptr::null_mut(),
+                std_output: ptr::null_mut(),
+                std_error: ptr::null_mut(),
+            }
+        }
+    }
+
+    #[repr(C)]
+    struct StartupInfoExW {
+        base: StartupInfoW,
+        attribute_list: *mut c_void,
+    }
+
+    /// `cb` for the extended startup info. The structure is about a hundred
+    /// bytes, so the narrowing cannot lose anything, and the assertion makes
+    /// that a compile-time fact rather than an assumption.
+    #[allow(clippy::cast_possible_truncation)]
+    const STARTUP_INFO_SIZE: Dword = {
+        let size = size_of::<StartupInfoExW>();
+        assert!(size <= Dword::MAX as usize);
+        size as Dword
+    };
+
+    #[repr(C)]
+    struct ProcessInformation {
+        process: Handle,
+        thread: Handle,
+        process_id: Dword,
+        thread_id: Dword,
+    }
+
+    extern "system" {
+        fn CreatePipe(
+            read: *mut Handle,
+            write: *mut Handle,
+            attrs: *mut c_void,
+            size: Dword,
+        ) -> Bool;
+        fn CreatePseudoConsole(
+            size: Coord,
+            input: Handle,
+            output: Handle,
+            flags: Dword,
+            console: *mut Handle,
+        ) -> i32;
+        fn ResizePseudoConsole(console: Handle, size: Coord) -> i32;
+        fn ClosePseudoConsole(console: Handle);
+        fn DuplicateHandle(
+            source_process: Handle,
+            source: Handle,
+            target_process: Handle,
+            target: *mut Handle,
+            access: Dword,
+            inherit: Bool,
+            options: Dword,
+        ) -> Bool;
+        fn InitializeProcThreadAttributeList(
+            list: *mut c_void,
+            count: Dword,
+            flags: Dword,
+            size: *mut usize,
+        ) -> Bool;
+        fn UpdateProcThreadAttribute(
+            list: *mut c_void,
+            flags: Dword,
+            attribute: usize,
+            value: *mut c_void,
+            size: usize,
+            previous: *mut c_void,
+            return_size: *mut usize,
+        ) -> Bool;
+        fn DeleteProcThreadAttributeList(list: *mut c_void);
+        fn CreateProcessW(
+            application: *const u16,
+            command_line: *mut u16,
+            process_attributes: *mut c_void,
+            thread_attributes: *mut c_void,
+            inherit_handles: Bool,
+            flags: Dword,
+            environment: *mut c_void,
+            directory: *const u16,
+            startup_info: *mut StartupInfoExW,
+            information: *mut ProcessInformation,
+        ) -> Bool;
+        fn CloseHandle(handle: Handle) -> Bool;
+        fn WaitForSingleObject(handle: Handle, milliseconds: Dword) -> Dword;
+        fn GetExitCodeProcess(handle: Handle, code: *mut Dword) -> Bool;
+        fn TerminateProcess(handle: Handle, code: u32) -> Bool;
+        fn GetProcessHeap() -> Handle;
+        fn HeapAlloc(heap: Handle, flags: Dword, bytes: usize) -> *mut c_void;
+        fn HeapFree(heap: Handle, flags: Dword, memory: *mut c_void) -> Bool;
+    }
+
+    /// Something to call when the program has printed. Same shape as Unix.
+    pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+    /// A running program with a terminal attached. Same contract as Unix:
+    /// output arrives on a channel so a caller blocks on its own event loop.
+    pub struct Pty {
+        /// The write end of the console's input pipe.
+        input: File,
+        /// The pseudo-console, shared with the waiter thread that closes it
+        /// when the child exits on its own: that is the event that makes a
+        /// Unix PTY report end of file, and the only one that makes a `ConPTY`
+        /// output pipe report one.
+        console: Arc<ConsoleCell>,
+        /// The child's process handle, nulled once closed.
+        process: Handle,
+        output: Receiver<Vec<u8>>,
+    }
+
+    // SAFETY: the handles are owned by this value and only moved with it;
+    // the console handle is only used under the cell's lock.
+    unsafe impl Send for Pty {}
+
+    /// A duplicate of the child's process handle, owned by the waiter
+    /// thread so its wait never races the Pty's own handle.
+    struct WaitHandle(Handle);
+
+    // SAFETY: the handle is the thread's own duplicate and never leaves it.
+    unsafe impl Send for WaitHandle {}
+
+    /// A pseudo-console handle behind the lock that serializes the waiter
+    /// thread, `close`, and `Drop`.
+    struct ConsoleCell(Mutex<Handle>);
+
+    // SAFETY: the handle is owned by the cell and touched only under its
+    // lock, so sending or sharing the cell cannot race the console.
+    unsafe impl Send for ConsoleCell {}
+    unsafe impl Sync for ConsoleCell {}
+
+    /// Closes the console in the cell exactly once, whoever runs first.
+    fn close_console(cell: &ConsoleCell) {
+        let mut console = cell.0.lock().expect("console lock");
+        if !console.is_null() {
+            // SAFETY: closed exactly once; the lock serializes every closer
+            // and nulling marks it done.
+            unsafe { ClosePseudoConsole(*console) };
+            *console = ptr::null_mut();
+        }
+    }
+
+    fn wide(text: &str) -> Vec<u16> {
+        std::ffi::OsStr::new(text)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    fn close_handle(handle: Handle) {
+        if !handle.is_null() {
+            // SAFETY: the handle is one we created or were handed by
+            // CreateProcessW, still open, and closed at most once by the
+            // callers' nulling discipline.
+            unsafe { CloseHandle(handle) };
+        }
+    }
+
+    fn hresult(code: i32, context: &str) -> io::Error {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("{context}: HRESULT {code:#010x}"),
+        )
+    }
+
+    struct ConsoleGuard(Handle);
+    impl Drop for ConsoleGuard {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: created by CreatePseudoConsole, closed exactly once.
+                unsafe { ClosePseudoConsole(self.0) };
+            }
+        }
+    }
+
+    impl Pty {
+        /// Starts `program` under a new pseudo-terminal of the given grid.
+        ///
+        /// The environment is replaced rather than inherited, matching the
+        /// Unix arm; on Windows a caller that wants DLL lookup to behave
+        /// normally should pass `SystemRoot` through.
+        ///
+        /// # Errors
+        ///
+        /// Returns the OS error from any step of the allocation, or from
+        /// starting the program.
+        pub fn spawn(
+            program: &str,
+            arguments: &[&str],
+            environment: &[(&str, &str)],
+            columns: u16,
+            rows: u16,
+        ) -> io::Result<Self> {
+            Self::spawn_with_wake(program, arguments, environment, columns, rows, None)
+        }
+
+        /// The same, with something to call whenever output has arrived.
+        ///
+        /// # Errors
+        ///
+        /// As [`Pty::spawn`].
+        // One FFI sequence: every early return closes exactly what the steps
+        // before it opened, which is easier to audit in one place than split.
+        #[allow(clippy::too_many_lines)]
+        pub fn spawn_with_wake(
+            program: &str,
+            arguments: &[&str],
+            environment: &[(&str, &str)],
+            columns: u16,
+            rows: u16,
+            wake: Option<Wake>,
+        ) -> io::Result<Self> {
+            let mut in_read: Handle = ptr::null_mut();
+            let mut in_write: Handle = ptr::null_mut();
+            let mut out_read: Handle = ptr::null_mut();
+            let mut out_write: Handle = ptr::null_mut();
+            // SAFETY: out-pointers to live locals, no attributes (the handles
+            // are not inheritable, which the extended-startupinfo child does
+            // not need: the console attaches its own std handles).
+            if unsafe { CreatePipe(&mut in_read, &mut in_write, ptr::null_mut(), 0) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if unsafe { CreatePipe(&mut out_read, &mut out_write, ptr::null_mut(), 0) } == 0 {
+                let error = io::Error::last_os_error();
+                close_handle(in_read);
+                close_handle(in_write);
+                return Err(error);
+            }
+            let grid = Coord::grid(columns, rows);
+            let mut console: Handle = ptr::null_mut();
+            // SAFETY: both pipe ends are live handles we own; the console
+            // out-pointer is a live local.
+            let created = unsafe { CreatePseudoConsole(grid, in_read, out_write, 0, &mut console) };
+            // The console holds its own references; our copies of the ends it
+            // consumed are closed whatever happened.
+            close_handle(in_read);
+            close_handle(out_write);
+            if created != 0 {
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(hresult(created, "create the pseudo-console"));
+            }
+            let console = ConsoleGuard(console);
+
+            let mut list_size = 0_usize;
+            // SAFETY: a sizing call with a null list; failure with the size
+            // written is the documented contract.
+            unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut list_size) };
+            // SAFETY: the heap is the process heap and the size came from the
+            // sizing call above; zeroed so the attribute list starts clean.
+            let list = unsafe { HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, list_size) };
+            if list.is_null() {
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(io::Error::last_os_error());
+            }
+            let mut startup = StartupInfoExW {
+                base: StartupInfoW {
+                    cb: STARTUP_INFO_SIZE,
+                    // With the parent's std handles redirected (a test harness
+                    // or CI runner is exactly that), a child created without
+                    // STARTF_USESTDHANDLES attaches to the inherited console
+                    // instead of the pseudoconsole. Null std handles plus the
+                    // flag force the pseudoconsole to supply them.
+                    flags: STARTF_USESTDHANDLES,
+                    ..StartupInfoW::default()
+                },
+                attribute_list: list,
+            };
+            let prepared = unsafe {
+                // SAFETY: `list` is a live allocation of `list_size` bytes.
+                InitializeProcThreadAttributeList(list, 1, 0, &mut list_size) != 0
+                    // SAFETY: one attribute, the console handle by value.
+                    && UpdateProcThreadAttribute(
+                        list,
+                        0,
+                        PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+                        console.0,
+                        size_of::<Handle>(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                    ) != 0
+            };
+            if !prepared {
+                let error = io::Error::last_os_error();
+                // SAFETY: list was allocated above and is ours to free.
+                unsafe {
+                    DeleteProcThreadAttributeList(list);
+                    HeapFree(GetProcessHeap(), 0, list)
+                };
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(error);
+            }
+
+            let command_line = std::iter::once(program)
+                .chain(arguments.iter().copied())
+                .map(quote_argument)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut command_line = wide(&command_line);
+            let mut environment_block = environment_block(environment);
+            // An empty environment list means inherit: a null pointer hands
+            // the child the parent's block (SystemRoot among it, which cmd
+            // cannot start without). CREATE_UNICODE_ENVIRONMENT is ignored
+            // in that case.
+            let environment_pointer = if environment.is_empty() {
+                ptr::null_mut()
+            } else {
+                environment_block.as_mut_ptr().cast::<c_void>()
+            };
+            let mut information = ProcessInformation {
+                process: ptr::null_mut(),
+                thread: ptr::null_mut(),
+                process_id: 0,
+                thread_id: 0,
+            };
+            // SAFETY: every pointer names a live local or a NUL-terminated
+            // wide buffer that outlives the call; the environment pointer is
+            // either null (inherit the parent's block) or a live double-NUL
+            // terminated Unicode buffer.
+            let spawned = unsafe {
+                CreateProcessW(
+                    ptr::null(),
+                    command_line.as_mut_ptr(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    0,
+                    EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                    environment_pointer,
+                    ptr::null(),
+                    &mut startup,
+                    &mut information,
+                )
+            };
+            // SAFETY: the attribute list is ours and no longer needed.
+            unsafe {
+                DeleteProcThreadAttributeList(list);
+                HeapFree(GetProcessHeap(), 0, list)
+            };
+            if spawned == 0 {
+                let error = io::Error::last_os_error();
+                close_handle(out_read);
+                close_handle(in_write);
+                return Err(error);
+            }
+            close_handle(information.thread);
+            // A second reference to the child for the waiter thread: waiting
+            // must not race the Pty's own close of its handle.
+            let mut wait_handle: Handle = ptr::null_mut();
+            // SAFETY: -1 is the current-process pseudo-handle on both sides,
+            // information.process is live and ours, and DUPLICATE_SAME_ACCESS
+            // fills wait_handle with an equivalent reference.
+            let duplicated = unsafe {
+                DuplicateHandle(
+                    (-1isize) as Handle,
+                    information.process,
+                    (-1isize) as Handle,
+                    &mut wait_handle,
+                    0,
+                    0,
+                    DUPLICATE_SAME_ACCESS,
+                )
+            };
+            if duplicated == 0 {
+                let error = io::Error::last_os_error();
+                close_handle(out_read);
+                close_handle(in_write);
+                close_handle(information.process);
+                return Err(error);
+            }
+            // The pipes' surviving ends become owned Files here.
+            // SAFETY: both handles are live, open, and uniquely owned.
+            let (input, mut reader) = unsafe {
+                (
+                    File::from_raw_handle(in_write as RawHandle),
+                    File::from_raw_handle(out_read as RawHandle),
+                )
+            };
+
+            let (sender, output) = mpsc::channel();
+            thread::spawn(move || {
+                let mut buffer = [0u8; CHUNK];
+                loop {
+                    match reader.read(&mut buffer) {
+                        // A closed console reports end of file or a broken
+                        // pipe; both mean the program has gone.
+                        Ok(0) | Err(_) => break,
+                        Ok(read) => {
+                            if sender.send(buffer[..read].to_vec()).is_err() {
+                                break;
+                            }
+                            if let Some(wake) = wake.as_ref() {
+                                wake();
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Hand the console to the Pty without the guard closing it: the
+            // guard exists for the error paths above, and from here the cell
+            // owns the handle (the waiter thread, close(), and Drop manage it
+            // under the lock).
+            let console_handle = console.0;
+            std::mem::forget(console);
+            let console = Arc::new(ConsoleCell(Mutex::new(console_handle)));
+            let waiter_console = Arc::clone(&console);
+            let wait_handle = WaitHandle(wait_handle);
+            thread::spawn(move || {
+                // Bound whole first so the closure takes the wrapper: any
+                // field-shaped capture would move the bare raw handle, which
+                // is not Send.
+                let whole = wait_handle;
+                let WaitHandle(wait_handle) = whole;
+                // SAFETY: wait_handle is this thread's own reference; the
+                // wait ends when the child exits, which is when the console
+                // must go for readers to see the end of the stream.
+                unsafe { WaitForSingleObject(wait_handle, INFINITE) };
+                close_handle(wait_handle);
+                close_console(&waiter_console);
+            });
+            Ok(Self {
+                input,
+                console,
+                process: information.process,
+                output,
+            })
+        }
+
+        /// The channel every byte the program prints arrives on.
+        #[must_use]
+        pub const fn output(&self) -> &Receiver<Vec<u8>> {
+            &self.output
+        }
+
+        /// Sends keystrokes to the program.
+        ///
+        /// # Errors
+        ///
+        /// Returns the write error, including the one that means the program
+        /// has already gone.
+        pub fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
+            self.input.write_all(bytes)
+        }
+
+        /// Tells the program its grid changed.
+        ///
+        /// # Errors
+        ///
+        /// Returns the HRESULT from `ResizePseudoConsole`.
+        pub fn resize(&self, columns: u16, rows: u16) -> io::Result<()> {
+            let grid = Coord::grid(columns, rows);
+            // A poisoned lock still guards a live or nulled handle; the
+            // nulling discipline, not the poison flag, says which.
+            let console = self
+                .console
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if console.is_null() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "the console went with the program",
+                ));
+            }
+            // SAFETY: the console handle is live under the lock.
+            let result = unsafe { ResizePseudoConsole(*console, grid) };
+            if result != 0 {
+                return Err(hresult(result, "resize the pseudo-console"));
+            }
+            Ok(())
+        }
+
+        /// Whether the program has finished, and with what status.
+        ///
+        /// # Errors
+        ///
+        /// Returns the error from waiting on the child.
+        pub fn finished(&mut self) -> io::Result<Option<i32>> {
+            // SAFETY: the process handle is live or the child already exited;
+            // a zero timeout only polls.
+            let state = unsafe { WaitForSingleObject(self.process, 0) };
+            if state != WAIT_OBJECT_0 {
+                return Ok(None);
+            }
+            let mut code: Dword = 0;
+            // SAFETY: the process handle is live and signaled.
+            if unsafe { GetExitCodeProcess(self.process, &mut code) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // The same reinterpretation std's ExitStatus::code makes on
+            // Windows: an NTSTATUS crash code reads as a negative number.
+            Ok(Some(i32::from_ne_bytes(code.to_ne_bytes())))
+        }
+
+        /// Stops the program and reaps it.
+        ///
+        /// # Errors
+        ///
+        /// Returns the error from waiting, except for a program that had
+        /// already exited, which is success.
+        pub fn close(&mut self) -> io::Result<()> {
+            if self.finished()?.is_none() {
+                // SAFETY: the process handle is live; terminating an already
+                // exited child fails harmlessly and is ignored, matching the
+                // Unix arm's sweep-after-exit.
+                unsafe { TerminateProcess(self.process, 1) };
+                // SAFETY: as above; waits for the termination to land.
+                unsafe { WaitForSingleObject(self.process, INFINITE) };
+            }
+            close_console(&self.console);
+            Ok(())
+        }
+    }
+
+    impl Drop for Pty {
+        fn drop(&mut self) {
+            close_console(&self.console);
+            close_handle(self.process);
+        }
+    }
+
+    /// Quotes one command-line word the way the C runtime parses it.
+    fn quote_argument(word: &str) -> String {
+        if !word.is_empty()
+            && !word
+                .chars()
+                .any(|character| character.is_whitespace() || character == '"')
+        {
+            return word.to_owned();
+        }
+        let mut quoted = String::from('"');
+        let mut backslashes = 0_usize;
+        for character in word.chars() {
+            match character {
+                '\\' => backslashes += 1,
+                '"' => {
+                    quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+                    backslashes = 0;
+                    quoted.push('"');
+                }
+                _ => {
+                    quoted.push_str(&"\\".repeat(backslashes));
+                    backslashes = 0;
+                    quoted.push(character);
+                }
+            }
+        }
+        quoted.push_str(&"\\".repeat(backslashes * 2));
+        quoted.push('"');
+        quoted
+    }
+
+    /// The double-NUL-terminated Unicode environment block, sorted as
+    /// `CreateProcessW` expects.
+    fn environment_block(environment: &[(&str, &str)]) -> Vec<u16> {
+        let mut pairs: Vec<String> = environment
+            .iter()
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect();
+        pairs.sort_by_key(|pair| pair.to_uppercase());
+        let mut block: Vec<u16> = pairs
+            .join("\0")
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        block.push(0);
+        block
+    }
+}
+
+#[cfg(all(test, windows))]
+mod pty_windows_tests {
+    use super::pty::Pty;
+    use std::time::{Duration, Instant};
+
+    // Runs on the windows-2022 CI job: cmd under a real ConPTY must carry
+    // output over the channel, report its exit status, and close cleanly.
+    #[test]
+    fn conpty_carries_output_status_and_shutdown() {
+        let system_root = std::env::var("SystemRoot").expect("SystemRoot");
+        let mut pty = Pty::spawn(
+            "cmd.exe",
+            &["/c", "echo cobalt-pty-ok && exit 3"],
+            &[("SystemRoot", system_root.as_str())],
+            80,
+            24,
+        )
+        .expect("spawn cmd under ConPTY");
+        // Wait on the child first, then drain the channel until the reader
+        // hangs up: the exit status and the captured bytes diagnose attach
+        // and plumbing separately instead of conflating them in one timeout.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let status = loop {
+            if let Some(code) = pty.finished().expect("poll the child") {
+                break code;
+            }
+            assert!(Instant::now() < deadline, "cmd did not exit");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        let mut output = String::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            match pty.output().recv_timeout(Duration::from_millis(250)) {
+                Ok(chunk) => output.push_str(&String::from_utf8_lossy(&chunk)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+            if output.contains("cobalt-pty-ok") {
+                break;
+            }
+        }
+        assert_eq!(status, 3, "cmd exit status (output so far: {output:?})");
+        assert!(output.contains("cobalt-pty-ok"), "output was: {output:?}");
+        pty.close().expect("close after exit");
+    }
+}
+
+#[cfg(all(test, unix))]
 mod pty_tests {
     use super::pty::Pty;
     use std::time::{Duration, Instant};
+
+    /// devpts answers `EPERM` or a missing slave node (`ENOENT`) transiently
+    /// when the host is loaded, most often under qemu-user, which has no real
+    /// devpts at all. Give every environment a few attempts. Only qemu gets to
+    /// skip by name with the reason when a terminal keeps refusing, because
+    /// `KOBO_QEMU_EMULATED` is set only by the device-emulated CI job; on a
+    /// real host a pty that stays unavailable is a genuine failure.
+    fn spawn(
+        program: &str,
+        arguments: &[&str],
+        environment: &[(&str, &str)],
+        columns: u16,
+        rows: u16,
+    ) -> Option<Pty> {
+        for _ in 0..3 {
+            match Pty::spawn(program, arguments, environment, columns, rows) {
+                Ok(pty) => return Some(pty),
+                // qemu-user's devpts is unreliable beyond the open itself:
+                // ptsname can also come back as a NUL-filled buffer, which
+                // surfaces here as an invalid file name, and the slave node
+                // open can race devpts and answer NotFound.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::PermissionDenied
+                            | std::io::ErrorKind::InvalidInput
+                            | std::io::ErrorKind::NotFound
+                    ) =>
+                {
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                Err(error) => panic!("a terminal: {error}"),
+            }
+        }
+        if std::env::var_os("KOBO_QEMU_EMULATED").is_some() {
+            eprintln!(
+                "skipped under qemu-user: the emulated devpts keeps refusing a terminal (EPERM/ENOENT)"
+            );
+            return None;
+        }
+        panic!("a terminal: still unavailable after three attempts (EPERM/ENOENT)")
+    }
 
     /// Collects output until `needle` appears or the patience runs out.
     fn wait_for(pty: &Pty, needle: &str) -> String {
@@ -2179,7 +3686,9 @@ mod pty_tests {
     fn a_program_started_on_a_terminal_answers_what_is_typed_at_it() {
         // The whole point, exercised for real rather than described: bytes
         // written go in as keystrokes and what the program prints comes back.
-        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20) else {
+            return;
+        };
         pty.write(b"echo COBALT_ONE\n").expect("typing");
         let seen = wait_for(&pty, "COBALT_ONE");
         assert!(seen.contains("COBALT_ONE"), "saw {seen:?}");
@@ -2190,7 +3699,9 @@ mod pty_tests {
     fn the_program_is_told_the_grid_it_has() {
         // A program that is not told its size assumes eighty columns and draws
         // off the side of a panel that has fifty-three.
-        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 37).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 37) else {
+            return;
+        };
         pty.write(b"stty size\n").expect("typing");
         let seen = wait_for(&pty, "37 53");
         assert!(seen.contains("37 53"), "saw {seen:?}");
@@ -2199,7 +3710,9 @@ mod pty_tests {
 
     #[test]
     fn a_program_that_ends_is_reported_rather_than_read_forever() {
-        let mut pty = Pty::spawn("/bin/sh", &["-c", "exit 3"], &[], 53, 20).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &["-c", "exit 3"], &[], 53, 20) else {
+            return;
+        };
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut status = None;
         while Instant::now() < deadline && status.is_none() {
@@ -2211,14 +3724,15 @@ mod pty_tests {
 
     #[test]
     fn closing_stops_a_program_that_would_otherwise_run_forever() {
-        let mut pty = Pty::spawn(
+        let Some(mut pty) = spawn(
             "/bin/sh",
             &["-c", "while true; do sleep 1; done"],
             &[],
             53,
             20,
-        )
-        .expect("a terminal");
+        ) else {
+            return;
+        };
         assert_eq!(pty.finished().expect("waiting"), None);
         pty.close().expect("closing");
         assert!(pty.finished().expect("waiting").is_some());
@@ -2226,7 +3740,9 @@ mod pty_tests {
 
     #[test]
     fn the_grid_can_change_while_the_program_is_running() {
-        let mut pty = Pty::spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20).expect("a terminal");
+        let Some(mut pty) = spawn("/bin/sh", &[], &[("PS1", "$ ")], 53, 20) else {
+            return;
+        };
         pty.resize(40, 10).expect("resizing");
         pty.write(b"stty size\n").expect("typing");
         let seen = wait_for(&pty, "10 40");
@@ -2280,6 +3796,15 @@ mod tests {
         assert_eq!(iow(b'F', 0x2e, 36), 0x4024_462e);
         assert_eq!(iow(b'F', 0x2e, 72), 0x4048_462e);
         assert_eq!(iowr(b'F', 0x2f, 8), 0xc008_462f);
+    }
+
+    /// The capability query is the same request `touch_snapshot` already
+    /// sends for keys, built from the event type rather than spelled out.
+    #[test]
+    fn the_capability_query_is_numbered_by_event_type() {
+        assert_eq!(input::eviocgbit(input::EV_KEY, 96), ior(b'E', 0x21, 96));
+        assert_eq!(input::eviocgbit(input::EV_KEY, 96), 0x8060_4521);
+        assert_eq!(input::eviocgbit(input::EV_ABS, 96), 0x8060_4523);
     }
 
     /// The two backends share a number here, and that is not a coincidence to

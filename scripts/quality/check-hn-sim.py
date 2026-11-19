@@ -35,6 +35,36 @@ ARTICLE = (b'<h1>A quieter way to measure the sky</h1>'
            + b'<p>Each dish is aligned against the same star, which takes a night.</p>' * 6)
 
 
+
+def certificates(config):
+    """A private certificate authority and a server certificate for 127.0.0.1.
+
+    Made here rather than with `kobo stream init`, which now looks for a reader
+    on the local network to install its trust root on, and a check that runs on
+    a developer's desk must never reach the reader sitting next to it.
+    """
+    trust = config/'trust'
+    stream = config/'stream'
+    trust.mkdir(parents=True)
+    stream.mkdir(parents=True)
+
+    def openssl(*arguments):
+        subprocess.run(['openssl', *arguments], check=True, capture_output=True, timeout=60)
+
+    extensions = config/'server.ext'
+    extensions.write_text('basicConstraints=CA:FALSE\n'
+                          'subjectAltName=IP:127.0.0.1\n'
+                          'extendedKeyUsage=serverAuth\n')
+    openssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2', '-subj',
+            '/CN=Fixture authority', '-keyout', str(config/'root.key'),
+            '-out', str(trust/'root.pem'), '-addext', 'basicConstraints=critical,CA:TRUE',
+            '-addext', 'keyUsage=critical,keyCertSign')
+    openssl('req', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=127.0.0.1',
+            '-keyout', str(stream/'key.pem'), '-out', str(config/'server.csr'))
+    openssl('x509', '-req', '-in', str(config/'server.csr'), '-CA', str(trust/'root.pem'),
+            '-CAkey', str(config/'root.key'), '-CAcreateserial', '-days', '2',
+            '-extfile', str(extensions), '-out', str(stream/'cert.pem'))
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
@@ -53,9 +83,8 @@ def main():
                    KOBO_SIM_PROFILE='clara-bw-391', KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_FIXTURE='hacker-news-front-page', KOBO_SIM_SEED='0')
         config = private/'config'
-        env.update(KOBO_STREAM_CONFIG_DIR=str(config), KOBO_SIM_TRUST_DIR=str(config/'trust'))
-        subprocess.run([str(cli), 'stream', 'init', '--host', '127.0.0.1'], cwd=ROOT,
-                       env=env, check=True, capture_output=True, timeout=60)
+        env.update(KOBO_SIM_TRUST_DIR=str(config/'trust'))
+        certificates(config)
 
         def item(number):
             """One item, in the shape the site's own API answers with."""
@@ -226,7 +255,18 @@ def main():
                 drive('wait-for Top', 'tap Saved', 'wait-idle')
                 offline = capture('08-saved-offline')
                 assert 'A quieter way' in words(offline), words(offline)
-                drive('tap A quieter way', 'wait-idle', 'tap-id read-article')
+                # Save kept the article itself, so the list says it is on the
+                # reader and how much room the saved articles take.
+                assert 'Ready offline: 1 article' in words(offline), words(offline)
+                assert 'Offline \u00b7' in words(offline), words(offline)
+                # The discussion is not kept, only the article: the reason is
+                # a banner carrying Join Wi-Fi, and the saved article is said
+                # to open from the book at the top.
+                drive('tap A quieter way', 'wait-for Join Wi-Fi')
+                discussion = words(capture('08b-discussion-offline'))
+                assert 'The article is saved on this reader' in discussion, discussion
+                checks.append('a discussion that cannot be fetched says why with Join Wi-Fi on the message')
+                drive('tap-id read-article')
                 kept = capture('09-article-offline')
                 assert 'rebuilt over a winter' in words(kept), words(kept)
                 assert len(requests) == before, requests[before:]

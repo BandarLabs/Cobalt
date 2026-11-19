@@ -1,0 +1,70 @@
+# sweep: articles
+# Three web articles clipped from saved pages sit in the card's Articles
+# folder beside one book. They get a shelf of their own, a list with each
+# one's site and when it arrived, and the Library shelf keeps to the books.
+wait-for 3 unread
+expect Library
+expect 1 book
+clean
+shot books-articles-home
+tap Articles
+wait-for The Harbour Gazette
+expect Longform Monthly
+expect Notes from the Slipway
+expect Sync
+expect-missing A Walk by the River
+clean
+shot books-articles-shelf
+# An article opens in the shared reader like any book, and Back returns to
+# the shelf it was opened from.
+tap Harbour wall to be rebuilt after winter storms
+wait-for Saved from
+clean
+shot books-article-open
+tap-id 4294967295
+wait-for Sync
+expect Harbour wall to be rebuilt after winter storms
+# Archive, from the row's menu, puts an article away under Archived, and
+# Move back to Articles brings it back. Rows are named by their place: the
+# last page clipped is the newest and the first row.
+tap-id article-menu-0
+wait-for Archive
+clean
+shot books-article-menu
+tap Archive
+wait-for Archived
+expect-missing The last lighthouse keepers
+tap Archived
+wait-for The last lighthouse keepers
+expect Archived articles
+clean
+shot books-articles-archived
+tap-id article-menu-0
+wait-for Move back to Articles
+tap Move back to Articles
+wait-for No archived articles
+tap-id 4294967295
+wait-for Sync
+expect The last lighthouse keepers
+expect-missing Archived
+# Delete asks first. Keep article leaves it on the shelf; Delete article
+# takes it off the reader.
+tap-id article-menu-2
+wait-for Delete
+tap Delete
+wait-for Delete this article?
+clean
+shot books-article-delete
+tap Keep article
+wait-for Measuring tide heights with a pressure sensor
+tap-id article-menu-2
+wait-for Delete
+tap Delete
+wait-for Delete this article?
+tap Delete article
+wait-for Sync
+wait-idle
+expect-missing Measuring tide heights with a pressure sensor
+expect Harbour wall to be rebuilt after winter storms
+clean
+shot books-articles-after-delete

@@ -12,6 +12,10 @@ description = "Declarative E Ink UI, layout, and rendering primitives for Kobo a
 workspace = true
 
 [dependencies]
+# Draws the code node. Pure Rust with no dependencies of its own, and reached
+# only from the renderer, so an application that never draws a screen itself
+# links none of it.
+qrcodegen = "1.8.0"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
 

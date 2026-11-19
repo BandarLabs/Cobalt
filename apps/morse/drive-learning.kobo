@@ -1,0 +1,9 @@
+# The Learning switch's summary must say what Learning does now: the code
+# is drawn under the letter, and the bar counts letters either way.
+wait 800
+expect The bar counts letters only.
+tap Learning
+wait 300
+clean
+shot writing-learning
+expect-missing The bar names each letter's code.

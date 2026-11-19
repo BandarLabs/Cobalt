@@ -1,20 +1,24 @@
 //! Parser is an offline, touch-first Z-machine interactive-fiction player.
 
+mod story;
 mod zvm;
 
 use kobo_sdk::keyboard::{Keyboard, Pressed};
 use kobo_sdk::{
-    action_id, ActionId, Context, Glyph, KoboApp, ParagraphPresentation, Screen, ScreenBuilder,
-    ShelfDownload, ShelfProgress, ShelfUpload, StoreResult, TileShape,
+    action_id, ActionId, BannerLevel, Chrome, Context, DisplayMetrics, Glyph, KoboApp,
+    LayoutIssueKind, ParagraphPresentation, Screen, ScreenBuilder, ShelfDownload, ShelfProgress,
+    ShelfUpload, StoreResult, TileShape,
 };
 use std::fmt::Write as _;
 use std::process::ExitCode;
 use zvm::{Machine, RunState, StoryInfo};
 
 const STORY_PREFIX: &str = "story-";
+/// Shelf name of the bundled tutorial story.
+const TUTORIAL_BLOB: &str = "story-first-light.z3";
 const SAVE_PREFIX: &str = "save-";
-const TRANSCRIPT_PAGE_BYTES: usize = 2_400;
-
+/// What a save that could not be written says, until one is.
+const SAVE_FAILED: &str = "The save could not be written. Check free space.";
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Library,
@@ -31,16 +35,39 @@ enum SlotAction {
 struct Parser {
     view: View,
     stories: Vec<(String, u32)>,
+    library_page: usize,
+    saves: Vec<String>,
+    slots_page: usize,
     machine: Option<Machine>,
     open_blob: Option<String>,
     loading: Option<ShelfDownload>,
     saving: Option<ShelfUpload>,
+    seeding: Option<ShelfUpload>,
+    tutorial_seeded: bool,
     pending_restore: Option<ShelfDownload>,
     transcript: String,
+    pages: Vec<(usize, usize)>,
+    paginated_len: usize,
+    pages_metrics: Option<DisplayMetrics>,
+    pages_keyboard_open: Option<bool>,
+    /// The banner the pages were measured under. A banner takes room from
+    /// the story, so pages measured without one overflowed once it showed.
+    pages_banner: Option<String>,
     page: usize,
     keyboard: Keyboard,
-    message: Option<String>,
+    /// What the last thing done came to, with how it is drawn: a save that
+    /// finished is a success, a save that could not be written is an error,
+    /// and an empty slot is only news. Drawn at one level, a good save and a
+    /// failed one looked the same on the slots screen.
+    message: Option<(BannerLevel, String)>,
     slot_action: SlotAction,
+    /// The slot being written, so the slot reads as saved, and the banner
+    /// says so, once the write has landed rather than before.
+    saving_slot: Option<u8>,
+    keyboard_open: bool,
+    /// A verb tapped without its object, waiting for the reader to choose
+    /// what to read, open or take.
+    asking: Option<&'static str>,
 }
 
 impl Default for Parser {
@@ -48,84 +75,188 @@ impl Default for Parser {
         Self {
             view: View::Library,
             stories: Vec::new(),
+            library_page: 0,
+            saves: Vec::new(),
+            slots_page: 0,
             machine: None,
             open_blob: None,
             loading: None,
             saving: None,
+            seeding: None,
+            tutorial_seeded: false,
             pending_restore: None,
             transcript: String::new(),
+            pages: Vec::new(),
+            paginated_len: 0,
+            pages_metrics: None,
+            pages_keyboard_open: None,
+            pages_banner: None,
             page: 0,
             keyboard: Keyboard::new(),
             message: None,
             slot_action: SlotAction::Save,
+            saving_slot: None,
+            keyboard_open: false,
+            asking: None,
         }
     }
 }
 
 impl Parser {
-    fn show(&self, context: &mut Context) {
+    fn advance_seeding(&mut self, context: &mut Context, result: &StoreResult) {
+        let Some(seeding) = &mut self.seeding else {
+            return;
+        };
+        match seeding.advance(context, result) {
+            ShelfProgress::Done => {
+                self.seeding = None;
+                context.shelf().list();
+            }
+            ShelfProgress::Failed(_) => {
+                self.seeding = None;
+                self.show(context);
+            }
+            ShelfProgress::Moving { .. } | ShelfProgress::Elsewhere => {}
+        }
+    }
+
+    /// A reader who has never pushed a story still gets one: the bundled
+    /// tutorial seeds itself onto an empty shelf, once, so a first run opens
+    /// on a library with something in it.
+    fn maybe_seed_tutorial(&mut self, context: &mut Context) {
+        if self.stories.is_empty() && !self.tutorial_seeded && self.seeding.is_none() {
+            self.tutorial_seeded = true;
+            let mut seeding = ShelfUpload::new(TUTORIAL_BLOB, crate::story::build_first_light());
+            seeding.start(context);
+            self.seeding = Some(seeding);
+        }
+    }
+
+    fn show(&mut self, context: &mut Context) {
+        self.repaginate(context);
         context.set_screen(match self.view {
-            View::Library => self.library_screen(),
+            View::Library => self.library_screen(context),
             View::Play => self.play_screen(),
-            View::Slots => self.slots_screen(),
+            View::Slots => self.slots_screen_for(context),
         });
     }
 
-    fn library_screen(&self) -> Screen {
+    fn library_prefix(&self) -> ScreenBuilder {
         let mut builder = ScreenBuilder::new("parser")
             .top_bar("Parser")
-            .heading("Interactive fiction")
-            .text(
-                "Push a .z3, .z5 or .z8 story with `kobo parser push FILE --device IP`. \
-                 Stories play completely offline.",
-            );
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+            .heading("Interactive fiction");
+        if let Some((level, message)) = &self.message {
+            builder = builder.banner(*level, message);
         }
-        let stories = self
-            .stories
-            .iter()
-            .enumerate()
-            .map(|(index, (name, size))| {
+        builder
+    }
+
+    fn library_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        context.paginate_tiles_under(
+            self.stories.len(),
+            TileShape::Portrait,
+            true,
+            &self.library_prefix().build(),
+        )
+    }
+
+    /// An empty shelf, said the way Vault and Music Stand say theirs: what is
+    /// missing, the command to type on the computer under its own heading,
+    /// and the check directly under the command, so the owner who has just
+    /// typed it finds the next step beside it rather than at the foot.
+    ///
+    /// Held sideways at the larger sizes, a message over it pushed Check for
+    /// stories off the panel, so the mark gives way first and then the
+    /// sentence; the title, the command and the check always stay.
+    fn empty_library(&self, context: &Context) -> Screen {
+        let screen = |glyph: Option<Glyph>, body: &str| {
+            let mut builder = ScreenBuilder::new("parser").top_bar("Parser");
+            if let Some((level, message)) = &self.message {
+                builder = builder.banner(*level, message);
+            }
+            builder
+                .splash(glyph, "No stories yet", body)
+                .section("On your computer")
+                .command("kobo parser push story.z5")
+                .button("refresh", "Check for stories")
+                .build()
+        };
+        let body = "Send a .z3, .z5 or .z8 story from a computer. Stories play without Wi-Fi.";
+        let metrics = context.metrics();
+        [(Some(Glyph::Book), body), (None, body), (None, "")]
+            .into_iter()
+            .map(|(glyph, body)| screen(glyph, body))
+            .find(|candidate| {
+                !candidate
+                    .diagnostics(&metrics, &Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| screen(None, ""))
+    }
+
+    fn library_screen(&self, context: &Context) -> Screen {
+        if self.stories.is_empty() {
+            return self.empty_library(context);
+        }
+        let builder = self.library_prefix();
+        let pages = self.library_pages(context);
+        let page = self.library_page.min(pages.len().saturating_sub(1));
+        let mut builder = builder.tile_grid(
+            TileShape::Portrait,
+            // A story's name and nothing else: its size in kilobytes said
+            // nothing about the story to anybody choosing one to play.
+            pages[page].iter().map(|&index| {
+                let (name, _) = &self.stories[index];
                 (
                     format!("story-{index}"),
                     display_name(name),
                     Glyph::Book,
-                    move |tile: kobo_sdk::Tile| tile.with_subtitle(format_size(*size)),
+                    |tile: kobo_sdk::Tile| tile,
                 )
-            })
-            .collect::<Vec<_>>();
-        if stories.is_empty() {
-            builder
-                .empty_state("No stories have been transferred to this reader.")
-                .bottom_action("refresh", "Refresh library")
-                .build()
-        } else {
-            builder
-                .tile_grid(TileShape::Portrait, stories)
-                .bottom_action("refresh", "Refresh library")
-                .build()
+            }),
+        );
+        if pages.len() > 1 {
+            builder = builder
+                .page_turns("library-previous", "library-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
         }
+        builder.build()
     }
 
     fn play_screen(&self) -> Screen {
-        let pages = transcript_pages(&self.transcript);
-        let page = self.page.min(pages.len().saturating_sub(1));
-        let text = pages.get(page).copied().unwrap_or("");
-        let links = word_links(text);
+        if self.transcript.is_empty() {
+            return self.play_screen_for("Starting story…", 1, 1);
+        }
+        let index = self.page.min(self.pages.len().saturating_sub(1));
+        let text = self
+            .pages
+            .get(index)
+            .and_then(|&(start, end)| self.transcript.get(start..end))
+            .unwrap_or("");
+        self.play_screen_for(text, index + 1, self.pages.len().max(1))
+    }
+
+    fn play_screen_for(&self, text: &str, page: usize, pages: usize) -> Screen {
+        let links = self.tappable(text);
         let status = match self.machine.as_ref() {
             Some(machine) => {
                 if machine.status().is_empty() {
-                    machine.info().title.clone()
+                    self.open_blob
+                        .as_deref()
+                        .map_or_else(|| machine.info().title.clone(), display_name)
                 } else {
                     machine.status().to_owned()
                 }
             }
             None => "Parser".to_owned(),
         };
+        let commands = palette(self.machine.as_ref());
         let mut builder = ScreenBuilder::new("parser-play")
             .top_bar(status)
-            .top_bar_glyph("library", "Library", Glyph::Book)
+            .owns_back(true)
             .reading(true)
             .rich_text_linking(
                 text,
@@ -136,56 +267,253 @@ impl Parser {
                     .map(|(name, start, end, _)| (name, *start, *end)),
             )
             .divider()
-            .typed(&self.keyboard, "Type a command")
-            .keyboard(&self.keyboard, "Run")
-            .grid(
-                4,
-                false,
-                [
-                    ("look", "LOOK"),
-                    ("inventory", "INVENTORY"),
-                    ("examine", "EXAMINE"),
-                    ("take", "TAKE"),
-                    ("north", "N"),
-                    ("south", "S"),
-                    ("east", "E"),
-                    ("west", "W"),
-                    ("undo", "UNDO"),
-                    ("save", "SAVE"),
-                    ("restore", "RESTORE"),
-                    ("again", "AGAIN"),
-                ],
-            )
-            .page_turns("page-back", "page-next")
-            .page_position(
-                u16::try_from(page + 1).unwrap_or(u16::MAX),
-                u16::try_from(pages.len()).unwrap_or(u16::MAX),
-            );
-        if let Some(message) = &self.message {
-            builder = builder.banner(kobo_sdk::BannerLevel::Attention, message);
+            .typed(&self.keyboard, "Type a command");
+        // One input surface at a time: the palette by default, the keyboard
+        // behind a top-bar toggle, so the screen fits every panel and pose.
+        builder = builder.top_bar_action(
+            "keyboard-toggle",
+            if self.keyboard_open {
+                "Close keys"
+            } else {
+                "Keyboard"
+            },
+        );
+        // The verbs and the ways out of a room are two short runs of small
+        // labels in ordinary case, under the story rather than a wall of
+        // sixteen grey keys in capitals louder than the story itself.
+        builder = if self.keyboard_open {
+            builder.keyboard(&self.keyboard, "Run")
+        } else if let Some(verb) = self.asking {
+            let mut choices: Vec<(String, String, bool)> = self
+                .objects(text)
+                .into_iter()
+                .enumerate()
+                .map(|(index, thing)| (format!("object-{index}"), sentence_case(&thing), false))
+                .collect();
+            choices.push(("object-type".to_owned(), "Type it".to_owned(), false));
+            choices.push(("object-cancel".to_owned(), "Cancel".to_owned(), false));
+            builder.secondary(verb_question(verb)).chips(choices)
+        } else {
+            let (ways, verbs): (Vec<_>, Vec<_>) = commands
+                .iter()
+                .partition(|(name, _)| DIRECTIONS.contains(name));
+            let run = |commands: Vec<&(&str, &str)>| {
+                commands
+                    .into_iter()
+                    .map(|&(name, label)| (name.to_owned(), label.to_owned(), false))
+                    .collect::<Vec<_>>()
+            };
+            let builder = builder.chips(run(verbs));
+            // The ways out are one row of keys, a compass's worth, rather
+            // than labels as narrow as "Up", which no finger could be sure
+            // of at the smallest text.
+            if ways.is_empty() {
+                builder
+            } else {
+                builder.grid(
+                    u8::try_from(ways.len()).unwrap_or(6),
+                    false,
+                    ways.iter()
+                        .map(|&&(name, label)| (name.to_owned(), label.to_owned())),
+                )
+            }
+        };
+        builder = builder.page_turns("page-back", "page-next").page_position(
+            u16::try_from(page).unwrap_or(u16::MAX),
+            u16::try_from(pages).unwrap_or(u16::MAX),
+        );
+        if let Some((level, message)) = &self.message {
+            builder = builder.banner(*level, message);
         }
         builder.build()
     }
 
-    fn slots_screen(&self) -> Screen {
-        let (title, instruction) = match self.slot_action {
-            SlotAction::Save => ("Save game", "Tap to save the current turn"),
-            SlotAction::Restore => ("Restore game", "Tap to restore this slot"),
+    /// The things on the page a verb could be applied to: words the story's
+    /// own dictionary knows, without the verbs, directions and small words
+    /// that are never what an owner means. At most eight, in page order.
+    fn objects(&self, text: &str) -> Vec<String> {
+        let Some(machine) = self.machine.as_ref() else {
+            return Vec::new();
         };
-        let rows = (1..=10).map(|slot| {
-            (
-                format!("slot-{slot}"),
-                format!("Slot {slot}"),
-                instruction,
-                Glyph::Bookmark,
-            )
+        // Words the story knows that stand next to each other on the page,
+        // "wooden crate", are one thing and are offered as one: offered one
+        // word at a time, Open what? asked whether to open the wooden or
+        // the crate.
+        let mut found: Vec<String> = Vec::new();
+        let mut previous_end = None;
+        // Every word on the page, not only the ones that carry a link: a
+        // thing named low on a long page is as much on it as one at the top.
+        for (start, end) in words(text) {
+            let word = text[start..end]
+                .trim_matches(|character: char| !character.is_alphanumeric())
+                .to_lowercase();
+            if !worth_a_tap(machine, &word) || CHIPS.iter().any(|(probe, ..)| *probe == word) {
+                previous_end = None;
+                continue;
+            }
+            let joined = previous_end
+                .is_some_and(|before: usize| text.get(before..start).is_some_and(|gap| gap == " "));
+            previous_end = Some(end);
+            match found.last_mut() {
+                Some(last) if joined => {
+                    last.push(' ');
+                    last.push_str(&word);
+                }
+                _ => found.push(word),
+            }
+            found.dedup();
+            if found.len() == 8 {
+                break;
+            }
+        }
+        found
+    }
+
+    /// The words on the page a tap can put into the command: words the
+    /// story knows, past the small ones, up to the runtime's limit of links
+    /// in one paragraph. Linking every word spent that limit on the first
+    /// line or two, and nothing further down the page could be tapped.
+    fn tappable(&self, text: &str) -> Vec<(String, usize, usize, String)> {
+        words(text)
+            .into_iter()
+            .filter(|&(start, end)| {
+                self.machine.as_ref().is_none_or(|machine| {
+                    let word = text[start..end]
+                        .trim_matches(|character: char| !character.is_alphanumeric())
+                        .to_lowercase();
+                    worth_a_tap(machine, &word)
+                })
+            })
+            .take(MOST_LINKS)
+            .enumerate()
+            .map(|(index, (start, end))| {
+                (
+                    format!("noun-{index}"),
+                    start,
+                    end,
+                    text[start..end].to_owned(),
+                )
+            })
+            .collect()
+    }
+
+    fn page_text(&self) -> &str {
+        let page = self.page.min(self.pages.len().saturating_sub(1));
+        self.pages
+            .get(page)
+            .and_then(|&(start, end)| self.transcript.get(start..end))
+            .unwrap_or("")
+    }
+
+    fn slot_rows(&self) -> Vec<(String, String, String, Glyph)> {
+        // Restoring lists only the slots that hold a game: five empty
+        // slots offered to restore from were five taps that could only say
+        // a slot was empty.
+        let slot_rows = (1..=10).filter_map(|slot| {
+            let occupied = self.machine.as_ref().is_some_and(|machine| {
+                self.saves
+                    .contains(&save_name(machine.info(), &slot.to_string()))
+            });
+            (occupied || self.slot_action == SlotAction::Save).then(|| {
+                (
+                    format!("slot-{slot}"),
+                    format!("Slot {slot}"),
+                    slot_subtitle(self.slot_action, occupied),
+                    Glyph::Bookmark,
+                )
+            })
         });
-        ScreenBuilder::new("parser-slots")
+        // The story's own checkpoint (its "save" command) is restorable from
+        // here too, so a story-initiated restore can find it. It is paged
+        // with the slots rather than added beside them: an extra row beyond
+        // the page budget crowds the guidance line off the largest text
+        // scale, and the renderer refuses the screen.
+        let checkpoint = if self.slot_action == SlotAction::Restore {
+            self.machine
+                .as_ref()
+                .map(|machine| save_name(machine.info(), "game"))
+                .filter(|name| self.saves.contains(name))
+        } else {
+            None
+        };
+        checkpoint
+            .into_iter()
+            .map(|_| {
+                (
+                    "story-checkpoint".to_owned(),
+                    "Story checkpoint".to_owned(),
+                    "Saved by the story itself".to_owned(),
+                    Glyph::Bookmark,
+                )
+            })
+            .chain(slot_rows)
+            .collect()
+    }
+
+    fn slots_prefix(&self) -> ScreenBuilder {
+        let title = match self.slot_action {
+            SlotAction::Save => "Save game",
+            SlotAction::Restore => "Restore game",
+        };
+        let guidance = match self.slot_action {
+            SlotAction::Save => {
+                "Keep this position in a slot. The story also resumes where you left off."
+            }
+            SlotAction::Restore => {
+                "Return to a position you kept. The newest play waits where it is."
+            }
+        };
+        let mut builder = ScreenBuilder::new("parser-slots")
             .top_bar(title)
-            .top_bar_action("play", "Back")
-            .text("Parser keeps ten Quetzal slots per story. Autosave is separate and updated after every turn.")
-            .rows(rows)
-            .build()
+            .owns_back(true)
+            .text(guidance);
+        if let Some((level, message)) = &self.message {
+            builder = builder.banner(*level, message);
+        }
+        builder
+    }
+
+    fn slot_pages(&self, context: &Context) -> Vec<Vec<usize>> {
+        let rows = self.slot_rows();
+        let labels: Vec<_> = rows
+            .iter()
+            .map(|row| (row.1.as_str(), row.2.as_str()))
+            .collect();
+        context.paginate_rows_under(
+            &labels,
+            false,
+            kobo_sdk::Position::AtTheFoot,
+            &self.slots_prefix().build(),
+        )
+    }
+
+    #[cfg(test)]
+    fn slots_screen(&self) -> Screen {
+        self.slots_screen_for(&Context::default())
+    }
+
+    fn slots_screen_for(&self, context: &Context) -> Screen {
+        let rows = self.slot_rows();
+        if rows.is_empty() {
+            return self
+                .slots_prefix()
+                .secondary("No saved games yet. Tap Save while you play to keep one.")
+                .build();
+        }
+        let pages = self.slot_pages(context);
+        let page = self.slots_page.min(pages.len().saturating_sub(1));
+        let mut builder = self
+            .slots_prefix()
+            .rows(pages[page].iter().map(|&index| rows[index].clone()));
+        if pages.len() > 1 {
+            builder = builder
+                .page_turns("slots-page-back", "slots-page-next")
+                .page_position(
+                    u16::try_from(page + 1).unwrap_or(u16::MAX),
+                    u16::try_from(pages.len()).unwrap_or(u16::MAX),
+                );
+        }
+        builder.build()
     }
 
     fn open_story(&mut self, context: &mut Context, index: usize) {
@@ -193,6 +521,14 @@ impl Parser {
             return;
         };
         self.message = None;
+        if self.open_blob.as_ref() == Some(name) && self.machine.is_some() {
+            // A newer selection also cancels any other story being loaded.
+            self.loading = None;
+            // The library is a detour, not a restart of the open story.
+            self.view = View::Play;
+            self.show(context);
+            return;
+        }
         let mut download = ShelfDownload::new(name).at_most(16 * 1024 * 1024);
         download.start(context);
         self.loading = Some(download);
@@ -205,6 +541,8 @@ impl Parser {
                 self.machine = Some(machine);
                 self.open_blob = Some(blob);
                 self.transcript.clear();
+                self.pages.clear();
+                self.paginated_len = 0;
                 self.page = 0;
                 self.view = View::Play;
                 let mut restore = ShelfDownload::new(save).at_most(2 * 1024 * 1024);
@@ -213,7 +551,7 @@ impl Parser {
                 self.show(context);
             }
             Err(error) => {
-                self.message = Some(error.to_string());
+                self.message = Some((BannerLevel::Error, error.to_string()));
                 self.view = View::Library;
                 self.show(context);
             }
@@ -230,11 +568,14 @@ impl Parser {
                 if state == RunState::Halted {
                     self.transcript.push_str("\n\n[The story has ended.]\n");
                 }
-                self.page = transcript_pages(&self.transcript).len().saturating_sub(1);
+                self.repaginate(context);
+                self.page = self.last_content_page();
+                self.finish_file_request(context, &state);
             }
             Err(error) => {
                 self.transcript.push_str(&machine.take_output());
-                self.message = Some(error.to_string());
+                self.message = Some((BannerLevel::Error, error.to_string()));
+                self.repaginate(context);
             }
         }
         self.show(context);
@@ -247,14 +588,33 @@ impl Parser {
         let Some(machine) = &mut self.machine else {
             return;
         };
+        // A new turn makes the last turn's news old. A failed save stays
+        // until a save goes through, since the next one may fail too.
+        if self
+            .message
+            .as_ref()
+            .is_some_and(|(_, message)| message != SAVE_FAILED)
+        {
+            self.message = None;
+        }
         let _ = write!(self.transcript, "\n> {}\n", command.trim());
         match machine.input(command.trim()) {
-            Ok(_) => {
+            Ok(state) => {
                 self.transcript.push_str(&machine.take_output());
-                self.page = transcript_pages(&self.transcript).len().saturating_sub(1);
-                self.autosave(context);
+                if state == RunState::Halted {
+                    self.transcript.push_str("\n\n[The story has ended.]\n");
+                }
+                self.repaginate(context);
+                self.page = self.last_content_page();
+                self.finish_file_request(context, &state);
+                if state != RunState::Halted {
+                    self.autosave(context);
+                }
             }
-            Err(error) => self.message = Some(error.to_string()),
+            Err(error) => {
+                self.message = Some((BannerLevel::Error, error.to_string()));
+                self.repaginate(context);
+            }
         }
         self.show(context);
     }
@@ -266,6 +626,56 @@ impl Parser {
         self.begin_save(context, save_name(machine.info(), "auto"));
     }
 
+    /// The story asked to save or restore a game itself (0OP 5/6). Save:
+    /// persist the suspended state as the "game" checkpoint, then let the
+    /// story continue. Restore: no file is picked here - the reader uses
+    /// the slot picker - so the story resumes with the spec's failure
+    /// result instead of hanging.
+    fn finish_file_request(&mut self, context: &mut Context, state: &RunState) {
+        if *state == RunState::NeedSave {
+            let name = self
+                .machine
+                .as_ref()
+                .map(|machine| save_name(machine.info(), "game"));
+            if let Some(name) = name {
+                // Optimistic, like the menu's own "Saved in slot" message:
+                // the restore picker must see the checkpoint immediately.
+                if !self.saves.contains(&name) {
+                    self.saves.push(name.clone());
+                }
+                self.begin_save(context, name);
+            }
+            if let Some(machine) = &mut self.machine {
+                match machine.complete_save(true) {
+                    Ok(state) => {
+                        self.transcript.push_str(&machine.take_output());
+                        self.message = Some((
+                            BannerLevel::Success,
+                            "Saved the story checkpoint.".to_owned(),
+                        ));
+                        self.repaginate(context);
+                        self.page = self.last_content_page();
+                        if !matches!(state, RunState::Halted | RunState::NeedInput { .. }) {
+                            self.finish_file_request(context, &state);
+                        }
+                    }
+                    Err(error) => self.message = Some((BannerLevel::Error, error.to_string())),
+                }
+            }
+        } else if *state == RunState::NeedRestore {
+            // Route the story's restore to the slot picker. Loading a slot
+            // resolves the suspension on restore_quetzal; an empty slot or
+            // backing out resumes the story with the spec's failure result.
+            self.slot_action = SlotAction::Restore;
+            self.view = View::Slots;
+            self.slots_page = 0;
+            self.message = Some((
+                BannerLevel::Info,
+                "The story asked to restore a game. Pick a slot.".to_owned(),
+            ));
+        }
+    }
+
     fn begin_save(&mut self, context: &mut Context, name: String) {
         let Some(machine) = &self.machine else {
             return;
@@ -275,15 +685,37 @@ impl Parser {
         self.saving = Some(upload);
     }
 
+    fn last_content_page(&self) -> usize {
+        let mut page = self.pages.len().saturating_sub(1);
+        while page > 0 {
+            let (start, end) = self.pages[page];
+            if self.transcript.get(start..end).map_or("", str::trim) != ">" {
+                break;
+            }
+            page -= 1;
+        }
+        page
+    }
+
+    fn note_restored(&mut self) {
+        if !self.transcript.is_empty() {
+            self.transcript.push_str("\n\n");
+        }
+        self.transcript.push_str("[Restored.]");
+    }
+
     fn noun(&mut self, index: usize) {
-        let pages = transcript_pages(&self.transcript);
-        let page = self.page.min(pages.len().saturating_sub(1));
-        let links = pages
+        let page = self.page.min(self.pages.len().saturating_sub(1));
+        let text = self
+            .pages
             .get(page)
-            .map_or_else(Vec::new, |text| word_links(text));
+            .and_then(|&(start, end)| self.transcript.get(start..end))
+            .unwrap_or("");
+        let links = self.tappable(text);
         let Some((_, _, _, word)) = links.get(index).cloned() else {
             return;
         };
+        self.keyboard_open = true;
         let mut input = self.keyboard.text().to_owned();
         if !input.is_empty() && !input.ends_with(' ') {
             input.push(' ');
@@ -293,27 +725,202 @@ impl Parser {
     }
 }
 
+impl Parser {
+    fn play_page_fits(&self, text: &str, metrics: DisplayMetrics) -> bool {
+        let diagnostics = self
+            .play_screen_for(text, 1, 2)
+            .diagnostics(&metrics, &Chrome::measuring(true));
+        !diagnostics.issues.iter().any(|issue| {
+            matches!(
+                issue.kind,
+                LayoutIssueKind::ContentOverflow { .. }
+                    | LayoutIssueKind::Clipped
+                    | LayoutIssueKind::TextOverflow
+                    | LayoutIssueKind::TouchTargetTooSmall { .. }
+            )
+        })
+    }
+
+    fn repaginate(&mut self, context: &Context) {
+        self.repaginate_for_metrics(context.metrics());
+    }
+
+    fn repaginate_for_metrics(&mut self, metrics: DisplayMetrics) {
+        let banner = self.message.as_ref().map(|(_, message)| message.clone());
+        let mut anchor = None;
+        if self.pages_metrics != Some(metrics)
+            || self.pages_keyboard_open != Some(self.keyboard_open)
+            || self.pages_banner != banner
+            || self.paginated_len > self.transcript.len()
+            || !self.transcript.is_char_boundary(self.paginated_len)
+        {
+            // The reader keeps their place across the new page breaks: at
+            // the newest reply if they were there, otherwise on the page
+            // holding the text they were reading. Keeping the page number
+            // instead opened the keys over an older page.
+            if !self.pages.is_empty() && self.paginated_len <= self.transcript.len() {
+                anchor = Some(if self.page >= self.last_content_page() {
+                    None
+                } else {
+                    self.pages.get(self.page).map(|&(start, _)| start)
+                });
+            }
+            self.pages.clear();
+            self.paginated_len = 0;
+        }
+        self.pages_metrics = Some(metrics);
+        self.pages_keyboard_open = Some(self.keyboard_open);
+        self.pages_banner = banner;
+        self.extend_pages(metrics);
+        match anchor {
+            Some(None) => self.page = self.last_content_page(),
+            Some(Some(offset)) => {
+                self.page = self
+                    .pages
+                    .iter()
+                    .rposition(|&(start, _)| start <= offset)
+                    .unwrap_or(0);
+            }
+            None => {}
+        }
+    }
+
+    /// Measures pages for the text added since the last measure.
+    fn extend_pages(&mut self, metrics: DisplayMetrics) {
+        if self.paginated_len == self.transcript.len() {
+            self.page = self.page.min(self.pages.len().saturating_sub(1));
+            return;
+        }
+        let mut start = self.pages.pop().map_or(0, |(page_start, _)| page_start);
+        let text = &self.transcript;
+        let boundaries: Vec<usize> = text
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(text.len()))
+            .collect();
+        while start < text.len() {
+            let start_index = boundaries
+                .binary_search(&start)
+                .expect("page start is a char boundary");
+            let mut low = start_index + 1;
+            let mut high = boundaries.len() - 1;
+            let mut best = boundaries[low.min(high)];
+            while low <= high {
+                let middle = low + (high - low) / 2;
+                let end = boundaries[middle];
+                if self.play_page_fits(&text[start..end], metrics) {
+                    best = end;
+                    low = middle + 1;
+                } else if middle == 0 {
+                    break;
+                } else {
+                    high = middle - 1;
+                }
+            }
+            if best < text.len() {
+                let segment = &text[start..best];
+                let half = segment.len() / 2;
+                let break_at = segment
+                    .rfind("\n\n")
+                    .filter(|offset| *offset >= half)
+                    .map(|offset| offset + 2)
+                    .or_else(|| {
+                        segment
+                            .rfind('\n')
+                            .filter(|offset| *offset >= half)
+                            .map(|offset| offset + 1)
+                    })
+                    .or_else(|| {
+                        // Never inside a word: a page that ends "lan" and
+                        // a next that starts "tern" reads as two words.
+                        segment
+                            .char_indices()
+                            .rev()
+                            .find(|&(offset, character)| offset > 0 && character.is_whitespace())
+                            .map(|(offset, character)| offset + character.len_utf8())
+                    });
+                if let Some(offset) = break_at {
+                    best = start + offset;
+                }
+            }
+            if best <= start {
+                best = text.len();
+            }
+            self.pages.push((start, best));
+            start = best;
+        }
+        self.paginated_len = self.transcript.len();
+        self.page = self.page.min(self.pages.len().saturating_sub(1));
+    }
+}
+
 impl KoboApp for Parser {
     fn on_start(&mut self, context: &mut Context) {
         context.shelf().list();
         self.show(context);
     }
 
+    /// A story pushed while the reader slept is on the shelf when it wakes,
+    /// so the library is read again instead of waiting for a tap.
+    fn on_resume(&mut self, context: &mut Context) {
+        context.shelf().list();
+    }
+
+    fn on_foreground(&mut self, context: &mut Context) {
+        context.shelf().list();
+    }
+
     #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
-        if action == action_id("library") {
+        if action == ActionId::BACK && self.view == View::Play && self.keyboard_open {
+            self.keyboard_open = false;
+            self.show(context);
+            return;
+        }
+        if action == ActionId::BACK && self.view == View::Play && self.asking.is_some() {
+            self.asking = None;
+            self.show(context);
+            return;
+        }
+        if action == action_id("library") || (action == ActionId::BACK && self.view == View::Play) {
             self.view = View::Library;
+            self.message = None;
             context.shelf().list();
             self.show(context);
             return;
         }
-        if action == action_id("play") {
+        if action == action_id("play") || (action == ActionId::BACK && self.view == View::Slots) {
+            self.message = None;
+            if self.view == View::Slots {
+                if let Some(machine) = &mut self.machine {
+                    if machine.awaiting_restore() {
+                        if let Ok(state) = machine.complete_restore(false) {
+                            self.transcript.push_str(&machine.take_output());
+                            self.repaginate(context);
+                            self.page = self.last_content_page();
+                            self.finish_file_request(context, &state);
+                        }
+                    }
+                }
+            }
             self.view = View::Play;
             self.show(context);
             return;
         }
         if action == action_id("refresh") {
             context.shelf().list();
+            return;
+        }
+        if self.view == View::Slots
+            && (action == action_id("slots-page-back") || action == action_id("slots-page-next"))
+        {
+            self.on_page_turn(context, action == action_id("slots-page-next"));
+            return;
+        }
+        if self.view == View::Library
+            && (action == action_id("library-previous") || action == action_id("library-next"))
+        {
+            self.on_page_turn(context, action == action_id("library-next"));
             return;
         }
         for index in 0..self.stories.len() {
@@ -323,6 +930,18 @@ impl KoboApp for Parser {
             }
         }
         if self.view == View::Slots {
+            if action == action_id("story-checkpoint") {
+                if let Some(machine) = &self.machine {
+                    let name = save_name(machine.info(), "game");
+                    let mut restore = ShelfDownload::new(name).at_most(2 * 1024 * 1024);
+                    restore.start(context);
+                    self.pending_restore = Some(restore);
+                    self.message = None;
+                    self.view = View::Play;
+                    self.show(context);
+                }
+                return;
+            }
             for slot in 1..=10 {
                 if action == action_id(&format!("slot-{slot}")) {
                     if let Some(machine) = &self.machine {
@@ -330,16 +949,42 @@ impl KoboApp for Parser {
                         match self.slot_action {
                             SlotAction::Save => {
                                 self.begin_save(context, name);
-                                self.message = Some(format!("Saved in slot {slot}."));
-                            }
-                            SlotAction::Restore => {
-                                let mut restore = ShelfDownload::new(name).at_most(2 * 1024 * 1024);
-                                restore.start(context);
-                                self.pending_restore = Some(restore);
+                                self.saving_slot = Some(slot);
                                 self.message = None;
                             }
+                            SlotAction::Restore => {
+                                if self.saves.contains(&name) {
+                                    let mut restore =
+                                        ShelfDownload::new(name).at_most(2 * 1024 * 1024);
+                                    restore.start(context);
+                                    self.pending_restore = Some(restore);
+                                    self.message = None;
+                                    self.view = View::Play;
+                                } else {
+                                    self.message =
+                                        Some((BannerLevel::Info, format!("Slot {slot} is empty.")));
+                                }
+                            }
                         }
-                        self.view = View::Play;
+                        if self.slot_action == SlotAction::Restore
+                            && self.pending_restore.is_none()
+                            && self.machine.as_ref().is_some_and(Machine::awaiting_restore)
+                        {
+                            // Tapped an empty slot while the story waits on a
+                            // restore: resume it as failed and go back.
+                            if let Some(machine) = &mut self.machine {
+                                if let Ok(state) = machine.complete_restore(false) {
+                                    self.transcript.push_str(&machine.take_output());
+                                    self.repaginate(context);
+                                    self.page = self.last_content_page();
+                                    self.view = View::Play;
+                                    self.finish_file_request(context, &state);
+                                }
+                            }
+                        }
+                        if self.pending_restore.is_some() {
+                            self.view = View::Play;
+                        }
                         self.show(context);
                     }
                     return;
@@ -349,23 +994,29 @@ impl KoboApp for Parser {
         if self.view != View::Play {
             return;
         }
-        if let Some(pressed) = self.keyboard.press(action) {
-            if pressed == Pressed::Submitted {
-                let input = self.keyboard.take();
-                self.command(context, &input);
-            } else {
-                self.show(context);
-            }
+        if action == action_id("keyboard-toggle") {
+            self.keyboard_open = !self.keyboard_open;
+            self.show(context);
             return;
         }
-        let pages = transcript_pages(&self.transcript);
-        let page = self.page.min(pages.len().saturating_sub(1));
-        for (index, (name, _, _, _)) in pages
+        if self.keyboard_open {
+            if let Some(pressed) = self.keyboard.press(action) {
+                if pressed == Pressed::Submitted {
+                    let input = self.keyboard.take();
+                    self.command(context, &input);
+                } else {
+                    self.show(context);
+                }
+                return;
+            }
+        }
+        let page = self.page.min(self.pages.len().saturating_sub(1));
+        let text = self
+            .pages
             .get(page)
-            .map_or_else(Vec::new, |text| word_links(text))
-            .iter()
-            .enumerate()
-        {
+            .and_then(|&(start, end)| self.transcript.get(start..end))
+            .unwrap_or("");
+        for (index, (name, _, _, _)) in self.tappable(text).iter().enumerate() {
             if action == action_id(name) {
                 self.noun(index);
                 self.show(context);
@@ -378,37 +1029,56 @@ impl KoboApp for Parser {
             return;
         }
         if action == action_id("page-next") {
-            self.page = (self.page + 1).min(pages.len().saturating_sub(1));
+            self.page = (self.page + 1).min(self.pages.len().saturating_sub(1));
             self.show(context);
             return;
         }
         if action == action_id("save") {
             self.slot_action = SlotAction::Save;
+            self.slots_page = 0;
             self.view = View::Slots;
+            context.shelf().list();
             self.show(context);
             return;
         }
         if action == action_id("restore") {
             self.slot_action = SlotAction::Restore;
+            self.slots_page = 0;
             self.view = View::Slots;
+            context.shelf().list();
             self.show(context);
             return;
         }
-        for (name, command) in [
-            ("look", "look"),
-            ("inventory", "inventory"),
-            ("examine", "examine "),
-            ("take", "take "),
-            ("north", "north"),
-            ("south", "south"),
-            ("east", "east"),
-            ("west", "west"),
-            ("undo", "undo"),
-            ("again", "again"),
-        ] {
+        if let Some(verb) = self.asking {
+            let objects = self.objects(self.page_text());
+            if let Some(object) = (0..objects.len())
+                .find(|index| action == action_id(&format!("object-{index}")))
+                .map(|index| objects[index].clone())
+            {
+                self.asking = None;
+                self.command(context, &format!("{verb} {object}"));
+                return;
+            }
+            if action == action_id("object-type") {
+                self.asking = None;
+                self.keyboard = Keyboard::with_text(format!("{verb} "));
+                self.keyboard_open = true;
+                self.show(context);
+                return;
+            }
+            if action == action_id("object-cancel") {
+                self.asking = None;
+                self.show(context);
+                return;
+            }
+        }
+        for &(_, name, _, command) in CHIPS {
             if action == action_id(name) {
-                if command.ends_with(' ') {
-                    self.keyboard = Keyboard::with_text(command);
+                if let Some(verb) = command.strip_suffix(' ') {
+                    // A verb needs its object: asking which thing, from the
+                    // ones on the page, is a tap away from the story's own
+                    // "What do you want to read?".
+                    self.asking = Some(verb);
                     self.show(context);
                 } else {
                     self.command(context, command);
@@ -419,12 +1089,32 @@ impl KoboApp for Parser {
     }
 
     fn on_page_turn(&mut self, context: &mut Context, forward: bool) {
+        if self.view == View::Library {
+            let last = self.library_pages(context).len().saturating_sub(1);
+            let page = self.library_page.min(last);
+            self.library_page = if forward {
+                (page + 1).min(last)
+            } else {
+                page.saturating_sub(1)
+            };
+            self.show(context);
+            return;
+        }
+        if self.view == View::Slots {
+            let page_count = self.slot_pages(context).len();
+            self.slots_page = if forward {
+                (self.slots_page + 1).min(page_count - 1)
+            } else {
+                self.slots_page.saturating_sub(1)
+            };
+            self.show(context);
+            return;
+        }
         if self.view != View::Play {
             return;
         }
-        let pages = transcript_pages(&self.transcript);
         self.page = if forward {
-            (self.page + 1).min(pages.len().saturating_sub(1))
+            (self.page + 1).min(self.pages.len().saturating_sub(1))
         } else {
             self.page.saturating_sub(1)
         };
@@ -443,6 +1133,7 @@ impl KoboApp for Parser {
         self.autosave(context);
     }
 
+    #[allow(clippy::too_many_lines)]
     fn on_store(&mut self, context: &mut Context, result: StoreResult) {
         if let StoreResult::Shelf(items) = &result {
             self.stories = items
@@ -451,21 +1142,55 @@ impl KoboApp for Parser {
                 .cloned()
                 .collect();
             self.stories.sort_by(|left, right| left.0.cmp(&right.0));
-            if self.view == View::Library {
+            self.saves = items
+                .iter()
+                .filter(|(name, _)| name.starts_with(SAVE_PREFIX))
+                .map(|(name, _)| name.clone())
+                .collect();
+            self.maybe_seed_tutorial(context);
+            if self.view == View::Library || self.view == View::Slots {
                 self.show(context);
             }
+            return;
+        }
+        if self.seeding.is_some() {
+            self.advance_seeding(context, &result);
             return;
         }
         if let Some(upload) = &mut self.saving {
             match upload.advance(context, &result) {
                 ShelfProgress::Done => {
-                    self.saving = None;
+                    let name = self.saving.take().map(|upload| upload.name().to_owned());
+                    let slot = self.saving_slot.filter(|slot| {
+                        self.machine
+                            .as_ref()
+                            .map(|machine| save_name(machine.info(), &slot.to_string()))
+                            == name
+                    });
+                    if let Some(slot) = slot {
+                        self.saving_slot = None;
+                        if let Some(name) = name.filter(|name| !self.saves.contains(name)) {
+                            self.saves.push(name);
+                        }
+                        self.message =
+                            Some((BannerLevel::Success, format!("Saved in slot {slot}.")));
+                        self.show(context);
+                    } else if self
+                        .message
+                        .as_ref()
+                        .is_some_and(|(_, message)| message == SAVE_FAILED)
+                    {
+                        // A save went through, so the warning about the last
+                        // one no longer holds.
+                        self.message = None;
+                        self.show(context);
+                    }
                     return;
                 }
                 ShelfProgress::Failed(_) => {
                     self.saving = None;
-                    self.message =
-                        Some("The save could not be written. Check free space.".to_owned());
+                    self.saving_slot = None;
+                    self.message = Some((BannerLevel::Error, SAVE_FAILED.to_owned()));
                     self.show(context);
                     return;
                 }
@@ -483,7 +1208,10 @@ impl KoboApp for Parser {
                 }
                 ShelfProgress::Failed(_) => {
                     self.loading = None;
-                    self.message = Some("That story could not be read from storage.".to_owned());
+                    self.message = Some((
+                        BannerLevel::Error,
+                        "That story could not be read from storage.".to_owned(),
+                    ));
                     self.show(context);
                     return;
                 }
@@ -499,12 +1227,22 @@ impl KoboApp for Parser {
                         .take()
                         .expect("restore download exists")
                         .take();
+                    let mut restored = false;
                     if let Some(machine) = &mut self.machine {
-                        if let Err(error) = machine.restore_quetzal(&bytes) {
-                            self.message = Some(error.to_string());
+                        match machine.restore_quetzal(&bytes) {
+                            Ok(()) => restored = true,
+                            Err(error) => {
+                                self.message = Some((BannerLevel::Error, error.to_string()));
+                            }
                         }
                     }
+                    if restored {
+                        self.note_restored();
+                    }
                     self.advance_story(context);
+                    if restored {
+                        self.command(context, "look");
+                    }
                 }
                 ShelfProgress::Failed(kobo_sdk::StoreError::Missing) => {
                     self.pending_restore = None;
@@ -512,7 +1250,10 @@ impl KoboApp for Parser {
                 }
                 ShelfProgress::Failed(_) => {
                     self.pending_restore = None;
-                    self.message = Some("The saved game could not be restored.".to_owned());
+                    self.message = Some((
+                        BannerLevel::Error,
+                        "The saved game could not be restored.".to_owned(),
+                    ));
                     self.advance_story(context);
                 }
                 ShelfProgress::Moving { .. } | ShelfProgress::Elsewhere => {}
@@ -521,35 +1262,12 @@ impl KoboApp for Parser {
     }
 }
 
-fn transcript_pages(text: &str) -> Vec<&str> {
-    if text.is_empty() {
-        return vec!["Starting story…"];
-    }
-    let mut pages = Vec::new();
-    let mut start = 0;
-    while start < text.len() {
-        let mut end = (start + TRANSCRIPT_PAGE_BYTES).min(text.len());
-        while end > start && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        if end < text.len() {
-            if let Some(break_at) = text[start..end].rfind("\n\n") {
-                end = start + break_at + 2;
-            } else if let Some(break_at) = text[start..end].rfind('\n') {
-                end = start + break_at + 1;
-            }
-        }
-        if end == start {
-            end = text.len();
-        }
-        pages.push(&text[start..end]);
-        start = end;
-    }
-    pages
-}
+/// The most links the runtime draws in one paragraph.
+const MOST_LINKS: usize = 16;
 
-fn word_links(text: &str) -> Vec<(String, usize, usize, String)> {
-    let mut links = Vec::new();
+/// Where each word of two letters or more sits in the text.
+fn words(text: &str) -> Vec<(usize, usize)> {
+    let mut words = Vec::new();
     let mut start = None;
     for (index, character) in text
         .char_indices()
@@ -558,17 +1276,28 @@ fn word_links(text: &str) -> Vec<(String, usize, usize, String)> {
         if character.is_alphanumeric() || character == '\'' || character == '-' {
             start.get_or_insert(index);
         } else if let Some(from) = start.take() {
-            if index > from + 1 && links.len() < 16 {
-                links.push((
-                    format!("noun-{}", links.len()),
-                    from,
-                    index,
-                    text[from..index].to_owned(),
-                ));
+            if index > from + 1 {
+                words.push((from, index));
             }
         }
     }
-    links
+    words
+}
+
+/// Whether a word, already trimmed and lowercased, is one a reader might
+/// want in a command: the story knows it and it is not one of the small
+/// words on every page.
+fn worth_a_tap(machine: &Machine, word: &str) -> bool {
+    word.chars().count() >= 3 && !NOT_OBJECTS.contains(&word) && machine.knows_word(word)
+}
+
+fn slot_subtitle(action: SlotAction, occupied: bool) -> String {
+    match (action, occupied) {
+        (SlotAction::Save, true) => "Saved game: tap to overwrite".to_owned(),
+        (SlotAction::Save, false) => "Empty: tap to save here".to_owned(),
+        (SlotAction::Restore, true) => "Saved game: tap to restore".to_owned(),
+        (SlotAction::Restore, false) => "Empty: nothing to restore".to_owned(),
+    }
 }
 
 fn save_name(info: &StoryInfo, slot: &str) -> String {
@@ -581,17 +1310,159 @@ fn save_name(info: &StoryInfo, slot: &str) -> String {
     format!("{SAVE_PREFIX}{id}-{slot}")
 }
 
-fn display_name(name: &str) -> String {
-    name.trim_start_matches(STORY_PREFIX)
-        .replace(['_', '-'], " ")
+/// The chip table every suggestion comes from: a dictionary word to probe,
+/// the action id the chip fires, its label, and the command a tap sends.
+/// Verbs first, then directions, then meta; the save/restore slot screens
+/// are app-owned and always offered.
+const CHIPS: &[(&str, &str, &str, &str)] = &[
+    ("look", "look", "Look", "look"),
+    ("inventory", "inventory", "Inventory", "inventory"),
+    ("examine", "examine", "Examine", "examine "),
+    ("take", "take", "Take", "take "),
+    ("north", "north", "North", "north"),
+    ("south", "south", "South", "south"),
+    ("east", "east", "East", "east"),
+    ("west", "west", "West", "west"),
+    ("up", "up", "Up", "up"),
+    ("down", "down", "Down", "down"),
+    ("drop", "drop", "Drop", "drop "),
+    ("open", "open", "Open", "open "),
+    ("read", "read", "Read", "read "),
+    ("light", "light", "Light", "light "),
+    ("undo", "undo", "Undo", "undo"),
+    ("again", "again", "Again", "again"),
+];
+
+/// The commands that are ways out of a room, set in a row of their own.
+const DIRECTIONS: &[&str] = &["north", "south", "east", "west", "up", "down"];
+
+/// "wooden crate" as "Wooden crate", for a label.
+fn sentence_case(text: &str) -> String {
+    let mut characters = text.chars();
+    characters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(characters).collect()
+    })
 }
 
-fn format_size(bytes: u32) -> String {
-    if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", f64::from(bytes) / (1024.0 * 1024.0))
-    } else {
-        format!("{} KB", bytes.div_ceil(1024))
-    }
+/// Commands the story actually understands, in a stable order, plus the
+/// app-owned save/restore screens. A story that never mentions a verb or a
+/// direction never offers it, so a tap can never answer "The story does not
+/// know that word."
+fn palette(machine: Option<&Machine>) -> Vec<(&'static str, &'static str)> {
+    let mut commands: Vec<(&'static str, &'static str)> = CHIPS
+        .iter()
+        .filter(|(probe, _, _, _)| machine.is_some_and(|machine| machine.knows_word(probe)))
+        .map(|(_, name, label, _)| (*name, *label))
+        .collect();
+    commands.push(("save", "Save"));
+    commands.push(("restore", "Restore"));
+    commands
+}
+
+/// Words that turn up on every page and are never the thing an owner wants
+/// to read, open or take.
+const NOT_OBJECTS: &[&str] = &[
+    "the",
+    "and",
+    "you",
+    "your",
+    "are",
+    "was",
+    "were",
+    "with",
+    "from",
+    "this",
+    "that",
+    "there",
+    "here",
+    "into",
+    "onto",
+    "for",
+    "but",
+    "not",
+    "can",
+    "see",
+    "has",
+    "have",
+    "its",
+    "it's",
+    "all",
+    "out",
+    "off",
+    "over",
+    "under",
+    "through",
+    "what",
+    "which",
+    "who",
+    "one",
+    "some",
+    "small",
+    "large",
+    "old",
+    "new",
+    "room",
+    "northeast",
+    "northwest",
+    "southeast",
+    "southwest",
+    "inventory",
+    "examine",
+    "again",
+    "undo",
+    "save",
+    "restore",
+    "carrying",
+    "nothing",
+    "taken",
+    "dropped",
+];
+
+fn verb_question(verb: &str) -> String {
+    let mut letters = verb.chars();
+    let verb = letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect::<String>())
+        .unwrap_or_default();
+    format!("{verb} what? Choose a thing on the page, or type it.")
+}
+
+/// A story's name for the library. Pushed stories are filed as
+/// `story-<title>-<release>-<serial>-<checksum>.z5` so two releases of one
+/// story never overwrite each other; that tail tells a computer which copy
+/// it is, and is no use to a person choosing what to play.
+fn display_name(name: &str) -> String {
+    let bare = name.trim_start_matches(STORY_PREFIX);
+    let bare = bare
+        .strip_suffix(".z3")
+        .or_else(|| bare.strip_suffix(".z5"))
+        .or_else(|| bare.strip_suffix(".z8"))
+        .unwrap_or(bare);
+    let mut parts = bare.rsplitn(4, '-');
+    let bare = match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(checksum), Some(serial), Some(release), Some(title))
+            if checksum.len() <= 4
+                && checksum.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && serial.len() == 6
+                && serial.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                && !release.is_empty()
+                && release.bytes().all(|byte| byte.is_ascii_digit()) =>
+        {
+            title
+        }
+        _ => bare,
+    };
+    bare.replace(['_', '-'], " ")
+        .split(' ')
+        .map(|word| {
+            let mut letters = word.chars();
+            match letters.next() {
+                Some(first) => first.to_uppercase().chain(letters).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<String>>()
+        .join(" ")
 }
 
 fn main() -> ExitCode {
@@ -607,35 +1478,569 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kobo_ui::{Chrome, CLARA_BW_METRICS};
+    use kobo_ui::{Chrome, DisplayMetrics, TextScale, CLARA_BW_METRICS};
+
+    /// Measure with the same face the runtime draws with, or the tests approve
+    /// pages the panel cannot show.
+    fn install_real_face() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            kobo_text::install(CLARA_BW_METRICS).expect("bundled face installs");
+        });
+    }
 
     #[test]
-    fn transcript_navigation_is_utf8_safe_and_preserves_all_text() {
+    fn transcript_pagination_is_measured_utf8_safe_and_preserves_all_text() {
+        install_real_face();
         let text = format!("{}\n\n{}", "word ".repeat(600), "café ".repeat(600));
-        let pages = transcript_pages(&text);
-        assert!(pages.len() > 1);
-        assert_eq!(pages.concat(), text);
+        let mut parser = Parser {
+            transcript: text.clone(),
+            ..Parser::default()
+        };
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        assert!(parser.pages.len() > 1);
+        let joined: String = parser
+            .pages
+            .iter()
+            .map(|&(start, end)| &text[start..end])
+            .collect();
+        assert_eq!(joined, text);
+        for &(start, end) in &parser.pages {
+            assert!(text.is_char_boundary(start));
+            assert!(text.is_char_boundary(end));
+            assert!(parser.play_page_fits(&text[start..end], CLARA_BW_METRICS));
+        }
+    }
+
+    #[test]
+    fn a_page_never_ends_inside_a_word() {
+        install_real_face();
+        let text = "the lanterns glow in the hallway ".repeat(300);
+        let mut parser = Parser {
+            transcript: text.clone(),
+            ..Parser::default()
+        };
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        assert!(parser.pages.len() > 1);
+        for &(_, end) in &parser.pages[..parser.pages.len() - 1] {
+            assert!(
+                text[..end].ends_with(char::is_whitespace),
+                "a page ends mid-word: {:?}",
+                &text[end.saturating_sub(12)..end]
+            );
+        }
+    }
+
+    #[test]
+    fn a_failed_save_banner_is_measured_into_every_page_and_goes_once_a_save_lands() {
+        install_real_face();
+        let mut parser = Parser {
+            transcript: "The lamp gutters and the hall goes dark. ".repeat(200),
+            ..Parser::default()
+        };
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        let without = parser.pages.len();
+        parser.message = Some((BannerLevel::Error, SAVE_FAILED.to_owned()));
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        assert!(parser.pages.len() >= without);
+        for &(start, end) in &parser.pages {
+            assert!(parser.play_page_fits(&parser.transcript[start..end], CLARA_BW_METRICS));
+        }
+        let mut context = Context::default();
+        parser.machine = Some(Machine::new(story_fixture(), "lamplight.z3").expect("story"));
+        parser.begin_save(&mut context, "save-autosave".to_owned());
+        let total = parser.machine.as_ref().expect("story").save_quetzal().len();
+        let mut written = 0;
+        while parser.saving.is_some() {
+            written = (written + kobo_sdk::MAX_SHELF_CHUNK).min(total);
+            parser.on_store(
+                &mut context,
+                StoreResult::ShelfWritten {
+                    name: "save-autosave".to_owned(),
+                    size: u32::try_from(written).expect("small"),
+                },
+            );
+        }
+        assert_eq!(parser.message, None, "the warning outlived a good save");
+    }
+
+    #[test]
+    fn opening_the_keys_keeps_the_newest_reply_on_screen() {
+        install_real_face();
+        let mut parser = Parser {
+            transcript: "You walk on through the long gallery. ".repeat(300),
+            ..Parser::default()
+        };
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        parser.page = parser.last_content_page();
+        parser.keyboard_open = true;
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        assert_eq!(parser.page, parser.last_content_page());
+        // A reader paging back through older text keeps that text.
+        parser.keyboard_open = false;
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        parser.page = 1;
+        let reading = parser.pages[1].0;
+        parser.keyboard_open = true;
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        let (start, end) = parser.pages[parser.page];
+        assert!(start <= reading && reading < end);
+    }
+
+    #[test]
+    fn a_thing_named_low_on_a_long_page_can_still_be_chosen() {
+        let machine = Machine::new(story_fixture(), "lamplight.z3").expect("story");
+        let parser = Parser {
+            machine: Some(machine),
+            ..Parser::default()
+        };
+        let text = format!(
+            "{} In the corner sits a wooden crate.",
+            "It is so and so on to me. ".repeat(8)
+        );
+        assert!(parser.objects(&text).contains(&"wooden crate".to_owned()));
+        assert!(parser
+            .tappable(&text)
+            .iter()
+            .any(|(_, _, _, word)| word == "crate"));
+    }
+
+    #[test]
+    fn new_output_lands_on_output_not_a_stranded_prompt() {
+        install_real_face();
+        let probe = Parser::default();
+        let mut words = 1usize;
+        while probe.play_page_fits(&"word ".repeat(words + 1), CLARA_BW_METRICS) {
+            words += 1;
+        }
+        // A full page of output followed by the Z-machine prompt: the prompt
+        // cannot fit, so pagination must strand it and landing must skip it.
+        let text = format!("{}\n\n>", "word ".repeat(words));
+        let mut parser = Parser {
+            transcript: text.clone(),
+            ..Parser::default()
+        };
+        parser.repaginate_for_metrics(CLARA_BW_METRICS);
+        assert!(parser.pages.len() > 1);
+        let (start, end) = parser.pages[parser.pages.len() - 1];
+        assert_eq!(text[start..end].trim(), ">");
+        let landing = parser.last_content_page();
+        assert_eq!(landing, parser.pages.len() - 2);
+        let (start, end) = parser.pages[landing];
+        assert_ne!(text[start..end].trim(), ">");
+    }
+
+    #[test]
+    fn palette_only_offers_words_the_story_knows() {
+        let machine =
+            Machine::new(crate::story::build_first_light(), "first-light.z3").expect("story opens");
+        let labels: Vec<&str> = palette(Some(&machine))
+            .into_iter()
+            .map(|(_, label)| label)
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Look",
+                "Inventory",
+                "Examine",
+                "Take",
+                "North",
+                "South",
+                "Drop",
+                "Read",
+                "Light",
+                "Save",
+                "Restore"
+            ]
+        );
+    }
+
+    #[test]
+    fn palette_follows_the_story_dictionary() {
+        let machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
+        let names: Vec<&str> = palette(Some(&machine))
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        for expected in [
+            "look",
+            "inventory",
+            "examine",
+            "take",
+            "north",
+            "south",
+            "east",
+            "west",
+            "save",
+            "restore",
+        ] {
+            assert!(names.contains(&expected), "missing {expected}");
+        }
+        assert_eq!(names.last(), Some(&"restore"));
+    }
+
+    #[test]
+    fn tutorial_blob_is_a_valid_shelf_key() {
+        assert!(kobo_sdk::is_valid_key(TUTORIAL_BLOB));
+        assert_eq!(display_name(TUTORIAL_BLOB), "First Light");
+        assert_eq!(display_name("story-lamplight.z3"), "Lamplight");
+    }
+
+    fn story_fixture() -> Vec<u8> {
+        include_bytes!("../fixtures/lamplight.z3").to_vec()
+    }
+
+    #[test]
+    fn pushed_stories_are_listed_by_title_not_by_file_name() {
+        assert_eq!(display_name("story-lost-pig-2-080406-a1b2.z8"), "Lost Pig");
+        assert_eq!(display_name("story-first-light.z3"), "First Light");
+        assert_eq!(display_name("story-zork-2-0.z5"), "Zork 2 0");
+    }
+
+    #[test]
+    fn a_verb_without_an_object_asks_which_thing_on_the_page() {
+        install_real_face();
+        let mut app = Parser::default();
+        let mut context = Context::default();
+        app.start_story(
+            &mut context,
+            "story-lamplight.z3".to_owned(),
+            story_fixture(),
+        );
+        app.on_store(
+            &mut context,
+            StoreResult::Denied(kobo_sdk::StoreError::Missing),
+        );
+        assert!(app.transcript.contains("crate"), "{}", app.transcript);
+        let sent = app.transcript.len();
+        app.on_action(&mut context, action_id("open"));
+        assert_eq!(app.asking, Some("open"));
+        assert_eq!(
+            app.transcript.len(),
+            sent,
+            "nothing is sent without an object"
+        );
+        // "a wooden crate" is one thing on the page, offered as one.
+        let objects = app.objects(app.page_text());
+        assert!(objects.contains(&"wooden crate".to_owned()), "{objects:?}");
+        assert!(!objects.contains(&"wooden".to_owned()), "{objects:?}");
+        assert!(!objects.contains(&"the".to_owned()));
+        let index = objects
+            .iter()
+            .position(|word| word == "wooden crate")
+            .expect("crate");
+        app.on_action(&mut context, action_id(&format!("object-{index}")));
+        assert_eq!(app.asking, None);
+        assert!(
+            app.transcript.contains("> open wooden crate"),
+            "{}",
+            app.transcript
+        );
+        app.on_action(&mut context, action_id("read"));
+        app.on_action(&mut context, action_id("object-type"));
+        assert!(app.keyboard_open);
+        assert_eq!(app.keyboard.text(), "read ");
+    }
+
+    #[test]
+    fn story_fixture_facts_match_provenance() {
+        let info = StoryInfo::inspect(&story_fixture(), "lamplight.z3").expect("fixture inspects");
+        assert_eq!(info.release, 1);
+        assert_eq!(&info.serial, b"260919");
+        assert_eq!(info.checksum, 0x276d);
+        assert_eq!(info.bytes, 28_160);
+    }
+
+    #[test]
+    fn the_story_opens_answers_and_survives_a_save_round_trip() {
+        let mut machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
+        machine.run().expect("opening runs");
+        let opening = machine.take_output();
+        assert!(opening.contains("Lamp Square"), "{opening}");
+        machine.input("look").expect("look accepted");
+        let look = machine.take_output();
+        assert!(look.contains("Lamp Square"), "{look}");
+        machine.input("inventory").expect("inventory accepted");
+        let inventory = machine.take_output();
+        assert!(inventory.contains("empty handed"), "{inventory}");
+        machine.input("open crate").expect("open accepted");
+        machine.take_output();
+        machine.input("take note").expect("take accepted");
+        machine.take_output();
+        machine.input("inventory").expect("inventory accepted");
+        let inventory = machine.take_output();
+        assert!(inventory.contains("note"), "{inventory}");
+        let save = machine.save_quetzal();
+        let mut restored = Machine::new(story_fixture(), "lamplight.z3").expect("fixture reopens");
+        restored.restore_quetzal(&save).expect("save restores");
+        restored.input("look").expect("restored look accepted");
+        let look = restored.take_output();
+        assert!(look.contains("Lamp Square"), "{look}");
+    }
+
+    #[test]
+    fn the_story_opening_paginates_cleanly_and_lands_on_the_story() {
+        install_real_face();
+        let mut machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
+        machine.run().expect("opening runs");
+        machine.input("look").expect("look accepted");
+        let mut parser = Parser {
+            transcript: machine.take_output(),
+            ..Parser::default()
+        };
+        for keyboard_open in [false, true] {
+            parser.keyboard_open = keyboard_open;
+            for scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    text_scale: scale,
+                    ..CLARA_BW_METRICS
+                };
+                parser.repaginate_for_metrics(metrics);
+                for &(start, end) in &parser.pages {
+                    let page_text = &parser.transcript[start..end];
+                    assert!(
+                        parser.play_page_fits(page_text, metrics),
+                        "{scale:?} keyboard_open={keyboard_open} overflow: {page_text:?}"
+                    );
+                }
+            }
+            if keyboard_open {
+                assert!(
+                    parser.pages.len() > 1,
+                    "real output spans pages with the keyboard open"
+                );
+            }
+        }
+        let landing = parser.last_content_page();
+        let (start, end) = parser.pages[landing];
+        assert_ne!(parser.transcript[start..end].trim(), ">");
+    }
+
+    #[test]
+    fn the_story_landing_fits_elipsa_extra_large_with_display_chrome() {
+        install_real_face();
+        let mut machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
+        machine.run().expect("opening runs");
+        let mut parser = Parser {
+            transcript: machine.take_output(),
+            ..Parser::default()
+        };
+        for keyboard_open in [false, true] {
+            parser.keyboard_open = keyboard_open;
+            let metrics = DisplayMetrics {
+                width: 1404,
+                height: 1872,
+                pixels_per_inch: 227,
+                text_scale: TextScale::ExtraLarge,
+            };
+            parser.repaginate_for_metrics(metrics);
+            let landing = parser.last_content_page();
+            let (start, end) = parser.pages[landing];
+            let text = parser.transcript[start..end].to_owned();
+            let screen = parser.play_screen_for(&text, landing + 1, parser.pages.len());
+            for chrome in [Chrome::default(), Chrome::measuring(true)] {
+                let diagnostics = screen.diagnostics(&metrics, &chrome);
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "keyboard_open={keyboard_open}: {:?}",
+                    diagnostics.issues
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn play_screen_status_fits_every_panel_and_text_size() {
+        install_real_face();
+        let mut machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
+        machine.run().expect("opening runs");
+        let mut parser = Parser {
+            transcript: machine.take_output(),
+            machine: Some(machine),
+            // The name the store gives a pushed story: serial and checksum
+            // included, far longer than a title anybody would type.
+            open_blob: Some("story-lamplight-1-260919-276d.z3".to_owned()),
+            ..Parser::default()
+        };
+        for (width, height, ppi) in [(1072, 1448, 300), (1264, 1680, 300), (1404, 1872, 227)] {
+            for scale in TextScale::STEPS {
+                let metrics = DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch: ppi,
+                    text_scale: scale,
+                };
+                for keyboard_open in [false, true] {
+                    parser.keyboard_open = keyboard_open;
+                    // Production repaginates inside show(), so the split always
+                    // matches the keyboard state on screen. Mirror that here.
+                    parser.repaginate_for_metrics(metrics);
+                    let landing = parser.last_content_page();
+                    let (start, end) = parser.pages[landing];
+                    let text = parser.transcript[start..end].to_owned();
+                    let screen = parser.play_screen_for(&text, landing + 1, parser.pages.len());
+                    let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{width}x{height}@{ppi} {scale:?} keyboard_open={keyboard_open}: {:?}",
+                        diagnostics.issues
+                    );
+                }
+            }
+        }
+    }
+
+    fn shown(screen: &Screen) -> Vec<String> {
+        screen
+            .layout_with(&CLARA_BW_METRICS, &Chrome::default())
+            .nodes
+            .iter()
+            .flat_map(|node| node.text_lines.clone())
+            .collect()
+    }
+
+    #[test]
+    fn the_slots_screen_says_what_a_slot_is() {
+        for (action, expected) in [
+            (SlotAction::Save, "Keep this position in a slot"),
+            (SlotAction::Restore, "Return to a position you kept"),
+        ] {
+            let parser = Parser {
+                slot_action: action,
+                ..Parser::default()
+            };
+            let lines = shown(&parser.slots_screen());
+            assert!(
+                lines.iter().any(|line| line.contains(expected)),
+                "the {action:?} screen does not explain slots: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn slot_rows_name_what_each_slot_holds() {
+        assert_eq!(
+            slot_subtitle(SlotAction::Save, true),
+            "Saved game: tap to overwrite"
+        );
+        assert_eq!(
+            slot_subtitle(SlotAction::Save, false),
+            "Empty: tap to save here"
+        );
+        assert_eq!(
+            slot_subtitle(SlotAction::Restore, false),
+            "Empty: nothing to restore"
+        );
+        install_real_face();
+        let machine = Machine::new(story_fixture(), "lamplight.z3").expect("fixture opens");
+        let mut parser = Parser {
+            saves: vec![
+                "save-lamplight-3".to_owned(),
+                save_name(machine.info(), "game"),
+            ],
+            machine: Some(machine),
+            ..Parser::default()
+        };
+        parser.slot_action = SlotAction::Restore;
+        parser.message = Some((
+            BannerLevel::Info,
+            "The story asked to restore a game. Pick a slot.".to_owned(),
+        ));
+        for scale in TextScale::STEPS {
+            let scaled = DisplayMetrics {
+                text_scale: scale,
+                ..CLARA_BW_METRICS
+            };
+            let runner = kobo_sdk::AppRunner::with_metrics(Parser::default(), scaled);
+            let context = runner.context();
+            for page in 0..parser.slot_pages(&context).len() {
+                parser.slots_page = page;
+                let diagnostics = parser
+                    .slots_screen_for(&context)
+                    .diagnostics(&scaled, &Chrome::default());
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "page {page} at {scaled:?}: {:?}",
+                    diagnostics.issues
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn restore_marker_separates_old_transcript_from_new() {
+        let mut parser = Parser::default();
+        parser.note_restored();
+        assert_eq!(parser.transcript, "[Restored.]");
+        parser.note_restored();
+        assert_eq!(parser.transcript, "[Restored.]\n\n[Restored.]");
     }
 
     #[test]
     fn transcript_words_are_tappable_and_appendable() {
-        let links = word_links("Take the brass-lamp, please.");
-        assert!(links.iter().any(|link| link.3 == "brass-lamp"));
+        let text = "Take the brass-lamp, please.";
+        assert!(words(text)
+            .iter()
+            .any(|&(start, end)| &text[start..end] == "brass-lamp"));
         let mut parser = Parser {
             transcript: "A brass lamp waits.".to_owned(),
             ..Parser::default()
         };
+        parser.pages = vec![(0, parser.transcript.len())];
+        parser.paginated_len = parser.transcript.len();
         parser.noun(0);
         assert_eq!(parser.keyboard.text(), "brass");
     }
 
     #[test]
-    fn library_and_play_layouts_fit_clara() {
+    fn supported_matrix_layouts_fit() {
+        install_real_face();
+        // One panel per supported geometry: Clara (both densities), Libra,
+        // Elipsa, each in both poses, at every text scale.
         let mut parser = Parser::default();
         parser.stories.push(("story-advent.z3".to_owned(), 128_000));
-        for screen in [parser.library_screen(), parser.play_screen()] {
-            let diagnostics = screen.diagnostics(&CLARA_BW_METRICS, &Chrome::default());
-            assert!(diagnostics.issues.is_empty(), "{:?}", diagnostics.issues);
+        for (width, height, ppi) in [
+            (1072, 1448, 300),
+            (1072, 1448, 212),
+            (1264, 1680, 300),
+            (1404, 1872, 227),
+        ] {
+            for pose in [(width, height), (height, width)] {
+                for scale in TextScale::STEPS {
+                    let metrics = DisplayMetrics {
+                        width: pose.0,
+                        height: pose.1,
+                        pixels_per_inch: ppi,
+                        text_scale: scale,
+                    };
+                    // The library is paged by the context it is built with,
+                    // so it is built for the panel and size it is measured on.
+                    // A default context paged it for a portrait Clara at the
+                    // default size whatever was being checked.
+                    let context =
+                        kobo_sdk::AppRunner::with_metrics(Parser::default(), metrics).context();
+                    for keyboard_open in [false, true] {
+                        parser.keyboard_open = keyboard_open;
+                        for (name, screen) in [
+                            ("library", parser.library_screen(&context)),
+                            ("play", parser.play_screen()),
+                        ] {
+                            let diagnostics = screen.diagnostics(&metrics, &Chrome::default());
+                            assert!(
+                                diagnostics.issues.is_empty(),
+                                "{name} {}x{}@{ppi} {scale:?} keyboard_open={keyboard_open}: {:?}",
+                                pose.0,
+                                pose.1,
+                                diagnostics.issues
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }
+
+#[cfg(test)]
+mod navigation_tests;

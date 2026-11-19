@@ -23,11 +23,13 @@ pub fn encode(entries: &[Entry]) -> Option<Vec<u8>> {
                 .set("minutes", entry.reading_time.to_string())
                 .set("text", entry.content.clone())
                 .set("position", entry.position.to_string())
+                .set("starred", if entry.starred { "1" } else { "0" })
+                .set("archived", if entry.archived { "1" } else { "0" })
                 .build()
         })
         .collect();
     let bytes = ObjectBuilder::new()
-        .set("version", "1")
+        .set("version", "2")
         .set("items", items)
         .build()
         .to_json()
@@ -40,9 +42,12 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<Entry>> {
         return None;
     }
     let value = kobo_json::parse(std::str::from_utf8(bytes).ok()?).ok()?;
-    if value.get("version")?.as_str()? != "1" {
-        return None;
-    }
+    // Version 1 predates flags; its articles load as unstarred and unread.
+    let flags = match value.get("version")?.as_str()? {
+        "1" => false,
+        "2" => true,
+        _ => return None,
+    };
     let mut seen = std::collections::BTreeSet::new();
     value
         .get("items")?
@@ -64,6 +69,8 @@ pub fn decode(bytes: &[u8]) -> Option<Vec<Entry>> {
                     None => 0,
                     Some(value) => value.as_str()?.parse().ok()?,
                 },
+                starred: flags && text("starred")? == "1",
+                archived: flags && text("archived")? == "1",
             })
         })
         .collect()
@@ -81,9 +88,14 @@ mod tests {
             reading_time: 5,
             position: 12,
             content: "Use <section> & preserve \"quotes\".\n\nSecond paragraph.".into(),
+            starred: true,
+            archived: false,
         }];
         assert_eq!(decode(&encode(&entries).unwrap()), Some(entries));
-        assert!(decode(br#"{"version":"2","items":[]}"#).is_none());
+        assert!(decode(br#"{"version":"3","items":[]}"#).is_none());
+        let legacy = br#"{"version":"1","items":[{"id":"7","title":"t","site":"s","minutes":"1","text":"x"}]}"#;
+        let legacy = decode(legacy).unwrap();
+        assert!(!legacy[0].starred && !legacy[0].archived);
         assert!(decode(b"broken").is_none());
     }
 }

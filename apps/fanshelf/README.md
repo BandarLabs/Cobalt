@@ -1,62 +1,81 @@
 # Fanshelf
 
-Fanshelf is an unofficial reader for [Archive of Our Own](https://archiveofourown.org/),
-not affiliated with the Organization for Transformative Works (OTW). It is a
-personal reading tool, not a crawler: there is no free-text search scraping,
-prefetching, mirroring, redistribution, AI-training use, or background polling.
-Every AO3 request follows a reader action such as opening a pasted work,
-downloading its EPUB, opening a followed tag, or pressing an update button.
-If the OTW asks for this behavior to change or stop, it should.
+Save [Archive of Our Own](https://archiveofourown.org/) works to a shelf and
+read them offline.
 
-Ratings and archive warnings are rendered before the download action. An AO3
-adult-content interstitial becomes an explicit Fanshelf confirmation screen;
-`view_adult=true` is never added until the reader continues. Archive-locked
-works are not supported.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/shelf.png" alt="The shelf, with an unread update"><br>The shelf, with an unread update</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/work.png" alt="A work with new chapters found"><br>A work with new chapters found</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/updates.png" alt="Each work with its update status"><br>Each work with its update status</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/fandom-filter.png" alt="The shelf filtered to one fandom"><br>The shelf filtered to one fandom</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/manage.png" alt="Managing the shelf"><br>Managing the shelf</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/reading.png" alt="Reading a downloaded EPUB"><br>Reading a downloaded EPUB</td>
+</tr>
+</table>
 
-![A synthetic Fanshelf shelf showing an unread WIP update and a non-Latin title](screenshots/shelf.png)
+## Features
 
-## What v1 does
+- Add a work by pasting its link. The author's summary, rating and archive
+  warnings are shown before you download. Where a large text size leaves no
+  room for the whole summary, **Whole summary** in the work's menu shows it
+  all.
+- Download works as EPUB and read them offline. Your place, highlights and
+  notes survive a re-download.
+- Up to 96 works. The shelf marks works you have started and says how many are
+  ready offline and how much room they take.
+- **Filter** narrows the shelf by fandom.
+- **Check for new chapters** in a work's menu, or **Update all** on the
+  Updates screen, looks for new chapters and downloads them straight away for
+  works you have downloaded. Works with new chapters you have not opened yet are
+  marked on the shelf.
+- **Manage** removes downloaded copies while keeping the works and your place.
+- Follow up to 24 AO3 tags through their public feeds.
+- Adult content needs an explicit confirmation. Works restricted to logged-in
+  users cannot be downloaded, and the app says so.
 
-- Stores bounded metadata for up to 96 works: title, author, fandom, rating,
-  archive warnings, summary, chapter count/status, updated date, EPUB URL,
-  adult confirmation, download state, unread update state, and archive removal.
-- Downloads EPUBs in 256 KiB ranged chunks, spaces every AO3 request by at
-  least one second, permits only one request in flight, and sends
-  `kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)` on every request.
-- Refuses EPUBs over 12 MiB and only replaces the shelf copy after the complete
-  file has arrived.
-- Opens downloaded EPUBs through `BookView`; page position, type settings,
-  highlights, notes, and other reader memory are stored separately and survive
-  a re-download when the updated document still has compatible anchors.
-- Checks WIPs only when **Check updates** or **Check all** is pressed. A newer
-  chapter sets an unread badge and enables an explicit re-download.
-- Follows up to 24 AO3 tags through `/tags/<tag>/feeds.atom`, parsed with
-  `kobo-xml`. Tag listings do not scrape AO3 HTML search pages.
-- Treats HTTP 429 separately, honors a numeric `Retry-After` up to one hour,
-  and otherwise uses a conservative exponential delay.
+## How it uses AO3
 
-## Honest limitations
+Fanshelf is a personal reading tool, not a crawler.
 
-AO3 has no public work API. Work metadata and manual update checks therefore
-parse bounded public work HTML, which can require maintenance when AO3 changes
-its markup. Fanshelf does not log in, so locked works, bookmarks,
-subscriptions, kudos, comments, and marked-for-later are unavailable. It does
-not provide free-text search, recommendations, automatic update checks, or
-background jobs. Shelf, tag, feed, and update lists are deliberately paged in
-small groups for the e-ink panel.
+- Every request follows something you did: opening a work, downloading it,
+  opening a tag or checking for updates. Update all checks your works in
+  progress one at a time and downloads only the ones that changed. There is
+  no background checking, prefetching, search scraping or mirroring.
+- One request at a time, at least one second apart, identified as
+  `kobo-fanshelf/0.2.0 (+https://github.com/BandarLabs/Cobalt)`.
+- When AO3 asks it to slow down, it waits as long as AO3 says, up to an hour.
+- EPUBs over 12 MiB are refused. A new copy replaces the old one only after it
+  has fully downloaded.
 
-The real Kobo was unreachable during this implementation. Simulator behavior,
-storage, parser, task-wire, rate-limit, layout, and ARM cross-build checks were
-performed, but Cloudflare passability and touch/reader behavior were not
-validated on physical hardware and are not claimed here.
+If the Organization for Transformative Works asks for this behaviour to change
+or stop, it will.
 
-AO3 works remain copyrighted by their authors and Fanshelf never republishes
-them. Downloads are initiated by the device owner for personal reading, like
-pressing AO3's own EPUB download link.
+## Limits
 
-## Simulator
+- AO3 has no public API, so work details come from its public web pages and
+  may break when AO3 changes them.
+- No sign-in, so locked works, bookmarks, subscriptions, kudos, comments and
+  Marked for Later are not available.
+- No free-text search, recommendations or automatic update checks.
+- Not yet tested on a physical Kobo.
 
-The screenshot tour uses synthetic metadata only:
+## Permissions
+
+- `network`: fetches works, feeds and EPUBs from AO3.
+
+## Development
+
+```sh
+cargo test -p kobo-fanshelf
+python3 scripts/check-apps-sim.py fanshelf
+```
+
+To capture the screenshots with made-up data:
 
 ```sh
 cd apps/fanshelf
@@ -67,16 +86,12 @@ cargo run -p kobo-cli -- drive --ideal \
   --shots apps/fanshelf/screenshots
 ```
 
-Without `FANSHELF_DEMO`, simulator fetches are real network requests:
+`scripts/quality/check-fanshelf-epub-sim.py` covers downloading and reading
+against a local test server. Without `FANSHELF_DEMO`, the simulator makes real
+requests to AO3.
 
-```sh
-cargo run -p kobo-cli -- run --sim --app fanshelf
-```
+## Credits
 
-## Dependencies and prior art
-
-| Item | License | Use |
-| --- | --- | --- |
-| AO3 | Service | Remote service; unofficial client; OTW named and linked above |
-| FanFicFare | Apache-2.0 core; Calibre plugin also GPL-3.0 | Behavior reference only; no code reused |
-| Cobalt platform crates | AGPL-3.0-only | Task transport, bounded shelf transfers, XML scanner, and shared EPUB reader |
+Fanshelf is unofficial and not affiliated with the Organization for
+Transformative Works. Works belong to their authors and Fanshelf never
+republishes them.

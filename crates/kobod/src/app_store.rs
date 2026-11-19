@@ -2,7 +2,7 @@
 #![allow(dead_code)]
 
 use kobo_app_store::{
-    parse_public_bundle, verify, Catalog, DetachedSignature, Ed25519PublicKey, Manifest,
+    parse_installable_bundle, verify, Catalog, DetachedSignature, Ed25519PublicKey, Manifest,
 };
 use kobo_protocol::{AppInfo, DeviceError, RemoteInstallOutcome, UpdateChannel};
 use kobo_ui::Glyph;
@@ -11,13 +11,26 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+// Each channel publishes two signed catalogs. This runtime reads the one that
+// names every application's own mark, `kobo_app_store::CATALOG_FILE`. The
+// other, `kobo_app_store::EARLIER_CATALOG_FILE`, is what runtimes up to 0.3.33
+// read; this one reads it only when the channel has no newer file, which is a
+// channel last published before there were two.
 pub const CATALOG_URL: &str =
-    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json";
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog-v2.json";
 pub const CATALOG_SIGNATURE_URL: &str =
-    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig";
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog-v2.json.sig";
 pub const BETA_CATALOG_URL: &str =
-    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog.json";
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog-v2.json";
 pub const BETA_CATALOG_SIGNATURE_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog-v2.json.sig";
+pub const EARLIER_CATALOG_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json";
+pub const EARLIER_CATALOG_SIGNATURE_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog/cobalt-app-catalog.json.sig";
+pub const EARLIER_BETA_CATALOG_URL: &str =
+    "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog.json";
+pub const EARLIER_BETA_CATALOG_SIGNATURE_URL: &str =
     "https://github.com/BandarLabs/Cobalt/releases/download/app-catalog-beta/cobalt-app-catalog.json.sig";
 
 const CATALOG_LIMIT: u32 = 512 * 1024;
@@ -57,13 +70,13 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         label: "Daily Brief",
         summary: "Collects the day's stories while you read something else.",
         version: "1.0.0",
-        glyph: Glyph::Clock,
+        glyph: Glyph::Sunrise,
         capabilities: &["network"],
     },
     BuiltinApp {
         id: "chat",
-        title: "AI Command Center",
-        label: "AI Chat",
+        title: "Chat",
+        label: "Chat",
         summary: "Ask a question and tap the answer, rather than typing one.",
         version: "1.0.0",
         glyph: Glyph::Chat,
@@ -84,7 +97,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         label: "Gutenbird",
         summary: "Sixty thousand free books from Project Gutenberg.",
         version: "1.0.0",
-        glyph: Glyph::Book,
+        glyph: Glyph::BookDownload,
         capabilities: &["network", "frontlight-control"],
     },
     BuiltinApp {
@@ -129,7 +142,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         label: "Tic-tac-toe",
         summary: "Two players, one panel. Nought goes first.",
         version: "1.0.0",
-        glyph: Glyph::Grid,
+        glyph: Glyph::NoughtsCrosses,
         capabilities: &[],
     },
     BuiltinApp {
@@ -138,7 +151,7 @@ const MANAGED_BUILTINS: &[BuiltinApp] = &[
         label: "Todo",
         summary: "A list that remembers itself. Tap an item to finish it.",
         version: "1.0.0",
-        glyph: Glyph::Check,
+        glyph: Glyph::Checklist,
         capabilities: &[],
     },
 ];
@@ -151,7 +164,9 @@ const SYSTEM_APPS: &[BuiltinApp] = &[
         summary: "The documents already on this device.",
         version: env!("CARGO_PKG_VERSION"),
         glyph: Glyph::Book,
-        capabilities: &["library"],
+        // The network is for Sync on the Articles shelf, which asks the
+        // computer paired with this reader for articles waiting there.
+        capabilities: &["library", "network"],
     },
     BuiltinApp {
         id: "settings",
@@ -219,15 +234,21 @@ pub fn catalog_using(
     }
 }
 
-/// Lists every verified installed Store application.
+/// Lists every installed Store application whose signed manifest verifies.
+///
+/// This is what the launcher draws its first screen from, so it checks the
+/// signature, the canonical manifest and the binary's length, and leaves the
+/// binary's bytes to launch, which hashes exactly what it runs. Hashing every
+/// installed binary here held the launcher's first frame behind megabytes of
+/// reads and hashing on a single core, and did it twice, on every start and
+/// every return to the launcher.
 ///
 /// # Errors
 ///
-/// Returns a bounded device error when installed metadata or package bytes
-/// cannot be verified.
+/// Returns a bounded device error when installed metadata cannot be verified.
 pub fn installed(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
     let key = public_key()?;
-    installed_with_key(root, &key)
+    installed_with_key(root, &key, Check::Listing)
 }
 
 /// Lists installed applications using an explicitly supplied trust key.
@@ -237,17 +258,33 @@ pub fn installed(root: &Path) -> Result<Vec<AppInfo>, DeviceError> {
 ///
 /// # Errors
 ///
-/// Returns a bounded device error when installed metadata or package bytes
-/// cannot be verified.
+/// Returns a bounded device error when installed metadata cannot be verified.
 pub fn installed_using(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, DeviceError> {
-    installed_with_key(root, key)
+    installed_with_key(root, key, Check::Listing)
 }
 
-fn installed_with_key(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, DeviceError> {
-    let mut entries = installed_manifests(root, key)?
+/// How much of an installed package to verify before believing it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Check {
+    /// Signature, canonical manifest and binary bytes. Launch relies on it,
+    /// and so does every install decision: a binary that no longer matches
+    /// its manifest must not be taken for the installed version, or the
+    /// install meant to repair it would be skipped as already done.
+    Full,
+    /// Signature, canonical manifest and binary length, for showing what is
+    /// installed. Nothing is run on the strength of it.
+    Listing,
+}
+
+fn installed_with_key(
+    root: &Path,
+    key: &Ed25519PublicKey,
+    check: Check,
+) -> Result<Vec<AppInfo>, DeviceError> {
+    let mut entries = installed_manifests_checked(root, key, check)?
         .into_iter()
         .map(|manifest| manifest_info(&manifest, Some(manifest.version())))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     let installed_ids = entries
         .iter()
         .map(|entry| entry.id.clone())
@@ -316,9 +353,7 @@ fn prepare_remote_install_channel_with(
     if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
         return Err(DeviceError::InvalidInput);
     }
-    let source = catalog_source(channel);
-    let json = fetch(source.url, CATALOG_LIMIT)?;
-    let signature = fetch(source.signature_url, SIGNATURE_LIMIT)?;
+    let (json, signature) = fetch_catalog(channel, &mut fetch)?;
     let catalog = verify_catalog(&json, &signature, key)?;
     write_channel_catalog_cache(root, channel, &json, &signature)?;
     let Some(entry) = catalog
@@ -344,7 +379,7 @@ fn prepare_remote_install_channel_with(
         });
     }
 
-    let installed = installed_with_key(root, key)?;
+    let installed = installed_with_key(root, key, Check::Full)?;
     let current = installed.iter().find(|candidate| candidate.id == id);
     if current.and_then(|candidate| candidate.installed_version.as_deref())
         == Some(entry.manifest().version())
@@ -365,7 +400,7 @@ fn prepare_remote_install_channel_with(
         && !manifest_info(
             entry.manifest(),
             current.and_then(|candidate| candidate.installed_version.as_deref()),
-        )?
+        )
         .has_update()
     {
         return Ok(RemoteInstallPlan {
@@ -526,6 +561,31 @@ pub fn resolve_launch(root: &Path, id: &str) -> Result<PathBuf, String> {
 /// Returns a description when the identity is invalid, package is absent, or
 /// installed metadata, signature, or binary bytes fail verification.
 pub fn resolve_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<PathBuf, String> {
+    resolve_checked(root, id, key, Check::Full)
+}
+
+/// Picks the binary to open, checking only what the listing checks.
+///
+/// For the runtime's own launches, which never run the path this returns:
+/// they hand it to [`admit`], which reads the binary once and verifies those
+/// bytes before they go into the jail. Verifying them here as well was a
+/// second full read and hash of every binary opened.
+///
+/// # Errors
+///
+/// As [`resolve`], except that a binary of the right length with the wrong
+/// bytes is left for [`admit`] to refuse.
+pub fn resolve_listed(root: &Path, id: &str) -> Result<PathBuf, String> {
+    let key = public_key().map_err(|error| format!("read app signing key: {error:?}"))?;
+    resolve_checked(root, id, &key, Check::Listing)
+}
+
+fn resolve_checked(
+    root: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+    check: Check,
+) -> Result<PathBuf, String> {
     if !kobo_protocol::valid_app_id(id) {
         return Err(format!("{id:?} is not a valid application identity"));
     }
@@ -538,8 +598,11 @@ pub fn resolve_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<Pa
     }
     let directory = apps_root(root).join(id);
     if safe_directory(&directory).map_err(|error| format!("read application {id}: {error:?}"))? {
-        let manifest = read_installed_manifest(&directory, id, key)
-            .map_err(|error| format!("installed application {id} is invalid: {error:?}"))?;
+        let manifest = match check {
+            Check::Full => read_installed_manifest(&directory, id, key),
+            Check::Listing => read_listed_manifest(&directory, id, key),
+        }
+        .map_err(|error| format!("installed application {id} is invalid: {error:?}"))?;
         return Ok(app_binary(root, manifest.id()));
     }
     let builtin = builtin_binary(root, id);
@@ -549,12 +612,53 @@ pub fn resolve_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<Pa
     Err(format!("no application named {id} is installed"))
 }
 
-#[must_use]
-pub fn declared(root: &Path, id: &str) -> Option<kobo_policy::Declared> {
-    let key = public_key().ok()?;
-    installed_manifest(root, id, &key)
-        .ok()
-        .map(|manifest| manifest.declared_capabilities().clone())
+/// An installed Store application, verified from the bytes that will run.
+pub struct Admitted {
+    /// The capabilities its signed manifest declares, and nothing more.
+    pub declared: kobo_policy::Declared,
+    /// The binary exactly as it was verified. The jail is written from this,
+    /// never from the installed file.
+    pub binary: Vec<u8>,
+}
+
+/// Reads an installed application once and verifies those bytes.
+///
+/// Launch used to verify the installed file twice and then copy it into the
+/// jail with a third read, so the bytes that ran were never the bytes that
+/// were checked, and an application was hashed four times before it opened.
+/// This reads the binary once, holds it against its signed manifest's length
+/// and digest, and hands back that same buffer for the jail.
+///
+/// # Errors
+///
+/// Returns a description when the identity is invalid or reserved, the
+/// package is absent, or its manifest, signature or binary fail verification.
+pub fn admit(root: &Path, id: &str) -> Result<Admitted, String> {
+    let key = public_key().map_err(|error| format!("read app signing key: {error:?}"))?;
+    admit_using(root, id, &key)
+}
+
+fn admit_using(root: &Path, id: &str, key: &Ed25519PublicKey) -> Result<Admitted, String> {
+    if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
+        return Err(format!("{id:?} is not an installable application identity"));
+    }
+    recover_interrupted_transaction(root, id, key)
+        .map_err(|error| format!("recover application {id}: {error:?}"))?;
+    let directory = apps_root(root).join(id);
+    if !safe_directory(&directory).map_err(|error| format!("read application {id}: {error:?}"))? {
+        return Err(format!("no application named {id} is installed"));
+    }
+    let invalid = |error: DeviceError| format!("installed application {id} is invalid: {error:?}");
+    let manifest = read_signed_manifest(&directory, id, key).map_err(invalid)?;
+    let binary = fs::read(app_binary(root, id))
+        .map_err(|error| invalid(installed_component_read_error(&error)))?;
+    if !binary_matches(&manifest, &binary) {
+        return Err(invalid(DeviceError::Integrity));
+    }
+    Ok(Admitted {
+        declared: manifest.declared_capabilities().clone(),
+        binary,
+    })
 }
 
 #[cfg(test)]
@@ -593,9 +697,7 @@ pub fn refresh_using_fault(
     mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
     fault: Option<AppWriteFault>,
 ) -> Result<Vec<AppInfo>, DeviceError> {
-    let source = catalog_source(channel);
-    let json = fetch(source.url, CATALOG_LIMIT)?;
-    let signature = fetch(source.signature_url, SIGNATURE_LIMIT)?;
+    let (json, signature) = fetch_catalog(channel, &mut fetch)?;
     let catalog = verify_catalog(&json, &signature, key)?;
     if fault.is_some() {
         return Err(DeviceError::Backend);
@@ -670,14 +772,9 @@ pub fn install_using_fault(
     ) {
         return Err(DeviceError::InvalidInput);
     }
-    if let Some(current) = installed_with_key(root, key)?
-        .iter()
-        .find(|candidate| candidate.id == id)
-    {
-        let candidate = manifest_info(entry.manifest(), current.installed_version.as_deref())?;
-        if current.installed_version.as_deref() != Some(entry.manifest().version())
-            && !candidate.has_update()
-        {
+    if let Some(installed) = installed_version(root, id, key)? {
+        let candidate = manifest_info(entry.manifest(), Some(&installed));
+        if installed != entry.manifest().version() && !candidate.has_update() {
             return Ok(());
         }
     }
@@ -688,8 +785,10 @@ pub fn install_using_fault(
     {
         return Err(DeviceError::Integrity);
     }
-    let bundle = parse_public_bundle(&package, key).map_err(|_| DeviceError::Integrity)?;
-    if bundle.manifest() != entry.manifest() {
+    let bundle = parse_installable_bundle(&package, key).map_err(|_| DeviceError::Integrity)?;
+    // The entry is the bundle's own manifest, or the same manifest with the
+    // stand-in glyph when the entry came from the earlier catalog.
+    if !bundle.manifest().is_offered_as(entry.manifest()) {
         return Err(DeviceError::Integrity);
     }
     if fault.is_some() {
@@ -715,6 +814,29 @@ pub fn install_using(
     install_channel_with(root, id, channel, key, fetch)
 }
 
+/// Fetches a channel's catalog and its signature.
+///
+/// Only a missing catalog sends the fetch to the earlier file. Any other
+/// failure, and a catalog whose signature is missing, is the newer file's
+/// failure, because answering it with a different file would hide a broken
+/// publication behind one that looks fine.
+fn fetch_catalog(
+    channel: UpdateChannel,
+    fetch: &mut impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<(Vec<u8>, Vec<u8>), DeviceError> {
+    let source = catalog_source(channel);
+    let (json, signature_url) = match fetch(source.url, CATALOG_LIMIT) {
+        Ok(json) => (json, source.signature_url),
+        Err(DeviceError::NotFound) => (
+            fetch(source.earlier_url, CATALOG_LIMIT)?,
+            source.earlier_signature_url,
+        ),
+        Err(error) => return Err(error),
+    };
+    let signature = fetch(signature_url, SIGNATURE_LIMIT)?;
+    Ok((json, signature))
+}
+
 fn verify_catalog(
     json: &[u8],
     signature: &[u8],
@@ -725,12 +847,9 @@ fn verify_catalog(
         .trim_end_matches(['\r', '\n']);
     let signature = DetachedSignature::from_hex(signature).map_err(|_| DeviceError::Integrity)?;
     verify(json, &signature, key).map_err(|_| DeviceError::Integrity)?;
-    let catalog = Catalog::parse_public(json).map_err(|_| DeviceError::InvalidInput)?;
+    let catalog = Catalog::parse_installable(json).map_err(|_| DeviceError::InvalidInput)?;
     if catalog.to_canonical_bytes() != json {
         return Err(DeviceError::Integrity);
-    }
-    for entry in catalog.entries() {
-        glyph(entry.manifest().glyph()).ok_or(DeviceError::InvalidInput)?;
     }
     Ok(catalog)
 }
@@ -771,7 +890,7 @@ fn catalog_info(
     catalog: &Catalog,
     key: &Ed25519PublicKey,
 ) -> Result<Vec<AppInfo>, DeviceError> {
-    let installed = installed_with_key(root, key)?;
+    let installed = installed_with_key(root, key, Check::Listing)?;
     let mut entries = catalog
         .entries()
         .iter()
@@ -782,7 +901,7 @@ fn catalog_info(
                 .and_then(|installed| installed.installed_version.as_deref());
             manifest_info(entry.manifest(), version)
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<_>>();
     for installed in installed {
         if !catalog
             .entries()
@@ -847,21 +966,18 @@ fn is_uninstalled(root: &Path, id: &str) -> Result<bool, DeviceError> {
     safe_regular_file(&apps_root(root).join(format!("{id}.{UNINSTALLED_SUFFIX}")))
 }
 
-fn manifest_info(
-    manifest: &Manifest,
-    installed_version: Option<&str>,
-) -> Result<AppInfo, DeviceError> {
-    Ok(AppInfo {
+fn manifest_info(manifest: &Manifest, installed_version: Option<&str>) -> AppInfo {
+    AppInfo {
         id: manifest.id().to_owned(),
         title: manifest.display_name().to_owned(),
         label: manifest.short_label().to_owned(),
         summary: manifest.summary().to_owned(),
         version: manifest.version().to_owned(),
         minimum_cobalt_version: manifest.minimum_cobalt_version().to_owned(),
-        glyph: glyph(manifest.glyph()).ok_or(DeviceError::InvalidInput)?,
+        glyph: launcher_glyph(manifest.glyph()),
         capabilities: manifest.capabilities().map(str::to_owned).collect(),
         installed_version: installed_version.map(str::to_owned),
-    })
+    }
 }
 
 fn sort_info(entries: &mut [AppInfo]) {
@@ -873,7 +989,16 @@ fn sort_info(entries: &mut [AppInfo]) {
     });
 }
 
+#[cfg(test)]
 fn installed_manifests(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<Manifest>, DeviceError> {
+    installed_manifests_checked(root, key, Check::Full)
+}
+
+fn installed_manifests_checked(
+    root: &Path,
+    key: &Ed25519PublicKey,
+    check: Check,
+) -> Result<Vec<Manifest>, DeviceError> {
     let apps = apps_root(root);
     let directory = match fs::read_dir(&apps) {
         Ok(directory) => directory,
@@ -899,7 +1024,7 @@ fn installed_manifests(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<Manife
     }
     let mut manifests = Vec::new();
     for id in ids {
-        match installed_manifest(root, &id, key) {
+        match installed_manifest_checked(root, &id, key, check) {
             Ok(manifest) => manifests.push(manifest),
             Err(DeviceError::NotFound) => {}
             Err(error) => return Err(error),
@@ -908,10 +1033,42 @@ fn installed_manifests(root: &Path, key: &Ed25519PublicKey) -> Result<Vec<Manife
     Ok(manifests)
 }
 
+#[cfg(test)]
 fn installed_manifest(
     root: &Path,
     id: &str,
     key: &Ed25519PublicKey,
+) -> Result<Manifest, DeviceError> {
+    installed_manifest_checked(root, id, key, Check::Full)
+}
+
+/// The version an install of `id` would replace, verified as fully as launch
+/// verifies it, or nothing when `id` is not installed.
+///
+/// Only `id` is read. Listing every installed application here read and
+/// hashed each one's binary to find one version, about 108 MB with the whole
+/// catalog installed, and a batch of background updates did it again for
+/// every package while the reader waited for the panel to answer.
+fn installed_version(
+    root: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+) -> Result<Option<String>, DeviceError> {
+    match installed_manifest_checked(root, id, key, Check::Full) {
+        Ok(manifest) => Ok(Some(manifest.version().to_owned())),
+        Err(DeviceError::NotFound) => match managed_builtin(id) {
+            Some(app) if builtin_is_installed(root, id)? => Ok(Some(app.version.to_owned())),
+            _ => Ok(None),
+        },
+        Err(error) => Err(error),
+    }
+}
+
+fn installed_manifest_checked(
+    root: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+    check: Check,
 ) -> Result<Manifest, DeviceError> {
     if !kobo_protocol::valid_app_id(id) || kobo_app_store::is_public_reserved_app_id(id) {
         return Err(DeviceError::InvalidInput);
@@ -921,10 +1078,52 @@ fn installed_manifest(
     if !safe_directory(&directory)? {
         return Err(DeviceError::NotFound);
     }
-    read_installed_manifest(&directory, id, key)
+    match check {
+        Check::Full => read_installed_manifest(&directory, id, key),
+        Check::Listing => read_listed_manifest(&directory, id, key),
+    }
 }
 
 fn read_installed_manifest(
+    directory: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+) -> Result<Manifest, DeviceError> {
+    let manifest = read_signed_manifest(directory, id, key)?;
+    let binary = fs::read(directory.join("bin").join(format!("kobo-{id}")))
+        .map_err(|error| installed_component_read_error(&error))?;
+    if !binary_matches(&manifest, &binary) {
+        return Err(DeviceError::Integrity);
+    }
+    Ok(manifest)
+}
+
+/// The signed manifest, with the binary only measured, never read.
+///
+/// The length is checked because it costs one `lstat` and still catches a
+/// missing, truncated or replaced binary before the launcher offers it. The
+/// bytes are not: launch reads and hashes them anyway, right before it runs
+/// them.
+fn read_listed_manifest(
+    directory: &Path,
+    id: &str,
+    key: &Ed25519PublicKey,
+) -> Result<Manifest, DeviceError> {
+    let manifest = read_signed_manifest(directory, id, key)?;
+    let binary = fs::symlink_metadata(directory.join("bin").join(format!("kobo-{id}")))
+        .map_err(|error| installed_component_read_error(&error))?;
+    if !binary.is_file() || binary.len() != manifest.binary_bytes() {
+        return Err(DeviceError::Integrity);
+    }
+    Ok(manifest)
+}
+
+fn binary_matches(manifest: &Manifest, binary: &[u8]) -> bool {
+    binary.len() as u64 == manifest.binary_bytes()
+        && kobo_net::sha256::hex_digest(binary) == manifest.binary_sha256().as_str()
+}
+
+fn read_signed_manifest(
     directory: &Path,
     id: &str,
     key: &Ed25519PublicKey,
@@ -936,7 +1135,7 @@ fn read_installed_manifest(
             DeviceError::Backend
         }
     })?;
-    let manifest = Manifest::parse_public(&bytes).map_err(|_| DeviceError::Integrity)?;
+    let manifest = Manifest::parse_installable(&bytes).map_err(|_| DeviceError::Integrity)?;
     if manifest.id() != id || manifest.to_canonical_bytes() != bytes {
         return Err(DeviceError::Integrity);
     }
@@ -945,13 +1144,6 @@ fn read_installed_manifest(
     let signature =
         DetachedSignature::from_hex(signature.trim()).map_err(|_| DeviceError::Integrity)?;
     verify(&bytes, &signature, key).map_err(|_| DeviceError::Integrity)?;
-    let binary = fs::read(directory.join("bin").join(format!("kobo-{id}")))
-        .map_err(|error| installed_component_read_error(&error))?;
-    if binary.len() as u64 != manifest.binary_bytes()
-        || kobo_net::sha256::hex_digest(&binary) != manifest.binary_sha256().as_str()
-    {
-        return Err(DeviceError::Integrity);
-    }
     Ok(manifest)
 }
 
@@ -980,6 +1172,13 @@ fn recover_interrupted_transaction(
         remove_directory(&current)?;
         remove_directory(&removed)?;
         remove_directory(&apps.join(format!("{id}.prev")))?;
+        return Ok(());
+    }
+    // With nothing to recover from there is nothing to decide, so the live
+    // folder is not verified here. This ran on every listing and every
+    // launch, and verifying the live folder means hashing its whole binary,
+    // only for the caller to verify it again a moment later.
+    if !safe_directory(&removed)? && !safe_directory(&apps.join(format!("{id}.prev")))? {
         return Ok(());
     }
     if safe_directory(&current)? && read_installed_manifest(&current, id, key).is_ok() {
@@ -1161,15 +1360,11 @@ fn write_synced(path: &Path, contents: &[u8]) -> Result<(), DeviceError> {
 }
 
 fn sync_file(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|file| file.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_file(path).map_err(|_| DeviceError::Backend)
 }
 
 fn sync_directory(path: &Path) -> Result<(), DeviceError> {
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|_| DeviceError::Backend)
+    kobo_protocol::durability::sync_directory(path).map_err(|_| DeviceError::Backend)
 }
 
 fn rename_synced(source: &Path, destination: &Path, parent: &Path) -> Result<(), DeviceError> {
@@ -1187,7 +1382,10 @@ fn set_executable(path: &Path) -> Result<(), DeviceError> {
     fs::set_permissions(path, permissions).map_err(|_| DeviceError::Backend)
 }
 
+/// Windows has no executable bit to set. The signature matches the Unix arm
+/// so the one caller reads the same on both.
 #[cfg(not(unix))]
+#[allow(clippy::unnecessary_wraps)]
 fn set_executable(_path: &Path) -> Result<(), DeviceError> {
     Ok(())
 }
@@ -1213,6 +1411,8 @@ fn catalog_cache(root: &Path, channel: UpdateChannel) -> PathBuf {
 struct CatalogSource {
     url: &'static str,
     signature_url: &'static str,
+    earlier_url: &'static str,
+    earlier_signature_url: &'static str,
     cache_name: &'static str,
 }
 
@@ -1221,11 +1421,15 @@ const fn catalog_source(channel: UpdateChannel) -> CatalogSource {
         UpdateChannel::Stable => CatalogSource {
             url: CATALOG_URL,
             signature_url: CATALOG_SIGNATURE_URL,
+            earlier_url: EARLIER_CATALOG_URL,
+            earlier_signature_url: EARLIER_CATALOG_SIGNATURE_URL,
             cache_name: "catalog",
         },
         UpdateChannel::Beta => CatalogSource {
             url: BETA_CATALOG_URL,
             signature_url: BETA_CATALOG_SIGNATURE_URL,
+            earlier_url: EARLIER_BETA_CATALOG_URL,
+            earlier_signature_url: EARLIER_BETA_CATALOG_SIGNATURE_URL,
             cache_name: "catalog-beta",
         },
     }
@@ -1257,6 +1461,16 @@ fn network_error(error: kobo_protocol::TaskError) -> DeviceError {
         }
         kobo_protocol::TaskError::RateLimited(_) => DeviceError::Unreachable,
     }
+}
+
+/// The picture the launcher and the Store draw for a manifest's glyph name.
+///
+/// A name this runtime does not know is drawn as the generic application mark
+/// rather than refused. Refusing it is what runtimes up to 0.3.33 did, and it
+/// cost the owner the whole Store over one entry's picture, which is why no
+/// glyph can be added to the catalog while those runtimes still read it.
+fn launcher_glyph(name: &str) -> Glyph {
+    glyph(name).unwrap_or(Glyph::App)
 }
 
 fn glyph(name: &str) -> Option<Glyph> {
@@ -1319,6 +1533,40 @@ fn glyph(name: &str) -> Option<Glyph> {
         "chess-black-bishop" => Glyph::ChessBlackBishop,
         "chess-black-knight" => Glyph::ChessBlackKnight,
         "chess-black-pawn" => Glyph::ChessBlackPawn,
+        "crossword-grid" => Glyph::CrosswordGrid,
+        "cell-grid" => Glyph::CellGrid,
+        "letter-check" => Glyph::LetterCheck,
+        "noughts-crosses" => Glyph::NoughtsCrosses,
+        "clued-grid" => Glyph::CluedGrid,
+        "puzzle" => Glyph::Puzzle,
+        "remote" => Glyph::Remote,
+        "dice" => Glyph::Dice,
+        "board-pieces" => Glyph::BoardPieces,
+        "question" => Glyph::Question,
+        "swords" => Glyph::Swords,
+        "map" => Glyph::Map,
+        "books" => Glyph::Books,
+        "book-download" => Glyph::BookDownload,
+        "stack" => Glyph::Stack,
+        "flask" => Glyph::Flask,
+        "paperclip" => Glyph::Paperclip,
+        "cards" => Glyph::Cards,
+        "yarn" => Glyph::Yarn,
+        "music" => Glyph::Music,
+        "lock" => Glyph::Lock,
+        "quote" => Glyph::Quote,
+        "feather" => Glyph::Feather,
+        "binoculars" => Glyph::Binoculars,
+        "mail" => Glyph::Mail,
+        "calendar-check" => Glyph::CalendarCheck,
+        "checklist" => Glyph::Checklist,
+        "house" => Glyph::House,
+        "cutlery" => Glyph::Cutlery,
+        "comic-panels" => Glyph::ComicPanels,
+        "inbox" => Glyph::Inbox,
+        "photo" => Glyph::Photo,
+        "keyboard" => Glyph::Keyboard,
+        "sunrise" => Glyph::Sunrise,
         _ => return None,
     })
 }
@@ -1331,11 +1579,14 @@ mod tests {
     };
 
     fn root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "cobalt-app-store-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
+        // The test name reads well in a path, but its `::` separators are
+        // illegal in Windows file names; dashes keep it readable everywhere.
+        let name = std::thread::current()
+            .name()
+            .unwrap_or("test")
+            .replace(':', "-");
+        let root =
+            std::env::temp_dir().join(format!("cobalt-app-store-{}-{name}", std::process::id()));
         let _ignored = fs::remove_dir_all(&root);
         root
     }
@@ -1354,19 +1605,32 @@ mod tests {
         version: &str,
         minimum_cobalt_version: &str,
     ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        release_marked(seed, id, version, minimum_cobalt_version, "note")
+    }
+
+    fn release_marked(
+        seed: &[u8; 32],
+        id: &str,
+        version: &str,
+        minimum_cobalt_version: &str,
+        glyph: &str,
+    ) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let binary = format!("{id} app binary").into_bytes();
-        let manifest = Manifest::new_public(ManifestInput {
-            id: id.to_owned(),
-            display_name: format!("{id} application"),
-            short_label: id.to_owned(),
-            summary: format!("The {id} test application."),
-            version: version.to_owned(),
-            minimum_cobalt_version: minimum_cobalt_version.to_owned(),
-            glyph: "note".to_owned(),
-            capabilities: Vec::new(),
-            binary_sha256: kobo_net::sha256::hex_digest(&binary),
-            binary_bytes: binary.len() as u64,
-        })
+        let manifest = Manifest::new(
+            ManifestInput {
+                id: id.to_owned(),
+                display_name: format!("{id} application"),
+                short_label: id.to_owned(),
+                summary: format!("The {id} test application."),
+                version: version.to_owned(),
+                minimum_cobalt_version: minimum_cobalt_version.to_owned(),
+                glyph: glyph.to_owned(),
+                capabilities: Vec::new(),
+                binary_sha256: kobo_net::sha256::hex_digest(&binary),
+                binary_bytes: binary.len() as u64,
+            },
+            kobo_app_store::public_reserved_app_ids(),
+        )
         .expect("manifest");
         let package = build_bundle(&manifest, &binary, seed).expect("bundle");
         let catalog = Catalog::new(vec![CatalogEntry::new(CatalogEntryInput {
@@ -1501,6 +1765,231 @@ mod tests {
         let _ignored = fs::remove_dir_all(root);
     }
 
+    /// The catalog `json` signed by `seed`, rebuilt as runtimes up to 0.3.33
+    /// are given it, with `glyph` in place of every entry's own.
+    fn signed_with_glyph(seed: &[u8; 32], json: &[u8], glyph: &str) -> (Vec<u8>, Vec<u8>) {
+        let catalog = Catalog::parse_installable(json).expect("catalog");
+        let entries = catalog
+            .entries()
+            .iter()
+            .map(|entry| {
+                let manifest = entry.manifest();
+                CatalogEntry::new(CatalogEntryInput {
+                    manifest: Manifest::new(
+                        ManifestInput {
+                            id: manifest.id().to_owned(),
+                            display_name: manifest.display_name().to_owned(),
+                            short_label: manifest.short_label().to_owned(),
+                            summary: manifest.summary().to_owned(),
+                            version: manifest.version().to_owned(),
+                            minimum_cobalt_version: manifest.minimum_cobalt_version().to_owned(),
+                            glyph: glyph.to_owned(),
+                            capabilities: manifest.capabilities().map(str::to_owned).collect(),
+                            binary_sha256: manifest.binary_sha256().to_string(),
+                            binary_bytes: manifest.binary_bytes(),
+                        },
+                        kobo_app_store::public_reserved_app_ids(),
+                    )
+                    .expect("manifest"),
+                    package_url: entry.package_url().to_owned(),
+                    package_sha256: entry.package_sha256().to_string(),
+                    package_bytes: entry.package_bytes(),
+                })
+                .expect("entry")
+            })
+            .collect();
+        let json = Catalog::new(entries).expect("catalog").to_canonical_bytes();
+        let signature = format!("{}\n", sign(&json, seed).expect("signature")).into_bytes();
+        (json, signature)
+    }
+
+    /// A channel last published before there were two catalogs has only the
+    /// earlier one, and a reader on this runtime still gets its Store.
+    #[test]
+    fn a_channel_without_the_newer_catalog_is_read_from_the_earlier_one() {
+        let root = root();
+        let seed = [12_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release(&seed);
+        let mut asked = Vec::new();
+        let listed = refresh_with(&root, &key, |url: &str, _: u32| {
+            asked.push(url.to_owned());
+            match url {
+                EARLIER_CATALOG_URL => Ok(json.clone()),
+                EARLIER_CATALOG_SIGNATURE_URL => Ok(signature.clone()),
+                _ => Err(DeviceError::NotFound),
+            }
+        })
+        .expect("refresh");
+        assert_eq!(
+            asked,
+            [
+                CATALOG_URL,
+                EARLIER_CATALOG_URL,
+                EARLIER_CATALOG_SIGNATURE_URL
+            ]
+        );
+        assert_eq!(listed.len(), 1);
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
+        assert_eq!(installed_using(&root, &key).expect("installed").len(), 1);
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    /// Only a missing catalog is answered with the earlier file. A newer
+    /// catalog that times out, or that arrives without its signature, is a
+    /// failed publication or a failed network, and the earlier file would
+    /// paper over either.
+    #[test]
+    fn the_earlier_catalog_is_not_read_when_the_newer_one_fails_any_other_way() {
+        let root = root();
+        let seed = [13_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, _) = release(&seed);
+        let earlier = |url: &str| match url {
+            EARLIER_CATALOG_URL => Some(Ok(json.clone())),
+            EARLIER_CATALOG_SIGNATURE_URL => Some(Ok(signature.clone())),
+            _ => None,
+        };
+        let timed_out = refresh_with(&root, &key, |url: &str, _: u32| {
+            earlier(url).unwrap_or(Err(DeviceError::TimedOut))
+        });
+        assert_eq!(timed_out, Err(DeviceError::TimedOut));
+        let unsigned = refresh_with(&root, &key, |url: &str, _: u32| match url {
+            CATALOG_URL => Ok(json.clone()),
+            _ => earlier(url).unwrap_or(Err(DeviceError::NotFound)),
+        });
+        assert_eq!(unsigned, Err(DeviceError::NotFound));
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    /// The earlier catalog offers a marked application under the glyph it
+    /// wore before, while its bundle is signed with the mark. That one
+    /// difference is allowed and no other.
+    #[test]
+    fn an_application_installs_from_the_earlier_catalog_under_its_stand_in_glyph() {
+        for (offered, installs) in [("circle", true), ("grid", false), ("dice", true)] {
+            let root = root();
+            let seed = [14_u8; 32];
+            let key = derive_public_key(&seed).expect("key");
+            let (json, _, package) = release_marked(
+                &seed,
+                "backgammon",
+                "0.1.17",
+                env!("CARGO_PKG_VERSION"),
+                "dice",
+            );
+            let (earlier, earlier_signature) = signed_with_glyph(&seed, &json, offered);
+            let listed = refresh_with(&root, &key, |url: &str, _: u32| match url {
+                EARLIER_CATALOG_URL => Ok(earlier.clone()),
+                EARLIER_CATALOG_SIGNATURE_URL => Ok(earlier_signature.clone()),
+                _ => Err(DeviceError::NotFound),
+            })
+            .expect("refresh");
+            assert_eq!(listed[0].glyph, launcher_glyph(offered));
+            let installed = install_with(&root, "backgammon", &key, |_, _| Ok(package.clone()));
+            if installs {
+                installed.expect("install");
+                let apps = installed_using(&root, &key).expect("installed apps");
+                let app = apps.iter().find(|app| app.id == "backgammon").expect("app");
+                assert_eq!(
+                    app.glyph,
+                    Glyph::Dice,
+                    "the installed manifest is the bundle's"
+                );
+            } else {
+                assert_eq!(
+                    installed,
+                    Err(DeviceError::Integrity),
+                    "offered as {offered}"
+                );
+            }
+            let _ignored = fs::remove_dir_all(root);
+        }
+    }
+
+    /// Every mark the publisher accepts is one this runtime draws, and the
+    /// glyph the earlier catalog shows in its place is the one a frame below
+    /// protocol 18 carries in its place, so an application looks the same to
+    /// an older reader whichever way the picture reaches it.
+    #[test]
+    fn each_mark_stands_in_as_the_same_glyph_in_the_earlier_catalog_and_on_the_wire() {
+        use kobo_protocol::{decode, encode, Frame, Message, QUIET_TYPE_VERSION};
+        use kobo_ui::{ActionId, Node, NodeId, Screen, Tile, TileShape};
+        let below_eighteen = |glyph: Glyph| {
+            let frame = Frame {
+                version: QUIET_TYPE_VERSION,
+                request_id: 1,
+                message: Message::SetScreen(Screen::new(
+                    1,
+                    vec![Node::TileGrid {
+                        id: NodeId(1),
+                        tiles: vec![Tile::new(ActionId(1), "App", glyph)],
+                        shape: TileShape::Square,
+                    }],
+                )),
+            };
+            let Message::SetScreen(screen) = decode(&encode(&frame).expect("encodes"))
+                .expect("decodes")
+                .message
+            else {
+                panic!("expected a screen");
+            };
+            let [Node::TileGrid { tiles, .. }] = screen.nodes.as_slice() else {
+                panic!("expected one tile grid");
+            };
+            tiles[0].glyph
+        };
+        let mut marks = 0;
+        for name in kobo_app_store::mark_names() {
+            let drawn = glyph(name).unwrap_or_else(|| panic!("{name} is published but not drawn"));
+            let earlier = kobo_app_store::earlier_glyph(name).expect("stand-in");
+            let wire = below_eighteen(drawn);
+            // Two marks were glyphs before protocol 18 and travel as
+            // themselves; every other one has to stand in identically.
+            if wire != drawn {
+                marks += 1;
+                assert_eq!(glyph(earlier), Some(wire), "{name}");
+            }
+        }
+        assert_eq!(marks, 34);
+    }
+
+    /// A glyph name this runtime has never heard of costs the application its
+    /// picture rather than costing the owner the Store, which is what a
+    /// runtime that refused it would do to every reader the day a later
+    /// release gave some application a new mark.
+    #[test]
+    fn an_application_whose_glyph_this_runtime_cannot_draw_is_listed_and_installed_as_an_app() {
+        for (name, drawn) in [("a-later-mark", Glyph::App), ("dice", Glyph::Dice)] {
+            let root = root();
+            let seed = [11_u8; 32];
+            let key = derive_public_key(&seed).expect("key");
+            let (json, signature, package) = release_marked(
+                &seed,
+                "backgammon",
+                "0.1.17",
+                env!("CARGO_PKG_VERSION"),
+                name,
+            );
+            let listed = refresh_with(&root, &key, |url: &str, _: u32| match url {
+                CATALOG_URL => Ok(json.clone()),
+                CATALOG_SIGNATURE_URL => Ok(signature.clone()),
+                _ => Err(DeviceError::NotFound),
+            })
+            .expect("refresh");
+            assert_eq!(listed.len(), 1);
+            assert_eq!(listed[0].glyph, drawn);
+            install_with(&root, "backgammon", &key, |_, _| Ok(package.clone())).expect("install");
+            let installed = installed_using(&root, &key).expect("installed apps");
+            let entry = installed
+                .iter()
+                .find(|app| app.id == "backgammon")
+                .expect("installed backgammon");
+            assert_eq!(entry.glyph, drawn);
+            let _ignored = fs::remove_dir_all(root);
+        }
+    }
+
     #[test]
     fn an_installed_manifest_without_its_binary_fails_closed() {
         let root = root();
@@ -1524,10 +2013,12 @@ mod tests {
         assert!(!builtin_binary(&root, "word-count").exists());
         fs::remove_file(app_binary(&root, "word-count")).expect("remove installed binary");
 
-        assert!(matches!(
-            installed_with_key(&root, &key),
-            Err(DeviceError::Integrity)
-        ));
+        for check in [Check::Full, Check::Listing] {
+            assert!(matches!(
+                installed_with_key(&root, &key, check),
+                Err(DeviceError::Integrity)
+            ));
+        }
         assert!(resolve_using(&root, "word-count", &key)
             .expect_err("missing binary must not resolve")
             .contains("invalid"));
@@ -1656,7 +2147,8 @@ mod tests {
             }
         );
         assert!(!plan.install);
-        let installed = installed_with_key(&root, &key).expect("installed app remains");
+        let installed =
+            installed_with_key(&root, &key, Check::Full).expect("installed app remains");
         assert!(installed.iter().any(|app| app.id == "word-count"));
         let _ignored = fs::remove_dir_all(root);
     }
@@ -1860,6 +2352,119 @@ mod tests {
     }
 
     #[test]
+    fn the_listing_measures_the_binary_and_leaves_its_bytes_to_launch() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release(&seed);
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
+        let binary_path = app_binary(&root, "word-count");
+        let mut binary = fs::read(&binary_path).expect("binary");
+
+        // Same length, different bytes: still listed, refused where it would
+        // run, and refused as the installed version an install would skip.
+        binary[0] ^= 1;
+        fs::write(&binary_path, &binary).expect("flip one byte");
+        let listed = installed_using(&root, &key).expect("listing reads only the length");
+        assert!(listed.iter().any(|app| app.id == "word-count"));
+        assert!(resolve_using(&root, "word-count", &key).is_err());
+        assert_eq!(
+            installed_with_key(&root, &key, Check::Full),
+            Err(DeviceError::Integrity)
+        );
+
+        // A different length is caught without reading a byte.
+        binary.pop();
+        fs::write(&binary_path, &binary).expect("truncate");
+        assert_eq!(installed_using(&root, &key), Err(DeviceError::Integrity));
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_install_reads_only_the_application_it_replaces() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let refresh_from = |json: &[u8], signature: &[u8]| {
+            refresh_with(&root, &key, |url, _| {
+                if url == CATALOG_URL {
+                    Ok(json.to_vec())
+                } else {
+                    Ok(signature.to_vec())
+                }
+            })
+            .expect("refresh");
+        };
+        let (json, signature, package) = release_for(&seed, "other", "1.0.0");
+        refresh_from(&json, &signature);
+        install_with(&root, "other", &key, |_, _| Ok(package.clone())).expect("install other");
+
+        // A binary the install has no business reading, broken in a way only
+        // hashing it would find.
+        let binary_path = app_binary(&root, "other");
+        let mut binary = fs::read(&binary_path).expect("binary");
+        binary[0] ^= 1;
+        fs::write(&binary_path, &binary).expect("flip one byte");
+        assert_eq!(
+            installed_with_key(&root, &key, Check::Full),
+            Err(DeviceError::Integrity)
+        );
+
+        let (json, signature, package) = release(&seed);
+        refresh_from(&json, &signature);
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone()))
+            .expect("installing one app never reads another");
+        assert_eq!(
+            installed_manifest(&root, "word-count", &key)
+                .expect("installed")
+                .version(),
+            "1.0.0"
+        );
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn admission_hands_back_the_bytes_it_verified() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) = release(&seed);
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+        install_with(&root, "word-count", &key, |_, _| Ok(package.clone())).expect("install");
+        let binary_path = app_binary(&root, "word-count");
+        let installed = fs::read(&binary_path).expect("binary");
+        let manifest = installed_manifest(&root, "word-count", &key).expect("manifest");
+
+        let admitted = admit_using(&root, "word-count", &key).expect("admit");
+        assert_eq!(admitted.binary, installed);
+        assert_eq!(&admitted.declared, manifest.declared_capabilities());
+
+        let mut tampered = installed;
+        tampered[0] ^= 1;
+        fs::write(&binary_path, tampered).expect("tamper binary");
+        assert!(admit_using(&root, "word-count", &key)
+            .err()
+            .is_some_and(|error| error.contains("invalid")));
+        assert!(admit_using(&root, "store", &key).is_err());
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn installed_manifest_signature_and_binary_are_verified_every_time() {
         let root = root();
         let seed = [9_u8; 32];
@@ -2025,6 +2630,7 @@ mod tests {
     #[test]
     fn unknown_glyphs_and_incompatible_versions_are_refused() {
         assert_eq!(glyph("not-a-glyph"), None);
+        assert_eq!(launcher_glyph("not-a-glyph"), Glyph::App);
         assert!(kobo_app_store::cobalt_version_at_least("0.2.0", "0.1.9"));
         assert!(!kobo_app_store::cobalt_version_at_least("0.1.8", "0.1.9"));
         assert!(!kobo_app_store::cobalt_version_at_least("nightly", "0.1.9"));

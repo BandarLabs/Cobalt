@@ -1,0 +1,7 @@
+=== missing ===
+Helper: /tmp/missing-flashcards-import
+kobo: The Flashcards importer is not installed or is missing from this host installation. Run 'kobo update' to restore the signed helper, or follow the source-build instructions in apps/flashcards/README.md. No import or transfer was started.
+=== incompatible ===
+Helper: /tmp/incompatible-helper
+flashcards-import: incompatible helper protocol
+kobo: The Flashcards importer did not complete (exit status: 64). Review its message above before retrying.

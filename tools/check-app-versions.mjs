@@ -22,6 +22,7 @@ const MANIFEST_FIELDS = [
 const COMPATIBLE_RELEASE_PATHS = new Set([
   "apps/flashcards/src/main.rs",
   "Cargo.lock",
+  "crates/kobo-abi/src/entropy.rs",
   "crates/kobo-abi/src/lib.rs",
   "crates/kobo-image/src/lib.rs",
   "crates/kobo-net/src/lib.rs",
@@ -30,12 +31,17 @@ const COMPATIBLE_RELEASE_PATHS = new Set([
   "crates/kobo-net/tests/fixtures/localhost-cert.der",
   "crates/kobo-net/tests/fixtures/localhost-key.der",
   "crates/kobo-net/tests/lichess_stream_mock.rs",
+  "crates/kobo-policy/src/credential_servers.rs",
   "crates/kobo-policy/src/credentials.rs",
+  "crates/kobo-policy/src/persistence.rs",
   "crates/kobo-policy/src/services.rs",
   "crates/kobo-policy/src/tasks.rs",
+  "crates/kobo-protocol/src/channel.rs",
+  "crates/kobo-protocol/src/durability.rs",
   "crates/kobo-protocol/src/lib.rs",
   "crates/kobo-sdk/Cargo.toml",
   "crates/kobo-sdk/src/credentials.rs",
+  "crates/kobo-sdk/src/entropy.rs",
   "crates/kobo-sdk/src/keyboard.rs",
   "crates/kobo-sdk/src/lib.rs",
   "crates/kobo-sdk/src/terminal.rs",
@@ -45,7 +51,8 @@ const COMPATIBLE_RELEASE_PATHS = new Set([
   "crates/kobo-ui/src/vector.rs",
   "crates/kobo-ui/src/vector/tabler.rs",
   "examples/gutenbird/Cargo.toml",
-  "examples/gutenbird/src/main.rs"
+  "examples/gutenbird/src/main.rs",
+  "rust-toolchain.toml"
 ]);
 
 // Cargo metadata grows with every workspace package. Bound it well above the
@@ -423,6 +430,40 @@ export function manifestOnlyChangesWorkspaceMembershipOrVersion(
   );
 }
 
+// The `version` entry of `[package]`, in any of its spellings, replaced by a
+// placeholder so two manifests can be compared with it out of the way. Only
+// `[package]` is touched: a `version` inside a dependency table is a different
+// thing.
+function normalizePackageVersion(source) {
+  const lines = source.split("\n");
+  const start = lines.findIndex(line => line.trim() === "[package]");
+  if (start < 0) return source;
+  for (let index = start + 1; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (line.startsWith("[")) break;
+    if (
+      /^version(\.workspace\s*=\s*true|\s*=\s*"[^"]*"|\s*=\s*\{\s*workspace\s*=\s*true\s*\})$/.test(
+        line
+      )
+    ) {
+      lines[index] = 'version = "<package-version>"';
+      return lines.join("\n");
+    }
+  }
+  return source;
+}
+
+// A package manifest that changed only in its version lines: its own under
+// `[package]`, in whichever spelling, and the versions written beside path
+// dependencies. Neither changes what the package compiles to, so the gate
+// treats such an edit as it already treats the workspace version moving.
+export function manifestOnlyChangesVersions(previousSource, currentSource) {
+  return manifestOnlyChangesPathDependencyVersions(
+    normalizePackageVersion(previousSource),
+    normalizePackageVersion(currentSource)
+  );
+}
+
 export function manifestOnlyChangesPathDependencyVersions(previousSource, currentSource) {
   const normalize = source =>
     source
@@ -518,19 +559,61 @@ function packageIdentity(name, version, source = "") {
   return JSON.stringify([name, version, source]);
 }
 
+// Cargo names a dependency by name alone while one version of it is
+// locked, and adds the version the moment a second one arrives. Adding an
+// unrelated crate that brings a second version of, say, foldhash rewrites
+// every block that depends on the first one without changing what any of
+// them resolves to. Each reference is therefore spelled out in full, against
+// the lockfile it came from, before blocks are compared: a package whose
+// dependencies resolve to the same packages is the same package.
+function qualifiedDependencies(packageBlock, resolve) {
+  return packageBlock.replace(/^dependencies = \[\n([\s\S]*?)^\]$/m, (_, list) => {
+    const references = list
+      .split("\n")
+      .map(line => /^\s*"([^"]+)"/.exec(line)?.[1])
+      .filter(Boolean)
+      .map(resolve)
+      .sort();
+    return `dependencies = [\n${references.map(reference => ` "${reference}",\n`).join("")}]`;
+  });
+}
+
 function lockPackagesByIdentity(source) {
   const parts = lockfileParts(source);
   if (!parts) throw new Error("Cargo.lock has no package blocks");
+  const parsedBlocks = parts.packages.map(packageBlock => ({
+    parsed: lockPackage(packageBlock),
+    lockedVersion: /^version = "([^"]+)"$/m.exec(packageBlock)?.[1]
+  }));
+  const byName = new Map();
+  for (const entry of parsedBlocks) {
+    const named = byName.get(entry.parsed.name) || [];
+    named.push(entry);
+    byName.set(entry.parsed.name, named);
+  }
+  const resolve = reference => {
+    const [name, version, ...rest] = reference.split(" ");
+    const wantedSource = rest.join(" ").replace(/^\(|\)$/g, "");
+    const candidates = (byName.get(name) || []).filter(
+      entry =>
+        (version === undefined || entry.lockedVersion === version) &&
+        (wantedSource === "" || entry.parsed.source === wantedSource)
+    );
+    if (candidates.length !== 1) return reference;
+    const [{ parsed }] = candidates;
+    return parsed.source
+      ? `${parsed.name} ${parsed.version} (${parsed.source})`
+      : `${parsed.name} ${parsed.version}`;
+  };
   const packages = new Map();
-  for (const packageBlock of parts.packages) {
-    const parsed = lockPackage(packageBlock);
+  for (const { parsed } of parsedBlocks) {
     const identity = packageIdentity(parsed.name, parsed.version, parsed.source);
     const value = packages.get(identity) || {
       name: parsed.name,
       blocks: []
     };
     const blocks = value.blocks;
-    blocks.push(parsed.canonical);
+    blocks.push(qualifiedDependencies(parsed.canonical, resolve));
     packages.set(identity, value);
   }
   for (const value of packages.values()) value.blocks.sort();
@@ -569,6 +652,89 @@ export function releaseLockPackageIdentities(
   return compatiblePaths.has("Cargo.lock")
     ? new Set()
     : changedLockPackageIdentities(previousSource, currentSource);
+}
+
+// A package that left the lockfile has no consumers in the current metadata,
+// so nothing there can say what it affected. The previous lockfile can: its
+// dependency lists name whoever depended on the package, up to the workspace
+// members that compiled it in, and those are the identities the change
+// belongs to. A removed package no workspace member reached, or one that was
+// itself a workspace member, is left as it was, which fails closed below.
+export function lockChangesResolvedAgainstBase(previousSource, lockChanges, currentPackageNames) {
+  const parts = lockfileParts(previousSource);
+  const packages = (parts?.packages || []).map(packageBlock => {
+    const parsed = lockPackage(packageBlock);
+    const list = /^dependencies = \[\n([\s\S]*?)^\]$/m.exec(packageBlock)?.[1] || "";
+    const dependencies = list
+      .split("\n")
+      .map(line => /^\s*"([^"]+)"/.exec(line)?.[1])
+      .filter(Boolean);
+    return {
+      identity: packageIdentity(parsed.name, parsed.version, parsed.source),
+      name: parsed.name,
+      version: /^version = "([^"]+)"$/m.exec(packageBlock)?.[1],
+      source: parsed.source,
+      workspace: !parsed.source,
+      dependencies
+    };
+  });
+  const byName = new Map();
+  for (const package_ of packages) {
+    const named = byName.get(package_.name) || [];
+    named.push(package_);
+    byName.set(package_.name, named);
+  }
+  // A lockfile names a dependency by name alone when one resolution of it
+  // exists, by name and version when several do, and with its source when
+  // two share a version. Each form is matched against exactly what it says,
+  // so two resolutions of one crate keep their own dependents.
+  const resolveDependency = reference => {
+    const [name, version, ...rest] = reference.split(" ");
+    const source = rest.join(" ").replace(/^\(|\)$/g, "");
+    return (byName.get(name) || []).filter(
+      candidate =>
+        (version === undefined || candidate.version === version) &&
+        (source === "" || candidate.source === source)
+    );
+  };
+  const dependents = new Map();
+  for (const package_ of packages) {
+    for (const reference of package_.dependencies) {
+      for (const dependency of resolveDependency(reference)) {
+        const set = dependents.get(dependency.identity) || new Set();
+        set.add(package_.identity);
+        dependents.set(dependency.identity, set);
+      }
+    }
+  }
+  const byIdentity = new Map(packages.map(package_ => [package_.identity, package_]));
+  const resolved = new Set();
+  for (const identity of lockChanges) {
+    const [name] = JSON.parse(identity);
+    if (currentPackageNames.has(name)) {
+      resolved.add(identity);
+      continue;
+    }
+    const reached = new Set();
+    const pending = [identity];
+    while (pending.length > 0) {
+      const next = pending.pop();
+      for (const dependent of dependents.get(next) || []) {
+        if (reached.has(dependent)) continue;
+        reached.add(dependent);
+        pending.push(dependent);
+      }
+    }
+    const members = [...reached].filter(dependent => byIdentity.get(dependent)?.workspace);
+    if (members.length === 0 || byIdentity.get(identity)?.workspace) {
+      resolved.add(identity);
+      continue;
+    }
+    for (const member of members) {
+      resolved.add(packageIdentity(byIdentity.get(member).name, "<workspace-version>", ""));
+    }
+  }
+  return resolved;
 }
 
 export function registeredConsumers(
@@ -694,6 +860,25 @@ export function storeImpactOfChangedPaths(changedPaths, packageDirectories, regi
   };
 }
 
+// The inputs that decide how every Store binary is built. A change to one
+// rebuilds every app, with two exceptions that change no shipped byte: a root
+// manifest edit that only moves the workspace version or membership, and a
+// toolchain pin whose reviewed content names the compiler the workflows were
+// already using. That review is recorded in the compatible-change manifest
+// against the exact blob, so any later edit to the pin is a global input again.
+export function globalBuildInputsChanged(
+  changedPaths,
+  compatiblePaths,
+  rootManifestOnlyMovesVersionOrMembership
+) {
+  const toolchainPins = new Set(["rust-toolchain", "rust-toolchain.toml"]);
+  if (changedPaths.some(path => path.startsWith(".cargo/"))) return true;
+  if (changedPaths.some(path => toolchainPins.has(path) && !compatiblePaths.has(path))) {
+    return true;
+  }
+  return changedPaths.includes("Cargo.toml") && !rootManifestOnlyMovesVersionOrMembership();
+}
+
 export function analyzeAppReleaseInputs(baseRevision, registry) {
   const metadata = JSON.parse(command("cargo", ["metadata", "--format-version", "1", "--locked"]));
   const workspaceRoot = resolve(metadata.workspace_root);
@@ -737,19 +922,20 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
     path => command("git", ["hash-object", path])
   );
 
-  const unconditionalGlobalInputs = new Set(["rust-toolchain", "rust-toolchain.toml"]);
-  const changesGlobalInputs =
-    changedPaths.some(path => unconditionalGlobalInputs.has(path) || path.startsWith(".cargo/")) ||
-    (changedPaths.includes("Cargo.toml") &&
-      !manifestOnlyChangesWorkspaceMembershipOrVersion(
-        command("git", ["show", `${baseRevision}:Cargo.toml`]),
-        readFileSync(resolve(workspaceRoot, "Cargo.toml"), "utf8")
-      ));
+  const changesGlobalInputs = globalBuildInputsChanged(changedPaths, compatiblePaths, () =>
+    manifestOnlyChangesWorkspaceMembershipOrVersion(
+      command("git", ["show", `${baseRevision}:Cargo.toml`]),
+      readFileSync(resolve(workspaceRoot, "Cargo.toml"), "utf8")
+    )
+  );
   if (changesGlobalInputs) {
     return { affected: new Set(registeredPackages), storeChanges };
   }
 
   const changedIdentities = new Set();
+  // Package manifests whose only change is a version line. They are not Store
+  // changes, so a push that carries nothing else is not an unpublished one.
+  const quietManifests = new Set();
   const previousRegistry = JSON.parse(
     command("git", ["show", `${baseRevision}:apps/catalog.json`])
   );
@@ -785,11 +971,9 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
     if (
       previousManifest !== null &&
       packageChanges.every(path => path === relativeManifest) &&
-      manifestOnlyChangesPathDependencyVersions(
-        previousManifest,
-        readFileSync(package_.manifest_path, "utf8")
-      )
+      manifestOnlyChangesVersions(previousManifest, readFileSync(package_.manifest_path, "utf8"))
     ) {
+      quietManifests.add(relativeManifest);
       continue;
     }
     changedIdentities.add(
@@ -802,17 +986,25 @@ export function analyzeAppReleaseInputs(baseRevision, registry) {
   }
 
   if (changedPaths.includes("Cargo.lock")) {
+    const previousLock = command("git", ["show", `${baseRevision}:Cargo.lock`]);
     const lockChanges = releaseLockPackageIdentities(
-      command("git", ["show", `${baseRevision}:Cargo.lock`]),
+      previousLock,
       readFileSync(resolve(workspaceRoot, "Cargo.lock"), "utf8"),
       compatiblePaths
     );
-    for (const identity of lockChanges) changedIdentities.add(identity);
+    const currentPackageNames = new Set(metadata.packages.map(package_ => package_.name));
+    for (const identity of lockChangesResolvedAgainstBase(
+      previousLock,
+      lockChanges,
+      currentPackageNames
+    )) {
+      changedIdentities.add(identity);
+    }
   }
 
   return {
     affected: registeredConsumers(metadata, registeredPackages, changedIdentities),
-    storeChanges
+    storeChanges: storeChanges.filter(path => !quietManifests.has(path))
   };
 }
 

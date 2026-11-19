@@ -1,60 +1,89 @@
 # Logic Pack
 
-Twenty original offline puzzles: five each of Slitherlink, Hashi, Kakuro and
-Minesweeper. Choose a game, then a puzzle. The picker shows difficulty and
-whether a puzzle is new, in progress or completed. Each puzzle keeps its own
-progress and up to 32 undo steps.
+Four hundred and twenty offline puzzles: 105 each of Slitherlink, Hashi, Kakuro
+and Minesweeper.
 
-![Logic Pack puzzle picker](screenshots/collection.png)
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/collection.png" alt="The four games, with how many of each are solved"><br>The four games, with how many of each are solved</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/slitherlink.png" alt="Slitherlink, with part of the loop drawn"><br>Slitherlink, with part of the loop drawn</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/hashi.png" alt="Hashi, with single and double bridges"><br>Hashi, with single and double bridges</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/kakuro.png" alt="Kakuro, with the first digits entered"><br>Kakuro, with the first digits entered</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/entry.png" alt="Entering a Kakuro digit, with both sums shown"><br>Entering a Kakuro digit, with both sums shown</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/logicpack-mines.png" alt="Minesweeper, with untouched squares shaded"><br>Minesweeper, with untouched squares shaded</td>
+</tr>
+</table>
 
-Slitherlink grows from 2 × 2 to 4 × 4 cells, including loops with omitted clues.
-Hashi grows from five to sixteen islands, with single and double bridges.
-Kakuro includes irregular cross-sums and longer runs. Minefields grow from
-4 × 4 to 7 × 7. Starter introduces the rules; Easy and Medium are editorial
-guides based on size and clue structure. Open Help, then Difficulty for the
-selected puzzle’s guide. Minefields may require a guess; the first reveal is safe.
+## Puzzles
 
-The collection is generated entirely from original definitions and fixed seeds.
-A complete constraint solver checks uniqueness for every loop, bridge and
-cross-sum puzzle. Separate Rust rule checks verify the bundled answers. Reproduce
-and verify the collection from the repository root:
+- **Slitherlink**: 2 × 2 to 4 × 4 loops, from every clue shown to a handful.
+- **Hashi**: four to twenty-two islands, with single and double bridges.
+- **Kakuro**: from three blanks to twenty-seven.
+- **Minesweeper**: 4 × 4 to 8 × 8. Each new field opens with a safe patch
+  cleared and never needs a guess. The five original fields keep a safe first
+  reveal instead, and some of them need a guess.
+
+Each game has Starter, Easy, Medium and Hard puzzles. A grade comes from the
+hardest step a puzzle needs: Easy needs one clue at a time, Medium needs the
+game's own rule (one loop, every island connected, where a sum's digits must
+go, or two numbers read together), and Hard needs trying a move and following
+it through. **Rules**, then **Difficulty**, shows the open puzzle's guide.
+
+## Playing
+
+Every game keeps its controls in the same places: **Rules** and the menu at
+the top, **Undo** first at the foot. The menu starts with **New game**, which
+opens the next puzzle of the same kind you have not solved, then **Restart
+puzzle** and **Puzzles**. Slitherlink and Minesweeper put the way taps work
+beside Undo, named for what a tap there does: **Mark crosses** or **Draw
+lines**, **Flag mines** or **Reveal squares**. Hashi and Kakuro put
+**Restart** there, and a solved puzzle offers **Next puzzle**.
+
+- The puzzle list shows one grade at a time and as many puzzles as fit the
+  page, numbered from the start of the grade and each marked solved or in
+  progress.
+- A puzzle tells you when it is solved, and when a finished-looking board
+  breaks a rule, which rule it is.
+- Each puzzle keeps its own progress and up to 32 undo steps, which survive
+  reopening.
+- In Kakuro, tapping a square opens a digit chooser that shows both sums.
+- **Restart puzzle** asks first, leaves other puzzles alone and can be undone.
+- Saving is quiet when it works. If a save fails, a line over the board says
+  so: keep the app open and choose **Retry saving**.
+
+## How the puzzles are made
+
+The first twenty puzzles are the original collection and stay first, because
+saved games refer to them. The rest come from a generator with fixed seeds. A
+complete search proves that every Slitherlink, Hashi and Kakuro puzzle has
+exactly one solution, and a step-by-step solver confirms each grade and that
+every new Minesweeper field clears from its opening without a guess. To
+rebuild or verify the collection:
 
 ```sh
-python3 scripts/quality/make-logicpack-collection.py --check
+python3 apps/logicpack/tools/generate.py
+python3 apps/logicpack/tools/generate.py --check
 ```
 
-Kakuro opens a digit chooser when you tap an editable square. It shows the square’s
-row, column, current value, and across/down sums. Choose 1–9 or Clear square;
-printed digits stay fixed. Check judges the current marks without revealing the
-answer. More holds undo, restart and the rules. Restart asks first, preserves
-other puzzles, and can itself be undone.
+`cargo test -p kobo-logicpack` checks the shipped file again: one solution for
+every loop, bridge and sum puzzle, and a guess-free clear for every new field.
 
-![Kakuro digit entry with both sums](screenshots/entry.png)
-![A larger Slitherlink](screenshots/collection-slither.png)
+## Permissions
 
-Undo includes checks, flags, flood reveals and first-mine relocation, and survives
-reopening. Progress shows Saving… until storage confirms it. An older write cannot
-mark newer moves saved. If saving fails, keep the app open and choose Retry save;
-your latest moves remain in memory. Unreadable or future-version records stay
-untouched. Both the original single-game format and the four-game format migrate
-without rewriting the old file until the next edit; earlier undo history is retained.
+None. Logic Pack runs offline.
 
-The app opens in portrait. Shared pencil-board geometry draws continuous loops,
-circular islands and joined diagonal sum cells; fixed clues have no actions.
-One row of contextual controls leaves room for larger boards. Layout checks use
-the shipped fonts at all nine text sizes on Clara BW and a 758 × 1024 display.
-The versioned save holds the complete collection within a 128 KiB bound.
-
-After building `kobo-cli`, run this from the repository root:
+## Development
 
 ```sh
-python3 scripts/quality/check-logicpack-sim.py --output /tmp/logicpack-check
+cargo test -p kobo-logicpack
+python3 scripts/check-apps-sim.py logicpack
 ```
 
-The actual SDK simulator completes and forcibly reopens all twenty puzzles,
-checks independent progress, digit entry, persistent undo, storage recovery,
-confirmed restart, both migrations and unreadable-record preservation. It uses
-a private temporary store and asserts zero network effects. Physical Clara BW
-acceptance follows the three quality PRs.
-
-Logic Pack requests no capabilities and uses no external puzzle code or assets.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`. `scripts/quality/check-logicpack-sim.py --output /tmp/logicpack-check`
+also completes and reopens the original twenty puzzles and the first new one of
+each kind, and checks saving, older saves and recovery.

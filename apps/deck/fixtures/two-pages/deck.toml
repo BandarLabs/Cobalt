@@ -1,0 +1,23 @@
+[[page]]
+name = "Build"
+
+[[page.key]]
+label = "Test"
+detail = "cargo test"
+run = "cargo test"
+confirm = false
+
+[[page.key]]
+label = "Deploy"
+detail = "ship the site"
+run = "make deploy"
+confirm = true
+
+[[page]]
+name = "Home"
+
+[[page.key]]
+label = "Lights"
+detail = "living room"
+run = "lights toggle"
+confirm = false

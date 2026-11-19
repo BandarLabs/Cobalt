@@ -1,11 +1,22 @@
 expect KnightReader
-tap-at 102,423
+# A pawn one step from the last rank is picked up like any other piece.
+tap-id square-a7
 wait-for a7 →
 shot promotion-selected
-tap-at 102,301
-wait-for a7 → a8
+# Moving it to the last rank asks which piece it becomes, rather than
+# assuming a queen.
+tap-id square-a8
+wait-for Choose promotion
+expect a7 → a8
+expect Queen
+expect Rook
+expect Bishop
+expect Knight
 shot promotion-choices
-tap-at 895,590
+# Closing the choice puts the pawn back unmoved and sends nothing.
+tap-id 4294967295
 expect-missing Choose promotion
-wait-for none
+expect-missing a7 →
+expect White · Your move · Casual
+expect-state /activity#/effects/post 0
 shot promotion-dismissed

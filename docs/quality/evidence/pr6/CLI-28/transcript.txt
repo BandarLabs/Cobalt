@@ -1,0 +1,20 @@
+=== one photo, three moments, three distinct states (fresh photo, fresh config, live simulator) ===
+
+--- 1. prepared: --preview renders locally ---
+Prepared 1 photos at 1072 × 1448. Open /tmp/preview-28e/index.html to compare crop and pad. No photos were transferred.
+files rendered: 0-crop.png 0-pad.png index.html 
+receipt recorded? no (prepared is not sent)
+
+--- 2. sent: the transfer runs and is receipted ---
+preparing /tmp/send-photo-28d.png for frame
+1 new, 0 already present, 0 removed; 11521 image bytes to send
+  Add: send-photo-28d.png / send-photo-28d.png (photo-b35ac40229e883e5)
+Frame transfer verified: 7 photo(s), 1 new, 0 removed
+sent to sim
+this photo's shelf id: photo-b35ac40229e883e5
+was it on the shelf after step 1 (prepared)? 0 occurrence(s) in the pre-send shelf listing (0 = prepared is not available)
+receipt now recorded: 1 send(s) (sent is on record)
+
+--- 3. available offline: the photo sits on the shelf with the CLI off ---
+photo-b35ac40229e883e5.png
+kobo has exited; the file above remains in the reader's own storage - availability is a property of the shelf, not of the connection

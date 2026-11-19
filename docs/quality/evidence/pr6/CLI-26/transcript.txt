@@ -1,0 +1,20 @@
+=== fresh simulator: the rss shelf does not exist yet ===
+frame
+
+=== a corrupt OPML is refused and NO storage is created ===
+preparing /tmp/bad.opml for feeds
+kobo: /tmp/bad.opml: This OPML file contains unexpected text
+The selection is kept; retry with: kobo send --retry
+exit=1
+rss shelf exists after refusal? no
+
+=== a valid OPML passes validation and the storage is created ===
+preparing /tmp/send-subs.opml for feeds
+1 feed staged at /tmp/cobalt-sim-data/rss/send-subs.opml; open Feeds ▸ Import OPML.
+sent to sim
+exit=0
+rss shelf now:
+total 4
+drwxr-xr-x 2 sandbox sandbox  60 Sep 19 17:36 .
+drwxr-xr-x 4 sandbox sandbox  60 Sep 19 17:36 ..
+-rw-r--r-- 1 sandbox sandbox 158 Sep 19 17:36 send-subs.opml

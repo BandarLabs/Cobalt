@@ -1,0 +1,1 @@
+Reused committed real-helper simulator evidence because this sandbox cannot execute its protoc binary (permission denied).

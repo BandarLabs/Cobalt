@@ -1,91 +1,133 @@
-# Audiobook Studio
+# Audiobooks
 
-Type a topic and the application asks Exa for deep research, OpenAI for an
-original spoken script, and ElevenLabs for narration. It packages the bounded
-MP3 parts as a Kobo `.mp3z` in `/mnt/onboard/Audiobooks`, so the result remains
-available in My Books.
+Play the audiobooks on your Kobo, with chapters, speed, a sleep timer and your
+place kept. Or make one from a topic with your own accounts.
 
-The finished result opens in `kobo_sdk::audio::AudioPlayer` with deterministic
-album art, position, ±30-second seek, play/pause and software volume. Playback
-uses a connected Bluetooth audio-class device. If none is connected, Play
-opens the component's own headphones/speaker picker; after pairing and
-connection the pending audiobook starts automatically.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/library.png" alt="The library, with a book on the go first"><br>The library, with a book on the go first</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/player.png" alt="The player, with cover, chapter and transport"><br>The player</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/chapters.png" alt="The chapters of a book, with the one playing marked"><br>The chapters, with the one playing marked</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/speed.png" alt="Playing speed, from half to three times"><br>Speed, with the common ones a tap each</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/sleep.png" alt="The sleep timer"><br>The sleep timer</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/headphones.png" alt="Choosing headphones"><br>Play asks for headphones when none are connected</td>
+</tr>
+</table>
 
-Provider keys remain runtime secrets named `exa`, `openai` and `elevenlabs`.
-They are attached only to the exact provider endpoints allowed by `kobod` and
-are never sent to, stored by, or logged from the application process.
+## Features
 
-| The shelf | Choosing a topic |
-| --- | --- |
-| ![One saved audiobook listed by title with its size on disk](screenshots/shelf.png) | ![An on-screen keyboard with the topic typed above it](screenshots/topic.png) |
+- Plays what you copy onto the reader over USB: MP3, M4B and M4A (AAC), Ogg
+  Vorbis, Ogg Opus, FLAC and WAV, and the `.mp3z` archives the reader's own
+  store uses. A folder of numbered files is one book with a part per file,
+  which is how a ripped set of discs arrives.
+- Shows the book's own cover, title, author and narrator, and its chapters,
+  whether they are in the file, in an ID3 tag, in Ogg comments, or one per
+  file.
+- Chapter keys either side of the transport, and a chapter list that opens
+  on the chapter playing. Back within a chapter goes to its start; back
+  again goes to the one before.
+- Speed from half to three times, in steps of five percent, with the voice's
+  pitch unchanged. The common speeds are a tap each.
+- A sleep timer: in 15, 30, 45 or 60 minutes, or at the end of this chapter.
+- Your place in every book is kept. Opening a book again carries on where
+  you left it, a few seconds earlier the longer you have been away, and the
+  library lists the books on the go first with how much is left in each.
+- Losing the headphones keeps your place. Play carries on from where the
+  sound stopped once they are back.
+- Backing out of the player keeps the book playing; the library's first row
+  leads back to it. The page keys skip half a minute either way.
+- Plays through Bluetooth headphones or speakers on the MediaTek readers:
+  Clara BW, Clara Colour, Libra Colour and Elipsa 2E. If none is connected,
+  tapping a book opens a device picker, and the book starts once one
+  connects.
+- A free sample plays without any accounts.
+- Everything plays offline. Nothing on the reader is uploaded anywhere.
 
-| Making it | Listening |
-| --- | --- |
-| ![The title and summary above two progress bars and how long it has taken](screenshots/making.png) | ![The player, with generated cover art, position and transport controls](screenshots/player.png) |
+### Making a book
 
-*Captured from a Kobo Clara BW over Wi-Fi with `kobo shot --device`, on a run
-that took four minutes end to end against the real providers.*
+- Type a topic. Exa researches it, OpenAI writes an original script and
+  ElevenLabs narrates it. Before anything is spent, it shows what a book
+  takes: about 3 to 8 minutes and roughly $1 to $5 across the three accounts,
+  most of it narration.
+- Finished books are saved as `.mp3z` files in the Audiobooks folder, so they
+  also appear in the Kobo's My Books, and they list and play here like any
+  other book.
+- Each narrated part is kept as it arrives. If a book stops part way, even
+  across a restart, **Resume** carries on from the next part and does not pay
+  for the finished ones again.
 
-## The shelf
+## Setup
 
-The application opens on what it has already made, not on the form. An
-audiobook is four minutes of somebody else's money and a few minutes of
-waiting, so the copy that exists is worth more than the copy that does not.
+1. Set up the reader once over USB, if you have not already:
 
-Two things store it. The `.mp3z` itself goes to `/mnt/onboard/Audiobooks`,
-which is where the reader's own My Books looks, and is published by rename so a
-power cut during a save leaves the previous state, never a truncated file.
-The titles go to the application's own store, because the shelf can only key on
-a slug and `a-string-into-the-sky-the-story-and-science-of-k` is not a title.
+   ```sh
+   kobo setup
+   ```
 
-The shelf remains the truth about what exists. The index only supplies the
-words and the order, and a line it cannot parse is skipped,
-so a corrupt index costs you a title and not a library.
+2. Plug the reader in, open its storage and copy audiobooks into a folder
+   called `Audiobooks`. One file is one book; a folder of numbered files is
+   one book with a part per file. The folder can be anywhere the reader's
+   own books go, including the SD card.
+3. Open Audiobooks and tap a book. Connect headphones or a speaker when
+   asked.
 
-Nothing here needs the network. A book made last week opens and plays with
-Wi-Fi off, which is the point of putting it on the reader rather than streaming
-it.
-
-## Why it says how long it has been
-
-Research is about ten seconds, the script is around a hundred, and narration is
-a dozen or so calls. A progress bar that sits at thirty percent for a minute
-and a half is indistinguishable from a hung application, and on a panel that
-does not animate there is nothing else to say otherwise.
-
-So a `Heartbeat` ticks every five seconds and the screen counts up: "25 seconds
-so far", then "2 min 45 s so far". It is the cheapest possible proof that the
-application is still alive, and it costs one nap.
-
-The save has its own bar in bytes, because that is the one stage whose progress
-is genuinely known rather than estimated.
-
-## Running it
+To make a book from a topic, create an API key with Exa (research), OpenAI
+(writing) and ElevenLabs (narration), save them in `~/.exa`, `~/.openai` and
+`~/.elevenlabs`, and install the three keys:
 
 ```sh
-kobo secret set exa        --from PATH --device IP
-kobo secret set openai     --from PATH --device IP
-kobo secret set elevenlabs --from PATH --device IP
+kobo secret set exa
+kobo secret set openai
+kobo secret set elevenlabs
 ```
 
-All three are needed. Without one the run stops at the stage that wanted it and
-says which, instead of failing at the end with everything already spent.
+The app checks all three keys before making any paid request. If one is
+missing, it names the exact command to run and keeps your topic, so **Check
+again** picks up where you were. The runtime attaches each key only to its
+provider's endpoints, and the app never sees them.
+
+## What plays and what does not
+
+Everything is decoded on the reader by the runtime, in pure Rust: MP3, AAC-LC
+in MPEG-4, Ogg Vorbis, Ogg Opus, FLAC and WAV. HE-AAC (AAC with SBR) is not
+decoded; a file that says it needs it is refused as a kind this reader cannot
+play. Books with DRM do not play. A listing stops at two thousand books and
+says so.
+
+Sound goes out through the Bluetooth audio service of the MediaTek readers
+(Clara BW, Clara Colour, Libra Colour, Elipsa 2E). On the readers with a
+standard Linux Bluetooth stack (Libra 2, Sage, Clara 2E) the app can switch
+Bluetooth on and pair headphones, but the runtime has no way to send them
+sound yet, and the player says so. The reader's own software has to have
+started the Bluetooth radio once since the reader was switched on; if it has
+not, the player asks you to turn Bluetooth on from the Kobo home screen and
+come back.
+
+## Permissions
+
+- `network`: calls Exa, OpenAI and ElevenLabs when making a book.
+- `audio`: lists and plays the audiobooks on the reader.
+- `bluetooth-audio`, `bluetooth-control`: finds and connects headphones or
+  speakers.
+
+## Development
+
+```sh
+cargo test -p kobo-audiobook
+(cd examples/audiobook && kobo dev)   # in the browser simulator
+python3 scripts/check-apps-sim.py audiobook --all-routes
+kobo deploy --device <ip>   # install Cobalt, with this app, over Wi-Fi
+```
+
+The simulator check seeds two books from `crates/kobo-audio/fixtures` and
+simulates a pair of headphones once Bluetooth is switched on. The studio's
+end-to-end check, `scripts/quality/check-audiobook-sim.py`, runs the creation
+flow against local test servers.
 
 ---
 
-Built with the [Cobalt SDK](../../README.md), which
-[installs on a Kobo](../../README.md#install-it-on-your-kobo) with one
-command over USB. The other apps:
-[Launcher](../launcher/README.md) ·
-[Gutenbird](../gutenbird/README.md) ·
-[Hacker News](../hn/README.md) ·
-[RSS Reader](../rss/README.md) ·
-[Daily Brief](../brief/README.md) ·
-[AI Chat](../chat/README.md) ·
-[Coding Agents Sidekick](../sidekick/README.md) ·
-[Terminal](../terminal/README.md) ·
-[UI Components Showcase](../gallery/README.md) ·
-[Settings](../settings/README.md) ·
-[Todo](../todo/README.md) ·
-[Tic-tac-toe](../tictactoe/README.md) ·
-[Magnet Sensor](../magnet/README.md)
+Part of [Cobalt](../../README.md). See [all apps](../../README.md#apps).

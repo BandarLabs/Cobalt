@@ -1,0 +1,17 @@
+=== the same send, terminal vs pipe (fresh config each, same bytes): identical output, no escape codes ===
+terminal exit=0
+pipe exit=0
+IDENTICAL output (modulo PTY carriage returns)
+preparing /tmp/send-photo-kb.png for frame
+0 new, 1 already present, 0 removed; 0 image bytes to send
+  Keep: send-photo-kb.png / send-photo-kb.png (photo-76694eea1e9c2e7e)
+Frame transfer verified: 4 photo(s), 0 new, 0 removed
+sent to sim
+escape bytes in terminal output: 0
+
+=== TERM=dumb and NO_COLOR change nothing ===
+IDENTICAL under TERM=dumb NO_COLOR=1
+
+=== source: capability detection in one place so no escape can leak (console.rs) ===
+122:    /// Colour and emphasis escapes may be sent. Nothing here emits any yet;
+134:    /// Movement on screen is welcome: spinners and in-place redraws.

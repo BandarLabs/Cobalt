@@ -1,0 +1,6 @@
+Fieldbook photo pack: 6 photo(s), 6 without an eligible Avicommons photo
+Saved /tmp/fieldbook-cache-hit
+
+real	0m0.100s
+user	0m0.084s
+sys	0m0.016s

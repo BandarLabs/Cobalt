@@ -1,0 +1,34 @@
+! Lamplight: a tiny original story that exists to be the parser's test
+! fixture. Written for Cobalt, compiled with Inform 6 + PunyInform (MIT).
+Constant Story "Lamplight";
+Constant Headline "^A small story that keeps the parser honest.^";
+Serial "260919";
+Release 1;
+
+Include "globals.h";
+Include "puny.h";
+
+Object Square "Lamp Square"
+    with description
+        "A single lamp burns over the square, and a wooden crate sits in its pool of light.",
+    n_to Path,
+    has light;
+
+Object -> Crate "wooden crate"
+    with name 'wooden' 'crate',
+        description "A slatted crate, stenciled with a lantern mark.",
+    has container openable ~open;
+
+Object -> -> Note "folded note"
+    with name 'folded' 'note',
+        description "A note folded small: the lane, the gate, the third lantern.";
+
+Object Path "Garden Path"
+    with description "Gravel crunches underfoot. The square lies south.",
+    s_to Square,
+    has light;
+
+[ Initialise;
+    location = Square;
+    "Dusk settles. Somebody has to light the lamps, and tonight that is you.";
+];

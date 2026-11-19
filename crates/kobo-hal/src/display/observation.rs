@@ -42,6 +42,9 @@ pub enum RefreshPhase {
     SubmissionFailed,
     Completed,
     CompletionFailed,
+    /// The profile bypasses the completion ioctl, so a short pause stood in
+    /// for it. Not evidence that the update reached the panel.
+    Paced,
 }
 
 /// The marker and controller-specific request. A copied-back waveform is only
@@ -81,6 +84,7 @@ impl RefreshObservation {
             RefreshPhase::SubmissionFailed => "submission-failed",
             RefreshPhase::Completed => "completed",
             RefreshPhase::CompletionFailed => "completion-failed",
+            RefreshPhase::Paced => "paced",
         };
         let backend = match request.backend {
             Backend::Hwtcon => "hwtcon",

@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -22,6 +23,9 @@ with tempfile.TemporaryDirectory(prefix='cobalt-provider-help-') as temp:
                                     text=True, timeout=5)
             assert result.returncode == 0 and 'usage: kobo ' + command in result.stdout
             assert not result.stderr
+            # The target is optional and the help says where it goes without one.
+            assert '[--device IP | --reader NAME' in result.stdout, result.stdout
+            assert 'the reader kobo setup saved' in result.stdout, result.stdout
             checks.append({'args': [command, *suffix], 'exit': result.returncode})
             if suffix == ['--help']:
                 args.output.mkdir(parents=True, exist_ok=True)
@@ -41,6 +45,14 @@ with tempfile.TemporaryDirectory(prefix='cobalt-provider-help-') as temp:
             checks.append({'command': command, 'refused': result.stderr.strip()})
         missing = subprocess.run([cli, command], capture_output=True, text=True, timeout=5)
         assert missing.returncode != 0, 'missing arguments must remain an error'
+        # No target and nothing saved: the named next step, as a target error.
+        unsaved = subprocess.run([cli, command, 'list'], capture_output=True, text=True,
+                                 timeout=5, env=dict(os.environ, KOBO_CONFIG_DIR=str(root/'config'),
+                                                     KOBO_READER=''))
+        assert unsaved.returncode == 3, unsaved
+        assert 'No reader saved. Run kobo setup with the reader plugged in, or kobo pair.' \
+            in unsaved.stderr, unsaved.stderr
+        checks.append({'args': [command, 'list'], 'no_reader_saved_exit': unsaved.returncode})
     source = root/'synthetic-token'
     source.write_text('fixture-only-not-a-live-token')
     source.chmod(0o600)
@@ -58,19 +70,17 @@ with tempfile.TemporaryDirectory(prefix='cobalt-provider-help-') as temp:
                                  '--volume', str(reader)], capture_output=True, text=True, timeout=5)
         assert result.returncode != 0 and installed.read_bytes() == previous
     source.write_text('replacement-fixture-value')
+    # A staging file left by an interrupted run is cleared rather than
+    # blocking every later set until somebody finds and deletes it by hand.
     partial = installed.with_name('.fixture.writing')
-    partial.write_text('another attempt')
-    result = subprocess.run([cli, 'secret', 'set', 'fixture', '--from', str(source),
-                             '--volume', str(reader)], capture_output=True, text=True, timeout=5)
-    assert result.returncode != 0 and installed.read_bytes() == previous
-    assert partial.read_text() == 'another attempt'
-    partial.unlink()
+    partial.write_text('left by an interrupted run')
     result = subprocess.run([cli, 'secret', 'set', 'fixture', '--from', str(source),
                              '--volume', str(reader)], capture_output=True, text=True, timeout=5)
     assert result.returncode == 0 and installed.read_text().strip() == source.read_text()
+    assert not partial.exists()
     assert installed.stat().st_mode & 0o777 == 0o600
-    checks.append({'preserved_previous': ['empty', 'oversized', 'invalid UTF-8', 'occupied staging file'],
-                   'retry': 'replacement published with mode 0600'})
+    checks.append({'preserved_previous': ['empty', 'oversized', 'invalid UTF-8'],
+                   'stale_staging_file': 'cleared; replacement published with mode 0600'})
     result = subprocess.run([cli, 'secret', 'list', '--volume', str(reader)],
                             capture_output=True, text=True, timeout=5)
     assert result.returncode == 0 and 'fixture' in result.stdout

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Stub ssh: the script arrives on stdin; answer the kobod calls setup makes.
+script=$(cat)
+case "$script" in
+  *"--syncthing id"*) echo "KKKKKKK-KKKKKKK-KKKKKKK-KKKKKKK-KKKKKKK-KKKKKKK-KKKKKKK-KKKKKKK" ;;
+  *"--syncthing pair"*) echo "Paired stub Kobo with the folder." ;;
+  *) echo "stub ssh: unhandled script" >&2; exit 1 ;;
+esac
+exit 0

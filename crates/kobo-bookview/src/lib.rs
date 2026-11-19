@@ -45,6 +45,7 @@ use std::time::{Duration, Instant};
 
 pub mod comic;
 pub mod illustrations;
+pub mod offline;
 pub mod positions;
 
 use kobo_doc::{Block, Document, FORMULA_PICTURE_EM, FORMULA_PICTURE_PREFIX};
@@ -195,6 +196,8 @@ pub struct BookView {
     wanted: VecDeque<String>,
     /// The fetch in flight, and what it is for.
     fetching: Option<(TaskId, String)>,
+    /// Some formulas in the open HTML were left as text past the picture budget.
+    formulae_as_text: bool,
 }
 
 impl BookView {
@@ -261,6 +264,7 @@ impl BookView {
     /// the scanned bytes as well as the decoded greyscale meant every plate
     /// was paid for twice.
     pub fn open(&mut self, context: &mut Context, mut document: Document, memory: Memory) {
+        self.formulae_as_text = false;
         // Whatever the last document handed over is about to be replaced, so
         // it goes back first. Without this, a book reopened from the shelf
         // left its first set decoded in the runtime with nothing left that
@@ -369,15 +373,68 @@ impl BookView {
         origin: &str,
         memory: Memory,
     ) -> bool {
-        let document = kobo_doc::html::parse(html);
+        let (document, formulae_as_text) = kobo_doc::html::parse_noting_formula_fallback(html);
         if document.blocks.is_empty() {
             return false;
         }
         self.open(context, document, memory);
+        self.formulae_as_text = formulae_as_text;
         self.origin = Some(origin.to_owned());
         self.wanted = self.missing_pictures().into_iter().collect();
         self.fetch_next(context);
         true
+    }
+
+    /// Opens a web page fetched from a link, cut to the article in it.
+    ///
+    /// For a page somebody else's site serves, where the article is a minority
+    /// of the markup: the menus, share buttons and footers are taken away
+    /// before the reader measures anything, so the first page is the first
+    /// page of the article. See [`kobo_doc::web::main_content`] for what
+    /// is cut. Pictures are fetched as [`BookView::open_html`] fetches them.
+    pub fn open_article(
+        &mut self,
+        context: &mut Context,
+        html: &str,
+        origin: &str,
+        memory: Memory,
+    ) -> bool {
+        self.open_html(context, &kobo_doc::web::main_content(html), origin, memory)
+    }
+
+    /// Opens an article kept on the device, with the pictures kept beside it.
+    ///
+    /// Nothing is asked of the network for a picture the file carries. One it
+    /// does not carry, because it did not fit or would not come when the
+    /// article was kept, is asked for the way an open page asks, and simply
+    /// stays a caption when the reader is offline.
+    pub fn open_kept(
+        &mut self,
+        context: &mut Context,
+        kept: offline::Kept,
+        memory: Memory,
+    ) -> bool {
+        let (document, formulae_as_text) =
+            kobo_doc::html::parse_noting_formula_fallback(&kept.html);
+        if document.blocks.is_empty() {
+            return false;
+        }
+        self.open(context, document, memory);
+        self.formulae_as_text = formulae_as_text;
+        for (name, bytes) in kept.pictures {
+            self.provide_picture(&name, bytes);
+        }
+        self.settle_pictures(context);
+        self.origin = Some(kept.origin);
+        self.wanted = self.missing_pictures().into_iter().collect();
+        self.fetch_next(context);
+        true
+    }
+
+    /// Whether opening HTML left some formulas as text past the picture budget.
+    #[must_use]
+    pub const fn formulae_as_text(&self) -> bool {
+        self.formulae_as_text
     }
 
     /// Says the document stopped short of its own end.
@@ -802,12 +859,20 @@ impl BookView {
         }
         let mut on_this_page = false;
         if let Some((name, mut picture)) = self.dithering.take() {
-            // The second half: the greys.
+            // The second half: the greys. The colour plane, when the panel
+            // asked for one, is left as it was read and sent beside them.
             picture.dither(kobo_image::PANEL_GREYS);
             let (drawn_width, drawn_height) = (picture.width(), picture.height());
             if let Some(reserved) = self.handed(&name) {
+                let colour = picture.colour().map(<[u8]>::to_vec);
                 if context
-                    .put_picture(reserved, drawn_width, drawn_height, picture.into_grey())
+                    .put_picture_shown(
+                        reserved,
+                        drawn_width,
+                        drawn_height,
+                        picture.into_grey(),
+                        colour,
+                    )
                     .is_some()
                     && showing.contains(&name)
                 {
@@ -824,7 +889,15 @@ impl BookView {
                 if self.handed(&name).is_none() {
                     continue;
                 }
-                let Ok(picture) = kobo_image::decode(&bytes) else {
+                // Read in colour only for a panel that will show it: a colour
+                // read costs twice the memory of a grey one at its peak, and a
+                // greyscale reader draws the same picture either way.
+                let decoded = if context.panel_shows_colour() {
+                    kobo_image::decode_colour(&bytes)
+                } else {
+                    kobo_image::decode(&bytes)
+                };
+                let Ok(picture) = decoded else {
                     continue;
                 };
                 let (box_width, box_height) = if name.starts_with(FORMULA_PICTURE_PREFIX) {
@@ -1425,6 +1498,7 @@ mod tests {
     /// the runtime dispatching its answer, and there is no runtime here. Left
     /// on one context the pipeline stalls after four passes, which is a
     /// property of the harness and not of the view.
+    #[cfg(feature = "raster")]
     fn drain(view: &mut BookView) -> (usize, std::time::Duration) {
         let mut passes = 0;
         let mut longest = std::time::Duration::ZERO;
@@ -1871,5 +1945,77 @@ mod tests {
         );
         assert!(!view.provide_picture("x1.png", plate_bytes()));
         assert!(!view.settle_pictures(&mut context));
+    }
+
+    /// Moby-Dick's Etymology page glosses "whale" in a dozen languages, and
+    /// the first of them is Hebrew.
+    fn etymology() -> Document {
+        Document {
+            title: Some("Moby-Dick".into()),
+            blocks: vec![
+                Block::Heading {
+                    level: 1,
+                    text: "ETYMOLOGY.".into(),
+                },
+                Block::Paragraph("\u{5d7}\u{5d5}, Hebrew.".into()),
+                Block::Paragraph("WHALE, English.".into()),
+            ],
+            contents: vec![
+                kobo_doc::Contents {
+                    title: "ETYMOLOGY.".into(),
+                    block: 0,
+                    depth: 0,
+                },
+                kobo_doc::Contents {
+                    title: "\u{5d7}\u{5d5}".into(),
+                    block: 1,
+                    depth: 1,
+                },
+            ],
+            ..Document::default()
+        }
+    }
+
+    /// A letter no installed face carries does not close the book.
+    ///
+    /// No face on the reader has a Hebrew letter, and turning to Moby-Dick's
+    /// Etymology page stopped the application: the check that keeps an
+    /// application's own labels drawable was applied to the author's words
+    /// as well. The page, the contents that name it and the notes that quote
+    /// it are all shown, with the letter as a box.
+    #[test]
+    fn a_letter_no_installed_face_carries_does_not_close_the_book() {
+        let _ = kobo_text::install(kobo_sdk::DisplayMetrics::default());
+        for face in [kobo_ui::Face::Text, kobo_ui::Face::Reading] {
+            assert!(
+                kobo_ui::undrawable_in("\u{5d7}", face).is_some(),
+                "the {face:?} face can draw Hebrew now, so this no longer tests anything"
+            );
+        }
+        let mut context = Context::default();
+        let mut view = BookView::new();
+        view.open(&mut context, etymology(), Memory::default());
+        context.set_screen(view.screen("Moby-Dick").expect("a book"));
+
+        let mark = format!("{}1", kobo_read::action::MARK);
+        for name in [
+            kobo_read::action::CONTENTS,
+            kobo_read::action::MARKING,
+            &mark,
+            kobo_read::action::HIGHLIGHTS,
+        ] {
+            assert!(
+                view.act(&mut context, kobo_sdk::action_id(name)).is_some(),
+                "{name} was not answered"
+            );
+            let screen = view.screen("Moby-Dick").expect("a book");
+            if name == kobo_read::action::CONTENTS {
+                assert!(
+                    format!("{screen:?}").contains('\u{25a1}'),
+                    "the contents do not show the Hebrew entry as a box"
+                );
+            }
+            context.set_screen(screen);
+        }
     }
 }

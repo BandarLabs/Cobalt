@@ -5,26 +5,29 @@ import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  COMMAND_MAX_BUFFER,
   changedLockPackageIdentities,
   changedRegistryPackages,
   checkBuildPackages,
   checkEntries,
   checkProtocolMinimums,
-  COMMAND_MAX_BUFFER,
   compatibleChangePaths,
+  globalBuildInputsChanged,
   isContributionManifest,
-  meaningfulReleaseNotes,
-  lockfileOnlyAddsPackages,
-  manifestOnlyChangesPathDependencyVersions,
-  manifestOnlyChangesWorkspaceMembershipOrVersion,
-  packagesToBuild,
-  registeredConsumers,
   isDocumentation,
   isFilmingScript,
+  lockChangesResolvedAgainstBase,
+  lockfileOnlyAddsPackages,
+  manifestOnlyChangesPathDependencyVersions,
+  manifestOnlyChangesVersions,
+  manifestOnlyChangesWorkspaceMembershipOrVersion,
+  meaningfulReleaseNotes,
+  packagesToBuild,
+  registeredConsumers,
+  releaseDependencyIds,
   releaseDiffArguments,
   releaseLockPackageIdentities,
   releaseNeeded,
-  releaseDependencyIds,
   storeImpactOfChangedPaths
 } from "./check-app-versions.mjs";
 import { collectRegistry, currentProtocolVersion, deriveMinimumCobalt } from "./app-registry.mjs";
@@ -551,10 +554,22 @@ test("prose beside an application is not a release input", () => {
   // Source is source, whatever it is named.
   assert.equal(isDocumentation("apps/notes/src/main.rs", "apps/notes"), false);
   assert.equal(isDocumentation("apps/notes/build-armv7.sh", "apps/notes"), false);
-  // A nested path may be a screenshot the app page publishes, so only prose
-  // directly beside the package is excused.
+  // Only prose directly beside the package is excused.
   assert.equal(isDocumentation("apps/notes/docs/guide.md", "apps/notes"), false);
   assert.equal(isDocumentation("apps/notes-extra/README.md", "apps/notes"), false);
+});
+
+// The README's own pictures are no more downloaded than its prose. The app
+// page publishes from docs/media/site, so a refreshed still beside the package
+// must not owe every reader a new version of the app.
+test("the screenshots a README shows are not a release input", () => {
+  assert.equal(isDocumentation("apps/notes/screenshots/home.png", "apps/notes"), true);
+  assert.equal(isDocumentation("examples/todo/screenshots/list.png", "examples/todo"), true);
+  // Only that folder, only beside the package.
+  assert.equal(isDocumentation("apps/notes/src/screenshots/home.png", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes/assets/home.png", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes-extra/screenshots/home.png", "apps/notes"), false);
+  assert.equal(isDocumentation("apps/notes/screenshots", "apps/notes"), false);
 });
 
 // One route per application was the assumption, and the shelf broke it: an
@@ -604,7 +619,8 @@ test("no drive script in this tree counts as a release input", () => {
 test("an app drawing a board the runtime learned late says which release it needs", () => {
   const LATE_NODES = [
     ["crossword_board", "0.3.14"],
-    ["pencil_board", "0.3.14"]
+    ["pencil_board", "0.3.14"],
+    ["PencilMarkKind::Candidates", "0.3.18"]
   ];
   const packages = [
     ...readdirSync("apps", { withFileTypes: true }).map(e => ["apps", e]),
@@ -636,15 +652,23 @@ test("an app drawing a board the runtime learned late says which release it need
     } catch {
       continue;
     }
-    for (const [node, floor] of LATE_NODES) {
-      if (!sources.includes(`${node}(`)) continue;
-      checked += 1;
-      assert.equal(
-        manifest.minimum_cobalt_version,
-        floor,
-        `${entry.name} draws ${node} and must declare minimum_cobalt_version ${floor}`
-      );
-    }
+    const floors = LATE_NODES.filter(([node]) => sources.includes(`${node}(`));
+    if (floors.length === 0) continue;
+    checked += 1;
+    // The install floor is the newest node the app draws.
+    const floor = floors
+      .map(([, version]) => version)
+      .sort((a, b) => {
+        const pa = a.split(".").map(Number);
+        const pb = b.split(".").map(Number);
+        return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
+      })
+      .at(-1);
+    assert.equal(
+      manifest.minimum_cobalt_version,
+      floor,
+      `${entry.name} draws ${floors.map(([node]) => node).join(" and ")} and must declare minimum_cobalt_version ${floor}`
+    );
   }
   assert.ok(checked >= 2, `expected the board apps, found ${checked}`);
 });
@@ -1037,6 +1061,33 @@ test("an app-local lock change affects that app and its true dependents only", (
   );
 });
 
+test("a dependency named more exactly once a second version arrives is not a change", () => {
+  const registry = 'source = "registry+https://example.test/index"';
+  const previous = [
+    'version = 4\n\n[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n',
+    `[[package]]\nname = "shared"\nversion = "1.0.0"\n${registry}\nchecksum = "s"\ndependencies = [\n "hasher",\n]\n`,
+    `[[package]]\nname = "hasher"\nversion = "0.1.5"\n${registry}\nchecksum = "h1"\n`
+  ].join("\n");
+  // A host-only crate brings hasher 0.2.0, so Cargo now names the old one
+  // with its version wherever it was named before.
+  const current = [
+    'version = 4\n\n[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n',
+    `[[package]]\nname = "shared"\nversion = "1.0.0"\n${registry}\nchecksum = "s"\ndependencies = [\n "hasher 0.1.5",\n]\n`,
+    `[[package]]\nname = "hasher"\nversion = "0.1.5"\n${registry}\nchecksum = "h1"\n`,
+    `[[package]]\nname = "hasher"\nversion = "0.2.0"\n${registry}\nchecksum = "h2"\n`
+  ].join("\n");
+  assert.deepEqual(
+    changedLockPackageIdentities(previous, current),
+    new Set([registryIdentity("hasher", "0.2.0")])
+  );
+  // Moving shared onto the new version is still a change to shared.
+  const moved = current.replace('"hasher 0.1.5"', '"hasher 0.2.0"');
+  assert.deepEqual(
+    changedLockPackageIdentities(previous, moved),
+    new Set([registryIdentity("shared"), registryIdentity("hasher", "0.2.0")])
+  );
+});
+
 test("adding a package outside every Store app closure affects no app", () => {
   const previous = `version = 4\n\n[[package]]\nname = "notes"\nversion = "0.3.1"\n`;
   const current = `${previous}\n[[package]]\nname = "unrelated"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "new"\n`;
@@ -1130,6 +1181,77 @@ test("a lock change with no identifiable current package fails closed", () => {
   );
 });
 
+test("a dependency that left the lockfile affects what depended on it at base", () => {
+  const previous = [
+    'version = 4\n\n[[package]]\nname = "weather"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n',
+    '[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "notes-dep",\n]\n',
+    '[[package]]\nname = "shared"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s"\ndependencies = [\n "removed-dependency 2.0.0",\n]\n',
+    '[[package]]\nname = "notes-dep"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "n"\n',
+    '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n'
+  ].join("\n");
+  const current = previous
+    .replace('dependencies = [\n "removed-dependency 2.0.0",\n]\n', "")
+    .replace(
+      '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n',
+      ""
+    );
+  const changed = changedLockPackageIdentities(previous, current);
+  assert.deepEqual(
+    changed,
+    new Set([registryIdentity("shared"), registryIdentity("removed-dependency", "2.0.0")])
+  );
+  const resolved = lockChangesResolvedAgainstBase(
+    previous,
+    changed,
+    new Set(["weather", "notes", "shared", "notes-dep"])
+  );
+  assert.deepEqual(
+    resolved,
+    new Set([registryIdentity("shared"), JSON.stringify(["weather", "<workspace-version>", ""])])
+  );
+  // The consumers at base are what the removal affects: weather, not notes.
+  const removalAlone = lockChangesResolvedAgainstBase(
+    previous,
+    new Set([registryIdentity("removed-dependency", "2.0.0")]),
+    new Set(["weather", "notes", "shared", "notes-dep"])
+  );
+  assert.deepEqual(
+    registeredConsumers(metadata(), ["notes", "reader", "weather"], removalAlone),
+    new Set(["weather"])
+  );
+  // Two resolutions of one crate keep their own dependents: notes depends
+  // on shared 2.0, which never carried the removed package, so only weather
+  // is affected.
+  const twoShared = [
+    'version = 4\n\n[[package]]\nname = "weather"\nversion = "0.3.1"\ndependencies = [\n "shared 1.0.0",\n]\n',
+    '[[package]]\nname = "notes"\nversion = "0.3.1"\ndependencies = [\n "shared 2.0.0",\n]\n',
+    '[[package]]\nname = "shared"\nversion = "1.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s1"\ndependencies = [\n "removed-dependency",\n]\n',
+    '[[package]]\nname = "shared"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "s2"\n',
+    '[[package]]\nname = "removed-dependency"\nversion = "2.0.0"\nsource = "registry+https://example.test/index"\nchecksum = "r"\n'
+  ].join("\n");
+  assert.deepEqual(
+    lockChangesResolvedAgainstBase(
+      twoShared,
+      new Set([registryIdentity("removed-dependency", "2.0.0")]),
+      new Set(["weather", "notes", "shared"])
+    ),
+    new Set([JSON.stringify(["weather", "<workspace-version>", ""])])
+  );
+
+  // A removed package nothing at base reached is left as it was, and still
+  // fails closed.
+  const gone = lockChangesResolvedAgainstBase(
+    previous,
+    new Set([JSON.stringify(["gone-app", "<workspace-version>", ""])]),
+    new Set(["notes"])
+  );
+  assert.deepEqual(gone, new Set([JSON.stringify(["gone-app", "<workspace-version>", ""])]));
+  assert.throws(
+    () => registeredConsumers(metadata(), ["notes"], gone),
+    /cannot identify its consumers/
+  );
+});
+
 test("workspace package version-only lock changes affect no Store app", () => {
   const previous = `version = 4\n\n[[package]]\nname = "kobo-sdk"\nversion = "0.3.1"\ndependencies = [\n "shared",\n]\n`;
   const current = previous.replace('version = "0.3.1"', 'version = "0.3.2"');
@@ -1210,6 +1332,80 @@ test("the standalone importer is isolated without changing device workspace inpu
   const importer = metadata("crates/kobo-flashcards-import/Cargo.toml");
   assert.equal(importer.workspace_members.length, 1);
   assert.ok(importer.workspace_members[0].includes("kobo-flashcards-import"));
+});
+
+test("a package manifest that only moves its version lines is not a Store change", () => {
+  const previous = [
+    "[package]",
+    'name = "kobo-sudoku"',
+    'version = "1.0.11"',
+    "edition.workspace = true",
+    "",
+    "[dependencies]",
+    'kobo-sdk = { path = "../../crates/kobo-sdk", version = "0.3.2" }',
+    ""
+  ].join("\n");
+  const inherited = previous.replace('version = "1.0.11"', "version.workspace = true");
+  assert.equal(manifestOnlyChangesVersions(previous, inherited), true);
+  assert.equal(manifestOnlyChangesVersions(previous, previous.replace('"1.0.11"', '"1.0.15"')), true);
+  assert.equal(
+    manifestOnlyChangesVersions(previous, inherited.replace('version = "0.3.2"', 'version = "0.3.3"')),
+    true
+  );
+  assert.equal(
+    manifestOnlyChangesVersions(previous, inherited.replace("[dependencies]\n", '[dependencies]\nserde = "1"\n')),
+    false
+  );
+  assert.equal(manifestOnlyChangesVersions(previous, inherited.replace("kobo-sudoku", "kobo-sudoku2")), false);
+  const dependencyTable = `${previous}\n[dependencies.serde]\nversion = "1"\n`;
+  assert.equal(
+    manifestOnlyChangesVersions(dependencyTable, dependencyTable.replace('version = "1"\n', 'version = "2"\n')),
+    false
+  );
+});
+
+test("a toolchain pin rebuilds every app unless its exact content was reviewed", () => {
+  const compatible = new Set(["rust-toolchain.toml"]);
+  const unchangedRoot = () => true;
+  assert.equal(globalBuildInputsChanged([], compatible, unchangedRoot), false);
+  assert.equal(globalBuildInputsChanged(["rust-toolchain.toml"], new Set(), unchangedRoot), true);
+  assert.equal(globalBuildInputsChanged(["rust-toolchain"], compatible, unchangedRoot), true);
+  assert.equal(globalBuildInputsChanged(["rust-toolchain.toml"], compatible, unchangedRoot), false);
+  assert.equal(globalBuildInputsChanged([".cargo/config.toml"], compatible, unchangedRoot), true);
+  assert.equal(globalBuildInputsChanged(["Cargo.toml"], compatible, () => false), true);
+  assert.equal(globalBuildInputsChanged(["Cargo.toml"], compatible, unchangedRoot), false);
+  assert.equal(
+    globalBuildInputsChanged(["apps/sudoku/src/main.rs", "docs/README.md"], new Set(), unchangedRoot),
+    false
+  );
+});
+
+test("the reviewed toolchain pin is the file in the tree, and only that file", () => {
+  const manifest = JSON.parse(readFileSync("tools/app-release-compatible-changes.json", "utf8"));
+  const change = manifest.changes.find(entry =>
+    entry.files.some(file => file.path === "rust-toolchain.toml")
+  );
+  assert.ok(change);
+  const file = change.files.find(entry => entry.path === "rust-toolchain.toml");
+  assert.equal(file.base_blob, null);
+  const inTree = execFileSync("git", ["hash-object", "rust-toolchain.toml"], { encoding: "utf8" }).trim();
+  assert.equal(file.compatible_blob, inTree);
+  // The protocol the pin was reviewed under, not the newest one: a review
+  // answers for the protocol it names, and a protocol bump rebuilds every
+  // app anyway.
+  const protocol = change.protocol_version;
+  assert.deepEqual(
+    compatibleChangePaths(manifest, protocol, [file.path], () => null, () => file.compatible_blob),
+    new Set([file.path])
+  );
+  assert.deepEqual(
+    compatibleChangePaths(manifest, protocol, [file.path], () => null, () => "f".repeat(40)),
+    new Set()
+  );
+  assert.deepEqual(
+    compatibleChangePaths(manifest, protocol, [file.path], () => "f".repeat(40), () => file.compatible_blob),
+    new Set()
+  );
 });
 
 test("the Flashcards test-only exemption refuses a changed production blob", () => {

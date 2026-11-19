@@ -1,0 +1,31 @@
+# sweep: --bare --seed-root apps/paperterm/fixtures/saved
+# A reader with a saved pairing opens straight on the terminal and tries
+# the computer, with no setup in the way.
+wait-for Not connected
+expect Pairing
+# The computer confirmed this pairing on an earlier run, so the advice for a
+# first pairing is not given again.
+expect-missing reopen Cobalt once
+expect-missing Terminal sessions
+expect-missing Pair with your computer
+clean
+shot saved-opening
+scenario offline
+lifecycle background
+lifecycle foreground
+wait-for This Kobo is not on Wi-Fi.
+clean
+shot saved-offline
+tap Pairing
+wait-for Computer connection
+expect laptop:9332
+expect Pairing is saved for next time.
+clean
+shot saved-pairing-menu
+tap Return to terminal
+wait-for Not connected
+# The top bar's back arrow leaves the Pairing menu too.
+tap Pairing
+wait-for Computer connection
+tap-id 4294967295
+wait-for Not connected

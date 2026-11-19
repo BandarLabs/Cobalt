@@ -3,9 +3,28 @@
   "display_name": "Flashcards",
   "short_label": "Flashcards",
   "summary": "Review flashcards anywhere, even without Wi-Fi.",
-  "page_description": "Study with large reveal and answer controls designed for a Kobo screen.",
-  "version": "0.2.4",
-  "release_notes": "Preview a card's front, back and media on your computer before importing, and see how many cards and how much media a package holds. Merging and replacing a collection are now separate, named choices.",
-  "glyph": "bookmark",
-  "capabilities": []
+  "page_description": "Study Anki decks with large reveal and answer controls. Cards you grade come back on their own schedule, and missed cards return before the session ends.",
+  "version": "0.2.18",
+  "release_notes": "Your Card details choice in Review settings is now kept when Flashcards restarts, and the licence pages no longer repeat their title.",
+  "glyph": "cards",
+  "capabilities": [],
+  "setup": {
+    "steps": [
+      {
+        "text": "Or start with the sample deck in the app, no computer needed."
+      },
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Export a deck from Anki and turn it into a collection on this computer.",
+        "command": "kobo flashcards import deck.apkg --merge collection.cobfc"
+      },
+      {
+        "text": "Send the collection to the reader over Wi-Fi. Grades on the reader are kept.",
+        "command": "kobo flashcards push collection.cobfc"
+      }
+    ]
+  }
 }

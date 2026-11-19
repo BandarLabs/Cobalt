@@ -1,0 +1,28 @@
+$ kobo send s.opml --sim   (a good one-feed list lands on the shelf)
+preparing /tmp/s.opml for feeds
+1 feed staged at /tmp/cobalt-sim-data/rss/s.opml; open Feeds ▸ Import OPML.
+sent to sim
+exit: 0
+feeds on the shelf: 1
+
+$ the list gains a second feed, and a stale .writing partial is left behind
+preparing /tmp/s2.opml for feeds
+kobo: prepare subscription list (existing content unchanged): File exists (os error 17)
+The selection is kept; retry with: kobo send --retry
+exit: 1
+--> blocked by the remains of the interrupted write; nothing changed yet (s2 never landed)
+s.opml
+
+$ the owner removes the stale partial and sends again
+preparing /tmp/s2.opml for feeds
+2 feeds staged at /tmp/cobalt-sim-data/rss/s2.opml; open Feeds ▸ Import OPML.
+sent to sim
+exit: 0
+feeds on the shelf now: 2
+
+$ a corrupt list is refused; the previous valid list stays
+preparing /tmp/s-bad.opml for feeds
+kobo: /tmp/s-bad.opml: This OPML file contains unexpected text
+The selection is kept; retry with: kobo send --retry
+exit: 1
+s2.opml still holds: 2 feeds

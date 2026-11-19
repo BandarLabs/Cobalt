@@ -1,0 +1,210 @@
+{
+  "profiles": [
+    "clara-bw-391",
+    "clara-bw-395",
+    "clara-hd-376",
+    "clara-colour-393",
+    "elipsa-2e-389",
+    "libra-2-388",
+    "libra-colour-390",
+    "libra-colour-390-4.46.23836",
+    "libra-h2o-384"
+  ],
+  "scales": [
+    "default",
+    "large",
+    "extra-large"
+  ],
+  "cells": {
+    "clara-bw-391-default": {
+      "source_sha": "6e4ba702be90e91fac3fa148768a169b644d8368",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-bw-391-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-bw-391-extra-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-bw-395-default": {
+      "source_sha": "6e4ba702be90e91fac3fa148768a169b644d8368",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-bw-395-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-bw-395-extra-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": true,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-hd-376-default": {
+      "source_sha": "ed453477851d3aa44e543446229a65134c498b60",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-hd-376-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-hd-376-extra-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-colour-393-default": {
+      "source_sha": "ed453477851d3aa44e543446229a65134c498b60",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-colour-393-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "clara-colour-393-extra-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "elipsa-2e-389-default": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "elipsa-2e-389-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "elipsa-2e-389-extra-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-2-388-default": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-2-388-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-2-388-extra-large": {
+      "source_sha": "6e4ba702be90e91fac3fa148768a169b644d8368",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-colour-390-default": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-colour-390-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-colour-390-extra-large": {
+      "source_sha": "6e4ba702be90e91fac3fa148768a169b644d8368",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-colour-390-4.46.23836-default": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-colour-390-4.46.23836-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-colour-390-4.46.23836-extra-large": {
+      "source_sha": "6e4ba702be90e91fac3fa148768a169b644d8368",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-h2o-384-default": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-h2o-384-large": {
+      "source_sha": "10915153b65910272cfa4cc3d5b458b4d05721bf",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    },
+    "libra-h2o-384-extra-large": {
+      "source_sha": "6e4ba702be90e91fac3fa148768a169b644d8368",
+      "dirty": false,
+      "passed": 45,
+      "total": 45,
+      "failed": []
+    }
+  },
+  "missing_cells": []
+}

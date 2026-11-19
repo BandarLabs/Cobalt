@@ -448,7 +448,125 @@ impl<'de> Deserialize<'de> for UniqueMediaMap {
 }
 
 fn read_archive(path: &Path, _kind: PackageKind) -> Result<Unpacked, ImportError> {
-    unpack_legacy_members(read_zip_members(path)?)
+    unpack_members(read_zip_members(path)?)
+}
+
+/// The largest media list a package may carry once decompressed. Each entry
+/// is a name, a size and a 20-byte digest, so this holds every entry the
+/// bundle allows with room to spare.
+const MAX_MEDIA_LIST_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Anki 2.1.50 and later mark every package with a `meta` member naming its
+/// layout. The default export is the current layout: a zstd-compressed
+/// collection and media, listed in a protobuf map. Ticking "Support older
+/// Anki versions" in the export window writes the earlier `SQLite` layout,
+/// still with `meta`, next to a placeholder `collection.anki2` that only
+/// tells an older Anki to update.
+fn unpack_members(mut members: BTreeMap<String, Vec<u8>>) -> Result<Unpacked, ImportError> {
+    use anki_proto::import_export::package_metadata::Version;
+    use prost::Message;
+
+    let Some(meta) = members.remove("meta") else {
+        return unpack_legacy_members(members);
+    };
+    let version = anki_proto::import_export::PackageMetadata::decode(meta.as_slice())
+        .map_err(|_| ImportError::InvalidPackage("the package description is damaged".to_owned()))?
+        .version();
+    match version {
+        Version::Latest => unpack_current_members(members),
+        Version::Legacy1 | Version::Legacy2 => {
+            if members.contains_key("collection.anki21") {
+                members.remove("collection.anki2");
+            }
+            unpack_legacy_members(members)
+        }
+        Version::Unknown => Err(ImportError::InvalidPackage(
+            "this package comes from a newer Anki than kobo flashcards reads. In Anki's export \
+             window, tick Support older Anki versions and export again"
+                .to_owned(),
+        )),
+    }
+}
+
+fn unpack_current_members(mut members: BTreeMap<String, Vec<u8>>) -> Result<Unpacked, ImportError> {
+    use prost::Message;
+
+    let compressed = members
+        .remove("collection.anki21b")
+        .ok_or_else(|| ImportError::InvalidPackage("the package has no collection".to_owned()))?;
+    members.remove("collection.anki2");
+    let collection = zstd_bounded(&compressed, MAX_COLLECTION_BYTES, "collection database")?;
+    let list = members
+        .remove("media")
+        .ok_or_else(|| ImportError::InvalidPackage("media map is missing".to_owned()))?;
+    let entries = anki_proto::import_export::MediaEntries::decode(
+        zstd_bounded(&list, MAX_MEDIA_LIST_BYTES, "media map")?.as_slice(),
+    )
+    .map_err(|error| ImportError::InvalidPackage(format!("media map: {error}")))?
+    .entries;
+    if entries.len() > MAX_MEDIA_ENTRIES {
+        return Err(ImportError::InvalidPackage(format!(
+            "{} media files exceed the {MAX_MEDIA_ENTRIES} file limit",
+            entries.len()
+        )));
+    }
+    let mut media = BTreeMap::new();
+    let mut total = u64::try_from(collection.len()).unwrap_or(u64::MAX);
+    for (index, entry) in entries.into_iter().enumerate() {
+        let number = entry
+            .legacy_zip_filename
+            .map_or_else(|| index.to_string(), |number| number.to_string());
+        let compressed = members.remove(&number).ok_or_else(|| {
+            ImportError::InvalidPackage(format!("media map member {number:?} is missing"))
+        })?;
+        let bytes = zstd_bounded(&compressed, MAX_MEDIA_BYTES, "media file")?;
+        if u64::try_from(bytes.len()).ok() != Some(u64::from(entry.size)) {
+            return Err(ImportError::InvalidPackage(format!(
+                "media member {number:?} is not the size its map records"
+            )));
+        }
+        total = total.saturating_add(u64::from(entry.size));
+        if total > MAX_EXPANDED_ARCHIVE_BYTES {
+            return Err(ImportError::InvalidPackage(
+                "expanded archive exceeds the host import limit".to_owned(),
+            ));
+        }
+        let name = canonical_media_name(&entry.name)?;
+        validate_media_bytes(&name, &bytes)?;
+        if media.insert(name.clone(), bytes).is_some() {
+            return Err(ImportError::InvalidPackage(format!(
+                "media names collide after normalization: {name:?}"
+            )));
+        }
+    }
+    if let Some(unexpected) = members.keys().next() {
+        return Err(ImportError::InvalidPackage(format!(
+            "unexpected package member {unexpected:?}"
+        )));
+    }
+    Ok(Unpacked {
+        collection,
+        collection_member: "collection.anki21b".to_owned(),
+        media,
+    })
+}
+
+/// Decompresses one zstd member, refusing it past `limit` bytes rather than
+/// trusting the size it claims.
+fn zstd_bounded(bytes: &[u8], limit: u64, what: &str) -> Result<Vec<u8>, ImportError> {
+    let decoder = zstd::stream::read::Decoder::new(bytes)
+        .map_err(|error| ImportError::InvalidPackage(format!("{what}: {error}")))?;
+    let mut output = Vec::new();
+    decoder
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut output)
+        .map_err(|error| ImportError::InvalidPackage(format!("{what}: {error}")))?;
+    if u64::try_from(output.len()).unwrap_or(u64::MAX) > limit {
+        return Err(ImportError::InvalidPackage(format!(
+            "{what} exceeds the decompression limit"
+        )));
+    }
+    Ok(output)
 }
 
 fn read_zip_members(path: &Path) -> Result<BTreeMap<String, Vec<u8>>, ImportError> {
@@ -538,10 +656,9 @@ fn read_zip_members(path: &Path) -> Result<BTreeMap<String, Vec<u8>>, ImportErro
 }
 
 fn unpack_legacy_members(mut members: BTreeMap<String, Vec<u8>>) -> Result<Unpacked, ImportError> {
-    if members.contains_key("meta") || members.contains_key("collection.anki21b") {
+    if members.contains_key("collection.anki21b") {
         return Err(ImportError::InvalidPackage(
-            "modern meta/collection.anki21b packages use the protobuf media map and zstd collection path, which this bounded legacy adapter does not accept"
-                .to_owned(),
+            "the package's description is missing. Export it from Anki again".to_owned(),
         ));
     }
     let collection_names = ["collection.anki2", "collection.anki21"]
@@ -3001,6 +3118,80 @@ mod tests {
     }
 
     #[test]
+    fn a_current_anki_export_is_read_with_and_without_support_for_older_versions() {
+        use anki::import_export::package::ExportAnkiPackageOptions;
+
+        let root = unique("current-export");
+        fs::create_dir_all(&root).expect("export root");
+        let collection_path = root.join("owner.anki2");
+        let mut collection = CollectionBuilder::new(&collection_path)
+            .with_desktop_media_paths()
+            .build()
+            .expect("owner collection");
+        let image = kobo_image::encode_png_grey(1, 1, &[0]).expect("tiny PNG");
+        fs::write(root.join("owner.media").join("picture.png"), &image).expect("media file");
+        let basic = collection
+            .get_notetype_by_name("Basic")
+            .expect("basic lookup")
+            .expect("basic notetype");
+        let mut note = basic.new_note();
+        note.set_field(0, "Front <img src=\"picture.png\">")
+            .expect("front");
+        note.set_field(1, "Back").expect("back");
+        collection.add_note(&mut note, DeckId(1)).expect("note");
+        for legacy in [false, true] {
+            let package = root.join(format!("export-{legacy}.apkg"));
+            collection
+                .export_apkg(
+                    &package,
+                    ExportAnkiPackageOptions {
+                        with_scheduling: true,
+                        with_deck_configs: true,
+                        with_media: true,
+                        legacy,
+                    },
+                    "",
+                    None,
+                )
+                .expect("Anki export");
+            let output = root.join(format!("export-{legacy}.cobfc"));
+            let report = import(&package, &output, &ImportOptions::apkg())
+                .unwrap_or_else(|error| panic!("legacy {legacy}: {error}"));
+            assert_eq!(report.notes, 1, "legacy {legacy}");
+            assert_eq!(report.media_files, 1, "legacy {legacy}");
+            let bundle = decode(&fs::read(&output).expect("bundle")).expect("decode");
+            assert_eq!(
+                bundle.manifest().sources[0].collection_member,
+                if legacy {
+                    "collection.anki21"
+                } else {
+                    "collection.anki21b"
+                }
+            );
+            assert_eq!(bundle.media("picture.png"), Some(image.as_slice()));
+            assert!(bundle.manifest().cards[0].front.starts_with("Front"));
+        }
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_package_from_a_newer_anki_names_the_export_option_to_choose() {
+        let root = unique("newer-anki");
+        fs::create_dir_all(&root).expect("newer root");
+        let newer = root.join("newer.apkg");
+        fs::write(
+            &newer,
+            fixture(&[("meta", &[0x08, 0x09]), ("collection.anki21b", b"x")]),
+        )
+        .expect("newer package");
+        let error = read_archive(&newer, PackageKind::Apkg)
+            .expect_err("newer refused")
+            .to_string();
+        assert!(error.contains("Support older Anki versions"), "{error}");
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn modern_schema_gap_javascript_addons_and_animated_images_fail_closed() {
         let root = unique("unsupported-boundaries");
         fs::create_dir_all(&root).expect("boundary root");
@@ -3015,9 +3206,9 @@ mod tests {
         )
         .expect("modern package");
         assert!(read_archive(&modern, PackageKind::Apkg)
-            .expect_err("modern refused")
+            .expect_err("damaged description refused")
             .to_string()
-            .contains("modern"));
+            .contains("damaged"));
 
         let collection_path = root.join("collection.anki2");
         create_fixture_collection(&collection_path);

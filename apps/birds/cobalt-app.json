@@ -1,0 +1,32 @@
+{
+  "id": "birds",
+  "display_name": "Birds",
+  "short_label": "Birds",
+  "summary": "Show the birds heard by BirdNET-Go on your Mac or Linux computer. Needs your computer.",
+  "page_description": "See the birds BirdNET-Go hears on your computer, drawn as Fugleramme's labelled plates and sent to your Kobo. The last collage stays on screen offline.",
+  "version": "0.1.15",
+  "release_notes": "When the latest birds cannot be shown, Birds now says plainly what is missing and what to do, instead of showing a technical error.",
+  "glyph": "feather",
+  "capabilities": [
+    "keep-awake"
+  ],
+  "setup": {
+    "steps": [
+      {
+        "text": "Birds needs BirdNET-Go and Fugleramme running on a Mac or Linux computer with a microphone. Install and start both first, as the Birds README describes.",
+        "link": {
+          "label": "Birds README",
+          "url": "https://github.com/BandarLabs/Cobalt/tree/main/apps/birds"
+        }
+      },
+      {
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Start sending what BirdNET-Go hears to the reader. It checks the station and the reader first, and says what to fix if either does not answer.",
+        "command": "kobo birds listen --source http://localhost:8080"
+      }
+    ]
+  }
+}

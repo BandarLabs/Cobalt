@@ -2,10 +2,10 @@
   "id": "syncthing",
   "display_name": "Sync",
   "short_label": "Sync",
-  "summary": "Choose folders and a battery-friendly sync schedule.",
-  "page_description": "Keep selected folders in sync while controlling when your Kobo uses Wi-Fi.",
-  "version": "0.2.4",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
+  "summary": "Sync folders between your computer and your Kobo with Syncthing. Needs your computer.",
+  "page_description": "Sync notes, photos and books from your computer to your Kobo with Syncthing. Sync when you tap Sync now, or on a schedule while Cobalt is open on Wi-Fi.",
+  "version": "0.3.10",
+  "release_notes": "Back from About now returns to the folders page, and the setup steps name the Sync switch as it appears on the reader.",
   "glyph": "refresh",
   "capabilities": [
     "scheduled-wake"
@@ -13,15 +13,19 @@
   "setup": {
     "steps": [
       {
-        "text": "The first time Sync runs it downloads its engine over Wi-Fi and checks it against the digest the runtime requires, so the Kobo needs to be online once. Your computer needs a package-manager-installed Syncthing binary."
+        "text": "Set up the reader once over USB, if you have not already. Sync also needs Syncthing on this computer, installed with its package manager.",
+        "command": "kobo setup"
       },
       {
-        "text": "Pair exactly one local directory to a fixed safe folder while the Kobo is awake on Wi-Fi.",
-        "command": "kobo sync setup LOCAL_DIR --folder vault --device <address>"
+        "text": "With the reader awake on Wi-Fi, pair one folder on this computer with a folder on the reader. The first time, the reader downloads the Syncthing engine.",
+        "command": "kobo sync setup ~/Documents/notes --folder vault"
       },
       {
-        "text": "Resume Sync on the Kobo, then start the private host peer. It does not modify another Syncthing installation.",
+        "text": "Start this computer's side of Sync and leave it running.",
         "command": "kobo sync run"
+      },
+      {
+        "text": "On the reader, open Sync and turn on the Sync switch. The first sync starts at once and takes up to five minutes."
       }
     ]
   }

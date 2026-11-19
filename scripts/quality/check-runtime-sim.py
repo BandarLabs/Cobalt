@@ -28,13 +28,14 @@ def main():
     parser.add_argument('--scale', default='extra-large')
     args = parser.parse_args()
     args.output.mkdir(parents=True, mode=0o700)
-    cli = ROOT / 'target/debug/kobo'
+    target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target')).resolve()
+    cli = target / 'debug/kobo'
     process = None
     with tempfile.TemporaryDirectory(prefix='cobalt-runtime-', dir='/tmp') as private:
         items = Path(private) / 'cobalt-sim-state/todo/items'
         items.parent.mkdir(parents=True)
         items.write_text('- Read the garden notes\n')
-        env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(ROOT / 'target'),
+        env = dict(os.environ, TMPDIR=private, CARGO_TARGET_DIR=str(target),
                    CARGO_PROFILE_DEV_DEBUG='0', CARGO_INCREMENTAL='0',
                    KOBO_SIM_PROFILE='clara-bw-391', KOBO_TEXT_SCALE=args.scale,
                    KOBO_SIM_FIXTURE='original-runtime-journey', KOBO_SIM_SEED='0',

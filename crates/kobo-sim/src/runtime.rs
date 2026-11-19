@@ -51,7 +51,11 @@ impl AppSession {
         }
         let is_back =
             matches!(message, Message::Action { action } if *action == kobo_ui::ActionId::BACK);
-        match navigation::route(is_back, state.screen.owns_back) {
+        match navigation::route(
+            is_back,
+            state.screen.owns_back,
+            state.screen.overlay.is_some(),
+        ) {
             BackRoute::Deliver => Ok(true),
             BackRoute::Offer => {
                 let millis = state.time.now()?.monotonic_millis;
@@ -94,10 +98,17 @@ fn start(
     program: &Program,
     id: u64,
 ) -> io::Result<Hosted> {
-    let mut child = Command::new(&program.executable)
+    let mut command = Command::new(&program.executable);
+    command
         .env("KOBO_SOCKET", socket)
-        .env("KOBO_SIM_CALLBACKS", "1")
-        .spawn()?;
+        .env("KOBO_SIM_CALLBACKS", "1");
+    if let Some(minutes) = crate::reader_offset_for_app() {
+        command.env(
+            kobo_policy::clock::READER_OFFSET_VARIABLE,
+            minutes.to_string(),
+        );
+    }
+    let mut child = command.spawn()?;
     let deadline = Instant::now() + Duration::from_secs(10);
     let accepted = (|| loop {
         if let Some(session) = server.try_accept_app()? {
@@ -212,6 +223,19 @@ fn make_room(apps: &mut Vec<Hosted>, front: u64) -> io::Result<()> {
     Ok(())
 }
 
+fn admit_power_fault(session: &AppSession, power: &mut power::Controller) -> io::Result<()> {
+    if let Some(command) = session.take_power_fault()? {
+        if !power.inject(&command) {
+            session
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("app state unavailable"))?
+                .record("synthetic power fault refused: host not awake or slot occupied".into());
+        }
+    }
+    Ok(())
+}
+
 /// Run real SDK programs against the simulated HAL/services. Programs are
 /// explicitly selected host binaries; their existence does not grant device
 /// trust or bypass SDK capability declarations. Exit ends only these children.
@@ -251,6 +275,7 @@ pub fn run(
             return Err(io::Error::other("foreground app lost"));
         };
         server.try_serve_one(&apps[index].session)?;
+        admit_power_fault(&apps[index].session, &mut power)?;
         power.step(&mut apps, front)?;
         if power.awake() {
             if let Some(name) = apps[index].session.next_launch()? {
@@ -346,12 +371,12 @@ fn prepare_catalog(server: &AppServer, programs: &BTreeMap<String, Program>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::net::UnixStream;
+
     use std::sync::{Arc, Mutex};
 
     #[test]
     fn owned_back_is_delivered_and_only_its_deadline_or_answer_ends_the_offer() {
-        let (mut peer, stream) = UnixStream::pair().unwrap();
+        let (mut peer, stream) = kobo_protocol::channel::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_millis(20)))
             .unwrap();
         let clock = Arc::new(
@@ -405,6 +430,78 @@ mod tests {
             state.set_screen(kobo_ui::Screen::new(2, vec![]));
             state.time.change("advance 2000").unwrap();
         }
+        assert_eq!(session.next_launch().unwrap(), None);
+        session.writer.close();
+    }
+
+    #[test]
+    fn overlay_back_closes_in_app_then_root_back_leaves_and_unanswered_close_times_out() {
+        let (mut peer, stream) = kobo_protocol::channel::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_millis(20)))
+            .unwrap();
+        let clock = Arc::new(
+            kobo_policy::clock::ManualClock::new(kobo_policy::clock::Snapshot {
+                unix_millis: 0,
+                monotonic_millis: 0,
+                utc_offset_minutes: 0,
+            })
+            .unwrap(),
+        );
+        let covered = kobo_ui::Screen::new(1, vec![]).with_overlay(kobo_ui::Overlay::modal(
+            kobo_ui::NodeId(2),
+            "Settings",
+            vec![],
+        ));
+        let state = crate::AppState {
+            runtime_navigation: true,
+            time: crate::clock::Time::Manual(clock),
+            screen: covered.clone(),
+            ..crate::AppState::default()
+        };
+        let session = AppSession {
+            state: Arc::new(Mutex::new(state)),
+            writer: crate::AppWriter::spawn_for(stream, kobo_protocol::VERSION),
+        };
+        session.send_action(kobo_ui::ActionId::BACK).unwrap();
+        assert!(matches!(
+            kobo_protocol::read_from(&mut peer).unwrap().message,
+            Message::Action {
+                action: kobo_ui::ActionId::BACK
+            }
+        ));
+        assert_eq!(session.next_launch().unwrap(), None);
+        {
+            let mut state = session.state.lock().unwrap();
+            // The app answers by drawing its root without the overlay.
+            state.set_screen(kobo_ui::Screen::new(2, vec![]));
+            state.time.change("advance 2000").unwrap();
+        }
+        assert_eq!(session.next_launch().unwrap(), None);
+        session.send_action(kobo_ui::ActionId::BACK).unwrap();
+        assert_eq!(session.next_launch().unwrap().as_deref(), Some("launcher"));
+        assert!(kobo_protocol::read_from(&mut peer).is_err());
+
+        session.state.lock().unwrap().set_screen(covered);
+        session.send_action(kobo_ui::ActionId::BACK).unwrap();
+        kobo_protocol::read_from(&mut peer).unwrap();
+        session
+            .state
+            .lock()
+            .unwrap()
+            .time
+            .change("advance 1999")
+            .unwrap();
+        session.send_action(kobo_ui::ActionId::BACK).unwrap();
+        kobo_protocol::read_from(&mut peer).unwrap();
+        assert_eq!(session.next_launch().unwrap(), None);
+        session
+            .state
+            .lock()
+            .unwrap()
+            .time
+            .change("advance 1")
+            .unwrap();
+        assert_eq!(session.next_launch().unwrap().as_deref(), Some("launcher"));
         assert_eq!(session.next_launch().unwrap(), None);
         session.writer.close();
     }

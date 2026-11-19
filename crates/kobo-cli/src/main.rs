@@ -3,34 +3,54 @@ use std::env;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{IsTerminal, Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod account;
 mod apps;
 mod authorize;
 mod beta_store_smoke;
+mod birds;
 mod bootstrap;
+mod clip;
+mod clip_delivery;
+mod clip_host;
+mod clip_install;
 mod connect;
+mod console;
 mod deck;
+mod detect;
 mod devsession;
 mod drive;
 mod exports;
 mod feeds;
+mod fieldbook;
 mod flashcards;
 mod frame;
 mod frame_preview;
 mod frame_recovery;
+mod harden;
 mod host_release;
 mod menu;
+mod musicstand;
 mod needles;
 mod nonograms;
 mod owner_start;
 mod package;
+mod panels;
+mod post;
+mod publish;
+mod readers;
+mod readlater;
+mod receipts;
+mod report;
 mod runtime_dev;
+mod server_secret;
 mod stream_demo;
 mod vault;
 // Only the `device-write` build dispatches to this, but its tests decide what
@@ -42,7 +62,9 @@ mod panel;
 mod setup;
 mod sha256;
 mod sidekick;
+mod steps;
 mod sync;
+mod targets;
 
 const DEVICE_PACKAGES: &[&str] = &["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"];
 const SYNCTHING_SOURCE_RECORD: &str = "\
@@ -93,6 +115,7 @@ const STORE_PACKAGES: &[&str] = &[
     "kobo-arxiv",
     "kobo-audiobook",
     "kobo-backgammon",
+    "kobo-birds",
     "kobo-brief",
     "kobo-calibre-web",
     "kobo-chat",
@@ -194,7 +217,7 @@ const START_SCRIPT: &str = "\
 # stock reader, so nothing here needs undoing by hand.
 set -e
 root=/mnt/onboard/.adds/cobalt
-# `kobo setup --enable-ssh` leaves only a public key here. The reader's
+# `kobo setup` may leave only a public key here. The reader's
 # root-owned menu action can finish the step a USB volume cannot.
 staged_key=\"$root/bootstrap/authorized_key\"
 if [ -s \"$staged_key\" ]; then
@@ -415,6 +438,19 @@ fn main() -> ExitCode {
     // make `kobo shell` the one thing here that cannot be tested for in a
     // script.
     if arguments.first().map(|command| canonical(command)) == Some("shell") {
+        // Only the first word: everything after it is the reader's command,
+        // and `kobo shell grep -h` means grep's -h, not this one.
+        if matches!(arguments.get(1).map(String::as_str), Some("--help" | "-h")) {
+            println!("{}", reference_usage("shell"));
+            return ExitCode::SUCCESS;
+        }
+        let arguments = match with_default_reader(&arguments) {
+            Ok(filled) => filled,
+            Err(error) => {
+                eprintln!("kobo: {}", console::display(&error));
+                return ExitCode::from(console::category_of(&error));
+            }
+        };
         return match shell_command(&arguments[1..]) {
             Ok(code) => code,
             Err(error) => {
@@ -426,8 +462,8 @@ fn main() -> ExitCode {
     match run(&arguments) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("kobo: {error}");
-            ExitCode::FAILURE
+            eprintln!("kobo: {}", console::display(&error));
+            ExitCode::from(console::category_of(&error))
         }
     }
 }
@@ -489,38 +525,654 @@ fn canonical(command: &str) -> &str {
 }
 
 fn run_owner_menu() -> Result<(), String> {
-    use std::io::IsTerminal;
-    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+    let console = console::Console::detect();
+    if console.interactive() {
         let selected =
             owner_start::choose(&mut std::io::stdin().lock(), &mut std::io::stdout().lock())?;
         if let Some(selected) = selected {
             return run(&selected);
         }
     } else {
+        // A bare `kobo` in a pipe prints what there is to know and exits,
+        // rather than blocking on answers nobody can give.
         println!("{}", owner_start::COMPACT_HELP);
     }
     Ok(())
 }
 
+/// What `kobo send --help` prints.
+const SEND_USAGE: &str = concat!(
+    "usage: kobo send FILE [--to APP] [--replace] ",
+    targets::target_choice!(),
+    "\n       kobo send --preview FILE --out DIRECTORY [--to APP] [--profile PROFILE]\n",
+    "       kobo send --retry\n",
+    "\n",
+    "Sends a file or folder to the app on the reader that opens it, adds it to\n",
+    "what is already there, and says which app received it:\n",
+    "  photos, or a folder of them         Frame\n",
+    "  a PDF                               Music Stand or Needles: you are asked\n",
+    "  a folder of PDF scores              Music Stand\n",
+    "  Markdown notes, or a folder of them Vault\n",
+    "  OPML lists                          Feeds\n",
+    "  CBZ comics                          Panels\n",
+    "  story files                         Parser\n",
+    "  APKG/COLPKG decks                   Flashcards, which imports them first\n",
+    "\n",
+    "--to APP chooses the app yourself, for a file more than one app opens.\n",
+    "--replace sends to an app that keeps one thing at a time (Panels keeps\n",
+    "one comic) without asking first.\n",
+    "--preview renders or checks the file on this computer; nothing is sent.\n",
+    "--retry repeats the last send that failed.\n",
+    targets::saved_reader_note!()
+);
+
+/// Sends a file to the companion that reads it.
+///
+/// The owner names the file; [`detect`] names the companion. A format two
+/// apps read is settled by `--to` or by asking, and the target flags are the
+/// shared ones, so a saved reader name works here exactly as it does
+/// everywhere else. `--preview` looks before anything is sent, and every
+/// acknowledged send leaves a receipt, so re-sending an unchanged file is
+/// reported as already done rather than pushed twice.
+fn send_file(arguments: &[String]) -> Result<(), String> {
+    if wants_help(arguments) {
+        return print_command_help(SEND_USAGE);
+    }
+    let (arguments, target_words) = send_arguments(arguments)?;
+    let (target, rest) = targets::TargetArgs::parse(&arguments)?;
+    let options = SendOptions::parse(&rest)?;
+    let file = options
+        .file
+        .ok_or_else(|| console::usage("kobo send FILE [--to APP]: name the file to send"))?;
+    let path = Path::new(&file);
+    let folder = path.is_dir();
+    if !folder && !path.is_file() {
+        return Err(format!("{file} is not a file or folder on this computer."));
+    }
+    let candidates = if folder {
+        detect::folder_candidates(path)
+    } else {
+        detect::candidates(path)
+    };
+    let chosen = match detect::choose(&candidates, options.app.as_deref()) {
+        Ok(companion) => companion,
+        Err(detect::ChooseError::Ambiguous(offered)) => match pick_companion(&file, &offered)? {
+            Some(companion) => companion,
+            None => return Ok(()),
+        },
+        Err(detect::ChooseError::Message(error)) => return Err(error),
+    };
+    if folder && !chosen.takes_folders() {
+        return Err(console::usage(format!(
+            "{} takes one file at a time, not a folder: kobo send FILE --to {}",
+            chosen.title(),
+            chosen.name()
+        )));
+    }
+
+    // Preview is local by definition: it renders or checks for the owner's
+    // eyes on this computer, so target flags are a misunderstanding.
+    if options.preview {
+        if folder {
+            return Err(console::usage("--preview takes one file, not a folder"));
+        }
+        if target != targets::TargetArgs::default() {
+            return Err(console::usage(
+                "a preview is local; it takes no target flags",
+            ));
+        }
+        return send_preview(
+            chosen,
+            &file,
+            options.out.as_deref(),
+            options.profile.as_deref(),
+        );
+    }
+    if options.out.is_some() || options.profile.is_some() {
+        return Err(console::usage("--out and --profile belong to --preview"));
+    }
+    // Answered before any reader is looked for: these send nothing, and an
+    // owner told how to send a deck should not first wait out a sweep.
+    if let Some(advice) = not_a_push(chosen, &file) {
+        return advice;
+    }
+
+    let (reader_label, device_flags, target_label) = send_target(&target.resolve()?)?;
+
+    // Preparing is real work: hashing the content is what makes "already
+    // sent" mean the same bytes, and it is what a resumed send compares. A
+    // folder has no one hash; the apps that take folders compare what is
+    // already on the reader themselves and send only what changed.
+    console::Console::progress(&format!("preparing {file} for {}", chosen.title()));
+    let sha = if folder {
+        None
+    } else {
+        Some(receipts::hash_file(path)?)
+    };
+    let receipts_path = receipts::receipts_path();
+    let mut ledger = receipts::Receipts::load(&receipts_path)?;
+    if sha
+        .as_ref()
+        .is_some_and(|sha| ledger.find(chosen.name(), &target_label, sha).is_some())
+    {
+        println!(
+            "{file} is unchanged since it was sent to {} on {reader_label}, so there is \
+             nothing to send.",
+            chosen.title(),
+        );
+        return Ok(());
+    }
+    if !options.replace && !replacing_is_agreed(chosen, &file, &reader_label)? {
+        return Ok(());
+    }
+
+    send_dispatch(
+        chosen,
+        &file,
+        &device_flags,
+        &target_label,
+        &target_words,
+        &mut ledger,
+        &receipts_path,
+        sha,
+    )?;
+    println!("Sent {file} to {} on {reader_label}.", chosen.title());
+    Ok(())
+}
+
+/// Where a send goes, three ways: the words that tell the owner, the flags
+/// the companion reads, and the label its receipt is kept under.
+///
+/// A receipt belongs to a reader, not to one spelling of it: a nickname and
+/// its address are the same device, and the serial outlives a new DHCP lease.
+/// The address stands in only when no serial answers.
+fn send_target(resolved: &targets::Target) -> Result<(String, Vec<String>, String), String> {
+    let reader_label = match resolved {
+        targets::Target::Simulator => "the simulator".to_owned(),
+        targets::Target::Address(host) => format!("the reader at {host}"),
+        targets::Target::Nickname(name) => format!("\"{name}\""),
+    };
+    let device_flags = match resolved {
+        targets::Target::Simulator => vec!["--sim".to_owned()],
+        targets::Target::Address(host) => vec!["--device".to_owned(), host.clone()],
+        targets::Target::Nickname(name) => {
+            vec!["--device".to_owned(), targets::resolve_nickname(name)?]
+        }
+    };
+    let target_label = match device_flags.as_slice() {
+        [_, host] => targets::probe_serial(host).unwrap_or_else(|| host.clone()),
+        _ => "sim".to_owned(),
+    };
+    Ok((reader_label, device_flags, target_label))
+}
+
+/// The answer for an app that takes this file some other way than a push.
+///
+/// Decks are a two-step import and Fanshelf fetches its own books. Each says
+/// how it is done instead of pretending a push happened, and neither claims
+/// success: nothing reached the reader.
+fn not_a_push(chosen: detect::Companion, file: &str) -> Option<Result<(), String>> {
+    let advice = match chosen {
+        detect::Companion::Flashcards => format!(
+            "{file} is a study deck. Flashcards imports decks into a collection first, then \
+             copies it over USB:\n  kobo flashcards import {file} --merge COLLECTION.cobfc\n  \
+             kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT"
+        ),
+        detect::Companion::Fanshelf => format!(
+            "{file} is an EPUB book. Fanshelf downloads the works on its shelf itself: add \
+             the work from the app on the reader."
+        ),
+        _ => return None,
+    };
+    Some(Err(console::unsupported(advice)))
+}
+
+/// Whether a send to an app that keeps one thing at a time may go ahead.
+///
+/// A terminal is asked. A pipe cannot be, so it is told to say `--replace`,
+/// because quietly replacing the pattern an owner was halfway through is the
+/// one outcome a send must never have.
+fn replacing_is_agreed(
+    chosen: detect::Companion,
+    file: &str,
+    reader_label: &str,
+) -> Result<bool, String> {
+    let Some(what) = chosen.replaces() else {
+        return Ok(true);
+    };
+    let warning = format!(
+        "{} keeps one {what} at a time, so sending {file} replaces the {what} on \
+         {reader_label}.",
+        chosen.title()
+    );
+    if !std::io::stdin().is_terminal() {
+        eprintln!("{warning} Add --replace to send it anyway.");
+        return Err(console::usage(format!(
+            "kobo send {file} --to {} --replace",
+            chosen.name()
+        )));
+    }
+    print!("{warning} Replace it? [y/N] ");
+    let _ = std::io::stdout().flush();
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|error| format!("read the answer: {error}"))?;
+    if confirmation_answer(&answer) {
+        Ok(true)
+    } else {
+        println!("Nothing was sent.");
+        Ok(false)
+    }
+}
+
+/// The transfer itself: keep the selection, dispatch to the companion, and
+/// only past its acknowledgement clear the pending send and write the
+/// receipt. An interrupted transfer keeps the one and never gains the other,
+/// which is what makes the next send a resume rather than a duplicate.
+#[allow(clippy::too_many_arguments)]
+fn send_dispatch(
+    chosen: detect::Companion,
+    file: &str,
+    device_flags: &[String],
+    target_label: &str,
+    target_words: &str,
+    ledger: &mut receipts::Receipts,
+    receipts_path: &std::path::Path,
+    sha: Option<String>,
+) -> Result<(), String> {
+    let pending_path = receipts::pending_path();
+    let pending = receipts::Pending {
+        file: file.to_owned(),
+        app: Some(chosen.name().to_owned()),
+        target: target_words.to_owned(),
+    };
+    if let Err(error) = pending.save(&pending_path) {
+        println!("note: this send could not be kept for --retry ({error}); the send itself is unaffected");
+    }
+    let mut forwarded = vec!["push".to_owned(), file.to_owned()];
+    forwarded.extend(device_flags.iter().cloned());
+    let sent = match chosen {
+        detect::Companion::Frame => frame::command(&forwarded),
+        detect::Companion::Feeds => feeds::command(&forwarded),
+        detect::Companion::Panels => panels::command(&forwarded),
+        detect::Companion::Parser => parser_command(&forwarded),
+        detect::Companion::Needles => needles::command(&forwarded),
+        detect::Companion::MusicStand => musicstand::command(&forwarded),
+        detect::Companion::Vault => vault_push(file, device_flags),
+        detect::Companion::Flashcards | detect::Companion::Fanshelf => {
+            // Answered by not_a_push before anything is resolved, so these
+            // never reach a transfer.
+            receipts::Pending::clear(&pending_path);
+            return Ok(());
+        }
+    };
+    if let Err(error) = sent {
+        return Err(console::Console::with_details(
+            format!(
+                "{}\n{} did not receive {file}. The selection is kept; retry with: kobo send --retry",
+                console::display(&error),
+                chosen.title()
+            ),
+            &format!("forwarded: kobo {} {}", chosen.name(), forwarded.join(" ")),
+        ));
+    }
+    receipts::Pending::clear(&pending_path);
+    let Some(sha) = sha else {
+        return Ok(());
+    };
+    ledger.record(receipts::Receipt {
+        file: file.to_owned(),
+        app: chosen.name().to_owned(),
+        target: target_label.to_owned(),
+        sha256: sha,
+        at: steps::now(),
+    });
+    if let Err(error) = ledger.save(receipts_path) {
+        println!(
+            "note: the send's receipt could not be written ({error}); the send itself finished"
+        );
+    }
+    Ok(())
+}
+
+/// Sends a notes folder, or one note, to Vault.
+///
+/// Vault takes folders and adds what they hold to the shelf, so one note
+/// travels in a folder of its own, made for the push and removed after it.
+/// The note keeps its file name, which is what Vault shows it as.
+fn vault_push(file: &str, device_flags: &[String]) -> Result<(), String> {
+    let path = Path::new(file);
+    if path.is_dir() {
+        let mut forwarded = vec!["push".to_owned(), file.to_owned()];
+        forwarded.extend(device_flags.iter().cloned());
+        return vault::command(&forwarded);
+    }
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("{file} has no file name"))?;
+    let folder = env::temp_dir().join(format!("kobo-send-note-{}", std::process::id()));
+    fs::create_dir_all(&folder).map_err(|error| format!("create {}: {error}", folder.display()))?;
+    let sent = fs::copy(path, folder.join(name))
+        .map_err(|error| format!("copy {file}: {error}"))
+        .and_then(|_| {
+            let mut forwarded = vec!["push".to_owned(), folder.display().to_string()];
+            forwarded.extend(device_flags.iter().cloned());
+            vault::command(&forwarded)
+        });
+    let _ = fs::remove_dir_all(&folder);
+    sent
+}
+
+/// The arguments a send runs with, and its target flags as words.
+///
+/// Ordinarily the arguments as given. With `--retry` they are rebuilt from
+/// the kept pending send: same file, same companion, same target, none of
+/// it retyped. A retry is the owner repeating a send they already agreed to,
+/// so it carries `--replace` rather than asking a second time.
+fn send_arguments(arguments: &[String]) -> Result<(Vec<String>, String), String> {
+    if !arguments.iter().any(|argument| argument == "--retry") {
+        return Ok((arguments.to_vec(), target_words(arguments)));
+    }
+    let pending_path = receipts::pending_path();
+    let pending = receipts::Pending::load(&pending_path)?
+        .ok_or_else(|| console::target("nothing is waiting to be retried"))?;
+    let mut rebuilt = vec![pending.file.clone(), "--replace".to_owned()];
+    // The kept file is sent as it was named, folder or not.
+    if let Some(app) = pending.app.clone() {
+        rebuilt.push("--to".to_owned());
+        rebuilt.push(app);
+    }
+    rebuilt.extend(
+        pending
+            .target
+            .split(' ')
+            .filter(|word| !word.is_empty())
+            .map(str::to_owned),
+    );
+    console::Console::progress(&format!("retrying the kept send of {}", pending.file));
+    let words = pending.target.clone();
+    Ok((rebuilt, words))
+}
+
+/// Writes a diagnostic report: redacted by default, `--include-paths` when
+/// the file names are the question, `--out` to a file or stdout without.
+fn report_command(arguments: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: kobo report [--out FILE] [--include-paths]\n\
+                         \x20      A diagnostic snapshot for a helper: versions, counts and kinds.\n\
+                         \x20      Never file contents, trust material, keys or full serials;\n\
+                         \x20      paths only when --include-paths is given.";
+    if wants_help(arguments) {
+        return print_command_help(USAGE);
+    }
+    let mut out = None;
+    let mut include_paths = false;
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--out" if out.is_none() => {
+                out = Some(
+                    arguments
+                        .next()
+                        .ok_or_else(|| console::usage("--out takes a file"))?
+                        .clone(),
+                );
+            }
+            "--include-paths" if !include_paths => include_paths = true,
+            _ => return Err(console::usage(USAGE)),
+        }
+    }
+    let text = report::build(include_paths);
+    match out {
+        Some(path) => {
+            std::fs::write(&path, &text)
+                .map_err(|error| format!("{path} cannot be written: {error}"))?;
+            println!("report written to {path}");
+        }
+        None => print!("{text}"),
+    }
+    Ok(())
+}
+
+/// The target flags exactly as given, so a kept send retries the same way.
+fn target_words(arguments: &[String]) -> String {
+    let mut words = Vec::new();
+    let mut arguments = arguments.iter().peekable();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--sim" => words.push("--sim".to_owned()),
+            "--device" | "-s" | "--reader" => {
+                words.push(argument.clone());
+                if let Some(value) = arguments.next() {
+                    words.push(value.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    words.join(" ")
+}
+
+/// What a send run was asked for, beyond the shared target flags.
+#[derive(Default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent request from the command line"
+)]
+struct SendOptions {
+    file: Option<String>,
+    app: Option<String>,
+    preview: bool,
+    replace: bool,
+    out: Option<String>,
+    profile: Option<String>,
+}
+
+impl SendOptions {
+    /// Reads the options. `--app` is the old spelling of `--to`, kept so a
+    /// kept retry and a remembered command still work.
+    fn parse(arguments: &[String]) -> Result<Self, String> {
+        let mut options = Self::default();
+        let mut arguments = arguments.iter();
+        while let Some(argument) = arguments.next() {
+            match argument.as_str() {
+                "--to" | "--app" if options.app.is_none() => {
+                    options.app = Some(
+                        arguments
+                            .next()
+                            .ok_or_else(|| console::usage("--to takes an app name"))?
+                            .clone(),
+                    );
+                }
+                "--preview" if !options.preview => options.preview = true,
+                "--replace" if !options.replace => options.replace = true,
+                "--out" if options.out.is_none() => {
+                    options.out = Some(
+                        arguments
+                            .next()
+                            .ok_or_else(|| console::usage("--out takes a directory"))?
+                            .clone(),
+                    );
+                }
+                "--profile" if options.profile.is_none() => {
+                    options.profile = Some(
+                        arguments
+                            .next()
+                            .ok_or_else(|| console::usage("--profile takes a profile id"))?
+                            .clone(),
+                    );
+                }
+                _ if options.file.is_none() && !argument.starts_with('-') => {
+                    options.file = Some(argument.clone());
+                }
+                other => {
+                    return Err(console::usage(format!(
+                        "kobo send does not know {other}. See kobo send --help."
+                    )))
+                }
+            }
+        }
+        Ok(options)
+    }
+}
+
+/// Asks which app a file several apps open goes to. A pipe cannot ask, so it
+/// gets the choices as `--to` lines; a blank answer cancels.
+fn pick_companion(
+    file: &str,
+    candidates: &[detect::Companion],
+) -> Result<Option<detect::Companion>, String> {
+    let question = format!("{file} could go to more than one app:");
+    if !std::io::stdin().is_terminal() {
+        eprintln!(
+            "{question}\n{}\nSend it again with the one you mean.",
+            detect::choices(candidates)
+        );
+        let names: Vec<&str> = candidates.iter().map(|app| app.name()).collect();
+        return Err(console::usage(format!(
+            "kobo send {file} --to {}",
+            names.join("|")
+        )));
+    }
+    let names: Vec<String> = candidates
+        .iter()
+        .map(|companion| format!("{}, for {}", companion.title(), companion.purpose()))
+        .collect();
+    println!("{question}");
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let mut output = std::io::stdout();
+    Ok(console::choose_numbered(
+        &mut input,
+        &mut output,
+        &names,
+        "Send it to which app (blank cancels): ",
+    )?
+    .map(|index| candidates[index]))
+}
+
+/// The local half of send: render or check the content, transfer nothing.
+fn send_preview(
+    app: detect::Companion,
+    file: &str,
+    out: Option<&str>,
+    profile: Option<&str>,
+) -> Result<(), String> {
+    let app_name = app.title();
+    match app {
+        detect::Companion::Frame | detect::Companion::Panels => {
+            let out = out.ok_or_else(|| {
+                console::usage(format!("a {app_name} preview needs --out DIRECTORY"))
+            })?;
+            // frame_preview owns its verb already (frame strips it); panels
+            // dispatches its own, so each gets the argv shape it expects.
+            let mut forwarded = vec![file.to_owned(), "--out".to_owned(), out.to_owned()];
+            if let Some(profile) = profile {
+                forwarded.push("--profile".to_owned());
+                forwarded.push(profile.to_owned());
+            }
+            if app == detect::Companion::Frame {
+                frame_preview::command(&forwarded)
+            } else {
+                forwarded.insert(0, "preview".to_owned());
+                panels::command(&forwarded)
+            }
+        }
+        detect::Companion::Feeds => feeds::command(&["check".to_owned(), file.to_owned()]),
+        detect::Companion::Parser => parser_command(&["inspect".to_owned(), file.to_owned()]),
+        detect::Companion::Vault => vault::command(&["preview".to_owned(), file.to_owned()]),
+        detect::Companion::Needles => {
+            let out = out.ok_or_else(|| {
+                console::usage(format!("a {app_name} preview needs --out DIRECTORY"))
+            })?;
+            needles::command(&[
+                "preview".to_owned(),
+                file.to_owned(),
+                "--out".to_owned(),
+                out.to_owned(),
+            ])
+        }
+        detect::Companion::MusicStand => {
+            println!(
+                "Music Stand has no preview on this computer. To see what a send would add \
+                 to the shelf on the reader:\n  kobo musicstand plan {file}"
+            );
+            Ok(())
+        }
+        detect::Companion::Flashcards => {
+            println!(
+                "{file} is a study deck. Preview the collection it merges into:\n  kobo flashcards preview COLLECTION.cobfc --out PREVIEW.html"
+            );
+            Ok(())
+        }
+        detect::Companion::Fanshelf => {
+            println!(
+                "{file} is an EPUB book. Fanshelf shelves works it downloads itself: add the work from the app on the reader."
+            );
+            Ok(())
+        }
+    }
+}
+
+/// The command line as it will run: an alias spelled out, and the reader it
+/// acts on filled in from the one `kobo setup` or `kobo pair` saved, or from
+/// `KOBO_READER`, when none is named.
+///
+/// The alias goes first so `kobo logcat` finds the same reader `kobo logs`
+/// does, rather than being the one spelling that still asks for an address.
+fn with_default_reader(arguments: &[String]) -> Result<Vec<String>, String> {
+    let mut line = arguments.to_vec();
+    if let Some(first) = line.first_mut() {
+        *first = canonical(first).to_owned();
+    }
+    targets::with_reader(
+        &line,
+        targets::configured(),
+        targets::resolve_nickname,
+        |said| eprintln!("{said}"),
+    )
+}
+
 fn run(arguments: &[String]) -> Result<(), String> {
+    if let Some(help) = unanswered_help(arguments) {
+        return print_command_help(&help);
+    }
+    run_command(arguments)
+}
+
+/// [`run`], once a request for help has been answered.
+fn run_command(arguments: &[String]) -> Result<(), String> {
+    let filled = with_default_reader(arguments)?;
+    let arguments = filled.as_slice();
     let Some(command) = arguments.first().map(String::as_str) else {
         return run_owner_menu();
     };
     match canonical(command) {
+        "pair" => pair_command(&arguments[1..]),
         "new" => create_app(arguments.get(1).ok_or("usage: kobo new <name>")?),
         "dev" => dev(&arguments[1..]),
         "drive" => drive_command(&arguments[1..]),
         "deck" => deck::command(&arguments[1..]),
         "flashcards" => flashcards::command(&arguments[1..]),
         "frame" => frame::command(&arguments[1..]),
+        "musicstand" => musicstand::command(&arguments[1..]),
+        "post" => post::command(&arguments[1..]),
+        "readlater" => readlater::command(&arguments[1..]),
+        "connect" => account::command(&arguments[1..]),
+        "birds" => birds::command(&arguments[1..]),
+        "clip" => clip::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
         "export" => exports::command(&arguments[1..]),
         "feeds" => feeds::command(&arguments[1..]),
+        "send" => send_file(&arguments[1..]),
+        "report" => report_command(&arguments[1..]),
+        "fieldbook" => fieldbook::command(&arguments[1..]),
         "needles" => needles::command(&arguments[1..]),
         "nonograms" => nonograms::command(&arguments[1..]),
         "parser" => parser_command(&arguments[1..]),
+        "panels" => panels::command(&arguments[1..]),
         "shot" => shot_command(&arguments[1..]),
         #[cfg(feature = "device-write")]
         "tap" => tap_command(&arguments[1..]),
@@ -529,10 +1181,10 @@ fn run(arguments: &[String]) -> Result<(), String> {
         #[cfg(feature = "device-write")]
         "stop" => panel::stop(&arguments[1..]),
         #[cfg(not(feature = "device-write"))]
-        "present" | "stop" => Err(format!(
+        "present" | "stop" => Err(console::unsupported(format!(
             "{command} takes the panel, so it is not compiled in; rebuild the CLI with \
              --features device-write"
-        )),
+        ))),
         "build" => build_device(arguments.iter().any(|argument| is_device_flag(argument))),
         "doctor" => doctor(&arguments[1..]),
         "devices" => list_devices(&arguments[1..]),
@@ -553,15 +1205,13 @@ fn run(arguments: &[String]) -> Result<(), String> {
         #[cfg(feature = "device-write")]
         "guard-test" => guard_test(&arguments[1..]),
         #[cfg(not(feature = "device-write"))]
-        "guard-test" => Err(
-            "guard-test is not compiled in; rebuild the CLI with --features device-write"
-                .to_owned(),
-        ),
+        "guard-test" => Err(console::unsupported(
+            "guard-test is not compiled in; rebuild the CLI with --features device-write",
+        )),
         #[cfg(not(feature = "device-write"))]
-        "smoke-display" => Err(
-            "smoke-display is not compiled in; rebuild the CLI with --features device-write"
-                .to_owned(),
-        ),
+        "smoke-display" => Err(console::unsupported(
+            "smoke-display is not compiled in; rebuild the CLI with --features device-write",
+        )),
         "package" => build_package(&arguments[1..]),
         "app-key" => app_key(&arguments[1..]),
         "app-bundle" => app_bundle(&arguments[1..]),
@@ -594,78 +1244,206 @@ fn run(arguments: &[String]) -> Result<(), String> {
             print_help();
             Ok(())
         }
-        "version" | "--version" | "-V" => {
-            println!("kobo {}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
+        "version" | "--version" | "-V" => version_command(&arguments[1..]),
         unknown => Err(format!("unknown command '{unknown}'")),
     }
 }
 
+/// `kobo version` is one line a script can read; `--full` is the
+/// compatibility report a person reads before an update: what this host is,
+/// which helpers it can see, and how signed updates are checked.
+fn version_command(arguments: &[String]) -> Result<(), String> {
+    match arguments {
+        [] => {
+            println!("kobo {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
+        [flag] if flag == "--full" => {
+            println!("kobo {}", env!("CARGO_PKG_VERSION"));
+            println!("host: {} {}", std::env::consts::OS, std::env::consts::ARCH);
+            for helper in ["kobo-doctor", "kobo-sidekickd", "flashcards-import"] {
+                println!("helper: {}", helper_status(helper));
+            }
+            println!(
+                "updates: host release packages are signed; setup verifies the manifest signature before anything is installed"
+            );
+            println!(
+                "compatibility: a package built for a newer kobo than {} is refused with an update prompt, and each companion declares the minimum kobo it needs in the signed manifest",
+                env!("CARGO_PKG_VERSION")
+            );
+            println!(
+                "reader: a reader's own model and firmware are read from the device itself - 'kobo doctor --device HOST' or a setup dry run"
+            );
+            Ok(())
+        }
+        _ => Err(console::usage("usage: kobo version [--full]")),
+    }
+}
+
+/// One line about a helper: its version when it answers, its path problem
+/// when it cannot run, "not installed" when it is absent.
+fn helper_status(name: &str) -> String {
+    // The probe is the helper answering --version: present helpers name
+    // themselves, absent ones are reported absent, and a lookup that itself
+    // fails (an unsearchable PATH entry, a dangling sibling) says the lookup
+    // failed rather than guessing either way.
+    match Command::new(sibling_binary(name)).arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            // Helpers answer "NAME VERSION", some with more lines after it.
+            // One line per helper, named once, keeps the report readable.
+            let reply = String::from_utf8_lossy(&output.stdout);
+            let first = reply.lines().next().unwrap_or("").trim();
+            let version = first.strip_prefix(name).map_or(first, str::trim_start);
+            format!("{name} {version}")
+        }
+        Ok(output) => format!("{name} present but --version exited {}", output.status),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            format!("{name} not installed (looked beside kobo and on PATH)")
+        }
+        Err(error) => format!("{name} could not be looked up: {error}"),
+    }
+}
+
+const PARSER_USAGE: &str = concat!(
+    "usage: kobo parser inspect FILE\n\
+     \x20      kobo parser push FILE ",
+    targets::target_choice!(),
+    " [--replace]\n\
+     inspect reports format, title and Parser compatibility.\n\
+     push validates with the interpreter's shared inspector first.\n",
+    targets::saved_reader_note!(),
+);
+
 fn parser_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo parser check FILE\n\
-                         \x20      kobo parser push FILE --device IP\n\
-                         check validates a .z3, .z5 or .z8 story on the host.\n\
-                         push transfers a checked story to the reader's Parser shelf.";
     if wants_help(arguments) {
-        return print_command_help(USAGE);
+        return print_command_help(PARSER_USAGE);
     }
     if let [verb, file] = arguments {
-        if verb == "check" {
+        if matches!(verb.as_str(), "inspect" | "check") {
             let path = Path::new(file);
             let bytes = fs::read(path)
                 .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-            validate_parser_story(&bytes)?;
+            let info =
+                kobo_zstory::StoryInfo::inspect(&bytes, file).map_err(|error| error.to_string())?;
             println!(
-                "Parser story is a Z-machine v{} file ({} bytes).",
-                bytes[0],
-                bytes.len()
+                "Title: {}\nFormat: {}\nCompatibility: {}\nRelease: {}\nSerial: {}\nChecksum: {:04x}\nSize: {} bytes",
+                info.title,
+                info.format(),
+                info.compatibility(),
+                info.release,
+                String::from_utf8_lossy(&info.serial),
+                info.checksum,
+                info.bytes
             );
             return Ok(());
         }
     }
-    let [verb, file, device, host] = arguments else {
-        return Err(USAGE.to_owned());
-    };
-    if verb != "push" || !is_device_flag(device) {
-        return Err(USAGE.to_owned());
+    if arguments.first().map(String::as_str) != Some("push") {
+        return Err(PARSER_USAGE.to_owned());
+    }
+    let file = arguments.get(1).ok_or_else(|| PARSER_USAGE.to_owned())?;
+    let mut target: Option<String> = None;
+    let mut replace = false;
+    let mut index = 2;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--sim" => {
+                if target.is_some() {
+                    return Err(PARSER_USAGE.to_owned());
+                }
+                target = Some(String::new());
+                index += 1;
+            }
+            flag if is_device_flag(flag) => {
+                let host = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| PARSER_USAGE.to_owned())?;
+                if !valid_device_host(host) {
+                    return Err("device host contains unsupported characters".to_owned());
+                }
+                if target.replace(host.clone()).is_some() {
+                    return Err(PARSER_USAGE.to_owned());
+                }
+                index += 2;
+            }
+            "--replace" => {
+                replace = true;
+                index += 1;
+            }
+            _ => return Err(PARSER_USAGE.to_owned()),
+        }
     }
     let path = Path::new(file);
     let bytes =
         fs::read(path).map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    validate_parser_story(&bytes)?;
-    let file_name = path
-        .file_name()
-        .and_then(OsStr::to_str)
-        .ok_or("story file name is not valid UTF-8")?;
-    let mut safe = file_name
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
-                character.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    safe.truncate(50);
-    if safe.is_empty() {
-        return Err("story file name has no usable characters".to_owned());
+    let info = kobo_zstory::StoryInfo::inspect(&bytes, file).map_err(|error| error.to_string())?;
+    let name = info.shelf_name(file);
+    let shelf = match target.ok_or_else(|| PARSER_USAGE.to_owned())? {
+        host if host.is_empty() => parser_publish_local(&name, &bytes, replace)?,
+        host => parser_publish_remote(&host, &name, &bytes, replace)?,
+    };
+    println!(
+        "Parser story ready: {} ({}, {})",
+        info.title,
+        info.format(),
+        info.compatibility()
+    );
+    println!("{}", parser_shelf_summary(&shelf));
+    Ok(())
+}
+
+/// What a push leaves on the reader, said once the transfer is done.
+///
+/// A push adds a story, and an owner who cannot see what is already there
+/// pushes the same one twice or wonders where an earlier one went.
+fn parser_shelf_summary(shelf: &[String]) -> String {
+    let mut stories = shelf
+        .iter()
+        .filter(|name| !name.starts_with('.'))
+        .filter_map(|name| name.rsplit_once(".z").map(|(stem, _)| stem.to_owned()))
+        .collect::<Vec<_>>();
+    stories.sort();
+    match stories.len() {
+        0 => "Parser has no stories yet.".to_owned(),
+        1 => format!("Parser now holds 1 story: {}.", stories[0]),
+        count => format!("Parser now holds {count} stories: {}.", stories.join(", ")),
     }
-    let name = format!("story-{safe}");
-    let encoded = base64_encode(&bytes);
+}
+
+fn parser_publish_local(name: &str, bytes: &[u8], replace: bool) -> Result<Vec<String>, String> {
+    let root = kobo_sim::simulated_data_root("parser");
+    fs::create_dir_all(&root).map_err(|e| format!("create Parser shelf: {e}"))?;
+    let final_path = root.join(name);
+    if final_path.exists() && !replace {
+        return Err(format!(
+            "{name} is already on the Parser shelf; use --replace to overwrite it"
+        ));
+    }
+    let partial = root.join(format!(".{name}.{}.writing", std::process::id()));
+    fs::write(&partial, bytes).map_err(|e| format!("write Parser staging file: {e}"))?;
+    fs::rename(&partial, &final_path).map_err(|e| format!("publish Parser story: {e}"))?;
+    let entries = fs::read_dir(&root).map_err(|e| format!("list Parser shelf: {e}"))?;
+    Ok(entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect())
+}
+fn parser_publish_remote(
+    host: &str,
+    name: &str,
+    bytes: &[u8],
+    replace: bool,
+) -> Result<Vec<String>, String> {
+    let encoded = base64_encode(bytes);
+    let count = bytes.len();
+    let digest = kobo_net::sha256::hex_digest(bytes);
+    let overwrite = if replace {
+        "true"
+    } else {
+        "test ! -e \"$final\""
+    };
     let script = format!(
-        "set -e\n\
-         root=/mnt/onboard/.adds/cobalt/data/parser\n\
-         mkdir -p \"$root\"\n\
-         partial=\"$root/.{name}.writing\"\n\
-         base64 -d > \"$partial\" <<'KOBO_PARSER_STORY'\n\
-         {encoded}\n\
-         KOBO_PARSER_STORY\n\
-         chmod 600 \"$partial\"\n\
-         mv -f \"$partial\" \"$root/{name}\"\n\
-         sync\n\
-         printf 'Transferred {name}\\n'\n"
+        "set -eu\nroot=/mnt/onboard/.adds/cobalt/data/parser\nmkdir -p \"$root\"\npartial=\"$root/.{name}.$$.writing\"\nfinal=\"$root/{name}\"\n{overwrite}\ntrap 'rm -f \"$partial\"' EXIT HUP INT TERM\nbase64 -d > \"$partial\" <<'KOBO_PARSER_STORY'\n{encoded}\nKOBO_PARSER_STORY\ntest \"$(wc -c < \"$partial\")\" = '{count}'\nset -- $(sha256sum \"$partial\"); test \"$1\" = '{digest}'\nchmod 600 \"$partial\"\nmv -f \"$partial\" \"$final\"\nsync\nls -1 \"$root\"\n"
     );
     let output = run_remote_shell(&format!("root@{host}"), &script, REMOTE_COMMAND_TIMEOUT)
         .map_err(unreachable_device)?;
@@ -675,26 +1453,17 @@ fn parser_command(arguments: &[String]) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    print!("{}", String::from_utf8_lossy(&output.stdout));
-    Ok(())
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect())
 }
 
+#[cfg(test)]
 fn validate_parser_story(bytes: &[u8]) -> Result<(), String> {
-    if bytes.starts_with(b"Glul") {
-        return Err("this is a Glulx story — Parser does not support it yet".to_owned());
-    }
-    let Some(version) = bytes.first().copied() else {
-        return Err("the file is empty".to_owned());
-    };
-    if !matches!(version, 3 | 5 | 8) {
-        return Err(format!(
-            "unsupported story format: Z-machine version {version}; Parser accepts v3, v5 and v8"
-        ));
-    }
-    if bytes.len() < 64 {
-        return Err("the file is too short to contain a Z-machine header".to_owned());
-    }
-    Ok(())
+    kobo_zstory::StoryInfo::inspect(bytes, "story.z5")
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// Runs the host half of a Paperterm session.
@@ -759,16 +1528,29 @@ fn wifi_trace_command(arguments: &[String]) -> Result<(), String> {
 /// So it finds this computer's address, finds the readers on the same network
 /// and names them, and installs the trust root on the one that was chosen. A
 /// reader can still be named outright with --device, and --host still overrides
-/// the address the certificate is minted for.
+/// the address the certificate is minted for. Once a reader is saved with
+/// `kobo pair` it is that reader, found by its serial, and never whichever
+/// reader happens to answer.
 fn stream_init(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo stream init [--device IP] [--host ADDRESS ...]";
+    const USAGE: &str =
+        "usage: kobo stream init [--sim | --device IP | --reader NAME] [--host ADDRESS ...]";
     let mut device = None;
+    let mut nickname = None;
+    let mut simulator = false;
     let mut hosts = Vec::new();
     let mut index = 0;
     while index < arguments.len() {
         match arguments[index].as_str() {
+            "--sim" => {
+                simulator = true;
+                index += 1;
+            }
             "--device" | "-s" => {
                 device = Some(arguments.get(index + 1).ok_or(USAGE)?.clone());
+                index += 2;
+            }
+            "--reader" => {
+                nickname = Some(arguments.get(index + 1).ok_or(USAGE)?.clone());
                 index += 2;
             }
             "--host" => {
@@ -779,16 +1561,22 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
             _ => return Err(USAGE.to_owned()),
         }
     }
+    if simulator {
+        if device.is_some() || nickname.is_some() {
+            return Err(USAGE.to_owned());
+        }
+        return stream_init_simulator(&hosts);
+    }
     // A reader named on the command line is checked before anything is minted
     // or printed, so a typo does not leave a half-done pairing behind.
-    let reader = match device {
+    let search = match device {
         Some(host) => {
             if !valid_device_host(&host) {
                 return Err(format!("{host:?} is not an address this can reach"));
             }
-            Some(host)
+            ReaderSearch::Found(host)
         }
-        None => choose_reader(),
+        None => saved_reader_search(nickname.as_deref())?,
     };
     // The certificate has to name an address the reader can reach. Without
     // --host that is this computer's own address, which it can find.
@@ -800,32 +1588,298 @@ fn stream_init(arguments: &[String]) -> Result<(), String> {
         }
     }
     kobo_stream::init(&hosts)?;
-    let Some(reader) = reader else {
-        println!(
-            "No reader was named, so the trust root is not installed yet. Run
-  kobo trust set stream --device READER_IP
-or run this again with --device once the reader is on this network."
-        );
-        return Ok(());
+    // Minting is not pairing, and this used to read as though it were: the
+    // identity was minted, "Paperterm is ready to pair" was printed with a
+    // code, and only then did the last line admit the trust root was never
+    // installed. It then exited 0. An owner following it in order opened
+    // Paperterm, typed a code that could not work, and was told the pairing
+    // was refused. The certificate is still kept, because it is what the
+    // instruction below needs, but nothing here claims to be ready.
+    let ReaderSearch::Found(reader) = search else {
+        let why = match search {
+            ReaderSearch::NoneAnswered => format!(
+                "No reader answered, so the trust root is not installed and Paperterm cannot \
+                 pair yet. {} Then run this again.",
+                targets::wake_step(None)
+            ),
+            _ => search.explain("kobo stream init --device READER_IP"),
+        };
+        return Err(format!(
+            "{why}\n\nThe computer's identity and pairing code are saved and stay valid:\n{}",
+            kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
+        ));
     };
+    stream_pair_reader(
+        &reader,
+        hosts.get(1).map(String::as_str),
+        nickname.as_deref(),
+    )
+}
+
+/// Installs Paperterm's trust root on a found reader and writes its pairing
+/// there, then says what the owner has left to do.
+fn stream_pair_reader(
+    reader: &str,
+    computer: Option<&str>,
+    nickname: Option<&str>,
+) -> Result<(), String> {
     let authority = stream_authority()?;
-    println!("Installing the trust root on {reader}.");
-    trust_set("stream", &authority, &SecretTarget::Device(reader.clone()))?;
-    println!("Paperterm is paired with {reader}. Open it on the reader and type the pairing code.");
+    let root = fs::read_to_string(&authority)
+        .map_err(|error| format!("read {}: {error}", authority.display()))?;
+    // The pairing is written onto the reader in the same visit as the trust
+    // root, so Paperterm opens connected instead of asking for an address and
+    // a code the owner has to copy across the room. Without an address for
+    // this computer there is nothing to write, and the details are printed.
+    let apps = match computer {
+        Some(computer) => {
+            let address = if computer.parse::<std::net::Ipv6Addr>().is_ok() {
+                format!("[{computer}]:{}", kobo_stream::DEFAULT_PORT)
+            } else {
+                format!("{computer}:{}", kobo_stream::DEFAULT_PORT)
+            };
+            vec![sidekick::AppPairing::paperterm(
+                &address,
+                &kobo_stream::saved_code()?,
+            )]
+        }
+        None => Vec::new(),
+    };
+    println!("Pairing Paperterm on {reader}.");
+    let restart = sidekick::deliver(reader, &[("stream", root)], &apps)?;
+    // Remember the pairing by serial, so the next command can name this
+    // reader and find it again after its address changes.
+    if let Some(identity) = identify_device(reader).filter(connect::Identity::is_kobo) {
+        let path = readers::store_path();
+        let mut store = readers::Store::load(&path)?;
+        store.record_pairing(&identity.serial, reader, nickname);
+        store.save(&path)?;
+    }
+    // Said once the reader actually holds the pairing, which the mint used to
+    // claim before anyone knew whether this point would be reached.
+    if apps.is_empty() {
+        println!(
+            "Paperterm on {reader} trusts this computer. Open it on the reader and enter:\n{}",
+            kobo_stream::pairing_details(kobo_stream::DEFAULT_PORT)?
+        );
+    } else {
+        println!(
+            "Paperterm on {reader} is paired with this computer. There is nothing to type on the reader."
+        );
+    }
+    if restart {
+        println!("Close Cobalt on the reader and open it again, once, so it trusts this computer.");
+    }
+    println!("Next: run kobo stream terminal, then open Paperterm on the reader.");
     Ok(())
 }
 
-/// The readers on this network, named, and the one to use.
+/// Pairs Paperterm in the simulator on this computer.
 ///
-/// One reader is chosen without asking, because there is nothing to choose.
-/// Several are listed by what they are rather than by address alone, because
-/// "192.168.1.23" is not how anybody knows their own reader.
-fn choose_reader() -> Option<String> {
-    let subnet = connect::local_subnet().or_else(|| {
-        println!("This computer has no route to a network, so no reader can be found from here.");
-        None
-    })?;
-    println!("Looking for readers on {subnet}.1-254.");
+/// The simulator reaches the computer over loopback and reads its trust roots
+/// from this computer's own directory, which the mint fills, so the only
+/// thing left is the pairing in its app state. Without this the simulator
+/// checks had to call the reader form of `init`, which looks for readers on
+/// the network when none is saved.
+fn stream_init_simulator(hosts: &[String]) -> Result<(), String> {
+    let mut hosts = hosts.to_vec();
+    if hosts.is_empty() {
+        hosts = vec!["--host".to_owned(), "127.0.0.1".to_owned()];
+    }
+    kobo_stream::init(&hosts)?;
+    let state = kobo_sim::simulated_state_root("paperterm");
+    fs::create_dir_all(&state).map_err(|error| format!("create {}: {error}", state.display()))?;
+    let pairing = format!(
+        "127.0.0.1:{}\n{}",
+        kobo_stream::DEFAULT_PORT,
+        kobo_stream::saved_code()?
+    );
+    fs::write(state.join("pairing"), pairing)
+        .map_err(|error| format!("write {}: {error}", state.join("pairing").display()))?;
+    println!("Paired Paperterm in the simulator. Next: kobo stream terminal, then open Paperterm.");
+    Ok(())
+}
+
+/// The reader `stream init` pairs when no address is given.
+///
+/// A saved reader is found by its serial and nowhere else. This used to sweep
+/// every time, so with the paired reader asleep and a neighbour's Kobo awake,
+/// the neighbour's was the one that answered and the trust root went onto it.
+/// A sweep is left for the first pairing, when nothing is saved to look for,
+/// and for a name not saved yet, which is the owner asking for a new one.
+fn saved_reader_search(nickname: Option<&str>) -> Result<ReaderSearch, String> {
+    let store = readers::Store::load(&readers::store_path())?;
+    let default = match nickname {
+        Some(name) if store.find(name).is_some() => {
+            Some(targets::DefaultReader::Nickname(name.to_owned()))
+        }
+        Some(_) => None,
+        None => targets::configured_default(),
+    };
+    match default {
+        Some(targets::DefaultReader::Address(address)) => Ok(ReaderSearch::Found(address)),
+        Some(targets::DefaultReader::Nickname(name)) => {
+            let address = targets::resolve_nickname(&name)?;
+            println!("Using your saved reader \"{name}\" at {address}.");
+            Ok(ReaderSearch::Found(address))
+        }
+        None if nickname.is_none() && !store.readers.is_empty() => Err(console::target(format!(
+            "{} readers are saved on this computer, so this will not guess which one to \
+                 pair. Name it: kobo stream init --reader NAME",
+            store.readers.len()
+        ))),
+        None => Ok(choose_reader_waiting().0),
+    }
+}
+
+/// What a sweep for readers concluded.
+///
+/// Three different things used to arrive at the caller as one `None`, and a
+/// caller that cannot tell them apart can only guess which to advise about.
+/// It guessed "no reader answered", which is a falsehood when several did.
+enum ReaderSearch {
+    /// Exactly one answered, so there is nothing to choose.
+    Found(String),
+    /// No route to any network, so no sweep was run at all.
+    NoRoute,
+    /// The sweep ran and nothing answered.
+    NoneAnswered,
+    /// Several answered. Their addresses have already been listed.
+    Several(usize),
+}
+
+impl ReaderSearch {
+    /// Why no single reader came out of this, and what to do about it.
+    ///
+    /// Each case earns its own next step: a reader that is not on the network
+    /// has to be put there, and a reader that is one of several only has to be
+    /// named, which is a different sentence and a different fix. `named` is
+    /// the command line that names one, for the caller to fill in.
+    fn explain(&self, named: &str) -> String {
+        match self {
+            Self::Found(_) => String::new(),
+            Self::NoRoute => "This computer has no route to a network, so no reader can be \
+                 reached from here. Join the Wi-Fi the reader is on and run this again."
+                .to_owned(),
+            Self::NoneAnswered => console::display(&targets::not_answering(None, false)).to_owned(),
+            Self::Several(count) => format!(
+                "{count} readers answered, so this will not guess which one to use. Name the \
+                 one you want from the addresses listed above:\n  {named}"
+            ),
+        }
+    }
+}
+
+/// The default name `kobo pair` and `kobo setup` save a reader under.
+const DEFAULT_READER_NAME: &str = "kobo";
+
+/// What `kobo pair --help` prints. Its own constant, because the usage error
+/// used to be built by wrapping a string that already began "usage:", and
+/// the owner who asked for help read "kobo: usage: usage:" and an exit of 2.
+const PAIR_USAGE: &str = "usage: kobo pair [NAME] [--device IP]
+
+Saves the reader on this network as NAME, or as kobo when no name is given,
+so commands that act on a reader find it without an address. kobo setup
+already saves the reader it sets up; run pair to give a reader a new name or
+to save one that was set up from another computer.
+
+When no reader answers, pair asks you to wake it and keeps looking for a
+minute before giving up.";
+
+/// Saves the reader on this network under a name, so companion commands can
+/// find it without being told its address.
+///
+/// Every app that is set up from a computer used to end its instructions with
+/// `--device IP`, and nothing on the reader says what that is. After this,
+/// `kobo frame push PHOTOS` goes to the reader saved here, and the reader is
+/// found again by its serial when its address changes. `kobo setup` saves
+/// the reader the same way when it sees it come back on Wi-Fi, so this is for
+/// renaming and for a reader prepared elsewhere.
+fn pair_command(arguments: &[String]) -> Result<(), String> {
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
+        return print_command_help(PAIR_USAGE);
+    }
+    let (target, rest) = targets::TargetArgs::parse(arguments)?;
+    let name = match rest.as_slice() {
+        [] => DEFAULT_READER_NAME.to_owned(),
+        [name] if !name.starts_with('-') => name.clone(),
+        _ => return Err(console::usage("kobo pair [NAME] [--device IP]")),
+    };
+    let address = if target.is_empty() {
+        let (search, waited) = choose_reader_waiting();
+        match search {
+            ReaderSearch::Found(address) => address,
+            ReaderSearch::NoneAnswered => return Err(targets::not_answering(None, waited)),
+            other => {
+                return Err(console::target(
+                    other.explain(&format!("kobo pair {name} --device IP")),
+                ))
+            }
+        }
+    } else {
+        match target.resolve()? {
+            targets::Target::Address(address) => address,
+            targets::Target::Nickname(nickname) => targets::resolve_nickname(&nickname)?,
+            targets::Target::Simulator => {
+                return Err(console::usage("the simulator needs no pairing; use --sim"))
+            }
+        }
+    };
+    let identity = identify_device(&address)
+        .filter(connect::Identity::is_kobo)
+        .ok_or_else(|| console::target(format!("{address} did not answer as a Kobo")))?;
+    let path = readers::store_path();
+    let mut store = readers::Store::load(&path)?;
+    store.name(&identity.serial, &address, &name)?;
+    store.save(&path)?;
+    println!(
+        "{}",
+        saved_reader_line(&identity.summary(), &name, &address)
+    );
+    Ok(())
+}
+
+/// What `pair` and `setup` print once a reader is saved, so the two say the
+/// same thing about the same outcome.
+fn saved_reader_line(summary: &str, name: &str, address: &str) -> String {
+    format!(
+        "Saved {summary} as \"{name}\" at {address}.\nCommands that act on a reader now use \
+         it, for example:\n  kobo frame push ~/Pictures/family"
+    )
+}
+
+/// [`choose_reader`], given a minute for a sleeping reader to wake, and
+/// whether that minute was spent.
+///
+/// Only a sweep that found nothing is repeated. No route and several readers
+/// are not fixed by waiting, so they are answered at once. The wait itself
+/// happens only with a person at the terminal (see [`targets::wake_pause`]).
+fn choose_reader_waiting() -> (ReaderSearch, bool) {
+    let mut pause = targets::wake_pause(None);
+    let mut search = choose_reader();
+    let mut waited = false;
+    while matches!(search, ReaderSearch::NoneAnswered) && pause() {
+        waited = true;
+        search = sweep_for_readers(false);
+    }
+    (search, waited)
+}
+
+fn choose_reader() -> ReaderSearch {
+    sweep_for_readers(true)
+}
+
+/// One sweep of the local network for readers, announced on the first look
+/// and quiet on the repeats a wait makes.
+fn sweep_for_readers(announce: bool) -> ReaderSearch {
+    let Some(subnet) = connect::local_subnet() else {
+        return ReaderSearch::NoRoute;
+    };
+    if announce {
+        println!("Looking for readers on {subnet}.1-254.");
+    }
     let mut readers = Vec::new();
     for address in connect::sweep(&subnet, connect::PROBE_TIMEOUT) {
         let host = address.to_string();
@@ -837,18 +1891,9 @@ fn choose_reader() -> Option<String> {
         }
     }
     match readers.as_slice() {
-        [] => {
-            println!("No reader answered. Put it on this Wi-Fi, or name it with --device IP.");
-            None
-        }
-        [only] => Some(only.clone()),
-        several => {
-            println!(
-                "{} readers answered. Name the one you want with --device IP.",
-                several.len()
-            );
-            None
-        }
+        [] => ReaderSearch::NoneAnswered,
+        [only] => ReaderSearch::Found(only.clone()),
+        several => ReaderSearch::Several(several.len()),
     }
 }
 
@@ -857,8 +1902,8 @@ fn stream_authority() -> Result<PathBuf, String> {
     let root = if let Some(value) = std::env::var_os("KOBO_STREAM_CONFIG_DIR") {
         PathBuf::from(value)
     } else {
-        let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
-        PathBuf::from(home).join(".config").join("kobo")
+        let home = kobo_abi::home_directory().ok_or("no HOME in the environment")?;
+        home.join(".config").join("kobo")
     };
     stream_authority_in(&root)
 }
@@ -884,7 +1929,9 @@ fn stream_companion(arguments: &[String]) -> Result<(), String> {
             .filter(|port| *port > 0)
             .ok_or("--port must be 1 through 65535")?,
         _ => {
-            return Err("usage: kobo stream demo|terminal|monitor|pairing [--port PORT]".to_owned())
+            return Err(
+                "usage: kobo stream demo|terminal|monitor|pairing [--port PORT]".to_owned(),
+            );
         }
     };
     let pairing = kobo_stream::pairing_instructions(port)?;
@@ -893,7 +1940,11 @@ fn stream_companion(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
     eprintln!("{pairing}\n");
-    let (command, title) = stream_preset(&arguments[0], std::env::var("SHELL").ok().as_deref())?;
+    #[cfg(unix)]
+    let shell = std::env::var("SHELL").ok();
+    #[cfg(windows)]
+    let shell = std::env::var("COMSPEC").ok();
+    let (command, title) = stream_preset(&arguments[0], shell.as_deref())?;
     eprintln!(
         "Open Paperterm on your reader and connect to this computer. Keep the computer awake."
     );
@@ -928,38 +1979,58 @@ fn stream_preset(name: &str, shell: Option<&str>) -> Result<(Vec<String>, &'stat
             ))
         }
         "terminal" => {
-            let shell = shell.unwrap_or("/bin/sh");
+            // The login-shell flag is a Unix convention; cmd.exe takes none,
+            // and its home is COMSPEC rather than SHELL.
+            #[cfg(unix)]
+            let fallback = "/bin/sh";
+            #[cfg(windows)]
+            let fallback = "C:\\Windows\\System32\\cmd.exe";
+            let shell = shell.unwrap_or(fallback);
             if !Path::new(shell).is_absolute() || !Path::new(shell).is_file() {
+                #[cfg(unix)]
                 return Err("Your default shell is unavailable. Set SHELL to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
+                #[cfg(windows)]
+                return Err("Your default shell is unavailable. Set COMSPEC to an installed shell's absolute path, or use the connection check: kobo stream demo".into());
             }
-            Ok((vec![shell.into(), "-l".into()], "Terminal"))
+            #[cfg(unix)]
+            return Ok((vec![shell.into(), "-l".into()], "Terminal"));
+            #[cfg(windows)]
+            return Ok((vec![shell.into()], "Terminal"));
         }
+        #[cfg(unix)]
         "monitor" => Ok((vec!["top".into()], "System monitor")),
+        // top(1) has no Windows equivalent; fail loudly rather than spawn a
+        // missing program.
+        #[cfg(windows)]
+        "monitor" => Err(
+            "the monitor preset runs top(1), which has no Windows equivalent; use kobo stream -- <command> with an explicit command".into(),
+        ),
         _ => Err(
             "Choose demo, terminal or monitor. Use kobo stream --help for custom commands.".into(),
         ),
     }
 }
 
-const STREAM_START: &str = "Paperterm shares a computer terminal with your reader.
+/// The one Paperterm recipe. The app's own setup pages, its README and its
+/// Store steps say the same three things in the same order, because three
+/// recipes that disagreed were how owners ended up typing codes by hand.
+const STREAM_START: &str = "Paperterm shares a terminal on this computer with your reader.
 
-Start with a connection check:
-  kobo stream demo
+1. Pair once: kobo stream init
+   It pairs Paperterm on your saved reader, so there is nothing to type there.
+   kobo sidekick init does the same and pairs Sidekick and Deck too.
+2. Share a terminal: kobo stream terminal
+3. Open Paperterm on the reader.
 
-Then choose a session:
-  kobo stream terminal    Open your usual shell
+Other sessions:
   kobo stream monitor     Watch this computer's processes with top
-
-First use: run kobo stream init. It finds this computer's address, finds the
-readers on this network, and installs the trust root on the one you choose;
-name a reader outright with --device IP. Open Paperterm on the reader and
-enter the computer address and pairing code it prints.
+  kobo stream demo        A connection check that runs no commands
 
 Keep the computer awake. Press Ctrl+] on the computer to stop sharing.
 For custom commands and other advanced options: kobo stream --help";
 
 fn stream_command(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo stream init [--device IP] [--host ADDRESS ...]\n\
+    const USAGE: &str = "usage: kobo stream init [--device IP] [--reader NAME] [--host ADDRESS ...]\n\
                          \x20      kobo stream demo [--port PORT]\n\
                          \x20      kobo stream terminal|monitor [--port PORT]\n\
                          \x20      kobo stream pairing [--port PORT]\n\
@@ -1069,7 +2140,7 @@ fn parse_host_update(arguments: &[String]) -> Result<HostUpdateChannel, String> 
 
 fn update_host(arguments: &[String]) -> Result<(), String> {
     let channel = parse_host_update(arguments)?;
-    let home = env::var_os("HOME").ok_or("HOME is not set")?;
+    let home = kobo_abi::home_directory().ok_or("HOME is not set")?;
     let data = env::var_os("XDG_DATA_HOME")
         .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
     let root = data.join("kobo");
@@ -1282,7 +2353,7 @@ fn app_catalog_verify(arguments: &[String]) -> Result<(), String> {
         .iter()
         .find(|entry| entry.manifest().id() == parsed.manifest().id())
         .ok_or("Verified catalog does not contain the supplied package")?;
-    if entry.manifest().to_canonical_bytes() != parsed.manifest().to_canonical_bytes()
+    if !parsed.manifest().is_offered_as(entry.manifest())
         || entry.package_bytes() != package.len() as u64
         || entry.package_sha256().as_str() != kobo_net::sha256::hex_digest(&package)
     {
@@ -1293,15 +2364,17 @@ fn app_catalog_verify(arguments: &[String]) -> Result<(), String> {
 }
 
 fn app_catalog(arguments: &[String]) -> Result<(), String> {
-    const USAGE: &str = "usage: kobo app-catalog --seed PATH --out PATH --signature PATH \
-                         --entry PACKAGE HTTPS_URL [--entry PACKAGE HTTPS_URL ...]";
+    const USAGE: &str = "usage: kobo app-catalog --seed PATH --out PATH --earlier-out PATH \
+                         --entry PACKAGE HTTPS_URL [--entry PACKAGE HTTPS_URL ...]\n\
+                         Each catalog is signed beside itself as PATH.sig; --earlier-out is \
+                         the one runtimes up to 0.3.33 read.";
     let seed_path = single_path_flag(arguments, "--seed", USAGE)?;
     let output = single_path_flag(arguments, "--out", USAGE)?;
-    let signature_output = single_path_flag(arguments, "--signature", USAGE)?;
+    let earlier_output = single_path_flag(arguments, "--earlier-out", USAGE)?;
     let entries = paired_flag(arguments, "--entry", USAGE)?;
     ensure_only_flags(
         arguments,
-        &["--seed", "--out", "--signature", "--entry"],
+        &["--seed", "--out", "--earlier-out", "--entry"],
         USAGE,
     )?;
     if entries.is_empty() {
@@ -1331,15 +2404,7 @@ fn app_catalog(arguments: &[String]) -> Result<(), String> {
     }
     let catalog = kobo_app_store::Catalog::new(catalog_entries)
         .map_err(|error| format!("invalid app catalog: {error}"))?;
-    let bytes = catalog.to_canonical_bytes();
-    let signature =
-        kobo_app_store::sign(&bytes, &seed).map_err(|error| format!("sign catalog: {error}"))?;
-    fs::write(&output, &bytes).map_err(|error| format!("write {}: {error}", output.display()))?;
-    fs::write(&signature_output, format!("{signature}\n"))
-        .map_err(|error| format!("write {}: {error}", signature_output.display()))?;
-    println!("created {}", output.display());
-    println!("created {}", signature_output.display());
-    Ok(())
+    write_signed_catalogs(&catalog, &seed, &output, &earlier_output)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1495,18 +2560,51 @@ fn app_release(arguments: &[String]) -> Result<(), String> {
 
     let catalog = kobo_app_store::Catalog::new(entries)
         .map_err(|error| format!("build app catalog: {error}"))?;
-    let catalog_bytes = catalog.to_canonical_bytes();
-    let signature =
-        kobo_app_store::sign(&catalog_bytes, &seed).map_err(|error| error.to_string())?;
-    let catalog_path = output.join("cobalt-app-catalog.json");
-    let signature_path = output.join("cobalt-app-catalog.json.sig");
-    fs::write(&catalog_path, catalog_bytes)
-        .map_err(|error| format!("write {}: {error}", catalog_path.display()))?;
-    fs::write(&signature_path, format!("{signature}\n"))
-        .map_err(|error| format!("write {}: {error}", signature_path.display()))?;
-    println!("created {}", catalog_path.display());
-    println!("created {}", signature_path.display());
+    write_signed_catalogs(
+        &catalog,
+        &seed,
+        &output.join(kobo_app_store::CATALOG_FILE),
+        &output.join(kobo_app_store::EARLIER_CATALOG_FILE),
+    )
+}
+
+/// Signs and writes the catalog and the same catalog for runtimes up to
+/// 0.3.33, each with its signature beside it under the same name and `.sig`.
+///
+/// Both are built and checked before either is written, so a publication
+/// that cannot give earlier runtimes a catalog they read gives nobody a new
+/// one.
+fn write_signed_catalogs(
+    catalog: &kobo_app_store::Catalog,
+    seed: &[u8; 32],
+    catalog_path: &Path,
+    earlier_path: &Path,
+) -> Result<(), String> {
+    let earlier = catalog
+        .for_earlier_runtimes()
+        .map_err(|error| format!("build the catalog for runtimes up to 0.3.33: {error}"))?;
+    let mut signed = Vec::with_capacity(2);
+    for (catalog, path) in [(catalog, catalog_path), (&earlier, earlier_path)] {
+        let bytes = catalog.to_canonical_bytes();
+        let signature =
+            kobo_app_store::sign(&bytes, seed).map_err(|error| format!("sign catalog: {error}"))?;
+        signed.push((path, bytes, signature));
+    }
+    for (path, bytes, signature) in signed {
+        let signature_path = signature_path_for(path);
+        fs::write(path, bytes).map_err(|error| format!("write {}: {error}", path.display()))?;
+        fs::write(&signature_path, format!("{signature}\n"))
+            .map_err(|error| format!("write {}: {error}", signature_path.display()))?;
+        println!("created {}", path.display());
+        println!("created {}", signature_path.display());
+    }
     Ok(())
+}
+
+fn signature_path_for(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".sig");
+    PathBuf::from(name)
 }
 
 fn build_release_binary(app: &ReleaseApp) -> Result<Vec<u8>, String> {
@@ -2005,7 +3103,16 @@ fn dev_sdk_app(address: &str) -> Result<(), String> {
             .local_addr()
             .map_err(|error| format!("read simulator address: {error}"))?
     );
-    serve_app(&server, &session, &mut app)
+    println!(
+        "Companion --sim commands deliver to {} (set {} to use another folder).",
+        kobo_sim::simulated_data_root("").display(),
+        kobo_sim::SIM_DATA_VARIABLE
+    );
+    println!(
+        "Library apps read documents from {}.",
+        kobo_sim::simulated_library_root().display()
+    );
+    serve_app(&server, session, &mut app, &executable, &dev_session.socket)
 }
 
 fn dev_capture_source(executable: &Path) -> Result<kobo_sim::CaptureSource, String> {
@@ -2048,12 +3155,35 @@ struct DevSessionGuard {
     socket: PathBuf,
 }
 
+/// The longest socket path macOS and Linux both accept, leaving room for the
+/// terminating NUL.
+const SOCKET_PATH_LIMIT: usize = 100;
+
+/// Where a dev session keeps its socket.
+///
+/// A private `TMPDIR` deep in a project folder is a sensible way to keep runs
+/// apart, but a Unix socket path is capped at about a hundred bytes, and the
+/// simulator refused to start under one with `path must be shorter than
+/// SUN_LEN`. The session then lives in `/tmp`, still in a directory only this
+/// user can enter.
+fn dev_session_root(temporary: &Path, name: &str) -> PathBuf {
+    let preferred = temporary.join(name);
+    if preferred.join("app.sock").as_os_str().len() <= SOCKET_PATH_LIMIT {
+        preferred
+    } else {
+        Path::new("/tmp").join(name)
+    }
+}
+
 impl DevSessionGuard {
     fn new() -> Result<Self, String> {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
-        Self::new_at(env::temp_dir().join(format!("kobo-dev-{}-{unique}", std::process::id())))
+        Self::new_at(dev_session_root(
+            &env::temp_dir(),
+            &format!("kobo-dev-{}-{unique}", std::process::id()),
+        ))
     }
 
     fn new_at(root: PathBuf) -> Result<Self, String> {
@@ -2062,6 +3192,9 @@ impl DevSessionGuard {
             socket: root.join("app.sock"),
             root,
         };
+        // Windows has no mode bits; the temp directory inherits the user
+        // profile ACL, which is the same account boundary.
+        #[cfg(unix)]
         if let Err(error) = fs::set_permissions(&session.root, fs::Permissions::from_mode(0o700)) {
             let message = format!("protect {}: {error}", session.root.display());
             drop(session);
@@ -2147,9 +3280,17 @@ struct AppChild {
 
 impl AppChild {
     fn spawn(executable: &Path, socket: &Path) -> Result<Self, String> {
-        let child = Command::new(executable)
+        let mut command = Command::new(executable);
+        command
             .env("KOBO_SOCKET", socket)
-            .env("KOBO_SIM_CALLBACKS", "1")
+            .env("KOBO_SIM_CALLBACKS", "1");
+        if let Some(minutes) = kobo_sim::reader_offset_for_app() {
+            command.env(
+                kobo_policy::clock::READER_OFFSET_VARIABLE,
+                minutes.to_string(),
+            );
+        }
+        let child = command
             .spawn()
             .map_err(|error| format!("launch {}: {error}", executable.display()))?;
         Ok(Self { child: Some(child) })
@@ -2202,13 +3343,25 @@ fn wait_for_app(
 
 fn serve_app(
     server: &kobo_sim::AppServer,
-    session: &kobo_sim::AppSession,
+    session: kobo_sim::AppSession,
     app: &mut AppChild,
+    executable: &Path,
+    socket: &Path,
 ) -> Result<(), String> {
+    let mut session = session;
     loop {
         server
-            .try_serve_one(session)
+            .try_serve_one(&session)
             .map_err(|error| format!("serve browser request: {error}"))?;
+        if session.take_restart_request() {
+            // The old process is stopped before the new one starts, so the
+            // app reads back only what it saved, as after a reader restarts.
+            drop(std::mem::replace(app, AppChild { child: None }));
+            *app = AppChild::spawn(executable, socket)?;
+            session = wait_for_app(server, app)?;
+            println!("Application restarted.");
+            continue;
+        }
         if let Some(status) = app.try_wait()? {
             return if status.success() {
                 Ok(())
@@ -2274,9 +3427,9 @@ fn doctor(arguments: &[String]) -> Result<(), String> {
                 program: RemoteProgram::DoctorJson,
                 ..RemoteArtifact::doctor()
             };
-            return run_remote_fixed_artifact(host, &artifact);
+            return run_remote_fixed_artifact(&host, &artifact);
         }
-        return remote_doctor(host);
+        return remote_doctor(&host);
     }
     let binary = sibling_binary("kobo-doctor");
     let mut command = Command::new(&binary);
@@ -2286,22 +3439,34 @@ fn doctor(arguments: &[String]) -> Result<(), String> {
     run_status(&mut command, format!("{}", binary.display()))
 }
 
-fn parse_doctor(arguments: &[String]) -> Result<(Option<&str>, bool), String> {
-    let usage = "usage: kobo doctor [--device HOST] [--json]";
+fn parse_doctor(arguments: &[String]) -> Result<(Option<String>, bool), String> {
+    let usage = "usage: kobo doctor [--device HOST | --reader NAME] [--json]";
+    let (flags, rest) = targets::TargetArgs::parse(arguments)?;
     let mut host = None;
     let mut json = false;
-    let mut args = arguments.iter();
-    while let Some(arg) = args.next() {
+    if !flags.is_empty() {
+        host = Some(match flags.resolve() {
+            Ok(targets::Target::Address(address)) => address,
+            Ok(targets::Target::Nickname(name)) => targets::resolve_nickname(&name)?,
+            Ok(targets::Target::Simulator) => {
+                return Err(
+                    "usage: the simulator has no hardware to diagnose; doctor is for a reader"
+                        .to_owned(),
+                );
+            }
+            Err(_) => return Err(usage.into()),
+        });
+    }
+    for arg in &rest {
         if arg == "--json" && !json {
             json = true;
-        } else if is_device_flag(arg) && host.is_none() {
-            let value = args.next().ok_or(usage)?;
-            if !valid_device_host(value) {
-                return Err("device host contains unsupported characters".into());
-            }
-            host = Some(value.as_str());
         } else {
             return Err(usage.into());
+        }
+    }
+    if let Some(host) = &host {
+        if !valid_device_host(host) {
+            return Err("device host contains unsupported characters".into());
         }
     }
     Ok((host, json))
@@ -2361,23 +3526,47 @@ fn remote_doctor(host: &str) -> Result<(), String> {
 /// home network when they asked where their e-reader went has answered a
 /// question nobody asked.
 fn list_devices(arguments: &[String]) -> Result<(), String> {
-    let subnet = parse_devices(arguments)?;
-    println!(
+    let (subnet, json) = parse_devices(arguments)?;
+    console::Console::progress(&format!(
         "scanning {subnet}.1-254 on port {} for readers",
         connect::SSH_PORT
-    );
+    ));
     let answered = connect::sweep(&subnet, connect::PROBE_TIMEOUT);
     let mut readers = Vec::new();
     let mut others = 0_usize;
     for address in &answered {
         match identify_device(&address.to_string()) {
             Some(identity) if identity.is_kobo() => {
-                println!("{address}  {}", identity.summary());
-                readers.push(*address);
+                readers.push((*address, identity.summary()));
             }
 
             _ => others += 1,
         }
+    }
+    if json {
+        console::Console::print_json(
+            "devices",
+            &serde_json::json!({
+                "subnet": format!("{subnet}.0/24"),
+                "readers": readers
+                    .iter()
+                    .map(|(address, summary)| serde_json::json!({
+                        "address": address.to_string(),
+                        "summary": summary,
+                    }))
+                    .collect::<Vec<_>>(),
+                "other_hosts": others,
+            }),
+        );
+        if readers.is_empty() {
+            return Err(unreachable_device(format!(
+                "no reader answered on {subnet}.0/24"
+            )));
+        }
+        return Ok(());
+    }
+    for (address, summary) in &readers {
+        println!("{address}  {summary}");
     }
     if others > 0 {
         println!(
@@ -2385,7 +3574,7 @@ fn list_devices(arguments: &[String]) -> Result<(), String> {
             connect::SSH_PORT
         );
     }
-    let Some(first) = readers.first() else {
+    let Some((first, _)) = readers.first() else {
         return Err(unreachable_device(format!(
             "no reader answered on {subnet}.0/24"
         )));
@@ -2454,15 +3643,26 @@ fn identify_device(host: &str) -> Option<connect::Identity> {
     )))
 }
 
-fn parse_devices(arguments: &[String]) -> Result<String, String> {
-    const USAGE: &str = "usage: kobo devices [--subnet A.B.C]";
-    let subnet = match arguments {
-        [] => connect::local_subnet().ok_or(
+fn parse_devices(arguments: &[String]) -> Result<(String, bool), String> {
+    const USAGE: &str = "usage: kobo devices [--subnet A.B.C] [--json]";
+    let mut subnet = None;
+    let mut json = false;
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--json" && !json {
+            json = true;
+        } else if argument == "--subnet" && subnet.is_none() {
+            subnet = Some(arguments.next().ok_or(USAGE)?.clone());
+        } else {
+            return Err(USAGE.to_owned());
+        }
+    }
+    let subnet = match subnet {
+        Some(value) => value,
+        None => connect::local_subnet().ok_or(
             "this machine has no route to a network, so there is nothing to scan; \
              connect to the same Wi-Fi as the reader, or pass --subnet A.B.C",
         )?,
-        [flag, value] if flag == "--subnet" => (*value).clone(),
-        _ => return Err(USAGE.to_owned()),
     };
     if !connect::valid_subnet(&subnet) {
         return Err(format!(
@@ -2470,7 +3670,7 @@ fn parse_devices(arguments: &[String]) -> Result<String, String> {
              not {subnet:?}"
         ));
     }
-    Ok(subnet)
+    Ok((subnet, json))
 }
 
 /// Controls how long a connected device stays reachable while developing.
@@ -2505,7 +3705,9 @@ fn dev_session(arguments: &[String]) -> Result<(), String> {
     print!("{}", String::from_utf8_lossy(&output.stdout));
     if output.status.success() {
         if matches!(action, DevSessionAction::KeepAwake(devsession::Switch::On)) {
-            println!("The reader can stay awake for two minutes. Use kobo session --device ADDRESS --hold MINUTES for a longer timed session.");
+            println!(
+                "The reader can stay awake for two minutes. Use kobo session --device ADDRESS --hold MINUTES for a longer timed session."
+            );
         }
         // Advising a restart is only true when something actually changed; the
         // reader already holds the intended value otherwise.
@@ -2764,7 +3966,10 @@ struct ShellRequest<'a> {
 }
 
 fn parse_shell(arguments: &[String]) -> Result<ShellRequest<'_>, String> {
-    const USAGE: &str = "usage: kobo shell --device <host> [command ...]";
+    const USAGE: &str = "usage: kobo shell --device <host> [command ...]\n\
+                         \x20      An advanced control: the command runs on the reader exactly as\n\
+                         \x20      typed, as root, with no validation. Prefer a named verb when one\n\
+                         \x20      exists - logs, shot, record and doctor cover the common reads.";
     let (host, rest) = match arguments {
         [device, host, rest @ ..] if is_device_flag(device) => (host.as_str(), rest),
         _ => return Err(USAGE.to_owned()),
@@ -2931,16 +4136,25 @@ fn device_answers(remote: &str) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
-fn parse_wait(arguments: &[String]) -> Result<(&str, Duration), String> {
-    const USAGE: &str = "usage: kobo wait --device <host> [--timeout <seconds>]";
-    let (host, rest) = match arguments {
-        [device, host, rest @ ..] if is_device_flag(device) => (host, rest),
-        _ => return Err(USAGE.to_owned()),
+fn parse_wait(arguments: &[String]) -> Result<(String, Duration), String> {
+    const USAGE: &str =
+        "usage: kobo wait (--device <host> | --reader <name>) [--timeout <seconds>]";
+    let (flags, rest) = targets::TargetArgs::parse(arguments)?;
+    let host = match flags.resolve() {
+        Ok(targets::Target::Address(host)) => host,
+        Ok(targets::Target::Nickname(name)) => targets::resolve_nickname(&name)?,
+        Ok(targets::Target::Simulator) => {
+            return Err(
+                "usage: the simulator is already here; wait is for a reader on the network"
+                    .to_owned(),
+            );
+        }
+        Err(_) => return Err(USAGE.to_owned()),
     };
-    if !valid_device_host(host) {
+    if !valid_device_host(&host) {
         return Err("device host contains unsupported characters".to_owned());
     }
-    let seconds = match rest {
+    let seconds = match rest.as_slice() {
         [] => 300,
         [flag, value] if flag == "--timeout" => value
             .parse::<u64>()
@@ -3343,6 +4557,7 @@ fn capture_remote_fixed_artifact(host: &str, artifact: &RemoteArtifact) -> Resul
 
 fn valid_device_host(host: &str) -> bool {
     !host.is_empty()
+        && !host.starts_with('-')
         && host
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b':' | b'-' | b'_'))
@@ -3425,8 +4640,7 @@ fn remote_artifact_session(artifact: &RemoteArtifact) -> Result<RemoteArtifactSe
 fn remote_owner_token() -> Result<String, String> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut bytes = [0_u8; 16];
-    fs::File::open("/dev/urandom")
-        .and_then(|mut random| random.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("create remote cleanup ownership token: {error}"))?;
     let mut token = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -3615,7 +4829,7 @@ fn cleanup_remote_fixed_artifact(
 fn unreachable_device(mut error: String) -> String {
     error.push_str("\n\n");
     error.push_str(connect::OFFLINE_HELP);
-    error
+    console::target(error)
 }
 
 /// The same, for a session that ssh itself gave up on.
@@ -3662,8 +4876,8 @@ fn remote_session_failure(
 pub const DEVICE_KEY_NAME: &str = "kobo_cobalt";
 
 fn default_device_key_path() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".ssh").join(DEVICE_KEY_NAME))
+    let home = kobo_abi::home_directory()?;
+    Some(home.join(".ssh").join(DEVICE_KEY_NAME))
 }
 
 /// The dedicated key used for reader connections, when it exists.
@@ -3724,7 +4938,15 @@ fn run_remote_shell(
     script: &str,
     timeout: Duration,
 ) -> Result<RemoteShellOutput, String> {
-    let mut command = remote_shell_command(remote);
+    run_shell_session(remote_shell_command(remote), script, timeout)
+}
+
+/// [`run_remote_shell`] over an `ssh` command the caller has already shaped.
+fn run_shell_session(
+    mut command: Command,
+    script: &str,
+    timeout: Duration,
+) -> Result<RemoteShellOutput, String> {
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -3937,7 +5159,7 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
     // independently installed copy before its rename transaction.
     let mut members = vec![package::Member {
         path: package::LAUNCH_BOOTSTRAP.to_owned(),
-        bytes: bootstrap::CONTENT.as_bytes().to_vec(),
+        bytes: bootstrap::content().as_bytes().to_vec(),
         program: true,
     }];
     for (name, features) in INSTALLED_PACKAGES {
@@ -4009,9 +5231,29 @@ fn build_package_bytes() -> Result<BuiltPackage, String> {
         include_str!("../../kobo-text/fonts/LICENSE-AtkinsonHyperlegible.txt"),
         false,
     ));
+    // The interface face is modified in one glyph, and the Open Font License
+    // asks that a modified copy say how; the note travels with the binaries.
+    members.push(text_member(
+        "licenses/SOURCE-AtkinsonHyperlegible.md",
+        include_str!("../../../licenses/SOURCE-AtkinsonHyperlegible.md"),
+        false,
+    ));
     members.push(text_member(
         "licenses/LICENSE-DejaVu.txt",
         include_str!("../../kobo-text/fonts/LICENSE-DejaVu.txt"),
+        false,
+    ));
+    // The serif every application falls back to when the reader has none of
+    // its own. Like the two faces above it is compiled into binaries this
+    // package installs, and the Open Font License travels with every copy.
+    members.push(text_member(
+        "licenses/LICENSE-Literata.txt",
+        include_str!("../../kobo-text/fonts/LICENSE-Literata.txt"),
+        false,
+    ));
+    members.push(text_member(
+        "licenses/SOURCE-Literata.md",
+        include_str!("../../../licenses/SOURCE-Literata.md"),
         false,
     ));
     members.push(text_member(
@@ -4097,6 +5339,13 @@ struct SetupOptions {
     non_interactive: bool,
     wait_for_reader: bool,
     wait: bool,
+    /// Whether the firmware's SSH server is turned on, with this computer's
+    /// key as the only way in.
+    ///
+    /// Default on. Every app set up from a computer needs it, and an install
+    /// that left it off sent owners back to the cable for a second run with
+    /// `--enable-ssh` before any of them worked. `--no-ssh` is for a reader
+    /// that will only ever be used on its own.
     enable_ssh: bool,
     /// Whether this machine's key is installed alongside the SSH server.
     ///
@@ -4104,7 +5353,43 @@ struct SetupOptions {
     /// thing anybody asked for. `--no-key` is for a reader that already has
     /// the key, or one being prepared for somebody else.
     authorize_key: bool,
+    /// Whether a short original welcome note joins the install, so the first
+    /// reconnect shows something new to open. `--no-sample` skips it.
+    sample: bool,
 }
+
+/// What `kobo setup --help` says. It used to answer "unknown option" to the
+/// one flag everybody tries first on a command they have not run before.
+const SETUP_HELP: &str = "usage: kobo setup [options]
+
+Prepares a reader connected over USB. Run it with no options and it finds the
+reader, says what it will change, and asks before changing anything.
+
+It also turns on the reader's SSH server with this computer's key as the only
+way in, waits for the reader to restart onto Wi-Fi, and saves it. After that,
+commands like kobo frame push need no address and no pairing step.
+
+  --no-ssh           Leave SSH off; computer commands will not reach the reader
+  --no-key           Turn SSH on but do not install this computer's key
+  --volume PATH      The mounted reader, when more than one is connected
+  --undo             Remove what setup installed
+  --dry-run          Say what would change and change nothing
+  --yes              Answer yes to the confirmation
+  --non-interactive  Never ask; fail where a question would be needed
+  --wait-for-reader  Wait for a reader to be plugged in
+  --no-eject         Leave the reader mounted afterwards
+  --no-wait          Do not wait for the reader to come back on Wi-Fi
+  --menu, --no-menu  Add or skip the launcher's menu entry
+  --no-sample        Skip the welcome note
+  --release-dir PATH | --source  Install a verified release, or a source build
+
+kobo pair saves a reader again later, under a new name or from another computer.";
+
+/// What an option `kobo setup` does not know is answered with.
+const SETUP_OPTIONS: &str = "kobo setup [--volume PATH] [--undo] [--no-ssh] [--no-key] \
+     [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run] [--yes] \
+     [--non-interactive] [--wait-for-reader] [--release-dir PATH] [--source] \
+     [--no-sample]";
 
 fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
     let mut options = SetupOptions {
@@ -4119,8 +5404,9 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
         non_interactive: false,
         wait_for_reader: false,
         wait: true,
-        enable_ssh: false,
+        enable_ssh: true,
         authorize_key: true,
+        sample: true,
     };
     let mut index = 0;
     while index < arguments.len() {
@@ -4148,16 +5434,17 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
             "--no-wait" => options.wait = false,
             "--no-menu" => options.menu = MenuEntry::Skip,
             "--menu" => options.menu = MenuEntry::Force,
+            // The old opt-in, still accepted so the instructions and scripts
+            // that spell it keep working. It asks for what is now the default.
             "--enable-ssh" => options.enable_ssh = true,
+            "--no-ssh" => options.enable_ssh = false,
             "--no-key" => options.authorize_key = false,
+            "--no-sample" => options.sample = false,
             "--dry-run" => options.dry_run = true,
             other => {
-                return Err(format!(
-                    "unknown option '{other}'\n\
-                     usage: kobo setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] \
-                     [--no-eject] [--no-wait] [--menu] [--no-menu] [--dry-run] [--yes] \
-                     [--non-interactive] [--wait-for-reader] [--release-dir PATH] [--source]"
-                ));
+                return Err(crate::console::usage(format!(
+                    "{SETUP_OPTIONS}\nunknown option '{other}'"
+                )));
             }
         }
         index += 1;
@@ -4166,7 +5453,9 @@ fn parse_setup(arguments: &[String]) -> Result<SetupOptions, String> {
         return Err("--source and --release-dir are mutually exclusive".to_owned());
     }
     if options.non_interactive && !options.yes && !options.dry_run {
-        return Err("--non-interactive requires --yes for any change".to_owned());
+        return Err(crate::console::usage(
+            "--non-interactive requires --yes for any change",
+        ));
     }
     Ok(options)
 }
@@ -4334,7 +5623,7 @@ fn load_release_package_from_manifest(
 }
 
 fn managed_release_directory() -> Option<PathBuf> {
-    let home = env::var_os("HOME")?;
+    let home = kobo_abi::home_directory()?;
     let data = env::var_os("XDG_DATA_HOME")
         .map_or_else(|| Path::new(&home).join(".local/share"), PathBuf::from);
     let state = fs::read_to_string(data.join("kobo/install-state")).ok()?;
@@ -4387,19 +5676,21 @@ fn reader_still_connected(expected: &setup::Mounted) -> Result<(), String> {
 fn confirmed_setup(
     options: &SetupOptions,
     reader: &setup::Mounted,
-    profile: &kobo_profile::DeviceProfile,
+    identified: &setup::Identified,
     payload: &SetupPayload,
 ) -> Result<bool, String> {
+    let tested = match identified.untested(reader) {
+        Some(note) if options.mode != SetupMode::Undo => format!("  Tested: {note}\n"),
+        _ => String::new(),
+    };
     println!(
-        "\nReady to {}:\n  Model: {} (device code {}, profile {})\n  Firmware: {}\n  Mount: {}\n  Release: {}\n  Changes: {}\n",
+        "\nReady to {}:\n  Model: {}\n  Firmware: {}\n{tested}  Mount: {}\n  Release: {}\n  Changes: {}\n",
         if options.mode == SetupMode::Undo {
             "remove Cobalt"
         } else {
             "install Cobalt"
         },
-        profile.model,
-        profile.device_code,
-        profile.id,
+        identified.describe(reader),
         reader.firmware,
         reader.volume.display(),
         payload.description(),
@@ -4413,27 +5704,62 @@ fn confirmed_setup(
         return Ok(true);
     }
     if options.non_interactive {
-        return Err("noninteractive setup was not explicitly confirmed with --yes".to_owned());
+        return Err(crate::console::usage(
+            "noninteractive setup was not explicitly confirmed with --yes",
+        ));
     }
-    let tty = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open("/dev/tty")
-        .map_err(|error| {
-            format!(
-                "open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"
-            )
-        })?;
-    let mut writer = &tty;
+    // The prompt bypasses stdio so redirected input cannot approve a device
+    // write. /dev/tty is the Unix controlling terminal; CONIN$/CONOUT$ are
+    // the corresponding Windows console devices and fail closed when this
+    // process has no attached console.
+    #[cfg(unix)]
+    {
+        let tty = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+            .map_err(|error| {
+                format!(
+                    "open /dev/tty for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        prompt_confirmation(&tty, &tty)
+    }
+    #[cfg(windows)]
+    {
+        let input = fs::OpenOptions::new()
+            .read(true)
+            .open("CONIN$")
+            .map_err(|error| {
+                format!(
+                    "open the Windows console for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        let output = fs::OpenOptions::new()
+            .write(true)
+            .open("CONOUT$")
+            .map_err(|error| {
+                format!(
+                    "open the Windows console for confirmation: {error}; pass --yes only after reviewing --dry-run"
+                )
+            })?;
+        prompt_confirmation(input, output)
+    }
+}
+
+fn prompt_confirmation(
+    reader: impl std::io::Read,
+    mut writer: impl std::io::Write,
+) -> Result<bool, String> {
     writer
         .write_all(b"Continue? [y/N] ")
         .map_err(|error| format!("write confirmation prompt: {error}"))?;
     writer
         .flush()
         .map_err(|error| format!("flush confirmation prompt: {error}"))?;
-    let mut reader_tty = std::io::BufReader::new(tty);
+    let mut buffered = std::io::BufReader::new(reader);
     let mut answer = String::new();
-    std::io::BufRead::read_line(&mut reader_tty, &mut answer)
+    std::io::BufRead::read_line(&mut buffered, &mut answer)
         .map_err(|error| format!("read confirmation: {error}"))?;
     Ok(confirmation_answer(&answer))
 }
@@ -4467,6 +5793,14 @@ fn choose_reader_list(mut found: Vec<setup::Mounted>) -> Result<setup::Mounted, 
 /// SSH server, and the setting that keeps the radio up. Everything after this
 /// happens over Wi-Fi, so everything before it has to happen here.
 fn setup_device(arguments: &[String]) -> Result<(), String> {
+    // A bare setup is the guided run and must not print usage instead of
+    // starting, but --help anywhere on the line is a question, not an option.
+    if arguments
+        .iter()
+        .any(|argument| argument == "--help" || argument == "-h")
+    {
+        return print_command_help(SETUP_HELP);
+    }
     setup_device_with_confirmation(arguments, confirmed_setup)
 }
 
@@ -4475,27 +5809,23 @@ fn setup_device_with_confirmation(
     confirm: impl FnOnce(
         &SetupOptions,
         &setup::Mounted,
-        &kobo_profile::DeviceProfile,
+        &setup::Identified,
         &SetupPayload,
     ) -> Result<bool, String>,
 ) -> Result<(), String> {
     let options = parse_setup(arguments)?;
     let reader = wait_for_mounted_reader(options.volume.as_deref(), options.wait_for_reader)?;
-    let profile = setup::install_profile(&reader)?;
+    let identified = if options.mode == SetupMode::Undo {
+        setup::undo_profile(&reader)
+    } else {
+        setup::install_profile(&reader)?
+    };
     let payload = if options.mode == SetupMode::Undo {
         SetupPayload::Source
     } else {
         setup_payload(&options)?
     };
-    println!(
-        "found {} ({}, profile {}, device code {}) at {} · firmware {}",
-        profile.model,
-        reader.model_code(),
-        profile.id,
-        profile.device_code,
-        reader.volume.display(),
-        reader.firmware
-    );
+    println!("{}", identified.found(&reader));
 
     if options.dry_run {
         println!(
@@ -4503,9 +5833,15 @@ fn setup_device_with_confirmation(
             dry_run_plan(&options, &reader),
             payload.description()
         );
+        if let Some(note) = identified
+            .untested(&reader)
+            .filter(|_| options.mode != SetupMode::Undo)
+        {
+            println!("tested: {note}");
+        }
         return Ok(());
     }
-    if !confirm(&options, &reader, profile, &payload)? {
+    if !confirm(&options, &reader, &identified, &payload)? {
         println!("Declined; nothing was written.");
         return Ok(());
     }
@@ -4537,6 +5873,9 @@ fn setup_device_with_confirmation(
     let staged_here = matches!(menu, Some(Ok(menu::Menu::Staged)));
     let key = (options.enable_ssh && options.authorize_key)
         .then(|| authorize_this_machine(&reader.volume, staged_here));
+    // Before the eject, because the note is a write to the volume. It never
+    // fails the install: a set-up reader without the note is still set up.
+    let sample = options.sample.then(|| setup::write_sample(&reader.volume));
     let ejected = ejected_or_explained(&reader.volume, options.eject);
 
     // A reader that was never ejected has not seen the install and will not be
@@ -4558,9 +5897,39 @@ fn setup_device_with_confirmation(
         }
         .describe_for(&reader)
     );
+    // The step is recorded only here, past the eject: a dry run, a decline
+    // or a failed verify completes nothing.
+    if let Err(error) = (|| {
+        let path = steps::steps_path();
+        let mut done = steps::Steps::load(&path)?;
+        done.complete(steps::SETUP, &reader.serial, steps::now());
+        done.save(&path)
+    })() {
+        println!("note: the completed setup could not be remembered ({error}); the install itself is fine");
+    }
+    match &sample {
+        Some(Ok(path)) => println!(
+            "sample: {} is in the library; open it on the reader after the restart, and delete it whenever you like",
+            path.display()
+        ),
+        Some(Err(error)) => println!(
+            "sample: the welcome note was not written ({error}); the install itself is fine"
+        ),
+        None => {}
+    }
     if waiting {
         let subnet = subnet.unwrap_or_default();
-        await_reader(&subnet);
+        // Hardening rides the wait because the wait ends in the first
+        // key-authenticated connection. `--no-key` skips it: an owner who
+        // manages keys themselves has not shown this computer's key works,
+        // and closing password login on their behalf could close the only
+        // door they have.
+        await_reader(&subnet, &reader, options.authorize_key);
+    } else if options.enable_ssh {
+        println!(
+            "\nOnce the reader has restarted and is on Wi-Fi, save it so the computer \
+             commands find it:\n  kobo pair"
+        );
     }
     Ok(())
 }
@@ -4615,25 +5984,36 @@ fn add_menu_entry(volume: &Path, force: bool) -> Result<menu::Menu, String> {
     outcome
 }
 
-/// Watches `subnet` until an address that was not answering starts to.
+/// Watches `subnet` until the reader that was just set up answers on it, then
+/// saves it the way `kobo pair` would and closes password login for root.
 ///
 /// Prints rather than returns, and never fails: everything this command was
 /// asked to do is already on the reader by the time it is called, so a wait
 /// that finds nothing is a wait that found nothing, not a setup that failed.
-fn await_reader(subnet: &str) {
+///
+/// The reader is recognised by the serial the USB volume gave, so another
+/// Kobo waking on the same network is passed over rather than saved in its
+/// place. This used to find the reader, identify it, and then throw that away
+/// and print `kobo deploy --device IP`, which left every owner to run
+/// `kobo pair` as a second step before any app's computer commands worked.
+fn await_reader(subnet: &str, reader: &setup::Mounted, harden: bool) {
     println!(
         "\nWaiting up to {} minutes for the reader to come back on {subnet}.0/24. Ctrl-C to stop.",
         setup::WAIT_LIMIT.as_secs() / 60
     );
     let deadline = Instant::now() + setup::WAIT_LIMIT;
+    let mut identities = std::collections::BTreeMap::new();
     let arrival = setup::wait_for_reader(
         || connect::sweep(subnet, connect::PROBE_TIMEOUT),
         |address| match identify_device(&address.to_string()) {
-            Some(identity) if identity.is_kobo() => setup::Verdict::Reader,
+            Some(identity) => {
+                let verdict = setup::verdict_for(&identity, &reader.serial);
+                identities.insert(address, identity);
+                verdict
+            }
             // Told apart deliberately. A machine that answered and is not a
             // reader is settled; one that could not be reached at all may
             // simply still be booting, and is asked again next round.
-            Some(_) => setup::Verdict::Other,
             None => setup::Verdict::Unknown,
         },
         || {
@@ -4648,10 +6028,24 @@ fn await_reader(subnet: &str) {
     );
     println!();
     match arrival {
-        setup::Arrival::Found(address) => println!(
-            "The reader is at {address}.\n\n  kobo deploy --device {address}\n\n\
-             That installs over Wi-Fi from here on, with no cable and no restart."
-        ),
+        setup::Arrival::Found(address) => {
+            let address = address.to_string();
+            println!("The reader is back on Wi-Fi at {address}.");
+            let summary = identities
+                .values()
+                .find(|identity| identity.serial == reader.serial)
+                .map_or_else(|| reader.summary(), connect::Identity::summary);
+            match save_set_up_reader(&reader.serial, &address) {
+                Ok(name) => println!("{}", saved_reader_line(&summary, &name, &address)),
+                Err(error) => println!(
+                    "It could not be saved on this computer ({}). Save it with:\n  kobo pair",
+                    console::display(&error)
+                ),
+            }
+            if harden {
+                harden_root_ssh(&address);
+            }
+        }
         setup::Arrival::Several(addresses) => {
             let listed = addresses
                 .iter()
@@ -4659,15 +6053,15 @@ fn await_reader(subnet: &str) {
                 .collect::<Vec<_>>()
                 .join(", ");
             println!(
-                "More than one reader joined while waiting ({listed}), so this will not\n\
-                 guess which is yours. 'kobo devices' asks each one what it is."
+                "The reader answered at more than one address ({listed}), so this will not\n\
+                 guess which to save. Once it has settled, save it with: kobo pair"
             );
         }
         setup::Arrival::TimedOut(passed_over) => {
             println!(
-                "The reader did not appear. It is set up either way, the files are on it\n\
-                 and its SSH server starts at the next boot. 'kobo devices' finds it once\n\
-                 it is awake and on Wi-Fi."
+                "The reader did not come back on Wi-Fi in time, so it is not saved yet. It is\n\
+                 set up either way. {} Then save it with:\n  kobo pair",
+                targets::wake_step(None)
             );
             if !passed_over.is_empty() {
                 let listed = passed_over
@@ -4677,11 +6071,133 @@ fn await_reader(subnet: &str) {
                     .join(", ");
                 println!(
                     "\nSomething else joined the network while waiting ({listed}) and was\n\
-                     passed over: each was asked what it was, and none of them is a reader."
+                     passed over: each was asked what it was, and none of them is this reader."
                 );
             }
         }
     }
+}
+
+/// Saves the reader setup just found, returning the name it is saved under.
+///
+/// The same store and the same record `kobo pair` writes, so every later
+/// command finds it by serial. A reader this computer already knows keeps the
+/// name the owner gave it: running setup again to update Cobalt must not
+/// rename `study` back to `kobo`. A new one is saved as `kobo`, or as the
+/// first free `kobo-N` when another reader already has that name.
+fn save_set_up_reader(serial: &str, address: &str) -> Result<String, String> {
+    let path = readers::store_path();
+    let mut store = readers::Store::load(&path)?;
+    let name = setup_reader_name(&store, serial);
+    store.name(serial, address, &name)?;
+    store.save(&path)?;
+    Ok(name)
+}
+
+/// The name [`save_set_up_reader`] uses, decided from the store alone.
+fn setup_reader_name(store: &readers::Store, serial: &str) -> String {
+    if let Some(known) = store.readers.iter().find(|reader| reader.serial == serial) {
+        return known.nickname.clone();
+    }
+    let taken = |name: &str| store.find(name).is_some();
+    if !taken(DEFAULT_READER_NAME) {
+        return DEFAULT_READER_NAME.to_owned();
+    }
+    (2..=999)
+        .map(|number| format!("{DEFAULT_READER_NAME}-{number}"))
+        .find(|name| !taken(name))
+        .unwrap_or_else(|| DEFAULT_READER_NAME.to_owned())
+}
+
+/// Closes password login for root, over connections that prove the key works.
+///
+/// Prints rather than returns, like the wait it runs inside: the setup itself
+/// succeeded before this began, and every ending here is an ending the reader
+/// survives. The order of the two connections is the safety argument. The
+/// first may authenticate by key and nothing else, and appends the block,
+/// gated on `sshd -t` and armed with a timed revert; the second is a fresh key
+/// login against the hardened server, and its success is what commits the
+/// change. A second login that never arrives means the reader restores
+/// password login on its own (see [`harden`]).
+fn harden_root_ssh(host: &str) {
+    let minutes = harden::REVERT_DELAY.as_secs() / 60;
+    let remote = format!("root@{host}");
+    let applied = match run_remote_shell_by_key(&remote, &harden::apply_script()) {
+        Ok(output) => output,
+        Err(error) => {
+            println!(
+                "SSH: the reader stopped answering before password login could be turned\n\
+                 off ({error}). It is as the firmware left it; running kobo setup again\n\
+                 retries."
+            );
+            return;
+        }
+    };
+    if !applied.status.success() {
+        println!(
+            "SSH: the reader declined to turn off password login and left its settings\n\
+             as they were: {}\nRunning kobo setup again retries.",
+            String::from_utf8_lossy(&applied.stderr).trim()
+        );
+        return;
+    }
+    match harden::Outcome::parse(&String::from_utf8_lossy(&applied.stdout)) {
+        Some(harden::Outcome::Already) => {
+            println!("SSH: only this computer's key gets in. Password login was already off.");
+            return;
+        }
+        Some(harden::Outcome::Applied) => {}
+        _ => {
+            println!(
+                "SSH: the reader answered something unexpected, so nothing further was\n\
+                 done: {}",
+                String::from_utf8_lossy(&applied.stdout).trim()
+            );
+            return;
+        }
+    }
+    // A fresh connection, deliberately: proving the still-open session works
+    // would prove nothing about the server as it now stands.
+    let confirmed = run_remote_shell_by_key(&remote, &harden::commit_script())
+        .ok()
+        .and_then(|output| harden::Outcome::parse(&String::from_utf8_lossy(&output.stdout)));
+    match confirmed {
+        Some(harden::Outcome::Committed | harden::Outcome::Already) => println!(
+            "SSH: only this computer's key gets in. Password login for root is off, and a\n\
+             fresh key login confirmed the key still works."
+        ),
+        Some(harden::Outcome::Missing) => println!(
+            "SSH: the reader put password login back before the key could confirm the\n\
+             change, so it is as the firmware left it. Running kobo setup again retries."
+        ),
+        _ => println!(
+            "SSH: password login is off for now, but the confirming key login did not get\n\
+             through, so the reader turns it back on by itself in {minutes} minutes. Keys keep\n\
+             working throughout; running kobo setup again retries."
+        ),
+    }
+}
+
+/// A session that may authenticate with this computer's key and nothing else,
+/// over a connection of its own.
+///
+/// Both halves matter for [`harden_root_ssh`]. The reader's stock server lets
+/// root in with an empty password, so a connection that fell back to that
+/// would "prove" a key that was never accepted. And an owner whose own SSH
+/// configuration multiplexes connections would otherwise have the confirming
+/// login ride the first one's master, which proves nothing about the
+/// reloaded server.
+fn run_remote_shell_by_key(remote: &str, script: &str) -> Result<RemoteShellOutput, String> {
+    let mut command = remote_shell_command(remote);
+    command.args([
+        "-o",
+        "PreferredAuthentications=publickey",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
+    ]);
+    run_shell_session(command, script, SHELL_TIMEOUT)
 }
 
 /// What a run would do, without doing any of it.
@@ -4732,18 +6248,18 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
          {trust_plan}\n\
          {}\n\
          {}\n\
+         {}\n\
          would eject, then {}\n\
          nothing outside the book partition{}",
         reader.volume.display(),
         setup::INSTALL_FOLDER,
         if options.enable_ssh {
             format!(
-                "would create or reuse ~/.ssh/{DEVICE_KEY_NAME}, stage only its public half for Cobalt to install on first launch, and enable the firmware's root SSH server by renaming {}",
+                "would enable the firmware's root SSH server by renaming {}",
                 setup::SSH_DISABLED
             )
         } else {
-            "would leave the firmware's SSH server disabled (pass --enable-ssh to opt in)"
-                .to_owned()
+            "would leave the firmware's SSH server disabled, because --no-ssh was given".to_owned()
         },
         if options.menu == MenuEntry::Skip {
             "would add no menu entry, because --no-menu was given".to_owned()
@@ -4776,21 +6292,45 @@ fn dry_run_plan(options: &SetupOptions, reader: &setup::Mounted) -> String {
             )
         },
         describe_key_plan(options, would_stage),
-        if options.enable_ssh && options.wait {
-            "wait for the restarted reader to appear on the network"
-        } else if !options.enable_ssh {
-            "stop after ejecting, because SSH was not enabled"
-        } else {
-            "stop, because --no-wait was given"
-        },
+        describe_sample_plan(options),
+        describe_wait_plan(options),
         match (would_stage, options.enable_ssh && options.authorize_key,) {
             (true, true) =>
-                ", and nothing extracted as root but NickelMenu's own two files and one authorized_keys",
+                ", and nothing extracted as root but NickelMenu's own two files, one authorized_keys and the firmware's first-login marker",
             (true, false) => ", and nothing extracted as root but NickelMenu's own two files",
-            (false, true) => ", and nothing extracted as root but one authorized_keys",
+            (false, true) => ", and nothing extracted as root but one authorized_keys and the firmware's first-login marker",
             (false, false) => ", nothing extracted as root",
         }
     )
+}
+
+/// The one line of the dry run that covers what happens after the eject.
+fn describe_wait_plan(options: &SetupOptions) -> &'static str {
+    if !options.enable_ssh {
+        "stop after ejecting, because SSH was not enabled"
+    } else if !options.wait {
+        "stop, because --no-wait was given"
+    } else if options.authorize_key {
+        "wait for the restarted reader to come back on Wi-Fi, save it the way\n\
+         \x20 kobo pair does, and close password login for root over its first key\n\
+         \x20 login: a marked block in sshd_config, gated on sshd -t, which the reader\n\
+         \x20 reverts by itself unless a second, fresh key login confirms keys still work"
+    } else {
+        "wait for the restarted reader to come back on Wi-Fi and save it, leaving\n\
+         \x20 password login as the firmware has it, because --no-key was given"
+    }
+}
+
+/// The one line of the dry run that covers the welcome note.
+fn describe_sample_plan(options: &SetupOptions) -> String {
+    if options.sample {
+        format!(
+            "would add {} to the library, a short welcome note to open after the restart",
+            setup::SAMPLE_NAME
+        )
+    } else {
+        "would add no welcome note, because --no-sample was given".to_owned()
+    }
 }
 
 /// The one line of the dry run that covers this machine's trust roots.
@@ -4827,7 +6367,9 @@ fn describe_key_plan(options: &SetupOptions, would_stage: bool) -> String {
         "would put this machine's public key {slot}, creating\n\
          \x20 ~/.ssh/{} first if it does not exist, so that 'kobo devices' and every\n\
          \x20 other device command can reach the reader without a password. This replaces\n\
-         \x20 any keys the reader already accepts, because USB cannot read that file back",
+         \x20 any keys the reader already accepts, because USB cannot read that file back.\n\
+         \x20 The firmware's empty first-login marker goes with it, so its forced password\n\
+         \x20 change does not swallow the first command a computer sends",
         authorize::KEY_NAME,
     )
 }
@@ -4909,7 +6451,13 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
          reader has already extracted stays in authorized_keys under root's home\n\
          directory (/.ssh on the i.MX6 readers, /root/.ssh elsewhere), which is\n\
          on the root filesystem, and USB does not reach it. To remove that one, edit\n\
-         the file over SSH and delete the line ending in 'kobo-cobalt'."
+         the file over SSH and delete the line ending in 'kobo-cobalt'.\n\n\
+         The same goes for the block setup added to /etc/ssh/sshd_config to keep\n\
+         password login off. With the server switched off it does nothing. If you\n\
+         turn SSH back on by hand and want password login back, delete the lines\n\
+         from '{}' to '{}'.",
+        harden::SENTINEL_BEGIN,
+        harden::SENTINEL_END,
     );
     Ok(())
 }
@@ -5095,7 +6643,7 @@ fn members_outside_install_root(
                 && entry.path == package::LAUNCH_BOOTSTRAP
                 && entry.kind == b'0'
                 && entry.mode == 0o755
-                && entry.size == bootstrap::CONTENT.len();
+                && entry.size == bootstrap::content().len();
             !(path.starts_with(root) || root.starts_with(path) || reviewed_bootstrap)
         })
         .map(|(_, entry)| entry.path.clone())
@@ -5112,7 +6660,7 @@ fn validated_release_archive(
     if first.path != package::LAUNCH_BOOTSTRAP
         || first.kind != b'0'
         || first.mode != 0o755
-        || first.size != bootstrap::CONTENT.len()
+        || first.size != bootstrap::content().len()
     {
         return Err(
             "standalone launch bootstrap must be the first regular 0755 archive member".to_owned(),
@@ -5132,7 +6680,7 @@ fn validated_release_archive(
         .ok_or("release archive has no standalone launch bootstrap")?;
     if !package::is_launch_bootstrap(bootstrap_member)
         || !bootstrap_member.program
-        || bootstrap_member.bytes != bootstrap::CONTENT.as_bytes()
+        || bootstrap_member.bytes != bootstrap::content().as_bytes()
     {
         return Err("standalone launch bootstrap differs from the reviewed executable".to_owned());
     }
@@ -5205,21 +6753,60 @@ fn parse_package(arguments: &[String]) -> Result<(PathBuf, Option<PathBuf>), Str
 ///
 /// `-n` keeps the name and timestamp out of the header, so the same input
 /// produces the same file and the checksum an owner compares is stable.
+#[cfg(unix)]
 fn gzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
     pipe_through(Command::new("gzip").args(["-n", "-9", "-c"]), bytes)
 }
 
+#[cfg(unix)]
 fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
     pipe_through(Command::new("gzip").args(["-d", "-c"]), bytes)
 }
 
 /// The integrity check `rcS` runs before it extracts anything.
+#[cfg(unix)]
 fn gzip_test(bytes: &[u8]) -> Result<(), String> {
     pipe_through(Command::new("gzip").arg("-t"), bytes)
         .map(|_| ())
         .map_err(|error| format!("the package fails the check the device runs first: {error}"))
 }
 
+/// Windows ships no `gzip`. The GitHub runner only looked as if it did
+/// because Git for Windows puts one on that image's path, and an owner's
+/// machine has none, so setup failed there before it wrote anything. The
+/// Windows arm compresses in-process instead, with no name and a zero
+/// timestamp in the header, which is what `-n` asks for: the same input
+/// still produces the same file.
+#[cfg(windows)]
+fn gzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    encoder
+        .write_all(bytes)
+        .and_then(|()| encoder.finish())
+        .map_err(|error| format!("gzip: {error}"))
+}
+
+/// Every member, as `gzip -d` reads them, with each member's CRC and length
+/// checked against its trailer.
+#[cfg(windows)]
+fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut decompressed = Vec::new();
+    flate2::read::MultiGzDecoder::new(bytes)
+        .read_to_end(&mut decompressed)
+        .map_err(|error| format!("gzip: {error}"))?;
+    Ok(decompressed)
+}
+
+/// The integrity check `rcS` runs before it extracts anything: a full
+/// decompression whose trailers all verify, which is what `gzip -t` does.
+#[cfg(windows)]
+fn gzip_test(bytes: &[u8]) -> Result<(), String> {
+    gunzip(bytes)
+        .map(|_| ())
+        .map_err(|error| format!("the package fails the check the device runs first: {error}"))
+}
+
+#[cfg(unix)]
 fn pipe_through(command: &mut Command, input: &[u8]) -> Result<Vec<u8>, String> {
     let mut child = command
         .stdin(Stdio::piped())
@@ -5381,6 +6968,7 @@ impl SimulationGuard {
             daemon: None,
             daemon_frame_temporary: None,
         };
+        #[cfg(unix)]
         if let Err(error) = fs::set_permissions(&guard.root, fs::Permissions::from_mode(0o700)) {
             let message = format!("protect {}: {error}", guard.root.display());
             drop(guard);
@@ -5456,21 +7044,35 @@ fn find_rust_lld() -> Result<PathBuf, String> {
     for entry in
         fs::read_dir(&rustlib).map_err(|error| format!("read {}: {error}", rustlib.display()))?
     {
-        let candidate = entry
-            .map_err(|error| error.to_string())?
-            .path()
-            .join("bin/rust-lld");
+        let candidate = rust_lld_candidate(&entry.map_err(|error| error.to_string())?.path());
         if candidate.is_file() {
             return Ok(candidate);
         }
     }
-    Err("rust-lld was not found in the active Rust toolchain".to_owned())
+    // rust-lld is part of the rustc component, so a rustup toolchain always
+    // carries it; a from-source or repackaged rustc may not.
+    Err(format!(
+        "rust-lld was not found in the active Rust toolchain under {}; a rustup-managed toolchain carries it in the rustc component",
+        root.display()
+    ))
+}
+
+/// The linker executable is `rust-lld.exe` on Windows; probing the bare Unix
+/// name there always misses.
+fn rust_lld_candidate(target_dir: &Path) -> PathBuf {
+    target_dir
+        .join("bin")
+        .join(format!("rust-lld{}", std::env::consts::EXE_SUFFIX))
 }
 
 /// The C cross-compiler `ring` needs to build its own sources for the reader.
 ///
 /// Several distributions and taps spell the same toolchain differently, so
-/// every name in use is tried before the build is refused.
+/// every name in use is tried. When none of them exists, `zig cc` is the
+/// fallback: zig is a single download on every host (winget on Windows), and
+/// it cross-compiles C for armv7 musl out of the box. cc-rs appends a
+/// Rust-style `--target` triple that zig rejects, so the zig path is offered
+/// through a small wrapper script that drops that flag.
 fn find_device_cc() -> Result<String, String> {
     const NAMES: [&str; 4] = [
         "armv7-unknown-linux-musleabihf-gcc",
@@ -5478,23 +7080,25 @@ fn find_device_cc() -> Result<String, String> {
         "arm-linux-musleabihf-gcc",
         "arm-linux-gnueabihf-gcc",
     ];
-    for name in NAMES {
-        let found = Command::new(name)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success());
-        if found {
-            return Ok(name.to_owned());
-        }
+    if let Some(name) = probe_tool(&NAMES) {
+        return Ok(name);
+    }
+    if zig_available() {
+        let (cc, _) = write_zig_device_wrappers(&zig_device_wrapper_dir())?;
+        return Ok(cc.to_string_lossy().into_owned());
     }
     Err(format!(
         "no ARM C cross-compiler was found, and one is needed because the TLS \
-         stack builds C for the reader. Tried: {}.\n  macOS:  brew install \
-         messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf\n  \
-         Debian: sudo apt-get install gcc-arm-linux-gnueabihf\nSet \
-         CC_armv7_unknown_linux_musleabihf to override.",
+         stack builds C for the reader. Tried: {}, and zig.\n  Windows: winget \
+         install zig.zig, then open a new terminal. If winget itself is \
+         missing, install App Installer from the Microsoft Store first, or \
+         download zig from https://ziglang.org/download/ and put it on PATH.\n  \
+         macOS:  brew install \
+         messense/macos-cross-toolchains/armv7-unknown-linux-musleabihf (or: \
+         brew install zig)\n  Debian: sudo apt-get install \
+         gcc-arm-linux-gnueabihf (or: download zig from \
+         https://ziglang.org/download/)\nSet CC_armv7_unknown_linux_musleabihf \
+         to override.",
         NAMES.join(", ")
     ))
 }
@@ -5506,7 +7110,28 @@ fn find_device_ar() -> Result<String, String> {
         "arm-linux-musleabihf-ar",
         "arm-linux-gnueabihf-ar",
     ];
-    for name in NAMES {
+    if let Some(name) = probe_tool(&NAMES) {
+        return Ok(name);
+    }
+    if zig_available() {
+        let (_, ar) = write_zig_device_wrappers(&zig_device_wrapper_dir())?;
+        return Ok(ar.to_string_lossy().into_owned());
+    }
+    Err(format!(
+        "no ARM cross-archiver was found, and one is needed for C dependencies. \
+         Tried: {}, and zig.\n  Windows: winget install zig.zig (if winget \
+         itself is missing, install App Installer from the Microsoft Store \
+         first, or download zig from https://ziglang.org/download/ and put it \
+         on PATH), then open a new terminal\n  macOS:  brew install zig\n  \
+         Debian: download zig from \
+         https://ziglang.org/download/\nSet AR_armv7_unknown_linux_musleabihf \
+         to override.",
+        NAMES.join(", ")
+    ))
+}
+
+fn probe_tool(names: &[&str]) -> Option<String> {
+    for name in names {
         let found = Command::new(name)
             .arg("--version")
             .stdout(Stdio::null())
@@ -5514,14 +7139,63 @@ fn find_device_ar() -> Result<String, String> {
             .status()
             .is_ok_and(|status| status.success());
         if found {
-            return Ok(name.to_owned());
+            return Some((*name).to_owned());
         }
     }
-    Err(format!(
-        "no ARM cross-archiver was found, and one is needed for C dependencies. \
-         Tried: {}.\nSet AR_armv7_unknown_linux_musleabihf to override.",
-        NAMES.join(", ")
-    ))
+    None
+}
+
+fn zig_available() -> bool {
+    Command::new("zig")
+        .arg("version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+fn zig_device_wrapper_dir() -> PathBuf {
+    workspace_target_directory().join("device-toolchain")
+}
+
+/// Zig speaks its own target spelling (`arm-linux-musleabihf`), while cc-rs
+/// appends the Rust triple as `--target=armv7-unknown-linux-musleabihf`, which
+/// zig rejects outright. The `cc` wrapper filters that flag out and supplies
+/// zig's target itself, with `UBSan` off: current zig instruments by default
+/// and does not link its runtime, which leaves C dependencies referencing
+/// undefined `__ubsan_handle_*` symbols. The `ar` wrapper only adapts the name. Written under
+/// the target directory so a stale wrapper is never picked up across
+/// checkouts. Returns the (cc, ar) wrapper paths.
+fn write_zig_device_wrappers(dir: &Path) -> Result<(PathBuf, PathBuf), String> {
+    fs::create_dir_all(dir).map_err(|error| format!("create {}: {error}", dir.display()))?;
+    let (cc_name, ar_name, cc_body, ar_body) = if cfg!(windows) {
+        (
+            "zig-cc.cmd",
+            "zig-ar.cmd",
+            "@echo off\r\nrem cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\r\nset kept=\r\n:filter\r\nif \"%~1\"==\"\" goto build\r\nset arg=%~1\r\nif not \"%arg:~0,9%\"==\"--target=\" set kept=%kept% \"%~1\"\r\nshift\r\ngoto filter\r\n:build\r\nzig cc -target arm-linux-musleabihf -fno-sanitize=undefined %kept%\r\nexit /b %errorlevel%\r\n",
+            "@echo off\r\nzig ar %*\r\n",
+        )
+    } else {
+        (
+            "zig-cc",
+            "zig-ar",
+            "#!/bin/sh\n# cc-rs appends a Rust-style --target triple that zig cannot parse; drop it.\ncount=$#\nwhile [ $count -gt 0 ]; do\n    arg=$1\n    shift\n    case $arg in\n        --target=*) ;;\n        *) set -- \"$@\" \"$arg\" ;;\n    esac\n    count=$((count - 1))\ndone\nexec zig cc -target arm-linux-musleabihf -fno-sanitize=undefined \"$@\"\n",
+            "#!/bin/sh\nexec zig ar \"$@\"\n",
+        )
+    };
+    let cc = dir.join(cc_name);
+    let ar = dir.join(ar_name);
+    fs::write(&cc, cc_body).map_err(|error| format!("write {}: {error}", cc.display()))?;
+    fs::write(&ar, ar_body).map_err(|error| format!("write {}: {error}", ar.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for path in [&cc, &ar] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755))
+                .map_err(|error| format!("chmod {}: {error}", path.display()))?;
+        }
+    }
+    Ok((cc, ar))
 }
 
 fn verify_arm_elf(path: &Path) -> Result<(), String> {
@@ -5855,17 +7529,25 @@ fn shot_command(arguments: &[String]) -> Result<(), String> {
         index += 1;
     }
     let mut capture_metadata = None;
-    let (width, height, grey) = if let Some(host) = host {
+    let (width, height, pixels, rgb) = if let Some(host) = host {
         let transcript = capture_remote_fixed_artifact(&host, &RemoteArtifact::capture())?;
-        drive::decode_capture(&transcript)?
+        let (width, height, grey) = drive::decode_capture(&transcript)?;
+        (width, height, grey, false)
     } else {
         let driver = drive::Driver::new(&address, Path::new(".")).ideal(ideal);
         let capture = driver.capture()?;
         capture_metadata = Some(capture.metadata);
-        (capture.width, capture.height, capture.grey)
+        (capture.width, capture.height, capture.pixels, capture.rgb)
     };
-    let png = kobo_image::encode_png_grey(width, height, &grey)
-        .map_err(|error| format!("encode the panel: {error}"))?;
+    // A simulated colour panel's capture arrives in colour and is kept that
+    // way, so a shot of a Clara Colour shows the bar and controls that reader
+    // would show rather than their luminance.
+    let png = if rgb {
+        kobo_image::encode_png_rgb(width, height, &pixels)
+    } else {
+        kobo_image::encode_png_grey(width, height, &pixels)
+    }
+    .map_err(|error| format!("encode the panel: {error}"))?;
     fs::write(&output, png).map_err(|error| format!("write {}: {error}", output.display()))?;
     if let Some(metadata) = capture_metadata {
         let sidecar = output.with_extension("json");
@@ -6007,7 +7689,11 @@ fn pull_recording(host: &str) -> Result<Vec<u8>, String> {
 /// One recorded frame: when it appeared, and what was on the panel.
 struct RecordedFrame {
     millis: u32,
-    grey: Vec<u8>,
+    /// Grey, one byte a pixel, or colour at three when `rgb` is set. A
+    /// device recording is always grey; a filmed simulated colour panel is
+    /// not.
+    pixels: Vec<u8>,
+    rgb: bool,
 }
 
 /// Reads the device's recording format.
@@ -6034,7 +7720,8 @@ fn decode_recording(raw: &[u8]) -> Result<(u32, u32, Vec<RecordedFrame>), String
         let millis = u32::from_le_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]]);
         frames.push(RecordedFrame {
             millis,
-            grey: raw[at + 4..at + 4 + pixels].to_vec(),
+            pixels: raw[at + 4..at + 4 + pixels].to_vec(),
+            rgb: false,
         });
         at += 4 + pixels;
     }
@@ -6064,8 +7751,12 @@ fn write_recording(
     fs::create_dir_all(directory)
         .map_err(|error| format!("create {}: {error}", directory.display()))?;
     for (index, frame) in frames.iter().enumerate() {
-        let png = kobo_image::encode_png_grey(*width, *height, &frame.grey)
-            .map_err(|error| format!("encode frame {index}: {error}"))?;
+        let png = if frame.rgb {
+            kobo_image::encode_png_rgb(*width, *height, &frame.pixels)
+        } else {
+            kobo_image::encode_png_grey(*width, *height, &frame.pixels)
+        }
+        .map_err(|error| format!("encode frame {index}: {error}"))?;
         let path = directory.join(format!("frame-{index:04}.png"));
         fs::write(&path, png).map_err(|error| format!("write {}: {error}", path.display()))?;
     }
@@ -6213,6 +7904,7 @@ const DRIVE_USAGE: &str = "usage: kobo drive [--address host:port] [--shots DIR]
                            steps: tap LABEL | tap-id ACTION | tap-at X,Y | type TEXT | shot NAME | expect TEXT\n\
                            \u{20}       expect-missing TEXT | wait-for TEXT | wait-for-id ACTION | clean | dump\n\
                            \u{20}       lifecycle foreground|background | scenario NAME | wait MS | wait-idle [MS]\n\
+                           \u{20}       notice TITLE (an article arriving, as a companion announces one)\n\
                            expect-state ENDPOINT#JSON_POINTER JSON_VALUE checks typed state.\n\
                            tap-id and wait-for-id accept numeric IDs or stable action names.\n\
                            Transition steps also check for serious layout diagnostics.\n\
@@ -6245,12 +7937,31 @@ enum SecretAction {
 enum SecretTarget {
     Device(String),
     Volume(PathBuf),
+    /// The simulator's credential store, so an app under `kobo dev` is given
+    /// a key exactly the way an owner gives one to a reader.
+    Sim,
 }
 
-const SECRET_USAGE: &str =
-    "usage: kobo secret set <name> [--from PATH] (--device IP | --volume PATH)\n\
-                            \x20      kobo secret list (--device IP | --volume PATH)\n\
-                            \x20      kobo secret remove <name> (--device IP | --volume PATH)";
+impl SecretTarget {
+    /// The secrets folder on this computer, for a mounted reader or the
+    /// simulator; `None` for a reader reached over SSH.
+    fn local_secrets(&self) -> Option<PathBuf> {
+        match self {
+            Self::Device(_) => None,
+            Self::Volume(volume) => Some(volume.join(".adds").join("cobalt").join("secrets")),
+            Self::Sim => Some(kobo_sim::simulated_secrets_root()),
+        }
+    }
+}
+
+const SECRET_USAGE: &str = concat!(
+    "usage: kobo secret set <name> [--from PATH] [--device IP | --reader NAME | --volume PATH | --sim]\n\
+     \x20      kobo secret set <name> --app APP --server HTTPS_URL (--from PATH | --stdin) \
+     [--device IP | --reader NAME | --sim]\n\
+     \x20      kobo secret list [--device IP | --reader NAME | --volume PATH | --sim]\n\
+     \x20      kobo secret remove <name> [--device IP | --reader NAME | --volume PATH | --sim]\n",
+    targets::saved_reader_note!(),
+);
 
 /// Accepts the names the runtime will actually resolve.
 ///
@@ -6276,8 +7987,7 @@ fn secret_source_candidates(name: &str) -> Vec<PathBuf> {
     if let Some(directory) = std::env::var_os("KOBO_SECRETS_DIR") {
         candidates.push(PathBuf::from(directory).join(name));
     }
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = PathBuf::from(home);
+    if let Some(home) = kobo_abi::home_directory() {
         candidates.push(
             home.join(".config")
                 .join("cobalt")
@@ -6418,6 +8128,10 @@ fn parse_secret(arguments: &[String]) -> Result<(SecretAction, SecretTarget), St
                 select_secret_target(&mut target, SecretTarget::Volume(PathBuf::from(value()?)))?;
                 index += 2;
             }
+            "--sim" => {
+                select_secret_target(&mut target, SecretTarget::Sim)?;
+                index += 1;
+            }
             "--from" => {
                 if verb != "set" || source.is_some() {
                     return Err("Use --from once, with set only.".to_owned());
@@ -6478,21 +8192,84 @@ fn secret_install_script(name: &str, value: &str) -> String {
          {SECRET_DELIMITER}\n\
          chmod 600 .{name}.writing\n\
          mv -f .{name}.writing {name}\n\
-         trap - EXIT HUP INT TERM\n"
+         trap - EXIT HUP INT TERM\n{}",
+        forget_typed_copies_script(name)
     )
 }
 
+fn secret_remove_script(name: &str) -> String {
+    format!(
+        "set -e\nrm -f {DEVICE_SECRETS_DIRECTORY}/{name}\n{}",
+        forget_typed_copies_script(name)
+    )
+}
+
+/// What the reader prints for each copy typed on it that a command removed.
+const TYPED_COPY_REMOVED: &str = "typed-copy-removed";
+
+/// Deletes the copies of a secret that apps saved from the reader's keyboard.
+///
+/// The runtime prefers an app's own copy to the owner's file, so an app can be
+/// connected without a computer. Left alone, that preference would make
+/// setting or removing a secret from here change nothing for an app connected
+/// that way: the owner replaces a rejected token and the app keeps sending the
+/// old one. Server-bound accounts live a directory deeper and are never
+/// matched. Each removal is announced so the owner is told what went.
+fn forget_typed_copies_script(name: &str) -> String {
+    format!(
+        "for typed in {DEVICE_SECRETS_DIRECTORY}/apps/*/{name}; do\n\
+         if [ -f \"$typed\" ]; then\n\
+         rm -f \"$typed\"\n\
+         echo {TYPED_COPY_REMOVED}\n\
+         fi\n\
+         done\n"
+    )
+}
+
+/// The same as [`forget_typed_copies_script`], for a reader mounted over USB.
+fn forget_typed_copies(secrets: &Path, name: &str) -> Result<usize, String> {
+    let apps = secrets.join("apps");
+    let entries = match fs::read_dir(&apps) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(format!("read {}: {error}", apps.display())),
+    };
+    let mut removed = 0;
+    for entry in entries {
+        let typed = entry
+            .map_err(|error| format!("read {}: {error}", apps.display()))?
+            .path()
+            .join(name);
+        if fs::symlink_metadata(&typed).is_ok_and(|metadata| metadata.is_file()) {
+            fs::remove_file(&typed)
+                .map_err(|error| format!("remove {}: {error}", typed.display()))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+fn typed_copies_removed(stdout: &[u8]) -> usize {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .filter(|line| line.trim() == TYPED_COPY_REMOVED)
+        .count()
+}
+
 fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
-    use std::os::unix::fs::OpenOptionsExt;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt as _;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("Invalid credential name")?;
     let partial = path.with_file_name(format!(".{name}.writing"));
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options
         .open(&partial)
         .map_err(|error| format!("Prepare credential (previous value unchanged): {error}"))?;
     let result = writeln!(file, "{value}")
@@ -6510,7 +8287,47 @@ fn publish_secret(path: &Path, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn remove_secret(name: &str, target: &SecretTarget) -> Result<(), String> {
+    match target {
+        SecretTarget::Device(host) => {
+            let script = secret_remove_script(name);
+            let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
+            if !output.status.success() {
+                return Err(remote_shell_error(
+                    format!("remove the '{name}' credential"),
+                    &output.stdout,
+                    &output.stderr,
+                ));
+            }
+            println!("Removed '{name}' from {host}.");
+            if typed_copies_removed(&output.stdout) > 0 {
+                println!("Removed the value typed on the reader.");
+            }
+        }
+        SecretTarget::Volume(_) | SecretTarget::Sim => {
+            let directory = target.local_secrets().unwrap_or_default();
+            let path = directory.join(name);
+            let typed = forget_typed_copies(&directory, name)?;
+            match std::fs::remove_file(&path) {
+                Ok(()) => println!("Removed {}.", path.display()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound && typed == 0 => {
+                    println!("No '{name}' credential was installed.");
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("remove {}: {error}", path.display())),
+            }
+            if typed > 0 {
+                println!("Removed the value typed on the reader.");
+            }
+        }
+    }
+    Ok(())
+}
+
 fn secret_command(arguments: &[String]) -> Result<(), String> {
+    if server_secret::requested(arguments) {
+        return server_secret::command(arguments);
+    }
     if provider_help_requested(arguments) {
         println!("{SECRET_USAGE}");
         return Ok(());
@@ -6536,14 +8353,23 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
                         ));
                     }
                     println!("Installed '{name}' ({bytes} bytes) on {host}.");
+                    if typed_copies_removed(&output.stdout) > 0 {
+                        println!("It replaces the value typed on the reader.");
+                    }
                 }
-                SecretTarget::Volume(volume) => {
-                    let directory = volume.join(".adds").join("cobalt").join("secrets");
+                SecretTarget::Volume(_) | SecretTarget::Sim => {
+                    let directory = target.local_secrets().unwrap_or_default();
                     std::fs::create_dir_all(&directory)
                         .map_err(|error| format!("create {}: {error}", directory.display()))?;
                     let path = directory.join(name);
+                    // A staging file left by an interrupted run would make
+                    // the next one refuse to start.
+                    let _ = std::fs::remove_file(directory.join(format!(".{name}.writing")));
                     publish_secret(&path, &value)?;
                     println!("Installed '{name}' ({bytes} bytes) at {}.", path.display());
+                    if forget_typed_copies(&directory, name)? > 0 {
+                        println!("It replaces the value typed on the reader.");
+                    }
                 }
             }
             println!(
@@ -6551,34 +8377,7 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
             );
             Ok(())
         }
-        (SecretAction::Remove { name }, SecretTarget::Device(host)) => {
-            let script = format!("rm -f {DEVICE_SECRETS_DIRECTORY}/{name}\n");
-            let output = run_remote_shell(&format!("root@{host}"), &script, DEVICE_PROBE_TIMEOUT)?;
-            if !output.status.success() {
-                return Err(remote_shell_error(
-                    format!("remove the '{name}' credential"),
-                    &output.stdout,
-                    &output.stderr,
-                ));
-            }
-            println!("Removed '{name}' from {host}.");
-            Ok(())
-        }
-        (SecretAction::Remove { name }, SecretTarget::Volume(volume)) => {
-            let path = volume
-                .join(".adds")
-                .join("cobalt")
-                .join("secrets")
-                .join(name);
-            match std::fs::remove_file(&path) {
-                Ok(()) => println!("Removed {}.", path.display()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    println!("No '{name}' credential was installed.");
-                }
-                Err(error) => return Err(format!("remove {}: {error}", path.display())),
-            }
-            Ok(())
-        }
+        (SecretAction::Remove { name }, target) => remove_secret(name, target),
         (SecretAction::List, SecretTarget::Device(host)) => {
             // Names only. A command that can print a key is a command someone
             // will run over a shoulder or paste into a bug report.
@@ -6594,11 +8393,13 @@ fn secret_command(arguments: &[String]) -> Result<(), String> {
             report_secret_names(String::from_utf8_lossy(&output.stdout).lines());
             Ok(())
         }
-        (SecretAction::List, SecretTarget::Volume(volume)) => {
-            let directory = volume.join(".adds").join("cobalt").join("secrets");
+        (SecretAction::List, SecretTarget::Volume(_) | SecretTarget::Sim) => {
+            let directory = target.local_secrets().unwrap_or_default();
             let mut names = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&directory) {
-                for entry in entries.flatten() {
+                // Files only: the folder also holds each app's own copies
+                // under `apps/`, which is not a credential's name.
+                for entry in entries.flatten().filter(|entry| entry.path().is_file()) {
                     names.push(entry.file_name().to_string_lossy().into_owned());
                 }
             }
@@ -6627,10 +8428,12 @@ fn report_secret_names<'a>(names: impl Iterator<Item = &'a str>) {
 /// Where the runtime reads owner-installed TLS trust roots, from `kobod`.
 const DEVICE_TRUST_DIRECTORY: &str = "/mnt/onboard/.adds/cobalt/trust";
 
-const TRUST_USAGE: &str =
-    "usage: kobo trust set <name> --from PATH (--device IP | --volume PATH)\n\
-                           \x20      kobo trust list (--device IP | --volume PATH)\n\
-                           \x20      kobo trust remove <name> (--device IP | --volume PATH)";
+const TRUST_USAGE: &str = concat!(
+    "usage: kobo trust set <name> --from PATH [--device IP | --reader NAME | --volume PATH]\n\
+     \x20      kobo trust list [--device IP | --reader NAME | --volume PATH]\n\
+     \x20      kobo trust remove <name> [--device IP | --reader NAME | --volume PATH]\n",
+    targets::saved_reader_note!(),
+);
 
 /// Installs, lists or removes owner TLS trust roots on a reader.
 ///
@@ -6652,6 +8455,12 @@ fn trust_command(arguments: &[String]) -> Result<(), String> {
 }
 
 /// Reads, checks and installs one PEM certificate as an owner trust root.
+/// `kobo trust` reads its targets with the same parser as `kobo secret`
+/// but never accepts `--sim`; the simulator trusts the roots in
+/// `KOBO_SIM_TRUST_DIR` instead.
+const TRUST_SIM: &str =
+    "The simulator trusts the roots in KOBO_SIM_TRUST_DIR; copy the .pem there.";
+
 fn trust_set(name: &str, source: &Path, target: &SecretTarget) -> Result<(), String> {
     let text = std::fs::read_to_string(source)
         .map_err(|error| format!("read {}: {error}", source.display()))?;
@@ -6684,6 +8493,7 @@ fn trust_set(name: &str, source: &Path, target: &SecretTarget) -> Result<(), Str
             }
             println!("Installed trust root '{name}' ({found} certificate(s)) on {host}.");
         }
+        SecretTarget::Sim => return Err(TRUST_SIM.to_owned()),
         SecretTarget::Volume(volume) => {
             let directory = volume.join(".adds").join("cobalt").join("trust");
             std::fs::create_dir_all(&directory)
@@ -6715,6 +8525,7 @@ fn trust_remove(name: &str, target: &SecretTarget) -> Result<(), String> {
             }
             println!("Removed trust root '{name}' from {host}.");
         }
+        SecretTarget::Sim => return Err(TRUST_SIM.to_owned()),
         SecretTarget::Volume(volume) => {
             let path = volume
                 .join(".adds")
@@ -6747,6 +8558,7 @@ fn trust_list(target: &SecretTarget) -> Result<(), String> {
             }
             report_trust_names(String::from_utf8_lossy(&output.stdout).lines());
         }
+        SecretTarget::Sim => return Err(TRUST_SIM.to_owned()),
         SecretTarget::Volume(volume) => {
             let directory = volume.join(".adds").join("cobalt").join("trust");
             let mut names = Vec::new();
@@ -6837,12 +8649,12 @@ fn parse_trust(arguments: &[String]) -> Result<(SecretAction, SecretTarget), Str
 /// trust directory every host runtime already reads, which is where
 /// `kobo-sidekick init` writes its certificate.
 fn trust_source(name: &str) -> Result<PathBuf, String> {
-    let Some(home) = std::env::var_os("HOME") else {
+    let Some(home) = kobo_abi::home_directory() else {
         return Err(format!(
             "no HOME to look in; pass --from PATH\n{TRUST_USAGE}"
         ));
     };
-    let candidate = PathBuf::from(home)
+    let candidate = home
         .join(".config")
         .join("kobo")
         .join("trust")
@@ -6872,99 +8684,243 @@ fn report_trust_names<'a>(names: impl Iterator<Item = &'a str>) {
 }
 
 fn print_help() {
-    println!(
-        "Kobo application SDK\n\n\
-         Usage: kobo <command>\n\n\
-         Commands:\n\
-           apps [search WORD | setup APP]  Find apps and read offline setup guides\n\
-           new <name>             Create a Rust application\n\
-           dev [--builtin] [address]  Run this SDK app in the browser simulator\n\
-           dev --runtime [address] [--apps IDs]  Run launcher and selected local apps\n\
-           drive --script PATH    Drive a running simulator and save PNG screenshots\n\
-           drive --script PATH --record DIR  ... and film it, no hardware needed\n\
-           deck set PAD --launch APP|--url URL|--run CMD  Assign a Deck pad on this computer\n\
-           deck ls|show [--json]                 List the assigned pads, or print the layout JSON\n\
-           deck push (--sim | --device IP | --out PATH)  Publish that layout to the reader or simulator\n\
-           flashcards --help                     Prepare, verify, stage, and export card bundles\n\
-           frame init (--sim | --device IP)      Create the Frame shelf\n\
-           frame push INPUT (--sim | --device IP) [--fit crop|pad] [--delete]\n\
-                                             Prepare and atomically push Frame photos\n\
-           frame ls (--sim | --device IP)        List Frame shelf photos\n\
-           frame rm ID (--sim | --device IP)     Remove a Frame shelf photo\n\
-           vault init (--device IP | --sim)      Prepare the Vault store on the reader or simulator\n\
-           vault push DIR (--device IP | --sim | --out INDEX)  Pack a markdown vault and publish it\n\
-           sync setup DIR --folder NAME --device IP  Pair one safe fixed Sync folder\n\
-           sync run [--foreground] [--seconds N] Start the private host Syncthing peer\n\
-           export --app APP --device IP --out DIR  Receive a prepared text or image copy\n\
-           sync status|stop                      Inspect or stop that dedicated peer\n\
-           sidekick setup [AGENT]               Install the Sidekick hook for a coding agent\n\
-           sidekick run [--foreground]          Start the helper the reader answers through\n\
-           sidekick status|stop                 Inspect or stop that helper\n\
-           sidekick sample                      See it work with nothing else set up\n\
-           sidekick test                        Ask the reader a harmless question, print the answer\n\
-           feeds check FILE                     Read an OPML subscription list here\n\
-           feeds push FILE (--device IP | --sim)  Stage that list on the reader for Feeds\n\
-           needles prepare PDF --out FILE       Extract a user-owned PDF for Needles\n\
-           needles push FILE --device IP        Transfer a prepared pattern to Needles\n\
-           nonograms push IMAGE --size 5|7|9 (--device IP | --out photo.png)\n\
-                                             Prepare and atomically transfer a photo puzzle\n\
-           parser check FILE             Validate a .z3/.z5/.z8 story on the host\n\
-           parser push FILE --device IP  Transfer a checked story to Parser\n\
-           stream init [--device IP]     Pair Paperterm with a named reader on this network\n\
-           stream [--grid CxR] -- COMMAND   Serve host rows to Paperterm; the reader has no shell\n\
-           shot [--device HOST]   Save a PNG of the panel (device or simulator)\n\
-           record --device IP [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only\n\
-           present <app> --device IP [--seconds N]  Run one app on the panel\n\
-           stop --device IP       Hand the panel back to the reader now\n\
-           build [--device]       Build host workspace or ARM safe doctor, disabled kobod, and sample app\n\
-           doctor [--device IP] [--json]   Run read-only device diagnostics\n\
-           devices [--subnet A.B.C]  Find every reader on the local network\n\
-           app-link status|unpair --device IP  Inspect or revoke browser pairing\n\
-           session --device IP    Keep a device awake and on Wi-Fi while developing\n\
-           session --device IP --hold [minutes]  Keep it reachable for unattended testing\n\
-           wait --device IP       Block until a device answers again\n\
-           logs --device IP [--follow] [--lines N]  Read the runtime trace from the device\n\
-           shell --device IP [command ...]  Run one command on the reader, or open a\n\
-           \x20                             session when no command is given. Exits with\n\
-           \x20                             whatever the reader exited with\n\
-           touch-probe --device IP [--seconds N]  Watch touch read-only to check the transform\n\
-           guard-test --device IP --confirm ...   Prove the guardian restores the screen\n\
-           package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies\n\
-           app-key --seed PATH     Print the Ed25519 public key for a release seed\n\
-           app-bundle --manifest PATH --binary PATH --seed PATH --out PATH\n\
-                                   Build one signed, pathless .cobalt-app package\n\
-           app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...\n\
-                                   Build and sign the public app catalog\n\
-           app-list --registry PATH\n\
-                                   List validated Store app packages as JSON\n\
-           app-check --registry PATH [--package PACKAGE] [--out PATH]\n\
-                                   Build and verify every registered Store app\n\
-           app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL [--prebuilt-dir PATH | --artifact-dir PATH]\n\
-                                   Build and sign every registered Store app\n\
-           host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH\n\
-                                   Sign host release metadata for publishing\n\
-           host-release-verify --manifest PATH --signature PATH\n\
-                                   Verify signed host release metadata\n\
-           update [--channel stable|beta]\n\
-                                   Update only the installed host kobo command; Stable is default\n\
-           setup [--volume PATH] [--undo] [--enable-ssh] [--no-key] [--dry-run]\n\
-                 [--yes] [--non-interactive] [--release-dir PATH | --source]\n\
-                                   Prepare a reader over USB after default-no confirmation;\n\
-                                   installed builds use their verified prebuilt device package\n\
-           deploy --device IP [--package PATH]   Install over Wi-Fi, no reboot\n\
-           secret set <name> [--from PATH] --device IP   Install a credential an app can name\n\
-           secret list --device IP   Name the installed credentials, never their values\n\
-           secret remove <name> --device IP   Take one credential off the reader\n\
-           trust set <name> [--from PATH] --device IP   Install an owner TLS root the runtime verifies against\n\
-           trust list --device IP   Name the installed trust roots\n\
-           trust remove <name> --device IP   Take one trust root off the reader\n\
-           inspect <package>       List a package and prove it writes nothing to the rootfs\n\
-           verify <arm-binary>     Verify static ARM hard-float format\n\
-           run --sim [--app NAME]  Run SDK, IPC, daemon and one app on host\n\
-           run                    Device execution remains safety-gated\n\
-           version                Print version"
-    );
+    let console = console::Console::detect();
+    println!("{}", console.wrap(COMMAND_REFERENCE));
+    print_output_contract();
     print_other_names();
+}
+
+/// Every command, one line each, in the order an owner meets them.
+///
+/// A constant rather than text inside [`print_help`] because it is also where
+/// `kobo COMMAND --help` finds its answer for the commands that have no help
+/// of their own (see [`reference_usage`]). Lines that start a command are
+/// indented two spaces, and a line indented further continues the one above,
+/// which is the whole grammar the lookup reads. Written with real line
+/// breaks, because a backslash continuation strips the indentation that makes
+/// the list readable.
+const COMMAND_REFERENCE: &str = "\
+Kobo: set up your reader, send things to its apps, and build new ones
+
+Usage: kobo <command>
+
+Getting started:
+  setup                  Prepare a reader over USB, turn on SSH with this
+                         computer's key, and save the reader for the commands
+                         below (run with no options to be asked)
+  pair [NAME]            Save or rename a reader that is already on Wi-Fi
+  apps [search WORD | setup APP]  Find apps and read their setup steps
+  update [--channel stable|beta]  Update this kobo command
+
+Send things to your apps. These go to the reader kobo setup saved; add
+--reader NAME, --device IP or --sim to send somewhere else:
+  send FILE [--to APP] [--replace]  Send a file to the app that opens it
+  frame init | push PHOTOS [--fit crop|pad] | plan | restore | ls | rm ID   Photos for Frame
+  musicstand init | push SCORE.pdf | plan | ls | rm ID  Scores for Music Stand
+  vault init | push NOTES_DIR | plan | ingest DIR | ls | rm ID  Markdown notes for Vault
+  flashcards --help      Import Anki decks and stage them for Flashcards
+  fieldbook --help       Field packs in, eBird checklists out
+  panels push COMIC.cbz  A comic for Panels
+  needles push PATTERN.pdf  A knitting pattern you own, for Needles
+  nonograms push IMAGE --name NAME --size 5|7|9  A photo puzzle for Nonograms
+  parser push STORY [--replace]  An interactive story for Parser
+  feeds check|push FILE.opml  Subscriptions for Feeds
+  deck set PAD ... | ls | show | push  Lay out Deck's pads, then send them
+  birds listen --source URL | status | stop  Mirror BirdNET-Go to Birds
+  post login --gateway URL --token-file PATH  Sign Post in to a Hermes gateway
+  readlater login --server URL ...  Sign Read Later in to Wallabag
+  sync setup DIR --folder NAME | run | status | stop  Keep a folder in sync
+  export --app APP --out DIR  Receive a copy an app prepared for you
+  sidekick init | setup | run | status | stop | sample | test  The Sidekick helper
+  stream init | stream -- COMMAND  Pair Paperterm, then serve it a terminal
+
+Send a web article to the reader:
+  clip URL | clip PAGE.html --url URL [--out FILE.epub] [--colour]  Send it, or save it with --out
+  clip sync | install --browser NAME | uninstall  Send what waits; add Send to Kobo to a browser
+
+Credentials an app asks for by name:
+  connect APP            Connect an account app: asks for the server and
+                         token, checks them, and sets the app up on the reader
+  secret set NAME [--from PATH] | list | remove NAME   Tokens and passwords
+  trust set NAME --from PATH | list | remove NAME      A private HTTPS root
+  report [--out FILE] [--include-paths]  A diagnostic snapshot to share with a helper
+
+Build apps:
+  new <name>             Create a Rust application
+  dev [address]          Run this app in the browser simulator
+  dev --runtime [address] [--apps IDs]  Run the launcher and selected local apps
+  drive --script PATH [--record DIR]  Tap through the simulator and save screenshots
+  build [--device]       Build the host workspace or the device binaries
+  deploy --device IP [--package PATH]  Install over Wi-Fi, no reboot
+  package [--out PATH] [--folder PATH]  Build the KoboRoot.tgz an owner copies
+  run --sim [--app NAME]  Run SDK, IPC, daemon and one app on this computer
+  inspect <package>      List a package and prove it writes nothing to the rootfs
+  verify <arm-binary>    Verify static ARM hard-float format
+
+Look at a reader (the saved reader too, unless shown with a target):
+  devices [--subnet A.B.C] [--json]  Find every reader on the local network
+  doctor [--reader NAME | --device IP] [--json]  Read-only diagnostics
+  shot [--reader NAME]   Save a PNG of a reader's panel, or the simulator's
+  record [--seconds N] [--fps F] [--out DIR]  Film the panel, read-only
+  logs [--follow] [--lines N]  Read the runtime trace
+  session [--hold MINUTES]  Keep a reader awake and on Wi-Fi while developing
+  wait [--timeout SECONDS]  Block until a reader answers again
+  app-link status|unpair  Inspect or revoke browser pairing
+  touch-probe [--seconds N]  Watch touch, read-only, to check the transform
+  wifi-trace summarize PATH | retrieve --out PATH  Read the radio's hand-off trace
+  guard-test --device IP --confirm ...  Prove the guardian restores the screen
+  shell [command ...]    Advanced: run a command on the reader, unchecked. Exits
+                         with whatever the reader exited with
+
+Publish to the Store:
+  app-key --seed PATH    Print the Ed25519 public key for a release seed
+  app-bundle --manifest PATH --binary PATH --seed PATH --out PATH  Sign one app
+  app-verify --package PATH --public-key PATH --manifest PATH --binary PATH  Check one
+  app-catalog --seed PATH --out PATH --signature PATH --entry PACKAGE HTTPS_URL ...  Sign a catalog
+  app-catalog-verify --catalog PATH --signature PATH --public-key PATH --package PATH  Check one
+  app-list --registry PATH  List the Store packages in a registry
+  app-check --registry PATH [--package PACKAGE] [--out PATH]  Check them
+  app-release --registry PATH --seed PATH --out PATH --base-url HTTPS_URL  Build signed releases
+  beta-store-smoke --app ID --fixture DIR --out DIR  Rehearse a Store release
+  host-release-sign --manifest PATH --seed PATH --signature PATH --ssh-signature PATH  Sign a host release
+  host-release-verify --manifest PATH --signature PATH  Check a host release
+
+  help                   Print this list
+  version [--full]       Print this command's version, or the full compatibility report";
+
+/// Commands whose own handler answers `--help`.
+///
+/// Everything else is answered from [`COMMAND_REFERENCE`] before it runs.
+/// Some of them used to take `--help` as an argument and act on it: `build`
+/// started a build, `inspect` tried to open a file named `--help`, and two
+/// dozen others printed their usage as an error and exited 2, so a script
+/// could not even tell asking for help from getting the command wrong.
+const ANSWERS_ITS_OWN_HELP: &[&str] = &[
+    "apps",
+    "birds",
+    "clip",
+    "deck",
+    "export",
+    "feeds",
+    "fieldbook",
+    "flashcards",
+    "frame",
+    "help",
+    "musicstand",
+    "needles",
+    "nonograms",
+    "pair",
+    "panels",
+    "parser",
+    "post",
+    "readlater",
+    "report",
+    "secret",
+    "send",
+    "setup",
+    "stream",
+    "sync",
+    "trust",
+    "vault",
+];
+
+/// The help to print instead of running the command, when the line asks for
+/// help and the command does not answer it itself.
+///
+/// Only words before a `--` count, because what follows one belongs to the
+/// command the reader or a terminal will run.
+fn unanswered_help(arguments: &[String]) -> Option<String> {
+    let (command, rest) = arguments.split_first()?;
+    let command = canonical(command);
+    if ANSWERS_ITS_OWN_HELP.contains(&command) || !is_command(command) {
+        return None;
+    }
+    rest.iter()
+        .take_while(|word| *word != "--")
+        .any(|word| word == "--help" || word == "-h")
+        .then(|| reference_usage(command))
+}
+
+/// Whether `run` dispatches this word. Kept beside the reference so a new
+/// command cannot be added to one and forgotten in the other; a test holds
+/// the two together.
+fn is_command(word: &str) -> bool {
+    COMMAND_REFERENCE.lines().any(|line| {
+        line.strip_prefix("  ")
+            .filter(|text| !text.starts_with(' '))
+            .and_then(|text| text.split_whitespace().next())
+            .is_some_and(|first| first == word)
+    }) || matches!(word, "shell" | "stop" | "present" | "tap" | "smoke-display")
+}
+
+/// One command's lines from the reference, as a usage.
+///
+/// The commands with a usage constant of their own keep it, since theirs is
+/// the longer and more exact answer. The rest get the reference line, with
+/// the purpose written below the form and any continuation joined to it.
+fn reference_usage(command: &str) -> String {
+    match command {
+        "drive" => return DRIVE_USAGE.to_owned(),
+        "record" => return RECORD_USAGE.to_owned(),
+        "shot" => return SHOT_USAGE.to_owned(),
+        _ => {}
+    }
+    let mut forms = Vec::new();
+    let mut purposes = Vec::new();
+    let mut lines = COMMAND_REFERENCE.lines().peekable();
+    while let Some(line) = lines.next() {
+        let Some(text) = line
+            .strip_prefix("  ")
+            .filter(|text| !text.starts_with(' '))
+        else {
+            continue;
+        };
+        if text.split_whitespace().next() != Some(command) {
+            continue;
+        }
+        let (form, purpose) = text.split_once("  ").map_or((text, ""), |(form, purpose)| {
+            (form.trim_end(), purpose.trim())
+        });
+        forms.push(format!("kobo {form}"));
+        let mut purpose = purpose.to_owned();
+        while let Some(more) = lines.peek().and_then(|next| next.strip_prefix("   ")) {
+            purpose.push(' ');
+            purpose.push_str(more.trim());
+            lines.next();
+        }
+        if !purpose.is_empty() {
+            purposes.push(purpose);
+        }
+    }
+    if forms.is_empty() {
+        return "Every command, with what it does: kobo --help".to_owned();
+    }
+    format!(
+        "usage: {}\n\n{}\n\nEvery command: kobo --help",
+        forms.join("\n       "),
+        purposes.join("\n")
+    )
+}
+
+/// Which stream carries what, what `--json` prints, and how an exit status
+/// is meant to be read. Split from the command list for the same reason the
+/// aliases are: the list is at the length the lints allow.
+fn print_output_contract() {
+    let console = console::Console::detect();
+    println!(
+        "{}",
+        console.wrap(
+            "\nReading the output:\n\
+             Progress and explanations print on stderr; results print on stdout,\n\
+             so kobo devices > readers.txt holds only readers. --json prints one\n\
+             JSON object on stdout, with a version field, for programs to read.\n\
+             Exit status is a category, stable enough to test in a script:\n\
+               0 done   2 the command was misspelled   3 the reader or simulator\n\
+               could not be reached   4 this build or host cannot do it   1 anything else\n\
+             Verbs stay the same across commands: check reads, preview shows,\n\
+             prepare writes on this computer, push sends, status reports."
+        )
+    );
 }
 
 /// The aliases, and the note about what this build can and cannot write.
@@ -6981,7 +8937,11 @@ fn print_other_names() {
          tap --device IP X,Y [MS:X,Y ...]  Tap the real panel through the real touch node.\n  \
          \x20                              Several steps run in one upload, timed on the\n  \
          \x20                              device, which is how an application is driven.\n  \
-         smoke-display --device IP --confirm ...  Attended display checks, one at a time";
+         smoke-display --device IP --confirm ...  Attended display checks, one at a time
+  \
+         present <app> --device IP [--seconds N]  Run one app on the panel
+  \
+         stop --device IP       Hand the panel back to the reader now";
     #[cfg(not(feature = "device-write"))]
     const WRITING: &str = "\n\nBuilt without --features device-write, so the commands that write \
          to a panel\n(tap, smoke-display) are not in this binary.";
@@ -6994,2250 +8954,4 @@ fn print_other_names() {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn stream_init_refuses_a_reader_it_cannot_reach_before_minting_anything() {
-        // A typo used to be found after the certificate had been minted and
-        // the pairing code printed, which leaves a half-done pairing behind.
-        let error = super::stream_init(&["--device".to_owned(), "not a host".to_owned()])
-            .expect_err("refused");
-        assert!(error.contains("not an address"), "{error}");
-    }
-
-    #[test]
-    fn stream_init_names_its_arguments_and_nothing_else() {
-        for arguments in [
-            vec!["--reader".to_owned(), "1.2.3.4".to_owned()],
-            vec!["--device".to_owned()],
-            vec!["--host".to_owned()],
-        ] {
-            let error = super::stream_init(&arguments).expect_err("refused");
-            assert!(
-                error.starts_with("usage: kobo stream init"),
-                "{arguments:?} gave {error}"
-            );
-        }
-    }
-
-    #[test]
-    fn the_stream_authority_says_which_file_is_missing() {
-        // Under an empty root this names the file rather than failing later
-        // inside an install with nothing to point at.
-        let empty = std::env::temp_dir().join("kobo-stream-authority-test");
-        let _ignored = std::fs::create_dir_all(&empty);
-        let error = super::stream_authority_in(&empty).expect_err("nothing is there");
-        assert!(error.contains("ca-cert.pem"), "{error}");
-    }
-
-    #[test]
-    fn companion_help_exits_successfully() {
-        super::parser_command(&["--help".into()]).expect("parser help");
-        super::stream_command(&["--help".into()]).expect("stream help");
-        super::flashcards::command(&["--help".into()]).expect("flashcards help");
-        super::deck::command(&["--help".into()]).expect("deck help");
-        super::frame::command(&["--help".into()]).expect("frame help");
-        super::sync::command(&["--help".into()]).expect("sync help");
-        super::needles::command(&["--help".into()]).expect("needles help");
-        super::nonograms::command(&["--help".into()]).expect("nonograms help");
-        super::vault::command(&["--help".into()]).expect("vault help");
-    }
-
-    #[test]
-    fn parser_check_accepts_a_minimal_v5_header() {
-        let mut bytes = vec![0_u8; 64];
-        bytes[0] = 5;
-        let path = std::env::temp_dir().join(format!("parser-check-{}.z5", std::process::id()));
-        std::fs::write(&path, &bytes).expect("fixture");
-        super::parser_command(&["check".into(), path.display().to_string()]).expect("check");
-        std::fs::remove_file(path).expect("cleanup");
-    }
-
-    #[test]
-    fn parser_check_refuses_glulx() {
-        let path = std::env::temp_dir().join(format!("parser-glulx-{}.ulx", std::process::id()));
-        std::fs::write(&path, b"Glul\0\0\0\0").expect("fixture");
-        let error = super::parser_command(&["check".into(), path.display().to_string()])
-            .expect_err("glulx");
-        std::fs::remove_file(path).expect("cleanup");
-        assert!(error.contains("Glulx"));
-    }
-
-    /// Builds a recording the way the device writes one.
-    fn recording(width: u32, height: u32, frames: &[(u32, u8)]) -> Vec<u8> {
-        let mut raw = b"KOBOCST1".to_vec();
-        raw.extend_from_slice(&width.to_le_bytes());
-        raw.extend_from_slice(&height.to_le_bytes());
-        for (millis, fill) in frames {
-            raw.extend_from_slice(&millis.to_le_bytes());
-            raw.extend(std::iter::repeat_n(*fill, (width * height) as usize));
-        }
-
-        raw
-    }
-
-    #[test]
-    fn host_update_defaults_stable_and_requires_explicit_beta() {
-        let arguments = |values: &[&str]| {
-            values
-                .iter()
-                .map(|value| (*value).to_owned())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            super::parse_host_update(&arguments(&[])),
-            Ok(super::HostUpdateChannel::Stable)
-        );
-        assert_eq!(
-            super::parse_host_update(&arguments(&["--channel", "beta"])),
-            Ok(super::HostUpdateChannel::Beta)
-        );
-        assert!(super::parse_host_update(&arguments(&["--beta"])).is_err());
-        assert!(super::parse_host_update(&arguments(&["--channel", "nightly"])).is_err());
-    }
-
-    #[test]
-    fn release_seed_accepts_raw_or_lowercase_hex() {
-        let root = std::env::temp_dir().join(format!("kobo-seed-test-{}", std::process::id()));
-        fs::create_dir_all(&root).expect("create fixture");
-        let raw = root.join("raw");
-        let hex = root.join("hex");
-        fs::write(&raw, [7_u8; 32]).expect("write raw seed");
-        fs::write(&hex, format!("{}\n", "07".repeat(32))).expect("write hex seed");
-        assert_eq!(
-            super::read_signing_seed(&raw).expect("raw seed"),
-            [7_u8; 32]
-        );
-        assert_eq!(
-            super::read_signing_seed(&hex).expect("hex seed"),
-            [7_u8; 32]
-        );
-        fs::remove_dir_all(root).expect("remove fixture");
-    }
-
-    #[test]
-    fn release_registry_accepts_website_setup_metadata() {
-        let value = kobo_json::parse(
-            r#"{
-                "package":"kobo-library",
-                "id":"library",
-                "display_name":"Library",
-                "short_label":"Library",
-                "summary":"Read a personal library.",
-                "version":"1.0.0",
-                "minimum_cobalt_version":"0.2.4",
-                "glyph":"book",
-                "capabilities":["network"],
-                "setup":{"steps":[{"text":"Create a read-only key."}]}
-            }"#,
-        )
-        .expect("registry fixture");
-
-        let app = super::parse_release_app(&value).expect("setup metadata is registry-only");
-        assert_eq!(app.id, "library");
-    }
-
-    #[test]
-    #[allow(clippy::too_many_lines)] // One signed fixture exercises creation and tampering together.
-    fn app_bundle_and_catalog_commands_produce_verified_assets() {
-        let root = std::env::temp_dir().join(format!("kobo-app-assets-{}", std::process::id()));
-        fs::create_dir_all(&root).expect("create fixture");
-        let seed_path = root.join("seed");
-        let manifest_path = root.join("manifest.json");
-        let binary_path = root.join("kobo-word-count");
-        let bundle_path = root.join("word-count.cobalt-app");
-        let catalog_path = root.join("cobalt-app-catalog.json");
-        let signature_path = root.join("cobalt-app-catalog.json.sig");
-        let seed = [9_u8; 32];
-        let mut binary = vec![0_u8; 84];
-        binary[..6].copy_from_slice(b"\x7fELF\x01\x01");
-        binary[16..18].copy_from_slice(&2_u16.to_le_bytes());
-        binary[18..20].copy_from_slice(&40_u16.to_le_bytes());
-        binary[24..28].copy_from_slice(&0x10_0040_u32.to_le_bytes());
-        binary[28..32].copy_from_slice(&52_u32.to_le_bytes());
-        binary[36..40].copy_from_slice(&0x400_u32.to_le_bytes());
-        binary[42..44].copy_from_slice(&32_u16.to_le_bytes());
-        binary[44..46].copy_from_slice(&1_u16.to_le_bytes());
-        binary[52..56].copy_from_slice(&1_u32.to_le_bytes());
-        binary[56..60].copy_from_slice(&0_u32.to_le_bytes());
-        binary[60..64].copy_from_slice(&0x10_0000_u32.to_le_bytes());
-        let binary_size = u32::try_from(binary.len()).expect("fixture fits in u32");
-        binary[68..72].copy_from_slice(&binary_size.to_le_bytes());
-        binary[72..76].copy_from_slice(&binary_size.to_le_bytes());
-        binary[76..80].copy_from_slice(&5_u32.to_le_bytes());
-        fs::write(&seed_path, seed).expect("write seed");
-        fs::write(&binary_path, &binary).expect("write binary");
-        let manifest = kobo_app_store::Manifest::new_public(kobo_app_store::ManifestInput {
-            id: "word-count".to_owned(),
-            display_name: "Word Count".to_owned(),
-            short_label: "Words".to_owned(),
-            summary: "Counts words in a note.".to_owned(),
-            version: "1.0.0".to_owned(),
-            minimum_cobalt_version: env!("CARGO_PKG_VERSION").to_owned(),
-            glyph: "note".to_owned(),
-            capabilities: Vec::new(),
-            binary_sha256: kobo_net::sha256::hex_digest(&binary),
-            binary_bytes: binary.len() as u64,
-        })
-        .expect("manifest");
-        fs::write(&manifest_path, manifest.to_canonical_bytes()).expect("write manifest");
-
-        let header_only = root.join("header-only");
-        let mut header = vec![0_u8; 52];
-        header[..6].copy_from_slice(b"\x7fELF\x01\x01");
-        header[16..18].copy_from_slice(&2_u16.to_le_bytes());
-        header[18..20].copy_from_slice(&40_u16.to_le_bytes());
-        header[24..28].copy_from_slice(&0x10_0040_u32.to_le_bytes());
-        header[36..40].copy_from_slice(&0x400_u32.to_le_bytes());
-        header[42..44].copy_from_slice(&32_u16.to_le_bytes());
-        fs::write(&header_only, header).expect("write header-only binary");
-        assert!(super::verify_arm_elf(&header_only)
-            .expect_err("an ELF header without a load segment was accepted")
-            .contains("executable load segment"));
-
-        super::app_bundle(&[
-            "--manifest".to_owned(),
-            manifest_path.display().to_string(),
-            "--binary".to_owned(),
-            binary_path.display().to_string(),
-            "--seed".to_owned(),
-            seed_path.display().to_string(),
-            "--out".to_owned(),
-            bundle_path.display().to_string(),
-        ])
-        .expect("build bundle");
-        super::app_catalog(&[
-            "--seed".to_owned(),
-            seed_path.display().to_string(),
-            "--out".to_owned(),
-            catalog_path.display().to_string(),
-            "--signature".to_owned(),
-            signature_path.display().to_string(),
-            "--entry".to_owned(),
-            bundle_path.display().to_string(),
-            "https://example.test/word-count.cobalt-app".to_owned(),
-        ])
-        .expect("build catalog");
-
-        let public = kobo_app_store::derive_public_key(&seed).expect("public key");
-        let bundle = fs::read(&bundle_path).expect("read bundle");
-        assert_eq!(
-            kobo_app_store::parse_public_bundle(&bundle, &public)
-                .expect("verify bundle")
-                .manifest()
-                .id(),
-            "word-count"
-        );
-        let catalog_bytes = fs::read(&catalog_path).expect("read catalog");
-        let signature = fs::read_to_string(&signature_path).expect("read signature");
-        let signature =
-            kobo_app_store::DetachedSignature::from_hex(signature.trim()).expect("signature");
-        kobo_app_store::verify(&catalog_bytes, &signature, &public).expect("verify catalog");
-        let catalog = kobo_app_store::Catalog::parse_public(&catalog_bytes).expect("parse catalog");
-        assert_eq!(catalog.entries().len(), 1);
-        let public_path = root.join("public-key");
-        fs::write(&public_path, public.to_string()).unwrap();
-        let verify_package = vec![
-            "--package".into(),
-            bundle_path.display().to_string(),
-            "--public-key".into(),
-            public_path.display().to_string(),
-            "--manifest".into(),
-            manifest_path.display().to_string(),
-            "--binary".into(),
-            binary_path.display().to_string(),
-        ];
-        let verify_catalog = vec![
-            "--catalog".into(),
-            catalog_path.display().to_string(),
-            "--signature".into(),
-            signature_path.display().to_string(),
-            "--public-key".into(),
-            public_path.display().to_string(),
-            "--package".into(),
-            bundle_path.display().to_string(),
-        ];
-        super::app_verify(&verify_package).expect("verify matching package");
-        super::app_catalog_verify(&verify_catalog).expect("verify matching catalog");
-        fs::write(&binary_path, b"different binary").unwrap();
-        assert!(super::app_verify(&verify_package).is_err());
-        fs::write(&binary_path, &binary).unwrap();
-        fs::write(
-            &public_path,
-            kobo_app_store::derive_public_key(&[8; 32])
-                .unwrap()
-                .to_string(),
-        )
-        .unwrap();
-        assert!(super::app_verify(&verify_package).is_err());
-        assert!(super::app_catalog_verify(&verify_catalog).is_err());
-        fs::write(&public_path, public.to_string()).unwrap();
-        let mut changed_catalog = catalog_bytes.clone();
-        changed_catalog.push(b' ');
-        fs::write(&catalog_path, changed_catalog).unwrap();
-        assert!(super::app_catalog_verify(&verify_catalog).is_err());
-        fs::write(&catalog_path, &catalog_bytes).unwrap();
-        let wrong_entry = kobo_app_store::CatalogEntry::new(kobo_app_store::CatalogEntryInput {
-            manifest: manifest.clone(),
-            package_url: "https://example.test/wrong.cobalt-app".into(),
-            package_sha256: kobo_net::sha256::hex_digest(&bundle),
-            package_bytes: bundle.len() as u64 + 1,
-        })
-        .unwrap();
-        let wrong_catalog = kobo_app_store::Catalog::new(vec![wrong_entry])
-            .unwrap()
-            .to_canonical_bytes();
-        fs::write(&catalog_path, &wrong_catalog).unwrap();
-        fs::write(
-            &signature_path,
-            kobo_app_store::sign(&wrong_catalog, &seed)
-                .unwrap()
-                .to_string(),
-        )
-        .unwrap();
-        assert!(
-            super::app_catalog_verify(&verify_catalog).is_err(),
-            "valid signature must not hide incorrect package length"
-        );
-        fs::write(&catalog_path, &catalog_bytes).unwrap();
-        fs::write(&signature_path, signature.to_string()).unwrap();
-        let mut changed_package = bundle.clone();
-        *changed_package.last_mut().unwrap() ^= 1;
-        fs::write(&bundle_path, changed_package).unwrap();
-        assert!(super::app_verify(&verify_package).is_err());
-        assert!(super::app_catalog_verify(&verify_catalog).is_err());
-        fs::remove_dir_all(root).expect("remove fixture");
-    }
-
-    /// A session is what somebody asked for by not asking for anything else.
-    #[test]
-    fn paperterm_presets_are_literal_commands_with_clear_titles() {
-        let (command, title) = super::stream_preset("terminal", Some("/bin/sh")).unwrap();
-        assert_eq!(command, ["/bin/sh", "-l"]);
-        assert_eq!(title, "Terminal");
-        assert!(super::stream_preset("terminal", Some("sh; echo unsafe")).is_err());
-        let (command, title) = super::stream_preset("monitor", None).unwrap();
-        assert_eq!(command, ["top"]);
-        assert_eq!(title, "System monitor");
-        assert!(super::stream_preset("unknown", None).is_err());
-        assert!(super::STREAM_START.contains("kobo stream demo"));
-        super::stream_command(&[]).unwrap();
-    }
-
-    #[test]
-    fn a_shell_with_no_command_is_a_request_for_a_session() {
-        let arguments = ["--device".to_owned(), "192.168.1.2".to_owned()];
-        let request =
-            super::parse_shell(&arguments).expect("a host and nothing else is a valid request");
-        assert_eq!(request.host, "192.168.1.2");
-        assert!(request.command.is_none());
-    }
-
-    /// The words after the host are one line of shell, not a list of
-    /// arguments. Somebody typing a pipeline or a redirection means it.
-    #[test]
-    fn the_words_after_the_host_become_one_line_of_shell() {
-        let arguments = [
-            "-s".to_owned(),
-            "192.168.1.2".to_owned(),
-            "dmesg".to_owned(),
-            "|".to_owned(),
-            "tail".to_owned(),
-            "-n".to_owned(),
-            "5".to_owned(),
-        ];
-        let request = super::parse_shell(&arguments).expect("a command is a valid request");
-        assert_eq!(request.command.as_deref(), Some("dmesg | tail -n 5"));
-    }
-
-    /// The host goes into an ssh argument, so anything that could be read as
-    /// something else has to be refused before it gets there.
-    #[test]
-    fn a_shell_refuses_a_host_that_is_not_one() {
-        for host in ["a;rm -rf /", "1.2.3.4 -oProxyCommand=x", "$(whoami)"] {
-            let arguments = ["--device".to_owned(), host.to_owned(), "uname".to_owned()];
-            assert!(
-                super::parse_shell(&arguments).is_err(),
-                "{host} was accepted as a device"
-            );
-        }
-    }
-
-    /// Missing the device entirely is the usage message, not a panic on an
-    /// empty slice.
-    #[test]
-    fn a_shell_without_a_device_says_how_to_spell_it() {
-        for arguments in [
-            Vec::new(),
-            vec!["uname".to_owned()],
-            vec!["192.168.1.2".to_owned()],
-        ] {
-            let error = super::parse_shell(&arguments).expect_err("no device was named");
-            assert!(error.starts_with("usage: kobo shell"), "{error}");
-        }
-    }
-
-    /// `sh` is what a shell is called by the people most likely to want one.
-    #[test]
-    fn sh_is_another_name_for_shell() {
-        assert_eq!(super::canonical("sh"), "shell");
-    }
-
-    #[test]
-    fn a_recording_decodes_to_the_frames_that_were_kept() {
-        let raw = recording(2, 3, &[(0, 0xff), (500, 0x40)]);
-        let (width, height, frames) = super::decode_recording(&raw).expect("decode");
-        assert_eq!((width, height), (2, 3));
-        assert_eq!(frames.len(), 2);
-        assert_eq!(frames[0].millis, 0);
-        assert_eq!(frames[1].millis, 500);
-        assert_eq!(frames[1].grey, vec![0x40; 6]);
-    }
-
-    #[test]
-    fn every_grey_level_survives_the_round_trip() {
-        // The panel is greyscale and the text on it is anti-aliased. A
-        // recording that flattened the greys would look harsher than the
-        // device and would be read as a rendering bug that is not there.
-        let mut raw = b"KOBOCST1".to_vec();
-        raw.extend_from_slice(&16_u32.to_le_bytes());
-        raw.extend_from_slice(&16_u32.to_le_bytes());
-        raw.extend_from_slice(&0_u32.to_le_bytes());
-        let ramp: Vec<u8> = (0..=255_u8).step_by(1).take(256).collect();
-        raw.extend_from_slice(&ramp);
-        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
-        assert_eq!(frames[0].grey, ramp);
-    }
-
-    #[test]
-    fn half_a_frame_is_dropped_rather_than_shown_as_a_whole_one() {
-        // The device can be unplugged or fill up mid-write. Half a frame
-        // decoded as a whole one is a picture of nothing that looks exactly
-        // like a rendering failure.
-        let mut raw = recording(2, 3, &[(0, 0xff)]);
-        raw.extend_from_slice(&99_u32.to_le_bytes());
-        raw.extend_from_slice(&[0x10, 0x10]);
-        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
-        assert_eq!(frames.len(), 1, "a torn frame was kept");
-    }
-
-    #[test]
-    fn something_that_is_not_a_recording_is_refused() {
-        assert!(super::decode_recording(b"not a recording at all").is_err());
-        assert!(super::decode_recording(&recording(2, 3, &[])).is_err());
-    }
-
-    /// The frames are not evenly spaced, because only the ones that moved were
-    /// kept. Handing them to ffmpeg at a fixed rate would play a screen that
-    /// was up for ten seconds in the same time as one that was up for a tenth
-    /// of one, which is a recording of a run that never happened.
-    #[test]
-    fn each_frame_is_played_for_as_long_as_it_was_really_on_the_panel() {
-        let raw = recording(2, 3, &[(0, 0xff), (2_000, 0x40), (2_150, 0x10)]);
-        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
-        assert_eq!(
-            super::concat_list(&frames),
-            "file 'frame-0000.png'\nduration 2.000\n\
-             file 'frame-0001.png'\nduration 0.150\n\
-             file 'frame-0002.png'\nduration 1.000\n\
-             file 'frame-0002.png'\n",
-            "the last frame is named twice because concat ignores the last duration"
-        );
-    }
-
-    /// A frame that was replaced within a tenth of a second is still a frame
-    /// somebody has to be able to see. Played for its real duration it is one
-    /// or two hundredths of a second, which at any sane frame rate is a frame
-    /// the encoder drops entirely.
-    #[test]
-    fn a_screen_that_barely_appeared_is_still_held_long_enough_to_see() {
-        let raw = recording(2, 3, &[(0, 0xff), (20, 0x40)]);
-        let (_, _, frames) = super::decode_recording(&raw).expect("decode");
-        assert!(
-            super::concat_list(&frames).contains("duration 0.100"),
-            "a frame was given less time than the encoder will keep"
-        );
-    }
-
-    use super::package;
-    use super::{
-        build_executables, canonical, configured_target_directory, is_device_flag,
-        manifest_uses_sdk, normalise_secret_value, parse_deploy, parse_devices, parse_logs,
-        parse_touch_probe, unreachable_device, valid_device_host, valid_slug, verify_arm_elf,
-        wait_for_remote_child, workspace_doctor_binary, DevSessionGuard, RemoteArtifact,
-        SimulationGuard, ALIASES, DEFAULT_TRACE_LINES, DEPLOY_TIMEOUT, DEVICE_PACKAGES,
-        TOUCH_PROBE_DEFAULT_SECONDS, TOUCH_PROBE_MAXIMUM_SECONDS,
-    };
-    #[cfg(feature = "device-write")]
-    use super::{
-        parse_guard_test, parse_smoke_display, run, workspace_smoke_binary, RemoteArtifactSession,
-        RemoteProgram, SmokeStage, GUARD_TEST_CHILD, GUARD_TEST_CONFIRMATION,
-        REMOTE_CLEANUP_TIMEOUT, REMOTE_COMMAND_TIMEOUT, REMOTE_CONNECT_TIMEOUT_SECONDS,
-        REMOTE_SMOKE_TIMEOUT_SECONDS,
-    };
-    use std::fs;
-    use std::path::PathBuf;
-    use std::process::Command;
-    use std::time::Duration;
-
-    #[test]
-    fn secret_remote_publish_preserves_old_value_on_failed_or_occupied_stage() {
-        use std::os::unix::fs::PermissionsExt;
-        let directory = std::env::temp_dir().join(format!(
-            "cobalt-secret-script-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&directory).unwrap();
-        let script = super::secret_install_script("fixture", "new-value")
-            .replace(super::DEVICE_SECRETS_DIRECTORY, directory.to_str().unwrap());
-        let destination = directory.join("fixture");
-        let partial = directory.join(".fixture.writing");
-        fs::write(&destination, "old-value").unwrap();
-        fs::write(&partial, "other-attempt").unwrap();
-        let run = || Command::new("sh").arg("-c").arg(&script).output().unwrap();
-        assert!(!run().status.success());
-        assert_eq!(fs::read_to_string(&destination).unwrap(), "old-value");
-        assert_eq!(fs::read_to_string(&partial).unwrap(), "other-attempt");
-        fs::remove_file(&partial).unwrap();
-        let bin = directory.join("bin");
-        fs::create_dir(&bin).unwrap();
-        fs::write(bin.join("cat"), "#!/bin/sh\nprintf partial\nexit 42\n").unwrap();
-        fs::set_permissions(bin.join("cat"), fs::Permissions::from_mode(0o700)).unwrap();
-        let failed = Command::new("sh")
-            .arg("-c")
-            .arg(&script)
-            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
-            .output()
-            .unwrap();
-        assert!(!failed.status.success());
-        assert_eq!(fs::read_to_string(&destination).unwrap(), "old-value");
-        assert!(!partial.exists());
-        assert!(run().status.success());
-        assert_eq!(fs::read_to_string(&destination).unwrap(), "new-value\n");
-        assert_eq!(
-            fs::metadata(&destination).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn secret_files_accept_raw_and_assignment_forms() {
-        assert_eq!(normalise_secret_value("sk-secret"), "sk-secret");
-        assert_eq!(
-            normalise_secret_value("EXA_API_KEY='exa-secret'"),
-            "exa-secret"
-        );
-        assert_eq!(normalise_secret_value("token=still=raw"), "token=still=raw");
-    }
-
-    #[test]
-    fn a_log_request_reads_the_way_adb_logcat_does() {
-        let arguments = |parts: &[&str]| {
-            parts
-                .iter()
-                .map(|part| (*part).to_owned())
-                .collect::<Vec<_>>()
-        };
-        let parse = |parts: &[&str]| {
-            parse_logs(&arguments(parts))
-                .map(|request| (request.follow, request.lines, request.clear))
-        };
-        // Watching is the point, so it is what asking for nothing gets.
-        assert_eq!(
-            parse(&["--device", "192.168.1.15"]),
-            Ok((true, DEFAULT_TRACE_LINES, false))
-        );
-        // -s is adb's spelling of the same flag and has to reach the same code.
-        assert_eq!(
-            parse(&["-s", "192.168.1.15", "-d"]),
-            Ok((false, DEFAULT_TRACE_LINES, false))
-        );
-        assert_eq!(
-            parse(&["--device", "host", "-t", "40"]),
-            Ok((true, 40, false))
-        );
-        assert_eq!(
-            parse(&["--device", "host", "--lines", "40", "--dump"]),
-            Ok((false, 40, false))
-        );
-        // Clearing alone clears and stops; asked for with --follow it clears
-        // and then watches, whichever order the two were written in.
-        assert_eq!(
-            parse(&["--device", "host", "-c"]),
-            Ok((false, DEFAULT_TRACE_LINES, true))
-        );
-        assert_eq!(
-            parse(&["--device", "host", "-c", "-f"]),
-            Ok((true, DEFAULT_TRACE_LINES, true))
-        );
-        assert_eq!(
-            parse(&["--device", "host", "-f", "-c"]),
-            Ok((true, DEFAULT_TRACE_LINES, true))
-        );
-        for rejected in [
-            // A host that could carry a second command into the remote shell.
-            vec!["--device", "192.168.1.15; reboot"],
-            vec!["--device"],
-            vec!["--device", "host", "--lines"],
-            vec!["--device", "host", "--lines", "0"],
-            vec!["--device", "host", "--lines", "10001"],
-            vec!["--device", "host", "--nonsense"],
-            vec!["host"],
-        ] {
-            assert!(
-                parse(&rejected).is_err(),
-                "{rejected:?} should not be accepted"
-            );
-        }
-    }
-
-    #[test]
-    fn names_from_other_mobile_toolchains_reach_the_command_they_mean() {
-        // Somebody who has shipped for Android should not have to learn a new
-        // word for the same idea before they can read a log.
-        assert_eq!(canonical("logcat"), "logs");
-        assert_eq!(canonical("install"), "deploy");
-        assert_eq!(canonical("wait-for-device"), "wait");
-        assert_eq!(canonical("sim"), "dev");
-        assert_eq!(canonical("init"), "new");
-        // A canonical name is left exactly as it is, and so is a name nobody
-        // knows, so an unknown command still reports itself rather than an
-        // alias it was silently turned into.
-        assert_eq!(canonical("logs"), "logs");
-        assert_eq!(canonical("nonsense"), "nonsense");
-        for (alias, name) in ALIASES {
-            assert_ne!(alias, name, "an alias for itself is dead weight");
-            assert_eq!(canonical(name), *name, "aliases must not chain");
-        }
-        assert!(is_device_flag("--device"));
-        assert!(is_device_flag("-s"));
-        assert!(!is_device_flag("--devices"));
-    }
-
-    #[test]
-    fn a_touch_probe_window_is_bounded_and_the_host_waits_longer_than_the_device() {
-        let arguments = |parts: &[&str]| {
-            parts
-                .iter()
-                .map(|part| (*part).to_owned())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            parse_touch_probe(&arguments(&["--device", "192.168.1.15"])),
-            Ok(("192.168.1.15", TOUCH_PROBE_DEFAULT_SECONDS))
-        );
-        for rejected in [
-            vec!["--device", "192.168.1.15", "--seconds", "0"],
-            vec!["--device", "192.168.1.15", "--seconds", "121"],
-            vec!["--device", "192.168.1.15", "--seconds", "ten"],
-            vec!["--device", "192.168.1.15; reboot"],
-            vec!["--device"],
-        ] {
-            assert!(
-                parse_touch_probe(&arguments(&rejected)).is_err(),
-                "{rejected:?} must be refused"
-            );
-        }
-        // The device enforces its own bound, so the host must outlast it.
-        let artifact = RemoteArtifact::touch_probe(TOUCH_PROBE_MAXIMUM_SECONDS);
-        assert!(artifact.timeout().as_secs() > TOUCH_PROBE_MAXIMUM_SECONDS + 15);
-    }
-
-    /// A sweep builds addresses by appending a host part, so anything that is
-    /// not exactly three octets would produce addresses nobody asked for.
-    #[test]
-    fn a_sweep_is_confined_to_one_named_subnet() {
-        let arguments = |parts: &[&str]| {
-            parts
-                .iter()
-                .map(|part| (*part).to_owned())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            parse_devices(&arguments(&["--subnet", "192.168.1"])),
-            Ok("192.168.1".to_owned())
-        );
-        for rejected in [
-            vec!["--subnet", "192.168.1.10"],
-            vec!["--subnet", "192.168"],
-            vec!["--subnet", "192.168.1; reboot"],
-            vec!["--subnet", "$(hostname)"],
-            vec!["--subnet"],
-            vec!["--subnet", "192.168.1", "--extra"],
-            vec!["192.168.1"],
-        ] {
-            assert!(
-                parse_devices(&arguments(&rejected)).is_err(),
-                "{rejected:?} must be refused"
-            );
-        }
-        // With no argument the subnet comes from this machine's own route, and
-        // a machine with no route has nothing to scan rather than a default.
-        assert_eq!(
-            parse_devices(&[]).is_ok(),
-            super::connect::local_subnet().is_some()
-        );
-    }
-
-    #[test]
-    fn a_deploy_names_one_host_and_at_most_one_package() {
-        let arguments = |parts: &[&str]| {
-            parts
-                .iter()
-                .map(|part| (*part).to_owned())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            parse_deploy(&arguments(&["--device", "192.168.1.15"])),
-            Ok(("192.168.1.15", None))
-        );
-        assert_eq!(
-            parse_deploy(&arguments(&[
-                "--device",
-                "192.168.1.15",
-                "--package",
-                "target/KoboRoot.tgz"
-            ])),
-            Ok(("192.168.1.15", Some(PathBuf::from("target/KoboRoot.tgz"))))
-        );
-        for rejected in [
-            vec!["--device", "192.168.1.15; reboot"],
-            vec!["--device", ""],
-            vec!["--device"],
-            vec!["--device", "192.168.1.15", "--package"],
-            vec!["--device", "192.168.1.15", "--out", "somewhere"],
-            vec!["--package", "target/KoboRoot.tgz"],
-            vec![],
-        ] {
-            assert!(
-                parse_deploy(&arguments(&rejected)).is_err(),
-                "{rejected:?} must be refused"
-            );
-        }
-        // Six and a half megabytes of base64 through one stdin pipe took about
-        // ten seconds on the device, so the budget has to be far larger.
-        assert!(DEPLOY_TIMEOUT.as_secs() >= 180);
-    }
-
-    /// The checklist is the whole value of these messages, so it has to
-    /// survive being attached to an error rather than replacing one.
-    #[test]
-    fn an_unreachable_device_keeps_its_error_and_gains_the_checklist() {
-        let reported = unreachable_device("device 192.168.1.15 did not answer".to_owned());
-        assert!(reported.starts_with("device 192.168.1.15 did not answer"));
-        assert!(reported.contains("kobo devices"));
-        assert!(reported.contains("asleep"));
-    }
-
-    #[test]
-    fn app_names_are_shell_safe() {
-        assert!(valid_slug("weather"));
-        assert!(valid_slug("home-panel-2"));
-        assert!(!valid_slug("../bad"));
-        assert!(!valid_slug("Bad"));
-        assert!(!valid_slug("bad;rm"));
-    }
-
-    #[test]
-    fn rejects_non_elf_binary() {
-        let path = std::env::temp_dir().join(format!("kobo-cli-not-elf-{}", std::process::id()));
-        fs::write(&path, b"not an elf").expect("write fixture");
-        assert!(verify_arm_elf(&path).is_err());
-        fs::remove_file(path).expect("remove fixture");
-    }
-
-    #[test]
-    fn every_uploaded_artifact_is_built_from_this_workspace() {
-        let command =
-            super::device_build_command("kobo-doctor", None).expect("create doctor build command");
-        let arguments = command
-            .get_args()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            arguments,
-            [
-                "build",
-                "--release",
-                "--locked",
-                "--manifest-path",
-                &super::workspace_manifest().display().to_string(),
-                "--target",
-                "armv7-unknown-linux-musleabihf",
-                "-p",
-                "kobo-doctor",
-                "--bin",
-                "kobo-doctor",
-            ]
-        );
-    }
-
-    #[test]
-    fn every_installed_package_is_a_member_of_this_workspace() {
-        let manifest = fs::read_to_string(super::workspace_manifest()).expect("read the workspace");
-        for (name, _) in super::INSTALLED_PACKAGES {
-            let directory = if *name == "kobod" {
-                "crates/kobod".to_owned()
-            } else {
-                format!("examples/{}", name.trim_start_matches("kobo-"))
-            };
-            assert!(
-                manifest.contains(&format!("\"{directory}\"")),
-                "{name} is packaged but {directory} is not a workspace member"
-            );
-        }
-    }
-
-    /// The daemon shipped in the package was built without `device-write` for
-    /// as long as the packager existed, so `--present` was not compiled in and
-    /// `start.sh` answered the owner with a usage message. Everything else
-    /// about that binary was correct, which is why nothing else caught it.
-    #[test]
-    fn every_packaged_binary_is_built_with_what_it_needs() {
-        let features = super::INSTALLED_PACKAGES
-            .iter()
-            .find(|(name, _)| *name == "kobod")
-            .map(|(_, features)| *features)
-            .expect("kobod is packaged");
-        assert_eq!(
-            features,
-            Some("device-write"),
-            "a kobod without device-write cannot take the panel, and start.sh is \
-             the only thing in the package an owner runs"
-        );
-        let command = super::device_build_command("kobod", features).expect("build command");
-        let arguments = command
-            .get_args()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert!(
-            arguments.windows(2).any(|pair| pair[0] == "--features"
-                && pair[1].split(',').any(|one| one == "device-write")),
-            "the build command dropped the feature: {arguments:?}"
-        );
-    }
-
-    #[test]
-    fn a_daemon_without_the_panel_session_is_refused() {
-        let path = std::path::Path::new("target/kobod");
-        super::verify_present_is_compiled_in(b"nothing useful in here", path)
-            .expect_err("a binary without the unlock phrase is not shippable");
-        let mut bytes = b"padding".to_vec();
-        bytes.extend_from_slice(super::PRESENT_UNLOCK_PHRASE);
-        bytes.extend_from_slice(b"more padding");
-        super::verify_present_is_compiled_in(&bytes, path)
-            .expect("a binary carrying the unlock phrase is shippable");
-    }
-
-    #[test]
-    fn a_package_writes_nothing_outside_the_install_root() {
-        // The archive is extracted as root by the device's own boot script, so
-        // the check that matters is what it is *able* to write.
-        let members = vec![
-            package::Member {
-                path: package::LAUNCH_BOOTSTRAP.to_owned(),
-                bytes: super::bootstrap::CONTENT.as_bytes().to_vec(),
-                program: true,
-            },
-            super::text_member("start.sh", super::START_SCRIPT, true),
-            super::text_member("README.txt", super::INSTALL_README, false),
-        ];
-        let archive = package::tar(&members).expect("build the archive");
-        let (readback, listed) =
-            super::validated_release_archive(&archive).expect("high-level validation");
-        assert_eq!(readback, members);
-        assert_eq!(listed[0].path, package::LAUNCH_BOOTSTRAP);
-    }
-
-    #[test]
-    fn high_level_readback_requires_exact_first_unique_bootstrap() {
-        let reviewed = super::bootstrap::CONTENT.as_bytes().to_vec();
-        let version = (
-            format!("{}/VERSION", package::INSTALL_ROOT),
-            b"0.1.0\n".to_vec(),
-            0o644,
-        );
-        let cases = [
-            package::archive(
-                &[],
-                &[
-                    (
-                        package::LAUNCH_BOOTSTRAP.to_owned(),
-                        reviewed.clone(),
-                        0o700,
-                    ),
-                    version.clone(),
-                ],
-            ),
-            package::archive(
-                &[],
-                &[
-                    version.clone(),
-                    (
-                        package::LAUNCH_BOOTSTRAP.to_owned(),
-                        reviewed.clone(),
-                        0o755,
-                    ),
-                ],
-            ),
-            package::archive(
-                &[],
-                &[
-                    (
-                        package::LAUNCH_BOOTSTRAP.to_owned(),
-                        reviewed.clone(),
-                        0o755,
-                    ),
-                    (
-                        package::LAUNCH_BOOTSTRAP.to_owned(),
-                        reviewed.clone(),
-                        0o755,
-                    ),
-                    version.clone(),
-                ],
-            ),
-            package::archive(
-                &[],
-                &[
-                    (
-                        package::LAUNCH_BOOTSTRAP.to_owned(),
-                        b"changed".to_vec(),
-                        0o755,
-                    ),
-                    version.clone(),
-                ],
-            ),
-            package::archive(
-                &[(package::LAUNCH_BOOTSTRAP, 0o755)],
-                &[(
-                    format!("{}/VERSION", package::INSTALL_ROOT),
-                    b"0.1.0\n".to_vec(),
-                    0o644,
-                )],
-            ),
-        ];
-        for archive in cases {
-            assert!(
-                super::validated_release_archive(&archive).is_err(),
-                "malformed standalone bootstrap passed high-level readback"
-            );
-        }
-    }
-
-    #[test]
-    fn deploy_validation_accepts_then_omits_reviewed_bootstrap() {
-        let members = vec![
-            package::Member {
-                path: package::LAUNCH_BOOTSTRAP.to_owned(),
-                bytes: super::bootstrap::CONTENT.as_bytes().to_vec(),
-                program: true,
-            },
-            super::text_member("VERSION", "0.1.0\n", false),
-        ];
-        let compressed = super::gzip(&package::tar(&members).expect("archive")).expect("gzip");
-        let folder = std::env::current_dir()
-            .expect("working directory")
-            .join("target")
-            .join(format!("deploy-validation-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&folder);
-        std::fs::create_dir_all(&folder).expect("scratch");
-        let path = folder.join("package.tgz");
-        std::fs::write(&path, compressed).expect("package");
-
-        let (uploaded, count) = super::validated_package(&path).expect("validated deploy package");
-        let uploaded = super::gunzip(&uploaded).expect("uploaded archive");
-        let listed = package::list(&uploaded).expect("uploaded listing");
-        assert_eq!(count, 1);
-        assert!(listed
-            .iter()
-            .all(|entry| entry.path != package::LAUNCH_BOOTSTRAP));
-        assert!(listed.iter().all(|entry| {
-            let path = std::path::Path::new(entry.path.trim_end_matches('/'));
-            let root = std::path::Path::new(package::INSTALL_ROOT);
-            path.starts_with(root) || root.starts_with(path)
-        }));
-        let _ = std::fs::remove_dir_all(folder);
-    }
-
-    #[test]
-    fn a_package_survives_the_check_the_device_runs_first() {
-        let members = vec![super::text_member("VERSION", "0.1.0\n", false)];
-        let archive = package::tar(&members).expect("build the archive");
-        let compressed = super::gzip(&archive).expect("compress");
-        super::gzip_test(&compressed).expect("the device would accept this");
-        assert_eq!(
-            super::gunzip(&compressed).expect("decompress"),
-            archive,
-            "compression must round-trip exactly"
-        );
-        assert_eq!(
-            super::gzip(&archive).expect("compress again"),
-            compressed,
-            "the same input must produce the same file, or a checksum means nothing"
-        );
-    }
-
-    #[test]
-    fn the_start_script_points_at_the_folder_the_package_writes() {
-        assert!(super::START_SCRIPT.contains(&format!("/{}", package::INSTALL_ROOT)));
-        assert!(super::INSTALL_README.contains(&format!("/{}", package::INSTALL_ROOT)));
-    }
-
-    #[test]
-    fn the_start_script_installs_the_staged_public_key_once() {
-        let script = super::START_SCRIPT;
-        // The home directory is read from /etc/passwd rather than assumed to
-        // be /root: the i.MX6 firmware gives root a home of `/`, and a key
-        // installed under /root never authenticates there.
-        assert!(script.contains("awk -F: '$1 == \"root\" { print $6 }' /etc/passwd"));
-        assert!(script.contains("keys=\"$home/.ssh/authorized_keys\""));
-        assert!(script.contains("while IFS= read -r known"));
-        assert!(script.contains("if [ \"$known\" = \"$key\" ]"));
-        assert!(script.contains("printf '%s\\n' \"$key\" >> \"$keys\""));
-        assert!(script.contains("rm -f \"$staged_key\""));
-    }
-
-    #[test]
-    fn package_options_are_parsed_and_unknown_ones_refused() {
-        let (tarball, folder) = super::parse_package(&[]).expect("defaults");
-        assert_eq!(tarball, PathBuf::from("target/KoboRoot.tgz"));
-        assert!(folder.is_none());
-        let (tarball, folder) = super::parse_package(&[
-            "--out".to_owned(),
-            "/tmp/a.tgz".to_owned(),
-            "--folder".to_owned(),
-            "/tmp/b".to_owned(),
-        ])
-        .expect("explicit paths");
-        assert_eq!(tarball, PathBuf::from("/tmp/a.tgz"));
-        assert_eq!(folder, Some(PathBuf::from("/tmp/b")));
-        assert!(super::parse_package(&["--onto".to_owned()]).is_err());
-    }
-
-    /// That the template compiles is settled by `examples/hello` being a
-    /// workspace member, which is the whole reason it is one. What is left to
-    /// check here is that it still teaches the right things and that the
-    /// front matter naming it a template does not follow it out the door.
-    #[test]
-    fn the_generated_app_teaches_the_contract_it_should() {
-        let source = super::generated_app_source();
-
-        // The loop belongs to the SDK. An application that hand-rolls one
-        // breaks the next time the event enum grows, which is how the
-        // previous template died.
-        assert!(source.contains("kobo_sdk::run("));
-        assert!(!source.contains("next_event"));
-
-        // Hardware is asked for, and every answer including a refusal is
-        // shown. Both halves are the point of the example.
-        assert!(source.contains("context.device().read_battery()"));
-        assert!(source.contains("fn on_device_result"));
-        assert!(source.contains("DeviceResult::Denied(reason)"));
-
-        // It must never reach hardware itself.
-        assert!(!source.contains("/dev/"));
-        assert!(!source.contains("/sys/"));
-
-        // It arrives as somebody's own application, not as a copy of a file
-        // that describes itself as a template.
-        assert!(
-            source.starts_with("use kobo_sdk::prelude::*;"),
-            "{}",
-            &source[..80]
-        );
-        assert!(!source.contains("//!"));
-        assert!(source.ends_with('\n'));
-    }
-
-    #[test]
-    fn detects_sdk_application_manifests() {
-        assert!(manifest_uses_sdk(
-            "[dependencies]\nkobo-sdk = { path = \"../kobo-sdk\" }"
-        ));
-        assert!(manifest_uses_sdk(
-            "[dependencies]\nkobo-sdk.workspace = true"
-        ));
-        assert!(!manifest_uses_sdk("[dependencies]\nkobo-ui = \"0.1\""));
-    }
-
-    #[test]
-    fn finds_executable_from_cargo_build_output() {
-        let output = concat!(
-            r#"{"reason":"compiler-artifact","target":{"kind":["lib"]},"executable":null}"#,
-            "\n",
-            r#"{"reason":"compiler-artifact","target":{"kind":["bin"]},"executable":"/apps/hello/target/debug/hello"}"#
-        );
-        assert_eq!(
-            build_executables(output),
-            vec![std::path::PathBuf::from("/apps/hello/target/debug/hello")]
-        );
-    }
-
-    #[test]
-    fn simulation_guard_removes_private_artifacts() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(format!(".simulation-cleanup-{}", std::process::id()));
-        let guard = SimulationGuard::new_at(root.clone()).expect("create simulation guard");
-        fs::write(&guard.socket, b"socket").expect("write socket fixture");
-        fs::write(&guard.frame, b"frame").expect("write frame fixture");
-        drop(guard);
-        assert!(!root.exists());
-    }
-
-    #[test]
-    fn dev_session_guard_removes_private_artifacts() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(format!(".dev-cleanup-{}", std::process::id()));
-        let guard = DevSessionGuard::new_at(root.clone()).expect("create development session");
-        fs::write(&guard.socket, b"socket").expect("write socket fixture");
-        drop(guard);
-        assert!(!root.exists());
-    }
-
-    #[test]
-    fn default_device_build_excludes_guard_and_smoke() {
-        assert_eq!(
-            DEVICE_PACKAGES,
-            ["kobo-doctor", "kobod", "kobo-todo", "kobo-terminal"]
-        );
-        assert!(!DEVICE_PACKAGES.contains(&"kobo-guard"));
-        assert!(!DEVICE_PACKAGES.contains(&"kobo-smoke"));
-    }
-
-    #[cfg(feature = "device-write")]
-    #[test]
-    fn the_guard_test_needs_the_exact_confirmation_and_a_clean_host() {
-        let arguments = |parts: &[&str]| {
-            parts
-                .iter()
-                .map(|part| (*part).to_owned())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            parse_guard_test(&arguments(&[
-                "--device",
-                "192.168.1.15",
-                "--confirm",
-                GUARD_TEST_CONFIRMATION
-            ])),
-            Ok("192.168.1.15")
-        );
-        for rejected in [
-            vec!["--device", "192.168.1.15", "--confirm", "GUARD_RESTORE"],
-            vec!["--device", "192.168.1.15", "--confirm", ""],
-            vec!["--device", "192.168.1.15"],
-            vec![
-                "--device",
-                "192.168.1.15; reboot",
-                "--confirm",
-                GUARD_TEST_CONFIRMATION,
-            ],
-        ] {
-            assert!(
-                parse_guard_test(&arguments(&rejected)).is_err(),
-                "{rejected:?} must be refused"
-            );
-        }
-    }
-
-    #[cfg(feature = "device-write")]
-    #[test]
-    fn the_guard_artifact_is_built_from_this_workspace_and_never_the_default_device_set() {
-        let artifact = RemoteArtifact::guard();
-        assert_eq!(artifact.package, "kobo-guard");
-        assert_eq!(artifact.features, Some("device-write"));
-        assert!(artifact
-            .local_binary
-            .ends_with("armv7-unknown-linux-musleabihf/release/kobo-guard"));
-        // The child is an exact absolute path, never resolved through PATH.
-        assert!(GUARD_TEST_CHILD.starts_with('/'));
-    }
-
-    #[cfg(feature = "device-write")]
-    #[test]
-    fn existing_run_command_cannot_invoke_the_smoke_binary() {
-        let error = run(&["run".to_owned(), "kobo-smoke".to_owned()]).expect_err("run is gated");
-        assert!(error.contains("device execution is safety-gated"));
-    }
-
-    #[test]
-    fn remote_doctor_uses_strict_hosts_and_workspace_artifact() {
-        fn arguments(values: &[&str]) -> Vec<String> {
-            values.iter().map(|v| (*v).to_owned()).collect()
-        }
-        assert_eq!(
-            super::parse_doctor(&arguments(&["--json", "--device", "192.0.2.1"])),
-            Ok((Some("192.0.2.1"), true))
-        );
-        for invalid in [
-            vec!["--json", "--json"],
-            vec!["--device"],
-            vec!["--device", "reader;reboot"],
-            vec!["--surprise"],
-        ] {
-            assert!(super::parse_doctor(&arguments(&invalid)).is_err());
-        }
-        assert!(valid_device_host("192.0.2.1"));
-        assert!(valid_device_host("kobo-reader_1"));
-        assert!(!valid_device_host(""));
-        assert!(!valid_device_host("reader;reboot"));
-        assert!(!valid_device_host("reader name"));
-        assert_eq!(
-            workspace_doctor_binary(),
-            super::workspace_target_directory()
-                .join("armv7-unknown-linux-musleabihf/release/kobo-doctor")
-        );
-        #[cfg(feature = "device-write")]
-        assert_eq!(
-            workspace_smoke_binary(),
-            super::workspace_target_directory()
-                .join("armv7-unknown-linux-musleabihf/release/kobo-smoke")
-        );
-    }
-
-    #[test]
-    fn cargo_target_dir_resolves_exactly_like_the_build_invocation() {
-        let workspace = PathBuf::from("/source/cobalt");
-        let invocation = PathBuf::from("/runner/jobs/package");
-        let relative = std::ffi::OsStr::new("../../cobalt-targets");
-        let resolved = configured_target_directory(&workspace, &invocation, Some(relative));
-        assert_eq!(resolved, invocation.join(relative));
-        assert_ne!(resolved, workspace.join(relative));
-        assert_eq!(
-            resolved.join("armv7-unknown-linux-musleabihf/release/kobod"),
-            invocation
-                .join(relative)
-                .join("armv7-unknown-linux-musleabihf/release/kobod")
-        );
-        assert_eq!(
-            configured_target_directory(&workspace, &invocation, None),
-            workspace.join("target")
-        );
-        assert_eq!(
-            configured_target_directory(
-                &workspace,
-                &invocation,
-                Some(std::ffi::OsStr::new("/external/cobalt-targets"))
-            ),
-            PathBuf::from("/external/cobalt-targets")
-        );
-    }
-
-    #[cfg(feature = "device-write")]
-    #[test]
-    fn smoke_confirmation_is_exact_and_has_no_arbitrary_arguments() {
-        let exact = [
-            "--device".to_owned(),
-            "192.0.2.1".to_owned(),
-            "--confirm".to_owned(),
-            "DISPLAY_ONLY_GC16".to_owned(),
-        ];
-        assert_eq!(
-            parse_smoke_display(&exact),
-            Ok(("192.0.2.1", SmokeStage::DisplayOnly))
-        );
-        let reversible = [
-            "--device".to_owned(),
-            "192.0.2.1".to_owned(),
-            "--confirm".to_owned(),
-            "REVERSIBLE_PIXELS_GC16".to_owned(),
-        ];
-        assert_eq!(
-            parse_smoke_display(&reversible),
-            Ok(("192.0.2.1", SmokeStage::ReversiblePixels))
-        );
-        for invalid in [
-            vec![],
-            vec!["--device", "192.0.2.1", "--confirm", "display_only_gc16"],
-            vec!["--device", "192.0.2.1", "--confirm", "FULL_SCREEN_GC16"],
-            vec![
-                "--device",
-                "192.0.2.1",
-                "--confirm",
-                "DISPLAY_ONLY_GC16",
-                "--extra",
-            ],
-            vec![
-                "--device",
-                "reader;reboot",
-                "--confirm",
-                "DISPLAY_ONLY_GC16",
-            ],
-        ] {
-            let invalid = invalid.into_iter().map(str::to_owned).collect::<Vec<_>>();
-            assert!(parse_smoke_display(&invalid).is_err());
-        }
-    }
-
-    #[test]
-    fn dev_session_parsing_is_exact_and_host_checked() {
-        use super::{devsession::Switch, DevSessionAction};
-        let base = ["--device".to_owned(), "192.0.2.1".to_owned()];
-        let parse = |extra: &[&str]| {
-            let mut arguments = base.to_vec();
-            arguments.extend(extra.iter().map(|value| (*value).to_owned()));
-            super::parse_dev_session(&arguments).map(|(host, action)| (host.to_owned(), action))
-        };
-        assert_eq!(
-            parse(&[]),
-            Ok(("192.0.2.1".to_owned(), DevSessionAction::Status))
-        );
-        assert_eq!(
-            parse(&["--status"]),
-            Ok(("192.0.2.1".to_owned(), DevSessionAction::Status))
-        );
-        assert_eq!(
-            parse(&["--keep-awake", "on"]),
-            Ok((
-                "192.0.2.1".to_owned(),
-                DevSessionAction::KeepAwake(Switch::On)
-            ))
-        );
-        assert_eq!(
-            parse(&["--wifi-always-on", "off"]),
-            Ok((
-                "192.0.2.1".to_owned(),
-                DevSessionAction::WifiAlwaysOn(Switch::Off)
-            ))
-        );
-        assert_eq!(
-            parse(&["--restore-reader-config"]),
-            Ok(("192.0.2.1".to_owned(), DevSessionAction::RestoreConfig))
-        );
-        for invalid in [
-            vec!["--keep-awake"],
-            vec!["--keep-awake", "yes"],
-            vec!["--wifi-always-on", "1"],
-            vec!["--unknown"],
-            vec!["--status", "--keep-awake", "on"],
-        ] {
-            assert!(parse(&invalid).is_err(), "{invalid:?} must be rejected");
-        }
-        let hostile = [
-            "--device".to_owned(),
-            "reader;reboot".to_owned(),
-            "--status".to_owned(),
-        ];
-        assert!(super::parse_dev_session(&hostile).is_err());
-        assert!(super::parse_dev_session(&[]).is_err());
-    }
-
-    #[cfg(feature = "device-write")]
-    #[test]
-    fn each_stage_maps_to_exactly_one_device_unlock() {
-        assert_eq!(
-            SmokeStage::DisplayOnly.device_unlock(),
-            "OWNER_ATTENDED_DISPLAY_ONLY_GC16"
-        );
-        assert_eq!(
-            SmokeStage::ReversiblePixels.device_unlock(),
-            "OWNER_ATTENDED_REVERSIBLE_PIXELS_GC16"
-        );
-    }
-
-    #[cfg(feature = "device-write")]
-    #[test]
-    fn smoke_build_is_pinned_to_this_workspace_and_feature_targeted() {
-        let command = super::device_build_command("kobo-smoke", Some("device-write"))
-            .expect("create smoke build command");
-        let arguments = command
-            .get_args()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            arguments,
-            [
-                "build",
-                "--release",
-                "--locked",
-                "--manifest-path",
-                &super::workspace_manifest().display().to_string(),
-                "--target",
-                "armv7-unknown-linux-musleabihf",
-                "-p",
-                "kobo-smoke",
-                "--bin",
-                "kobo-smoke",
-                "--features",
-                "device-write",
-            ]
-        );
-        assert!(super::workspace_manifest().is_file());
-    }
-
-    #[cfg(feature = "device-write")]
-    #[test]
-    fn remote_session_uses_stdin_only_and_fixed_safe_artifacts() {
-        let ssh = super::remote_shell_command("root@192.0.2.1");
-        let ssh_args = ssh
-            .get_args()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            &ssh_args[..5],
-            ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
-        );
-        assert!(matches!(ssh_args.len(), 6 | 10), "{ssh_args:?}");
-        if ssh_args.len() == 10 {
-            assert_eq!(&ssh_args[5..8], ["-o", "IdentitiesOnly=yes", "-i"]);
-            assert_eq!(
-                PathBuf::from(&ssh_args[8])
-                    .file_name()
-                    .and_then(|name| name.to_str()),
-                Some(super::DEVICE_KEY_NAME)
-            );
-        }
-        assert_eq!(ssh_args.last().expect("remote host"), "root@192.0.2.1");
-        let checksum = "a".repeat(64);
-        let encoded = super::base64_encode(b"fixed artifact");
-        let session = RemoteArtifactSession {
-            directory: "/tmp/kobo-smoke-123-456".to_owned(),
-            binary: "/tmp/kobo-smoke-123-456/kobo-smoke".to_owned(),
-            owner_file: "/tmp/kobo-smoke-123-456/.kobo-smoke-owner".to_owned(),
-            owner_token: "0123456789abcdef0123456789abcdef".to_owned(),
-        };
-        let script = super::remote_fixed_artifact_script(
-            &session,
-            &RemoteProgram::Smoke(SmokeStage::DisplayOnly),
-            &checksum,
-            &encoded,
-        );
-        assert!(script.starts_with("set -eu\numask 077\n"));
-        assert!(script.contains("mkdir -m 700 \"$dir\""));
-        assert!(script.contains("trap cleanup EXIT HUP INT TERM"));
-        assert!(script.contains("IFS= read -r actual < \"$owner\""));
-        assert!(script.contains("[ \"$actual\" = \"$token\" ]"));
-        assert!(
-            script.find("mkdir -m 700").expect("mkdir")
-                < script.find("trap cleanup").expect("trap")
-        );
-        assert!(script.contains("rm -f \"$bin\""));
-        assert!(script.contains("rmdir \"$dir\""));
-        assert!(script.contains("base64 -d > \"$bin\" <<'KOBO_ARTIFACT_BASE64'"));
-        assert!(script.contains(&encoded));
-        assert!(script.contains(&checksum));
-        assert!(script.contains("KOBO_SMOKE_UNLOCK='OWNER_ATTENDED_DISPLAY_ONLY_GC16'"));
-        assert!(script.contains("[ -x /usr/bin/timeout ]"));
-        assert!(script.contains("/usr/bin/timeout 25 \"$bin\""));
-        assert!(script.contains("refusing display smoke"));
-        assert!(!script.contains("192.0.2.1"));
-        assert!(!script.contains("scp"));
-        assert!(!script.contains("reader;reboot"));
-        assert!(script.ends_with("exit\n"));
-        let cleanup = super::remote_cleanup_script(&session);
-        assert!(cleanup.contains("IFS= read -r actual < \"$owner\""));
-        assert!(cleanup.contains("[ \"$actual\" = \"$token\" ]"));
-        assert!(cleanup.contains("rm -f \"$bin\" \"$owner\""));
-        assert!(cleanup.contains("rmdir \"$dir\""));
-        assert_eq!(REMOTE_CONNECT_TIMEOUT_SECONDS, 10);
-        assert_eq!(REMOTE_COMMAND_TIMEOUT.as_secs(), 60);
-        assert_eq!(REMOTE_CLEANUP_TIMEOUT.as_secs(), 5);
-        #[cfg(feature = "device-write")]
-        {
-            assert_eq!(REMOTE_SMOKE_TIMEOUT_SECONDS, 25);
-            assert!(REMOTE_COMMAND_TIMEOUT.as_secs() > REMOTE_SMOKE_TIMEOUT_SECONDS);
-        }
-        let token = super::remote_owner_token().expect("ownership token");
-        assert_eq!(token.len(), 32);
-        assert!(token.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    }
-
-    #[cfg(feature = "device-write")]
-    #[test]
-    fn a_whole_tap_sequence_travels_in_one_upload_and_outlasts_its_own_waits() {
-        // The point of the sequence. Every step must reach the device in one
-        // script, and both timeouts must outlast the sleeping the device is
-        // being asked to do, or the run is killed partway through a tour.
-        let session = RemoteArtifactSession {
-            directory: "/tmp/kobo-tap-123-456".to_owned(),
-            binary: "/tmp/kobo-tap-123-456/kobo-tap".to_owned(),
-            owner_file: "/tmp/kobo-tap-123-456/.kobo-tap-owner".to_owned(),
-            owner_token: "0123456789abcdef0123456789abcdef".to_owned(),
-        };
-        let sequence = "1500:536,400 2000:80,80 2500:400,1380";
-        let artifact = super::RemoteArtifact::tap(sequence.to_owned(), 6_000);
-        let script = super::remote_fixed_artifact_script(
-            &session,
-            &artifact.program,
-            &"a".repeat(64),
-            &super::base64_encode(b"tap"),
-        );
-        assert!(script.contains(&format!("KOBO_TAP_POINT='{sequence}'")));
-        assert!(script.contains("KOBO_TAP_UNLOCK='OWNER_ATTENDED_SYNTHETIC_TOUCH'"));
-        // 6s of waiting, so the device-side bound is 36 and the host's is 66.
-        assert!(script.contains("/usr/bin/timeout 36 \"$bin\""));
-        assert!(artifact.timeout() > Duration::from_secs(6));
-        assert!(artifact.timeout() > Duration::from_secs(36));
-    }
-
-    #[cfg(feature = "device-write")]
-    #[test]
-    fn a_step_is_checked_here_before_anything_is_built_or_uploaded() {
-        assert_eq!(super::parse_tap_step("536,400"), Ok(0));
-        assert_eq!(super::parse_tap_step("1500:536,400"), Ok(1500));
-        assert!(super::parse_tap_step("536").is_err());
-        assert!(super::parse_tap_step("soon:536,400").is_err());
-        assert!(super::parse_tap_step("536,-4").is_err());
-    }
-
-    #[test]
-    fn base64_round_trips_artifact_bytes() {
-        let bytes = (0_u8..58).collect::<Vec<_>>();
-        let encoded = super::base64_encode(&bytes);
-        assert!(encoded.contains('\n'));
-        assert_eq!(decode_base64(&encoded), bytes);
-    }
-
-    #[test]
-    fn parser_push_validates_story_formats_before_contacting_a_reader() {
-        for version in [3, 5, 8] {
-            let mut story = vec![0; 64];
-            story[0] = version;
-            assert_eq!(super::validate_parser_story(&story), Ok(()));
-        }
-        assert!(super::validate_parser_story(b"Glul followed by bytes")
-            .expect_err("Glulx must be refused")
-            .contains("Glulx"));
-        let mut unsupported = vec![0; 64];
-        unsupported[0] = 6;
-        assert!(super::validate_parser_story(&unsupported)
-            .expect_err("v6 must be refused")
-            .contains("version 6"));
-    }
-
-    #[test]
-    fn remote_session_error_includes_captured_output() {
-        let message = super::remote_shell_error(
-            "remote doctor failed".to_owned(),
-            b"doctor stdout",
-            b"doctor stderr",
-        );
-        assert!(message.contains("stdout: doctor stdout"));
-        assert!(message.contains("stderr: doctor stderr"));
-    }
-
-    #[test]
-    fn remote_child_timeout_kills_the_local_process() {
-        let mut child = Command::new("/bin/sleep")
-            .arg("5")
-            .spawn()
-            .expect("start local sleep");
-        let error =
-            wait_for_remote_child(&mut child, "test remote command", Duration::from_millis(1))
-                .expect_err("timeout");
-        assert!(error.contains("timed out"));
-        assert!(child.try_wait().expect("inspect child").is_some());
-    }
-
-    fn decode_base64(value: &str) -> Vec<u8> {
-        fn digit(value: u8) -> u8 {
-            match value {
-                b'A'..=b'Z' => value - b'A',
-                b'a'..=b'z' => value - b'a' + 26,
-                b'0'..=b'9' => value - b'0' + 52,
-                b'+' => 62,
-                b'/' => 63,
-                _ => panic!("invalid base64 byte"),
-            }
-        }
-
-        let compact = value
-            .bytes()
-            .filter(|byte| !byte.is_ascii_whitespace())
-            .collect::<Vec<_>>();
-        let mut decoded = Vec::new();
-        for chunk in compact.chunks_exact(4) {
-            let padding = usize::from(chunk[2] == b'=') + usize::from(chunk[3] == b'=');
-            let value = (u32::from(digit(chunk[0])) << 18)
-                | (u32::from(digit(chunk[1])) << 12)
-                | (u32::from(if chunk[2] == b'=' { 0 } else { digit(chunk[2]) }) << 6)
-                | u32::from(if chunk[3] == b'=' { 0 } else { digit(chunk[3]) });
-            let bytes = value.to_be_bytes();
-            decoded.push(bytes[1]);
-            if padding < 2 {
-                decoded.push(bytes[2]);
-            }
-            if padding == 0 {
-                decoded.push(bytes[3]);
-            }
-        }
-        decoded
-    }
-
-    mod holding {
-        use super::super::{parse_dev_session, DevSessionAction, HOLD_MAXIMUM_MINUTES};
-
-        fn arguments(values: &[&str]) -> Vec<String> {
-            values.iter().map(|value| (*value).to_owned()).collect()
-        }
-
-        #[test]
-        fn defaults_to_thirty_minutes() {
-            let given = arguments(&["--device", "192.0.2.1", "--hold"]);
-            assert_eq!(
-                parse_dev_session(&given).expect("parse").1,
-                DevSessionAction::Hold(30)
-            );
-        }
-
-        #[test]
-        fn accepts_an_explicit_duration() {
-            let given = arguments(&["--device", "192.0.2.1", "--hold", "90"]);
-            assert_eq!(
-                parse_dev_session(&given).expect("parse").1,
-                DevSessionAction::Hold(90)
-            );
-        }
-
-        #[test]
-        fn refuses_a_zero_or_unbounded_hold() {
-            // A hold must always end by itself, so it can never be forgotten.
-            let zero = arguments(&["--device", "192.0.2.1", "--hold", "0"]);
-            assert!(parse_dev_session(&zero).is_err());
-            let too_long = (HOLD_MAXIMUM_MINUTES + 1).to_string();
-            let over = arguments(&["--device", "192.0.2.1", "--hold", &too_long]);
-            assert!(parse_dev_session(&over).is_err());
-            let words = arguments(&["--device", "192.0.2.1", "--hold", "forever"]);
-            assert!(parse_dev_session(&words).is_err());
-        }
-    }
-
-    mod change_counting {
-        use super::super::changed_lines;
-
-        #[test]
-        fn reads_the_reported_count() {
-            assert_eq!(
-                changed_lines(b"applied; changed_lines=3\nforce_wifi_on: true\n"),
-                3
-            );
-            assert_eq!(changed_lines(b"applied; changed_lines=0\n"), 0);
-        }
-
-        #[test]
-        fn treats_anything_unreadable_as_no_change() {
-            // Advice may only be suppressed by this, never invented.
-            assert_eq!(changed_lines(b""), 0);
-            assert_eq!(changed_lines(b"applied; changed_lines=lots\n"), 0);
-            assert_eq!(changed_lines(b"something else entirely\n"), 0);
-            assert_eq!(changed_lines(&[0xff, 0xfe, 0x00]), 0);
-        }
-    }
-
-    mod simulating {
-        use super::super::simulated_package;
-
-        fn arguments(values: &[&str]) -> Vec<String> {
-            values.iter().map(|value| (*value).to_owned()).collect()
-        }
-
-        #[test]
-        fn without_an_app_it_runs_the_one_it_always_ran() {
-            assert_eq!(simulated_package(&arguments(&[])), Ok("kobo-todo"));
-        }
-
-        #[test]
-        fn an_app_can_be_named_the_way_the_launcher_names_it() {
-            assert_eq!(
-                simulated_package(&arguments(&["--app", "rss"])),
-                Ok("kobo-rss")
-            );
-            assert_eq!(
-                simulated_package(&arguments(&["-a", "gutenbird"])),
-                Ok("kobo-gutenbird")
-            );
-            assert_eq!(
-                simulated_package(&arguments(&["--app", "sudoku"])),
-                Ok("kobo-sudoku")
-            );
-        }
-
-        #[test]
-        fn an_app_can_also_be_named_the_way_cargo_names_it() {
-            assert_eq!(
-                simulated_package(&arguments(&["--app", "kobo-hn"])),
-                Ok("kobo-hn")
-            );
-        }
-
-        #[test]
-        fn the_runtime_is_not_an_application_to_run_against_itself() {
-            // kobod is on the packages list and is the thing already being
-            // started; asking for it would start two of them.
-            assert!(simulated_package(&arguments(&["--app", "kobod"])).is_err());
-        }
-
-        #[test]
-        fn a_name_that_is_not_an_app_is_refused_with_the_ones_that_are() {
-            let error =
-                simulated_package(&arguments(&["--app", "../../etc/passwd"])).expect_err("refused");
-            assert!(error.contains("rss"), "{error}");
-            assert!(error.contains("todo"), "{error}");
-            let missing = simulated_package(&arguments(&["--app"])).expect_err("refused");
-            assert!(missing.contains("needs a name"), "{missing}");
-        }
-
-        mod app_registry {
-            use super::super::super::{
-                contributed_store_packages, read_release_registry, workspace_manifest,
-                STORE_PACKAGES,
-            };
-            use std::collections::BTreeSet;
-
-            #[test]
-            fn cobalt_owned_registry_entries_are_known_store_applications() {
-                let registry = workspace_manifest()
-                    .parent()
-                    .expect("workspace root")
-                    .join("apps/catalog.json");
-                let apps = read_release_registry(&registry).expect("registry");
-                let registered = apps
-                    .iter()
-                    .map(|app| app.package.as_str())
-                    .collect::<BTreeSet<_>>();
-                let known = STORE_PACKAGES.iter().copied().collect::<BTreeSet<_>>();
-                assert!(
-                    registered.is_subset(&known),
-                    "Cobalt-owned base entries must remain presentable; third-party manifests are collected by tools/app-registry.mjs"
-                );
-                // Versions move with every release, so the check is that
-                // each entry carries a version rather than which version it
-                // carries. A pinned number here broke every routine catalog
-                // bump while catching nothing the shape check misses.
-                for app in &apps {
-                    let parts: Vec<&str> = app.version.split('.').collect();
-                    assert!(
-                        parts.len() == 3
-                            && parts.iter().all(|part| {
-                                !part.is_empty() && part.chars().all(|digit| digit.is_ascii_digit())
-                            }),
-                        "{} version {:?} is not three dot-separated numbers",
-                        app.id,
-                        app.version
-                    );
-                }
-            }
-
-            #[test]
-            fn standalone_contributions_are_discovered_without_a_package_list_edit() {
-                let contributed = contributed_store_packages()
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<BTreeSet<_>>();
-                for package in [
-                    "kobo-arxiv",
-                    "kobo-morse",
-                    "kobo-sudoku",
-                    "kobo-zotero-reader",
-                ] {
-                    assert!(contributed.contains(package), "missing {package}");
-                }
-            }
-        }
-    }
-
-    mod preparing {
-        use super::super::{
-            choose_reader_list, confirmation_answer, dry_run_plan, gzip,
-            load_release_package_from_manifest, parse_setup, setup, setup_device_with_confirmation,
-            undo_setup, SetupMode, SetupPayload,
-        };
-        use std::path::PathBuf;
-
-        fn arguments(values: &[&str]) -> Vec<String> {
-            values.iter().map(|value| (*value).to_owned()).collect()
-        }
-
-        /// A reader that has never had NickelMenu on it.
-        ///
-        /// A real path rather than a made-up one, because the plan now asks
-        /// the volume what is already installed. The first version of this
-        /// pointed at /Volumes/KOBOeReader and quietly read whichever device
-        /// happened to be plugged in, so the test passed or failed by what was
-        /// on somebody's desk.
-        fn fresh_reader() -> (setup::Mounted, TempVolume) {
-            let volume = TempVolume::new("fresh");
-            (mounted(volume.path.clone()), volume)
-        }
-
-        /// A reader that already has the plugin, which most do by the second
-        /// run of this command.
-        fn prepared_reader() -> (setup::Mounted, TempVolume) {
-            let volume = TempVolume::new("prepared");
-            let folder = volume.path.join(menu_config_folder());
-            std::fs::create_dir_all(&folder).expect("the plugin folder");
-            std::fs::write(folder.join("doc"), "nickelmenu").expect("the marker");
-            (mounted(volume.path.clone()), volume)
-        }
-
-        fn menu_config_folder() -> &'static str {
-            crate::menu::CONFIG_FOLDER
-        }
-
-        struct TempVolume {
-            path: PathBuf,
-        }
-
-        impl TempVolume {
-            fn new(name: &str) -> Self {
-                let path = std::env::current_dir()
-                    .expect("working directory")
-                    .join("target")
-                    .join(format!(
-                        "kobo-plan-{name}-{}-{:?}",
-                        std::process::id(),
-                        std::thread::current().id()
-                    ));
-                let _ = std::fs::remove_dir_all(&path);
-                std::fs::create_dir_all(&path).expect("a volume");
-                Self { path }
-            }
-        }
-
-        impl Drop for TempVolume {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.path);
-            }
-        }
-
-        fn mounted(volume: PathBuf) -> setup::Mounted {
-            setup::Mounted {
-                volume,
-                serial: "N365410043013".to_owned(),
-                firmware: "4.45.23697".to_owned(),
-            }
-        }
-
-        #[test]
-        fn a_bare_run_installs_ejects_and_waits() {
-            let parsed = parse_setup(&arguments(&[])).expect("parse");
-            assert_eq!(parsed.mode, SetupMode::Install);
-            assert!(parsed.eject);
-            assert!(parsed.wait);
-            assert!(!parsed.dry_run);
-            assert!(!parsed.enable_ssh);
-            assert!(!parsed.yes);
-            assert!(!parsed.non_interactive);
-        }
-
-        #[test]
-        fn automation_requires_an_explicit_confirmation() {
-            let error =
-                parse_setup(&arguments(&["--non-interactive"])).expect_err("confirmation required");
-            assert!(error.contains("--yes"), "{error}");
-            let parsed =
-                parse_setup(&arguments(&["--non-interactive", "--yes"])).expect("confirmed");
-            assert!(parsed.non_interactive);
-            assert!(parsed.yes);
-            for declined in ["", "n", "no", "later"] {
-                assert!(!confirmation_answer(declined));
-            }
-            assert!(confirmation_answer("yes\n"));
-        }
-
-        #[test]
-        fn declined_confirmation_writes_nothing() {
-            let volume = TempVolume::new("declined");
-            let system = volume.path.join(".kobo");
-            std::fs::create_dir_all(&system).expect("system folder");
-            std::fs::write(
-                system.join("version"),
-                "N365410043013,4.9.77,4.45.23697,4.9.77\n",
-            )
-            .expect("version");
-            setup_device_with_confirmation(
-                &arguments(&[
-                    "--volume",
-                    volume.path.to_str().expect("path"),
-                    "--source",
-                    "--no-eject",
-                ]),
-                |_, _, _, _| Ok(false),
-            )
-            .expect("declined cleanly");
-            assert!(!volume.path.join(setup::INSTALL_FOLDER).exists());
-            assert!(!volume.path.join(setup::SETTINGS).exists());
-        }
-
-        #[test]
-        fn several_readers_are_refused_without_printing_full_serials() {
-            let first = mounted(PathBuf::from("/Volumes/ONE"));
-            let mut second = mounted(PathBuf::from("/Volumes/TWO"));
-            second.serial = "N418999999999".to_owned();
-            let error = choose_reader_list(vec![first, second]).expect_err("ambiguous");
-            assert!(error.contains("2 readers"), "{error}");
-            assert!(error.contains("/Volumes/ONE"), "{error}");
-            assert!(!error.contains("N365410043013"), "{error}");
-            assert!(!error.contains("N418999999999"), "{error}");
-        }
-
-        #[test]
-        fn source_build_setup_remains_an_explicit_supported_path() {
-            let parsed = parse_setup(&arguments(&["--source", "--dry-run"])).expect("source");
-            assert!(parsed.source);
-            assert!(parse_setup(&arguments(&["--source", "--release-dir", "release"])).is_err());
-        }
-
-        #[test]
-        fn a_verified_prebuilt_device_package_becomes_direct_writer_members() {
-            let release = TempVolume::new("prebuilt");
-            std::fs::write(release.path.join("channel"), "stable\n").expect("channel");
-            let members = vec![
-                crate::package::Member {
-                    path: crate::package::LAUNCH_BOOTSTRAP.to_owned(),
-                    bytes: crate::bootstrap::CONTENT.as_bytes().to_vec(),
-                    program: true,
-                },
-                crate::package::Member {
-                    path: format!("{}/bin/kobod", crate::package::INSTALL_ROOT),
-                    bytes: b"prebuilt binary".to_vec(),
-                    program: true,
-                },
-                crate::package::Member {
-                    path: format!("{}/VERSION", crate::package::INSTALL_ROOT),
-                    bytes: format!("{}\n", env!("CARGO_PKG_VERSION")).into_bytes(),
-                    program: false,
-                },
-            ];
-            let archive = crate::package::tar(&members).expect("archive");
-            let compressed = gzip(&archive).expect("gzip");
-            let asset_name = format!("cobalt-{}-KoboRoot.tgz", env!("CARGO_PKG_VERSION"));
-            std::fs::write(release.path.join(&asset_name), &compressed).expect("package");
-            let manifest = crate::host_release::Manifest {
-                version: env!("CARGO_PKG_VERSION").to_owned(),
-                channels: vec!["stable".to_owned(), "beta".to_owned()],
-                source: "0123456789abcdef0123456789abcdef01234567".to_owned(),
-                assets: vec![crate::host_release::Asset {
-                    kind: "device".to_owned(),
-                    platform: None,
-                    name: asset_name,
-                    bytes: compressed.len() as u64,
-                    sha256: crate::sha256::hex_digest(&compressed),
-                }],
-            };
-            let mut damaged = manifest.clone();
-            damaged.assets[0].sha256 = "0".repeat(64);
-            let Err(error) = load_release_package_from_manifest(&release.path, damaged) else {
-                panic!("bad checksum was accepted");
-            };
-            assert!(error.contains("checksum failed"), "{error}");
-            let payload = load_release_package_from_manifest(&release.path, manifest.clone())
-                .expect("prebuilt");
-            match payload {
-                SetupPayload::Prebuilt { built, channel, .. } => {
-                    assert_eq!(channel, "stable");
-                    assert_eq!(built.members, members);
-                }
-                SetupPayload::Source => panic!("prebuilt became source build"),
-            }
-
-            let invalid_archive = crate::package::archive(
-                &[],
-                &[
-                    (
-                        crate::package::LAUNCH_BOOTSTRAP.to_owned(),
-                        crate::bootstrap::CONTENT.as_bytes().to_vec(),
-                        0o700,
-                    ),
-                    (
-                        format!("{}/VERSION", crate::package::INSTALL_ROOT),
-                        format!("{}\n", env!("CARGO_PKG_VERSION")).into_bytes(),
-                        0o644,
-                    ),
-                ],
-            );
-            let invalid_compressed = gzip(&invalid_archive).expect("invalid gzip");
-            std::fs::write(
-                release.path.join(&manifest.assets[0].name),
-                &invalid_compressed,
-            )
-            .expect("invalid package");
-            let mut invalid_manifest = manifest.clone();
-            invalid_manifest.assets[0].bytes = invalid_compressed.len() as u64;
-            invalid_manifest.assets[0].sha256 = crate::sha256::hex_digest(&invalid_compressed);
-            let Err(error) = load_release_package_from_manifest(&release.path, invalid_manifest)
-            else {
-                panic!("wrong bootstrap mode passed prebuilt validation");
-            };
-            assert!(error.contains("first regular 0755"), "{error}");
-            std::fs::write(release.path.join(&manifest.assets[0].name), &compressed)
-                .expect("restore valid package");
-
-            std::fs::write(release.path.join("channel"), "beta\n").expect("channel");
-            let manifest = crate::host_release::Manifest {
-                version: env!("CARGO_PKG_VERSION").to_owned(),
-                channels: vec!["stable".to_owned(), "beta".to_owned()],
-                source: "0123456789abcdef0123456789abcdef01234567".to_owned(),
-                assets: vec![crate::host_release::Asset {
-                    kind: "device".to_owned(),
-                    platform: None,
-                    name: format!("cobalt-{}-KoboRoot.tgz", env!("CARGO_PKG_VERSION")),
-                    bytes: compressed.len() as u64,
-                    sha256: crate::sha256::hex_digest(&compressed),
-                }],
-            };
-            let Err(error) = load_release_package_from_manifest(&release.path, manifest) else {
-                panic!("beta USB package was accepted");
-            };
-            assert!(error.contains("stable releases only"), "{error}");
-        }
-
-        #[test]
-        fn the_wait_can_be_declined() {
-            let parsed = parse_setup(&arguments(&["--no-wait"])).expect("parse");
-            assert!(!parsed.wait);
-            assert!(
-                parsed.eject,
-                "declining the wait does not decline the eject"
-            );
-        }
-
-        #[test]
-        fn a_dry_run_of_an_undo_describes_the_undo_and_performs_nothing() {
-            // This is the whole reason the two are one mode and not two flags.
-            // Read as two booleans, '--undo --dry-run' took the undo branch
-            // first and removed Cobalt from a reader nobody had agreed to.
-            let parsed = parse_setup(&arguments(&["--undo", "--dry-run"])).expect("parse");
-            assert_eq!(parsed.mode, SetupMode::Undo);
-            assert!(parsed.dry_run);
-            let plan = dry_run_plan(&parsed, &fresh_reader().0);
-            assert!(plan.starts_with("would "), "{plan}");
-            assert!(plan.contains("would remove"), "{plan}");
-            assert!(plan.contains(".adds/cobalt-launch.sh"), "{plan}");
-            assert!(plan.contains(".adds/nm/menu"), "{plan}");
-            assert!(plan.contains(".adds/cobalt.recovery.N"), "{plan}");
-            assert!(plan.contains(".adds/cobalt.unusable[.N]"), "{plan}");
-            assert!(plan.contains(setup::SSH_ENABLED), "{plan}");
-            assert!(!plan.contains("would install"), "{plan}");
-        }
-
-        #[test]
-        fn full_undo_preserves_mixed_nickelmenu_owner_entries() {
-            let (reader, volume) = prepared_reader();
-            std::fs::create_dir_all(volume.path.join(crate::setup::INSTALL_FOLDER))
-                .expect("managed payload");
-            crate::bootstrap::install(&volume.path).expect("bootstrap");
-            let cobalt_owner =
-                "menu_item :main :Owner tool :cmd_spawn :quiet:/mnt/onboard/owner.sh\n";
-            let shared_owner = "menu_item :main :Other :cmd_spawn :quiet:/mnt/onboard/other.sh\n";
-            std::fs::write(
-                volume.path.join(crate::menu::CONFIG),
-                format!(
-                    "{}{}",
-                    crate::menu::config(crate::setup::INSTALL_FOLDER),
-                    cobalt_owner
-                ),
-            )
-            .expect("mixed dedicated config");
-            std::fs::write(
-                volume.path.join(".adds/nm/menu"),
-                format!(
-                    "menu_item :main :Cobalt :cmd_spawn :quiet:{}\n{}",
-                    crate::bootstrap::DEVICE_PATH,
-                    shared_owner
-                ),
-            )
-            .expect("mixed shared config");
-
-            undo_setup(&reader, false).expect("full undo");
-
-            assert_eq!(
-                std::fs::read_to_string(volume.path.join(crate::menu::CONFIG))
-                    .expect("dedicated config"),
-                cobalt_owner
-            );
-            assert_eq!(
-                std::fs::read_to_string(volume.path.join(".adds/nm/menu")).expect("shared config"),
-                shared_owner
-            );
-            assert!(!volume.path.join(crate::menu::UNINSTALL_FLAG).exists());
-            assert!(volume.path.join(crate::menu::INSTALLED_MARKER).exists());
-            assert!(!volume.path.join(crate::bootstrap::RELATIVE_PATH).exists());
-            assert!(!volume.path.join(crate::setup::INSTALL_FOLDER).exists());
-        }
-
-        #[test]
-        fn a_dry_run_names_every_change_it_would_make() {
-            let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
-            let plan = dry_run_plan(&parsed, &fresh_reader().0);
-            assert!(plan.contains("would install"));
-            assert!(plan.contains("leave the firmware's SSH server disabled"));
-            assert!(plan.contains("stop after ejecting"));
-            for (section, key, value) in setup::SETTINGS_APPLIED {
-                assert!(plan.contains(&format!("{section}/{key}={value}")), "{plan}");
-            }
-        }
-
-        #[test]
-        fn root_ssh_requires_an_explicit_opt_in() {
-            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
-            assert!(parsed.enable_ssh);
-            let plan = dry_run_plan(&parsed, &fresh_reader().0);
-            assert!(plan.contains(setup::SSH_DISABLED), "{plan}");
-            assert!(plan.contains("root SSH"), "{plan}");
-            assert!(plan.contains("wait for the restarted reader"), "{plan}");
-        }
-
-        #[test]
-        fn a_dry_run_that_will_not_wait_says_so() {
-            let parsed = parse_setup(&arguments(&["--dry-run", "--enable-ssh", "--no-wait"]))
-                .expect("parse");
-            assert!(dry_run_plan(&parsed, &fresh_reader().0).contains("--no-wait was given"));
-        }
-
-        #[test]
-        fn enabling_ssh_installs_this_machines_key_by_default() {
-            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
-            assert!(parsed.authorize_key);
-            let plan = dry_run_plan(&parsed, &fresh_reader().0);
-            assert!(plan.contains("this machine's public key"), "{plan}");
-            assert!(plan.contains("kobo_cobalt"), "{plan}");
-            // Both go into the one slot the firmware reads, so the plan has to
-            // say so rather than describe two archives that cannot both exist.
-            assert!(plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
-            assert!(plan.contains("one authorized_keys"), "{plan}");
-        }
-
-        #[test]
-        fn no_key_says_why_no_key() {
-            let parsed =
-                parse_setup(&arguments(&["--enable-ssh", "--no-key", "--dry-run"])).expect("parse");
-            assert!(!parsed.authorize_key);
-            let plan = dry_run_plan(&parsed, &fresh_reader().0);
-            assert!(plan.contains("--no-key was given"), "{plan}");
-            assert!(!plan.contains("one authorized_keys"), "{plan}");
-        }
-
-        #[test]
-        fn without_ssh_there_is_no_key_to_install() {
-            let parsed = parse_setup(&arguments(&["--dry-run"])).expect("parse");
-            let plan = dry_run_plan(&parsed, &fresh_reader().0);
-            assert!(plan.contains("no SSH server to use it"), "{plan}");
-        }
-
-        #[test]
-        fn a_fresh_reader_is_told_both_things_go_into_the_one_slot() {
-            // The firmware extracts exactly one archive, so a plan that
-            // described two would be describing something impossible.
-            let (reader, _volume) = fresh_reader();
-            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
-            let plan = dry_run_plan(&parsed, &reader);
-            assert!(plan.contains("stage NickelMenu"), "{plan}");
-            assert!(plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
-            assert!(
-                plan.contains("NickelMenu's own two files and one authorized_keys"),
-                "{plan}"
-            );
-        }
-
-        #[test]
-        fn a_reader_that_already_has_the_plugin_is_not_promised_it_again() {
-            // Found on a real reader: the plan said it would stage NickelMenu
-            // and put the key in beside it, on a device that already had the
-            // plugin and where the key would go in alone.
-            let (reader, _volume) = prepared_reader();
-            let parsed = parse_setup(&arguments(&["--enable-ssh", "--dry-run"])).expect("parse");
-            let plan = dry_run_plan(&parsed, &reader);
-            assert!(plan.contains("already installed on this reader"), "{plan}");
-            assert!(plan.contains("would not write or reinstall"), "{plan}");
-            assert!(plan.contains("any NickelMenu files"), "{plan}");
-            assert!(plan.contains("or stage a KoboRoot.tgz"), "{plan}");
-            assert!(!plan.contains("stage NickelMenu"), "{plan}");
-            assert!(!plan.contains("same .kobo/KoboRoot.tgz"), "{plan}");
-            assert!(
-                plan.contains("nothing extracted as root but one authorized_keys"),
-                "{plan}"
-            );
-        }
-
-        #[test]
-        fn an_unknown_option_is_refused_with_the_whole_usage() {
-            let error = parse_setup(&arguments(&["--force"])).expect_err("refused");
-            assert!(error.contains("--no-wait"), "{error}");
-            assert!(error.contains("--undo"), "{error}");
-            assert!(error.contains("--no-key"), "{error}");
-        }
-    }
-
-    mod waiting {
-        use super::super::{parse_wait, DEVICE_WAIT_MAXIMUM_SECONDS};
-
-        fn arguments(values: &[&str]) -> Vec<String> {
-            values.iter().map(|value| (*value).to_owned()).collect()
-        }
-
-        #[test]
-        fn defaults_to_five_minutes() {
-            let given = arguments(&["--device", "192.0.2.1"]);
-            let parsed = parse_wait(&given).expect("parse");
-            assert_eq!(parsed.0, "192.0.2.1");
-            assert_eq!(parsed.1.as_secs(), 300);
-        }
-
-        #[test]
-        fn accepts_an_explicit_timeout() {
-            let given = arguments(&["--device", "192.0.2.1", "--timeout", "90"]);
-            let parsed = parse_wait(&given).expect("parse");
-            assert_eq!(parsed.1.as_secs(), 90);
-        }
-
-        #[test]
-        fn refuses_a_zero_or_unbounded_wait() {
-            let zero = arguments(&["--device", "192.0.2.1", "--timeout", "0"]);
-            assert!(parse_wait(&zero).is_err());
-            let too_long = (DEVICE_WAIT_MAXIMUM_SECONDS + 1).to_string();
-            let over = arguments(&["--device", "192.0.2.1", "--timeout", &too_long]);
-            assert!(parse_wait(&over).is_err());
-        }
-
-        #[test]
-        fn refuses_an_unsafe_host() {
-            let given = arguments(&["--device", "192.0.2.1; rm -rf /"]);
-            assert!(parse_wait(&given).is_err());
-        }
-
-        #[test]
-        fn refuses_unknown_flags() {
-            let given = arguments(&["--device", "192.0.2.1", "--forever"]);
-            assert!(parse_wait(&given).is_err());
-        }
-    }
-
-    #[test]
-    fn app_link_maintenance_accepts_only_fixed_actions_and_safe_hosts() {
-        let status = vec![
-            "status".to_owned(),
-            "--device".to_owned(),
-            "192.0.2.1".to_owned(),
-        ];
-        assert_eq!(super::parse_app_link(&status), Ok(("status", "192.0.2.1")));
-        let unpair = vec![
-            "unpair".to_owned(),
-            "-s".to_owned(),
-            "reader.local".to_owned(),
-        ];
-        assert_eq!(
-            super::parse_app_link(&unpair),
-            Ok(("unpair", "reader.local"))
-        );
-        for invalid in [
-            vec![
-                "delete".to_owned(),
-                "--device".to_owned(),
-                "reader".to_owned(),
-            ],
-            vec![
-                "status".to_owned(),
-                "--device".to_owned(),
-                "reader;reboot".to_owned(),
-            ],
-            vec!["status".to_owned()],
-        ] {
-            assert!(super::parse_app_link(&invalid).is_err());
-        }
-    }
-}
+mod tests;

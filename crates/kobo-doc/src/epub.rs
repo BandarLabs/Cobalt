@@ -733,6 +733,154 @@ fn fragment_of(href: &str) -> Option<String> {
         .filter(|fragment| !fragment.is_empty())
 }
 
+/// What a shelf shows for a book: its name, who wrote it, and its cover.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Description {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    /// Who published it. A saved web article names its site here.
+    pub publisher: Option<String>,
+    /// When the file was last made, as the package's `dcterms:modified`
+    /// says. For a saved web article, when it was saved.
+    pub modified: Option<String>,
+    /// The cover picture as the archive holds it, still encoded.
+    pub cover: Option<Vec<u8>>,
+}
+
+/// Reads what a shelf needs from an EPUB, without reading the book.
+///
+/// [`parse`] reads every chapter, so drawing a shelf of forty covers with it
+/// would parse forty novels. This follows the container to the package and
+/// stops there, apart from the one picture the package names as its cover.
+///
+/// # Errors
+///
+/// [`Fault::Archive`] when the bytes are not a readable zip, and
+/// [`Fault::NotABook`] when there is no package document in it.
+pub fn describe(bytes: &[u8]) -> Result<Description, Fault> {
+    described(bytes, true)
+}
+
+/// The same, without the cover, for a listing that only wants names.
+///
+/// # Errors
+///
+/// As for [`describe`].
+pub fn names(bytes: &[u8]) -> Result<Description, Fault> {
+    described(bytes, false)
+}
+
+fn described(bytes: &[u8], with_cover: bool) -> Result<Description, Fault> {
+    let archive = Archive::open(bytes)?;
+    let package_at = find_package(&archive).ok_or(Fault::NotABook)?;
+    let package = read_package(&text_of(&archive.read(&package_at)?));
+    let base = directory_of(&package_at);
+    let named = |text: &Option<String>| {
+        text.as_deref()
+            .map(crate::collapse)
+            .filter(|text| !text.is_empty())
+    };
+    Ok(Description {
+        title: named(&package.title),
+        author: named(&package.author),
+        publisher: named(&package.publisher),
+        modified: named(&package.modified),
+        cover: with_cover
+            .then(|| cover_of(&archive, &package, &base))
+            .flatten(),
+    })
+}
+
+/// The cover picture's bytes, found the way the book's own tools name it.
+///
+/// EPUB 3 marks it in the manifest and EPUB 2 points at it from a `<meta>`.
+/// A book that does neither usually still has an image called "cover", and
+/// failing that a cover page whose first picture is the cover. Each is tried
+/// in that order, because each is less certain than the one before.
+fn cover_of(archive: &Archive<'_>, package: &Package, base: &str) -> Option<Vec<u8>> {
+    let picture = |href: &str| {
+        archive
+            .read(&resolve(base, href))
+            .ok()
+            .filter(|bytes| !bytes.is_empty() && bytes.len() <= MAX_ONE_IMAGE_BYTES)
+    };
+    // An SVG is a drawing that names a picture, not a picture a shelf can
+    // decode, so it is followed to the picture it draws.
+    let is_drawing = |item: &Item| {
+        item.media_type.contains("svg") || item.href.to_ascii_lowercase().ends_with(".svg")
+    };
+    let is_picture = |item: &Item| {
+        !is_drawing(item)
+            && (item.media_type.starts_with("image/")
+                || is_picture_name(&item.href.to_ascii_lowercase()))
+    };
+    let marked = package
+        .cover_image
+        .iter()
+        .chain(package.cover_meta.iter())
+        .find_map(|id| match package.manifest.get(id) {
+            Some(item) if is_picture(item) => picture(&item.href),
+            Some(item) if is_drawing(item) => first_picture_in(archive, &resolve(base, &item.href)),
+            Some(_) => None,
+            // Some tools write the picture's path where an identifier belongs.
+            None => is_picture_name(&id.to_ascii_lowercase())
+                .then(|| picture(id))
+                .flatten(),
+        });
+    if marked.is_some() {
+        return marked;
+    }
+    let called_cover = package.manifest.iter().find_map(|(id, item)| {
+        let named = id.to_ascii_lowercase().contains("cover")
+            || item.href.to_ascii_lowercase().contains("cover");
+        (named && is_picture(item))
+            .then(|| picture(&item.href))
+            .flatten()
+    });
+    if called_cover.is_some() {
+        return called_cover;
+    }
+    let page = package.cover_page.clone().or_else(|| {
+        package
+            .spine
+            .first()
+            .and_then(|(id, _)| package.manifest.get(id))
+            .map(|item| item.href.clone())
+    })?;
+    first_picture_in(archive, &resolve(base, &page))
+}
+
+/// The first picture a page or a drawing in the archive refers to.
+fn first_picture_in(archive: &Archive<'_>, member: &str) -> Option<Vec<u8>> {
+    let xml = text_of(&archive.read(member).ok()?);
+    let mut source = None;
+    for_each_element(&xml, |name, inside, closing, _| {
+        if closing || source.is_some() {
+            return;
+        }
+        let local = name.rsplit(':').next().unwrap_or(name);
+        source = match local {
+            "img" => attribute(inside, "src"),
+            "image" => attribute(inside, "xlink:href").or_else(|| attribute(inside, "href")),
+            _ => None,
+        }
+        .map(decode_entities);
+    });
+    let at = resolve(&directory_of(member), &source?);
+    archive
+        .read(&at)
+        .ok()
+        .filter(|bytes| !bytes.is_empty() && bytes.len() <= MAX_ONE_IMAGE_BYTES)
+}
+
+/// Whether a member name looks like a picture, for a manifest that gave no
+/// media type.
+fn is_picture_name(name: &str) -> bool {
+    [".jpg", ".jpeg", ".png", ".gif", ".webp"]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+}
+
 /// Finds the package document.
 ///
 /// The container names it. When the container is missing or says nothing
@@ -779,6 +927,8 @@ struct Item {
 struct Package {
     title: Option<String>,
     author: Option<String>,
+    publisher: Option<String>,
+    modified: Option<String>,
     manifest: BTreeMap<String, Item>,
     /// Spine entries in order, each with whether it is part of the main flow.
     spine: Vec<(String, bool)>,
@@ -793,6 +943,14 @@ struct Package {
     /// it. The navigation document is preferred when there is one, and the NCX
     /// is what the great majority of Project Gutenberg's books actually carry.
     ncx: Option<String>,
+    /// The manifest identifier marked `properties="cover-image"`, which is
+    /// how EPUB 3 names its cover.
+    cover_image: Option<String>,
+    /// What `<meta name="cover">` points at, which is how EPUB 2 names it.
+    /// Meant to be a manifest identifier; some tools write a path instead.
+    cover_meta: Option<String>,
+    /// The page the guide calls the cover, for a book that names no picture.
+    cover_page: Option<String>,
 }
 
 impl Package {
@@ -817,14 +975,22 @@ fn read_package(xml: &str) -> Package {
     let mut package = Package {
         title: None,
         author: None,
+        publisher: None,
+        modified: None,
         manifest: BTreeMap::new(),
         spine: Vec::new(),
         nav: None,
         ncx: None,
+        cover_image: None,
+        cover_meta: None,
+        cover_page: None,
     };
     // The same element names appear in more than one place (`<title>` is in
     // the metadata and also in a `<guide>` reference) so the section matters.
     let mut in_metadata = false;
+    // A `<meta>` names what it holds in its opening tag and holds it before
+    // its closing one, so the name is kept until the value arrives.
+    let mut meta_property = None;
     for_each_element(xml, |name, inside, closing, before| {
         // A namespace prefix is chosen by whoever wrote the file. `dc:title`
         // and a `title` under a default Dublin Core namespace are the same
@@ -840,6 +1006,22 @@ fn read_package(xml: &str) -> Package {
             (true, "creator") if in_metadata && package.author.is_none() => {
                 package.author = Some(decode_entities(before));
             }
+            (true, "publisher") if in_metadata && package.publisher.is_none() => {
+                package.publisher = Some(decode_entities(before));
+            }
+            (false, "meta") if in_metadata => {
+                meta_property = attribute(inside, "property").map(decode_entities);
+                if attribute(inside, "name").is_some_and(|name| name == "cover") {
+                    package.cover_meta = attribute(inside, "content").map(decode_entities);
+                }
+            }
+            (true, "meta") => {
+                if meta_property.take().as_deref() == Some("dcterms:modified")
+                    && package.modified.is_none()
+                {
+                    package.modified = Some(decode_entities(before));
+                }
+            }
             (false, "item") => {
                 let id = attribute(inside, "id").map(decode_entities);
                 let href = attribute(inside, "href").map(decode_entities);
@@ -847,10 +1029,15 @@ fn read_package(xml: &str) -> Package {
                     // `properties` is a space-separated list, so `nav` has to
                     // be matched as one of its words: a stylesheet marked
                     // `navigation-only` is not the navigation document.
-                    if attribute(inside, "properties").is_some_and(|properties| {
-                        properties.split_whitespace().any(|word| word == "nav")
-                    }) {
+                    let properties = attribute(inside, "properties").unwrap_or_default();
+                    if properties.split_whitespace().any(|word| word == "nav") {
                         package.nav = Some(id.clone());
+                    }
+                    if properties
+                        .split_whitespace()
+                        .any(|word| word == "cover-image")
+                    {
+                        package.cover_image = Some(id.clone());
                     }
                     package.manifest.insert(
                         id,
@@ -862,6 +1049,12 @@ fn read_package(xml: &str) -> Package {
                         },
                     );
                 }
+            }
+            (false, "reference")
+                if attribute(inside, "type")
+                    .is_some_and(|kind| kind.eq_ignore_ascii_case("cover")) =>
+            {
+                package.cover_page = attribute(inside, "href").map(decode_entities);
             }
             (false, "spine") => {
                 package.ncx = attribute(inside, "toc").map(decode_entities);
@@ -1239,6 +1432,274 @@ fn slug(title: &str) -> String {
     } else {
         trimmed.to_owned()
     }
+}
+
+/// A book whose pages are already XHTML, with the pictures and the
+/// description a saved web article carries.
+///
+/// [`write`] takes plain prose and is the right call for text a person or a
+/// model typed. An article arrives with headings, lists, tables and figures
+/// that a blank-line format cannot hold, and with a site, a date and an
+/// address worth keeping, so this is the same container with those let in.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Publication {
+    pub title: String,
+    pub author: Option<String>,
+    /// A language tag such as `en` or `pt-BR`. Empty is written as `en`,
+    /// because EPUB 3 requires one and a guess is better than an invalid book.
+    pub language: String,
+    /// Who published it: for an article, the site.
+    pub publisher: Option<String>,
+    /// When it was published, as `YYYY`, `YYYY-MM-DD` or a full timestamp.
+    pub date: Option<String>,
+    /// Where it came from, written as `dc:source` and used for the identifier
+    /// so that saving the same page twice gives the same book.
+    pub source: Option<String>,
+    /// When the book was made, as `YYYY-MM-DDThh:mm:ssZ`. EPUB 3 requires it,
+    /// and this crate has no clock, so the caller says.
+    pub modified: String,
+    /// A style sheet every page links to, if any.
+    pub stylesheet: Option<String>,
+    pub pages: Vec<Page>,
+    pub resources: Vec<Resource>,
+}
+
+/// One page of a [`Publication`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Page {
+    /// What the contents list calls it.
+    pub title: String,
+    /// What goes inside `<body>`. It must already be well-formed XHTML: the
+    /// writer wraps it and does not check it, because only the caller knows
+    /// what it meant to write.
+    pub body: String,
+}
+
+/// A file the pages refer to, such as a picture.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Resource {
+    /// The path the pages use for it, relative to them, such as
+    /// `images/1.jpg`.
+    pub name: String,
+    pub media_type: String,
+    pub bytes: Vec<u8>,
+    /// Whether this is the picture a library shows for the book.
+    pub cover: bool,
+}
+
+/// Writes a [`Publication`] as an EPUB 3.
+///
+/// An NCX is written beside the EPUB 3 navigation document, because older
+/// readers, the firmware's among them, still look for one, and the two
+/// together are valid EPUB 3. The cover is named both ways for the same
+/// reason.
+///
+/// # Errors
+///
+/// Returns [`zip::Fault`] when the archive cannot be represented, or when a
+/// resource name would escape the package or collide with the book's own
+/// files.
+pub fn write_publication(book: &Publication) -> Result<Vec<u8>, zip::Fault> {
+    let identifier = format!(
+        "urn:cobalt:{}",
+        slug(book.source.as_deref().unwrap_or(&book.title))
+    );
+    let language = if book.language.trim().is_empty() {
+        "en"
+    } else {
+        book.language.trim()
+    };
+    let mut manifest = String::new();
+    let mut spine = String::new();
+    let mut ncx = String::new();
+    let mut nav = String::new();
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+
+    if let Some(css) = &book.stylesheet {
+        manifest.push_str("    <item id=\"css\" href=\"style.css\" media-type=\"text/css\"/>\n");
+        files.push(("OEBPS/style.css".to_owned(), css.clone().into_bytes()));
+    }
+    let link = if book.stylesheet.is_some() {
+        "<link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"/>"
+    } else {
+        ""
+    };
+    for (index, page) in book.pages.iter().enumerate() {
+        let id = format!("p{}", index + 1);
+        let href = format!("{id}.xhtml");
+        let _ = writeln!(
+            manifest,
+            "    <item id=\"{id}\" href=\"{href}\" media-type=\"application/xhtml+xml\"/>"
+        );
+        let _ = writeln!(spine, "    <itemref idref=\"{id}\"/>");
+        let _ = write!(
+            ncx,
+            "    <navPoint id=\"nav-{id}\" playOrder=\"{}\">\n      \
+             <navLabel><text>{}</text></navLabel>\n      \
+             <content src=\"{href}\"/>\n    </navPoint>\n",
+            index + 1,
+            escape(&page.title),
+        );
+        let _ = writeln!(
+            nav,
+            "      <li><a href=\"{href}\">{}</a></li>",
+            escape(&page.title)
+        );
+        let xhtml = page_xhtml(&page.title, language, link, &page.body);
+        files.push((format!("OEBPS/{href}"), xhtml.into_bytes()));
+    }
+
+    let mut cover_id = None;
+    let mut taken = std::collections::BTreeSet::new();
+    for (index, resource) in book.resources.iter().enumerate() {
+        // Two names the reader would look up as one are refused as well.
+        if !is_resource_name(&resource.name) || !taken.insert(resource.name.to_ascii_lowercase()) {
+            return Err(zip::Fault::Damaged);
+        }
+        let id = format!("r{}", index + 1);
+        let properties = if resource.cover && cover_id.is_none() {
+            cover_id = Some(id.clone());
+            " properties=\"cover-image\""
+        } else {
+            ""
+        };
+        let _ = writeln!(
+            manifest,
+            "    <item id=\"{id}\" href=\"{}\" media-type=\"{}\"{properties}/>",
+            escape(&resource.name),
+            escape(&resource.media_type),
+        );
+        files.push((format!("OEBPS/{}", resource.name), resource.bytes.clone()));
+    }
+
+    let metadata = publication_metadata(book, &identifier, language, cover_id.as_deref());
+    let package = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" \
+         unique-identifier=\"bookid\" xml:lang=\"{lang}\">\n  \
+         <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n{metadata}  </metadata>\n  \
+         <manifest>\n    \
+         <item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n    \
+         <item id=\"ncx\" href=\"toc.ncx\" media-type=\"application/x-dtbncx+xml\"/>\n\
+         {manifest}  </manifest>\n  <spine toc=\"ncx\">\n{spine}  </spine>\n</package>\n",
+        lang = escape(language),
+    );
+    let navigation = navigation_xhtml(&book.title, language, &nav);
+
+    let mut members = vec![
+        ("mimetype".to_owned(), b"application/epub+zip".to_vec()),
+        (CONTAINER.to_owned(), container_xml().into_bytes()),
+        ("OEBPS/content.opf".to_owned(), package.into_bytes()),
+        ("OEBPS/nav.xhtml".to_owned(), navigation.into_bytes()),
+        (
+            "OEBPS/toc.ncx".to_owned(),
+            toc_ncx(&book.title, &identifier, &ncx).into_bytes(),
+        ),
+    ];
+    members.append(&mut files);
+    zip::stored(&members)
+}
+
+/// The package's metadata block.
+fn publication_metadata(
+    book: &Publication,
+    identifier: &str,
+    language: &str,
+    cover_id: Option<&str>,
+) -> String {
+    let mut metadata = String::new();
+    let _ = writeln!(
+        metadata,
+        "    <dc:identifier id=\"bookid\">{}</dc:identifier>",
+        escape(identifier)
+    );
+    let _ = writeln!(metadata, "    <dc:title>{}</dc:title>", escape(&book.title));
+    let _ = writeln!(
+        metadata,
+        "    <dc:language>{}</dc:language>",
+        escape(language)
+    );
+    let optional = [
+        ("dc:creator", &book.author),
+        ("dc:publisher", &book.publisher),
+        ("dc:date", &book.date),
+        ("dc:source", &book.source),
+    ];
+    for (element, value) in optional {
+        if let Some(value) = value.as_deref().filter(|value| !value.trim().is_empty()) {
+            let _ = writeln!(
+                metadata,
+                "    <{element}>{}</{element}>",
+                escape(value.trim())
+            );
+        }
+    }
+    let _ = writeln!(
+        metadata,
+        "    <meta property=\"dcterms:modified\">{}</meta>",
+        escape(&book.modified)
+    );
+    if let Some(cover) = cover_id {
+        let _ = writeln!(metadata, "    <meta name=\"cover\" content=\"{cover}\"/>");
+    }
+    metadata
+}
+
+/// One page of a publication around the body the caller wrote.
+fn page_xhtml(title: &str, language: &str, link: &str, body: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE html>\n\
+         <html xmlns=\"http://www.w3.org/1999/xhtml\" \
+         xmlns:epub=\"http://www.idpf.org/2007/ops\" lang=\"{lang}\" xml:lang=\"{lang}\">\n\
+         <head><meta charset=\"utf-8\"/><title>{title}</title>{link}</head>\n\
+         <body>\n{body}\n</body>\n</html>\n",
+        lang = escape(language),
+        title = escape(title),
+    )
+}
+
+/// The EPUB 3 navigation document, listing every page.
+fn navigation_xhtml(title: &str, language: &str, entries: &str) -> String {
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+         <!DOCTYPE html>\n\
+         <html xmlns=\"http://www.w3.org/1999/xhtml\" \
+         xmlns:epub=\"http://www.idpf.org/2007/ops\" lang=\"{lang}\" xml:lang=\"{lang}\">\n\
+         <head><meta charset=\"utf-8\"/><title>{title}</title></head>\n\
+         <body>\n  <nav epub:type=\"toc\" id=\"toc\">\n    <ol>\n{entries}    </ol>\n  </nav>\n\
+         </body>\n</html>\n",
+        lang = escape(language),
+        title = escape(title),
+    )
+}
+
+/// Whether a resource name stays inside the package and clear of the
+/// book's own files.
+///
+/// Compared without case and with backslashes as separators, because that
+/// is how the reader looks members up: `CONTENT.OPF` would otherwise be
+/// written beside the package and then found in its place.
+fn is_resource_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    let reserved = matches!(
+        name.as_str(),
+        "content.opf" | "toc.ncx" | "nav.xhtml" | "style.css"
+    ) || is_page_name(&name);
+    let escapes = name.is_empty()
+        || name.contains('\\')
+        || name.starts_with('/')
+        || name
+            .split('/')
+            .any(|part| part == ".." || part == "." || part.is_empty());
+    !reserved && !escapes
+}
+
+/// Whether a resource name would replace one of the pages.
+fn is_page_name(name: &str) -> bool {
+    name.strip_prefix('p')
+        .and_then(|rest| rest.strip_suffix(".xhtml"))
+        .is_some_and(|number| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
 }
 
 #[cfg(test)]
@@ -1858,6 +2319,104 @@ mod tests {
     }
 
     #[test]
+    fn a_shelf_reads_the_name_author_and_epub_3_cover_without_the_chapters() {
+        let package = r#"<package version="3.0"><metadata>
+              <dc:title>
+                The   Open Sea
+              </dc:title>
+              <dc:creator>A. Mariner</dc:creator></metadata>
+            <manifest>
+              <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+              <item id="art" href="images/front.jpg" media-type="image/jpeg" properties="cover-image"/>
+            </manifest><spine><itemref idref="one"/></spine></package>"#;
+        let bytes = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            ("OEBPS/one.xhtml", b"<p>Words.</p>"),
+            ("OEBPS/images/front.jpg", b"jpeg bytes"),
+        ]);
+        let description = describe(&bytes).expect("a described book");
+        assert_eq!(description.title.as_deref(), Some("The Open Sea"));
+        assert_eq!(description.author.as_deref(), Some("A. Mariner"));
+        assert_eq!(description.cover.as_deref(), Some(&b"jpeg bytes"[..]));
+    }
+
+    #[test]
+    fn an_epub_2_cover_is_found_through_its_meta_even_when_it_names_a_path() {
+        for content in ["art", "front.png"] {
+            let package = format!(
+                r#"<package version="2.0"><metadata><dc:title>Two</dc:title>
+                  <meta name="cover" content="{content}"/></metadata>
+                <manifest>
+                  <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+                  <item id="art" href="front.png" media-type="image/png"/>
+                </manifest><spine><itemref idref="one"/></spine></package>"#
+            );
+            let bytes = archive(&[
+                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                ("OEBPS/book.opf", package.as_bytes()),
+                ("OEBPS/one.xhtml", b"<p>Words.</p>"),
+                ("OEBPS/front.png", b"png bytes"),
+            ]);
+            assert_eq!(
+                describe(&bytes).expect("a described book").cover.as_deref(),
+                Some(&b"png bytes"[..]),
+                "{content}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cover_marked_as_a_drawing_gives_the_picture_the_drawing_shows() {
+        let package = r#"<package version="3.0"><metadata><dc:title>Four</dc:title></metadata>
+            <manifest>
+              <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+              <item id="art" href="cover.svg" media-type="image/svg+xml" properties="cover-image"/>
+              <item id="plate" href="images/plate.jpg" media-type="image/jpeg"/>
+            </manifest><spine><itemref idref="one"/></spine></package>"#;
+        let bytes = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            ("OEBPS/one.xhtml", b"<p>Words.</p>"),
+            (
+                "OEBPS/cover.svg",
+                br#"<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="images/plate.jpg"/></svg>"#,
+            ),
+            ("OEBPS/images/plate.jpg", b"plate bytes"),
+        ]);
+        assert_eq!(
+            describe(&bytes).expect("a described book").cover.as_deref(),
+            Some(&b"plate bytes"[..])
+        );
+    }
+
+    #[test]
+    fn a_book_that_names_no_cover_picture_gives_the_first_picture_on_its_cover_page() {
+        // Project Gutenberg's shape: a cover page holding an SVG that draws
+        // the picture, and nothing in the metadata saying which picture it is.
+        let package = r#"<package version="2.0"><metadata><dc:title>Three</dc:title></metadata>
+            <manifest>
+              <item id="wrap" href="text/wrap.xhtml" media-type="application/xhtml+xml"/>
+              <item id="one" href="text/one.xhtml" media-type="application/xhtml+xml"/>
+              <item id="pic" href="art/plate.jpg" media-type="image/jpeg"/>
+            </manifest><spine><itemref idref="wrap" linear="no"/><itemref idref="one"/></spine>
+            </package>"#;
+        let bytes = archive(&[
+            ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+            ("OEBPS/book.opf", package.as_bytes()),
+            (
+                "OEBPS/text/wrap.xhtml",
+                br#"<html><body><svg><image xlink:href="../art/plate.jpg"/></svg></body></html>"#,
+            ),
+            ("OEBPS/text/one.xhtml", b"<p>Words.</p>"),
+            ("OEBPS/art/plate.jpg", b"plate bytes"),
+        ]);
+        let description = describe(&bytes).expect("a described book");
+        assert_eq!(description.cover.as_deref(), Some(&b"plate bytes"[..]));
+        assert_eq!(description.author, None);
+    }
+
+    #[test]
     fn a_missing_container_is_worked_around_rather_than_refused() {
         // The one file every tool assumes somebody else wrote.
         let package = opf(
@@ -2103,6 +2662,127 @@ mod tests {
         assert_eq!(slug("Moon: Past & Future"), "moon-past-future");
         assert_eq!(slug("???"), "book");
         assert_eq!(slug(""), "book");
+    }
+
+    fn publication() -> Publication {
+        Publication {
+            title: "Tides & Moons".to_owned(),
+            author: Some("A. Writer".to_owned()),
+            language: "en-GB".to_owned(),
+            publisher: Some("Example News".to_owned()),
+            date: Some("2024-05-01".to_owned()),
+            source: Some("https://example.org/tides".to_owned()),
+            modified: "2026-11-08T12:00:00Z".to_owned(),
+            stylesheet: Some("figcaption { font-style: italic; }".to_owned()),
+            pages: vec![
+                Page {
+                    title: "Tides & Moons".to_owned(),
+                    body: "<h1>Tides &amp; Moons</h1><p>Example News</p>".to_owned(),
+                },
+                Page {
+                    title: "Article".to_owned(),
+                    body: "<h2>High water</h2><p>The sea rises.</p>\
+                           <figure><img src=\"images/1.png\" alt=\"A chart\"/>\
+                           <figcaption>Twice a day.</figcaption></figure>"
+                        .to_owned(),
+                },
+            ],
+            resources: vec![Resource {
+                name: "images/1.png".to_owned(),
+                media_type: "image/png".to_owned(),
+                bytes: b"\x89PNG\r\n\x1a\nnot really".to_vec(),
+                cover: true,
+            }],
+        }
+    }
+
+    /// The reader beside the writer has to open what it writes, pictures
+    /// included, or the richer form is only richer on paper.
+    #[test]
+    fn a_written_publication_reads_back_with_its_headings_figures_and_pictures() {
+        let bytes = write_publication(&publication()).expect("a small book fits a zip");
+        let document = parse(&bytes).expect("what we wrote must parse");
+        assert_eq!(document.title.as_deref(), Some("Tides & Moons"));
+        assert_eq!(document.author.as_deref(), Some("A. Writer"));
+        assert!(document.blocks.iter().any(|block| matches!(
+            block,
+            Block::Heading { text, .. } if text == "High water"
+        )));
+        assert!(document
+            .blocks
+            .iter()
+            .any(|block| matches!(block, Block::Caption(text) if text == "Twice a day.")));
+        let picture = document.blocks.iter().find_map(|block| match block {
+            Block::Picture { name, .. } => Some(name.clone()),
+            _ => None,
+        });
+        let picture = picture.expect("the figure is a picture");
+        assert!(document.images.contains_key(&picture), "{picture} is held");
+    }
+
+    /// A shelf of saved articles names each one's site and when it was
+    /// saved, and reads both from the package without reading the article.
+    #[test]
+    fn a_saved_article_is_described_with_its_site_and_when_it_was_saved() {
+        let bytes = write_publication(&publication()).expect("a small book fits a zip");
+        let description = describe(&bytes).expect("described");
+        assert_eq!(description.publisher.as_deref(), Some("Example News"));
+        assert_eq!(
+            description.modified.as_deref(),
+            Some("2026-11-08T12:00:00Z")
+        );
+        assert_eq!(description.title.as_deref(), Some("Tides & Moons"));
+        assert!(description.cover.is_some(), "the cover is still found");
+    }
+
+    /// EPUB 3 is the package version, a modified time and a navigation
+    /// document; without any one of them a checker calls the book invalid.
+    #[test]
+    fn a_written_publication_carries_what_epub_3_requires() {
+        let bytes = write_publication(&publication()).expect("a small book fits a zip");
+        let archive = Archive::open(&bytes).expect("a readable archive");
+        let package = text_of(&archive.read("OEBPS/content.opf").expect("a package"));
+        assert!(package.contains("version=\"3.0\""));
+        assert!(package.contains("<meta property=\"dcterms:modified\">2026-11-08T12:00:00Z</meta>"));
+        assert!(package.contains("properties=\"nav\""));
+        assert!(package.contains("properties=\"cover-image\""));
+        assert!(package.contains("<dc:language>en-GB</dc:language>"));
+        assert!(package.contains("<dc:source>https://example.org/tides</dc:source>"));
+        assert!(package.contains("<dc:publisher>Example News</dc:publisher>"));
+        let nav = text_of(
+            &archive
+                .read("OEBPS/nav.xhtml")
+                .expect("a navigation document"),
+        );
+        assert!(nav.contains("epub:type=\"toc\""));
+        assert!(bytes[30..].starts_with(b"mimetypeapplication/epub+zip"));
+    }
+
+    /// A resource is named by the caller, so a name that climbs out of the
+    /// package or replaces a page is refused rather than written.
+    #[test]
+    fn a_resource_cannot_escape_the_package_or_replace_a_page() {
+        for name in [
+            "../evil.png",
+            "/abs.png",
+            "images//x.png",
+            "p1.xhtml",
+            "nav.xhtml",
+            "CONTENT.OPF",
+            "P1.XHTML",
+            "Nav.Xhtml",
+            "images\\..\\..\\x.png",
+            "./x.png",
+        ] {
+            let mut book = publication();
+            book.resources[0].name = name.to_owned();
+            assert_eq!(write_publication(&book), Err(zip::Fault::Damaged), "{name}");
+        }
+        let mut book = publication();
+        let mut twin = book.resources[0].clone();
+        twin.name = "IMAGES/1.PNG".to_owned();
+        book.resources.push(twin);
+        assert_eq!(write_publication(&book), Err(zip::Fault::Damaged));
     }
 
     /// Prose arrives as plain text, so blank lines are the only paragraph

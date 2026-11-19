@@ -1,17 +1,16 @@
-# Walk Home, full-frame Open, and the next photograph after a seeded push.
-expect Frame
-expect Photographs
-wait-for Open
-clean
-shot home-photo
-tap Open
-wait 400
+# The frame after a seeded push, and the next photograph from a side tap.
+wait-for-id next
+wait-idle
 expect-missing Open
 clean
-shot show
-# Page-turn zone on the right of the unframed photograph.
-tap-at 1000,720
-wait 400
+shot photo
+tap-at 1000,724
+wait-idle
 expect-missing Open
 clean
-shot show-next
+shot photo-next
+# A touch at the top edge brings the bar back, with Settings in it.
+tap-at 536,12
+wait-for Frame
+clean
+shot bar

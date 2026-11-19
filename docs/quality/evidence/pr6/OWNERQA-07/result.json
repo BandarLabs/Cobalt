@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "basis": "real-helper-and-original-three-card-package",
+  "physical_hardware": false,
+  "reader_simulator": false,
+  "text_scale": null,
+  "checks": [
+    "front/back HTML preview and card count",
+    "embedded image bytes and media count",
+    "preview preserves existing files",
+    "helper version and notice",
+    "supported formats and review limits",
+    "import with spaces in path",
+    "bundle verification",
+    "staged bytes match prepared bundle",
+    "helper failures reach CLI",
+    "corrupt stage preserves installed collection",
+    "merge preserves both card inventories and source bundle",
+    "explicit replacement replaces card inventory",
+    "failed import preserves prepared collection"
+  ]
+}

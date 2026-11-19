@@ -1,13 +1,12 @@
 # Nonograms screenshots
 
-Actual SDK output in the Clara BW simulator at extra-large interface size. These are ideal grayscale frames, not hardware captures.
+Actual SDK output in the Clara BW simulator. These are ideal grayscale frames, not hardware captures.
 
-| Image | Evidence |
+| Image | What it shows |
 | --- | --- |
-| completed-house.png | [Completed House](../../../docs/quality/evidence/nonogram-pictures/16-picture-completed.json) |
-| nonograms-play.png | [Selected square and matching clues](../../../docs/quality/evidence/nonogram-pictures/14-picture-selection.json) |
-| large-grid.png | [Last square of a 25×25 board](../../../docs/quality/evidence/nonograms/09-last-square.json) |
-| recovery.png | [Save retry](../../../docs/quality/evidence/nonograms/06-save-recovery.json) |
-| clue.png | [Complete row clue](../../../docs/quality/evidence/nonograms/03-full-row-clue.json) |
+| play.png | A whole run marked on a 5×5 picture |
+| large-board.png | A zoomed window on a 25×25 board |
+| picture-completed.png | A completed picture puzzle |
+| imported-puzzles.png | Three pushed photos imported by name |
 
-Each JSON records source/binary digests, font provenance, scale, display profile and fixture identity. The public app page uses the new House picture’s selected-square capture. Older large-grid, recovery and clue captures document the retained earlier collection. Reproduce with `scripts/quality/check-nonograms-sim.py` after building `kobo-cli` into the same cargo target directory.
+`play.png` comes from the app's `drive.kobo` route. `scripts/quality/check-nonograms-sim.py` drives the other three screens and writes each capture with its source digests, font provenance, scale and display profile. Build `kobo-cli` into the same cargo target directory first.

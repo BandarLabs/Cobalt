@@ -86,10 +86,8 @@ def main():
                     return any(node['action'] == aid(name) for node in json.loads(get('layout'))['nodes'])
 
                 def choose(index):
-                    drive('wait-for-id pack-toggle')
-                    text = ' '.join(line for node in json.loads(get('layout'))['nodes'] for line in node['lines'])
-                    if ('Earlier puzzles' in text) != (index < 60):
-                        drive('tap-id pack-toggle')
+                    drive('wait-for-id tab-patterns')
+                    drive('tap-id ' + ('tab-patterns' if index < 60 else 'tab-pictures'))
                     for _ in range(60):
                         if has(f'puzzle-{index}'):
                             drive(f'tap-id puzzle-{index}', 'wait-for-id more', 'wait-idle')
@@ -122,20 +120,20 @@ def main():
                 capture('04-restored-mark')
                 drive('tap-id undo', 'wait-idle')
                 assert saved()['marks'][0] == '.'
-                drive('tap-id more', 'tap-id run-entry', 'tap-id resume', 'wait-idle')
+                drive('tap-id more', 'tap-id run-entry', 'tap Back', 'wait-idle')
                 drive('tap-id board.cell.0', 'tap-id board.cell.4', 'wait-idle')
                 assert saved()['marks'][:5] == '#####'
                 capture('05-whole-run')
                 restart()
                 drive('tap-id undo', 'wait-idle')
                 assert saved()['marks'][:5] == '.....'
-                drive('tap-id more', 'tap-id run-entry', 'tap-id resume', 'wait-idle')
+                drive('tap-id more', 'tap-id run-entry', 'tap Back', 'wait-idle')
                 durable = (store_root/'progress-pack-00').read_bytes()
                 drive('scenario storage-full', 'tap-id board.cell.0', 'wait-idle')
                 assert (store_root/'progress-pack-00').read_bytes() == durable
                 drive('tap-id more')
                 capture('06-save-recovery')
-                drive('scenario normal', 'tap-id retry-save', 'wait-idle', 'tap-id resume')
+                drive('scenario normal', 'tap-id retry-save', 'wait-idle', 'tap Back')
                 latest = saved()
                 assert latest['marks'][0] == '#'
                 restart()
@@ -159,7 +157,7 @@ def main():
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=5)
                 address = start()
-                drive('wait-for-id pack-toggle', 'tap-id pack-toggle', 'tap-id puzzle-0', 'wait-for-id next-puzzle', 'wait-idle')
+                drive('wait-for-id tab-patterns', 'tap-id tab-patterns', 'tap-id puzzle-0', 'wait-for-id next-puzzle', 'wait-idle')
                 capture('13-restored-completion')
                 drive('tap-id undo', 'wait-for-id more', 'wait-idle')
                 assert saved()['marks'][24] == '#'
@@ -193,7 +191,7 @@ def main():
                 process.wait(timeout=5)
                 earlier_bytes = (store_root/'progress-pack-00').read_bytes()
                 address = start()
-                drive('wait-for-id pack-toggle')
+                drive('wait-for-id tab-pictures')
                 subprocess.run([str(cli),'drive','--address',address,'--ideal','--shots',str(args.output/'route'),'--script',str(ROOT/'apps/nonograms/drive.kobo')],cwd=ROOT,env=env,stdout=log,stderr=log,check=True,timeout=60)
                 capture('14-picture-selection')
                 picture_key = store_root/'progress-picture-house-v1'
@@ -203,7 +201,7 @@ def main():
                 assert picture_key.read_bytes() == picture_before
                 assert (store_root/'progress-pack-00').read_bytes() == earlier_bytes
                 capture('15-picture-restored')
-                drive('tap-id more', 'tap-id run-entry', 'tap-id resume', 'wait-idle')
+                drive('tap-id more', 'tap-id run-entry', 'tap Back', 'wait-idle')
                 house = (ROOT/'apps/nonograms/assets/pictures.txt').read_text().splitlines()[0].split('|')[3]
                 for cell, target in enumerate(house):
                     for _ in range(8):
@@ -218,10 +216,73 @@ def main():
                 drive('wait-for-id next-puzzle', 'wait-idle')
                 assert (store_root/'progress-pack-00').read_bytes() == earlier_bytes
                 capture('16-picture-completed')
+                # Imported photo puzzles arrive as a manifest plus images in
+                # the app's transfer directory.
+                def browser_text():
+                    return ' '.join(line for node in json.loads(get('layout'))['nodes'] for line in node['lines'])
+                data_root = Path(private)/'cobalt-sim-data/nonograms'
+                data_root.mkdir(parents=True, exist_ok=True)
+                rows_image = Image.new('L', (10, 10))
+                rows_image.putdata([24 if index//10 < 5 else 232 for index in range(100)])
+                rows_image.save(data_root/'moon.png')
+                columns_image = Image.new('L', (10, 10))
+                columns_image.putdata([24 if index%10 < 5 else 232 for index in range(100)])
+                columns_image.save(data_root/'eclipse.png')
+                (data_root/'imported.txt').write_text('moon.png\tThe Moon\t5\neclipse.png\tEclipse\t5\n')
+                # No Import button: the app reads the shelf again on waking.
+                drive('tap-id next-puzzle', 'wait-for-id tab-photos', 'lifecycle background',
+                      'lifecycle foreground', 'tap-id tab-photos', 'wait-for Eclipse')
+                assert '2 new photo puzzles.' in browser_text(), browser_text()
+                capture('17-imported-notice')
+                seen = set()
+                for _ in range(30):
+                    seen.update(name for name in ['The Moon', 'Eclipse'] if name in browser_text())
+                    if len(seen) == 2 or not has('next-page'):
+                        break
+                    drive('tap-id next-page', 'wait-idle')
+                assert seen == {'The Moon', 'Eclipse'}, seen
+                capture('18-imported-puzzles')
+                # A push that no longer names a photo drops it from the shelf.
+                (data_root/'imported.txt').write_text('moon.png\tThe Moon\t5\n')
+                drive('lifecycle background', 'lifecycle foreground', 'wait-for The Moon', 'wait-idle')
+                capture('19-import-synced-notice')
+                eclipse_gone = True
+                moon_found = False
+                for _ in range(30):
+                    page_text = browser_text()
+                    if 'Eclipse' in page_text:
+                        eclipse_gone = False
+                    if 'The Moon' in page_text:
+                        moon_found = True
+                    if not has('next-page'):
+                        break
+                    drive('tap-id next-page', 'wait-idle')
+                assert eclipse_gone and moon_found
+                capture('20-import-synced')
+                # Two pushes from the companion add to the photos already on
+                # the reader instead of replacing them.
+                from PIL import ImageDraw
+                disc = Image.new('L', (360, 360), 255)
+                ImageDraw.Draw(disc).ellipse((40, 40, 320, 320), fill=0)
+                disc.save(Path(private)/'disc.png')
+                plus = Image.new('L', (360, 360), 255)
+                ImageDraw.Draw(plus).rectangle((140, 0, 220, 360), fill=0)
+                ImageDraw.Draw(plus).rectangle((0, 140, 360, 220), fill=0)
+                plus.save(Path(private)/'plus.png')
+                for image, name in (('disc.png', 'Full moon'), ('plus.png', 'Crossroads')):
+                    pushed = subprocess.run([str(cli), 'nonograms', 'push', str(Path(private)/image),
+                                             '--name', name, '--size', '9', '--sim'],
+                                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+                    assert pushed.returncode == 0, pushed.stderr
+                assert 'On the reader: 3 photo puzzles' in pushed.stdout, pushed.stdout
+                drive('lifecycle background', 'lifecycle foreground', 'wait-for Crossroads',
+                      'wait-for Full moon', 'wait-for The Moon')
+                assert '2 new photo puzzles.' in browser_text(), browser_text()
+                capture('21-two-pushes-added')
                 result = dict(status='passed',profile=args.profile,scale=args.scale,original_fixture=True,
                     source_head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
                     source_dirty=bool(subprocess.check_output(['git','status','--porcelain'],cwd=ROOT)),
-                    checks=['attached clues','mark selection','full clue inspection','forced restart','persistent atomic run undo','failed-save preservation','explicit retry','confirmed restart undo','full completion','completion restart and undo','25x25 panning','last square restart','all help pages','committed route','new picture restart','earlier save preserved','new picture completion'])
+                    checks=['attached clues','mark selection','full clue inspection','forced restart','persistent atomic run undo','failed-save preservation','explicit retry','confirmed restart undo','full completion','completion restart and undo','25x25 panning','last square restart','all help pages','committed route','new picture restart','earlier save preserved','new picture completion','manifest import','imported names listed','import sync removes missing photos','imports picked up on wake','companion pushes add photos'])
                 (args.output/'result.json').write_text(json.dumps(result,indent=2)+'\n')
             finally:
                 if process is not None and process.poll() is None:

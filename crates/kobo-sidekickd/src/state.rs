@@ -29,6 +29,24 @@ pub const HOOK_PORT: u16 = 9330;
 /// LAN port where the reader collects them, over TLS.
 pub const READER_PORT: u16 = 9331;
 
+/// The ports `run` listens on: the usual ones, or others named in
+/// `KOBO_SIDEKICK_HOOK_PORT` and `KOBO_SIDEKICK_READER_PORT`, so a test run
+/// on a developer's computer never meets the helper already running there.
+#[must_use]
+pub fn ports() -> (u16, u16) {
+    let chosen = |name: &str, usual: u16| {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|port| *port != 0)
+            .unwrap_or(usual)
+    };
+    (
+        chosen("KOBO_SIDEKICK_HOOK_PORT", HOOK_PORT),
+        chosen("KOBO_SIDEKICK_READER_PORT", READER_PORT),
+    )
+}
+
 /// How long `run` holds a hook's question before answering "no decision".
 /// Codex allows a hook ten minutes by default and Claude Code less, so five
 /// keeps everyone comfortable while never leaving an agent stuck.
@@ -136,14 +154,13 @@ pub fn init(extra_hosts: &[String]) -> Result<(), String> {
         println!("The authority and pairing code were kept, so a reader that");
         println!("already trusts this daemon needs nothing done to it.\n");
     }
+    // The companion's own init pairs the reader over Wi-Fi and says what to
+    // do next in its own words, so this is only for somebody running the
+    // helper by hand.
     println!("Next:");
-    println!("  1. kobo-sidekickd setup codex   (or claude), follow it");
-    println!("  2. kobo-sidekickd run");
-    println!("  3. open Sidekick on the reader, enter the address and code");
-    println!();
-    println!("A reader set up with 'kobo setup' after this point trusts the");
-    println!("daemon already; one that was set up before it needs one");
-    println!("'kobo trust set sidekick --device READER_IP'.");
+    println!("  1. kobo sidekick init   pairs the reader, so nothing is typed on it");
+    println!("  2. kobo sidekick setup claude   (or codex)");
+    println!("  3. kobo sidekick run");
     Ok(())
 }
 
@@ -313,11 +330,9 @@ fn lan_address() -> Option<String> {
 /// no zero against o, no one against l.
 fn pairing_code() -> Result<String, String> {
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
-    use std::io::Read;
     let mut noise = [0_u8; 6];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut noise))
-        .map_err(|error| format!("read /dev/urandom: {error}"))?;
+    kobo_abi::entropy::random_bytes(&mut noise)
+        .map_err(|error| format!("read system randomness: {error}"))?;
     let mut code = String::new();
     for byte in noise {
         code.push(char::from(ALPHABET[usize::from(byte) % ALPHABET.len()]));
@@ -343,6 +358,6 @@ fn config_kobo() -> Result<PathBuf, String> {
     if let Some(directory) = std::env::var_os("KOBO_SIDEKICK_CONFIG_DIR") {
         return Ok(PathBuf::from(directory));
     }
-    let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
-    Ok(PathBuf::from(home).join(".config").join("kobo"))
+    let home = kobo_abi::home_directory().ok_or("no HOME in the environment")?;
+    Ok(home.join(".config").join("kobo"))
 }

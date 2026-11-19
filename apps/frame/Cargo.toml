@@ -1,12 +1,13 @@
 [package]
 name = "kobo-frame"
-version = "1.0.1"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
+blake3 = "1.8.2"
 kobo-image = { path = "../../crates/kobo-image" }
 kobo-sdk = { path = "../../crates/kobo-sdk" }
 

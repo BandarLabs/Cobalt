@@ -8,27 +8,45 @@ tap Quotes
 wait 900
 tap Marks
 wait 900
-tap-id panel-next
+maybe-tap-id panel-next
+wait 900
+tap Tone
+wait 900
+tap-paged Check again
 wait 900
 tap Lists
 wait-for Lists, rows and tiles
 wait 900
+tap-paged Robin
+wait-for 2 selected
 tap Tiles
 wait 900
-tap-id panel-next
+maybe-tap-id panel-next
 wait 900
 tap Boards
 wait 900
 tap Icons
 wait-for Every icon the system draws
-tap-id icons-next
+maybe-tap-id icons-next
 wait 900
 tap Input
 wait-for Groups, fields and asking
 wait 900
+tap-paged Night light
+wait 900
 tap Fields
 wait 900
-tap-id panel-next
+tap-paged Pretend it was refused
+wait-for Lichess refused this token
+tap-paged Time zone: London
+wait-for Choose the zone this reader keeps
+tap-id zones-next
+wait 900
+tap-id zones-previous
+wait 900
+tap Lisbon
+wait-for Time zone: Lisbon
+maybe-tap-id panel-next
 wait 900
 tap Overlays
 wait 900
@@ -51,7 +69,7 @@ wait-for Request failed
 wait 900
 tap Folio
 wait-for COBALT
-tap App Store
+tap-paged App Store
 wait-for Downloading a book
 tap Download it
 wait-for Download Mrs Dalloway?

@@ -61,6 +61,18 @@
 //! point where the honest answer is light rather than warmth. The balance is
 //! remembered and put back by [`Frontlight::restore`] exactly as the brightness
 //! is, so a session that ends leaves nothing moved.
+//!
+//! # Why the i.MX readers are different
+//!
+//! Everything above was measured on the `MediaTek` readers. The i.MX6 readers
+//! (the Clara HD, Libra H2O and Libra 2 among them) publish the same names
+//! with different meanings. Their brightness is driven through
+//! `mxc_msp430.0`, and on them `lm3630a_led/color` is the warmth itself, on a
+//! scale that runs the other way. Preferring the aggregate there would set
+//! the wrong control, and moving its balance would change the owner's warmth.
+//! So on i.MX the brightness control is `mxc_msp430.0` whenever it exists,
+//! and the warmth is never written: there is no profile yet that says how to
+//! drive it, and leaving it alone is the one choice that cannot be wrong.
 
 use std::fs;
 use std::io::{self, Read};
@@ -76,6 +88,24 @@ const BACKLIGHTS: &str = "/sys/class/backlight";
 /// Named as a preference and never as a requirement: if it is absent, any other
 /// usable control is taken instead.
 const PREFERRED: &str = "lm3630a_led";
+
+/// The brightness control on the i.MX6 readers.
+const IMX_PREFERRED: &str = "mxc_msp430.0";
+
+pub use kobo_profile::LightLayout;
+
+/// The control a layout prefers for brightness.
+const fn preferred(layout: LightLayout) -> &'static str {
+    match layout {
+        LightLayout::Aggregate => PREFERRED,
+        LightLayout::Imx => IMX_PREFERRED,
+    }
+}
+
+/// Whether a layout lets the balance between banks be moved to light both.
+const fn drives_balance(layout: LightLayout) -> bool {
+    matches!(layout, LightLayout::Aggregate)
+}
 
 /// A front light that can be read and set.
 ///
@@ -117,16 +147,31 @@ impl Balance {
 
 impl Frontlight {
     /// Opens the device's front light, or returns `None` when it has none.
+    ///
+    /// Uses the aggregate layout every measured reader was tested with. A
+    /// caller that knows the reader's profile uses [`Self::open_for`].
     #[must_use]
     pub fn open() -> Option<Self> {
         Self::open_in(Path::new(BACKLIGHTS))
+    }
+
+    /// Opens the front light the way `profile` says it is wired.
+    #[must_use]
+    pub fn open_for(profile: &kobo_profile::DeviceProfile) -> Option<Self> {
+        Self::open_in_layout(Path::new(BACKLIGHTS), profile.front_light)
     }
 
     /// The same, against an arbitrary root, so the discovery and the scaling are
     /// testable on a machine with no front light.
     #[must_use]
     pub fn open_in(backlights: &Path) -> Option<Self> {
-        let control = find_control(backlights)?;
+        Self::open_in_layout(backlights, LightLayout::Aggregate)
+    }
+
+    /// The same, for a reader wired the given way.
+    #[must_use]
+    pub fn open_in_layout(backlights: &Path, layout: LightLayout) -> Option<Self> {
+        let control = find_control(backlights, layout)?;
         let maximum = read_number(&control.join("max_brightness"))?;
         if maximum == 0 {
             return None;
@@ -139,8 +184,11 @@ impl Frontlight {
         // Two or more, because a scale of 0 and 1 is two ends and no middle:
         // there is no setting on it that lights both banks, so moving it would
         // change the warmth and buy no light for it.
+        //
+        // Only where the layout says the balance is ours to move. On i.MX the
+        // same file is the owner's warmth, so it is not even read.
         let balance = read_number(&control.join("max_color"))
-            .filter(|maximum| *maximum >= 2)
+            .filter(|maximum| drives_balance(layout) && *maximum >= 2)
             .and_then(|maximum| {
                 Some(Balance {
                     maximum,
@@ -275,7 +323,7 @@ impl Frontlight {
 /// that publishes only one is skipped rather than opened and failed on later.
 /// Candidates are sorted so that a device with several equally usable controls
 /// yields the same one on every call.
-fn find_control(backlights: &Path) -> Option<PathBuf> {
+fn find_control(backlights: &Path, layout: LightLayout) -> Option<PathBuf> {
     let mut candidates = fs::read_dir(backlights)
         .ok()?
         .filter_map(Result::ok)
@@ -285,7 +333,15 @@ fn find_control(backlights: &Path) -> Option<PathBuf> {
     candidates.sort();
     let preferred = candidates
         .iter()
-        .position(|path| path.file_name().is_some_and(|name| name == PREFERRED));
+        .position(|path| {
+            path.file_name()
+                .is_some_and(|name| name == preferred(layout))
+        })
+        .or_else(|| {
+            candidates
+                .iter()
+                .position(|path| path.file_name().is_some_and(|name| name == PREFERRED))
+        });
     match preferred {
         Some(at) => Some(candidates.swap_remove(at)),
         None => candidates.into_iter().next(),
@@ -406,7 +462,7 @@ mod tests {
         control(&root, "lm3630a_ledb", "70", "255");
         control(&root, "lm3630a_led", "7", "100");
         control(&root, "mxc_msp430.0", "0", "100");
-        let found = find_control(&root).expect("a control");
+        let found = find_control(&root, super::LightLayout::Aggregate).expect("a control");
         assert_eq!(found.file_name().expect("name"), "lm3630a_led");
     }
 
@@ -417,7 +473,7 @@ mod tests {
         // by a refusal.
         let root = scratch("unnamed");
         control(&root, "some_other_led", "50", "100");
-        let found = find_control(&root).expect("a control");
+        let found = find_control(&root, super::LightLayout::Aggregate).expect("a control");
         assert_eq!(found.file_name().expect("name"), "some_other_led");
     }
 
@@ -426,7 +482,7 @@ mod tests {
         let root = scratch("partial");
         fs::create_dir_all(root.join("broken")).expect("create");
         fs::write(root.join("broken").join("brightness"), "5").expect("write");
-        assert!(find_control(&root).is_none());
+        assert!(find_control(&root, super::LightLayout::Aggregate).is_none());
     }
 
     #[test]
@@ -554,5 +610,104 @@ mod tests {
         assert_eq!(light.percent(), Some(80));
         light.restore().expect("restore");
         assert_eq!(light.percent(), Some(7));
+    }
+    /// The four controls an i.MX6SLL reader publishes, with the warmth near
+    /// one end of its scale.
+    fn imx_lights(root: &Path) {
+        control(root, "lm3630a_leda", "99", "255");
+        control(root, "lm3630a_ledb", "70", "255");
+        control(root, "lm3630a_led", "30", "100");
+        banks(root, "lm3630a_led", "8", "10");
+        control(root, "mxc_msp430.0", "42", "100");
+    }
+
+    /// Every measured profile opens the same control, with the same balance
+    /// behaviour, as the layout-free discovery did before profiles named a
+    /// layout. The fixture holds every control an i.MX reader publishes, so a
+    /// measured i.MX profile that silently moved to `mxc_msp430.0` would fail
+    /// here.
+    #[test]
+    fn every_measured_profile_picks_the_control_it_picked_before() {
+        let root = scratch("measured-unchanged");
+        imx_lights(&root);
+        let before = find_control(&root, super::LightLayout::Aggregate).expect("a control");
+        assert_eq!(before.file_name().expect("name"), "lm3630a_led");
+        for profile in kobo_profile::SUPPORTED_PROFILES {
+            assert_eq!(
+                find_control(&root, profile.front_light).as_ref(),
+                Some(&before),
+                "{}",
+                profile.id
+            );
+            let light = Frontlight::open_in_layout(&root, profile.front_light).expect("a light");
+            light.set(100).expect("set");
+            assert_eq!(colour(&root, "lm3630a_led"), "5", "{}", profile.id);
+            light.restore().expect("restore");
+            assert_eq!(colour(&root, "lm3630a_led"), "8", "{}", profile.id);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_imx_reader_takes_its_brightness_from_the_msp430_control() {
+        let root = scratch("imx-control");
+        imx_lights(&root);
+        let found = find_control(&root, super::LightLayout::Imx).expect("a control");
+        assert_eq!(found.file_name().expect("name"), "mxc_msp430.0");
+        let light = Frontlight::open_in_layout(&root, super::LightLayout::Imx).expect("a light");
+        assert_eq!(light.original(), 42);
+        light.set(80).expect("set");
+        assert_eq!(
+            super::read_number(&root.join("mxc_msp430.0/brightness")),
+            Some(80)
+        );
+        assert_eq!(
+            super::read_number(&root.join("lm3630a_led/brightness")),
+            Some(30)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_imx_reader_never_has_its_warmth_moved_even_at_the_top_or_on_restore() {
+        let root = scratch("imx-warmth");
+        imx_lights(&root);
+        // Without the msp430 control the aggregate is the fallback, and its
+        // balance is the warmth on these readers, so it must stay put.
+        fs::remove_dir_all(root.join("mxc_msp430.0")).unwrap();
+        let light = Frontlight::open_in_layout(&root, super::LightLayout::Imx).expect("a light");
+        light.set(100).expect("set");
+        assert_eq!(colour(&root, "lm3630a_led"), "8");
+        light.restore().expect("restore");
+        assert_eq!(colour(&root, "lm3630a_led"), "8");
+        assert_eq!(
+            super::read_number(&root.join("lm3630a_led/brightness")),
+            Some(30)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_imx_reader_gets_back_the_brightness_it_had_when_the_session_ends() {
+        let root = scratch("imx-restore");
+        imx_lights(&root);
+        let light = Frontlight::open_in_layout(&root, super::LightLayout::Imx).expect("a light");
+        light.set(5).expect("set");
+        light.restore().expect("restore");
+        assert_eq!(
+            super::read_number(&root.join("mxc_msp430.0/brightness")),
+            Some(42)
+        );
+        assert_eq!(colour(&root, "lm3630a_led"), "8");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_mediatek_reader_still_prefers_the_aggregate_over_the_msp430_control() {
+        let root = scratch("mediatek-unchanged");
+        imx_lights(&root);
+        let found = find_control(&root, super::LightLayout::Aggregate).expect("a control");
+        assert_eq!(found.file_name().expect("name"), "lm3630a_led");
+        fs::remove_dir_all(root).unwrap();
     }
 }

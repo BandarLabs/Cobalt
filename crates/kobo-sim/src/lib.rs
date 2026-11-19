@@ -5,27 +5,31 @@
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::Command;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
-// Panel policy belongs to the runtime, but the simulator compiles the same
-// source so region and waveform decisions cannot drift.
+use kobo_protocol::channel;
+
 mod activity;
 mod app_store;
+mod board_fixtures;
 mod capture;
 mod clock;
+mod facts;
 mod hardware;
 mod input;
+pub mod kaleido;
 mod panel;
+mod radio;
 pub mod runtime;
 pub use capture::CaptureSource;
 use panel::PanelPreview;
-#[path = "../../kobod/src/frame.rs"]
-mod frame;
 
 use kobo_policy::{shelf::Shelf, store::Store, DeviceServices, TaskRunner};
 use kobo_profile::{DeviceProfile, PanelPose, CLARA_BW_391, SUPPORTED_PROFILES};
@@ -182,6 +186,35 @@ pub fn selected_profile() -> &'static DeviceProfile {
     *PROFILE
 }
 
+/// The pixels one capture carries, and whether they are three bytes a pixel.
+///
+/// A colour panel's captures are in colour, because that is what the panel
+/// shows: the ideal view is the renderer's own RGB, and the panel view is what
+/// the filter makes of the last committed frame, residue and all, by the
+/// model in [`kaleido`]. A greyscale panel's captures are the grey they have
+/// always been. Renderer colour asked for by name, on `/colour-capture`,
+/// answers three bytes a pixel on every profile, luminance in each channel on
+/// a greyscale one, so a script that asks the same question of every profile
+/// gets the same shape back.
+fn panel_capture(panel: &PanelPreview, ideal: bool, renderer_rgb: bool) -> (Vec<u8>, bool) {
+    if renderer_rgb || (ideal && PROFILE.colour_panel) {
+        (panel.ideal_rgb(PROFILE.colour_panel), true)
+    } else if PROFILE.colour_panel {
+        (panel.panel_rgb(), true)
+    } else {
+        (panel.frame(ideal).to_vec(), false)
+    }
+}
+
+/// What the painter is told about the selected reader's panel.
+fn profile_appearance() -> kobo_ui::Appearance {
+    if PROFILE.colour_panel {
+        kobo_ui::Appearance::Colour
+    } else {
+        kobo_ui::Appearance::Grey
+    }
+}
+
 fn profile_metrics() -> DisplayMetrics {
     DisplayMetrics {
         width: i32::try_from(PROFILE.width).unwrap_or(i32::MAX),
@@ -190,6 +223,19 @@ fn profile_metrics() -> DisplayMetrics {
         text_scale: kobo_ui::display_metrics_from_env().text_scale,
     }
 }
+
+/// The facts about the selected reader that its panel profile does not hold.
+fn profile_facts() -> facts::Facts {
+    facts::facts(PROFILE.id).expect("every supported profile states its hardware facts")
+}
+
+/// One radio for the whole simulated reader.
+///
+/// Process-wide rather than per application session, because a reader has
+/// one radio: Settings joining a network must be what the next app sees, and
+/// a fault imposed from the controls must reach whichever app is in front.
+static RADIO: LazyLock<Mutex<radio::Radio>> =
+    LazyLock::new(|| Mutex::new(radio::Radio::new(profile_facts().wifi_bands)));
 
 fn physical_rect(orientation: kobo_ui::Orientation, rect: kobo_ui::Rect) -> kobo_ui::Rect {
     match orientation {
@@ -228,6 +274,21 @@ enum Scenario {
 }
 
 impl Scenario {
+    /// The scenario a session opens in.
+    ///
+    /// `KOBO_SIM_OFFLINE` used to remove the network backend, so a request
+    /// came back refused and an app showed its "service refused" wording
+    /// where an owner without Wi-Fi would see the offline one. Starting in
+    /// the offline scenario fails each request the way a reader with no
+    /// network does.
+    fn starting() -> Self {
+        if std::env::var_os(OFFLINE).is_some() {
+            Self::Offline
+        } else {
+            Self::Normal
+        }
+    }
+
     const ALL: [Self; 9] = [
         Self::Normal,
         Self::Offline,
@@ -324,8 +385,8 @@ impl Simulator {
         self.panel.frame(ideal).to_vec()
     }
 
-    fn capture(&self, ideal: bool, rgb: bool) -> io::Result<Vec<u8>> {
-        let colour = rgb.then(|| self.panel.ideal_rgb(PROFILE.colour_panel));
+    fn capture(&self, ideal: bool, renderer_rgb: bool) -> io::Result<Vec<u8>> {
+        let (frame, rgb) = panel_capture(&self.panel, ideal, renderer_rgb);
         capture::View {
             app: "counter",
             mode: "counter-demo",
@@ -334,7 +395,7 @@ impl Simulator {
             paints: u64::from(self.counter),
             orientation: kobo_ui::Orientation::Portrait,
             simulation: self.simulation_json(),
-            frame: colour.as_deref().unwrap_or_else(|| self.panel.frame(ideal)),
+            frame: &frame,
             ideal,
             rgb,
         }
@@ -346,7 +407,7 @@ impl Simulator {
         kobo_ui::render_with(
             &self.screen,
             &profile_metrics(),
-            &kobo_ui::Chrome::default(),
+            &kobo_ui::Chrome::default().with_appearance(profile_appearance()),
             &mut surface,
             None,
         );
@@ -576,10 +637,10 @@ impl Server {
 #[derive(Debug)]
 pub struct AppServer {
     http: TcpListener,
-    app: UnixListener,
+    app: channel::Listener,
     apps: Arc<Mutex<SimulatedApps>>,
     socket_path: PathBuf,
-    socket_identity: (u64, u64),
+    socket_identity: channel::SocketIdentity,
     manifest: Option<kobo_catalog::App>,
     capture_source: CaptureSource,
     time: clock::Time,
@@ -611,11 +672,16 @@ impl AppServer {
             Err(error) => return Err(error),
         }
         let http = TcpListener::bind(parse_local_address(address)?)?;
-        let app = UnixListener::bind(&socket_path)?;
-        let metadata = match fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600))
-            .and_then(|()| fs::symlink_metadata(&socket_path))
-        {
-            Ok(metadata) => metadata,
+        // The Unix half tightens the socket to the owner; the Windows address
+        // file inherits the user profile ACL, which is the same account
+        // boundary by the platform's own mechanism.
+        let app = channel::Listener::bind(&socket_path)?;
+        #[cfg(unix)]
+        let protected = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600));
+        #[cfg(not(unix))]
+        let protected: io::Result<()> = Ok(());
+        let identity = match protected.and_then(|()| app.identity()) {
+            Ok(identity) => identity,
             Err(error) => {
                 drop(app);
                 let _ = fs::remove_file(&socket_path);
@@ -627,7 +693,7 @@ impl AppServer {
             app,
             apps: Arc::new(Mutex::new(apps)),
             socket_path,
-            socket_identity: (metadata.dev(), metadata.ino()),
+            socket_identity: identity,
             manifest: None,
             capture_source: CaptureSource::default(),
             time,
@@ -705,7 +771,7 @@ impl AppServer {
     /// Returns an error when accepting, handshaking, or creating the protocol
     /// reader fails.
     pub fn accept_app(&self) -> io::Result<AppSession> {
-        let (mut stream, _) = self.app.accept()?;
+        let mut stream = self.app.accept()?;
         self.start_session(&mut stream)
     }
 
@@ -720,7 +786,7 @@ impl AppServer {
     /// reader fails.
     pub fn try_accept_app(&self) -> io::Result<Option<AppSession>> {
         match self.app.accept() {
-            Ok((mut stream, _)) => {
+            Ok(mut stream) => {
                 stream.set_nonblocking(false)?;
                 self.start_session(&mut stream).map(Some)
             }
@@ -729,7 +795,7 @@ impl AppServer {
         }
     }
 
-    fn start_session(&self, stream: &mut UnixStream) -> io::Result<AppSession> {
+    fn start_session(&self, stream: &mut channel::Stream) -> io::Result<AppSession> {
         stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
         let hello = read_protocol_frame(stream)?;
         stream.set_read_timeout(None)?;
@@ -759,6 +825,7 @@ impl AppServer {
                     height: u16::try_from(PROFILE.height).unwrap_or(u16::MAX),
                     pixels_per_inch: PROFILE.pixels_per_inch,
                     text_scale: profile_metrics().text_scale,
+                    colour_panel: PROFILE.colour_panel,
                 },
             },
         )?;
@@ -773,7 +840,9 @@ impl AppServer {
             declared.clone(),
             kobo_policy::PowerPolicy::DEFAULT,
             kobo_policy::Backends::with(configured_backends()?.iter()),
-        );
+        )
+        .with_library_roots(simulated_library_roots())
+        .with_audio_opener(simulated_audio_opener(&name));
         initial.hardware.magnet_present =
             matches!(std::env::var("KOBO_MAGNET").as_deref(), Ok("1" | "present"));
         initial.observe_hardware();
@@ -861,6 +930,9 @@ impl AppServer {
     ///
     /// Returns an error when the listener itself stops accepting.
     pub fn try_serve_one(&self, session: &AppSession) -> io::Result<bool> {
+        if let Err(error) = session.tend_notices() {
+            report_dropped_request(&error);
+        }
         match self.http.accept() {
             Ok((stream, _)) => {
                 stream.set_nonblocking(false)?;
@@ -877,8 +949,8 @@ impl AppServer {
 
 impl Drop for AppServer {
     fn drop(&mut self) {
-        if fs::symlink_metadata(&self.socket_path)
-            .is_ok_and(|metadata| (metadata.dev(), metadata.ino()) == self.socket_identity)
+        if channel::socket_identity(&self.socket_path)
+            .is_ok_and(|identity| identity == self.socket_identity)
         {
             let _ = fs::remove_file(&self.socket_path);
         }
@@ -899,21 +971,31 @@ fn validate_socket_parent(socket_path: &Path) -> io::Result<()> {
             "SDK socket parent must be a directory",
         ));
     }
-    if metadata.uid() != current_user_id()? {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "SDK socket parent must be owned by the current user",
-        ));
+    // Ownership and mode checks are Unix answers; std has no stable owner or
+    // permission query on Windows. The parent there lives under the user
+    // profile, whose ACL already scopes it to the owning account, and the
+    // channel module documents the remaining loopback difference.
+    #[cfg(unix)]
+    {
+        if metadata.uid() != current_user_id()? {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "SDK socket parent must be owned by the current user",
+            ));
+        }
+        if metadata.mode() & 0o7777 != 0o700 {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "SDK socket parent must have mode 0700",
+            ));
+        }
     }
-    if metadata.mode() & 0o7777 != 0o700 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "SDK socket parent must have mode 0700",
-        ));
-    }
+    #[cfg(not(unix))]
+    let _ = metadata;
     Ok(())
 }
 
+#[cfg(unix)]
 fn current_user_id() -> io::Result<u32> {
     let output = Command::new("/usr/bin/id").arg("-u").output()?;
     if !output.status.success() {
@@ -1045,6 +1127,12 @@ fn is_picture_message(message: &Message) -> bool {
 #[derive(Debug)]
 struct AppState {
     screen: Screen,
+    /// The screen as the application drew it, before the shell added its way
+    /// back. Kept so the bar can be taken off and put back without asking the
+    /// application to draw anything.
+    drawn_screen: Screen,
+    /// Whether an auto-hiding top bar is currently showing.
+    top_bar: kobo_ui::TopBarState,
     app_name: String,
     capture_source: CaptureSource,
     time: clock::Time,
@@ -1080,12 +1168,17 @@ struct AppState {
     last_touch: Option<SimulatedTouch>,
     apps: Arc<Mutex<SimulatedApps>>,
     runtime_navigation: bool,
+    /// Restarts asked for by `POST /restart` and not yet carried out by
+    /// whoever owns the app process.
+    restarts_pending: u8,
     navigation: std::collections::VecDeque<String>,
     back_offer: kobod::navigation::BackOffer,
     hosted: Vec<String>,
     process_id: Option<u32>,
     protocol: u8,
     power_request: Option<runtime::power::Input>,
+    power_fault: Option<String>,
+    shell_fault: Option<kobo_protocol::ShellError>,
     power_state: kobod::power::State,
     power_generation: u64,
     power_status: kobo_json::Value,
@@ -1093,6 +1186,39 @@ struct AppState {
     wake_until: u64,
     scheduled_wake: Option<u64>,
     terminal_open: bool,
+    /// Whether this reader has page-turn buttons to press.
+    ///
+    /// Copied from the profile's facts at session start rather than read from
+    /// them on each press, so a test can stand in for either kind of reader
+    /// while the process runs the default profile.
+    page_keys: bool,
+    /// The text field the simulated runtime is holding open for the
+    /// application, and the id of the request it will answer.
+    ///
+    /// The same field the device draws, from the same module, so a script
+    /// that types here taps the keys a reader would.
+    typing: Option<(u32, kobod::text_entry::Field)>,
+    /// The runtime's notices, the same module and the same rules the device
+    /// uses, over the simulator's own inbox. Opened on first use, so a
+    /// session that never sees one never touches the folder.
+    notices: Option<kobod::notices::Notices>,
+    /// The card up now: when it goes, what a tap on it opens, and what it says.
+    notice: Option<(Instant, kobod::notices::Opens, kobo_ui::NoticeCard)>,
+    notice_chores: NoticeChores,
+}
+
+/// The bookkeeping behind the simulator's notices, kept together so the
+/// session state reads as what it is rather than as a row of flags.
+#[derive(Debug, Default)]
+struct NoticeChores {
+    /// When the inbox was last read.
+    read_at: Option<Instant>,
+    /// Whether the launcher has been sent the list since it connected.
+    told: bool,
+    /// Whether the reader has slept since the last card.
+    slept: bool,
+    /// Lists to send once the answer that changed them has gone.
+    to_tell: Vec<Message>,
 }
 
 impl Default for AppState {
@@ -1107,6 +1233,8 @@ impl AppState {
         let clock_snapshot = time.now().expect("host clock must be in 1970..9999");
         Self {
             screen: Screen::new(0, Vec::new()),
+            drawn_screen: Screen::new(0, Vec::new()),
+            top_bar: kobo_ui::TopBarState::Hidden,
             app_name: "app".into(),
             capture_source: CaptureSource::default(),
             time,
@@ -1119,7 +1247,7 @@ impl AppState {
             ),
             clock_snapshot,
             tasks: None,
-            secret_directory: std::env::temp_dir().join(SIM_SECRETS),
+            secret_directory: simulated_secrets_root(),
             chrome: kobo_ui::Chrome::default(),
             orientation: kobo_ui::Orientation::Portrait,
             paints: 0,
@@ -1128,7 +1256,7 @@ impl AppState {
             fonts: kobod::fonts::FontOwner::default(),
             pressure_pictures: kobo_ui::PictureCache::new(256 * 1024),
             panel: PanelPreview::new(),
-            scenario: Scenario::Normal,
+            scenario: Scenario::starting(),
             lifecycle: Lifecycle::Foreground,
             last_touch: None,
             apps,
@@ -1139,13 +1267,21 @@ impl AppState {
             process_id: None,
             protocol: kobo_protocol::VERSION,
             power_request: None,
+            power_fault: None,
+            shell_fault: None,
             power_state: kobod::power::State::Awake,
             power_generation: 0,
             power_status: kobo_json::Value::Null,
             suspend_reply: None,
             wake_until: 0,
+            restarts_pending: 0,
             scheduled_wake: None,
             terminal_open: false,
+            page_keys: profile_facts().page_keys,
+            typing: None,
+            notices: None,
+            notice: None,
+            notice_chores: NoticeChores::default(),
         }
     }
 }
@@ -1238,20 +1374,28 @@ impl Default for SimulatedApps {
     }
 }
 
+/// The applications that ship inside the runtime rather than the Store.
+const RUNTIME_APPS: [&str; 5] = ["books", "launcher", "settings", "store", "terminal"];
+
 fn app_declaration(name: &str) -> kobo_policy::Declared {
     let catalog = SimulatedApps::default();
-    let names = catalog
-        .catalog
-        .iter()
-        .find(|app| app.id == name)
-        .map(|app| {
-            app.capabilities
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    kobo_policy::Declared::parse(names).expect("validated capabilities")
+    let Some(app) = catalog.catalog.iter().find(|app| app.id == name) else {
+        // Books, Settings and the other built-ins ship with the runtime and
+        // have no Store manifest. Without the runtime's own declaration for
+        // them they held nothing here, so Books was refused the library it
+        // reads on every reader and could only ever show an empty shelf. The
+        // runtime admits these the way `start_application` does: a managed
+        // built-in by its declaration, a system app with everything.
+        if let Some(declared) = kobod::app_store::builtin_declared(name) {
+            return declared;
+        }
+        if RUNTIME_APPS.contains(&name) {
+            return kobo_policy::Declared::all();
+        }
+        return kobo_policy::Declared::parse([]).expect("no capabilities");
+    };
+    kobo_policy::Declared::parse(app.capabilities.iter().map(String::as_str))
+        .expect("validated capabilities")
 }
 
 fn session_declaration(
@@ -1339,6 +1483,26 @@ impl AppState {
                     .map_or(kobo_json::Value::Null, |apps| apps.metadata()),
             ));
             fields.push(("clock".into(), self.time.json(self.clock_snapshot)));
+            fields.push(("boardFixture".into(), board_fixtures::metadata(*PROFILE)));
+            fields.push((
+                "nextShellFault".into(),
+                self.shell_fault
+                    .map_or(kobo_json::Value::Null, |fault| format!("{fault:?}").into()),
+            ));
+            let facts = profile_facts();
+            fields.push((
+                "hardwareFacts".into(),
+                kobo_json::ObjectBuilder::new()
+                    .set("pageKeys", facts.page_keys)
+                    .set("wifiBands", facts.wifi_bands.name())
+                    .build(),
+            ));
+            fields.push((
+                "wifi".into(),
+                RADIO
+                    .lock()
+                    .map_or(kobo_json::Value::Null, |radio| radio.json()),
+            ));
             fields.push(("input".into(), self.input.json()));
             fields.push(("power".into(), self.power_status.clone()));
             fields.push((
@@ -1365,6 +1529,21 @@ impl AppState {
             i32::try_from(x).ok()?,
             i32::try_from(y).ok()?,
         );
+        // Showing and hiding the bar is the shell's, and is answered before
+        // anything is offered to the application: the band belongs to the way
+        // out, and an application cannot take it.
+        if let Some(state) = kobo_ui::top_bar_touch(
+            &self.drawn_screen,
+            &physical.oriented(self.orientation),
+            &self.chrome,
+            self.top_bar,
+            y,
+        ) {
+            self.top_bar = state;
+            self.compose_chrome();
+            self.commit_frame();
+            return None;
+        }
         let layout = self
             .screen
             .layout_with(&physical.oriented(self.orientation), &self.chrome);
@@ -1406,28 +1585,265 @@ impl AppState {
         self.services.set_magnet(observed.magnet_present);
     }
 
+    /// Redraws the band when a Wi-Fi request changed what it shows.
+    ///
+    /// The band samples the radio only when the chrome is rebuilt, and a Wi-Fi
+    /// reply rebuilds nothing on its own, so switching Wi-Fi off left the old
+    /// mark on screen until something unrelated redrew it. A frame is
+    /// committed only when the mark moved, so a scan does not repaint.
+    fn follow_radio(&mut self) {
+        let marks = |state: &Self| {
+            state
+                .chrome
+                .status
+                .as_ref()
+                .map(|status| status.marks.clone())
+        };
+        let before = marks(self);
+        self.update_chrome();
+        if marks(self) != before {
+            self.commit_frame();
+        }
+    }
+
     fn update_chrome(&mut self) {
         if let Ok(snapshot) = self.time.now() {
             self.clock_snapshot = snapshot;
         }
-        let status = kobo_ui::Status {
-            clock: self.clock_snapshot.hour_minute().map_or_else(
+        let signal = if self.scenario == Scenario::Offline {
+            kobo_ui::Signal::Off
+        } else {
+            // The same radio Settings switches, so the band follows it.
+            // A poisoned lock draws what the band drew before this read
+            // the radio at all, rather than failing a frame over it.
+            RADIO
+                .lock()
+                .map_or(kobo_ui::Signal::Strong, |radio| radio.signal())
+        };
+        let status = kobo_ui::Status::standard(
+            self.clock_snapshot.hour_minute().map_or_else(
                 || "--:--".into(),
                 |(hour, minute)| format!("{hour:02}:{minute:02}"),
             ),
-            signal: if self.scenario == Scenario::Offline {
-                kobo_ui::Signal::Off
-            } else {
-                kobo_ui::Signal::Strong
-            },
-            battery: Some(kobo_ui::Percent::new(
+            Some(kobo_ui::Percent::new(
                 self.effective_hardware().battery_percent,
             )),
-            charging: self.hardware.charging,
-            bluetooth: true,
+            self.hardware.charging,
+            signal,
+            // A reader draws the headphones only while something is
+            // connected over Bluetooth, and nothing ever connects to the
+            // simulator, so every capture showing them was wrong.
+            false,
+        );
+        let base = self.base_screen();
+        let notice = self
+            .notice
+            .as_ref()
+            .map(|(_, _, card)| card.clone())
+            .filter(|_| {
+                kobod::notices::room_on(Some(&base), self.typing.is_some())
+                    == kobod::notices::Room::Show
+            });
+        self.chrome = kobo_ui::Chrome::for_screen(&base, self.app_name == "launcher", Some(status))
+            .with_appearance(profile_appearance())
+            .with_notice(notice);
+    }
+
+    /// What the shell draws its chrome around: the open text field, if the
+    /// application asked for one, or else the screen it drew.
+    fn base_screen(&self) -> Screen {
+        match &self.typing {
+            Some((_, field)) => field.screen(
+                Some(&self.drawn_screen),
+                &profile_metrics().oriented(self.orientation),
+            ),
+            None => self.drawn_screen.clone(),
+        }
+    }
+
+    /// Rebuilds the displayed screen from the one the application drew, for
+    /// the bar state the shell is currently in.
+    fn compose_chrome(&mut self) {
+        self.screen = kobo_ui::ensure_way_back_revealed(
+            self.base_screen(),
+            &self.chrome,
+            &self.app_name,
+            self.top_bar,
+        );
+    }
+
+    /// Draws the text field again, or the application's screen once it
+    /// has closed, as a paint a driver can wait for.
+    fn repaint_field(&mut self) {
+        self.update_chrome();
+        self.compose_chrome();
+        self.paints = self.paints.saturating_add(1);
+        self.commit_frame();
+    }
+
+    /// Reads the inbox, puts up or takes down the card, and returns what the
+    /// application has to be told: the list, to the launcher, when it changed.
+    ///
+    /// The device's rules exactly, on the simulator's clock: the inbox is read
+    /// four times a second rather than every two, so a route that raises a
+    /// notice sees it at once, and the card stays its full four seconds.
+    fn tend_notices(&mut self, now: Instant) -> Vec<Message> {
+        let mut told = std::mem::take(&mut self.notice_chores.to_tell);
+        if self.power_state != kobod::power::State::Awake {
+            self.notice_chores.slept = true;
+        }
+        let library = simulated_library_root();
+        let launcher = self.app_name == "launcher";
+        let notices = self
+            .notices
+            .get_or_insert_with(|| kobod::notices::Notices::open(&simulated_notices_folder()));
+        if self
+            .notice_chores
+            .read_at
+            .is_none_or(|at| now.saturating_duration_since(at) >= NOTICE_POLL)
+        {
+            self.notice_chores.read_at = Some(now);
+            let (arrived, discarded) = notices.collect(kobod::notices::now_millis());
+            if arrived + discarded > 0 {
+                self.logs
+                    .push(format!("notices: {arrived} arrived, {discarded} discarded"));
+            }
+            if arrived > 0 && launcher && self.notice_chores.told {
+                told.push(Message::Notices(notices.list(
+                    &library,
+                    false,
+                    kobod::notices::builtin_mark,
+                )));
+            }
+        }
+        if launcher && !self.notice_chores.told && self.paints > 0 {
+            self.notice_chores.told = true;
+            told.push(Message::Notices(notices.list(
+                &library,
+                false,
+                kobod::notices::builtin_mark,
+            )));
+        }
+        let room = if self.power_state == kobod::power::State::Awake
+            && self.lifecycle == Lifecycle::Foreground
+        {
+            kobod::notices::room_on(Some(&self.drawn_screen), self.typing.is_some())
+        } else {
+            kobod::notices::Room::Hold
         };
-        self.chrome =
-            kobo_ui::Chrome::for_screen(&self.screen, self.app_name == "launcher", Some(status));
+        let expired = self
+            .notice
+            .as_ref()
+            .is_some_and(|(until, _, _)| now >= *until);
+        if self.notice.is_some() && (expired || room != kobod::notices::Room::Show) {
+            self.notice = None;
+            notices.card_gone();
+            self.record("notice: gone".into());
+            self.panel.clean_next();
+            self.repaint_field();
+        } else if notices.waiting() {
+            match room {
+                kobod::notices::Room::Quiet => notices.keep_quiet(),
+                kobod::notices::Room::Hold => {}
+                kobod::notices::Room::Show => {
+                    if let Some(shown) =
+                        notices.announce(self.notice_chores.slept, kobod::notices::builtin_mark)
+                    {
+                        self.notice_chores.slept = false;
+                        self.notice = Some((
+                            now + Duration::from_millis(kobod::notices::SHOWN_FOR_MS),
+                            shown.opens,
+                            shown.card,
+                        ));
+                        self.record("notice: shown".into());
+                        self.repaint_field();
+                    }
+                }
+            }
+        }
+        told
+    }
+
+    /// Answers one of the launcher's notice requests, as the device does.
+    fn notice_request(
+        &mut self,
+        request: &kobo_protocol::DeviceRequest,
+    ) -> kobo_protocol::DeviceResult {
+        use kobo_protocol::{DeviceError, DeviceRequest, DeviceResult};
+        let library = simulated_library_root();
+        let notices = self
+            .notices
+            .get_or_insert_with(|| kobod::notices::Notices::open(&simulated_notices_folder()));
+        let (result, changed) = match request {
+            DeviceRequest::MarkNoticesRead => (DeviceResult::Done, notices.mark_read()),
+            DeviceRequest::ClearNotices => {
+                notices.clear();
+                (DeviceResult::Done, true)
+            }
+            DeviceRequest::OpenNotice { id } => match notices.target(*id, &library) {
+                Some((app, document)) => {
+                    let note = format!("notice: open {document} in {app}");
+                    self.record(note);
+                    return DeviceResult::Done;
+                }
+                None => (DeviceResult::Failed(DeviceError::NotFound), false),
+            },
+            _ => (DeviceResult::Failed(DeviceError::InvalidInput), false),
+        };
+        if changed {
+            let list = notices.list(&library, false, kobod::notices::builtin_mark);
+            self.notice_chores.to_tell.push(Message::Notices(list));
+        }
+        result
+    }
+
+    /// Answers a tap on the card. The simulator hosts one application, so an
+    /// article's opening is noted rather than performed; the list opens in
+    /// the launcher as it does on the device.
+    fn notice_tapped(&mut self) -> Vec<Message> {
+        let Some((_, opens, _)) = self.notice.take() else {
+            return Vec::new();
+        };
+        if let Some(notices) = self.notices.as_mut() {
+            notices.card_gone();
+        }
+        self.panel.clean_next();
+        self.repaint_field();
+        let library = simulated_library_root();
+        let Some(notices) = self.notices.as_ref() else {
+            return Vec::new();
+        };
+        if let kobod::notices::Opens::One(id) = opens {
+            if let Some((app, document)) = notices.target(id, &library) {
+                self.record(format!("notice: open {document} in {app}"));
+                return Vec::new();
+            }
+        }
+        let told = if self.app_name == "launcher" {
+            vec![Message::Notices(notices.list(
+                &library,
+                true,
+                kobod::notices::builtin_mark,
+            ))]
+        } else {
+            Vec::new()
+        };
+        self.record("notice: open the list".into());
+        told
+    }
+
+    /// Notes a page press on a reader that has no page-turn buttons.
+    ///
+    /// The press is still delivered, because the injection contract lets an
+    /// app's button path be exercised at any panel size. The note makes a
+    /// journey that only works by pressing them visible as one.
+    fn note_page_press(&mut self) {
+        if !self.page_keys {
+            self.record(format!(
+                "note: {} has no page-turn buttons; delivered for testing only",
+                PROFILE.model
+            ));
+        }
     }
 
     fn record(&mut self, mut message: String) {
@@ -1445,9 +1861,14 @@ impl AppState {
             .reading_font
             .and_then(|local| self.fonts.resolve(local));
         self.back_offer.answer(1);
+        // A screen that has just been drawn starts with its bar hidden, if it
+        // asked to hide it. Carrying the shown state across would leave the
+        // bar up over art the reader had already dismissed it from.
+        self.top_bar = kobo_ui::TopBarState::Hidden;
+        self.drawn_screen = screen.clone();
         self.screen = screen;
         self.update_chrome();
-        self.screen = kobo_ui::ensure_way_back(self.screen.clone(), &self.chrome, &self.app_name);
+        self.compose_chrome();
         self.paints = self.paints.saturating_add(1);
         self.record(format!("screen: {} paint: {}", self.screen.id, self.paints));
         self.commit_frame();
@@ -1511,6 +1932,21 @@ pub struct AppSession {
 }
 
 impl AppSession {
+    /// Whether a drive script asked for the app to be stopped and started
+    /// again, clearing the request.
+    ///
+    /// "Comes back after a restart" is half of what an owner judges an app
+    /// by, and a script could only check it by killing `kobo dev` by hand.
+    /// The simulator cannot restart a process it does not own, so it records
+    /// the request for the owner of the process to act on.
+    #[must_use]
+    pub fn take_restart_request(&self) -> bool {
+        self.state
+            .lock()
+            .map(|mut state| std::mem::take(&mut state.restarts_pending) > 0)
+            .unwrap_or(false)
+    }
+
     /// Returns the most recently received SDK screen.
     #[must_use]
     pub fn screen(&self) -> Screen {
@@ -1527,7 +1963,9 @@ impl AppSession {
     ///
     /// Returns an error if the SDK connection is closed or its writer is poisoned.
     pub fn send_action(&self, action: ActionId) -> io::Result<()> {
-        if !self.route_input(&Message::Action { action })? {
+        if self.type_into(&Message::Action { action })?
+            || !self.route_input(&Message::Action { action })?
+        {
             return Ok(());
         }
         self.state
@@ -1590,6 +2028,17 @@ impl AppSession {
                         }
                     }
                 }
+                "fixture-tap" => {
+                    if !source.is_empty() {
+                        return Err(io::Error::other("fixture-tap takes no arguments"));
+                    }
+                    let events = state.input.fixture_tap(&POSE, millis)?;
+                    for (event, held) in events {
+                        if let Some(message) = state.input_event(event, held) {
+                            messages.push(message);
+                        }
+                    }
+                }
                 "tap" => {
                     let (x, y) = parse_touch(source.as_bytes())
                         .ok_or_else(|| io::Error::other("invalid tap coordinates"))?;
@@ -1605,8 +2054,9 @@ impl AppSession {
                         }
                     }
                 }
-                "gpio" => {
-                    if let Some(forward) = state.input.gpio(source)? {
+                "gpio" | "page" => {
+                    if let Some(forward) = page_turn(&mut state.input, kind, source)? {
+                        state.note_page_press();
                         let layout = state.screen.layout_with(
                             &profile_metrics().oriented(state.orientation),
                             &state.chrome,
@@ -1625,7 +2075,11 @@ impl AppSession {
                     }
                 }
                 "resync" => state.input.resynchronize(source)?,
-                _ => return Err(io::Error::other("input expects touch, gpio or resync")),
+                _ => {
+                    return Err(io::Error::other(
+                        "input expects touch, gpio, page or resync",
+                    ))
+                }
             }
             state.record(format!("input: {command}"));
             if state.lifecycle == Lifecycle::Background {
@@ -1634,7 +2088,7 @@ impl AppSession {
             messages
         };
         for message in messages {
-            if !self.route_input(&message)? {
+            if self.taken_by_the_runtime(&message)? {
                 continue;
             }
             write_shared(
@@ -1647,6 +2101,70 @@ impl AppSession {
             )?;
         }
         Ok(())
+    }
+
+    /// Gives `message` to the open text field, if there is one.
+    ///
+    /// True when the field took it. While a field is open it takes every
+    /// input, because nothing the application drew is on the panel to be
+    /// pressed, held or paged.
+    fn type_into(&self, message: &Message) -> io::Result<bool> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?;
+        // A field held for an application behind another is not on the
+        // panel, so input is not its to take.
+        if state.runtime_navigation && state.lifecycle == Lifecycle::Background {
+            return Ok(false);
+        }
+        let Some((request_id, mut field)) = state.typing.take() else {
+            return Ok(false);
+        };
+        let step = match message {
+            Message::Action { action } => field.press(*action),
+            _ => None,
+        };
+        let finished = match step {
+            None => {
+                state.typing = Some((request_id, field));
+                return Ok(true);
+            }
+            Some(kobod::text_entry::Step::Redraw) => {
+                state.typing = Some((request_id, field));
+                state.repaint_field();
+                return Ok(true);
+            }
+            Some(kobod::text_entry::Step::Finished(finished)) => finished,
+        };
+        let caller = state.app_name.clone();
+        let scenario = state.scenario;
+        drop(state);
+        let result = kobod::text_entry::answer(finished, |install| {
+            simulated_credential_request(&self.state, &caller, scenario, install)
+                .ok()
+                .flatten()
+                .unwrap_or(kobo_protocol::DeviceResult::Failed(
+                    kobo_protocol::DeviceError::Backend,
+                ))
+        });
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?;
+            state.record(format!("device: text field -> {}", described(&result)));
+            state.repaint_field();
+        }
+        write_shared(
+            &self.writer,
+            &Frame {
+                version: kobo_protocol::VERSION,
+                request_id,
+                message: Message::DeviceResult(result),
+            },
+        )?;
+        Ok(true)
     }
 
     fn change_hardware(&self, command: &str) -> io::Result<()> {
@@ -1693,8 +2211,16 @@ impl AppSession {
         Ok(())
     }
 
+    fn take_power_fault(&self) -> io::Result<Option<String>> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state unavailable"))?;
+        Ok(state.power_fault.take())
+    }
+
     fn change_clock(&self, command: &str) -> io::Result<()> {
-        let tasks = {
+        let (tasks, due_wake) = {
             let mut state = self
                 .state
                 .lock()
@@ -1703,12 +2229,123 @@ impl AppSession {
             state.record(format!("clock: {command}"));
             state.update_chrome();
             state.commit_frame();
-            state.tasks.clone()
+            let now = state.time.now()?.monotonic_millis;
+            let due_wake = match state.scheduled_wake {
+                Some(due) if due <= now => {
+                    state.scheduled_wake = None;
+                    Some(due)
+                }
+                _ => None,
+            };
+            (state.tasks.clone(), due_wake)
         };
         if let Some(tasks) = tasks {
             deliver_task_outcomes(&tasks, &self.writer, &self.state)?;
         }
+        // A clock crossing a scheduled wake wakes the app that asked for it,
+        // the same crossing that completes sleeps that came due.
+        if let Some(occurrence) = due_wake {
+            write_shared(
+                &self.writer,
+                &Frame {
+                    version: kobo_protocol::VERSION,
+                    request_id: 0,
+                    message: Message::ScheduledWake { occurrence },
+                },
+            )?;
+        }
         Ok(())
+    }
+
+    /// Reads the notices inbox and moves the card on, telling the
+    /// application anything it has to hear. Cheap when nothing changed, so
+    /// the server calls it between requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the application cannot be written to.
+    pub fn tend_notices(&self) -> io::Result<()> {
+        let told = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .tend_notices(Instant::now());
+        self.tell(told)
+    }
+
+    /// Whether the runtime answers `message` itself rather than passing it
+    /// on: a tap on its notice card, a key on its keyboard, or its way back.
+    fn taken_by_the_runtime(&self, message: &Message) -> io::Result<bool> {
+        Ok(self.notice_tapped(message)?
+            || self.type_into(message)?
+            || !self.route_input(message)?)
+    }
+
+    /// Answers a tap on the runtime's notice card, which never reaches the
+    /// application. True when `message` was that tap.
+    fn notice_tapped(&self, message: &Message) -> io::Result<bool> {
+        if !matches!(message, Message::Action { action } if *action == ActionId::NOTICE) {
+            return Ok(false);
+        }
+        let told = self
+            .state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .notice_tapped();
+        self.tell(told)?;
+        Ok(true)
+    }
+
+    fn tell(&self, messages: Vec<Message>) -> io::Result<()> {
+        if !self.writer.connected() {
+            return Ok(());
+        }
+        for message in messages {
+            write_shared(
+                &self.writer,
+                &Frame {
+                    version: kobo_protocol::VERSION,
+                    request_id: 0,
+                    message,
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Drops a notice into the inbox the way a companion does, and reads the
+    /// inbox at once, so a route that raises one can expect it on the next
+    /// step.
+    fn raise_notice(&self, title: &str) -> io::Result<()> {
+        let title = title.trim();
+        if title.is_empty() || title.len() > kobo_protocol::MAX_NOTICE_TITLE_LEN {
+            return Err(io::Error::other("a notice needs a title of 1 to 256 bytes"));
+        }
+        let inbox = simulated_notices_folder().join(kobod::notices::INBOX);
+        fs::create_dir_all(&inbox)?;
+        let record = kobo_json::ObjectBuilder::new()
+            .set("kind", "article")
+            .set("title", title)
+            .set("source", "example.com")
+            .set("app", "books")
+            .build()
+            .to_json();
+        let name = format!("{}.json", kobod::notices::now_millis());
+        let mut unique = inbox.join(&name);
+        let mut count = 0;
+        while unique.exists() {
+            count += 1;
+            unique = inbox.join(format!("{count}-{name}"));
+        }
+        let part = unique.with_extension("part");
+        fs::write(&part, record)?;
+        fs::rename(&part, &unique)?;
+        self.state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .notice_chores
+            .read_at = None;
+        self.tend_notices()
     }
 
     fn send_lifecycle(&self, lifecycle: Lifecycle) -> io::Result<()> {
@@ -1811,8 +2448,8 @@ impl AppSession {
                         .lock()
                         .map_err(|_| io::Error::other("app state lock poisoned"))?;
                     let ideal = request.path != "/capture";
-                    let rgb = request.path == "/colour-capture";
-                    let colour = rgb.then(|| state.panel.ideal_rgb(PROFILE.colour_panel));
+                    let (frame, rgb) =
+                        panel_capture(&state.panel, ideal, request.path == "/colour-capture");
                     capture::View {
                         app: &state.app_name,
                         mode: if state.runtime_navigation {
@@ -1825,9 +2462,7 @@ impl AppSession {
                         paints: state.paints,
                         orientation: state.orientation,
                         simulation: state.simulation_json(),
-                        frame: colour
-                            .as_deref()
-                            .unwrap_or_else(|| state.panel.frame(ideal)),
+                        frame: &frame,
                         ideal,
                         rgb,
                     }
@@ -1939,17 +2574,106 @@ impl AppSession {
                     }
                 }
             }
+            ("POST", "/wifi-fixture") => match radio::Interface::parse(&request.body) {
+                Some(interface) => {
+                    RADIO
+                        .lock()
+                        .map_err(|_| io::Error::other("simulated radio lock poisoned"))?
+                        .set_interface(interface);
+                    write_response(
+                        &mut stream,
+                        200,
+                        "text/plain",
+                        b"synthetic wifi fixture set",
+                    )
+                }
+                None => write_response(
+                    &mut stream,
+                    400,
+                    "text/plain",
+                    b"wifi fixture expects normal, interface-missing, or interface-down",
+                ),
+            },
+            ("POST", "/shell-fault") => {
+                let fault = match request.body.as_slice() {
+                    b"helper-missing" => Some(kobo_protocol::ShellError::Unavailable),
+                    b"helper-start-failed" => Some(kobo_protocol::ShellError::Failed),
+                    _ => None,
+                };
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state unavailable"))?;
+                if !state.runtime_navigation || state.shell_fault.is_some() || fault.is_none() {
+                    write_response(
+                        &mut stream,
+                        400,
+                        "text/plain",
+                        b"fault needs runtime mode and an empty slot",
+                    )
+                } else {
+                    state.shell_fault = fault;
+                    write_response(
+                        &mut stream,
+                        200,
+                        "text/plain",
+                        b"synthetic shell fault queued",
+                    )
+                }
+            }
+            ("POST", "/power-fault") => {
+                let command = std::str::from_utf8(&request.body).unwrap_or("");
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state unavailable"))?;
+                if !state.runtime_navigation
+                    || state.power_fault.is_some()
+                    || command.len() > 32
+                    || !matches!(
+                        command,
+                        "permission-veto"
+                            | "alarm-absent"
+                            | "alarm-failed"
+                            | "immediate-wake"
+                            | "duplicate-wake"
+                    )
+                {
+                    write_response(
+                        &mut stream,
+                        400,
+                        "text/plain",
+                        b"fault control needs runtime mode, known fault, and empty slot",
+                    )
+                } else {
+                    state.power_fault = Some(command.to_owned());
+                    write_response(&mut stream, 200, "text/plain", b"synthetic fault queued")
+                }
+            }
             ("GET", "/power") => {
                 let state = self
                     .state
                     .lock()
                     .map_err(|_| io::Error::other("app state unavailable"))?;
-                write_response(
-                    &mut stream,
-                    200,
-                    "application/json",
-                    state.power_status.to_json().as_bytes(),
-                )
+                let body = match &state.power_status {
+                    kobo_json::Value::Null => {
+                        let now = state.time.now()?.monotonic_millis;
+                        kobo_json::ObjectBuilder::new()
+                            .set("monotonicMillis", now.to_string())
+                            .set("wakeUntil", state.wake_until.to_string())
+                            .set("wakeHeld", state.wake_until > now)
+                            .set(
+                                "scheduledWake",
+                                state
+                                    .scheduled_wake
+                                    .map_or(kobo_json::Value::Null, |due| due.to_string().into()),
+                            )
+                            .build()
+                            .to_json()
+                    }
+                    status => status.to_json(),
+                };
+                write_response(&mut stream, 200, "application/json", body.as_bytes())
             }
             ("POST", "/power") => {
                 let mut state = self
@@ -2000,6 +2724,35 @@ impl AppSession {
                 let body = hardware::json(state.effective_hardware(), state.orientation).to_json();
                 write_response(&mut stream, 200, "application/json", body.as_bytes())
             }
+            ("GET", "/wifi") => {
+                let body = RADIO
+                    .lock()
+                    .map_err(|_| io::Error::other("simulated radio lock poisoned"))?
+                    .json()
+                    .to_json();
+                write_response(&mut stream, 200, "application/json", body.as_bytes())
+            }
+            ("POST", "/wifi") => {
+                match radio::Fault::parse(std::str::from_utf8(&request.body).unwrap_or("")) {
+                    Some(fault) => {
+                        RADIO
+                            .lock()
+                            .map_err(|_| io::Error::other("simulated radio lock poisoned"))?
+                            .set_fault(fault);
+                        self.state
+                            .lock()
+                            .map_err(|_| io::Error::other("app state lock poisoned"))?
+                            .record(format!("wifi fault: {}", fault.name()));
+                        write_response(&mut stream, 200, "text/plain", b"ok")
+                    }
+                    None => write_response(
+                        &mut stream,
+                        400,
+                        "text/plain",
+                        b"wifi expects none, absent, hung, unresponsive, or wrong-password",
+                    ),
+                }
+            }
             ("POST", "/device") => {
                 match self.change_hardware(std::str::from_utf8(&request.body).unwrap_or("")) {
                     Ok(()) => write_response(&mut stream, 200, "text/plain", b"ok"),
@@ -2046,6 +2799,17 @@ impl AppSession {
                     }
                 }
             }
+            ("POST", "/notice") => {
+                let raised = std::str::from_utf8(&request.body)
+                    .map_err(io::Error::other)
+                    .and_then(|title| self.raise_notice(title));
+                match raised {
+                    Ok(()) => write_response(&mut stream, 204, "text/plain; charset=utf-8", b""),
+                    Err(error) => {
+                        write_response(&mut stream, 400, "text/plain", error.to_string().as_bytes())
+                    }
+                }
+            }
             ("POST", "/scenario") => match Scenario::parse(&request.body) {
                 Some(scenario) => match self.set_scenario(scenario) {
                     Ok(()) => write_response(&mut stream, 204, "text/plain; charset=utf-8", b""),
@@ -2080,8 +2844,31 @@ impl AppSession {
                     b"invalid lifecycle",
                 ),
             },
+            ("POST", "/restart") => {
+                self.state
+                    .lock()
+                    .map_err(|_| io::Error::other("app state lock poisoned"))?
+                    .restarts_pending = 1;
+                write_response(&mut stream, 202, "text/plain; charset=utf-8", b"restarting")
+            }
             _ => write_response(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
         }
+    }
+}
+
+/// Which way a page key turned, if the input was a page key at all.
+///
+/// `page next` and `page back` press whichever key turns that way as the
+/// reader is held, so a route does not have to know that the forward key
+/// changes with the orientation. `gpio` takes the raw event, as before.
+fn page_turn(input: &mut input::Replay, kind: &str, source: &str) -> io::Result<Option<bool>> {
+    if kind == "gpio" {
+        return input.gpio(source);
+    }
+    match source.trim() {
+        "next" => Ok(Some(true)),
+        "back" => Ok(Some(false)),
+        _ => Err(io::Error::other("page expects next or back")),
     }
 }
 
@@ -2277,7 +3064,30 @@ fn layout_json_with_chrome(
 ) -> String {
     let metrics = profile_metrics().oriented(orientation);
     let layout = screen.layout_with(&metrics, chrome);
-    let mut json = format!("{{\"paints\":{paints},\"nodes\":[");
+    // The content area and declared page-turn zones ride along so a driver
+    // can page a catalogue the way a reader's thumb would -- a tap on the
+    // empty right edge -- instead of needing to know the application's own
+    // action names, which differ from app to app.
+    let content = physical_rect(orientation, layout.content);
+    let page_turns = match layout.page_turns.declared() {
+        // The middle of the page too, when it opens something: it is as
+        // much a control as the sides are, and as invisible.
+        Some(turns) => match turns.menu {
+            Some(menu) => format!(
+                "{{\"previous\":{},\"next\":{},\"menu\":{}}}",
+                turns.previous.0, turns.next.0, menu.0
+            ),
+            None => format!(
+                "{{\"previous\":{},\"next\":{}}}",
+                turns.previous.0, turns.next.0
+            ),
+        },
+        None => "null".to_owned(),
+    };
+    let mut json = format!(
+        "{{\"paints\":{paints},\"content\":{{\"x\":{},\"y\":{},\"width\":{},\"height\":{}}},\"pageTurns\":{page_turns},\"nodes\":[",
+        content.x, content.y, content.width, content.height
+    );
     for (index, node) in layout.nodes.iter().enumerate() {
         if index > 0 {
             json.push(',');
@@ -2429,7 +3239,7 @@ mod writer_tests {
     /// and the simulator stopped answering its own HTTP port.
     #[test]
     fn writing_to_an_application_that_is_not_reading_does_not_block_the_writer() {
-        let (ours, theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let (ours, theirs) = kobo_protocol::channel::pair().expect("socket pair");
         // Deliberately never read from.
         let writer = AppWriter::spawn_for(ours, kobo_protocol::VERSION);
         let frame = Frame {
@@ -2457,7 +3267,7 @@ mod writer_tests {
 
     #[test]
     fn a_legacy_session_receives_legacy_runtime_events() {
-        let (ours, mut theirs) = std::os::unix::net::UnixStream::pair().expect("socket pair");
+        let (ours, mut theirs) = kobo_protocol::channel::pair().expect("socket pair");
         let writer = AppWriter::spawn_for(ours, kobo_protocol::LEGACY_VERSION);
         let frame = Frame {
             version: kobo_protocol::VERSION,
@@ -2482,14 +3292,14 @@ struct AppWriter {
     /// The lock is only ever held across a queue push, which cannot block on
     /// anything, which is the entire point.
     sender: Mutex<std::sync::mpsc::Sender<Option<Frame>>>,
-    socket: Arc<UnixStream>,
+    socket: Arc<channel::Stream>,
     /// Fixed by Hello for the lifetime of this one-app session.
     version: u8,
     activity: Arc<Mutex<activity::Activity>>,
 }
 
 impl AppWriter {
-    fn spawn_for(stream: UnixStream, version: u8) -> Arc<Self> {
+    fn spawn_for(stream: channel::Stream, version: u8) -> Arc<Self> {
         let (sender, receiver) = std::sync::mpsc::channel::<Option<Frame>>();
         let activity = Arc::new(Mutex::new(activity::Activity::default()));
         let thread_activity = Arc::clone(&activity);
@@ -2651,6 +3461,26 @@ impl Drop for SessionWorkers {
     }
 }
 
+/// Answers a Wi-Fi request from the simulated radio, once policy allows it.
+///
+/// Policy still decides first, exactly as on a device, so an undeclared app
+/// or a low battery is refused before the radio is asked anything.
+fn wifi_request(
+    services: &DeviceServices,
+    request: &kobo_protocol::DeviceRequest,
+) -> io::Result<Option<kobo_protocol::DeviceResult>> {
+    if !radio::is_wifi(request) {
+        return Ok(None);
+    }
+    if let Some(reason) = services.refusal_for(request) {
+        return Ok(Some(kobo_protocol::DeviceResult::Denied(reason)));
+    }
+    Ok(RADIO
+        .lock()
+        .map_err(|_| io::Error::other("simulated radio lock poisoned"))?
+        .handle(request))
+}
+
 fn current_scenario(state: &Arc<Mutex<AppState>>) -> Scenario {
     state.lock().map_or_else(
         |poisoned| poisoned.into_inner().scenario,
@@ -2716,12 +3546,32 @@ fn simulated_task_error(
     scenario_task_error(scenario, task)
 }
 
+fn take_shell_fault(
+    state: &mut AppState,
+    request: &kobo_protocol::ShellRequest,
+    declared: &kobo_policy::Declared,
+    backends: &kobo_policy::Declared,
+    paused: bool,
+    shell_open: bool,
+) -> Option<kobo_protocol::ShellError> {
+    if matches!(request, kobo_protocol::ShellRequest::Open { .. })
+        && !paused
+        && !shell_open
+        && declared.holds(kobo_policy::Capability::Shell)
+        && backends.holds(kobo_policy::Capability::Shell)
+    {
+        state.shell_fault.take()
+    } else {
+        None
+    }
+}
+
 #[allow(
     clippy::too_many_lines,
     reason = "one exhaustive protocol message dispatcher"
 )]
 fn read_app_messages(
-    mut stream: UnixStream,
+    mut stream: channel::Stream,
     name: &str,
     declared: &kobo_policy::Declared,
     writer: &Arc<AppWriter>,
@@ -2751,7 +3601,7 @@ fn read_app_messages(
     // Kept outside the process so state survives a reload, which is the whole
     // point of a store: a developer restarting the application should see what
     // the owner would see after closing and reopening it.
-    let store = Store::new(std::env::temp_dir().join("cobalt-sim-state").join(name));
+    let store = Store::new(simulated_state_root(name));
     // The shelf is where an application keeps what will not fit in a message:
     // an audiobook, a downloaded book. Without one here every shelf request
     // came back `Unwritable`, so the one class of application that most needs
@@ -2816,6 +3666,9 @@ fn read_app_messages(
                     .callback_complete();
             }
             Message::Log { level, message } => note(state, &format!("{level:?}: {message}"))?,
+            Message::DeviceRequest(request @ kobo_protocol::DeviceRequest::TypeText { .. }) => {
+                open_text_field(state, writer, name, request_id, &request)?;
+            }
             Message::DeviceRequest(request) => {
                 let scenario = current_scenario(state);
                 let result = if let Some(result) =
@@ -2831,7 +3684,13 @@ fn read_app_messages(
                         .lock()
                         .map_err(|_| io::Error::other("app state lock poisoned"))?;
                     state.observe_hardware();
-                    let mut result = state.services.handle(request.clone());
+                    let mut result = match wifi_request(&state.services, &request)? {
+                        Some(result) => result,
+                        None => state.services.handle(request.clone()),
+                    };
+                    if radio::is_wifi(&request) {
+                        state.follow_radio();
+                    }
                     if matches!(
                         result,
                         kobo_protocol::DeviceResult::Done
@@ -2912,11 +3771,20 @@ fn read_app_messages(
                 answer_store(writer, request_id, &store, &shelf, &request, state)?;
             }
             Message::ShellRequest(request) => {
-                let paused = state
+                let shell_open = shells
                     .lock()
-                    .map_err(|_| io::Error::other("app state unavailable"))?
-                    .power_state
-                    != kobod::power::State::Awake;
+                    .map_err(|_| io::Error::other("shell unavailable"))?
+                    .is_open();
+                let (paused, fault) = {
+                    let mut state = state
+                        .lock()
+                        .map_err(|_| io::Error::other("app state unavailable"))?;
+                    let paused = state.power_state != kobod::power::State::Awake;
+                    let fault = take_shell_fault(
+                        &mut state, &request, declared, &backends, paused, shell_open,
+                    );
+                    (paused, fault)
+                };
                 if paused {
                     write_shared(
                         writer,
@@ -2926,6 +3794,15 @@ fn read_app_messages(
                             message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(
                                 kobo_protocol::ShellError::Unavailable,
                             )),
+                        },
+                    )?;
+                } else if let Some(fault) = fault {
+                    write_shared(
+                        writer,
+                        &Frame {
+                            version: kobo_protocol::VERSION,
+                            request_id,
+                            message: Message::ShellEvent(kobo_protocol::ShellEvent::Refused(fault)),
                         },
                     )?;
                 } else {
@@ -3013,6 +3890,59 @@ fn scenario_refuses_store(scenario: Scenario, request: &kobo_protocol::StoreRequ
         )
 }
 
+/// Opens the simulated runtime's text field for `caller`, or answers why it
+/// will not, exactly as the device host does.
+fn open_text_field(
+    state: &Arc<Mutex<AppState>>,
+    writer: &Arc<AppWriter>,
+    caller: &str,
+    request_id: u32,
+    request: &kobo_protocol::DeviceRequest,
+) -> io::Result<()> {
+    let mut answers = Vec::new();
+    {
+        let mut state = state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?;
+        match kobod::text_entry::Field::open(caller, request) {
+            Some(Ok(field)) => {
+                state.record(format!("device: {request:?} -> keyboard"));
+                if let Some((previous, _)) = state.typing.take() {
+                    answers.push((previous, kobod::text_entry::superseded()));
+                }
+                state.typing = Some((request_id, field));
+                state.repaint_field();
+            }
+            Some(Err(refusal)) => {
+                state.record(format!("device: {request:?} -> {refusal:?}"));
+                answers.push((request_id, refusal));
+            }
+            None => {}
+        }
+    }
+    for (request_id, result) in answers {
+        write_shared(
+            writer,
+            &Frame {
+                version: kobo_protocol::VERSION,
+                request_id,
+                message: Message::DeviceResult(result),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// How a field ended, for the session log, and never what was typed in it.
+fn described(result: &kobo_protocol::DeviceResult) -> String {
+    match result {
+        kobo_protocol::DeviceResult::Text(kobo_protocol::TextOutcome::Typed(text)) => {
+            format!("typed {} characters", text.chars().count())
+        }
+        other => format!("{other:?}"),
+    }
+}
+
 fn simulated_platform_request_allowed(
     caller: &str,
     request: &kobo_protocol::DeviceRequest,
@@ -3020,13 +3950,26 @@ fn simulated_platform_request_allowed(
     !matches!(request, kobo_protocol::DeviceRequest::Update { .. }) || caller == "settings"
 }
 
-fn simulated_app_request(
+/// Credential installs and presence checks, answered against the same policy
+/// functions and durable layout the device host uses.
+fn simulated_credential_request(
     state: &Arc<Mutex<AppState>>,
     caller: &str,
     scenario: Scenario,
     request: &kobo_protocol::DeviceRequest,
 ) -> io::Result<Option<kobo_protocol::DeviceResult>> {
     use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+    if let DeviceRequest::CheckSecrets { .. } = request {
+        let directory = state
+            .lock()
+            .map_err(|_| io::Error::other("app state lock poisoned"))?
+            .secret_directory
+            .clone();
+        return Ok(kobo_policy::credentials::handle_check(
+            &directory, caller, request,
+        ));
+    }
 
     if matches!(
         request,
@@ -3050,7 +3993,42 @@ fn simulated_app_request(
             &directory, caller, request,
         ));
     }
+    Ok(None)
+}
 
+fn simulated_app_request(
+    state: &Arc<Mutex<AppState>>,
+    caller: &str,
+    scenario: Scenario,
+    request: &kobo_protocol::DeviceRequest,
+) -> io::Result<Option<kobo_protocol::DeviceResult>> {
+    use kobo_protocol::{DenyReason, DeviceError, DeviceRequest, DeviceResult};
+
+    if let Some(result) = simulated_credential_request(state, caller, scenario, request)? {
+        return Ok(Some(result));
+    }
+    if matches!(
+        request,
+        DeviceRequest::MarkNoticesRead
+            | DeviceRequest::ClearNotices
+            | DeviceRequest::OpenNotice { .. }
+    ) {
+        if caller != "launcher" {
+            return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+        }
+        return Ok(Some(
+            state
+                .lock()
+                .map_err(|_| io::Error::other("app state lock poisoned"))?
+                .notice_request(request),
+        ));
+    }
+
+    // Deleting an article is the one library write, and Books the one
+    // application the runtime lets make it.
+    if matches!(request, DeviceRequest::RemoveArticle { .. }) && caller != "books" {
+        return Ok(Some(DeviceResult::Denied(DenyReason::NotDeclared)));
+    }
     let authorized = match request {
         DeviceRequest::ListInstalledApps => matches!(caller, "launcher" | "store"),
         DeviceRequest::ReadAppCatalog
@@ -3189,11 +4167,11 @@ fn deliver_task_outcomes(
     Ok(())
 }
 
-fn read_protocol_frame(stream: &mut UnixStream) -> io::Result<Frame> {
+fn read_protocol_frame(stream: &mut channel::Stream) -> io::Result<Frame> {
     read_from(stream).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
-fn write_protocol_frame(stream: &mut UnixStream, frame: &Frame) -> io::Result<()> {
+fn write_protocol_frame(stream: &mut channel::Stream, frame: &Frame) -> io::Result<()> {
     write_to(stream, frame).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
@@ -3230,14 +4208,16 @@ const SIM_SECRETS: &str = "cobalt-sim-secrets";
 /// everything all the time and teaching nothing.
 pub const OFFLINE: &str = "KOBO_SIM_OFFLINE";
 
-/// The task runner the browser simulator gives an application.
+/// Routes requests the way the simulator does: to the local fixture named by
+/// `KOBO_SIM_HTTP_FIXTURE`, trusting the owner roots in `KOBO_SIM_TRUST_DIR`.
 ///
-/// It performs real requests, for the same reason the simulator runs a real
-/// shell: an application that could only reach the network on the device could
-/// only be developed on the device, which is the one thing this project is
-/// arranged to avoid. Capabilities come from the app's publishing manifest;
-/// an unknown app has no implicit network or shell permission.
-fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
+/// The app under `kobo dev` and a computer-side command run with `--sim` must
+/// reach the same fixture, or `kobo connect APP --sim` checks a token against
+/// the real server while the app talks to the fixture. Returns false when a
+/// fixture was asked for and could not be installed; nothing may then reach
+/// the network.
+#[must_use]
+pub fn prepare_simulated_network() -> bool {
     // A fixture uses real TLS and HTTP, but cannot reach public hosts. Refuse
     // invalid configurations and release builds instead of silently going live.
     static FIXTURE_READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -3266,23 +4246,45 @@ fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
     TRUST.call_once(|| {
         let directory = std::env::var_os("KOBO_SIM_TRUST_DIR").map_or_else(
             || {
-                std::env::var_os("HOME").map_or_else(
+                kobo_abi::home_directory().map_or_else(
                     || std::path::PathBuf::from(".kobo-trust"),
-                    |home| {
-                        std::path::PathBuf::from(home)
-                            .join(".config")
-                            .join("kobo")
-                            .join("trust")
-                    },
+                    |home| home.join(".config").join("kobo").join("trust"),
                 )
             },
             std::path::PathBuf::from,
         );
         let _ = kobo_net::trust_owner_roots_from_dir(&directory);
     });
+    fixture_ready
+}
+
+/// The task runner the browser simulator gives an application.
+///
+/// It performs real requests, for the same reason the simulator runs a real
+/// shell: an application that could only reach the network on the device could
+/// only be developed on the device, which is the one thing this project is
+/// arranged to avoid. Capabilities come from the app's publishing manifest;
+/// an unknown app has no implicit network or shell permission.
+fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
+    let fixture_ready = prepare_simulated_network();
     let runner = TaskRunner::simulated(simulated_data_root(name))
-        .with_app_secrets(std::env::temp_dir().join(SIM_SECRETS), name);
-    if !fixture_ready || std::env::var_os(OFFLINE).is_some() {
+        .with_app_secrets(simulated_secrets_root(), name);
+    if std::env::var_os(OFFLINE).is_some() {
+        // A reader with no network, not an application without permission.
+        // Left without its grants, the runner refused every request as
+        // Denied, and apps showed "This action isn't available" where an
+        // owner without Wi-Fi sees the offline copy. Nothing here can reach
+        // the network: every backend answers offline.
+        use kobo_protocol::TaskError;
+        return runner
+            .with_fetch(Arc::new(|_, _, _, _, _, _, _| Err(TaskError::Offline)))
+            .with_post(Arc::new(|_, _, _, _, _, _, _, _| Err(TaskError::Offline)))
+            .with_updates(Arc::new(|_, _, _, _, _, _, _, _, _| {
+                Err(TaskError::Offline)
+            }))
+            .with_capabilities(declared.iter());
+    }
+    if !fixture_ready {
         return runner;
     }
     // The same policy the device applies, from the same function, because a
@@ -3312,13 +4314,193 @@ fn simulated_tasks(name: &str, declared: &kobo_policy::Declared) -> TaskRunner {
         .with_capabilities(declared.iter())
 }
 
+/// The variable that moves every simulated shelf into one chosen folder.
+///
+/// Two simulators running at once, whether two people or two test runs,
+/// otherwise share `$TMPDIR/cobalt-sim-data` and quietly overwrite each
+/// other's pushes. Set for both `kobo dev` and the companion command, it lets
+/// them agree on where the shelf is without either knowing the other's
+/// address.
+pub const SIM_DATA_VARIABLE: &str = "KOBO_SIM_DATA";
+
 /// Directory the host simulator uses for one application's shelf.
 ///
 /// Companion commands such as `kobo frame push --sim` write here so a `kobo
 /// dev` session sees the same files the reader would after an SSH push.
 #[must_use]
 pub fn simulated_data_root(name: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join("cobalt-sim-data").join(name)
+    data_root_under(std::env::var_os(SIM_DATA_VARIABLE), name)
+}
+
+fn data_root_under(chosen: Option<std::ffi::OsString>, name: &str) -> std::path::PathBuf {
+    chosen
+        .filter(|folder| !folder.is_empty())
+        .map_or_else(
+            || std::env::temp_dir().join("cobalt-sim-data"),
+            std::path::PathBuf::from,
+        )
+        .join(name)
+}
+
+/// The folder the simulator's credential store reads secrets from.
+///
+/// `kobo secret set NAME --sim` writes the owner-wide copy here, the same
+/// place `kobo secret set` fills on a reader, so an app under `kobo dev` can
+/// make the signed-in requests it would make for an owner.
+#[must_use]
+pub fn simulated_secrets_root() -> std::path::PathBuf {
+    simulated_folder(SIM_SECRETS, ".secrets")
+}
+
+/// The folder one application's saved state lives in under the simulator.
+///
+/// It follows `KOBO_SIM_DATA` with the shelves. When only the shelves moved,
+/// a "fresh" simulator still reopened yesterday's game, poem or progress from
+/// the shared temporary folder, and five people checking a first run had to
+/// invent a new `TMPDIR` each time to see one.
+#[must_use]
+pub fn simulated_state_root(name: &str) -> std::path::PathBuf {
+    simulated_folder("cobalt-sim-state", ".state").join(name)
+}
+
+/// A simulator folder: inside `KOBO_SIM_DATA` when it is set, under a name no
+/// application id can take, and otherwise in the temporary folder as before.
+fn simulated_folder(temporary: &str, chosen: &str) -> std::path::PathBuf {
+    match std::env::var_os(SIM_DATA_VARIABLE).filter(|folder| !folder.is_empty()) {
+        Some(folder) => std::path::PathBuf::from(folder).join(chosen),
+        None => std::env::temp_dir().join(temporary),
+    }
+}
+
+/// Where the simulator's notices arrive and are kept: the device's
+/// `state/notices`, in a folder no application id can name.
+#[must_use]
+pub fn simulated_notices_folder() -> std::path::PathBuf {
+    simulated_folder("cobalt-sim-state", ".state").join(".notices")
+}
+
+/// How often the simulator reads its notices inbox.
+const NOTICE_POLL: Duration = Duration::from_millis(250);
+
+/// The folder the simulator's library reads documents from.
+///
+/// Books, Fanshelf and the other library readers list what is in here, so a
+/// developer can drop an EPUB in and open it the way an owner would. It sits
+/// beside the per-app shelves, so `KOBO_SIM_DATA` moves it with them.
+#[must_use]
+pub fn simulated_library_root() -> std::path::PathBuf {
+    simulated_data_root("library")
+}
+
+/// How the simulator opens an audio source: the real file, read the way the
+/// reader reads it, so a load under the simulator has the length, chapters
+/// and cover the device would show. A shelf name is looked up in the
+/// application's simulated shelf and a library identifier in the simulated
+/// library; a stream is left to the half-hour stand-in.
+fn simulated_audio_opener(app: &str) -> kobo_policy::services::AudioOpener {
+    let shelf = simulated_data_root(app);
+    let roots = simulated_library_roots();
+    kobo_policy::services::AudioOpener(std::sync::Arc::new(move |source| {
+        let book = match source {
+            kobo_protocol::AudioSource::Shelf(name) => kobo_audio::Book::open(&shelf.join(name)),
+            kobo_protocol::AudioSource::Library(id) => {
+                match kobo_policy::audio_library::resolve_in(&roots, id)? {
+                    kobo_policy::audio_library::Location::File(path) => {
+                        kobo_audio::Book::open(&path)
+                    }
+                    kobo_policy::audio_library::Location::Parts { title, paths } => {
+                        kobo_audio::Book::open_parts(&title, &paths)
+                    }
+                }
+            }
+            kobo_protocol::AudioSource::Stream(_) => return None,
+        };
+        Some(
+            book.map(|book| kobo_policy::services::SimulatedBook {
+                duration_ms: book.duration_ms(),
+                detail: book.description().to_wire(),
+            })
+            .map_err(|fault| match fault {
+                kobo_audio::Fault::Unreadable => kobo_protocol::DeviceError::NotFound,
+                kobo_audio::Fault::Unsupported => kobo_protocol::DeviceError::InvalidInput,
+                kobo_audio::Fault::Damaged => kobo_protocol::DeviceError::Backend,
+            }),
+        )
+    }))
+}
+
+/// Every folder the simulator's library is listed from, in the reader's order.
+///
+/// The reader lists its card and then Cobalt's data folder, where each
+/// application keeps its shelf. Listing only the library folder here meant a
+/// book Gutenbird downloaded in the simulator never reached Books, so the one
+/// path an owner takes most often could not be tried without a reader.
+#[must_use]
+pub fn simulated_library_roots() -> Vec<std::path::PathBuf> {
+    vec![simulated_library_root(), simulated_data_root("")]
+}
+
+/// The offset from UTC an application under the simulator should be told.
+///
+/// The runtime hands every application the reader's offset in
+/// `KOBO_UTC_OFFSET_MINUTES`, so the simulator does the same with the offset
+/// its own clock runs at, so an app's "today" and the status bar agree. A value
+/// already in the environment wins, which is how a test pins a zone far from
+/// the developer's to catch a day counted in UTC. `None` means the variable is
+/// already set and the child inherits it.
+#[must_use]
+pub fn reader_offset_for_app() -> Option<i16> {
+    if std::env::var_os(kobo_policy::clock::READER_OFFSET_VARIABLE).is_some() {
+        return None;
+    }
+    Some(session_offset_minutes())
+}
+
+/// The offset this session's clock runs at, and so the one its apps are told.
+///
+/// The band showed UTC while apps were handed the computer's zone, so a 21:04
+/// band sat over "Last sync 02:34", and with the simulator's own override set
+/// the band moved while the apps stayed on the computer's zone. With either
+/// variable set on its own, the band and the apps now agree; only a test that
+/// sets both on purpose can give them different zones.
+#[must_use]
+pub fn session_offset_minutes() -> i16 {
+    if std::env::var_os(kobo_policy::clock::READER_OFFSET_VARIABLE).is_some() {
+        return kobo_policy::clock::reader_offset_minutes();
+    }
+    std::env::var(SIM_OFFSET_VARIABLE)
+        .ok()
+        .and_then(|value| value.trim().parse::<i16>().ok())
+        .filter(|minutes| (-840..=840).contains(minutes))
+        .unwrap_or_else(host_offset_minutes)
+}
+
+/// The simulator's own override for the offset its clock runs at.
+pub const SIM_OFFSET_VARIABLE: &str = "KOBO_SIM_UTC_OFFSET_MINUTES";
+
+fn host_offset_minutes() -> i16 {
+    std::process::Command::new("date")
+        .arg("+%z")
+        .output()
+        .ok()
+        .and_then(|output| numeric_offset_minutes(std::str::from_utf8(&output.stdout).ok()?))
+        .unwrap_or(0)
+}
+
+/// Minutes east of UTC from the `+hhmm` form `date +%z` prints.
+fn numeric_offset_minutes(text: &str) -> Option<i16> {
+    let text = text.trim();
+    let (sign, digits) = match text.strip_prefix('-') {
+        Some(digits) => (-1, digits),
+        None => (1, text.strip_prefix('+')?),
+    };
+    if digits.len() != 4 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let hours = digits[..2].parse::<i16>().ok()?;
+    let minutes = digits[2..].parse::<i16>().ok()?;
+    let total = sign * (hours * 60 + minutes);
+    (-840..=840).contains(&total).then_some(total)
 }
 
 fn valid_app_name(name: &str) -> bool {
@@ -3340,7 +4522,11 @@ fn valid_app_name(name: &str) -> bool {
 /// A failure is not fatal: `kobo-ui` keeps its bitmap, so the worst case is a
 /// preview that looks like the old one.
 fn install_typeface() {
-    let _ = kobo_text::install(kobo_ui::display_metrics_from_env());
+    // The profile's own metrics, not the Clara default: glyph widths scale
+    // with the panel's density, so a face built for 300 ppi measures every
+    // line a third too wide on a 227 ppi Elipsa and validation rejects
+    // screens the panel would draw untouched.
+    let _ = kobo_text::install(profile_metrics());
 }
 
 fn parse_local_address(address: &str) -> io::Result<SocketAddr> {
@@ -3503,6 +4689,197 @@ const SHELL: &str = include_str!("shell.html");
 
 #[cfg(test)]
 mod tests {
+    /// Held by every test that changes the process-wide simulated radio, so
+    /// one cannot switch it while another is reading it back.
+    static RADIO_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn switching_wifi_off_redraws_the_band_without_waiting_for_another_frame() {
+        let _radio = RADIO_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = super::AppState::default();
+        state.set_screen(kobo_ui::Screen::new(1, vec![]));
+        state.update_chrome();
+        let signal = |state: &super::AppState| {
+            state.chrome.status.as_ref().and_then(|status| {
+                status.marks.iter().find_map(|mark| match mark {
+                    kobo_ui::StatusMark::Signal(signal) => Some(*signal),
+                    _ => None,
+                })
+            })
+        };
+        assert_eq!(signal(&state), Some(kobo_ui::Signal::Strong));
+        let drawn = state.panel.planner.refreshes();
+        let _ = super::RADIO
+            .lock()
+            .unwrap()
+            .handle(&kobo_protocol::DeviceRequest::SetWifi { enabled: false });
+        state.follow_radio();
+        let after = signal(&state);
+        let redrawn = state.panel.planner.refreshes() != drawn;
+        // The radio is process-wide, so put it back before asserting.
+        let _ = super::RADIO
+            .lock()
+            .unwrap()
+            .handle(&kobo_protocol::DeviceRequest::SetWifi { enabled: true });
+        assert_eq!(after, Some(kobo_ui::Signal::Off));
+        assert!(redrawn, "the band changed but no frame was committed");
+    }
+
+    #[test]
+    fn a_wifi_request_is_refused_by_policy_before_the_radio_is_asked() {
+        use kobo_policy::{Backends, Declared, DeviceServices, PowerPolicy};
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult};
+        let services = DeviceServices::new(
+            Declared::parse([]).unwrap(),
+            PowerPolicy::DEFAULT,
+            Backends::with(Declared::parse(["wifi-control"]).unwrap().iter()),
+        );
+        assert_eq!(
+            super::wifi_request(&services, &DeviceRequest::ScanWifi).unwrap(),
+            Some(DeviceResult::Denied(DenyReason::NotDeclared))
+        );
+        assert_eq!(
+            super::wifi_request(&services, &DeviceRequest::ReadBattery).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn shell_fault_preserves_declaration_backend_and_paused_refusals() {
+        let mut state = super::AppState {
+            shell_fault: Some(kobo_protocol::ShellError::Failed),
+            ..super::AppState::default()
+        };
+        let allowed = kobo_policy::Declared::parse(["shell"]).unwrap();
+        let denied = kobo_policy::Declared::parse([]).unwrap();
+        let open = kobo_protocol::ShellRequest::Open {
+            columns: 80,
+            rows: 24,
+        };
+        for (declared, backends, paused) in [
+            (&denied, &allowed, false),
+            (&allowed, &denied, false),
+            (&allowed, &allowed, true),
+        ] {
+            assert_eq!(
+                super::take_shell_fault(&mut state, &open, declared, backends, paused, false),
+                None
+            );
+            assert!(state.shell_fault.is_some());
+        }
+        assert_eq!(
+            super::take_shell_fault(
+                &mut state,
+                &kobo_protocol::ShellRequest::Close,
+                &allowed,
+                &allowed,
+                false,
+                false
+            ),
+            None
+        );
+        assert_eq!(
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false, true),
+            None
+        );
+        assert!(state.shell_fault.is_some());
+        assert_eq!(
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false, false),
+            Some(kobo_protocol::ShellError::Failed)
+        );
+        assert_eq!(
+            super::take_shell_fault(&mut state, &open, &allowed, &allowed, false, false),
+            None
+        );
+    }
+    #[test]
+    fn fixture_endpoints_are_bounded() {
+        let _radio = RADIO_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (socket, _peer) = super::channel::pair().unwrap();
+        let mut state = super::AppState {
+            runtime_navigation: true,
+            ..super::AppState::default()
+        };
+        state.set_screen(kobo_ui::Screen::new(
+            1,
+            vec![kobo_ui::Node::Text {
+                id: kobo_ui::NodeId(1),
+                text: "Independent simulator fixture".into(),
+                links: vec![],
+            }],
+        ));
+        let session = super::AppSession {
+            state: Arc::new(Mutex::new(state)),
+            writer: AppWriter::spawn_for(socket, kobo_protocol::VERSION),
+        };
+        for (path, body, status) in [
+            ("/power-fault", "duplicate-wake", 200),
+            ("/power-fault", "immediate-wake", 400),
+            ("/wifi-fixture", "interface-missing", 200),
+            ("/wifi-fixture", "observed-device", 400),
+            // The radio is process-wide, so put it back for every other test.
+            ("/wifi-fixture", "normal", 200),
+            ("/shell-fault", "helper-missing", 200),
+            ("/shell-fault", "helper-start-failed", 400),
+            ("/panel", "delay 6000", 400),
+            ("/panel", "delay 100", 200),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (server, _) = listener.accept().unwrap();
+            write!(
+                client,
+                "POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            session.handle_http(server).unwrap();
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert!(
+                response.starts_with(&format!("HTTP/1.1 {status}")),
+                "{path}: {response}"
+            );
+        }
+        if let Ok(out) = std::env::var("COBALT_FIXTURE_CAPTURE_OUT") {
+            let state = session.state.lock().unwrap();
+            let rgb = state.panel.ideal_rgb(super::PROFILE.colour_panel);
+            let data = super::capture::View {
+                app: "synthetic-fixture",
+                mode: "test",
+                screen: &state.screen,
+                source: &super::CaptureSource::default(),
+                paints: state.paints,
+                orientation: state.orientation,
+                simulation: state.simulation_json(),
+                frame: &rgb,
+                ideal: true,
+                rgb: true,
+            }
+            .pack()
+            .unwrap();
+            std::fs::write(out, data).unwrap();
+        }
+    }
+    #[test]
+    fn shell_faults_are_explicit_one_shot_open_failures() {
+        let mut state = super::AppState {
+            runtime_navigation: true,
+            ..super::AppState::default()
+        };
+        state.shell_fault = Some(kobo_protocol::ShellError::Failed);
+        assert_eq!(
+            state.shell_fault.take(),
+            Some(kobo_protocol::ShellError::Failed)
+        );
+        assert_eq!(state.shell_fault.take(), None);
+        assert!(state.simulation_json().contains("nextShellFault"));
+    }
+
     #[test]
     fn observations_cannot_silently_select_an_unrelated_profile_or_pose() {
         let mut observation = kobo_profile::observation::Observation::parse(include_str!(
@@ -3594,6 +4971,30 @@ mod tests {
         assert!(nonograms.ends_with("cobalt-sim-data/nonograms"));
         assert!(panels.ends_with("cobalt-sim-data/panels"));
     }
+
+    #[test]
+    fn a_built_in_app_holds_what_the_runtime_declares_for_it() {
+        assert!(app_declaration("books").holds(kobo_policy::Capability::Library));
+        assert!(!app_declaration("no-such-app").holds(kobo_policy::Capability::Library));
+    }
+
+    #[test]
+    fn a_chosen_data_folder_keeps_two_simulators_from_sharing_a_shelf() {
+        let first = data_root_under(Some("/tmp/first".into()), "frame");
+        let second = data_root_under(Some("/tmp/second".into()), "frame");
+        assert_eq!(first, std::path::PathBuf::from("/tmp/first/frame"));
+        assert_ne!(first, second);
+        assert!(data_root_under(Some("".into()), "frame").ends_with("cobalt-sim-data/frame"));
+    }
+
+    #[test]
+    fn the_hosts_offset_reads_the_way_date_prints_it() {
+        assert_eq!(numeric_offset_minutes("+1100\n"), Some(660));
+        assert_eq!(numeric_offset_minutes("-0530"), Some(-330));
+        assert_eq!(numeric_offset_minutes("+0000"), Some(0));
+        assert_eq!(numeric_offset_minutes("+1500"), None);
+        assert_eq!(numeric_offset_minutes("AEDT"), None);
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::time::Duration;
@@ -3649,6 +5050,46 @@ mod tests {
             app_result(&state, "todo", Scenario::Normal, &request),
             DeviceResult::Denied(_)
         ));
+        fs::remove_dir_all(directory).expect("remove owned test directory");
+    }
+
+    #[test]
+    fn simulated_presence_check_answers_names_only_for_the_calling_app() {
+        use kobo_protocol::{DenyReason, DeviceRequest, DeviceResult, SecretValue};
+
+        let directory = private_temp_dir();
+        let state = Arc::new(Mutex::new(AppState::with_apps(Arc::new(Mutex::new(
+            SimulatedApps::default(),
+        )))));
+        state
+            .lock()
+            .unwrap()
+            .secret_directory
+            .clone_from(&directory);
+        let install = DeviceRequest::SetSecret {
+            name: "openai".to_owned(),
+            value: SecretValue::new("private-token"),
+        };
+        assert_eq!(
+            app_result(&state, "audiobook", Scenario::Normal, &install),
+            DeviceResult::Done
+        );
+        let ask = DeviceRequest::CheckSecrets {
+            names: vec!["exa".to_owned(), "openai".to_owned()],
+        };
+        assert_eq!(
+            app_result(&state, "audiobook", Scenario::Normal, &ask),
+            DeviceResult::Secrets {
+                present: vec!["openai".to_owned()]
+            }
+        );
+        let nosy = DeviceRequest::CheckSecrets {
+            names: vec!["zotero".to_owned()],
+        };
+        assert_eq!(
+            app_result(&state, "audiobook", Scenario::Normal, &nosy),
+            DeviceResult::Denied(DenyReason::PolicyRejected)
+        );
         fs::remove_dir_all(directory).expect("remove owned test directory");
     }
 
@@ -3886,7 +5327,7 @@ mod tests {
     #[test]
     fn injected_failures_and_capacity_use_runner_delivery_without_duplicate_callbacks() {
         use kobo_protocol::{Task, TaskError, TaskId, TaskOutcome};
-        let (mut peer, socket) = UnixStream::pair().unwrap();
+        let (mut peer, socket) = channel::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_millis(250)))
             .unwrap();
         let writer = AppWriter::spawn_for(socket, kobo_protocol::VERSION);
@@ -3984,7 +5425,7 @@ mod tests {
     fn disconnect_reaps_session_workers_and_preserves_last_screen() {
         let root = private_temp_dir();
         let server = AppServer::bind("127.0.0.1:0", root.join("app.sock")).unwrap();
-        let mut peer = UnixStream::connect(root.join("app.sock")).unwrap();
+        let mut peer = channel::connect(&root.join("app.sock")).unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         write_protocol_frame(
             &mut peer,
@@ -4060,7 +5501,7 @@ mod tests {
     fn transfer_cancellation_reaches_the_app_once_and_new_work_remains_possible() {
         use kobo_protocol::{Task, TaskId, TaskOutcome};
         use std::sync::atomic::Ordering;
-        let (mut peer, socket) = UnixStream::pair().unwrap();
+        let (mut peer, socket) = channel::pair().unwrap();
         peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         let (started_tx, started_rx) = mpsc::channel();
         let tasks = Arc::new(Mutex::new(
@@ -4170,7 +5611,7 @@ mod tests {
         // taking seconds used to be delivered only when the developer next
         // tapped something. Refusals arrived instantly, which is why nothing
         // noticed: the only tasks the simulator completed were refused ones.
-        let (client, server) = UnixStream::pair().expect("a socket pair");
+        let (client, server) = channel::pair().expect("a socket pair");
         let writer = AppWriter::spawn_for(server, kobo_protocol::VERSION);
         let state = Arc::new(Mutex::new(AppState::default()));
         let tasks = Arc::new(Mutex::new(
@@ -4249,6 +5690,9 @@ mod tests {
             NEXT_PRIVATE_DIR.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&root).expect("create private directory");
+        // Windows has no mode bits; the temp directory is already scoped to
+        // the owning account by the profile ACL.
+        #[cfg(unix)]
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700))
             .expect("protect private directory");
         root
@@ -4457,7 +5901,7 @@ mod tests {
     #[test]
     fn storage_full_uses_policy_validation_and_correlated_ipc_replies() {
         use kobo_protocol::{StoreError, StoreRequest, StoreResult};
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server) = channel::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
@@ -4642,7 +6086,7 @@ mod tests {
                 kobo_protocol::Task::Sleep { seconds: 30 },
             )
             .unwrap();
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server) = channel::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_secs(1)))
             .unwrap();
@@ -4703,7 +6147,7 @@ mod tests {
     #[test]
     fn hardware_controls_update_service_reads_and_only_emit_foreground_cover_edges() {
         use kobo_protocol::{DeviceRequest, DeviceResult};
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server) = channel::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_millis(50)))
             .unwrap();
@@ -4795,7 +6239,7 @@ mod tests {
             })
             .unwrap(),
         );
-        let (mut client, server) = UnixStream::pair().unwrap();
+        let (mut client, server) = channel::pair().unwrap();
         client
             .set_read_timeout(Some(Duration::from_millis(50)))
             .unwrap();
@@ -4834,8 +6278,46 @@ mod tests {
     }
 
     #[test]
+    fn a_page_press_on_a_reader_without_buttons_is_delivered_and_noted() {
+        for page_keys in [false, true] {
+            let (mut client, server) = super::channel::pair().unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_millis(50)))
+                .unwrap();
+            let mut state = AppState {
+                page_keys,
+                ..AppState::default()
+            };
+            state.set_screen(Screen::new(4, Vec::new()));
+            let session = AppSession {
+                state: Arc::new(Mutex::new(state)),
+                writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
+            };
+            session.replay_input("gpio 1 194 1").unwrap();
+            assert_eq!(
+                read_protocol_frame(&mut client).unwrap().message,
+                Message::PageTurn { forward: true }
+            );
+            let noted = session
+                .state
+                .lock()
+                .unwrap()
+                .logs
+                .iter()
+                .any(|line| line.contains("no page-turn buttons"));
+            assert_eq!(noted, !page_keys);
+        }
+    }
+
+    #[test]
+    fn the_default_clara_bw_profile_has_no_page_buttons_and_hears_both_bands() {
+        assert!(!AppState::default().page_keys);
+        assert_eq!(profile_facts().wifi_bands, facts::Bands::Dual);
+    }
+
+    #[test]
     fn lifecycle_control_sends_the_real_sdk_event() {
-        let (mut client, server) = UnixStream::pair().expect("socket pair");
+        let (mut client, server) = channel::pair().expect("socket pair");
         let session = AppSession {
             state: Arc::new(Mutex::new(AppState::default())),
             writer: AppWriter::spawn_for(server, kobo_protocol::VERSION),
@@ -4874,7 +6356,7 @@ mod tests {
             .rect_of_action(action)
             .expect("button");
         let physical = physical_rect(orientation, logical);
-        let (client, server) = UnixStream::pair().expect("socket pair");
+        let (client, server) = channel::pair().expect("socket pair");
         drop(client);
         let session = AppSession {
             state: Arc::new(Mutex::new(AppState {
@@ -5042,6 +6524,7 @@ mod tests {
         assert_eq!(&answer, b"HTTP/1.1 200 OK");
     }
 
+    #[cfg(unix)] // ownership and mode validation exist only on Unix
     #[test]
     fn app_server_rejects_non_private_socket_parent() {
         let root = private_temp_dir();
@@ -5058,6 +6541,7 @@ mod tests {
         let root = private_temp_dir();
         let socket_path = root.join("app.sock");
         let server = AppServer::bind("127.0.0.1:0", &socket_path).expect("bind app server");
+        #[cfg(unix)]
         assert_eq!(
             fs::symlink_metadata(&socket_path)
                 .expect("socket metadata")
@@ -5070,7 +6554,7 @@ mod tests {
         let (ready_sender, ready_receiver) = mpsc::channel();
         let app_socket_path = socket_path.clone();
         let app = thread::spawn(move || -> io::Result<ActionId> {
-            let mut stream = UnixStream::connect(&app_socket_path)?;
+            let mut stream = channel::connect(&app_socket_path)?;
             write_protocol_frame(
                 &mut stream,
                 &Frame {
@@ -5090,6 +6574,7 @@ mod tests {
                     height: u16::try_from(PROFILE.height).expect("profile height"),
                     pixels_per_inch: PROFILE.pixels_per_inch,
                     text_scale: kobo_ui::TextScale::Default,
+                    colour_panel: PROFILE.colour_panel,
                 }
             );
             write_protocol_frame(
@@ -5193,3 +6678,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod text_entry_tests;

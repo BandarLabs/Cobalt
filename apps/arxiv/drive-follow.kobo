@@ -1,0 +1,82 @@
+# sweep: --bare
+# A live subject listing pages, cycles its date window, and can be followed.
+# A followed subject leads the first screen and survives a restart, and
+# Saved can take it away again.
+wait-for Preprints
+tap Computer Science
+wait-idle
+tap Artificial Intelligence
+wait-for 1 of
+expect Follow this subject
+expect Any time
+clean
+shot listing
+# The page turn is the listing's own, not a refetch.
+tap-id list-next
+wait-for 2 of
+clean
+shot listing-page-2
+tap-id list-back
+wait-for 1 of
+# One button holds the window and says which one is in force.
+tap Any time
+wait-idle 20000
+wait-for This week
+tap This week
+wait-idle 20000
+wait-for Last 30 days
+clean
+shot listing-month
+tap Last 30 days
+wait-idle 20000
+wait-for Any time
+# Older papers shows only on the last page, and fetches the next 25.
+expect-missing Older papers
+tap-paged Older papers
+wait-idle 20000
+wait-for 1 of
+expect-missing Older papers
+clean
+shot listing-older
+tap Follow this subject
+wait-for Stop following
+expect-missing Follow this subject
+tap Back
+wait-idle
+tap Back
+wait-idle
+# Followed subjects sit above arXiv's headings, one tap from their listing.
+expect Artificial Intelligence
+expect cs.AI
+expect Computer Science
+clean
+shot followed-on-top
+restart
+wait-for Preprints
+expect cs.AI
+tap Artificial Intelligence
+wait-for 1 of
+expect Stop following
+tap Back
+wait-idle
+tap Saved
+wait-for Saved
+expect Artificial Intelligence
+expect Manage
+clean
+shot saved
+# Manage turns each row into its own removal, and Done puts it back.
+tap Manage
+wait-for Done
+clean
+shot saved-manage
+tap Artificial Intelligence
+wait-for Nothing saved
+expect Save a search or follow a subject
+expect-missing Done
+clean
+shot saved-empty
+tap Back
+wait-idle
+expect-missing cs.AI
+expect Computer Science

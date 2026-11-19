@@ -81,6 +81,12 @@ For simulator sleep tests, start `kobo dev` with `KOBO_SIM_CLOCK_MILLIS=<Unix mi
 Browser inspector controls use the same endpoints. Frontlight values do not model LCD illumination. Display orientation changes composition and hit testing of the current screen; use the app's own rotation control when verifying its measured reflow. Device controls do not add a physical backend or establish measured calibration.
 
 
+## Simulated Wi-Fi
+
+The simulator's radio answers the way the device backend does. A scan starts a new scan and reports the previous one's results, so the first scan after the radio comes up lists nothing. A join answers before it associates; a later read reports the connection. A secured network needs a password of 8 to 63 characters, an open one needs none, and a wrong password or a network out of range never connects. Five networks are in range, two of them on 5 GHz, and a reader whose radio is 2.4 GHz only never lists those.
+
+`kobo drive` accepts `wifi absent` (no backend: `Denied(Unsupported)`), `wifi hung` (`Failed(TimedOut)`), `wifi unresponsive` (`Failed(Backend)`), `wifi wrong-password` (joins never connect) and `wifi none`. The radio belongs to the reader, not to one app, so a fault or a connection made in Settings is what every app sees. Assert with `/wifi` in `expect-state`. `/simulation#/hardwareFacts` reports whether the profile has page-turn buttons and which bands its radio hears; a page-key press on a profile without buttons is still delivered, and the activity log notes it.
+
 ## Panel failure tests
 
 Use `panel hold` before an app transition or clock/device observation that repaints. Assert `/panel#/status "busy"`; frame reads retain confirmed output while ideal pixels show requested content. A newer requested screen replaces the one queued behind the pending frame. `panel complete` confirms one pending update and submits the latest queued frame, if any. `panel fail` marks contents uncertain without committing the planner. `panel retry` submits a whole-panel cleaning refresh; complete it before returning to `panel auto`. Invalid commands or commands in the wrong state fail explicitly. The browser exposes the same controls and disables unavailable actions.

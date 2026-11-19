@@ -1,5 +1,10 @@
 """Build and identify the checkout's CLI before collecting simulator evidence."""
 
+# Evidence is harness output: sidecars carry per-run timings, and a live
+# feed drifts between runs. Changes confined to the evidence tree therefore
+# say nothing about the sources under test, and every harness excludes it
+# from the build-time dirt check by default.
+
 import hashlib
 import json
 import os
@@ -15,7 +20,7 @@ def fingerprint(path):
     return digest.hexdigest()
 
 
-def build_cli(root, target):
+def build_cli(root, target, ignore_prefix="docs/quality/evidence"):
     build = subprocess.run(
         ["cargo", "+1.85.1", "build", "-p", "kobo-cli", "--message-format=json"],
         cwd=root,
@@ -35,8 +40,18 @@ def build_cli(root, target):
     cli = executables[0]
     revision = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    dirty = bool(subprocess.check_output(
-        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True))
+    status = subprocess.check_output(
+        ["git", "status", "--porcelain", "--untracked-files=no"], cwd=root, text=True)
+    if ignore_prefix is not None:
+        # A harness writes its evidence into its own output directory while
+        # it runs, and a previous run's committed evidence may legitimately
+        # differ (a live feed drifts). Changes confined there say nothing
+        # about the sources under test, so they do not taint provenance.
+        prefix = ignore_prefix.rstrip("/") + "/"
+        status = "\n".join(
+            line for line in status.splitlines()
+            if not line[3:].startswith(prefix))
+    dirty = bool(status.strip())
     return cli, dict(source_revision=revision, tracked_changes=dirty,
                      cli_sha256=fingerprint(cli), toolchain="1.85.1")
 

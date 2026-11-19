@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       expected_catalog_sha256:
-        description: SHA-256 of the tested beta cobalt-app-catalog.json
+        description: SHA-256 of the tested beta cobalt-app-catalog-v2.json (cobalt-app-catalog.json if it has none)
         required: true
         type: string
       confirmation:
@@ -28,7 +28,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
@@ -55,8 +55,22 @@ jobs:
             --pattern cobalt-app-catalog.json \
             --pattern cobalt-app-catalog.json.sig \
             --pattern cobalt-app-catalog-provenance.json
+          # The tested catalog is the one that names every mark. A Beta
+          # channel last published before there were two has only the earlier
+          # one, and that is what was tested.
+          if [ "$(gh release view app-catalog-beta --json assets \
+            --jq '[.assets[] | select(.name == "cobalt-app-catalog-v2.json")] | length')" -gt 0 ]
+          then
+            gh release download app-catalog-beta \
+              --dir dist/beta \
+              --pattern cobalt-app-catalog-v2.json \
+              --pattern cobalt-app-catalog-v2.json.sig
+            cp dist/beta/cobalt-app-catalog-v2.json dist/beta/tested-catalog.json
+          else
+            cp dist/beta/cobalt-app-catalog.json dist/beta/tested-catalog.json
+          fi
           actual_catalog_sha256="$(
-            sha256sum dist/beta/cobalt-app-catalog.json | cut -d' ' -f1
+            sha256sum dist/beta/tested-catalog.json | cut -d' ' -f1
           )"
           test "$actual_catalog_sha256" = "$EXPECTED_CATALOG_SHA256"
           node -e '
@@ -112,7 +126,7 @@ jobs:
                 `${asset}\t${entry.package_sha256}\t${entry.package_bytes}\n`
               );
             }
-          ' dist/beta/cobalt-app-catalog.json > dist/beta/packages.tsv
+          ' dist/beta/tested-catalog.json > dist/beta/packages.tsv
           while IFS=$'\t' read -r asset expected_sha256 expected_bytes; do
             gh release download app-catalog-beta \
               --dir dist/packages \
@@ -145,32 +159,40 @@ jobs:
           done < dist/beta/packages.tsv
           target/debug/kobo app-catalog \
             --seed "$seed" \
-            --out dist/stable/cobalt-app-catalog.json \
-            --signature dist/stable/cobalt-app-catalog.json.sig \
+            --out dist/stable/cobalt-app-catalog-v2.json \
+            --earlier-out dist/stable/cobalt-app-catalog.json \
             "${entries[@]}"
-          node -e '
-            const fs = require("fs");
-            const beta = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-            const stable = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-            if (beta.format_version !== stable.format_version) process.exit(1);
-            const normalize = (entry) => ({
-              ...entry,
-              package_url: entry.package_url.replace(
-                "/download/app-catalog-beta/",
-                "/download/app-catalog/"
-              ),
-            });
-            const expected = beta.entries.map(normalize);
-            if (JSON.stringify(stable.entries) !== JSON.stringify(expected)) process.exit(1);
-          ' \
-            dist/beta/cobalt-app-catalog.json \
-            dist/stable/cobalt-app-catalog.json
+          # Each stable catalog is its Beta counterpart pointed at the stable
+          # release. Without a Beta catalog naming marks, the tested bundles
+          # carry none, and both stable catalogs are the earlier Beta one.
+          same_as_beta() {
+            node -e '
+              const fs = require("fs");
+              const beta = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              const stable = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+              if (beta.format_version !== stable.format_version) process.exit(1);
+              const normalize = (entry) => ({
+                ...entry,
+                package_url: entry.package_url.replace(
+                  "/download/app-catalog-beta/",
+                  "/download/app-catalog/"
+                ),
+              });
+              const expected = beta.entries.map(normalize);
+              if (JSON.stringify(stable.entries) !== JSON.stringify(expected)) process.exit(1);
+            ' "$1" "$2"
+          }
+          same_as_beta dist/beta/tested-catalog.json dist/stable/cobalt-app-catalog-v2.json
+          same_as_beta dist/beta/cobalt-app-catalog.json dist/stable/cobalt-app-catalog.json
       - name: Record stable catalog provenance
         env:
           TESTED_COMMIT: ${{ inputs.tested_commit }}
           EXPECTED_CATALOG_SHA256: ${{ inputs.expected_catalog_sha256 }}
         run: |
           stable_sha256="$(
+            sha256sum dist/stable/cobalt-app-catalog-v2.json | cut -d' ' -f1
+          )"
+          earlier_sha256="$(
             sha256sum dist/stable/cobalt-app-catalog.json | cut -d' ' -f1
           )"
           # shellcheck disable=SC2016
@@ -183,6 +205,7 @@ jobs:
               source_sha: process.argv[2],
               source_catalog_sha256: process.argv[3],
               catalog_sha256: process.argv[4],
+              earlier_catalog_sha256: process.argv[7],
               workflow_run_id: Number(process.argv[5]),
               workflow_run_attempt: Number(process.argv[6]),
             };
@@ -193,7 +216,8 @@ jobs:
             "$EXPECTED_CATALOG_SHA256" \
             "$stable_sha256" \
             "$GITHUB_RUN_ID" \
-            "$GITHUB_RUN_ATTEMPT"
+            "$GITHUB_RUN_ATTEMPT" \
+            "$earlier_sha256"
           cp \
             dist/stable/cobalt-app-catalog-provenance.json \
             "dist/stable/cobalt-app-catalog-provenance-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
@@ -240,5 +264,9 @@ jobs:
             dist/stable/cobalt-app-catalog.json.sig --clobber
           gh release upload app-catalog \
             dist/stable/cobalt-app-catalog.json --clobber
+          gh release upload app-catalog \
+            dist/stable/cobalt-app-catalog-v2.json.sig --clobber
+          gh release upload app-catalog \
+            dist/stable/cobalt-app-catalog-v2.json --clobber
           gh release upload app-catalog \
             dist/stable/cobalt-app-catalog-provenance.json --clobber

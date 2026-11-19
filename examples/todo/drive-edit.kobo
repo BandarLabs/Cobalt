@@ -1,0 +1,153 @@
+# sweep: --bare
+# Everything past adding and ticking: tags, the Edit list and one item's
+# screen (date, order, rename, remove), clearing finished items and its undo,
+# reopening from Select, the copy for a computer, a refused save, a list long
+# enough to page, and the list surviving a restart.
+wait-for Nothing to do
+# No Edit or Select over an empty list.
+expect-missing Edit
+expect-missing Select
+tap Add a task
+wait-for New item
+type call mum #home
+tap Add
+wait-for Added
+type fix bike #home
+tap Add
+wait-for Added
+type send invoice #work
+tap Add
+wait-for Added
+tap Back
+wait-for send invoice #work
+expect #home
+expect #work
+clean
+shot todo-edit-tags
+# A tag chip narrows the list, and a second tap widens it again.
+tap #work
+wait-for send invoice #work
+expect-missing call mum
+clean
+shot todo-edit-filtered
+tap #work
+wait-for call mum #home
+# A tap on a row finishes it, and it moves under Done.
+tap fix bike
+wait-for Done
+expect Done. Tap to reopen.
+expect Clear finished
+# Clear finished, then the one undo it offers.
+tap Clear finished
+wait-for Undo clear
+expect-missing fix bike
+tap Undo clear
+wait-for fix bike #home
+expect Clear finished
+# Select with only finished items ticked offers Reopen rather than Finish.
+tap Select
+wait-for Select items
+tap fix bike
+wait-for 1 selected
+expect Reopen
+tap Reopen
+wait-for call mum #home
+expect-missing Done. Tap to reopen.
+expect-missing Clear finished
+# Select, then Back, changes nothing.
+tap Select
+wait-for Select items
+tap Select all
+wait-for 3 selected
+tap-id 4294967295
+wait-for Edit
+expect-missing Done. Tap to reopen.
+# The Edit list and one item's screen.
+tap Edit
+wait-for Edit list
+expect Tap an item to rename it, move it, give it a date or remove it.
+expect Save a copy
+clean
+shot todo-edit-list
+tap send invoice #work
+wait-for When it is due
+expect Move up
+clean
+shot todo-edit-item
+tap Tomorrow
+wait-for due tomorrow
+tap In a week
+wait-for due in 7 days
+tap Today
+wait-for due today
+tap No date
+expect-missing due today
+tap Tomorrow
+wait-for due tomorrow
+# The last item can move up but not down; after one move up it can do both.
+tap Move up
+wait-for Move down
+clean
+shot todo-edit-item-moved
+# Rename keeps the item where it is.
+tap Rename
+wait-for Change the words
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+tap-id kb.backspace
+type by friday
+tap Save
+wait-for send invoice by friday
+expect due tomorrow
+tap-id 4294967295
+wait-for Edit list
+expect send invoice by friday
+tap-id 4294967295
+wait-for To do
+# The renamed item sits second, above fix bike, and the #work chip went
+# with the tag.
+expect send invoice by friday
+expect-missing #work
+clean
+shot todo-edit-renamed
+# A copy for the computer, received by the companion.
+tap Edit
+wait-for Edit list
+tap Save a copy
+wait-for Ready for your computer.
+expect TXT
+clean
+shot todo-edit-copy
+companion export --app todo --sim --out target/todo-route-export
+tap-id 4294967295
+wait-for Edit list
+# Remove from one item's screen.
+tap fix bike
+wait-for When it is due
+tap-id delete
+wait-for Edit list
+expect-missing fix bike
+tap-id 4294967295
+wait-for To do
+expect-missing fix bike
+# The list survives the app restarting, dates and order included.
+restart
+wait-for send invoice by friday
+expect call mum #home
+expect due tomorrow
+expect-missing Done
+# A save the reader refuses says so on the list, and the next good save
+# takes the banner down.
+scenario storage-full
+tap call mum
+wait-for The list could not be saved. Check free space.
+clean
+shot todo-edit-save-refused
+scenario normal
+tap call mum
+wait-idle
+wait 1000
+# The banner should go once a save lands.
+expect-missing The list could not be saved

@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "cli_source": "pr6 local cb3c6de plus working change",
+  "source": "https://archive.org/details/priscillawarwork00pris",
+  "source_pdf_sha256": "f8cbe5401a7d4fa3a79a554f9ebf83a0cbd3719400deb62c1ff85f2143adcd27",
+  "prepared_and_simulator_sha256": "cd0f3779098f99bb062b26e3e679ae3c0e563ba34bdcde0d9683b5d4dcfc5cf1",
+  "checks": [
+    "prepare labels a local copy not sent and usable without a reader",
+    "preview labels reviewable local output not sent",
+    "simulator push labels sent and available offline",
+    "prepared and simulator copies are byte-identical",
+    "running Needles app opens the CLI-driven pattern and returns to its offline counter"
+  ],
+  "visual_review": "922x1246 captures inspected: empty-state guidance, real public-domain pattern text, and offline counter are legible with no overlap or clipping.",
+  "caveat": "OCR defects in the public-domain source remain visible; physical-reader transfer and offline behavior are unverified."
+}

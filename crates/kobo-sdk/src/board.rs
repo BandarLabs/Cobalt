@@ -480,7 +480,7 @@ mod tests {
         undone.undo();
         let states = [puzzle(), played, undone];
         for profile in kobo_profile::SUPPORTED_PROFILES {
-            for scale in [TextScale::Default, TextScale::Large, TextScale::ExtraLarge] {
+            for scale in TextScale::STEPS {
                 for orientation in [Orientation::Portrait, Orientation::Landscape] {
                     let metrics = DisplayMetrics {
                         width: i32::try_from(profile.width).unwrap(),

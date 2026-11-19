@@ -468,6 +468,12 @@ pub fn run_with_title(options: Options, title: &str) -> Result<i32, String> {
     if options.command.is_empty() {
         return Err("kobo stream needs a command after --".to_owned());
     }
+    if let Some(address) = refresh_for_current_address()? {
+        eprintln!(
+            "This computer is now at {address}, so Paperterm's certificate was renewed to name it.\r\n\
+             If the reader was paired at an older address, run kobo stream init to update it.\r"
+        );
+    }
     let identity = Identity::load()?;
     let tls = kobo_net::serve::TlsServer::from_pem(&identity.certificate, &identity.key)?;
     let listener = TcpListener::bind(("0.0.0.0", options.port))
@@ -615,10 +621,48 @@ fn host_environment_with(mut read: impl FnMut(&str) -> Option<String>) -> Vec<(S
     environment.extend(
         INHERITED
             .iter()
+            .chain(PLATFORM_INHERITED)
             .filter_map(|name| read(name).map(|value| ((*name).to_owned(), value))),
     );
     environment
 }
+
+/// What a Windows program needs on top of that list. A replaced environment
+/// without `SystemRoot` leaves cmd unable to start and anything that loads
+/// Winsock unable to run, `PATHEXT` is how a bare name such as `claude` finds
+/// its `.exe` or `.cmd`, and the profile, application data and temp folders
+/// are where every Windows program keeps its own files. None of them carries
+/// a credential.
+#[cfg(windows)]
+const PLATFORM_INHERITED: &[&str] = &[
+    "SystemRoot",
+    "SystemDrive",
+    "windir",
+    "ComSpec",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
+    "CommonProgramFiles",
+    "USERNAME",
+    "USERDOMAIN",
+    "COMPUTERNAME",
+    "OS",
+    "PROCESSOR_ARCHITECTURE",
+    "NUMBER_OF_PROCESSORS",
+];
+
+/// Unix programs find everything they need in the shared list above.
+#[cfg(not(windows))]
+const PLATFORM_INHERITED: &[&str] = &[];
 
 struct ReaderSlot(Arc<AtomicUsize>);
 
@@ -784,76 +828,7 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
     let leaf = directory.join("cert.pem");
     let leaf_key = directory.join("key.pem");
     if !leaf.exists() || !leaf_key.exists() || !requested_hosts.is_empty() {
-        let request = directory.join("leaf.csr");
-        let extensions = directory.join("leaf.ext");
-        let serial = directory.join("ca-cert.srl");
-        let mut names = vec!["IP:127.0.0.1".to_owned()];
-        names.extend(requested_hosts.iter().map(|host| {
-            if host.parse::<std::net::IpAddr>().is_ok() {
-                format!("IP:{host}")
-            } else {
-                format!("DNS:{host}")
-            }
-        }));
-        std::fs::write(
-            &extensions,
-            format!(
-                "subjectAltName={}\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n",
-                names.join(",")
-            ),
-        )
-        .map_err(|error| format!("write leaf extensions: {error}"))?;
-        let request_output = Command::new("openssl")
-            .args(["req", "-newkey", "rsa:2048", "-nodes", "-keyout"])
-            .arg(&leaf_key)
-            .arg("-out")
-            .arg(&request)
-            .args(["-subj", "/CN=kobo-stream"])
-            .output()
-            .map_err(|error| format!("run openssl: {error}"))?;
-        if !request_output.status.success() {
-            return Err(format!(
-                "openssl refused the stream leaf: {}",
-                String::from_utf8_lossy(&request_output.stderr)
-            ));
-        }
-        let signed = Command::new("openssl")
-            .args([
-                "x509",
-                "-req",
-                "-sha256",
-                "-days",
-                "3650",
-                "-CAcreateserial",
-            ])
-            .arg("-in")
-            .arg(&request)
-            .arg("-CA")
-            .arg(&ca)
-            .arg("-CAkey")
-            .arg(&key)
-            .arg("-CAserial")
-            .arg(&serial)
-            .arg("-extfile")
-            .arg(&extensions)
-            .arg("-out")
-            .arg(&leaf)
-            .output()
-            .map_err(|error| format!("run openssl: {error}"))?;
-        let _ = std::fs::remove_file(request);
-        let _ = std::fs::remove_file(extensions);
-        if !signed.status.success() {
-            return Err(format!(
-                "openssl refused to sign the stream leaf: {}",
-                String::from_utf8_lossy(&signed.stderr)
-            ));
-        }
-        let authority =
-            std::fs::read_to_string(&ca).map_err(|error| format!("read authority: {error}"))?;
-        let certificate =
-            std::fs::read_to_string(&leaf).map_err(|error| format!("read stream leaf: {error}"))?;
-        std::fs::write(&leaf, format!("{certificate}{authority}"))
-            .map_err(|error| format!("write stream chain: {error}"))?;
+        mint_leaf(&directory, &requested_hosts)?;
     }
     let pairing_path = directory.join("pairing");
     let pairing = std::fs::read_to_string(&pairing_path)
@@ -871,18 +846,194 @@ pub fn init(hosts: &[String]) -> Result<(), String> {
         std::fs::write(directory.join("hosts"), requested_hosts.join("\n"))
             .map_err(|error| format!("save computer addresses: {error}"))?;
     }
-    // What remains after this is the caller's to say: the companion installs
-    // the trust root itself now, and printing an instruction it has already
-    // carried out said the same thing twice, one of them wrongly.
-    println!(
-        "Paperterm is ready to pair.\n{}",
-        pairing_instructions(DEFAULT_PORT)?
-    );
+    // Minting is not pairing. This used to announce "Paperterm is ready to
+    // pair" from here, which is a claim only the caller is in a position to
+    // make: it is the caller that knows whether a reader was found and the
+    // trust root installed. Announcing it here said pairing was ready in the
+    // one case where it was furthest from it -- no reader found at all.
     Ok(())
+}
+
+/// Mints a leaf naming loopback and `hosts`, signed by the stream authority.
+///
+/// The authority is what the reader trusts, so a new leaf costs nothing on
+/// the reader's side: it is how a change of address is absorbed without a
+/// cable or a second `kobo trust set`.
+fn mint_leaf(directory: &std::path::Path, hosts: &[String]) -> Result<(), String> {
+    let ca = directory.join("ca-cert.pem");
+    let key = directory.join("ca-key.pem");
+    let leaf = directory.join("cert.pem");
+    let leaf_key = directory.join("key.pem");
+    let request = directory.join("leaf.csr");
+    let extensions = directory.join("leaf.ext");
+    let serial = directory.join("ca-cert.srl");
+    let mut names = vec!["IP:127.0.0.1".to_owned()];
+    names.extend(hosts.iter().map(|host| {
+        if host.parse::<std::net::IpAddr>().is_ok() {
+            format!("IP:{host}")
+        } else {
+            format!("DNS:{host}")
+        }
+    }));
+    std::fs::write(
+        &extensions,
+        format!(
+            "subjectAltName={}\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n",
+            names.join(",")
+        ),
+    )
+    .map_err(|error| format!("write leaf extensions: {error}"))?;
+    let request_output = Command::new("openssl")
+        .args(["req", "-newkey", "rsa:2048", "-nodes", "-keyout"])
+        .arg(&leaf_key)
+        .arg("-out")
+        .arg(&request)
+        .args(["-subj", "/CN=kobo-stream"])
+        .output()
+        .map_err(|error| format!("run openssl: {error}"))?;
+    if !request_output.status.success() {
+        return Err(format!(
+            "openssl refused the stream leaf: {}",
+            String::from_utf8_lossy(&request_output.stderr)
+        ));
+    }
+    let signed = Command::new("openssl")
+        .args([
+            "x509",
+            "-req",
+            "-sha256",
+            "-days",
+            "3650",
+            "-CAcreateserial",
+        ])
+        .arg("-in")
+        .arg(&request)
+        .arg("-CA")
+        .arg(&ca)
+        .arg("-CAkey")
+        .arg(&key)
+        .arg("-CAserial")
+        .arg(&serial)
+        .arg("-extfile")
+        .arg(&extensions)
+        .arg("-out")
+        .arg(&leaf)
+        .output()
+        .map_err(|error| format!("run openssl: {error}"))?;
+    let _ = std::fs::remove_file(request);
+    let _ = std::fs::remove_file(extensions);
+    if !signed.status.success() {
+        return Err(format!(
+            "openssl refused to sign the stream leaf: {}",
+            String::from_utf8_lossy(&signed.stderr)
+        ));
+    }
+    let authority =
+        std::fs::read_to_string(&ca).map_err(|error| format!("read authority: {error}"))?;
+    let certificate =
+        std::fs::read_to_string(&leaf).map_err(|error| format!("read stream leaf: {error}"))?;
+    std::fs::write(&leaf, format!("{certificate}{authority}"))
+        .map_err(|error| format!("write stream chain: {error}"))?;
+    Ok(())
+}
+
+/// Renews the leaf when this computer's address is not one it names.
+///
+/// The certificate used to be minted only by `init`, so the day the router
+/// handed the computer a new address every session failed its handshake and
+/// nothing said why. Each session now checks first. The new leaf keeps any
+/// name the owner gave with `--host` and drops numeric addresses this
+/// computer no longer has, so the pairing details stop listing dead ones.
+/// Only a session renews: reading the pairing details leaves the identity
+/// exactly as it was. Returns the new address when it renewed, `None` when
+/// nothing changed.
+pub fn refresh_for_current_address() -> Result<Option<String>, String> {
+    let directory = identity_dir()?;
+    if !directory.join("ca-cert.pem").exists() || !directory.join("ca-key.pem").exists() {
+        return Ok(None);
+    }
+    let Some(current) = lan_address() else {
+        return Ok(None);
+    };
+    let saved = std::fs::read_to_string(directory.join("hosts")).unwrap_or_default();
+    let Some(hosts) = hosts_after_move(&saved, &current) else {
+        return Ok(None);
+    };
+    mint_leaf(&directory, &hosts)?;
+    std::fs::write(directory.join("hosts"), hosts.join("\n"))
+        .map_err(|error| format!("save computer addresses: {error}"))?;
+    Ok(Some(current))
+}
+
+/// The addresses a renewed leaf should name, or `None` when `current` is
+/// already among the saved ones.
+fn hosts_after_move(saved: &str, current: &str) -> Option<Vec<String>> {
+    let saved: Vec<&str> = saved
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if saved.contains(&current) {
+        return None;
+    }
+    let mut hosts = vec![current.to_owned()];
+    hosts.extend(
+        saved
+            .into_iter()
+            .filter(|host| host.parse::<std::net::IpAddr>().is_err())
+            .map(str::to_owned),
+    );
+    Some(hosts)
+}
+
+/// The address the reader will dial: whichever interface routes outward.
+/// Connecting a UDP socket sends nothing; it only asks the kernel which
+/// source address it would use.
+fn lan_address() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("192.0.2.1:9").ok()?;
+    let std::net::IpAddr::V4(address) = socket.local_addr().ok()?.ip() else {
+        return None;
+    };
+    Some(address.to_string())
+}
+
+/// The pairing code this computer's Paperterm host answers to.
+pub fn saved_code() -> Result<String, String> {
+    Ok(Identity::load()?.pairing)
+}
+
+/// Where the stream authority the reader must trust is kept.
+pub fn authority_path() -> Result<PathBuf, String> {
+    let path = identity_dir()?.join("ca-cert.pem");
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!("no {}; run kobo stream init", path.display()))
+    }
 }
 
 /// Shows saved connection details without replacing the identity or pairing code.
 pub fn pairing_instructions(port: u16) -> Result<String, String> {
+    Ok(format!("{}\n\n{FIRST_TIME_HELP}", pairing_details(port)?))
+}
+
+/// What to do with a freshly minted identity, for a caller that has not
+/// already done it. Named so a test can hold it to saying so without a
+/// filesystem identity to load.
+const FIRST_TIME_HELP: &str = "First time: run kobo stream init. It pairs Paperterm on your reader, so there is nothing to type there.\nKeep both devices on the same network and the computer awake.";
+
+/// The address and code alone, with no advice about what to do with them.
+///
+/// Separate from [`pairing_instructions`] because what to do next is not a
+/// property of the identity: after a successful pairing the trust root is
+/// already installed, and telling the owner to install it is one instruction
+/// too many, while after a failed one they need different advice entirely.
+/// Only the caller knows which happened.
+///
+/// # Errors
+/// Fails when the identity cannot be read.
+pub fn pairing_details(port: u16) -> Result<String, String> {
     let identity = Identity::load()?;
     let hosts = std::fs::read_to_string(identity_dir()?.join("hosts")).unwrap_or_default();
     Ok(format_pairing(&hosts, &identity.pairing, port))
@@ -905,7 +1056,7 @@ fn format_pairing(hosts: &str, code: &str, port: u16) -> String {
     } else {
         format!("Computer address:\n{}", addresses.join("\n"))
     };
-    format!("{address_help}\nPairing code: {code}\n\nFirst time: run kobo trust set stream --device READER_IP.\nThen open Paperterm and enter the computer address and pairing code.\nKeep both devices on the same network and the computer awake.")
+    format!("{address_help}\nPairing code: {code}")
 }
 
 fn config_dir() -> Result<PathBuf, String> {
@@ -916,8 +1067,8 @@ fn config_dir() -> Result<PathBuf, String> {
         }
         return Ok(root);
     }
-    let home = std::env::var_os("HOME").ok_or("no HOME in the environment")?;
-    Ok(PathBuf::from(home).join(".config").join("kobo"))
+    let home = kobo_abi::home_directory().ok_or("no HOME in the environment")?;
+    Ok(home.join(".config").join("kobo"))
 }
 fn identity_dir() -> Result<PathBuf, String> {
     Ok(config_dir()?.join("stream"))
@@ -925,8 +1076,7 @@ fn identity_dir() -> Result<PathBuf, String> {
 fn pairing_code() -> Result<String, String> {
     const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
     let mut bytes = [0_u8; 6];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("read randomness: {error}"))?;
     Ok(bytes
         .iter()
@@ -1182,8 +1332,7 @@ fn random_session() -> Result<u64, String> {
     // so the value sent back on /screen and /keys is byte-for-byte equivalent.
     const MAX_EXACT_JSON_INTEGER: u64 = (1_u64 << 53) - 1;
     let mut bytes = [0_u8; 8];
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("read randomness: {error}"))?;
     Ok((u64::from_le_bytes(bytes) & MAX_EXACT_JSON_INTEGER).max(1))
 }
@@ -1266,10 +1415,34 @@ mod tests {
     }
 
     #[test]
+    fn a_computer_that_moved_gets_a_certificate_for_its_new_address_and_keeps_its_names() {
+        let hosts = super::hosts_after_move("192.168.1.20\nstudio.local\n", "192.168.1.31")
+            .expect("the new address is not named yet");
+        assert_eq!(hosts, ["192.168.1.31", "studio.local"]);
+        assert_eq!(
+            super::hosts_after_move("192.168.1.31\nstudio.local", "192.168.1.31"),
+            None,
+            "an unchanged address re-minted the certificate"
+        );
+        assert_eq!(
+            super::hosts_after_move("", "10.0.0.4").expect("first address"),
+            ["10.0.0.4"]
+        );
+    }
+
+    #[test]
+    fn first_time_help_sends_the_owner_to_the_one_pairing_command() {
+        assert!(super::FIRST_TIME_HELP.contains("kobo stream init"));
+        assert!(!super::FIRST_TIME_HELP.contains("trust set"));
+    }
+
+    #[test]
     fn missing_saved_address_explains_how_to_finish_setup() {
         let details = super::format_pairing("", "ABC123", 9123);
         assert!(details.contains("kobo stream init --host COMPUTER_IP"));
-        assert!(details.contains("kobo trust set stream --device READER_IP"));
+        // What to do next is the caller's to say, because a caller that has
+        // just paired the reader must not repeat the instruction back.
+        assert!(!details.contains("kobo trust set stream --device READER_IP"));
     }
     use super::*;
 
@@ -1306,6 +1479,20 @@ mod tests {
         assert!(environment
             .iter()
             .all(|(name, _)| name != "ANTHROPIC_API_KEY"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_host_terminal_keeps_what_cmd_needs_to_start() {
+        let environment = host_environment_with(|name| match name {
+            "SystemRoot" => Some(r"C:\Windows".to_owned()),
+            "PATHEXT" => Some(".COM;.EXE;.BAT;.CMD".to_owned()),
+            "GITHUB_TOKEN" => Some("must-not-leak".to_owned()),
+            _ => None,
+        });
+        assert!(environment.contains(&("SystemRoot".to_owned(), r"C:\Windows".to_owned())));
+        assert!(environment.contains(&("PATHEXT".to_owned(), ".COM;.EXE;.BAT;.CMD".to_owned())));
+        assert!(environment.iter().all(|(name, _)| name != "GITHUB_TOKEN"));
     }
 
     #[test]
@@ -1650,18 +1837,33 @@ mod tests {
 
     #[test]
     fn pty_output_keeps_terminal_escape_sequences_for_the_screen_model() {
-        let mut pty = kobo_abi::pty::Pty::spawn(
+        #[cfg(unix)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "/bin/sh",
             &["-c", "printf '\\033[2Jready'"],
             &[("TERM", "xterm-256color")],
-            12,
-            2,
-        )
-        .expect("start a PTY command");
-        let bytes = pty
+        );
+        // The same observable under ConPTY: a clear issued by the hosted
+        // program, then text, which must land on the first row.
+        #[cfg(windows)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) =
+            ("cmd.exe", &["/c", "cls & echo ready"], &[]);
+        let mut pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 12, 2)
+            .expect("start a PTY command");
+        // ConPTY delivers the clear and the text as separate writes, so
+        // collect until the answer arrives rather than assuming one read is
+        // everything; on Unix the whole output lands in the first read.
+        let mut bytes = pty
             .output()
             .recv_timeout(Duration::from_secs(2))
             .expect("PTY output");
+        while !String::from_utf8_lossy(&bytes).contains("ready") {
+            bytes.extend_from_slice(
+                &pty.output()
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("PTY output"),
+            );
+        }
         let session = Session::new(Grid {
             columns: 12,
             rows: 2,
@@ -1674,20 +1876,42 @@ mod tests {
 
     #[test]
     fn child_exit_drains_pty_eof_and_exposes_uncapped_final_output() {
-        let pty = kobo_abi::pty::Pty::spawn(
+        #[cfg(unix)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "/bin/sh",
             &["-c", "printf first; sleep 1; printf final"],
             &[("TERM", "xterm-256color")],
-            20,
-            2,
-        )
-        .expect("start final-output command");
+        );
+        // PowerShell is stock on Windows and its Console.Write is exact:
+        // both halves without a newline, so they share a row exactly as
+        // sh's printf makes them. (cmd's newline-free echo|set /p idiom
+        // proved unreliable under ConPTY.)
+        #[cfg(windows)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
+            "powershell.exe",
+            &[
+                "-NoProfile",
+                "-Command",
+                "[Console]::Write('first'); Start-Sleep -Milliseconds 800; [Console]::Write('final')",
+            ],
+            &[],
+        );
+        let pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 20, 2)
+            .expect("start final-output command");
         let input = Mutex::new(pty);
         let session = Session::new(Grid {
             columns: 20,
             rows: 2,
         });
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // ConPTY process startup and cmd's own pacing stretch the same
+        // sequence; the assertion (both halves arrive before EOF) is
+        // unchanged.
+        let deadline = Instant::now()
+            + if cfg!(windows) {
+                Duration::from_secs(10)
+            } else {
+                Duration::from_secs(3)
+            };
         let mut before = None;
         let mut exit = None;
         loop {
@@ -1724,20 +1948,34 @@ mod tests {
 
     #[test]
     fn pty_accepts_control_input_without_waiting_for_a_snapshot() {
-        let mut pty = kobo_abi::pty::Pty::spawn(
+        #[cfg(unix)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) = (
             "/bin/sh",
             &["-c", "read answer; printf 'answer:%s' \"$answer\""],
             &[("TERM", "xterm-256color")],
-            24,
-            2,
-        )
-        .expect("start PTY command");
+        );
+        // `set /p` reads a line; ConPTY echoes what was typed, which is the
+        // whole assertion below.
+        #[cfg(windows)]
+        let (program, arguments, environment): (&str, &[&str], &[(&str, &str)]) =
+            ("cmd.exe", &["/c", "set /p answer="], &[]);
+        let mut pty = kobo_abi::pty::Pty::spawn(program, arguments, environment, 24, 2)
+            .expect("start PTY command");
         pty.write(b"yes\r").expect("write terminal input");
-        let output = pty
+        // ConPTY can deliver the echo in a later write than the first
+        // output burst, so collect until it arrives instead of trusting a
+        // single read; on Unix the whole echo lands in the first chunk.
+        let mut output = pty
             .output()
             .recv_timeout(Duration::from_secs(2))
             .expect("PTY echoed the answer");
-        assert!(String::from_utf8_lossy(&output).contains("yes"));
+        while !String::from_utf8_lossy(&output).contains("yes") {
+            output.extend_from_slice(
+                &pty.output()
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("PTY echoed the answer"),
+            );
+        }
         let _ = pty.finished().expect("reap PTY command");
     }
     #[test]

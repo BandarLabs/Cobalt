@@ -1,0 +1,5 @@
+usage: kobo musicstand init (--sim | --device IP)
+       kobo musicstand push SCORE.pdf|IMAGES_DIR (--sim | --device IP)
+       kobo musicstand plan SCORE.pdf|IMAGES_DIR (--sim | --device IP)
+       kobo musicstand ls (--sim | --device IP)
+       kobo musicstand rm ID (--sim | --device IP)

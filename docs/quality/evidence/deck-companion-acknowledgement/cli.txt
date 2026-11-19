@@ -1,0 +1,46 @@
+$ deck init --preset build --home /tmp/cobalt-deck-cli-imwlryuu/home/.config/kobo/sidekick
+Deck config directory ready: /tmp/cobalt-deck-cli-imwlryuu/home/.config/kobo/sidekick
+Wrote the build preset to /tmp/cobalt-deck-cli-imwlryuu/home/.config/kobo/sidekick/deck.toml: 7 pad(s) across 1 page(s).
+Change any of them with kobo deck set, then kobo deck push --sim or --device IP.
+
+$ deck set 1 --label Check --detail harmless output --run printf 'deck companion check passed
+' --home /tmp/cobalt-deck-cli-imwlryuu/home/.config/kobo/sidekick
+Assigned pad 1 on 'Build': Check · harmless output
+
+$ deck set 8 --page Build --url https://www.rust-lang.org/learn --home /tmp/cobalt-deck-cli-imwlryuu/home/.config/kobo/sidekick
+Assigned pad 8 on 'Build': Rust-lang · www.rust-lang.org
+
+$ deck set 9 --page Build --launch calculator --home /tmp/cobalt-deck-cli-imwlryuu/home/.config/kobo/sidekick
+Assigned pad 9 on 'Build': Calculator · launch calculator
+
+$ deck show --home /tmp/cobalt-deck-cli-imwlryuu/home/.config/kobo/sidekick
+Build
+  1   Check             harmless output                           printf 'deck companion check passed
+'
+  2   Format            cargo fmt                                 cargo fmt --all
+  3   Lint              cargo clippy                              cargo clippy --workspace
+  4   Build             release build                             cargo build --release
+  5   Status            git status                                git status --short
+  6   Pull              git pull                                  git pull --ff-only
+  7   Deploy            deploy the site                           make deploy  confirm
+  8   Rust-lang         www.rust-lang.org                         xdg-open 'https://www.rust-lang.org/learn'
+  9   Calculator        launch calculator                         gtk-launch calculator || calculator
+
+$ deck push --sim --home /tmp/cobalt-deck-cli-imwlryuu/home/.config/kobo/sidekick
+Staged 9 pad(s) in the simulator. Existing pairing is kept; an unpaired simulator opens a static preview.
+
+$ init --host 127.0.0.1
+sidekick: minted a certificate for 169.254.0.21, 127.0.0.1
+Sidekick is initialised.
+
+  address       169.254.0.21:9331
+  pairing code  yrddft
+
+Next:
+  1. kobo-sidekickd setup codex   (or claude), follow it
+  2. kobo-sidekickd run
+  3. open Sidekick on the reader, enter the address and code
+
+A reader set up with 'kobo setup' after this point trusts the
+daemon already; one that was set up before it needs one
+'kobo trust set sidekick --device READER_IP'.

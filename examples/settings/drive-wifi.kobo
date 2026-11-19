@@ -1,0 +1,124 @@
+# Wi-Fi from the switch to a joined network. The simulated radio answers the
+# way the reader's does: a scan reports what the previous scan found, and a
+# join lands on a later reading rather than in its own answer.
+wait-for Settings
+tap Wi-Fi
+wait-for Not connected
+# The list fills from the next scan without a button to press.
+wait-for Cobalt Home
+expect Password · Strong signal
+expect-missing No networks found.
+expect-missing Looking for networks
+shot settings-wifi-networks
+# An open network joins without asking for a password. The radio takes a
+# moment, so the page says it is joining, then the switch line, the row and
+# the home list all name it once the radio has joined.
+tap-paged Library Guest
+wait-for Joining Library Guest
+wait-for Connected to Library Guest
+expect-state /wifi#/connected "Library Guest"
+expect Tap to disconnect
+shot settings-wifi-connected
+tap-id 4294967295
+wait-for Connections
+expect Connected to Library Guest
+tap Wi-Fi
+wait-for Tap to disconnect
+# Tapping the joined network leaves it. Its row is found by what it says,
+# since the switch line above it also names the network.
+tap-paged Tap to disconnect
+wait-for Not connected
+expect-state /wifi#/connected null
+# A secured network asks for its password on the reader's own keys, and
+# the field shows dots, not the letters.
+maybe-tap-id previous
+tap Cobalt Home 5G
+wait-for Password for Cobalt Home 5G
+expect 8 to 63 characters
+expect Join
+shot settings-wifi-password
+# A password too short to be one is refused under the field, and the next
+# key pressed takes the complaint away.
+type short
+expect-missing short
+tap Join
+wait-for A Wi-Fi password has 8 to 63 characters.
+expect Password for Cobalt Home 5G
+shot settings-wifi-password-short
+type pass
+expect-missing A Wi-Fi password has
+tap Join
+wait-for Connected to Cobalt Home 5G
+expect-state /wifi#/connected "Cobalt Home 5G"
+expect-missing Password for
+shot settings-wifi-joined-secured
+# Back from the password screen returns to the list and joins nothing.
+tap-paged Upstairs
+wait-for Password for Upstairs
+type abc
+tap-id 4294967295
+wait-for Connected to Cobalt Home 5G
+expect-missing Password for Upstairs
+expect-state /wifi#/connected "Cobalt Home 5G"
+# A wrong password never associates, as on the reader. The radio has no
+# answer that says so, so the page waits a while, then says the join did
+# not work and what to check.
+wifi wrong-password
+maybe-tap-id previous
+tap-paged Upstairs
+wait-for Password for Upstairs
+type notthisone
+tap Join
+wait-for Joining Upstairs
+wait 16000
+wait-for Could not join Upstairs. Check the password, then try again.
+expect Not connected
+expect-state /wifi#/connected null
+expect-missing Connected to Upstairs
+shot settings-wifi-wrong-password
+wifi none
+# A radio that stops answering is said over the switch, and the banner goes
+# once a reading succeeds again.
+wifi hung
+tap-id toggle
+wait-for That took too long. Try again.
+shot settings-wifi-hung
+wifi none
+wait 6000
+wait-idle
+expect-missing That took too long.
+# Off empties the list, the home list says Off, and the radio stays off
+# when Settings is started again.
+tap-id toggle
+wait-for Turn on to see networks
+expect-missing Cobalt Home
+expect-state /wifi#/enabled false
+shot settings-wifi-off
+tap-id 4294967295
+wait-for Connections
+expect Off
+restart
+wait-for Connections
+wait-idle
+expect Off
+expect-missing On · Not connected
+tap Wi-Fi
+wait-for Turn on to see networks
+tap-id toggle
+wait-for Cobalt Home
+expect-state /wifi#/enabled true
+expect Not connected
+# A reader whose radio was never brought up says so in words, with no
+# switch that cannot work.
+wifi absent
+tap-id 4294967295
+wait-for Connections
+tap Wi-Fi
+wait-for This version of Cobalt cannot use Wi-Fi on this reader.
+expect-missing Turn on to see networks
+shot settings-wifi-absent
+tap-id 4294967295
+wait-for Not available in this version of Cobalt
+wifi none
+tap Wi-Fi
+wait-for Not connected

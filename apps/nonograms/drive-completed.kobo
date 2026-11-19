@@ -1,0 +1,72 @@
+# Solving House with fills and crosses, then what the finished picture offers.
+expect Picture puzzles
+tap House
+wait-for-id board.cell.24
+tap-id board.cell.2
+tap-id board.cell.6
+tap-id board.cell.7
+tap-id board.cell.8
+tap-id board.cell.10
+tap-id board.cell.11
+tap-id board.cell.12
+tap-id board.cell.13
+tap-id board.cell.14
+tap-id board.cell.15
+tap-id board.cell.16
+tap-id board.cell.18
+tap-id board.cell.19
+tap-id board.cell.20
+tap-id board.cell.21
+tap-id board.cell.23
+tap-id board.cell.24
+tap-id board.cell.0
+tap-id board.cell.0
+tap-id board.cell.1
+tap-id board.cell.1
+tap-id board.cell.3
+tap-id board.cell.3
+tap-id board.cell.4
+tap-id board.cell.4
+tap-id board.cell.5
+tap-id board.cell.5
+tap-id board.cell.9
+tap-id board.cell.9
+tap-id board.cell.17
+tap-id board.cell.17
+expect 24/25
+# Leaving the puzzle half done still lists it as begun, not untouched.
+tap-id 4294967295
+expect Picture puzzles
+expect In progress · 5×5 · Easy
+clean
+shot nonograms-browser-in-progress
+tap House
+wait-for-id board.cell.24
+expect 24/25
+# The last cross completes the picture.
+tap-id board.cell.22
+tap-id board.cell.22
+wait-for Puzzle complete
+expect Puzzles
+clean
+shot nonograms-completed
+# Undo from the finished picture goes back to the board one mark short.
+tap Undo
+wait-for-id board.cell.24
+expect-missing Puzzle complete
+tap-id board.cell.22
+wait-for Puzzle complete
+tap Puzzles
+expect Picture puzzles
+expect Solved · 5×5 · Easy
+clean
+shot nonograms-solved-shelf
+# Solved stays solved after closing the app.
+restart
+wait-for Picture puzzles
+expect Solved · 5×5 · Easy
+# Opening a solved puzzle shows it finished.
+tap House
+wait-idle
+clean
+shot nonograms-solved-reopened

@@ -31,6 +31,9 @@ def main():
     env = dict(os.environ, KOBO_FLASHCARDS_IMPORT=str(args.helper.resolve()))
     with tempfile.TemporaryDirectory(prefix='cobalt-fc-', dir='/tmp') as directory:
         root = Path(directory)
+        # The simulator shelf a `--sim` push writes to lives under TMPDIR.
+        env['TMPDIR'] = str(root)
+        env.pop('KOBO_SIM_DATA', None)
         package = root/'original study cards.apkg'
         bundle = root/'collection.cobfc'
         mount = root/'reader'
@@ -51,7 +54,7 @@ def main():
         status = run('status')
         assert 'flashcards-import 0.' in status.stdout, 'Helper version missing'
         formats = run('formats')
-        assert 'collection.anki21b' in formats.stdout, 'Modern-package boundary missing'
+        assert 'Support older Anki versions' in formats.stdout, 'Newer-package guidance missing'
         assert 'does not update Anki scheduling' in formats.stdout, 'Review boundary missing'
         run('import', package, '--merge', bundle)
         run('verify', bundle)
@@ -70,6 +73,19 @@ def main():
         run('stage', bundle, '--kobo-root', mount)
         destination = mount/'.adds/cobalt/data/flashcards/collection.cobfc'
         assert destination.read_bytes() == bundle.read_bytes()
+        # Wi-Fi push into the simulator shelf: the collection lands, the
+        # grades already there stay, and an Anki package is turned away with
+        # the import command rather than sent.
+        sim_shelf = root/'cobalt-sim-data/flashcards'
+        sim_shelf.mkdir(parents=True, exist_ok=True)
+        (sim_shelf/'cobalt-review-log.ndjson').write_bytes(b'{}\n')
+        pushed = run('push', bundle, '--sim')
+        assert (sim_shelf/'collection.cobfc').read_bytes() == bundle.read_bytes()
+        assert (sim_shelf/'cobalt-review-log.ndjson').read_bytes() == b'{}\n'
+        assert '1 grade kept' in pushed.stdout, pushed.stdout
+        refused = run('push', package, '--sim', succeeds=False)
+        assert 'kobo flashcards import' in refused.stderr, refused.stderr
+        shutil.rmtree(sim_shelf)
         digest = hashlib.sha256(destination.read_bytes()).hexdigest()
         # A second original package with distinct card/note identities exercises real merge.
         second = root/'second deck.apkg'
@@ -136,7 +152,8 @@ def main():
             'physical_hardware': False, 'reader_simulator': args.reader_sim,
             'text_scale': args.scale if args.reader_sim else None,
             'checks': ['front/back HTML preview and card count', 'embedded image bytes and media count', 'preview preserves existing files', 'helper version and notice', 'supported formats and review limits', 'import with spaces in path', 'bundle verification',
-                       'staged bytes match prepared bundle', 'helper failures reach CLI',
+                       'staged bytes match prepared bundle', 'push lands the collection and keeps grades',
+                       'push turns away an Anki package', 'helper failures reach CLI',
                        'corrupt stage preserves installed collection',
                        'merge preserves both card inventories and source bundle',
                        'explicit replacement replaces card inventory',

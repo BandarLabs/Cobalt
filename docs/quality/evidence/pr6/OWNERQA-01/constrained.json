@@ -1,0 +1,10 @@
+[
+  {
+    "columns": 32,
+    "output": "Cobalt - tools for your reader\n\n  kobo setup\n    Set up a reader connected by USB\n  kobo apps\n    Find apps and read setup guides\n  kobo frame --help\n    Prepare and send photos\n  kobo flashcards --help\n    Import cards and review progress\n  kobo feeds --help\n    Check and send feed subscriptions\n  kobo stream\n    Share a terminal with Paperterm\n\nRun kobo in a terminal for guided choices.\nDeveloper and release commands: kobo --help\n"
+  },
+  {
+    "columns": 48,
+    "output": "Cobalt - tools for your reader\n\n  kobo setup\n    Set up a reader connected by USB\n  kobo apps\n    Find apps and read setup guides\n  kobo frame --help\n    Prepare and send photos\n  kobo flashcards --help\n    Import cards and review progress\n  kobo feeds --help\n    Check and send feed subscriptions\n  kobo stream\n    Share a terminal with Paperterm\n\nRun kobo in a terminal for guided choices.\nDeveloper and release commands: kobo --help\n"
+  }
+]

@@ -1,45 +1,416 @@
+//! Vault: a reader for a folder of Markdown notes, published onto the shelf
+//! by the companion CLI or ingested from what Sync delivers.
+
 mod md;
 mod model;
+mod page;
+mod shelf;
+
 use kobo_sdk::keyboard::{TextEntry, Typing};
-use kobo_sdk::{action_id, ActionId, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult};
-use model::{backlinks, decode_index, search, Note, INDEX_KEY};
+use kobo_sdk::{
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Position, RowLead, Screen,
+    ScreenBuilder, ShelfDownload, ShelfProgress, StoreResult,
+};
+use model::{link_matches_path, Note};
+use shelf::{ImportFailure, Manifest, NoteEntry};
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::process::ExitCode;
-#[derive(Clone, Copy, Debug, PartialEq)]
+use std::rc::Rc;
+
+/// The pre-shelf index the first Vault kept in the app store, still read so a
+/// vault packed by an older CLI is not stranded.
+const LEGACY_INDEX_KEY: &str = "vault-index-v1";
+const STATE: &str = "vault-state-v2";
+/// Said on the list a tap returns to when the note it opened could not be
+/// read off the shelf.
+const UNREADABLE: &str = "This note could not be opened. Push your notes again from your computer.";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Home,
     Browse,
     Note,
     Tags,
+    TagNotes,
     Recent,
     Search,
     Backlinks,
+    About,
+    Failure,
 }
-struct Vault {
-    notes: Vec<Note>,
-    loaded: bool,
-    view: View,
-    current: usize,
-    entry: TextEntry,
-    results: Vec<(usize, String)>,
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Source {
+    Pushed,
+    Synced,
 }
-impl Default for Vault {
-    fn default() -> Self {
-        Self {
-            notes: vec![],
-            loaded: false,
-            view: View::Home,
-            current: 0,
-            entry: TextEntry::new().opened_by("search"),
-            results: vec![],
+
+impl Source {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Pushed => "pushed",
+            Self::Synced => "synced",
         }
     }
 }
-impl Vault {
-    fn show(&self, cx: &mut Context) {
-        cx.set_screen(self.screen());
+
+/// Why a note body is on its way down: the reader opened the note, or a
+/// search is loading every body it has not seen yet.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Loading {
+    Open,
+    Search,
+}
+
+type Rows = Vec<(String, String, String, RowLead)>;
+
+/// A note's pages, with the note id and text size they were measured for.
+type LaidOut = (String, kobo_ui::TextScale, Rc<Vec<Vec<page::Piece>>>);
+
+struct Vault {
+    loaded: bool,
+    pushed: Option<Manifest>,
+    synced: Option<Manifest>,
+    /// Notes from both shelves, pushed first; bodies load lazily by id.
+    notes: Vec<(NoteEntry, Source)>,
+    bodies: BTreeMap<String, String>,
+    manifest_load: Option<(Source, ShelfDownload)>,
+    body_load: Option<(String, Loading, ShelfDownload)>,
+    /// Notes a search still needs the bodies of, drained one at a time.
+    search_queue: Vec<String>,
+    pending_search: Option<String>,
+    view: View,
+    origin: View,
+    browse_stack: Vec<String>,
+    pages: BTreeMap<u8, usize>,
+    current: usize,
+    note_page: usize,
+    positions: BTreeMap<String, usize>,
+    tag_filter: String,
+    entry: TextEntry,
+    results: Vec<(usize, String)>,
+    /// The words the results were found for, said above them and used to
+    /// open a result at the page that holds them.
+    query: String,
+    legacy_checked: bool,
+    failure_index: usize,
+    /// The notes a reader followed links out of, with the page each was on,
+    /// so Back retraces the links before it leaves for the list.
+    trail: Vec<(String, usize)>,
+    /// The pages of the note last laid out, with the note and text size they
+    /// were measured for. Every tap repaints, and measuring a long note's
+    /// headings again for a page turn is work a single-core reader feels.
+    laid_out: RefCell<Option<LaidOut>>,
+    /// What the last tap came to, drawn over the list it left the reader on.
+    /// A note whose body could not be read used to drop the reader back on
+    /// the list with no word, so the tap looked as if it did nothing.
+    notice: Option<(BannerLevel, String)>,
+}
+
+impl Default for Vault {
+    fn default() -> Self {
+        Self {
+            loaded: false,
+            pushed: None,
+            synced: None,
+            notes: Vec::new(),
+            bodies: BTreeMap::new(),
+            manifest_load: None,
+            body_load: None,
+            search_queue: Vec::new(),
+            pending_search: None,
+            view: View::Home,
+            origin: View::Home,
+            browse_stack: Vec::new(),
+            pages: BTreeMap::new(),
+            current: 0,
+            note_page: 0,
+            positions: BTreeMap::new(),
+            tag_filter: String::new(),
+            entry: TextEntry::new().opened_by("search"),
+            results: Vec::new(),
+            query: String::new(),
+            legacy_checked: false,
+            failure_index: 0,
+            trail: Vec::new(),
+            laid_out: RefCell::new(None),
+            notice: None,
+        }
     }
+}
+
+impl Vault {
+    fn show(&mut self, cx: &mut Context) {
+        let screen = self.screen(cx);
+        cx.set_screen(screen);
+    }
+
+    fn page(&self, view: View) -> usize {
+        self.pages.get(&(view as u8)).copied().unwrap_or(0)
+    }
+
+    fn set_page(&mut self, view: View, page: usize) {
+        self.pages.insert(view as u8, page);
+    }
+
+    /// A list's head with the notice over it, so the rows are paged under
+    /// what is actually drawn above them.
+    fn noticed(&self, screen: ScreenBuilder) -> ScreenBuilder {
+        match &self.notice {
+            Some((level, text)) => screen.banner(*level, text),
+            None => screen,
+        }
+    }
+
+    fn current_entry(&self) -> Option<&(NoteEntry, Source)> {
+        self.notes.get(self.current)
+    }
+
+    fn deduped_tags(&self) -> Vec<(String, usize)> {
+        let mut tags: Vec<(String, usize)> = Vec::new();
+        for (entry, _) in &self.notes {
+            for tag in &entry.tags {
+                match tags.iter_mut().find(|(known, _)| known == tag) {
+                    Some((_, count)) => *count += 1,
+                    None => tags.push((tag.clone(), 1)),
+                }
+            }
+        }
+        tags.sort_by(|left, right| left.0.cmp(&right.0));
+        tags
+    }
+
+    fn tag_matches(&self, tag: &str) -> Vec<usize> {
+        self.notes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (entry, _))| {
+                entry.tags.iter().any(|known| known == tag).then_some(index)
+            })
+            .collect()
+    }
+
+    /// Immediate subfolders of the browse position and the notes directly in
+    /// it, so folders are drilled into rather than flattened.
+    fn browse_level(&self) -> (Vec<String>, Vec<usize>) {
+        let prefix = self.browse_stack.join("/");
+        let mut folders: Vec<String> = Vec::new();
+        let mut notes = Vec::new();
+        for (index, (entry, _)) in self.notes.iter().enumerate() {
+            let rest = if prefix.is_empty() {
+                entry.path.as_str()
+            } else if let Some(rest) = entry.path.strip_prefix(&format!("{prefix}/")) {
+                rest
+            } else {
+                continue;
+            };
+            if let Some((folder, _)) = rest.split_once('/') {
+                if !folders.iter().any(|known| known == folder) {
+                    folders.push(folder.to_owned());
+                }
+            } else {
+                notes.push(index);
+            }
+        }
+        folders.sort();
+        (folders, notes)
+    }
+
+    fn backlinks(&self, index: usize) -> Vec<usize> {
+        let Some((target, _)) = self.notes.get(index) else {
+            return Vec::new();
+        };
+        self.notes
+            .iter()
+            .enumerate()
+            .filter_map(|(other, (entry, _))| {
+                (other != index
+                    && entry
+                        .links
+                        .iter()
+                        .any(|link| link_matches_path(link, &target.path)))
+                .then_some(other)
+            })
+            .collect()
+    }
+
+    fn start_manifest(&mut self, cx: &mut Context, source: Source) {
+        let name = match source {
+            Source::Pushed => shelf::MANIFEST,
+            Source::Synced => shelf::SYNCED_MANIFEST,
+        };
+        let mut load = ShelfDownload::new(name).at_most(shelf::MAX_MANIFEST);
+        load.start(cx);
+        self.manifest_load = Some((source, load));
+    }
+
+    fn start_body(&mut self, cx: &mut Context, id: &str, why: Loading) {
+        let mut load = ShelfDownload::new(shelf::note_name(id)).at_most(shelf::MAX_NOTE_BYTES);
+        load.start(cx);
+        self.body_load = Some((id.to_owned(), why, load));
+    }
+
+    fn open_note(&mut self, cx: &mut Context, index: usize) {
+        if self.view != View::Note && self.view != View::Backlinks {
+            self.origin = self.view;
+        }
+        self.current = index;
+        let id = self.notes[index].0.id.clone();
+        self.note_page = self.positions.get(&id).copied().unwrap_or(0);
+        if self.bodies.contains_key(&id) {
+            if self.view == View::Search {
+                if let Some(page) = page::page_with(&self.note_pages(cx), &self.query) {
+                    self.note_page = page;
+                }
+            }
+            self.view = View::Note;
+        } else {
+            self.start_body(cx, &id, Loading::Open);
+        }
+        self.show(cx);
+    }
+
+    fn remember_position(&mut self, cx: &mut Context) {
+        if let Some((entry, _)) = self.current_entry() {
+            self.positions.insert(entry.id.clone(), self.note_page);
+            let mut out = String::new();
+            for (id, page) in &self.positions {
+                out.push_str(&format!("pos {id} {page}\n"));
+            }
+            cx.store().save(STATE, out.into_bytes());
+        }
+    }
+
+    fn note_pages(&self, cx: &Context) -> Rc<Vec<Vec<page::Piece>>> {
+        let Some((entry, _)) = self.current_entry() else {
+            return Rc::default();
+        };
+        let Some(body) = self.bodies.get(&entry.id) else {
+            return Rc::default();
+        };
+        let scale = cx.metrics().text_scale;
+        if let Some((id, at, pages)) = self.laid_out.borrow().as_ref() {
+            if id == &entry.id && *at == scale {
+                return Rc::clone(pages);
+            }
+        }
+        let pages = Rc::new(page::paginate(&md::blocks(body), cx));
+        *self.laid_out.borrow_mut() = Some((entry.id.clone(), scale, Rc::clone(&pages)));
+        pages
+    }
+
+    /// The note a wiki link points at, when it is on this reader.
+    ///
+    /// The exact path wins over a note that only shares the name, the way
+    /// Obsidian resolves the same link, and a heading named after `#` is not
+    /// part of which note it is.
+    fn resolve(&self, target: &str) -> Option<usize> {
+        let target = target.split('#').next().unwrap_or(target).trim();
+        if target.is_empty() {
+            return None;
+        }
+        let exact = format!("{}.md", target.trim_end_matches(".md"));
+        self.notes
+            .iter()
+            .position(|(entry, _)| entry.path == exact)
+            .or_else(|| {
+                self.notes
+                    .iter()
+                    .position(|(entry, _)| link_matches_path(target, &entry.path))
+            })
+    }
+
+    /// Opens the note a link names, remembering where this one was left.
+    fn follow(&mut self, cx: &mut Context, index: usize) {
+        if let Some((entry, _)) = self.current_entry() {
+            let id = entry.id.clone();
+            self.remember_position(cx);
+            self.trail.push((id, self.note_page));
+        }
+        self.open_note(cx, index);
+    }
+
+    /// Back from a note reached by a link goes to the note the link was in,
+    /// at the page it was read from.
+    fn retrace(&mut self, cx: &mut Context) -> bool {
+        let Some((id, page)) = self.trail.pop() else {
+            return false;
+        };
+        let Some(index) = self.notes.iter().position(|(entry, _)| entry.id == id) else {
+            return self.retrace(cx);
+        };
+        self.remember_position(cx);
+        self.current = index;
+        self.note_page = page;
+        if self.bodies.contains_key(&id) {
+            self.view = View::Note;
+        } else {
+            self.start_body(cx, &id, Loading::Open);
+        }
+        true
+    }
+
+    fn run_search(&mut self, query: &str) {
+        let indexed: Vec<(usize, Note)> = self
+            .notes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (entry, _))| {
+                self.bodies.get(&entry.id).map(|body| {
+                    (
+                        index,
+                        Note {
+                            path: entry.path.clone(),
+                            body: body.clone(),
+                        },
+                    )
+                })
+            })
+            .collect();
+        let models: Vec<Note> = indexed.iter().map(|(_, note)| note.clone()).collect();
+        self.results = model::search(&models, query)
+            .into_iter()
+            .map(|(model_index, line)| (indexed[model_index].0, line))
+            .collect();
+        query.clone_into(&mut self.query);
+        self.view = View::Search;
+    }
+
+    fn paged_rows(
+        &mut self,
+        cx: &Context,
+        view: View,
+        rows: &Rows,
+        screen: ScreenBuilder,
+    ) -> Screen {
+        let borrowed: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|(_, title, detail, _)| (title.as_str(), detail.as_str()))
+            .collect();
+        let chunks = cx.paginate_rows_under(
+            &borrowed,
+            false,
+            Position::AtTheFoot,
+            &screen.clone().build(),
+        );
+        let page = self.page(view).min(chunks.len().saturating_sub(1));
+        // Clamp the stored cursor as well as the rendered page: repeated Next
+        // at the end must never create invisible pages that Previous must undo.
+        self.set_page(view, page);
+        let shown = chunks.get(page).map(Vec::as_slice).unwrap_or_default();
+        let mut screen = screen.rows(shown.iter().filter_map(|index| rows.get(*index).cloned()));
+        if chunks.len() > 1 {
+            screen = screen.page_turns("list-prev", "list-next").page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(chunks.len()).unwrap_or(u16::MAX),
+            );
+        }
+        screen.build().with_own_back(true)
+    }
+
     #[allow(clippy::too_many_lines)]
-    fn screen(&self) -> Screen {
+    fn screen(&mut self, cx: &mut Context) -> Screen {
         if self.entry.is_open() {
             return ScreenBuilder::new("vault-search")
                 .top_bar("Search")
@@ -52,125 +423,531 @@ impl Vault {
                 .skeleton(4)
                 .build();
         }
-        match self.view {
-            View::Home => {
-                let s = ScreenBuilder::new("vault-home").top_bar("Vault");
-                if self.notes.is_empty() {
-                    s.splash(
-                        Some(Glyph::Note),
-                        "No vault yet",
-                        "Run kobo vault init, then kobo vault push ~/Notes.",
+        if let Some((_, why, _)) = &self.body_load {
+            let screen = ScreenBuilder::new("vault-opening").top_bar("Vault");
+            return match why {
+                Loading::Open => screen.activity("Opening the note", None).build(),
+                Loading::Search => screen
+                    .activity(
+                        format!(
+                            "Loading notes to search ({} left)",
+                            self.search_queue.len() + 1
+                        ),
+                        None,
                     )
-                    .build()
+                    .build(),
+            };
+        }
+        match self.view {
+            View::Home => self.home_screen(cx),
+            View::About => self.about_screen(cx),
+            View::Failure => self.failure_screen(cx),
+            View::Browse => {
+                let (folders, notes) = self.browse_level();
+                let mut rows: Rows = Vec::new();
+                let prefix = self.browse_stack.join("/");
+                for folder in &folders {
+                    let base = if prefix.is_empty() {
+                        format!("{folder}/")
+                    } else {
+                        format!("{prefix}/{folder}/")
+                    };
+                    let count = self
+                        .notes
+                        .iter()
+                        .filter(|(entry, _)| entry.path.starts_with(&base))
+                        .count();
+                    rows.push((
+                        format!("dir-{folder}"),
+                        folder.clone(),
+                        format!("{} note{}", count, if count == 1 { "" } else { "s" }),
+                        RowLead::Icon(Glyph::Folder),
+                    ));
+                }
+                for index in &notes {
+                    let (entry, source) = &self.notes[*index];
+                    rows.push((
+                        format!("note-{index}"),
+                        entry.title.clone(),
+                        format!("{} · {}", entry.path, source.label()),
+                        RowLead::Icon(Glyph::Note),
+                    ));
+                }
+                let title = if self.browse_stack.is_empty() {
+                    "Browse".to_owned()
                 } else {
-                    s.heading(format!("{} notes", self.notes.len()))
-                        .rows([
-                            ("browse", "Browse", "Folders and notes", Glyph::Folder),
-                            ("tags", "Tags", "Notes by tag", Glyph::Note),
-                            ("recent", "Recent", "Last pushed notes", Glyph::Clock),
-                            ("search", "Search", "Find text in this vault", Glyph::Search),
-                        ])
+                    format!("Browse / {}", self.browse_stack.join(" / "))
+                };
+                let screen = self.noticed(ScreenBuilder::new("vault-browse").top_bar(title));
+                if rows.is_empty() {
+                    screen
+                        .text("This folder is empty.")
                         .build()
+                        .with_own_back(true)
+                } else {
+                    self.paged_rows(cx, View::Browse, &rows, screen)
                 }
             }
-            View::Browse => {
-                ScreenBuilder::new("vault-browse")
-                    .top_bar("Browse")
-                    .rows(self.notes.iter().enumerate().map(|(i, n)| {
-                        (format!("note-{i}"), n.title(), n.path.clone(), Glyph::Note)
-                    }))
-                    .build()
+            View::Note => self.note_screen(cx),
+            View::Tags => {
+                let tags = self.deduped_tags();
+                let screen = self.noticed(ScreenBuilder::new("vault-tags").top_bar("Tags"));
+                if tags.is_empty() {
+                    screen
+                        .text("No tags in this vault yet.")
+                        .build()
+                        .with_own_back(true)
+                } else {
+                    let rows: Rows = tags
+                        .iter()
+                        .map(|(tag, count)| {
+                            (
+                                format!("tag-{tag}"),
+                                format!("#{tag}"),
+                                format!("{} note{}", count, if *count == 1 { "" } else { "s" }),
+                                RowLead::Icon(Glyph::Note),
+                            )
+                        })
+                        .collect();
+                    self.paged_rows(cx, View::Tags, &rows, screen)
+                }
             }
-            View::Note => {
-                let n = &self.notes[self.current];
-                ScreenBuilder::new("vault-note")
-                    .top_bar(n.title())
-                    .reading(true)
-                    .text(n.rendered())
-                    .buttons([
+            View::TagNotes => {
+                let rows: Rows = self
+                    .tag_matches(&self.tag_filter)
+                    .iter()
+                    .map(|index| {
+                        let (entry, source) = &self.notes[*index];
                         (
-                            "backlinks",
-                            format!("Backlinks ({})", backlinks(&self.notes, &n.path).len()),
-                        ),
-                        ("tags", "Tags".to_owned()),
-                    ])
-                    .build()
-            }
-            View::Tags => ScreenBuilder::new("vault-tags")
-                .top_bar("Tags")
-                .rows(self.notes.iter().flat_map(model::Note::tags).map(|tag| {
-                    (
-                        format!("tag-{tag}"),
-                        format!("#{tag}"),
-                        "Open matching notes".to_owned(),
-                        Glyph::Note,
-                    )
-                }))
-                .build(),
-            View::Recent => {
-                ScreenBuilder::new("vault-recent")
-                    .top_bar("Recent")
-                    .rows(self.notes.iter().enumerate().rev().map(|(i, n)| {
-                        (format!("note-{i}"), n.title(), n.path.clone(), Glyph::Clock)
-                    }))
-                    .build()
-            }
-            View::Search => ScreenBuilder::new("vault-search-results")
-                .top_bar("Search")
-                .rows(self.results.iter().map(|(i, line)| {
-                    (
-                        format!("note-{i}"),
-                        self.notes[*i].title(),
-                        line.clone(),
-                        Glyph::Search,
-                    )
-                }))
-                .button("search", "Search again")
-                .build(),
-            View::Backlinks => {
-                let n = &self.notes[self.current];
-                ScreenBuilder::new("vault-backlinks")
-                    .top_bar("Backlinks")
-                    .rows(backlinks(&self.notes, &n.path).iter().map(|(i, line)| {
-                        (
-                            format!("note-{i}"),
-                            self.notes[*i].title(),
-                            line.clone(),
-                            Glyph::Note,
+                            format!("note-{index}"),
+                            entry.title.clone(),
+                            format!("{} · {}", entry.path, source.label()),
+                            RowLead::Icon(Glyph::Note),
                         )
-                    }))
-                    .build()
+                    })
+                    .collect();
+                let screen = self.noticed(
+                    ScreenBuilder::new("vault-tag-notes").top_bar(format!("#{}", self.tag_filter)),
+                );
+                self.paged_rows(cx, View::TagNotes, &rows, screen)
+            }
+            View::Recent => {
+                let mut order: Vec<usize> = (0..self.notes.len()).collect();
+                order.sort_by(|left, right| {
+                    self.notes[*right].0.added.cmp(&self.notes[*left].0.added)
+                });
+                let rows: Rows = order
+                    .iter()
+                    .map(|index| {
+                        let (entry, source) = &self.notes[*index];
+                        (
+                            format!("note-{index}"),
+                            entry.title.clone(),
+                            format!("{} · {}", entry.path, source.label()),
+                            RowLead::Icon(Glyph::Clock),
+                        )
+                    })
+                    .collect();
+                let screen = self.noticed(ScreenBuilder::new("vault-recent").top_bar("Recent"));
+                self.paged_rows(cx, View::Recent, &rows, screen)
+            }
+            View::Search => {
+                let rows: Rows = self
+                    .results
+                    .iter()
+                    .map(|(index, line)| {
+                        (
+                            format!("note-{index}"),
+                            self.notes[*index].0.title.clone(),
+                            line.clone(),
+                            RowLead::Icon(Glyph::Search),
+                        )
+                    })
+                    .collect();
+                let screen = self.noticed(
+                    ScreenBuilder::new("vault-search-results")
+                        .top_bar("Search")
+                        .secondary(format!("Searched for \"{}\"", self.query.trim())),
+                );
+                if rows.is_empty() {
+                    screen
+                        .text("Nothing in this vault matches.")
+                        .button("search", "Search again")
+                        .build()
+                        .with_own_back(true)
+                } else {
+                    self.paged_rows(cx, View::Search, &rows, screen)
+                }
+            }
+            View::Backlinks => {
+                let rows: Rows = self
+                    .backlinks(self.current)
+                    .iter()
+                    .map(|index| {
+                        let (entry, source) = &self.notes[*index];
+                        (
+                            format!("note-{index}"),
+                            entry.title.clone(),
+                            format!("{} · {}", entry.path, source.label()),
+                            RowLead::Icon(Glyph::Note),
+                        )
+                    })
+                    .collect();
+                let title = self.current_entry().map_or_else(
+                    || "Backlinks".to_owned(),
+                    |(entry, _)| format!("Links to {}", entry.title),
+                );
+                let screen = self.noticed(ScreenBuilder::new("vault-backlinks").top_bar(title));
+                if rows.is_empty() {
+                    screen
+                        .text("No note links here yet.")
+                        .build()
+                        .with_own_back(true)
+                } else {
+                    self.paged_rows(cx, View::Backlinks, &rows, screen)
+                }
             }
         }
     }
+
+    /// The way into the vault, shaped for the panel it is on.
+    ///
+    /// Held sideways from the middle sizes up, and upright at the largest
+    /// with a banner over it, the four ways in ran off the panel. So the
+    /// count under the top bar keeps its place while the four rows become
+    /// two buttons a line, and then the count gives way too; every way in
+    /// stays.
+    fn home_screen(&self, context: &Context) -> Screen {
+        let metrics = context.metrics();
+        let shapes = [(true, false), (true, true), (false, true)];
+        shapes
+            .into_iter()
+            .map(|(count, compact)| self.home_shaped(count, compact))
+            .find(|screen| {
+                !screen
+                    .diagnostics(&metrics, &kobo_sdk::Chrome::measuring(true))
+                    .has_errors()
+            })
+            .unwrap_or_else(|| self.home_shaped(false, true))
+    }
+
+    fn home_shaped(&self, count: bool, compact: bool) -> Screen {
+        let pushed = self.pushed.as_ref().map_or(0, |m| m.notes.len());
+        let synced = self.synced.as_ref().map_or(0, |m| m.notes.len());
+        let screen = self.noticed(ScreenBuilder::new("vault-home").top_bar("Vault"));
+        if self.notes.is_empty() {
+            return screen
+                .splash(
+                    Some(Glyph::Note),
+                    "No vault yet",
+                    "Send a folder of Markdown notes from a computer.",
+                )
+                .section("On your computer")
+                .command("kobo vault push ~/Notes")
+                .buttons([("check", "Check for notes"), ("about", "About Vault")])
+                .build();
+        }
+        let mut screen = screen;
+        let failures: usize = self
+            .pushed
+            .iter()
+            .chain(self.synced.iter())
+            .map(|m| m.failures.len())
+            .sum();
+        // Notes that did not import are a failure the owner fixes on the
+        // computer, so the banner is an error and carries the way to the
+        // reasons. About Vault is where they are listed, so while there are
+        // any the banner's See why takes its place rather than sitting
+        // beside a second button that goes to the same screen.
+        if failures > 0 {
+            screen = screen
+                .banner(
+                    BannerLevel::Error,
+                    format!(
+                        "{failures} note{} did not import.",
+                        if failures == 1 { "" } else { "s" }
+                    ),
+                )
+                .banner_action("about", "See why");
+        }
+        let mut heading = if pushed == 1 {
+            "1 note".to_owned()
+        } else {
+            format!("{pushed} notes")
+        };
+        if synced > 0 {
+            heading.push_str(&format!(" + {synced} synced"));
+        }
+        if count {
+            screen = screen.heading(heading);
+        }
+        let mut screen = if compact {
+            screen.grid(
+                2,
+                false,
+                [
+                    ("browse", "Browse"),
+                    ("tags", "Tags"),
+                    ("recent", "Recent"),
+                    ("search", "Search"),
+                ],
+            )
+        } else {
+            screen.rows([
+                ("browse", "Browse", "Folders and notes", Glyph::Folder),
+                ("tags", "Tags", "Notes by tag", Glyph::Note),
+                ("recent", "Recent", "Last changed notes", Glyph::Clock),
+                ("search", "Search", "Find text in this vault", Glyph::Search),
+            ])
+        };
+        if failures == 0 {
+            screen = screen.button("about", "About Vault");
+        }
+        screen.build()
+    }
+
+    fn failures(&self) -> Vec<&ImportFailure> {
+        self.pushed
+            .iter()
+            .chain(self.synced.iter())
+            .flat_map(|manifest| manifest.failures.iter())
+            .collect()
+    }
+
+    fn about_screen(&mut self, context: &Context) -> Screen {
+        let screen = ScreenBuilder::new("vault-about")
+            .top_bar("About Vault")
+            .text(
+                "Send a folder of Markdown notes from your computer with kobo vault push \
+                 ~/Notes. Push again whenever your notes change: only changed notes are \
+                 sent, and they appear here the next time you come back to Vault.",
+            );
+        let failures = self.failures();
+        if failures.is_empty() {
+            return screen.build().with_own_back(true);
+        }
+        let rows: Rows = failures
+            .iter()
+            .enumerate()
+            .map(|(index, failure)| {
+                (
+                    format!("failure-{index}"),
+                    failure.input.clone(),
+                    failure.reason.clone(),
+                    RowLead::Icon(Glyph::Note),
+                )
+            })
+            .collect();
+        self.paged_rows(
+            context,
+            View::About,
+            &rows,
+            screen.heading("Did not import"),
+        )
+    }
+
+    fn failure_pages(&self, context: &Context) -> Vec<Vec<String>> {
+        self.failures()
+            .get(self.failure_index)
+            .map_or_else(Vec::new, |failure| {
+                context.paginate(&format!("{}\n\n{}", failure.input, failure.reason), false)
+            })
+    }
+
+    fn failure_screen(&mut self, context: &Context) -> Screen {
+        let mut screen = ScreenBuilder::new("vault-import-problem")
+            .top_bar("Did not import")
+            .owns_back(true);
+        let pages = self.failure_pages(context);
+        let page = self.page(View::Failure).min(pages.len().saturating_sub(1));
+        self.set_page(View::Failure, page);
+        if let Some(paragraphs) = pages.get(page) {
+            for paragraph in paragraphs {
+                screen = screen.text(paragraph);
+            }
+        } else {
+            screen = screen.text("This import problem is no longer in the report.");
+        }
+        if pages.len() > 1 {
+            screen = screen.page_turns("list-prev", "list-next").page_position(
+                u16::try_from(page + 1).unwrap_or(u16::MAX),
+                u16::try_from(pages.len()).unwrap_or(u16::MAX),
+            );
+        }
+        screen.build()
+    }
+
+    fn note_screen(&self, cx: &Context) -> Screen {
+        let Some((entry, _)) = self.current_entry() else {
+            return ScreenBuilder::new("vault-note")
+                .top_bar("Vault")
+                .banner(BannerLevel::Error, "This note is no longer on the shelf.")
+                .button("home", "Vault")
+                .build()
+                .with_own_back(true);
+        };
+        let pages = self.note_pages(cx);
+        let index = self.note_page.min(pages.len().saturating_sub(1));
+        let backlinks = self.backlinks(self.current).len();
+        // A note is a page to read, set the way a book is: the whole panel,
+        // the sides of it turning the page, and the bar out of sight until a
+        // touch at the top calls it back over the page. It used to keep a bar
+        // above, a row of Previous, Browse and Next below and a page number
+        // over that, a third of the panel spent on furniture. Back from the
+        // bar returns to wherever the note was opened from.
+        let mut screen = ScreenBuilder::new("vault-note")
+            .top_bar(entry.title.clone())
+            .reading(true);
+        if pages.len() > 1 {
+            screen = screen.page_turns("previous-page", "next-page");
+        }
+        if backlinks > 0 {
+            screen = screen.top_bar_action("backlinks", format!("Links ({backlinks})"));
+        }
+        if let Some(pieces) = pages.get(index) {
+            for piece in pieces {
+                screen = match piece {
+                    page::Piece::Heading { level, text } => screen.heading_at_level(*level, text),
+                    page::Piece::Body { text, links } => {
+                        // Only a link to a note that is on this reader is
+                        // drawn as one; the rest stay words, because a link
+                        // that opens nothing is worse than no link at all.
+                        let live = links
+                            .iter()
+                            .filter_map(|(target, start, end)| {
+                                self.resolve(target)
+                                    .map(|note| (format!("wiki-{note}"), *start, *end))
+                            })
+                            .collect::<Vec<_>>();
+                        screen.text_linking(text, live)
+                    }
+                };
+            }
+        }
+        screen
+            .build()
+            .with_own_back(true)
+            .with_auto_hidden_top_bar(true)
+    }
 }
+
 impl KoboApp for Vault {
     fn on_start(&mut self, cx: &mut Context) {
-        cx.store().load(INDEX_KEY);
+        cx.store().load(STATE);
+        self.start_manifest(cx, Source::Pushed);
         self.show(cx);
     }
+
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
-        if let StoreResult::Loaded { key, value } = result {
-            if key == INDEX_KEY {
-                self.notes = value
-                    .and_then(|v| String::from_utf8(v).ok())
-                    .map(|raw| decode_index(&raw))
+        if let StoreResult::Loaded { key, value } = &result {
+            if key == STATE {
+                if let Some(text) = value.as_deref().and_then(|v| std::str::from_utf8(v).ok()) {
+                    for line in text.lines() {
+                        if let Some(rest) = line.strip_prefix("pos ") {
+                            if let Some((id, page)) = rest.rsplit_once(' ') {
+                                if let Ok(page) = page.parse::<usize>() {
+                                    self.positions.insert(id.to_owned(), page);
+                                }
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+            if key == LEGACY_INDEX_KEY {
+                let raw = value
+                    .as_deref()
+                    .and_then(|v| String::from_utf8(v.to_vec()).ok())
                     .unwrap_or_default();
+                for note in model::decode_index(&raw) {
+                    let id = format!("legacy-{}", self.notes.len());
+                    let entry = NoteEntry {
+                        path: note.path.clone(),
+                        title: note.title(),
+                        tags: note.tags(),
+                        links: note.links(),
+                        id: id.clone(),
+                        digest: String::new(),
+                        bytes: note.body.len() as u64,
+                        added: 0,
+                    };
+                    self.bodies.insert(id, note.body);
+                    self.notes.push((entry, Source::Pushed));
+                }
                 self.loaded = true;
                 self.show(cx);
             }
         }
     }
+
+    /// Shelf answers go to the read that asked for them, by name: once the
+    /// manifests are read again while a note is opening, a refusal with no
+    /// name of its own could otherwise be taken by the wrong one.
+    fn on_shelf(&mut self, cx: &mut Context, name: &str, result: StoreResult) {
+        if self
+            .manifest_load
+            .as_ref()
+            .is_some_and(|(_, load)| load.name() == name)
+        {
+            self.advance_manifest(cx, &result);
+        } else if self
+            .body_load
+            .as_ref()
+            .is_some_and(|(_, _, load)| load.name() == name)
+        {
+            self.advance_body(cx, &result);
+        }
+    }
+
+    fn on_resume(&mut self, cx: &mut Context) {
+        self.reload(cx);
+        self.show(cx);
+    }
+
+    fn on_foreground(&mut self, cx: &mut Context) {
+        self.reload(cx);
+        self.show(cx);
+    }
+
+    fn on_page_turn(&mut self, cx: &mut Context, forward: bool) {
+        let name = match (self.view, forward) {
+            (View::Note, true) => "next-page",
+            (View::Note, false) => "previous-page",
+            (_, true) => "list-next",
+            (_, false) => "list-prev",
+        };
+        self.on_action(cx, action_id(name));
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn on_action(&mut self, cx: &mut Context, a: ActionId) {
+        // The notice answers the tap before this one; turning the page of
+        // the list it sits over keeps it, anything else moves on from it.
+        if a != action_id("list-prev") && a != action_id("list-next") {
+            self.notice = None;
+        }
         if let Some(event) = self.entry.handle(a) {
             if let Typing::Submitted(query) = event {
-                self.results = search(&self.notes, &query);
-                self.view = View::Search;
+                let missing: Vec<String> = self
+                    .notes
+                    .iter()
+                    .filter(|(entry, _)| !self.bodies.contains_key(&entry.id))
+                    .map(|(entry, _)| entry.id.clone())
+                    .collect();
+                if missing.is_empty() {
+                    self.run_search(&query);
+                } else {
+                    self.search_queue = missing;
+                    self.pending_search = Some(query);
+                    let id = self.search_queue.remove(0);
+                    self.start_body(cx, &id, Loading::Search);
+                }
             }
             self.show(cx);
             return;
         }
         if a == action_id("browse") {
+            self.browse_stack.clear();
             self.view = View::Browse;
         } else if a == action_id("tags") {
             self.view = View::Tags;
@@ -178,19 +955,300 @@ impl KoboApp for Vault {
             self.view = View::Recent;
         } else if a == action_id("search") {
             self.entry.open();
+        } else if a == action_id("about") {
+            self.view = View::About;
+        } else if a == action_id("check") {
+            self.reload(cx);
+        } else if a == action_id("home") {
+            self.view = View::Home;
         } else if a == action_id("backlinks") {
             self.view = View::Backlinks;
+        } else if a == action_id("origin") {
+            self.remember_position(cx);
+            self.trail.clear();
+            self.view = self.origin;
+        } else if a == action_id("previous-page") || a == action_id("next-page") {
+            let pages = self.note_pages(cx);
+            let current = self.note_page.min(pages.len().saturating_sub(1));
+            let next = if a == action_id("next-page") {
+                (current + 1).min(pages.len().saturating_sub(1))
+            } else {
+                current.saturating_sub(1)
+            };
+            if next != current {
+                self.note_page = next;
+                self.remember_position(cx);
+            }
+        } else if a == action_id("list-prev") || a == action_id("list-next") {
+            let view = self.view;
+            let page = self.page(view);
+            let next = if a == action_id("list-next") {
+                page.saturating_add(1)
+            } else {
+                page.saturating_sub(1)
+            };
+            self.set_page(view, next);
+        } else if a == ActionId::BACK {
+            match self.view {
+                View::Note => {
+                    if !self.retrace(cx) {
+                        self.remember_position(cx);
+                        self.view = self.origin;
+                    }
+                }
+                View::Backlinks => self.view = View::Note,
+                View::TagNotes => self.view = View::Tags,
+                View::Failure => self.view = View::About,
+                View::Browse if !self.browse_stack.is_empty() => {
+                    self.browse_stack.pop();
+                    self.set_page(View::Browse, 0);
+                }
+                View::Home => {}
+                _ => self.view = View::Home,
+            }
         } else {
-            for i in 0..self.notes.len() {
-                if a == action_id(&format!("note-{i}")) {
-                    self.current = i;
-                    self.view = View::Note;
+            if self.view == View::About {
+                if let Some(index) = (0..self.failures().len())
+                    .find(|index| a == action_id(&format!("failure-{index}")))
+                {
+                    self.failure_index = index;
+                    self.set_page(View::Failure, 0);
+                    self.view = View::Failure;
+                    self.show(cx);
+                    return;
+                }
+            }
+            for index in 0..self.notes.len() {
+                if a == action_id(&format!("note-{index}")) {
+                    if self.view == View::Backlinks {
+                        self.follow(cx, index);
+                    } else {
+                        self.trail.clear();
+                        self.open_note(cx, index);
+                    }
+                    return;
+                }
+                if a == action_id(&format!("wiki-{index}")) {
+                    self.follow(cx, index);
+                    return;
+                }
+            }
+            let (folders, _) = self.browse_level();
+            for folder in folders {
+                if a == action_id(&format!("dir-{folder}")) {
+                    self.browse_stack.push(folder);
+                    self.set_page(View::Browse, 0);
+                    self.show(cx);
+                    return;
+                }
+            }
+            for (tag, _) in self.deduped_tags() {
+                if a == action_id(&format!("tag-{tag}")) {
+                    self.tag_filter = tag;
+                    self.view = View::TagNotes;
+                    self.show(cx);
+                    return;
                 }
             }
         }
         self.show(cx);
     }
 }
+
+enum BodyOutcome {
+    Ready(String, String),
+    Failed,
+    Waiting,
+}
+
+fn load_done(
+    slot: &mut Option<(String, Loading, ShelfDownload)>,
+    cx: &mut Context,
+    result: &StoreResult,
+) -> BodyOutcome {
+    let Some((_, _, load)) = slot else {
+        return BodyOutcome::Waiting;
+    };
+    match load.advance(cx, result) {
+        ShelfProgress::Done => {
+            let (id, _, load) = slot.take().expect("active note");
+            match String::from_utf8(load.take()) {
+                Ok(body) => BodyOutcome::Ready(id, body),
+                Err(_) => BodyOutcome::Failed,
+            }
+        }
+        ShelfProgress::Failed(_) => {
+            slot.take();
+            BodyOutcome::Failed
+        }
+        _ => BodyOutcome::Waiting,
+    }
+}
+
+impl Vault {
+    fn advance_search(&mut self, cx: &mut Context) {
+        if let Some(id) = self.search_queue.first().cloned() {
+            self.search_queue.remove(0);
+            self.start_body(cx, &id, Loading::Search);
+        } else if let Some(query) = self.pending_search.take() {
+            self.run_search(&query);
+        }
+    }
+
+    fn advance_manifest(&mut self, cx: &mut Context, result: &StoreResult) {
+        let Some((source, load)) = &mut self.manifest_load else {
+            return;
+        };
+        let source = *source;
+        match load.advance(cx, result) {
+            ShelfProgress::Done => {
+                let (_, load) = self.manifest_load.take().expect("active manifest");
+                let bytes = load.take();
+                let manifest = Manifest::decode(&bytes).unwrap_or_else(|_| Manifest {
+                    notes: Vec::new(),
+                    failures: vec![ImportFailure {
+                        input: "shelf manifest".to_owned(),
+                        reason: "could not be read".to_owned(),
+                    }],
+                });
+                if source == Source::Pushed {
+                    self.pushed = Some(manifest);
+                    self.start_manifest(cx, Source::Synced);
+                } else {
+                    self.synced = Some(manifest);
+                    self.finish_loading(cx);
+                }
+                self.show(cx);
+            }
+            ShelfProgress::Failed(error) => {
+                self.manifest_load = None;
+                // A shelf that is not there is an empty one; any other
+                // refusal while notes are already showing keeps them.
+                let missing = error == kobo_sdk::StoreError::Missing;
+                if source == Source::Pushed {
+                    if missing || !self.loaded {
+                        self.pushed = None;
+                    }
+                    self.start_manifest(cx, Source::Synced);
+                } else {
+                    if missing || !self.loaded {
+                        self.synced = None;
+                    }
+                    self.finish_loading(cx);
+                }
+                self.show(cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn advance_body(&mut self, cx: &mut Context, result: &StoreResult) {
+        let Some(why) = self.body_load.as_ref().map(|(_, why, _)| *why) else {
+            return;
+        };
+        match load_done(&mut self.body_load, cx, result) {
+            BodyOutcome::Ready(id, body) => {
+                self.bodies.insert(id, body);
+                match why {
+                    Loading::Open => self.view = View::Note,
+                    Loading::Search => self.advance_search(cx),
+                }
+                self.show(cx);
+            }
+            BodyOutcome::Failed => {
+                if why == Loading::Search {
+                    self.advance_search(cx);
+                } else {
+                    self.view = self.origin;
+                    self.notice = Some((BannerLevel::Error, UNREADABLE.to_owned()));
+                }
+                self.show(cx);
+            }
+            BodyOutcome::Waiting => {}
+        }
+    }
+
+    /// Reads both shelves again.
+    ///
+    /// Vault used to read them once, when it opened, so notes pushed while it
+    /// sat in the background never appeared until it was closed and opened
+    /// again. Coming back to Vault is when somebody looks for what they sent.
+    fn reload(&mut self, cx: &mut Context) {
+        if !self.loaded || self.manifest_load.is_some() {
+            return;
+        }
+        self.start_manifest(cx, Source::Pushed);
+    }
+
+    fn finish_loading(&mut self, cx: &mut Context) {
+        let mut notes = Vec::new();
+        if let Some(manifest) = &self.pushed {
+            notes.extend(
+                manifest
+                    .notes
+                    .iter()
+                    .map(|entry| (entry.clone(), Source::Pushed)),
+            );
+        }
+        if let Some(manifest) = &self.synced {
+            notes.extend(
+                manifest
+                    .notes
+                    .iter()
+                    .map(|entry| (entry.clone(), Source::Synced)),
+            );
+        }
+        if self.loaded {
+            self.replace_notes(notes);
+            return;
+        }
+        self.notes = notes;
+        if self.notes.is_empty() && !self.legacy_checked {
+            self.legacy_checked = true;
+            cx.store().load(LEGACY_INDEX_KEY);
+            return;
+        }
+        self.loaded = true;
+    }
+
+    /// Takes the notes found by a second look at the shelves.
+    ///
+    /// Positions in the list move when notes arrive or leave, so everything
+    /// that points into it (the open note, search results) is carried across
+    /// by note id, and the note being read stays the note being read.
+    fn replace_notes(&mut self, notes: Vec<(NoteEntry, Source)>) {
+        let legacy = !self.notes.is_empty()
+            && self
+                .notes
+                .iter()
+                .all(|(entry, _)| entry.id.starts_with("legacy-"));
+        if notes.is_empty() && legacy {
+            return;
+        }
+        let old: Vec<String> = self
+            .notes
+            .iter()
+            .map(|(entry, _)| entry.id.clone())
+            .collect();
+        self.notes = notes;
+        let find = |notes: &[(NoteEntry, Source)], index: usize| {
+            old.get(index)
+                .and_then(|id| notes.iter().position(|(entry, _)| &entry.id == id))
+        };
+        self.current = find(&self.notes, self.current).unwrap_or(usize::MAX);
+        self.results = std::mem::take(&mut self.results)
+            .into_iter()
+            .filter_map(|(index, line)| find(&self.notes, index).map(|found| (found, line)))
+            .collect();
+        let kept: std::collections::BTreeSet<&str> = self
+            .notes
+            .iter()
+            .map(|(entry, _)| entry.id.as_str())
+            .collect();
+        self.bodies.retain(|id, _| kept.contains(id.as_str()));
+    }
+}
+
 fn main() -> ExitCode {
     match kobo_sdk::run("vault", Vault::default()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -206,36 +1264,198 @@ mod tests {
     use super::*;
     use kobo_sdk::AppRunner;
 
+    fn entry(id: &str, path: &str, title: &str, tags: &[&str], links: &[&str]) -> NoteEntry {
+        NoteEntry {
+            id: id.to_owned(),
+            path: path.to_owned(),
+            title: title.to_owned(),
+            tags: tags.iter().map(|tag| (*tag).to_owned()).collect(),
+            links: links.iter().map(|link| (*link).to_owned()).collect(),
+            digest: String::new(),
+            bytes: 10,
+            added: 1,
+        }
+    }
+
     fn seeded() -> AppRunner<Vault> {
         let mut runner = AppRunner::new(Vault::default());
-        runner.start();
-        runner.store_result(StoreResult::Loaded {
-            key: INDEX_KEY.into(),
-            value: Some(
-                "Welcome.md\n# Welcome\n\nhome note of the fixture. See [[Alpha]].\n\n---vault-note---\n\nProjects/Alpha.md\n# Alpha\n\nA project with a wiki link to [[Welcome]].\n\n#project\n"
-                    .as_bytes()
-                    .to_vec(),
-            ),
-        });
+        {
+            let app = runner.app_mut();
+            app.pushed = Some(Manifest {
+                notes: vec![
+                    entry("note-a", "Welcome.md", "Welcome", &["home"], &["Alpha"]),
+                    entry(
+                        "note-b",
+                        "Projects/Alpha.md",
+                        "Alpha",
+                        &["project", "active"],
+                        &["Welcome"],
+                    ),
+                    entry("note-c", "Projects/Beta.md", "Beta", &["project"], &[]),
+                ],
+                failures: Vec::new(),
+            });
+            app.synced = Some(Manifest {
+                notes: vec![entry(
+                    "synced-note-s",
+                    "Inbox/Synced.md",
+                    "Synced",
+                    &["inbox"],
+                    &[],
+                )],
+                failures: Vec::new(),
+            });
+            app.finish_loading(&mut Context::default());
+            app.bodies.insert(
+                "note-a".to_owned(),
+                "# Welcome\n\nHome note. See [[Alpha]].".to_owned(),
+            );
+            app.bodies.insert(
+                "note-b".to_owned(),
+                "# Alpha\n\nA project note linking to [[Welcome]].".to_owned(),
+            );
+        }
         runner
+    }
+
+    #[test]
+    fn both_shelves_merge_with_their_source() {
+        let runner = seeded();
+        assert_eq!(runner.app().notes.len(), 4);
+        assert_eq!(runner.app().notes[3].1, Source::Synced);
+        assert_eq!(runner.app().pushed.as_ref().map_or(0, |m| m.notes.len()), 3);
+        assert_eq!(runner.app().synced.as_ref().map_or(0, |m| m.notes.len()), 1);
+    }
+
+    #[test]
+    fn tags_dedupe_and_filter() {
+        let runner = seeded();
+        let tags = runner.app().deduped_tags();
+        assert_eq!(
+            tags,
+            vec![
+                ("active".to_owned(), 1),
+                ("home".to_owned(), 1),
+                ("inbox".to_owned(), 1),
+                ("project".to_owned(), 2),
+            ]
+        );
+        assert_eq!(runner.app().tag_matches("project"), vec![1, 2]);
+    }
+
+    #[test]
+    fn folders_drill_down() {
+        let runner = seeded();
+        let (folders, notes) = runner.app().browse_level();
+        assert_eq!(folders, vec!["Inbox", "Projects"]);
+        assert_eq!(notes, vec![0]);
+        let mut runner = runner;
+        runner.app_mut().browse_stack.push("Projects".to_owned());
+        let (folders, notes) = runner.app().browse_level();
+        assert!(folders.is_empty());
+        assert_eq!(notes, vec![1, 2]);
+    }
+
+    #[test]
+    fn backlinks_answer_from_the_manifest() {
+        let runner = seeded();
+        assert_eq!(runner.app().backlinks(0), vec![1]);
+        assert_eq!(runner.app().backlinks(1), vec![0]);
     }
 
     #[test]
     fn action_graph_reaches_every_view() {
         let mut runner = seeded();
-        assert_eq!(runner.app().view, View::Home);
-        assert_eq!(runner.app().notes.len(), 2);
         runner.action(action_id("browse"));
         assert_eq!(runner.app().view, View::Browse);
-        runner.action(action_id("note-0"));
+        runner.action(action_id("dir-Projects"));
+        assert_eq!(runner.app().browse_stack, vec!["Projects"]);
+        runner.action(action_id("note-1"));
         assert_eq!(runner.app().view, View::Note);
         runner.action(action_id("backlinks"));
         assert_eq!(runner.app().view, View::Backlinks);
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Note);
+        runner.action(action_id("origin"));
+        assert_eq!(runner.app().view, View::Browse);
+        runner.action(ActionId::BACK);
+        assert!(runner.app().browse_stack.is_empty());
         runner.action(action_id("tags"));
+        runner.action(action_id("tag-project"));
+        assert_eq!(runner.app().view, View::TagNotes);
+        runner.action(ActionId::BACK);
         assert_eq!(runner.app().view, View::Tags);
         runner.action(action_id("recent"));
         assert_eq!(runner.app().view, View::Recent);
-        runner.action(action_id("search"));
-        assert!(runner.app().entry.is_open());
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Home);
+    }
+
+    #[test]
+    fn reading_position_is_remembered_per_note() {
+        let mut runner = seeded();
+        runner.action(action_id("note-0"));
+        assert_eq!(runner.app().view, View::Note);
+        runner.app_mut().note_page = 3;
+        runner.action(action_id("origin"));
+        assert_eq!(runner.app().positions.get("note-a"), Some(&3));
+        runner.action(action_id("note-0"));
+        assert_eq!(runner.app().note_page, 3);
+    }
+
+    #[test]
+    fn a_search_result_opens_its_note_at_the_page_with_the_match() {
+        let mut runner = seeded();
+        let long = "Ordinary words about the garden and the weather.\n\n".repeat(400)
+            + "The gate hinge is rusted.";
+        runner.app_mut().bodies.insert("note-c".to_owned(), long);
+        runner.app_mut().positions.insert("note-c".to_owned(), 0);
+        runner.app_mut().run_search("GATE HINGE");
+        assert_eq!(runner.app().results.len(), 1);
+        let index = runner.app().results[0].0;
+        runner.action(action_id(&format!("note-{index}")));
+        let app = runner.app();
+        assert_eq!(app.view, View::Note);
+        let pages = app.note_pages(&Context::default());
+        assert!(pages.len() > 1, "the note should run to several pages");
+        assert_eq!(app.note_page, pages.len() - 1);
+    }
+
+    #[test]
+    fn a_note_opened_from_anywhere_but_a_search_keeps_its_saved_page() {
+        let mut runner = seeded();
+        runner.app_mut().query = "Home".to_owned();
+        runner.app_mut().positions.insert("note-a".to_owned(), 2);
+        runner.action(action_id("browse"));
+        runner.app_mut().view = View::Recent;
+        runner.action(action_id("note-0"));
+        assert_eq!(runner.app().note_page, 2);
+    }
+
+    #[test]
+    fn a_result_shows_the_words_around_the_match_rather_than_the_whole_paragraph() {
+        let notes = vec![model::Note {
+            path: "long.md".into(),
+            body: format!(
+                "{} the gate hinge took the morning. {}",
+                "Early words ".repeat(20),
+                "Later words ".repeat(20)
+            ),
+        }];
+        let (_, line) = &model::search(&notes, "Gate Hinge")[0];
+        assert!(line.contains("gate hinge"), "{line}");
+        assert!(line.starts_with('…') && line.ends_with('…'), "{line}");
+        assert!(line.chars().count() <= 122, "{line}");
+        let short = vec![model::Note {
+            path: "short.md".into(),
+            body: "  A short line with a hinge.  ".into(),
+        }];
+        assert_eq!(
+            model::search(&short, "hinge")[0].1,
+            "A short line with a hinge."
+        );
     }
 }
+
+#[cfg(test)]
+mod ui_review_tests;

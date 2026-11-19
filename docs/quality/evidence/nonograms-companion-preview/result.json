@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "source": "real NASA image PIA13227",
+  "checks": [
+    "real image decoded and bounded",
+    "5x5 preview line-solvable",
+    "7x7 preview line-solvable",
+    "9x9 preview line-solvable",
+    "repeatable solving-pass difficulty displayed",
+    "row and column clues displayed",
+    "full preview pixel-inspected"
+  ],
+  "side_by_side_app_transfer": "blocked on the app manifest/multiple-puzzle contract; not claimed"
+}

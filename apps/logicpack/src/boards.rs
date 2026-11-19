@@ -8,6 +8,7 @@ fn mark(column: u8, row: u8, kind: Ink) -> PencilMark {
         kind,
         action: None,
         selected: false,
+        peer: false,
     }
 }
 fn byte(n: usize) -> u8 {

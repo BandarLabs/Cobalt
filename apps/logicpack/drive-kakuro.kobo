@@ -1,0 +1,69 @@
+# Kakuro: the digit chooser, a wrong board, clearing, restart and solving.
+expect Cross sums · 0 of 105 solved
+tap Kakuro
+tap Three blanks
+wait-for-id game-more
+expect Starter · Three blanks
+expect Row 2, column 3, blank square
+expect Restart
+# Tapping a square shows both of its sums and the nine digits.
+tap-id kakuro-0
+expect Enter a digit
+expect Across 4 · Down 7
+expect Clear square
+clean
+shot kakuro-entry
+# Board leaves without changing the square.
+tap Board
+expect Row 2, column 3, blank square
+tap-id kakuro-0
+tap-id digit-5
+expect Row 2, column 3, digit 5
+tap-id kakuro-1
+tap-id digit-2
+tap-id kakuro-2
+tap-id digit-2
+expect Every square is filled, but a sum is wrong or a digit repeats.
+clean
+shot kakuro-wrong
+# Clear square empties it again.
+tap-id kakuro-0
+tap-id digit-0
+expect Row 2, column 3, blank square
+# Restart at the foot asks first and can be undone.
+tap-id restart
+expect Clear this puzzle?
+expect Other puzzles keep their progress. You can undo this restart.
+clean
+shot kakuro-restart-confirm
+tap Keep playing
+expect Row 3, column 2, digit 2
+tap-id restart
+tap-id confirm-restart
+expect Row 3, column 2, blank square
+tap-id game-undo
+expect Row 3, column 2, digit 2
+# The right digits solve it.
+tap-id kakuro-0
+tap-id digit-3
+tap-id kakuro-2
+tap-id digit-4
+expect Solved.
+expect Next puzzle
+clean
+shot kakuro-solved
+# Progress in another puzzle survives a restart and shows in the list.
+tap Next puzzle
+wait-for-id game-more
+tap-id kakuro-0
+tap-id digit-1
+restart
+wait-for Starter · Puzzle 2
+expect Row 2, column 2, digit 1
+tap-id 4294967295
+expect In progress
+expect Solved
+clean
+shot kakuro-list-after-restart
+tap-id 4294967295
+expect Cross sums · 1 of 105 solved

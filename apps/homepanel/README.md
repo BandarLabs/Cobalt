@@ -1,28 +1,73 @@
 # Home Panel
 
-Tiles for a Home Assistant installation, on a panel that costs nothing to
-keep showing them. This is a client for Home Assistant; it is not affiliated
-with Nabu Casa.
+Home Assistant controls on a Kobo, for a desk or a wall.
 
-Set the URL once, then install the long-lived access token outside the app:
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/grid.png" alt="The tile grid"><br>The tile grid</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/climate.png" alt="Climate controls"><br>Climate controls</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/edit.png" alt="The grid after removing a tile"><br>The grid after removing a tile</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/wall.png" alt="The one-column wall layout"><br>The one-column wall layout</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/setup.png" alt="Connecting to Home Assistant"><br>Connecting to Home Assistant</td>
+</tr>
+</table>
+
+## Features
+
+- Up to twelve tiles, refreshed every ten seconds while the app is open.
+- Add tiles by browsing or searching devices by name, or by typing an entity
+  ID.
+- Lights, switches, scenes, scripts, automations and buttons act on a tap.
+  Sensors and other entities open a detail screen.
+- Climate tiles show room and target temperature, adjust the target in
+  half-degree steps and switch the unit on or off.
+- Each action shows a confirmation until the next one. Failures name the cause
+  and the fix.
+- If Home Assistant stops responding, the last readings stay on screen with
+  the time of the last successful refresh.
+- In **Settings**, **Edit tiles** removes and reorders tiles, and **Wall
+  panel** switches to one large tile per row for a wall-mounted reader.
+
+## Setup
+
+Home Assistant must be reachable over **HTTPS**: Nabu Casa, a reverse proxy
+with a real certificate, or a private certificate authority whose root you
+install with `kobo trust set homeassistant --from ROOT.pem`. Plain `http://`
+addresses do not work.
+
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. In Home Assistant, create a long-lived access token on your profile page.
+3. Connect from your computer:
+
+   ```sh
+   kobo connect homepanel
+   ```
+
+   It asks for the address and the token, checks them, and sets the panel up.
+   Open Home Panel, or tap **Check again** on its setup screen, which shows
+   this command from the start.
+
+The token never appears in a URL, request body, log or the app's storage.
+
+## Permissions
+
+- `network`: talks to your Home Assistant server.
+
+## Development
 
 ```sh
-kobo secret set homeassistant --device <ip>
+cargo test -p kobo-homepanel
+python3 scripts/check-apps-sim.py homepanel
 ```
 
-The URL must be HTTPS. Use Nabu Casa, a reverse proxy with a real
-certificate, or install a private CA with `kobo trust set homeassistant
---device <ip>`. Home Panel posts one compact Jinja template per poll and
-never puts the token in its URL, body, log, or local store.
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
 
-Use the `+` action to browse or search Home Assistant devices by their
-friendly names. The grid keeps up to twelve tiles, refreshes them every ten
-seconds while open, and keeps the last visible state available when the
-server cannot be reached. Lights, switches, scenes, scripts, automations, and
-buttons can be triggered directly; unsupported domains remain useful as
-read-only tiles.
+## Credits
 
-Climate detail controls and a dedicated always-awake wall-panel mode are not
-included yet.
-
-![Home Panel grid](screenshots/setup.png)
+Home Panel is an unofficial client, not affiliated with Home Assistant or
+Nabu Casa.

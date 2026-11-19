@@ -1,42 +1,77 @@
 # Read Later
 
-A Wallabag reading app for the Kobo. Save links from Wallabag's phone or
-browser tools, then sync their extracted articles to the reader.
+Read your [Wallabag](https://wallabag.org/) articles on your Kobo, online or
+off.
 
-Fetched article bodies survive metadata refreshes during the current session.
-Unreadable list responses leave current articles unchanged, and replies from a
-previous server or credential cannot replace the current list. The queue's
-**Sync** control retries a failed refresh.
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/readlater-queue.png" alt="The unread list after a sync, with reading times"><br>The unread list after a sync, with reading times</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/readlater-article.png" alt="An essay open for reading, with star and archive controls"><br>An essay open for reading, with star and archive controls</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/readlater-starred.png" alt="The Starred tab"><br>The Starred tab</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/readlater-setup.png" alt="Connecting Wallabag from a computer"><br>Connecting Wallabag from a computer</td>
+</tr>
+</table>
 
-Articles now use acknowledged local snapshots scoped to the server and credential
-name. Saves keep a previous copy until the new content and its pointer are
-acknowledged. A failed save shows **Retry saving**; Settings remains available
-from the reading list. The collection is bounded to 8 MiB, and extracted article
-text is stored verbatim, including Unicode and paragraph breaks.
+## Features
 
-Full simulator restart/recovery validation, acknowledged archive/star replay,
-filtering and reading pagination remain under LATER-01 through LATER-06. The app
-is not yet a complete offline Wallabag client.
+- Unread, Starred and Archive tabs.
+- Articles are saved on the reader for offline reading, with Unicode and
+  paragraph breaks intact. The collection is capped at 8 MiB.
+- Star and archive articles offline. The changes sync to Wallabag next time.
+- A failed refresh keeps the current list and offers **Sync** to retry. A
+  failed save keeps the previous copy and offers **Retry saving**.
 
-![Read Later setup on the Clara BW simulator](screenshots/readlater-setup.png)
+Save links with Wallabag's own browser or phone tools, then sync them here.
 
-Configure an HTTPS server in Settings and install its daemon-owned credential:
-`kobo secret set wallabag`. The app only names that credential; it never puts a
-password, client secret, or token in a request body.
+## Setup
 
-## Dependencies
+1. Set up the reader once over USB, if you have not already: `kobo setup`.
+2. On your Wallabag server, create an API client (on wallabag.it: **Settings,
+   API clients**).
+3. Sign in from your computer:
 
-| Dependency | License | Nature |
-| --- | --- | --- |
-| [Wallabag](https://wallabag.org/) | MIT | Remote read-later service; not vendored |
-| `kobo-sdk`, `kobo-html`, `kobo-json` | Platform | Device UI, storage, rendering and parsing |
+   ```sh
+   kobo connect readlater
+   ```
 
-`drive.kobo` exercises the setup and offline surface. Wallabag OAuth
-password-grant exchange requires kobod's `oauth2-password` credential kind;
-this MVP expects that runtime credential and cannot provision it itself.
+   It asks for the server, the client ID and secret, your username and your
+   password (typed without being shown), completes Wallabag's sign-in, and
+   sends the session to the reader. Open Read Later, or tap **Check again** if
+   it is already open. No restart is needed.
 
+For scripts, the same sign-in takes flags and reads the password from
+`KOBO_WALLABAG_PASSWORD`, `--password-env VAR` or `--password-file PATH`:
 
-![Refresh failure retains the current reading list, rendered from an original fixture](../../docs/quality/evidence/readlater-refresh/refresh-failed.png)
+```sh
+kobo readlater login --server https://wallabag.example \
+  --client-id ID --client-secret-file SECRET_FILE --username you@example.com
+```
 
+The reader renews the session on its own. The token can only be sent to your
+Wallabag server, and the password is not stored on the reader. The client
+secret and refresh token remain in private app state so the reader can renew
+the session. Run it again only if you revoke access.
 
-![Saving failure retains the previous copy and offers retry](../../docs/quality/evidence/readlater-cache/save-failed.png)
+When something fails, the list stays readable and a banner says why: a
+refused sign-in, a server that did not answer, or no Wi-Fi.
+
+## Permissions
+
+- `network`: syncs with your Wallabag server.
+
+## Development
+
+```sh
+cargo test -p kobo-readlater
+python3 scripts/check-apps-sim.py readlater
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.
+
+## Credits
+
+Read Later is unofficial and not affiliated with or endorsed by the Wallabag
+project. Wallabag is MIT-licensed.

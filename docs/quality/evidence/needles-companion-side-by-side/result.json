@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "app_source": "pr5-apps-polish 00a6f45",
+  "cli_source": "pr6 02a92a0",
+  "source": "https://archive.org/details/priscillawarwork00pris",
+  "source_sha256": "f8cbe5401a7d4fa3a79a554f9ebf83a0cbd3719400deb62c1ff85f2143adcd27",
+  "checks": [
+    "empty app reported no pattern",
+    "CLI prepared public-domain PDF into simulator shelf",
+    "running app opened CLI output",
+    "title visible",
+    "reader exit returned to row counter",
+    "row counter incremented"
+  ],
+  "caveat": "OCR errors and image/chart omission are flagged by CLI preview; physical reader unverified"
+}

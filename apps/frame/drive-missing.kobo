@@ -1,0 +1,21 @@
+# sweep: --bare --seed-root apps/frame/fixtures/missing
+# A photo file gone from the shelf is skipped, and the page asks for a push.
+wait-for No photograph can be opened
+expect 2 photos could not be read. Push the album again from your computer.
+expect Check for photos
+expect-missing No photo on this shelf can be read
+clean
+shot missing
+# Checking before anything is pushed keeps the same page.
+tap Check for photos
+wait-idle
+wait-for No photograph can be opened
+# The push the page asks for has to be able to repair the shelf, and the
+# button on the page is enough to find it.
+companion frame push scripts/fixtures/frame/lighthouse.jpg --album Coast --replace --sim
+tap Check for photos
+wait-for-id next
+wait-idle
+expect-missing No photograph can be opened
+clean
+shot missing-repaired

@@ -2,12 +2,20 @@
 use kobo_sdk::exports::{Offer, MAX_OFFER_BYTES, OFFER_KEY};
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-const USAGE: &str = "Receive the copy you prepared with Export in a reader app.\n\nusage: kobo export --app APP (--device ADDRESS | --sim) --out FOLDER\n\nThe reader keeps its copy. Existing computer files are never replaced.\nFor a reader, use the SSH connection enabled during kobo setup.";
+const USAGE: &str = concat!(
+    "Receive the copy you prepared with Export in a reader app.\n\nusage: kobo export --app APP ",
+    crate::targets::target_choice!(),
+    " --out FOLDER\n\nThe reader keeps its copy. Existing computer files are never replaced.\nFor a reader, use the SSH connection enabled during kobo setup.\n",
+    crate::targets::saved_reader_note!(),
+);
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
     if super::wants_help(arguments) {
@@ -39,13 +47,12 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             let root = if data {
                 kobo_sim::simulated_data_root(app)
             } else {
-                std::env::temp_dir().join("cobalt-sim-state").join(app)
+                kobo_sim::simulated_state_root(app)
             };
             bounded_file(&root.join(key), maximum)
         }
     };
-    let offer = Offer::restore(&read_offer(OFFER_KEY, MAX_OFFER_BYTES, false)?)?;
-    let bytes = read_offer(&offer.digest, offer.bytes, true)?;
+    let (offer, bytes) = receive(app, read_offer)?;
     if !offer.matches(&bytes) {
         return Err("The received copy is incomplete or changed. Choose Export in the app and try again. Your existing files were kept.".into());
     }
@@ -57,6 +64,36 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn receive(
+    app: &str,
+    read: impl Fn(&str, usize, bool) -> Result<Vec<u8>, String>,
+) -> Result<(Offer, Vec<u8>), String> {
+    // Inkling predates shelf-backed offers and saves this fixed, small text
+    // result in its private state. Never derive a reader path from its content.
+    if app == "inkling" {
+        let bytes = read("export-result.txt", 4096, false)?;
+        if bytes.len() > 4096
+            || !std::str::from_utf8(&bytes)
+                .is_ok_and(|text| text.starts_with("Inkling, ") && text.ends_with('\n'))
+        {
+            return Err(
+                "The Inkling result is incomplete or invalid. Choose Export in the app again."
+                    .into(),
+            );
+        }
+        let offer = Offer {
+            title: "Inkling result".into(),
+            format: kobo_sdk::exports::Format::Text,
+            digest: kobo_net::sha256::hex_digest(&bytes),
+            bytes: bytes.len(),
+        };
+        return Ok((offer, bytes));
+    }
+    let offer = Offer::restore(&read(OFFER_KEY, MAX_OFFER_BYTES, false)?)?;
+    let bytes = read(&offer.digest, offer.bytes, true)?;
+    Ok((offer, bytes))
+}
+
 fn bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>, String> {
     let before = fs::symlink_metadata(path)
         .map_err(|_| "No export is ready. Choose Export in the app first.")?;
@@ -65,7 +102,12 @@ fn bounded_file(path: &Path, maximum: usize) -> Result<Vec<u8>, String> {
     }
     let file = fs::File::open(path).map_err(|error| error.to_string())?;
     let opened = file.metadata().map_err(|error| error.to_string())?;
-    if before.dev() != opened.dev() || before.ino() != opened.ino() {
+    // The guard catches the file being swapped between the check and the
+    // open. Windows std offers no stable file index, so size plus
+    // modification time stand in there; a same-size rewrite within one
+    // timestamp tick is not detected on Windows.
+    let same = same_file(&before, &opened);
+    if !same {
         return Err("The export file changed. Try again.".into());
     }
     let mut bytes = Vec::new();
@@ -183,7 +225,12 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
         std::process::id(),
         offer.digest
     ));
-    let mut file = fs::OpenOptions::new().create_new(true).write(true).mode(0o600).open(&temporary)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&temporary)
         .map_err(|_| "A previous transfer may still be running. Choose another receiving folder or remove its unfinished .part file after checking it.")?;
     let result = (|| {
         file.write_all(bytes)
@@ -200,13 +247,17 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
             let target = folder.join(format!("{base}{suffix}.{}", offer.format.extension()));
             match fs::hard_link(&temporary, &target) {
                 Ok(()) => {
-                    fs::File::open(&folder).and_then(|folder| folder.sync_all()).map_err(|error| format!("The copy was written but its save could not be confirmed: {error}"))?;
+                    kobo_protocol::durability::sync_directory(&folder).map_err(|error| format!("The copy was written but its save could not be confirmed: {error}"))?;
                     return Ok(target);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     if bounded_file(&target, offer.bytes).is_ok_and(|bytes| offer.matches(&bytes)) {
-                        fs::File::open(&target).and_then(|file| file.sync_all())
-                            .and_then(|()| fs::File::open(&folder)?.sync_all())
+                        // Confirming the copy must not need write access to
+                        // it on macOS or Linux, where an owner may have made it
+                        // read-only; the shared helper asks for that only on
+                        // Windows, whose flush call requires it.
+                        kobo_protocol::durability::sync_file(&target)
+                            .and_then(|()| kobo_protocol::durability::sync_directory(&folder))
                             .map_err(|error| format!("The copy is present, but its save could not be confirmed: {error}"))?;
                         return Ok(target);
                     }
@@ -221,10 +272,69 @@ fn publish(folder: &Path, app: &str, offer: &Offer, bytes: &[u8]) -> Result<Path
     result
 }
 
+#[cfg(unix)]
+fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    before.dev() == opened.dev() && before.ino() == opened.ino()
+}
+
+/// See the call site: Windows substitutes size and modification time for the
+/// device/inode pair, a weaker same-file guard.
+#[cfg(not(unix))]
+fn same_file(before: &fs::Metadata, opened: &fs::Metadata) -> bool {
+    before.len() == opened.len() && before.modified().ok() == opened.modified().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use kobo_sdk::exports::Format;
+
+    #[test]
+    fn inkling_receives_the_apps_plain_state_export_without_an_offer() {
+        // Fixture matches Game::export_text for the pinned 2026-09-01 puzzle.
+        let bytes = "Inkling, September 1, 2026\nSolved in 2 of 6.\n[G] [R] [A] P× E×\n[G] [R] [A] [V] [Y]\n\nPlayed 1. Won 1.\nSolved in 2: 1\n";
+        let (offer, received) = receive("inkling", |key, maximum, data| {
+            assert_eq!(key, "export-result.txt");
+            assert_eq!(maximum, 4096);
+            assert!(!data, "Inkling exports to state, not its data shelf");
+            Ok(bytes.as_bytes().to_vec())
+        })
+        .unwrap();
+        assert_eq!(offer.title, "Inkling result");
+        assert_eq!(offer.format, Format::Text);
+        assert!(offer.matches(bytes.as_bytes()));
+        assert_eq!(received, bytes.as_bytes());
+    }
+
+    #[test]
+    fn inkling_refuses_missing_invalid_and_oversized_result_fixtures() {
+        assert!(receive("inkling", |_, _, _| Err("No export is ready".into())).is_err());
+        for bytes in [
+            Vec::new(),
+            b"not an Inkling result\n".to_vec(),
+            b"Inkling, September 1, 2026".to_vec(),
+            b"Inkling, \xff\n".to_vec(),
+            format!("Inkling, {}\n", "x".repeat(4096)).into_bytes(),
+        ] {
+            assert!(receive("inkling", |_, _, _| Ok(bytes.clone())).is_err());
+        }
+    }
+
+    #[test]
+    fn other_apps_still_require_a_verified_offer() {
+        assert!(receive("todo", |key, maximum, data| {
+            assert_eq!(key, OFFER_KEY);
+            assert_eq!(maximum, MAX_OFFER_BYTES);
+            assert!(!data);
+            Ok(b"Inkling, September 1, 2026\n".to_vec())
+        })
+        .is_err());
+        let script = remote_script("inkling", "export-result.txt", 4096, false);
+        assert!(script.contains("/state/inkling/export-result.txt"));
+        assert!(script.contains("test ! -L"));
+        assert!(script.contains("head -c 4097"));
+        assert!(!script.contains("/data/inkling"));
+    }
 
     #[test]
     fn receive_keeps_existing_files_and_reuses_a_complete_identical_copy() {
@@ -273,8 +383,11 @@ mod tests {
         let _ignored = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("original"), b"owner data").unwrap();
-        std::os::unix::fs::symlink(root.join("original"), root.join("link")).unwrap();
-        assert!(bounded_file(&root.join("link"), 100).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.join("original"), root.join("link")).unwrap();
+            assert!(bounded_file(&root.join("link"), 100).is_err());
+        }
         assert!(bounded_file(&root.join("original"), 3).is_err());
         fs::remove_dir_all(root).unwrap();
     }

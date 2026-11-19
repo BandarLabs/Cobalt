@@ -2,26 +2,30 @@
   "id": "homepanel",
   "display_name": "Home Panel",
   "short_label": "Home",
-  "summary": "Control saved Home Assistant tiles from a low-power panel.",
+  "summary": "Control saved Home Assistant tiles from a low-power panel. Needs an account. Home Assistant must be on HTTPS.",
   "page_description": "Keep your favorite Home Assistant controls on a simple, low-power panel.",
-  "version": "0.1.2",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
-  "glyph": "light",
+  "version": "0.2.12",
+  "release_notes": "Readings from an earlier day now say which day, and when Home Assistant cannot list its devices you can still add one by its ID. Settings no longer repeats the main screen's warnings.",
+  "glyph": "house",
   "capabilities": [
     "network"
   ],
   "setup": {
     "steps": [
       {
-        "text": "Expose Home Assistant through HTTPS, using Nabu Casa or a reverse proxy with a trusted certificate."
+        "text": "Set up the reader once over USB, if you have not already. Home Assistant must be reachable over HTTPS (Nabu Casa or a reverse proxy with a trusted certificate). Plain http:// addresses do not work.",
+        "command": "kobo setup"
       },
       {
-        "text": "Create a Home Assistant long-lived access token and install it under the exact name homeassistant.",
-        "command": "kobo secret set homeassistant --device <address>"
+        "text": "Create a long-lived access token on your Home Assistant profile page."
       },
       {
-        "text": "For a private certificate authority, install its root on the Kobo.",
-        "command": "kobo trust set homeassistant --device <address>"
+        "text": "Connect Home Panel from your computer. It asks for the address and the token, checks them, and sets the panel up. Open Home Panel, or tap Check again.",
+        "command": "kobo connect homepanel"
+      },
+      {
+        "text": "For a private certificate authority, install its root on the reader. Pass the same file to kobo connect with --ca.",
+        "command": "kobo trust set homeassistant --from root-ca.pem"
       }
     ]
   }

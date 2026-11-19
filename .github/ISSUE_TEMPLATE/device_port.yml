@@ -1,0 +1,46 @@
+name: Test another Kobo
+description: Offer a model Cobalt has not been tested on, or report how it went.
+labels: [device]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Start with the read-only doctor report in docs/PORTING.md,
+        and run display or touch tests only after a maintainer points you to a
+        reviewed candidate profile. Do not paste full serial numbers.
+  - type: input
+    id: model
+    attributes:
+      label: Model and device code
+      placeholder: Kobo Libra 2, N418
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware and kernel
+      description: Both appear in the doctor report.
+      placeholder: 4.41.23145, Linux 4.1.15
+    validations:
+      required: true
+  - type: dropdown
+    id: attended
+    attributes:
+      label: Can you run attended tests?
+      description: Attended means you can watch the screen and press the power button if asked.
+      options:
+        - Yes, with the device in front of me
+        - Only the read-only doctor report
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor report
+      description: The output of the read-only doctor command from docs/PORTING.md.
+      render: text
+  - type: textarea
+    id: observations
+    attributes:
+      label: Observations
+      description: Anything untested or unusual about the hardware revision, buttons, stylus, suspend or drivers.

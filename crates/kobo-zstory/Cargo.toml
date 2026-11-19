@@ -1,0 +1,10 @@
+[package]
+name = "kobo-zstory"
+version.workspace = true
+edition.workspace = true
+publish = false
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Capture the offline Lichess pairing recovery screen at two text sizes.
+"""Capture the offline Lichess pairing screens at two text sizes.
+
+Scenarios: a seek checking its games, a failed check, and a casual seek,
+whose pairing screen must say Casual and nowhere Rated.
 
 This checks presentation only; app tests cover request recovery, and live
 matchmaking and hardware acceptance remain separate.
@@ -16,15 +19,33 @@ import time
 import urllib.request
 from pathlib import Path
 
-from simulator_cli import build_cli, verify_cli
+from simulator_cli import build_cli, fingerprint, verify_cli
 
 root = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output", type=Path, required=True)
-parser.add_argument("--scenario", choices=["reconciling", "pairing-error"], default="reconciling")
+parser.add_argument("--scenario", choices=["reconciling", "pairing-error", "pairing-casual"],
+                    default="reconciling")
+parser.add_argument("--cli", type=Path,
+                    help="use this kobo binary instead of building one; for a shared target "
+                         "directory that other builds may rewrite during the run")
 args = parser.parse_args()
 target = Path(os.environ.get("CARGO_TARGET_DIR", str(root / "target"))).resolve()
-cli, provenance = build_cli(root, target)
+if args.cli is None:
+    cli, provenance = build_cli(root, target)
+else:
+    cli = args.cli.resolve()
+    provenance = dict(
+        source_revision=subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
+        prebuilt=str(cli),
+        cli_sha256=fingerprint(cli),
+    )
+READY = {
+    "reconciling": "Checking games",
+    "pairing-error": "Could not check your game",
+    "pairing-casual": "Rapid · Casual",
+}
 for scale in ["default", "170"]:
     out = args.output.resolve() / scale
     out.mkdir(parents=True, exist_ok=True)
@@ -70,7 +91,7 @@ for scale in ["default", "170"]:
                             "http://" + address + "/layout", timeout=2
                         ) as response:
                             layout = json.load(response)
-                        if ("Checking games" if args.scenario == "reconciling" else "Could not check your game") in json.dumps(layout):
+                        if READY[args.scenario] in json.dumps(layout, ensure_ascii=False):
                             break
                     except OSError:
                         pass

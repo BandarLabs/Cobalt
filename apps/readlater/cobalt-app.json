@@ -2,10 +2,10 @@
   "id": "readlater",
   "display_name": "Read Later",
   "short_label": "Read Later",
-  "summary": "Read your Wallabag articles anywhere.",
+  "summary": "Read your Wallabag articles anywhere. Needs an account.",
   "page_description": "Bring saved Wallabag articles to your Kobo, then archive or favorite them as you read.",
-  "version": "0.1.4",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
+  "version": "0.2.11",
+  "release_notes": "Articles to keep now stays as you set it. Articles show their page count and fill each page, and a sync without Wi-Fi offers a Join Wi-Fi button.",
   "glyph": "bookmark",
   "capabilities": [
     "network"
@@ -13,11 +13,15 @@
   "setup": {
     "steps": [
       {
-        "text": "Have an HTTPS Wallabag instance and a bearer credential accepted by its API."
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
       },
       {
-        "text": "Install that credential under the exact name wallabag.",
-        "command": "kobo secret set wallabag --device <address>"
+        "text": "Create an API client on your Wallabag server (on wallabag.it: Settings, API clients)."
+      },
+      {
+        "text": "Sign Read Later in from your computer. It asks for the server, the API client and your password, checks them with Wallabag, and sends the sign-in to the reader. Open Read Later, or tap Check again if it is already open.",
+        "command": "kobo connect readlater"
       }
     ]
   }

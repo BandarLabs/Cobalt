@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Send to Kobo",
+  "short_name": "Send to Kobo",
+  "version": "1.0.0",
+  "description": "Send a web page, a link or a selection to your Kobo as a clean article, through Cobalt on this computer.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvH8o72o1dxfvj1vw0MLPl4b53tM2njpkUed0SEKoTSZzFsNJTNhs5jzQN3ssmEIRBC21mYYZdQmJWMn8WpwoFh81qn56j4QqIhgDS6pBNFIZ3bnu1DspY8wxI2aL6jiAnkuvH4opKY4Xbin13MGYvlV+tm2JEjKMeRlNi0JXyBW4L4LzgkLj2zbgOKmfIAM7JeTchfi6E0Ujq7bByWEyxd/u+oGnA2hRLsKTV09RdlZrWJ9HmLf7g0T6vUGZnTwl8mZamCB+hQKEAT61juLtYcQzf1U9fiybV79uJNSiRES6xoFpOFQxYARkYrqb50c1g52LmkePTVcU0eslCUoVKwIDAQAB",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["contextMenus", "activeTab", "scripting", "nativeMessaging", "notifications"],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "send-to-kobo@cobalt.bandarlabs.github.io",
+      "strict_min_version": "128.0"
+    }
+  }
+}

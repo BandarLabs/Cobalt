@@ -2,11 +2,11 @@
   "id": "parlor",
   "display_name": "Parlor",
   "short_label": "Parlor",
-  "summary": "Play touch-first Reversi together on one Kobo.",
-  "page_description": "A pass-and-play board-game shelf, beginning with touch-first Reversi.",
-  "minimum_cobalt_version": "0.3.14",
-  "version": "0.1.3",
-  "release_notes": "Four games on one shelf, a mark for each, whose move it is under the game's name, and a board this panel cannot draw says so rather than raising an error.",
-  "glyph": "circle",
+  "summary": "Play Reversi, Draughts, Nine Men's Morris and Kalah on one Kobo.",
+  "page_description": "Four classic board games against the computer at three levels, which marks its last move on the board, or for two players passing one Kobo. Every move is saved.",
+  "version": "0.1.15",
+  "release_notes": "The last move on the Nine Men's Morris board is marked with a ring, and so is the piece you are about to slide.",
+  "minimum_cobalt_version": "0.3.34",
+  "glyph": "board-pieces",
   "capabilities": []
 }

@@ -2,18 +2,28 @@
   "id": "paperterm",
   "display_name": "Paperterm",
   "short_label": "Paperterm",
-  "summary": "Pair with a computer to mirror a terminal session on e-ink.",
-  "version": "0.1.7",
-  "glyph": "terminal",
+  "summary": "Pair with a computer to mirror a terminal session on e-ink. Needs your computer.",
+  "version": "0.1.19",
+  "glyph": "keyboard",
   "capabilities": [
     "network"
   ],
-  "release_notes": "See whether the computer is connected, waiting or reconnecting, stop sharing from the laptop, and start a terminal or a system monitor from a named preset instead of typing a command.",
+  "release_notes": "Pairing and terminal screens are now checked against each supported reader's own type, including the Kobo Nia, at every text size.",
   "setup": {
     "steps": [
       {
-        "text": "Run kobo stream init on the computer, install its stream trust root on the Kobo, then start kobo stream."
+        "text": "Set up the reader once over USB, if you have not already.",
+        "command": "kobo setup"
+      },
+      {
+        "text": "Pair this computer with the reader. There is nothing to type on the reader. The first time, close Cobalt and open it again afterwards.",
+        "command": "kobo stream init"
+      },
+      {
+        "text": "Share a terminal and leave it open, then open Paperterm on the reader.",
+        "command": "kobo stream terminal"
       }
     ]
-  }
+  },
+  "page_description": "Mirror a terminal session from your computer onto e-ink. The shell, credentials, and scrollback stay on the computer; the Kobo renders the session over a paired connection."
 }

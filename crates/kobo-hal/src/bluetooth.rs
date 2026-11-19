@@ -41,6 +41,12 @@ const MTK_MARKERS: [&str; 4] = [
     "/usr/local/Kobo/launch-mtkbtd.sh",
     "/usr/local/Kobo/mtkbtd",
 ];
+/// The `MediaTek` radio's Bluetooth device node, present once its driver is
+/// loaded.
+const MTK_RADIO_NODE: &str = "/dev/stpbt";
+/// Where the `MediaTek` stack keeps its state: its pairings, and the
+/// firmware configuration its first start under Nickel writes.
+const MTK_STATE_DIR: &str = "/data/misc/bluedroid";
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(18);
 
 /// Whether the kernel has registered `hci0`, the controller every backend
@@ -80,14 +86,44 @@ enum Backend {
     Bluetoothctl(PathBuf),
 }
 
-/// Chooses a backend when [`adapter_present`] can prove one exists under
-/// `sys_root`, and never otherwise -- taking the root as a parameter, rather
-/// than hardcoding `/sys/class/bluetooth`, so a test can gate this on an
-/// empty directory and confirm no backend is chosen even when the marker
-/// files and tool binaries below it are found, the same as a Libra H2O
-/// running the exact firmware image a real Bluetooth-equipped device ships.
-fn select_backend(sys_root: &Path) -> Option<Backend> {
-    if !adapter_present(sys_root) {
+/// Whether the `MediaTek` Bluetooth service is really installed, as opposed to
+/// left behind as firmware-image scaffolding.
+///
+/// On Clara BW/Colour the vendor service owns controller bring-up, so
+/// `/sys/class/bluetooth/hci0` (often the whole class directory) only exists
+/// once that service has powered the radio -- which this runtime deliberately
+/// never does on its own. [`adapter_present`] therefore cannot be the proof
+/// for this backend: it reads "not brought up yet" as "no radio" (#217).
+///
+/// The Libra H2O case the adapter gate was written for is still refused here:
+/// its MTK marker paths are zero-byte stubs, whereas a real D-Bus activation
+/// file or daemon binary always has content. Only a regular, non-empty file
+/// counts.
+fn mtk_service_installed(markers: &[&Path]) -> bool {
+    markers
+        .iter()
+        .any(|marker| std::fs::metadata(marker).is_ok_and(|meta| meta.is_file() && meta.len() > 0))
+}
+
+/// Chooses a backend when one can be proven, and never otherwise.
+///
+/// Two independent proofs are accepted:
+///
+/// * the kernel has registered `hci0` under `sys_root` ([`adapter_present`]),
+///   which is what the `BlueZ` and `bluetoothctl` backends need; or
+/// * the `MediaTek` service is genuinely installed ([`mtk_service_installed`]),
+///   in which case the MTK D-Bus backend is chosen even while the radio is
+///   off. An unstarted service is then reported as a disabled radio by
+///   [`Bluetooth::state`] (via `bus_running`), and enabling goes through the
+///   vendor's own `BluedroidManager1.On`, which brings `hci0` up itself.
+///
+/// Both roots are parameters rather than hardcoded so tests can reproduce the
+/// Libra H2O (stub markers, no adapter) and the Clara (real service, no
+/// adapter yet) without a device.
+fn select_backend(sys_root: &Path, mtk_markers: &[&Path]) -> Option<Backend> {
+    let adapter = adapter_present(sys_root);
+    let mtk_real = mtk_service_installed(mtk_markers);
+    if !adapter && !mtk_real {
         return None;
     }
     let dbus = DBUS_TOOLS
@@ -95,12 +131,20 @@ fn select_backend(sys_root: &Path) -> Option<Backend> {
         .map(Path::new)
         .find(|path| path.is_file());
     if let Some(tool) = dbus {
-        let mtk = MTK_MARKERS.iter().any(|marker| Path::new(marker).exists());
+        // With a registered adapter, keep the previous behaviour of trusting
+        // any marker to pick the MTK bus; without one, only a real service
+        // got us this far.
+        let mtk = mtk_real || mtk_markers.iter().any(|marker| marker.exists());
         return Some(Backend::Dbus {
             tool: tool.to_path_buf(),
             bus: if mtk { MTK_BUS } else { BLUEZ_BUS },
             mtk,
         });
+    }
+    if !adapter {
+        // The MTK service is only reachable over D-Bus; bluetoothctl needs a
+        // registered controller.
+        return None;
     }
     BLUETOOTHCTL_TOOLS
         .into_iter()
@@ -109,30 +153,69 @@ fn select_backend(sys_root: &Path) -> Option<Backend> {
         .map(|tool| Backend::Bluetoothctl(tool.to_path_buf()))
 }
 
+/// What has to be on the reader before the `MediaTek` service may be spoken
+/// to at all.
+///
+/// Nickel loads the radio's kernel modules on the first use of either radio
+/// after boot and never unloads them, and the Bluetooth device node appears
+/// with them. A reader whose owner has used neither radio since switching it
+/// on has no driver loaded, and the vendor service does nothing about that:
+/// it starts on any D-Bus call, loads nothing itself, and powering the chip
+/// through it then panics the kernel, as has been measured on a Clara BW.
+/// The state directory is written by the stack's first start under Nickel;
+/// without it the service's own initialisation fails and retries in a way
+/// reported to corrupt the filesystem. Neither is something this runtime
+/// can put right, so both are required before any request reaches the
+/// service, and a reader missing one is told the radio is unreachable,
+/// which it is.
+#[derive(Clone, Debug)]
+struct MtkPrerequisites {
+    radio_node: PathBuf,
+    state_dir: PathBuf,
+}
+
+impl MtkPrerequisites {
+    fn firmware() -> Self {
+        Self {
+            radio_node: PathBuf::from(MTK_RADIO_NODE),
+            state_dir: PathBuf::from(MTK_STATE_DIR),
+        }
+    }
+
+    fn met(&self) -> bool {
+        self.radio_node.exists() && self.state_dir.is_dir()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Bluetooth {
     backend: Backend,
     scanning: Arc<AtomicBool>,
+    mtk: MtkPrerequisites,
 }
 
 impl Bluetooth {
     /// Opens a firmware Bluetooth control surface when one can be proven.
     ///
-    /// Every backend below also requires [`adapter_present`]. The marker
+    /// Every backend requires either [`adapter_present`] or, for the MTK
+    /// backend only, [`mtk_service_installed`]. The marker
     /// files and tool binaries alone are not proof: a Libra H2O (which has no
     /// Bluetooth radio at all) was found carrying two of the four MTK marker
     /// paths as zero-byte stub files with epoch timestamps -- almost
     /// certainly generic firmware-image scaffolding rather than a real
     /// service -- which made this open the MTK D-Bus backend and then fail
     /// every request against a destination nothing was ever listening on.
-    /// `/sys/class/bluetooth` carrying at least one adapter is the one signal
-    /// here that is not a name or a path a build process gets to leave behind
-    /// by accident: it is the kernel's own record that a controller attached.
+    /// Those stubs are zero bytes, so a non-empty service file or daemon is
+    /// accepted as proof for the MTK backend; for every other backend,
+    /// `/sys/class/bluetooth/hci0` remains the kernel's own record that a
+    /// controller attached.
     #[must_use]
     pub fn open() -> Option<Self> {
-        select_backend(Path::new("/sys/class/bluetooth")).map(|backend| Self {
+        let markers = MTK_MARKERS.map(Path::new);
+        select_backend(Path::new("/sys/class/bluetooth"), &markers).map(|backend| Self {
             backend,
             scanning: Arc::new(AtomicBool::new(false)),
+            mtk: MtkPrerequisites::firmware(),
         })
     }
 
@@ -183,6 +266,15 @@ impl Bluetooth {
     pub fn set_enabled(&self, enabled: bool) -> DeviceResult {
         match &self.backend {
             Backend::Dbus { mtk: true, .. } => {
+                if !self.mtk.met() {
+                    // Nothing may be asked of the service yet, and a radio
+                    // that was never started needs no asking to be off.
+                    return if enabled {
+                        DeviceResult::Failed(DeviceError::Unreachable)
+                    } else {
+                        bluetooth_result(false, Vec::new())
+                    };
+                }
                 MTK_USED.store(true, Ordering::SeqCst);
                 let result = if enabled {
                     self.dbus_call(MANAGER, &["com.kobo.bluetooth.BluedroidManager1.On"])
@@ -211,6 +303,9 @@ impl Bluetooth {
         let started = match &self.backend {
             Backend::Dbus { mtk, .. } => {
                 if *mtk {
+                    if !self.mtk.met() {
+                        return DeviceResult::Failed(DeviceError::Unreachable);
+                    }
                     MTK_USED.store(true, Ordering::SeqCst);
                 }
                 self.dbus_call(ADAPTER, &["org.bluez.Adapter1.StartDiscovery"])
@@ -222,6 +317,45 @@ impl Bluetooth {
         }
         self.scanning.store(true, Ordering::SeqCst);
         bluetooth_result(true, Vec::new())
+    }
+
+    /// Ends discovery before a stream starts.
+    ///
+    /// A scan is normally ended by the state read that follows it a few
+    /// seconds later. An application that scanned and then played, or left
+    /// the screen, can leave discovery running, and discovery running under
+    /// an A2DP stream has been seen to starve it on the `MediaTek` stack,
+    /// whose daemon scans in a loop of ten seconds on and four off until it
+    /// is told to stop. A scan this backend did not start, left by whatever
+    /// owned the daemon before this session, starves the stream just the
+    /// same, so a running daemon is asked whether it is discovering. One
+    /// that is not running is not asked, because asking would start it.
+    pub fn settle_scan(&self) {
+        let own = self.scanning.swap(false, Ordering::SeqCst);
+        match &self.backend {
+            Backend::Dbus { bus, mtk, .. } => {
+                if !own {
+                    if !self.bus_running(bus) {
+                        return;
+                    }
+                    if *mtk {
+                        MTK_USED.store(true, Ordering::SeqCst);
+                    }
+                    let discovering = self
+                        .dbus_property(ADAPTER, "org.bluez.Adapter1", "Discovering")
+                        .is_ok_and(|value| value.contains("boolean true"));
+                    if !discovering {
+                        return;
+                    }
+                }
+                let _ = self.dbus_call(ADAPTER, &["org.bluez.Adapter1.StopDiscovery"]);
+            }
+            Backend::Bluetoothctl(_) => {
+                if own {
+                    let _ = self.ctl(&["scan", "off"]);
+                }
+            }
+        }
     }
 
     #[must_use]
@@ -637,10 +771,15 @@ fn parse_managed_devices(output: &str) -> Vec<BluetoothDevice> {
     if let Some(device) = current {
         push_managed(&mut parsed, device);
     }
+    // Connected first, then paired, then by signal: the devices the reader
+    // already uses must survive the cap however crowded the room is.
     parsed.sort_by(|left, right| {
         right
-            .1
-            .cmp(&left.1)
+            .0
+            .connected
+            .cmp(&left.0.connected)
+            .then_with(|| right.0.paired.cmp(&left.0.paired))
+            .then_with(|| right.1.cmp(&left.1))
             .then_with(|| left.0.name.cmp(&right.0.name))
     });
     parsed.truncate(MAX_RADIO_DEVICES);
@@ -654,14 +793,24 @@ fn push_managed(parsed: &mut Vec<(BluetoothDevice, i16)>, mut device: ManagedDev
     if !valid_address(&device.address) {
         return;
     }
-    let name = if device.alias.is_empty() {
-        if device.name.is_empty() {
-            device.address.clone()
-        } else {
-            device.name
-        }
+    let named = if device.alias.is_empty() || is_address_alias(&device.alias, &device.address) {
+        device.name
     } else {
         device.alias
+    };
+    // A device that is neither paired nor connected and broadcasts no name
+    // is somebody's phone, watch or tracker advertising under a rotating
+    // private address. There is nothing to recognise it by and nothing the
+    // reader would pair with, and a busy room holds dozens: on the Clara
+    // Colour a single scan found 44 devices, four of them named, and the
+    // anonymous ones pushed every named device past the list cap.
+    if named.is_empty() && !device.paired && !device.connected {
+        return;
+    }
+    let name = if named.is_empty() {
+        device.address.clone()
+    } else {
+        named
     };
     parsed.push((
         BluetoothDevice {
@@ -671,8 +820,25 @@ fn push_managed(parsed: &mut Vec<(BluetoothDevice, i16)>, mut device: ManagedDev
             paired: device.paired,
             connected: device.connected,
         },
-        device.rssi,
+        plausible_rssi(device.rssi),
     ));
+}
+
+/// Signal strength in dBm is never positive. The `MediaTek` stack reports
+/// values such as 81 or 119 for some devices, which sorted as the strongest
+/// signals in the room; anything above zero is treated as unknown.
+fn plausible_rssi(rssi: i16) -> i16 {
+    if rssi > 0 {
+        i16::MIN
+    } else {
+        rssi
+    }
+}
+
+/// `BlueZ` reports the address itself, with dashes, as the alias of a device
+/// whose name it has not learned. That is not a name.
+fn is_address_alias(alias: &str, address: &str) -> bool {
+    alias.replace('-', ":").eq_ignore_ascii_case(address)
 }
 
 /// The string inside a `variant`, however deeply `dbus-send` indented it.
@@ -794,12 +960,15 @@ fn clip(value: &str, bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        adapter_present, classify, device_path, parse_ctl_devices, parse_managed_devices, property,
-        select_backend,
+        adapter_present, classify, device_path, mtk_service_installed, parse_ctl_devices,
+        parse_managed_devices, property, select_backend, Backend, Bluetooth, MtkPrerequisites,
+        MTK_BUS,
     };
-    use kobo_protocol::BluetoothDeviceKind;
+    use kobo_protocol::{BluetoothDeviceKind, DeviceError, DeviceResult};
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
 
     fn root(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
@@ -809,6 +978,62 @@ mod tests {
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("a test directory");
         path
+    }
+
+    /// The `MediaTek` backend as it stands on a reader whose Nickel has not
+    /// brought the radio up, with a D-Bus tool that does not exist, so that
+    /// a request which does get through fails in a way a test can tell
+    /// apart from a refusal.
+    fn mtk_backend(root: &Path) -> Bluetooth {
+        Bluetooth {
+            backend: Backend::Dbus {
+                tool: root.join("no-such-dbus-send"),
+                bus: MTK_BUS,
+                mtk: true,
+            },
+            scanning: Arc::new(AtomicBool::new(false)),
+            mtk: MtkPrerequisites {
+                radio_node: root.join("stpbt"),
+                state_dir: root.join("bluedroid"),
+            },
+        }
+    }
+
+    /// Powering the `MediaTek` chip through its service before Nickel has
+    /// loaded the radio driver panics the kernel, and starting the service
+    /// without its state directory fails in a way reported to damage the
+    /// filesystem. Both are refused before the service is spoken to, and
+    /// only then.
+    #[test]
+    fn the_mtk_service_is_not_spoken_to_before_the_radio_and_its_state_exist() {
+        let root = root("mtk-cold");
+        let bluetooth = mtk_backend(&root);
+        assert_eq!(
+            bluetooth.set_enabled(true),
+            DeviceResult::Failed(DeviceError::Unreachable)
+        );
+        assert_eq!(
+            bluetooth.scan(),
+            DeviceResult::Failed(DeviceError::Unreachable)
+        );
+        assert!(matches!(
+            bluetooth.set_enabled(false),
+            DeviceResult::Bluetooth { enabled: false, .. }
+        ));
+
+        fs::write(root.join("stpbt"), b"").expect("the radio node");
+        assert_eq!(
+            bluetooth.set_enabled(true),
+            DeviceResult::Failed(DeviceError::Unreachable),
+            "the driver alone is not enough"
+        );
+        fs::create_dir_all(root.join("bluedroid")).expect("the state directory");
+        // With both in place the request reaches the tool, which is absent:
+        // a different failure, which is the guard having stepped aside.
+        assert_eq!(
+            bluetooth.set_enabled(true),
+            DeviceResult::Failed(DeviceError::Backend)
+        );
     }
 
     #[test]
@@ -847,7 +1072,123 @@ mod tests {
         // `adapter_present`'s own tests green while restoring the Libra H2O
         // failure this backend selection is meant to prevent.
         let root = root("gate-empty");
-        assert!(select_backend(&root).is_none());
+        assert!(select_backend(&root, &[]).is_none());
+    }
+
+    #[test]
+    fn zero_byte_mtk_stubs_are_not_a_service() {
+        // Libra H2O: marker paths exist as empty scaffolding files, no radio.
+        let root = root("h2o-stubs");
+        let stub = root.join("com.kobo.mtk.bluedroid.service");
+        let other = root.join("mtkbtd");
+        fs::write(&stub, b"").expect("a stub marker");
+        fs::write(&other, b"").expect("a stub marker");
+        assert!(!mtk_service_installed(&[&stub, &other]));
+        let sys = root.join("sys-class-bluetooth");
+        assert!(select_backend(&sys, &[&stub, &other]).is_none());
+    }
+
+    #[test]
+    fn a_real_mtk_service_is_proof_without_hci0() {
+        // Clara BW/Colour (#217): the vendor service is installed but has not
+        // brought the controller up, so /sys/class/bluetooth is missing or
+        // empty. The MTK backend must still be eligible.
+        let root = root("clara-mtk");
+        let service = root.join("com.kobo.mtk.bluedroid.service");
+        fs::write(
+            &service,
+            b"[D-BUS Service]\nName=com.kobo.mtk.bluedroid\nExec=/usr/local/Kobo/mtkbtd-launcher.sh\n",
+        )
+        .expect("a real service file");
+        assert!(mtk_service_installed(&[&service]));
+        assert!(!adapter_present(&root.join("no-sys-class-bluetooth")));
+    }
+
+    #[test]
+    fn a_directory_is_not_a_service_file() {
+        let root = root("mtk-dir");
+        let dir = root.join("mtkbtd");
+        fs::create_dir_all(dir.join("x")).expect("a directory");
+        assert!(!mtk_service_installed(&[&dir]));
+    }
+
+    #[test]
+    fn missing_markers_are_not_a_service() {
+        let root = root("mtk-missing");
+        assert!(!mtk_service_installed(&[&root.join("nope")]));
+    }
+
+    fn managed(address: &str, name: &str, rssi: &str, paired: bool) -> String {
+        let path = address.replace(':', "_");
+        format!(
+            "object path \"/org/bluez/hci0/dev_{path}\"\n\
+             string \"Address\"\n\
+             variant string \"{address}\"\n\
+             string \"Alias\"\n\
+             variant string \"\"\n\
+             string \"Name\"\n\
+             variant string \"{name}\"\n\
+             string \"Paired\"\n\
+             variant boolean {paired}\n\
+             string \"RSSI\"\n\
+             variant int16 {rssi}\n"
+        )
+    }
+
+    /// The Clara Colour scan that showed only MAC addresses: dozens of
+    /// anonymous private-address advertisers with implausible positive RSSI,
+    /// and a few named devices with real, weaker readings.
+    #[test]
+    fn named_devices_survive_a_room_full_of_anonymous_advertisers() {
+        let mut output = String::new();
+        for index in 0..40_u8 {
+            output.push_str(&managed(
+                &format!("4{}:00:00:00:00:{index:02X}", index % 10),
+                "",
+                "81",
+                false,
+            ));
+        }
+        output.push_str(&managed(
+            "80:8A:BD:7C:B9:B2",
+            "[TV] Samsung QHB Series",
+            "-79",
+            false,
+        ));
+        output.push_str(&managed(
+            "51:5B:00:1F:75:1B",
+            "EarFun Clip BLE",
+            "21",
+            false,
+        ));
+        output.push_str(&managed("00:11:22:33:44:55", "", "-60", true));
+        let devices = parse_managed_devices(&output);
+        let names = devices
+            .iter()
+            .map(|device| device.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(devices.len(), 3, "{names:?}");
+        // Paired first even without a name, then the real signal ahead of
+        // the implausible one.
+        assert_eq!(
+            names,
+            [
+                "00:11:22:33:44:55",
+                "[TV] Samsung QHB Series",
+                "EarFun Clip BLE"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_alias_that_is_only_the_address_is_not_a_name() {
+        assert!(super::is_address_alias(
+            "AA-BB-CC-DD-EE-FF",
+            "AA:BB:CC:DD:EE:FF"
+        ));
+        assert!(!super::is_address_alias("Headphones", "AA:BB:CC:DD:EE:FF"));
+        assert_eq!(super::plausible_rssi(81), i16::MIN);
+        assert_eq!(super::plausible_rssi(-40), -40);
     }
 
     #[test]

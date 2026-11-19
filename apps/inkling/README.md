@@ -1,16 +1,61 @@
 # Inkling
 
-An offline daily five-letter puzzle. The answer is `answers[djb2(YYYY-MM-DD ++ salt) % len]`, so
-one shipped build produces the same daily game everywhere without a network service. Shape states
-are grayscale-first: `[letter]` is placed, `(letter)` is present, and `letter×` is absent.
+A five-letter word puzzle, new each day, that works offline.
 
-![A solved Inkling puzzle on Clara BW](screenshots/inkling-solved.png)
+<table>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/solved.png" alt="A puzzle solved in three guesses"><br>A puzzle solved in three guesses</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/knowledge.png" alt="The board above the keys, which carry the same marks"><br>The board above the keys, which carry the same marks</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/stats.png" alt="Statistics and win distribution"><br>Statistics and win distribution</td>
+<td width="50%" valign="top"><img width="300" src="screenshots/archive.png" alt="The archive of past days"><br>The archive of past days</td>
+</tr>
+<tr>
+<td width="50%" valign="top"><img width="300" src="screenshots/help.png" alt="Rules, with the Hard mode switch"><br>Rules, with the Hard mode switch</td>
+</tr>
+</table>
 
-The compact game includes six guesses, duplicate-correct scoring, hard-mode revealed-letter checks,
-saved daily progress, and cumulative played/won statistics. The puzzle day is UTC;
-`KOBO_INKLING_DAY=YYYY-MM-DD` pins it for simulator recordings. It ships a deliberately small common-word seed list rather than any copied
-commercial answer list. No trademarked game name or source list is used.
+## Features
 
-## Capabilities
+- Six guesses, with correct scoring for repeated letters and an optional hard
+  mode.
+- The board stays in view above the keys while you type. A letter in the
+  right place is a black square, a letter elsewhere in the word is grey in a
+  heavy rule, and a letter not in the word is faint. The keys carry the same
+  marks. A word that is not accepted stays typed, so one wrong letter is one
+  backspace.
+- **Rules** sits in the top bar, with the **Hard mode** switch under the
+  rules. The menu beside it holds New game (an earlier day) and Statistics,
+  where every Cobalt game keeps them.
+- Saved daily progress. Statistics shows games played and solved, the
+  current and best streak, and how many guesses each win took.
+- **Export results**, on Statistics, saves the day's board and statistics as
+  `export-result.txt`, ready to fetch from a computer. If storage refuses
+  it, the message says so and carries **Try again**.
+- The archive plays any of the past 365 days. Archive games do not count
+  towards statistics and are not saved.
 
-None. Inkling is offline forever.
+## How the daily word is chosen
+
+The answer is picked from a hash of the date on the reader's own calendar,
+so every reader gets the same puzzle each day without a server, and the next
+one arrives at local midnight. The title shows the real date. For
+simulator recordings, `KOBO_INKLING_DAY=YYYY-MM-DD` pins the day.
+
+The word lists are hand-checked common English: 870 possible answers and
+about 1,900 further accepted guesses. No commercial game's list is used.
+
+## Permissions
+
+None. Inkling runs offline.
+
+## Development
+
+```sh
+cargo test -p kobo-inkling
+python3 scripts/check-apps-sim.py inkling
+```
+
+The simulator check builds the app, opens it in a fresh simulator and plays
+`drive.kobo`.

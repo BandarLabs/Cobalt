@@ -1,0 +1,11 @@
+Connect Lichess
+Play Lichess games, challenge players, solve puzzles, or play offline.
+
+Open in your browser:
+  https://lichess.org/account/oauth/token/create?scopes[]=board:play&description=Cobalt
+
+Then run:
+  kobo secret set lichess --from <token-file> --device <address>
+  The secret comes from a private file and is never shown here.
+
+Full setup: kobo apps setup lichess

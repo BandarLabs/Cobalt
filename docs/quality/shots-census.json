@@ -1,0 +1,1167 @@
+{
+ "generated": "2026-09-19",
+ "head": "38e80301",
+ "scope": "49 apps with generated web pages (45 registry + 4 system); provenance = md5 of docs/media/site/apps/<img> matched against every other PNG in the repo",
+ "summary": {
+  "web_images": 49,
+  "traced_to_app_screenshots_dir": 34,
+  "traced_to_evidence_dir": [
+   "logicpack"
+  ],
+  "untraced_predating_proof_standard": [],
+  "readme_without_gallery": [],
+  "system_app_without_readme": [
+   "store"
+  ],
+  "web_image_resourced_from_real_runs": [
+   "arxiv",
+   "backgammon",
+   "brief",
+   "deck",
+   "fanshelf",
+   "flashcards",
+   "grimoire",
+   "kitchencard",
+   "lichess",
+   "magnet",
+   "musicstand",
+   "syncthing",
+   "tictactoe",
+   "vault"
+  ],
+  "readme_gallery_added": [
+   "needles",
+   "parser"
+  ],
+  "census_correction": "First pass matched only markdown image syntax; arxiv, birds, morse and vault already had HTML <img> galleries. brief's web image now comes from examples/brief/screenshots/brief.png (shoot-apps.sh real-reader pipeline). brief still has no committed simulator route - that gap belongs to APPQA-06."
+ },
+ "plan": "Regenerate the 14 untraced web images from real sim runs (clara-bw-391, default scale, --ideal shots from each app's committed route); add README galleries for the 6 catalog apps missing them from the same runs; re-run this census to confirm 49/49 traced.",
+ "apps": [
+  {
+   "app": "arxiv",
+   "readmes": [
+    "apps/arxiv/README.md"
+   ],
+   "gallery_count": 0,
+   "gallery_provenance": {},
+   "web_image": "docs/media/site/apps/arxiv.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "audiobook",
+   "readmes": [
+    "examples/audiobook/README.md"
+   ],
+   "gallery_count": 5,
+   "gallery_provenance": {
+    "examples/audiobook/screenshots/shelf.png": [
+     "docs/quality/evidence/audiobook/audiobook-empty.png"
+    ],
+    "examples/audiobook/screenshots/preflight.png": [
+     "docs/quality/evidence/audiobook/audiobook-preflight-missing.png"
+    ],
+    "examples/audiobook/screenshots/narrating.png": [
+     "docs/quality/evidence/audiobook/audiobook-narrating.png"
+    ],
+    "examples/audiobook/screenshots/resume.png": [
+     "docs/quality/evidence/audiobook/audiobook-compose-resume.png"
+    ],
+    "examples/audiobook/screenshots/player.png": [
+     "docs/media/site/apps/audiobook.png",
+     "docs/quality/evidence/audiobook/audiobook-player.png",
+     "docs/quality/evidence/audiobook/audiobook-library-player.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/audiobook.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "docs/quality/evidence/audiobook/audiobook-player.png",
+    "docs/quality/evidence/audiobook/audiobook-library-player.png",
+    "examples/audiobook/screenshots/player.png"
+   ],
+   "web_image_last_commit": "f3feeb86 2026-09-18 audiobook: README gallery from the end-to-end run",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "backgammon",
+   "readmes": [
+    "apps/backgammon/README.md"
+   ],
+   "gallery_count": 3,
+   "gallery_provenance": {
+    "apps/backgammon/screenshots/backgammon-opening.png": [
+     "docs/quality/evidence/backgammon/01-before-the-first-roll.png"
+    ],
+    "apps/backgammon/screenshots/backgammon-selected.png": [
+     "docs/quality/evidence/backgammon/04-checker-in-hand.png"
+    ],
+    "apps/backgammon/screenshots/backgammon-match.png": [
+     "docs/quality/evidence/backgammon/08-reopened-match.png",
+     "docs/quality/evidence/backgammon/07-match.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/backgammon.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "birds",
+   "readmes": [
+    "apps/birds/README.md"
+   ],
+   "gallery_count": 0,
+   "gallery_provenance": {},
+   "web_image": "docs/media/site/apps/birds.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/birds/screenshots/birds.png"
+   ],
+   "web_image_last_commit": "c41ee567 2026-09-16 Replace borrowed collage artwork with public-domain plates",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "brief",
+   "readmes": [
+    "examples/brief/README.md"
+   ],
+   "gallery_count": 3,
+   "gallery_provenance": {
+    "examples/brief/screenshots/brief.png": [
+     "docs/quality/evidence/brief/04-offline-brief.png",
+     "docs/quality/evidence/brief/02-fetched.png"
+    ],
+    "examples/brief/screenshots/sources.png": [
+     "docs/quality/evidence/brief/07-sources.png"
+    ],
+    "examples/brief/screenshots/story.png": [
+     "docs/quality/evidence/brief/03-reading-a-story.png",
+     "docs/quality/evidence/brief/05-offline-story.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/brief.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "calibre-web",
+   "readmes": [
+    "apps/calibre-web/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "apps/calibre-web/screenshots/catalog.png": [
+     "apps/calibre-web/screenshots/private-catalog.png",
+     "docs/quality/evidence/calibre-web/13-setup-saved.png",
+     "docs/quality/evidence/calibre-web/02-catalog.png",
+     "docs/quality/evidence/calibre-web/18-private-catalog.png"
+    ],
+    "apps/calibre-web/screenshots/private-catalog.png": [
+     "apps/calibre-web/screenshots/catalog.png",
+     "docs/quality/evidence/calibre-web/13-setup-saved.png",
+     "docs/quality/evidence/calibre-web/02-catalog.png",
+     "docs/quality/evidence/calibre-web/18-private-catalog.png"
+    ],
+    "apps/calibre-web/screenshots/reading.png": [
+     "docs/media/site/apps/calibre-web.png",
+     "docs/quality/evidence/calibre-web/07-offline-reopened.png",
+     "docs/quality/evidence/calibre-web/06-reading-position.png"
+    ],
+    "apps/calibre-web/screenshots/repair.png": [
+     "docs/quality/evidence/calibre-web/10-damaged-download.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/calibre-web.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/calibre-web/screenshots/reading.png",
+    "docs/quality/evidence/calibre-web/07-offline-reopened.png",
+    "docs/quality/evidence/calibre-web/06-reading-position.png"
+   ],
+   "web_image_last_commit": "f217c253 2026-09-09 Complete calibre library navigation and offline reading",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "chat",
+   "readmes": [
+    "examples/chat/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "examples/chat/screenshots/answer.png": [
+     "docs/media/site/apps/chat.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/chat.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/chat/screenshots/answer.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "crossword",
+   "readmes": [
+    "apps/crossword/README.md"
+   ],
+   "gallery_count": 3,
+   "gallery_provenance": {
+    "apps/crossword/screenshots/crossword-play.png": [
+     "docs/media/site/apps/crossword.png",
+     "docs/quality/evidence/http-updates/02-numbered-grid.png",
+     "docs/quality/evidence/crossword/02-numbered-grid.png"
+    ],
+    "apps/crossword/screenshots/clue-entry.png": [
+     "apps/crossword/screenshots/crossword-entry.png",
+     "docs/quality/evidence/crossword/03-clue-and-entry.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/crossword.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/crossword/screenshots/crossword-play.png",
+    "docs/quality/evidence/http-updates/02-numbered-grid.png",
+    "docs/quality/evidence/crossword/02-numbered-grid.png"
+   ],
+   "web_image_last_commit": "6f13feca 2026-09-09 Complete Crossword with numbered grids and durable progress",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "deck",
+   "readmes": [
+    "apps/deck/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {},
+   "web_image": "docs/media/site/apps/deck.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "fanshelf",
+   "readmes": [
+    "apps/fanshelf/README.md"
+   ],
+   "gallery_count": 6,
+   "gallery_provenance": {
+    "apps/fanshelf/screenshots/shelf.png": [
+     "docs/quality/evidence/fanshelf/fanshelf-shelf.png"
+    ],
+    "apps/fanshelf/screenshots/work.png": [
+     "docs/quality/evidence/fanshelf/fanshelf-work-update.png"
+    ],
+    "apps/fanshelf/screenshots/updates.png": [
+     "docs/quality/evidence/fanshelf/fanshelf-updates.png"
+    ],
+    "apps/fanshelf/screenshots/manage.png": [
+     "docs/quality/evidence/fanshelf/fanshelf-manage.png"
+    ],
+    "apps/fanshelf/screenshots/reading.png": [
+     "docs/quality/evidence/fanshelf/fanshelf-epub-reading.png",
+     "docs/quality/evidence/fanshelf-epub/fanshelf-epub-reading.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/fanshelf.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "fieldbook",
+   "readmes": [
+    "apps/fieldbook/README.md"
+   ],
+   "gallery_count": 5,
+   "gallery_provenance": {
+    "apps/fieldbook/screenshots/tally.png": [
+     "docs/media/site/apps/fieldbook.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/fieldbook.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/fieldbook/screenshots/tally.png"
+   ],
+   "web_image_last_commit": "36495cad 2026-09-18 fieldbook: rebuild as a real field companion",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "flashcards",
+   "readmes": [
+    "apps/flashcards/README.md"
+   ],
+   "gallery_count": 9,
+   "gallery_provenance": {
+    "apps/flashcards/screenshots/first-use.png": [
+     "docs/quality/evidence/flashcards/flashcards-first-use.png"
+    ],
+    "apps/flashcards/screenshots/complete.png": [
+     "docs/quality/evidence/flashcards/flashcards-complete.png"
+    ],
+    "apps/flashcards/screenshots/japanese.png": [
+     "docs/quality/evidence/flashcards/flashcards-japanese.png"
+    ],
+    "apps/flashcards/screenshots/long-answer.png": [
+     "docs/quality/evidence/flashcards/flashcards-long-answer.png"
+    ],
+    "apps/flashcards/screenshots/media.png": [
+     "docs/quality/evidence/flashcards/flashcards-media-question.png"
+    ],
+    "apps/flashcards/screenshots/companion-review.png": [
+     "docs/quality/evidence/flashcards-companion/170/03-answer.png"
+    ],
+    "apps/flashcards/screenshots/preview.png": [
+     "docs/quality/evidence/flashcards-companion/preview.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/flashcards.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "frame",
+   "readmes": [
+    "apps/frame/README.md"
+   ],
+   "gallery_count": 1,
+   "gallery_provenance": {
+    "apps/frame/screenshots/companion-preview.png": [
+     "docs/quality/evidence/frame-companion-preview/preview.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/frame.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/frame/screenshots/frame.png"
+   ],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "gallery",
+   "readmes": [
+    "examples/gallery/README.md"
+   ],
+   "gallery_count": 2,
+   "gallery_provenance": {
+    "examples/gallery/screenshots/text.png": [
+     "docs/media/site/apps/components.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/components.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/gallery/screenshots/text.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "grimoire",
+   "readmes": [
+    "apps/grimoire/README.md"
+   ],
+   "gallery_count": 5,
+   "gallery_provenance": {
+    "apps/grimoire/screenshots/initiative.png": [
+     "docs/quality/evidence/grimoire/11-six-combatants.png"
+    ],
+    "apps/grimoire/screenshots/rule.png": [
+     "docs/quality/evidence/grimoire/05-long-rule-first-page.png"
+    ],
+    "apps/grimoire/screenshots/magic-items.png": [
+     "docs/quality/evidence/grimoire/02-magic-items.png"
+    ],
+    "apps/grimoire/screenshots/party-member.png": [
+     "docs/quality/evidence/grimoire/16-party-member.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/grimoire.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "gutenbird",
+   "readmes": [
+    "examples/gutenbird/README.md"
+   ],
+   "gallery_count": 9,
+   "gallery_provenance": {
+    "examples/gutenbird/screenshots/shelf.png": [
+     "docs/media/site/apps/gutenbird.png"
+    ],
+    "docs/quality/evidence/gutenbird-offline/default/03-offline-reopened.png": [
+     "docs/quality/evidence/gutenbird-setup/default/02-progress.png",
+     "docs/quality/evidence/gutenbird-setup/default/03-offline-reopened.png",
+     "docs/quality/evidence/gutenbird-offline/default/02-progress.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/gutenbird.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/gutenbird/screenshots/shelf.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "habits",
+   "readmes": [
+    "apps/habits/README.md"
+   ],
+   "gallery_count": 5,
+   "gallery_provenance": {
+    "apps/habits/screenshots/empty.png": [
+     "docs/quality/evidence/habits/habits-empty.png"
+    ],
+    "apps/habits/screenshots/done.png": [
+     "docs/media/site/apps/habits.png",
+     "docs/quality/evidence/habits/habits-done.png"
+    ],
+    "apps/habits/screenshots/edit.png": [
+     "docs/quality/evidence/habits/habits-edit.png"
+    ],
+    "apps/habits/screenshots/stats.png": [
+     "docs/quality/evidence/habits/habits-stats.png"
+    ],
+    "apps/habits/screenshots/export.png": [
+     "docs/quality/evidence/habits/habits-export-ready.png",
+     "docs/quality/evidence/habits/habits-export-offer.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/habits.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/habits/screenshots/done.png",
+    "docs/quality/evidence/habits/habits-done.png"
+   ],
+   "web_image_last_commit": "8c62bb4f 2026-09-18 habits: tick only the current schedule; README gallery",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "hn",
+   "readmes": [
+    "examples/hn/README.md"
+   ],
+   "gallery_count": 2,
+   "gallery_provenance": {
+    "examples/hn/screenshots/stories.png": [
+     "docs/media/site/apps/hackernews.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/hackernews.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/hn/screenshots/stories.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "homepanel",
+   "readmes": [
+    "apps/homepanel/README.md"
+   ],
+   "gallery_count": 5,
+   "gallery_provenance": {
+    "apps/homepanel/screenshots/setup.png": [
+     "docs/quality/evidence/homepanel/homepanel-setup.png"
+    ],
+    "apps/homepanel/screenshots/grid.png": [
+     "docs/media/site/apps/homepanel.png",
+     "docs/quality/evidence/homepanel/homepanel-grid.png"
+    ],
+    "apps/homepanel/screenshots/climate.png": [
+     "docs/quality/evidence/homepanel/homepanel-climate-warmer.png"
+    ],
+    "apps/homepanel/screenshots/edit.png": [
+     "docs/quality/evidence/homepanel/homepanel-edited.png"
+    ],
+    "apps/homepanel/screenshots/wall.png": [
+     "docs/quality/evidence/homepanel/homepanel-wall.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/homepanel.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/homepanel/screenshots/grid.png",
+    "docs/quality/evidence/homepanel/homepanel-grid.png"
+   ],
+   "web_image_last_commit": "bd9c122c 2026-09-18 homepanel 0.2.2: README gallery and site image for the rebuilt panel",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "inkling",
+   "readmes": [
+    "apps/inkling/README.md"
+   ],
+   "gallery_count": 5,
+   "gallery_provenance": {
+    "apps/inkling/screenshots/solved.png": [
+     "docs/media/site/apps/inkling.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/inkling.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/inkling/screenshots/solved.png"
+   ],
+   "web_image_last_commit": "bd17c8fd 2026-09-18 inkling: rebuild as a full daily word game",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "kitchencard",
+   "readmes": [
+    "apps/kitchencard/README.md"
+   ],
+   "gallery_count": 1,
+   "gallery_provenance": {},
+   "web_image": "docs/media/site/apps/kitchencard.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "lichess",
+   "readmes": [
+    "apps/lichess/README.md"
+   ],
+   "gallery_count": 13,
+   "gallery_provenance": {
+    "apps/lichess/screenshots/reconciling.png": [
+     "docs/quality/evidence/lichess-recovery/default/reconciling.png"
+    ],
+    "apps/lichess/screenshots/session-resumed.png": [
+     "docs/quality/evidence/lichess-session/default/04-resumed.png",
+     "docs/quality/evidence/lichess-session/default/03-acknowledged.png"
+    ],
+    "apps/lichess/screenshots/move-confirmation-large.png": [
+     "docs/quality/evidence/lichess-session/170/02-awaiting-ack.png"
+    ],
+    "apps/lichess/screenshots/match-recovered.png": [
+     "docs/quality/evidence/lichess-missed-start/default/01-matched.png"
+    ],
+    "apps/lichess/screenshots/reconnecting.png": [
+     "docs/quality/evidence/lichess-connection/default/03-disconnected.png"
+    ],
+    "apps/lichess/screenshots/reconnecting-large.png": [
+     "docs/quality/evidence/lichess-connection/170/03-disconnected.png"
+    ],
+    "apps/lichess/screenshots/reconciling-large.png": [
+     "docs/quality/evidence/lichess-recovery/170/reconciling.png"
+    ],
+    "apps/lichess/screenshots/pairing-error-large.png": [
+     "docs/quality/evidence/lichess-pairing-guidance/170/pairing-error.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/lichess.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "735e7e38 2026-09-03 Outline Lichess quick-pair cards",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "logicpack",
+   "readmes": [
+    "apps/logicpack/README.md"
+   ],
+   "gallery_count": 3,
+   "gallery_provenance": {
+    "apps/logicpack/screenshots/collection.png": [
+     "docs/quality/evidence/logicpack/collection/02-puzzle-picker.png"
+    ],
+    "apps/logicpack/screenshots/entry.png": [
+     "docs/quality/evidence/logicpack/collection/03-kakuro-entry.png"
+    ],
+    "apps/logicpack/screenshots/collection-slither.png": [
+     "docs/quality/evidence/logicpack/collection/completed-07-slither.png",
+     "docs/quality/evidence/logicpack/collection/reopened-slither.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/logicpack.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "docs/quality/evidence/logicpack/collection/completed-11-hashi.png",
+    "docs/quality/evidence/logicpack/collection/reopened-hashi.png"
+   ],
+   "web_image_last_commit": "05a00121 2026-09-09 Expand Logic Pack with validated puzzles and direct digit entry",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "magnet",
+   "readmes": [
+    "examples/magnet/README.md"
+   ],
+   "gallery_count": 2,
+   "gallery_provenance": {
+    "examples/magnet/screenshots/no-magnet.png": [
+     "docs/quality/evidence/magnet/magnet-sweeping-top.png"
+    ],
+    "examples/magnet/screenshots/counting.png": [
+     "docs/quality/evidence/magnet/magnet-found.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/magnet.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "morse",
+   "readmes": [
+    "apps/morse/README.md"
+   ],
+   "gallery_count": 0,
+   "gallery_provenance": {},
+   "web_image": "docs/media/site/apps/morse.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/morse/screenshots/sending.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "musicstand",
+   "readmes": [
+    "apps/musicstand/README.md"
+   ],
+   "gallery_count": 1,
+   "gallery_provenance": {
+    "apps/musicstand/screenshots/stand.png": [
+     "docs/quality/evidence/musicstand/musicstand-stand-page.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/musicstand.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "needles",
+   "readmes": [
+    "apps/needles/README.md"
+   ],
+   "gallery_count": 0,
+   "gallery_provenance": {},
+   "web_image": "docs/media/site/apps/needles.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/needles/screenshots/project.png"
+   ],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "nonograms",
+   "readmes": [
+    "apps/nonograms/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "apps/nonograms/screenshots/play.png": [
+     "docs/media/site/apps/nonograms.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/nonograms.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/nonograms/screenshots/play.png"
+   ],
+   "web_image_last_commit": "8f52e123 2026-09-18 docs(nonograms): refresh the gallery with current-UI captures",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "panels",
+   "readmes": [
+    "apps/panels/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "apps/panels/screenshots/library.png": [
+     "docs/media/site/apps/panels.png",
+     "docs/quality/evidence/panels-previews/37-shelf-position-restored.png",
+     "docs/quality/evidence/panels-previews/39-shelf-cover-regenerated.png"
+    ],
+    "apps/panels/screenshots/reader.png": [
+     "docs/quality/evidence/panels-docs/35-sample-first-page.png",
+     "docs/quality/evidence/panels-onboarding/35-sample-first-page.png",
+     "docs/quality/evidence/panels-recovery/44-recovered-after-restart.png"
+    ],
+    "apps/panels/screenshots/import-guide.png": [
+     "docs/quality/evidence/panels-docs/31-import-guide-folder.png",
+     "docs/quality/evidence/panels-onboarding/31-import-guide-folder.png"
+    ],
+    "apps/panels/screenshots/download-recovery.png": [
+     "docs/quality/evidence/panels-recovery/40-completed-download.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/panels.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/panels/screenshots/library.png",
+    "docs/quality/evidence/panels-previews/37-shelf-position-restored.png",
+    "docs/quality/evidence/panels-previews/39-shelf-cover-regenerated.png"
+   ],
+   "web_image_last_commit": "ffa26b64 2026-09-08 Show comic covers and acknowledged reading progress on the shelf",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "paperterm",
+   "readmes": [
+    "apps/paperterm/README.md"
+   ],
+   "gallery_count": 1,
+   "gallery_provenance": {
+    "apps/paperterm/screenshots/connection-check.png": [
+     "docs/quality/evidence/paperterm-connection-demo/demo-03-laptop-message.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/paperterm.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/paperterm/screenshots/terminal.png",
+    "docs/quality/evidence/paperterm/status-default/05-shared-session-and-wide-output.png"
+   ],
+   "web_image_last_commit": "c612cb1a 2026-09-09 Guide Paperterm pairing and show session state",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "parlor",
+   "readmes": [
+    "apps/parlor/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "apps/parlor/screenshots/table.png": [
+     "docs/quality/evidence/parlor/01-the-table.png"
+    ],
+    "apps/parlor/screenshots/draughts.png": [
+     "docs/quality/evidence/parlor/03-draughts-board.png"
+    ],
+    "apps/parlor/screenshots/morris.png": [
+     "docs/media/site/apps/parlor.png",
+     "docs/quality/evidence/parlor/04-nine-board.png"
+    ],
+    "apps/parlor/screenshots/reversi-rotated.png": [
+     "docs/quality/evidence/parlor/07-reversi-after.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/parlor.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/parlor/screenshots/morris.png",
+    "docs/quality/evidence/parlor/04-nine-board.png"
+   ],
+   "web_image_last_commit": "1ee4d1c5 2026-09-18 Give Parlor a README gallery and a current web page image",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "parser",
+   "readmes": [
+    "apps/parser/README.md"
+   ],
+   "gallery_count": 0,
+   "gallery_provenance": {},
+   "web_image": "docs/media/site/apps/parser.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/parser/screenshots/parser-game.png"
+   ],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "post",
+   "readmes": [
+    "apps/post/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "apps/post/screenshots/inbox.png": [
+     "docs/media/site/apps/post.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/post.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/post/screenshots/inbox.png"
+   ],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "pubquiz",
+   "readmes": [
+    "apps/pubquiz/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "apps/pubquiz/screenshots/players.png": [
+     "docs/quality/evidence/pubquiz/players.png"
+    ],
+    "apps/pubquiz/screenshots/keyboard.png": [
+     "docs/quality/evidence/pubquiz/keyboard.png"
+    ],
+    "apps/pubquiz/screenshots/renamed.png": [
+     "docs/quality/evidence/pubquiz/renamed.png"
+    ],
+    "apps/pubquiz/screenshots/question.png": [
+     "docs/media/site/apps/pubquiz.png",
+     "docs/quality/evidence/pubquiz/question.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/pubquiz.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/pubquiz/screenshots/question.png",
+    "docs/quality/evidence/pubquiz/question.png"
+   ],
+   "web_image_last_commit": "8e38e1c2 2026-09-17 readme galleries for sudoku and pubquiz",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "readlater",
+   "readmes": [
+    "apps/readlater/README.md"
+   ],
+   "gallery_count": 6,
+   "gallery_provenance": {
+    "apps/readlater/screenshots/readlater-setup.png": [
+     "docs/media/site/apps/readlater.png"
+    ],
+    "docs/quality/evidence/readlater-cache/save-failed.png": [
+     "docs/quality/evidence/readlater-reading/save-failed.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/readlater.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/readlater/screenshots/readlater-setup.png"
+   ],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "rss",
+   "readmes": [
+    "examples/rss/README.md"
+   ],
+   "gallery_count": 11,
+   "gallery_provenance": {
+    "examples/rss/screenshots/articles.png": [
+     "docs/media/site/apps/feeds.png"
+    ],
+    "examples/rss/screenshots/reading.png": [
+     "docs/quality/evidence/rss-offline/03-html-article.png",
+     "docs/quality/evidence/rss-image-save/04-offline-image-after-restart.png",
+     "docs/quality/evidence/rss-image-save/03-image-save-recovered.png"
+    ],
+    "examples/rss/screenshots/image-unavailable.png": [
+     "docs/quality/evidence/rss-image-save/08-missing-image-offline.png",
+     "docs/quality/evidence/rss-image-save/10-damaged-image-offline.png"
+    ],
+    "examples/rss/screenshots/image-recovered.png": [
+     "docs/quality/evidence/sdk-snapshot/12-repaired-image-offline.png",
+     "docs/quality/evidence/rss-image-save/09-missing-image-recovered.png",
+     "docs/quality/evidence/rss-image-save/12-repaired-image-offline.png",
+     "docs/quality/evidence/rss-image-save/07-latest-feed-offline.png",
+     "docs/quality/evidence/rss-image-save/11-damaged-image-recovered.png"
+    ],
+    "examples/rss/screenshots/feed-status.png": [
+     "docs/quality/evidence/rss-offline/16-subscriptions-save-recovered.png",
+     "docs/quality/evidence/rss-offline/17-subscriptions-reopened.png",
+     "docs/quality/evidence/rss-offline/19-subscriptions-reloaded.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/feeds.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/rss/screenshots/articles.png"
+   ],
+   "web_image_last_commit": "b4d835d6 2026-09-09 Add offline Feeds reading, discovery and save recovery",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "rss-miniflux",
+   "readmes": [
+    "apps/rss-miniflux/README.md"
+   ],
+   "gallery_count": 3,
+   "gallery_provenance": {
+    "apps/rss-miniflux/screenshots/unread.png": [
+     "docs/quality/evidence/miniflux-account/02-unread-after-sync.png"
+    ],
+    "apps/rss-miniflux/screenshots/reading.png": [
+     "docs/quality/evidence/miniflux-account/03-reading-with-its-picture.png"
+    ],
+    "apps/rss-miniflux/screenshots/rss-miniflux-directory.png": [
+     "docs/media/site/apps/rss-miniflux.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/rss-miniflux.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/rss-miniflux/screenshots/rss-miniflux-directory.png"
+   ],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "sidekick",
+   "readmes": [
+    "examples/sidekick/README.md",
+    "crates/kobo-sidekickd/README.md"
+   ],
+   "gallery_count": 7,
+   "gallery_provenance": {
+    "examples/sidekick/screenshots/board.png": [
+     "docs/media/site/apps/sidekick.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/sidekick.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/sidekick/screenshots/board.png"
+   ],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "sudoku",
+   "readmes": [
+    "apps/sudoku/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "apps/sudoku/screenshots/game.png": [
+     "docs/media/site/apps/sudoku.png",
+     "docs/quality/evidence/sudoku/02-pencil-notes.png",
+     "docs/quality/evidence/sudoku/03-restored-notes.png"
+    ],
+    "apps/sudoku/screenshots/completed.png": [
+     "docs/quality/evidence/sudoku/10-completion-restored.png",
+     "docs/quality/evidence/sudoku/09-completed-puzzle.png"
+    ],
+    "apps/sudoku/screenshots/recovery.png": [
+     "docs/quality/evidence/sudoku/05-save-recovery.png"
+    ],
+    "apps/sudoku/screenshots/landscape.png": [
+     "docs/quality/evidence/sudoku/15-landscape-selected.png",
+     "docs/quality/evidence/sudoku/16-landscape-restored.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/sudoku.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/sudoku/screenshots/game.png",
+    "docs/quality/evidence/sudoku/02-pencil-notes.png",
+    "docs/quality/evidence/sudoku/03-restored-notes.png"
+   ],
+   "web_image_last_commit": "1d30da5c 2026-09-17 Refresh sudoku evidence and screenshots on the merged tree",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "syncthing",
+   "readmes": [
+    "apps/syncthing/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "apps/syncthing/screenshots/syncthing-folders.png": [
+     "docs/quality/evidence/syncthing/sync-folders.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/syncthing.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "tictactoe",
+   "readmes": [
+    "examples/tictactoe/README.md"
+   ],
+   "gallery_count": 2,
+   "gallery_provenance": {
+    "examples/tictactoe/screenshots/game.png": [
+     "docs/quality/evidence/tictactoe/tictactoe-won.png"
+    ],
+    "examples/tictactoe/screenshots/solo.png": [
+     "docs/quality/evidence/tictactoe/tictactoe-solo.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/tictactoe.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "todo",
+   "readmes": [
+    "examples/todo/README.md"
+   ],
+   "gallery_count": 2,
+   "gallery_provenance": {
+    "examples/todo/screenshots/list.png": [
+     "docs/media/site/apps/todo.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/todo.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/todo/screenshots/list.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "vault",
+   "readmes": [
+    "apps/vault/README.md"
+   ],
+   "gallery_count": 0,
+   "gallery_provenance": {},
+   "web_image": "docs/media/site/apps/vault.png",
+   "web_image_exists": true,
+   "web_image_also_at": [],
+   "web_image_last_commit": "e99a6f84 2026-09-05 Ship the beta shelf of companion apps (#115)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "verses",
+   "readmes": [
+    "apps/verses/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "apps/verses/screenshots/reading.png": [
+     "docs/media/site/apps/verses.png",
+     "docs/quality/evidence/verses/tiger-page-one.png"
+    ],
+    "apps/verses/screenshots/browse-offline.png": [
+     "docs/quality/evidence/verses/service-outage.png"
+    ],
+    "apps/verses/screenshots/attribution.png": [
+     "docs/quality/evidence/verses/quote-card.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/verses.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/verses/screenshots/reading.png",
+    "docs/quality/evidence/verses/tiger-page-one.png"
+   ],
+   "web_image_last_commit": "66e70976 2026-09-18 docs(verses): curate README gallery and refresh the site image",
+   "web_image_in_evidence": true
+  },
+  {
+   "app": "zotero-reader",
+   "readmes": [
+    "apps/zotero-reader/README.md"
+   ],
+   "gallery_count": 1,
+   "gallery_provenance": {
+    "apps/zotero-reader/screenshots/reading.png": [
+     "docs/media/site/apps/zotero-reader.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/zotero-reader.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "apps/zotero-reader/screenshots/reading.png"
+   ],
+   "web_image_last_commit": "6f0b7fde 2026-09-01 Add Zotero Reader to the App Store (#74)",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "launcher",
+   "readmes": [
+    "examples/launcher/README.md"
+   ],
+   "gallery_count": 2,
+   "gallery_provenance": {
+    "examples/launcher/screenshots/home.png": [
+     "docs/media/site/apps/launcher.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/launcher.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/launcher/screenshots/home.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "store",
+   "readmes": [],
+   "gallery_count": 0,
+   "gallery_provenance": {},
+   "web_image": "docs/media/site/apps/store.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/store/screenshots/catalog.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "terminal",
+   "readmes": [
+    "examples/terminal/README.md"
+   ],
+   "gallery_count": 1,
+   "gallery_provenance": {
+    "examples/terminal/screenshots/shell.png": [
+     "docs/media/site/apps/terminal.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/terminal.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/terminal/screenshots/shell.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  },
+  {
+   "app": "settings",
+   "readmes": [
+    "examples/settings/README.md"
+   ],
+   "gallery_count": 4,
+   "gallery_provenance": {
+    "examples/settings/screenshots/battery.png": [
+     "docs/media/site/apps/settings.png"
+    ]
+   },
+   "web_image": "docs/media/site/apps/settings.png",
+   "web_image_exists": true,
+   "web_image_also_at": [
+    "examples/settings/screenshots/battery.png"
+   ],
+   "web_image_last_commit": "73c4b435 2026-08-18 Add GitHub Pages site",
+   "web_image_in_evidence": false
+  }
+ ]
+}

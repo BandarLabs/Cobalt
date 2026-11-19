@@ -1,22 +1,50 @@
 mod model;
+use kobo_sdk::clock::{Clock, Snapshot, SystemClock};
+use kobo_sdk::exports::{Export, Format as ExportFormat};
 use kobo_sdk::keyboard::{TextEntry, Typing};
+use kobo_sdk::ShelfDownload;
 use kobo_sdk::{
-    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreResult,
+    action_id, ActionId, BannerLevel, Context, Glyph, KoboApp, Screen, ScreenBuilder, StoreError,
+    StoreResult,
 };
 #[cfg(test)]
 use model::decode;
 use model::{
-    canonical_name, decode_with_blank_names, encode, Habit, Schedule, MAX_HABIT_NAME_CHARS,
+    canonical_name, decode_with_blank_names, encode, merge, Habit, Schedule, MAX_HABIT_NAME_CHARS,
 };
 use std::process::ExitCode;
 const HABITS: &str = "habits-v1";
+/// When each backup made here was made, one line of shelf name and date per
+/// backup, so the import list can tell them apart. A backup's shelf name is
+/// a hash of its contents and says nothing an owner can read.
+const BACKUPS: &str = "habit-backups-v1";
+/// How many backup dates are remembered. Older backups are still listed,
+/// without a date.
+const MAX_BACKUP_DATES: usize = 30;
+/// How large a backup this reader will read back in. A year of daily habits is
+/// a few kilobytes, so this is room to spare rather than a limit anybody meets.
+const MAX_BACKUP_BYTES: usize = 64 * 1024;
 const ROWS_PER_PAGE: usize = 3;
-const ACTION_NAME_CHARS: usize = 12;
+/// The schedules a habit can keep, in the order the edit screen offers them.
+const SCHEDULES: [(&str, &str, Schedule); 3] = [
+    ("sched-daily", "Daily", Schedule::Daily),
+    ("sched-weekdays", "Weekdays", Schedule::Weekdays),
+    ("sched-every-2", "Every 2 days", Schedule::Every(2)),
+];
+const SHOW_TODAY: &str = "show-today";
+const SHOW_YESTERDAY: &str = "show-yesterday";
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EntryMode {
+    Add,
+    Rename,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
     Today,
     Streaks,
     Manage,
+    Edit,
     Stats,
     Settings,
 }
@@ -27,7 +55,7 @@ impl Page {
             Self::Streaks => 1,
             Self::Manage => 2,
             Self::Stats => 3,
-            Self::Settings => 4,
+            Self::Edit | Self::Settings => 4,
         }
     }
     fn all() -> [(&'static str, &'static str); 4] {
@@ -39,18 +67,43 @@ impl Page {
         ]
     }
 }
+enum Import {
+    Choose,
+    Confirm(Vec<Habit>),
+}
+
 struct Habits {
     items: Vec<Habit>,
     loaded: bool,
     page: Page,
+    /// How many days back the Today list is marking: none, or one for
+    /// yesterday. A habit done late at night, or forgotten until the
+    /// morning, used to be a broken streak with no way to say otherwise.
+    days_back: u8,
     today_page: usize,
     manage_page: usize,
+    import_page: usize,
     streaks_page: usize,
     entry: TextEntry,
+    entry_mode: EntryMode,
+    editing: Option<usize>,
+    /// Which page of the schedule list is showing on the edit screen.
+    schedule_page: u16,
+    export: Option<Export>,
+    import: Option<Import>,
+    /// Files offered for import, with their size.
+    import_files: Vec<(String, u32)>,
+    import_read: Option<ShelfDownload>,
+    /// Shelf name and date of each backup made on this reader, oldest first.
+    backups: Vec<(String, String)>,
     notice: Option<String>,
+    /// What the last step did, said once and gone with the next tap.
+    done: Option<String>,
     loading: bool,
     save_in_flight: bool,
     queued_save: Option<Vec<u8>>,
+    /// The habit whose menu is open on Today, offering to skip it.
+    skip_menu: Option<usize>,
 }
 impl Default for Habits {
     fn default() -> Self {
@@ -58,27 +111,43 @@ impl Default for Habits {
             items: vec![],
             loaded: false,
             page: Page::Today,
+            days_back: 0,
             today_page: 0,
             manage_page: 0,
+            import_page: 0,
             streaks_page: 0,
             entry: TextEntry::new().opened_by("add"),
+            entry_mode: EntryMode::Add,
+            editing: None,
+            schedule_page: 0,
+            export: None,
+            import: None,
+            import_files: Vec::new(),
+            import_read: None,
+            backups: Vec::new(),
             notice: None,
+            done: None,
             loading: false,
             save_in_flight: false,
             queued_save: None,
+            skip_menu: None,
         }
     }
 }
 impl Habits {
+    /// Today on the reader's own calendar. Counted in UTC, a habit ticked
+    /// off at nine in the evening in California landed on tomorrow.
     fn day() -> u32 {
-        u32::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-                / 86_400,
-        )
-        .unwrap_or(u32::MAX)
+        SystemClock::reader()
+            .now()
+            .ok()
+            .and_then(Snapshot::local_day)
+            .and_then(|day| u32::try_from(day).ok())
+            .unwrap_or(0)
+    }
+    /// The day the Today list is marking: today, or yesterday when asked.
+    fn marking_day(&self) -> u32 {
+        Self::day().saturating_sub(u32::from(self.days_back))
     }
     fn save(&mut self, cx: &mut Context) {
         self.queued_save = Some(encode(&self.items));
@@ -107,7 +176,7 @@ impl Habits {
         }
     }
     fn normalize_pages(&mut self) {
-        let day = Self::day();
+        let day = self.marking_day();
         let due = self
             .items
             .iter()
@@ -118,11 +187,23 @@ impl Habits {
         self.manage_page = Self::clamp_page(self.manage_page, self.items.len());
         self.streaks_page = Self::clamp_page(self.streaks_page, streaks);
     }
+    /// Opens and closes a habit's menu on Today. Whatever is tapped while
+    /// one is open closes it, and a tap off the menu arrives as Back and
+    /// does nothing else. Returns whether the tap was spent here.
+    fn handle_skip_menu(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        if self.skip_menu.take().is_some() && a == ActionId::BACK {
+            self.show(cx);
+            return true;
+        }
+        if let Some(i) = (0..self.items.len()).find(|i| a == action_id(&format!("menu-{i}"))) {
+            self.skip_menu = Some(i);
+            self.show(cx);
+            return true;
+        }
+        false
+    }
     fn display_name(name: &str) -> String {
         Self::shortened_name(name, MAX_HABIT_NAME_CHARS)
-    }
-    fn action_name(name: &str) -> String {
-        Self::shortened_name(name, ACTION_NAME_CHARS)
     }
     fn shortened_name(name: &str, maximum: usize) -> String {
         let mut display: String = name.chars().take(maximum).collect();
@@ -156,15 +237,25 @@ impl Habits {
     fn back_target(&self) -> Option<Page> {
         match self.page {
             Page::Today => None,
+            Page::Edit => Some(Page::Manage),
             Page::Settings => Some(Page::Stats),
             Page::Streaks | Page::Manage | Page::Stats => Some(Page::Today),
         }
     }
     fn owns_back(&self) -> bool {
-        self.entry.is_open() || self.back_target().is_some()
+        self.export.is_some()
+            || self.import.is_some()
+            || self.entry.is_open()
+            || self.back_target().is_some()
     }
-    fn go_back(&mut self) {
-        if self.entry.is_open() {
+    fn go_back(&mut self, cx: &mut Context) {
+        if self.export.is_some() {
+            self.record_backup(cx);
+            self.export = None;
+        } else if self.import.is_some() {
+            self.import = None;
+            self.import_read = None;
+        } else if self.entry.is_open() {
             self.entry.close();
         } else if let Some(page) = self.back_target() {
             self.page = page;
@@ -176,22 +267,43 @@ impl Habits {
     }
     #[allow(clippy::too_many_lines)]
     fn screen(&self) -> Screen {
+        if let Some(export) = &self.export {
+            return export.screen();
+        }
+        if let Some(import) = &self.import {
+            return self.import_screen(import);
+        }
         if self.entry.is_open() {
+            let submit = match self.entry_mode {
+                EntryMode::Add => "Add",
+                EntryMode::Rename => "Save",
+            };
+            // The limit is the field's hint, because the reader's keyboard
+            // covers this screen and a line drawn above the field here is
+            // not on the panel while the name is typed.
             return ScreenBuilder::new("hb-add")
                 .top_bar("Habits")
-                .secondary(format!("Use {MAX_HABIT_NAME_CHARS} characters or fewer."))
-                .text_entry(&self.entry, "Habit name", "Add")
+                .text_entry_with_hint(
+                    &self.entry,
+                    "Habit name",
+                    &format!("Use {MAX_HABIT_NAME_CHARS} characters or fewer."),
+                    submit,
+                )
                 .build();
         }
         let mut s = ScreenBuilder::new(match self.page {
             Page::Today => "hb-today",
             Page::Streaks => "hb-streaks",
             Page::Manage => "hb-manage",
+            Page::Edit => "hb-edit",
             Page::Stats => "hb-stats",
             Page::Settings => "hb-settings",
         })
         .top_bar("Habits");
-        if self.page != Page::Settings {
+        if matches!(
+            self.page,
+            Page::Today | Page::Streaks | Page::Manage | Page::Stats
+        ) {
             s = s.tabs(self.page.index(), Page::all());
         }
         if !self.loaded {
@@ -199,26 +311,57 @@ impl Habits {
         }
         if let Some(note) = &self.notice {
             s = s.banner(BannerLevel::Attention, note);
+        } else if let Some(done) = &self.done {
+            s = s.banner(BannerLevel::Info, done);
         }
         match self.page {
             Page::Today => {
-                let day = Self::day();
+                let day = self.marking_day();
                 let due: Vec<_> = self
                     .items
                     .iter()
                     .enumerate()
                     .filter(|(_, h)| !h.archived && h.due(day))
                     .collect();
-                if due.is_empty() {
+                if !self.items.is_empty() {
+                    s = s.segmented(
+                        usize::from(self.days_back),
+                        [(SHOW_TODAY, "Today"), (SHOW_YESTERDAY, "Yesterday")],
+                    );
+                }
+                if due.is_empty() && self.days_back == 1 {
                     s = s.splash(
                         Some(Glyph::Check),
-                        "Nothing due",
-                        "Add a habit, or return when one is due.",
+                        "Nothing was due yesterday",
+                        "Tap Today to mark today's habits.",
                     );
+                } else if due.is_empty() {
+                    s = s
+                        .splash(
+                            Some(Glyph::Check),
+                            "Nothing due",
+                            "Add a habit, or return when one is due.",
+                        )
+                        .button("add", "Add a habit");
                 } else {
                     let (start, end, page, pages) = Self::page_bounds(self.today_page, due.len());
                     let visible = &due[start..end];
+                    // Nothing on the list said that tapping a habit is what
+                    // marks it done. Skipping is the rarer answer, so it is
+                    // in each open habit's menu rather than a row of
+                    // buttons under the list, where three of them had room
+                    // for "Skip read twenty..." and no more.
+                    let open: Vec<usize> = visible
+                        .iter()
+                        .filter(|(_, h)| !h.done.contains(&day) && !h.skipped.contains(&day))
+                        .map(|(i, _)| *i)
+                        .collect();
                     s = s
+                        .secondary(if self.days_back == 1 {
+                            "Tap a habit you did yesterday."
+                        } else {
+                            "Tap a habit when it is done."
+                        })
                         .checklist(visible.iter().map(|(i, h)| {
                             let done = h.done.contains(&day);
                             let skipped = h.skipped.contains(&day);
@@ -234,21 +377,25 @@ impl Habits {
                                 },
                                 done,
                             )
-                        }))
-                        .buttons(
-                            visible
-                                .iter()
-                                .filter(|(_, h)| {
-                                    !h.done.contains(&day) && !h.skipped.contains(&day)
-                                })
-                                .map(|(i, h)| {
-                                    (
-                                        format!("skip-{i}"),
-                                        format!("Skip {}", Self::action_name(&h.name)),
-                                    )
-                                })
-                                .take(3),
+                        }));
+                    for i in &open {
+                        s = s.row_menu(format!("done-{i}"), format!("menu-{i}"));
+                    }
+                    if let Some(i) = self.skip_menu.filter(|i| open.contains(i)) {
+                        s = s.row_overflow(
+                            format!("menu-{i}"),
+                            true,
+                            [(
+                                format!("skip-{i}"),
+                                if self.days_back == 1 {
+                                    "Skip yesterday"
+                                } else {
+                                    "Skip today"
+                                },
+                                Glyph::Next,
+                            )],
                         );
+                    }
                     if pages > 1 {
                         s = Self::paged(s, page, pages, "due-prev", "due-next");
                     }
@@ -293,7 +440,7 @@ impl Habits {
                         Self::page_bounds(self.manage_page, self.items.len());
                     s = s.rows(self.items[start..end].iter().enumerate().map(|(i, h)| {
                         (
-                            format!("cycle-{}", start + i),
+                            format!("edit-{}", start + i),
                             Self::display_name(&h.name),
                             format!(
                                 "{}{}",
@@ -306,11 +453,66 @@ impl Habits {
                     s = Self::paged(s, page, pages, "manage-prev", "manage-next");
                 }
             }
+            Page::Edit => match self.editing.and_then(|i| self.items.get(i).map(|h| (i, h))) {
+                Some((i, h)) => {
+                    let archive: (&str, &str) = if h.archived {
+                        ("unarchive", "Put back")
+                    } else {
+                        ("archive", "Archive")
+                    };
+                    let _ = i;
+                    // One answer from a list the runtime marks, where each
+                    // row used to say "current" under itself and draw its
+                    // own tick.
+                    let chosen = SCHEDULES
+                        .iter()
+                        .position(|(_, _, schedule)| *schedule == h.schedule);
+                    s = s
+                        .top_bar_action("rename", "Rename")
+                        .heading(Self::display_name(&h.name))
+                        .option_list(
+                            "How often",
+                            self.schedule_page,
+                            "sched-prev",
+                            "sched-next",
+                            SCHEDULES
+                                .iter()
+                                .map(|(action, label, _)| (*action, *label, "")),
+                        );
+                    if let Some(chosen) = chosen {
+                        s = s.chosen(chosen);
+                    }
+                    s = s.buttons([archive]);
+                }
+                None => {
+                    s = s.splash(
+                        Some(Glyph::Settings),
+                        "Nothing to edit",
+                        "Pick a habit on Manage.",
+                    );
+                }
+            },
             Page::Stats => {
                 let completed: usize = self.items.iter().map(|h| h.done.len()).sum();
+                let (due, done, skipped) = model::week_summary(&self.items, Self::day());
+                let week = if due == 0 {
+                    "This week: nothing was due.".to_owned()
+                } else {
+                    format!(
+                        "This week: {done} of {due} due {} completed, {skipped} skipped.",
+                        if due == 1 { "day" } else { "days" }
+                    )
+                };
                 s = s
-                    .heading(format!("{completed} completions"))
-                    .text("Best streaks are measured across scheduled days.")
+                    .heading(format!(
+                        "{completed} {}",
+                        if completed == 1 {
+                            "completion"
+                        } else {
+                            "completions"
+                        }
+                    ))
+                    .text(week)
                     .button("settings", "Settings");
             }
             Page::Settings => {
@@ -321,19 +523,352 @@ impl Habits {
                         "Works without network access.",
                         Glyph::Settings,
                     )])
-                    .text("Habits never connect, upload, or back up your completions.");
+                    .text("A missed day breaks a streak.")
+                    .text("A skipped day keeps it.")
+                    .text("Completions never leave this reader.")
+                    .button("backup", "Export a backup")
+                    .button("import-backup", "Import a backup");
             }
         }
         s.build()
     }
+    fn handle_entry(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        let Some(event) = self.entry.handle(a) else {
+            return false;
+        };
+        if let Typing::Submitted(name) = event {
+            if let Some(name) = canonical_name(&name) {
+                match self.entry_mode {
+                    EntryMode::Add => self.items.push(Habit::new(name)),
+                    EntryMode::Rename => {
+                        if let Some(habit) = self.editing.and_then(|i| self.items.get_mut(i)) {
+                            habit.name = name;
+                        }
+                    }
+                }
+                self.save(cx);
+            } else {
+                self.notice = Some(format!(
+                    "Habit names must be 1 to {MAX_HABIT_NAME_CHARS} characters. Nothing was added."
+                ));
+            }
+            self.entry_mode = EntryMode::Add;
+        }
+        self.show(cx);
+        true
+    }
+    fn handle_import(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        if a == action_id("import-backup") {
+            self.record_backup(cx);
+            self.export = None;
+            self.import = Some(Import::Choose);
+            self.import_files.clear();
+            self.import_read = None;
+            self.notice = None;
+            cx.shelf().list();
+            self.show(cx);
+            return true;
+        }
+        if matches!(self.import, Some(Import::Choose)) {
+            if let Some(index) = (0..self.import_files.len())
+                .find(|index| a == action_id(&format!("import-file-{index}")))
+            {
+                let mut read = ShelfDownload::new(self.import_files[index].0.clone())
+                    .at_most(MAX_BACKUP_BYTES);
+                read.start(cx);
+                self.import_read = Some(read);
+                self.notice = None;
+                self.show(cx);
+                return true;
+            }
+        }
+        // Only the two answers this screen offers take the backup out. Taking
+        // it out to look at it drops it on the way past for anything else, and
+        // the reader lands back in Settings with their choice gone.
+        let replacing = a == action_id("import-replace");
+        if (replacing || a == action_id("import-merge"))
+            && matches!(self.import, Some(Import::Confirm(_)))
+        {
+            let Some(Import::Confirm(incoming)) = self.import.take() else {
+                return false;
+            };
+            self.done = Some(if replacing {
+                self.items = incoming;
+                "The backup replaced the habits on this reader.".to_owned()
+            } else {
+                merge(&mut self.items, incoming);
+                "The backup was merged with the habits on this reader.".to_owned()
+            });
+            self.save(cx);
+            self.page = Page::Today;
+            self.show(cx);
+            return true;
+        }
+        false
+    }
+    /// Remembers when a backup that is ready for the computer was made, so
+    /// the import list can name it by its date.
+    fn record_backup(&mut self, cx: &mut Context) {
+        let Some(export) = self.export.as_ref().filter(|export| export.is_ready()) else {
+            return;
+        };
+        let name = export.offer().digest.clone();
+        if self.backups.iter().any(|(kept, _)| *kept == name) {
+            return;
+        }
+        let Some(date) = SystemClock::reader().now().ok().and_then(Snapshot::date) else {
+            return;
+        };
+        self.backups.push((name, date.to_string()));
+        let over = self.backups.len().saturating_sub(MAX_BACKUP_DATES);
+        self.backups.drain(..over);
+        cx.store().save(BACKUPS, encode_backups(&self.backups));
+    }
+    fn backup_title(&self, name: &str) -> String {
+        if !is_backup_name(name) {
+            return name.to_owned();
+        }
+        self.backups
+            .iter()
+            .find(|(kept, _)| kept == name)
+            .and_then(|(_, date)| readable_date(date))
+            .map_or_else(
+                || "Backup made on this reader".to_owned(),
+                |date| format!("Backup of {date}"),
+            )
+    }
+    fn import_screen(&self, import: &Import) -> Screen {
+        match import {
+            Import::Choose => {
+                let mut screen = ScreenBuilder::new("hb-import")
+                    .top_bar("Import a backup")
+                    .text("Choose a backup made on this reader. Replace removes the habits here. Merge keeps them and adds days from the backup when the name matches.");
+                // This screen is returned before the shared banner is reached,
+                // so a backup that could not be read says so here or nowhere.
+                if let Some(note) = &self.notice {
+                    screen = screen.banner(BannerLevel::Attention, note);
+                }
+                if self.import_read.is_some() {
+                    return screen.activity("Reading the backup", None).build();
+                }
+                if self.import_files.is_empty() {
+                    screen = screen.splash(
+                        Some(Glyph::Settings),
+                        "No backups yet",
+                        "Choose Export a backup in Settings first. The backup stays on this reader and is listed here.",
+                    );
+                } else {
+                    let (start, end, page, pages) =
+                        Self::page_bounds(self.import_page, self.import_files.len());
+                    screen = screen.rows(self.import_files[start..end].iter().enumerate().map(
+                        |(index, (name, size))| {
+                            (
+                                format!("import-file-{}", start + index),
+                                self.backup_title(name),
+                                format!("Text backup · {}", display_size(*size)),
+                                Glyph::Settings,
+                            )
+                        },
+                    ));
+                    screen = Self::paged(screen, page, pages, "import-prev", "import-next");
+                }
+                screen.build()
+            }
+            Import::Confirm(habits) => ScreenBuilder::new("hb-import-confirm")
+                .top_bar("Import a backup")
+                .heading(format!(
+                    "{} {}",
+                    habits.len(),
+                    if habits.len() == 1 { "habit" } else { "habits" }
+                ))
+                .text("Replace removes the habits on this reader. Merge keeps them and adds days from the backup when the name matches.")
+                .button("import-replace", "Replace habits on this reader")
+                .button("import-merge", "Merge with habits on this reader")
+                .build(),
+        }
+    }
+    /// Previous/More on every paged list. Returns whether the action turned
+    /// a page.
+    fn page_turn(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        let pagers = [
+            ("due-prev", "due-next", 0usize),
+            ("manage-prev", "manage-next", 1),
+            ("streaks-prev", "streaks-next", 2),
+            ("import-prev", "import-next", 3),
+        ];
+        for (previous, next, which) in pagers {
+            let delta = if a == action_id(previous) {
+                -1
+            } else if a == action_id(next) {
+                1
+            } else {
+                continue;
+            };
+            let page = match which {
+                0 => &mut self.today_page,
+                1 => &mut self.manage_page,
+                2 => &mut self.streaks_page,
+                _ => &mut self.import_page,
+            };
+            *page = page.saturating_add_signed(delta);
+            self.show(cx);
+            return true;
+        }
+        false
+    }
+
+    /// The edit screen's own actions: rename, archive, and the schedule
+    /// choices. Returns whether the action was one of theirs.
+    fn handle_edit(&mut self, cx: &mut Context, a: ActionId) -> bool {
+        if a == action_id("rename") {
+            if let Some(habit) = self.editing.and_then(|i| self.items.get(i)) {
+                let name = habit.name.clone();
+                self.entry_mode = EntryMode::Rename;
+                self.entry.open_with(name);
+            }
+        } else if a == action_id("archive") || a == action_id("unarchive") {
+            if let Some(habit) = self.editing.and_then(|i| self.items.get_mut(i)) {
+                habit.archived = !habit.archived;
+                self.save(cx);
+            }
+        } else if a == action_id("sched-next") {
+            let last =
+                kobo_sdk::options_pages(SCHEDULES.len(), &cx.metrics(), false).saturating_sub(1);
+            self.schedule_page = self
+                .schedule_page
+                .saturating_add(1)
+                .min(u16::try_from(last).unwrap_or(0));
+        } else if a == action_id("sched-prev") {
+            self.schedule_page = self.schedule_page.saturating_sub(1);
+        } else {
+            let Some((_, _, schedule)) = SCHEDULES
+                .iter()
+                .find(|(action, _, _)| a == action_id(action))
+            else {
+                return false;
+            };
+            if let Some(habit) = self.editing.and_then(|i| self.items.get_mut(i)) {
+                habit.schedule = schedule.clone();
+                self.save(cx);
+            }
+        }
+        self.show(cx);
+        true
+    }
 }
+
 impl KoboApp for Habits {
     fn on_start(&mut self, cx: &mut Context) {
         self.loading = true;
         cx.store().load(HABITS);
+        cx.store().load(BACKUPS);
         self.show(cx);
     }
+    fn on_save(&mut self, cx: &mut Context, key: &str, result: StoreResult) {
+        // The backup dates are a convenience: a refused save of them costs
+        // a date on a row, and must not read as the habits failing to save.
+        if key != BACKUPS {
+            self.on_store(cx, result);
+        }
+    }
+    fn on_shelf(&mut self, cx: &mut Context, name: &str, result: StoreResult) {
+        if let Some(read) = &mut self.import_read {
+            if read.name() == name {
+                match read.advance(cx, &result) {
+                    kobo_sdk::ShelfProgress::Done => {
+                        let bytes = self.import_read.take().expect("active backup").take();
+                        let (habits, _blank) = decode_with_blank_names(&bytes);
+                        if habits.is_empty() {
+                            self.notice =
+                                Some("That file has no habits this reader can import.".to_owned());
+                            self.import = Some(Import::Choose);
+                        } else {
+                            self.notice = None;
+                            self.import = Some(Import::Confirm(habits));
+                        }
+                    }
+                    kobo_sdk::ShelfProgress::Failed(error) => {
+                        self.import_read = None;
+                        self.notice = Some(if matches!(error, StoreError::TooFull) {
+                            format!(
+                                "That backup is larger than {} KB, which is more than this reader imports.",
+                                MAX_BACKUP_BYTES / 1024
+                            )
+                        } else {
+                            "That backup could not be read.".to_owned()
+                        });
+                        self.import = Some(Import::Choose);
+                    }
+                    _ => return,
+                }
+                self.show(cx);
+                return;
+            }
+        }
+        if let Some(export) = self.export.as_mut() {
+            if export.on_shelf(cx, name, &result) {
+                self.show(cx);
+            }
+        }
+    }
+
     fn on_store(&mut self, cx: &mut Context, result: StoreResult) {
+        // A backup on its way out answers on its own keys; the habits key is
+        // never handed to it.
+        if let Some(export) = self.export.as_mut() {
+            let key = match &result {
+                StoreResult::Loaded { key, .. } | StoreResult::Saved { key } => key.clone(),
+                _ => String::new(),
+            };
+            if key != HABITS && key != BACKUPS && export.on_save(cx, &key, &result) {
+                self.record_backup(cx);
+                self.show(cx);
+                return;
+            }
+        }
+        if let StoreResult::Loaded { key, value } = &result {
+            if key == BACKUPS {
+                self.backups = value.as_deref().map(decode_backups).unwrap_or_default();
+                return;
+            }
+        }
+        if let StoreResult::Shelf(files) = &result {
+            if matches!(self.import, Some(Import::Choose)) {
+                // A backup is written as text, and the shelf is shared with
+                // every other application here. Offering somebody's pictures
+                // as habits to import is a row that can only disappoint.
+                // A backup exported here is kept under its content hash.
+                self.import_files = files
+                    .iter()
+                    .filter(|(name, _)| {
+                        is_backup_name(name)
+                            || std::path::Path::new(name.as_str()).extension().is_some_and(
+                                |extension| {
+                                    extension.eq_ignore_ascii_case("txt")
+                                        || extension.eq_ignore_ascii_case("md")
+                                },
+                            )
+                    })
+                    .cloned()
+                    .collect();
+                // Newest dated backup first, then undated ones, then files
+                // by name.
+                let order = |name: &str| {
+                    let dated = self.backups.iter().position(|(kept, _)| kept == name);
+                    (
+                        !is_backup_name(name),
+                        dated.is_none(),
+                        std::cmp::Reverse(dated),
+                        name.to_owned(),
+                    )
+                };
+                self.import_files
+                    .sort_by_cached_key(|(name, _)| order(name.as_str()));
+                self.import_page = 0;
+                self.show(cx);
+                return;
+            }
+        }
         match result {
             StoreResult::Loaded { key, value } if key == HABITS => {
                 let (items, ignored_blank_names) = value
@@ -374,24 +909,17 @@ impl KoboApp for Habits {
         self.show(cx);
     }
     fn on_action(&mut self, cx: &mut Context, a: ActionId) {
+        self.done = None;
         self.normalize_pages();
+        if self.handle_skip_menu(cx, a) {
+            return;
+        }
         if a == ActionId::BACK {
-            self.go_back();
+            self.go_back(cx);
             self.show(cx);
             return;
         }
-        if let Some(event) = self.entry.handle(a) {
-            if let Typing::Submitted(name) = event {
-                if let Some(name) = canonical_name(&name) {
-                    self.items.push(Habit::new(name));
-                    self.save(cx);
-                } else {
-                    self.notice = Some(format!(
-                        "Habit names must be 1 to {MAX_HABIT_NAME_CHARS} characters. Nothing was added."
-                    ));
-                }
-            }
-            self.show(cx);
+        if self.handle_entry(cx, a) {
             return;
         }
         let pages = [Page::Today, Page::Streaks, Page::Manage, Page::Stats];
@@ -403,7 +931,14 @@ impl KoboApp for Habits {
             self.page = page;
             if page == Page::Today {
                 self.today_page = 0;
+                self.days_back = 0;
             }
+            self.show(cx);
+            return;
+        }
+        if a == action_id(SHOW_TODAY) || a == action_id(SHOW_YESTERDAY) {
+            self.days_back = u8::from(a == action_id(SHOW_YESTERDAY));
+            self.today_page = 0;
             self.show(cx);
             return;
         }
@@ -417,51 +952,59 @@ impl KoboApp for Habits {
             self.show(cx);
             return;
         }
-        if a == action_id("due-prev") {
-            self.today_page = self.today_page.saturating_sub(1);
+        if self.page_turn(cx, a) {
+            return;
+        }
+        if self.handle_import(cx, a) {
+            return;
+        }
+        if a == action_id("backup") {
+            match Export::new("habits-backup", ExportFormat::Text, encode(&self.items)) {
+                Ok(mut export) => {
+                    export.begin(cx);
+                    self.export = Some(export);
+                }
+                Err(error) => self.notice = Some(error),
+            }
             self.show(cx);
             return;
         }
-        if a == action_id("due-next") {
-            self.today_page = self.today_page.saturating_add(1);
+        if a == action_id("export-confirm") || a == action_id("export-retry") {
+            if let Some(export) = self.export.as_mut() {
+                export.begin(cx);
+            }
             self.show(cx);
             return;
         }
-        if a == action_id("manage-prev") {
-            self.manage_page = self.manage_page.saturating_sub(1);
-            self.show(cx);
-            return;
-        }
-        if a == action_id("manage-next") {
-            self.manage_page = self.manage_page.saturating_add(1);
-            self.show(cx);
-            return;
-        }
-        if a == action_id("streaks-prev") {
-            self.streaks_page = self.streaks_page.saturating_sub(1);
-            self.show(cx);
-            return;
-        }
-        if a == action_id("streaks-next") {
-            self.streaks_page = self.streaks_page.saturating_add(1);
-            self.show(cx);
+        if self.handle_edit(cx, a) {
             return;
         }
         let mut changed = false;
+        let day = self.marking_day();
         for (i, h) in self.items.iter_mut().enumerate() {
             if a == action_id(&format!("done-{i}")) {
-                changed |= h.toggle_complete(Self::day());
+                if h.skipped.contains(&day) {
+                    changed |= h.unskip(day);
+                } else {
+                    changed |= h.toggle_complete(day);
+                }
             }
             if a == action_id(&format!("skip-{i}")) {
-                changed |= h.skip(Self::day());
+                changed |= h.skip(day);
             }
-            if a == action_id(&format!("cycle-{i}")) {
-                h.schedule = match h.schedule {
-                    Schedule::Daily => Schedule::Weekdays,
-                    Schedule::Weekdays => Schedule::Every(2),
-                    Schedule::Every(_) => Schedule::Daily,
-                };
-                changed = true;
+            if a == action_id(&format!("edit-{i}")) {
+                self.editing = Some(i);
+                self.page = Page::Edit;
+                // Onto the page of the list holding this habit's schedule,
+                // counted the way the runtime pages it.
+                let chosen = SCHEDULES
+                    .iter()
+                    .position(|(_, _, schedule)| *schedule == h.schedule)
+                    .unwrap_or(0);
+                let per_page = kobo_sdk::options_per_page(&cx.metrics(), false).max(1);
+                self.schedule_page = u16::try_from(chosen / per_page).unwrap_or(0);
+                self.show(cx);
+                return;
             }
         }
         if changed {
@@ -469,6 +1012,49 @@ impl KoboApp for Habits {
         }
         self.show(cx);
     }
+}
+/// Whether a shelf name is a backup exported here: the 64 hex digits of its
+/// content hash.
+fn is_backup_name(name: &str) -> bool {
+    name.len() == 64
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+fn encode_backups(backups: &[(String, String)]) -> Vec<u8> {
+    let mut text = String::new();
+    for (name, date) in backups {
+        text.push_str(name);
+        text.push(' ');
+        text.push_str(date);
+        text.push('\n');
+    }
+    text.into_bytes()
+}
+fn decode_backups(bytes: &[u8]) -> Vec<(String, String)> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .filter(|(name, _)| is_backup_name(name))
+        .map(|(name, date)| (name.to_owned(), date.to_owned()))
+        .collect()
+}
+/// "2026-11-07" as "7 Nov 2026".
+fn readable_date(date: &str) -> Option<String> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let mut parts = date.splitn(3, '-');
+    let year: u16 = parts.next()?.parse().ok()?;
+    let month: usize = parts.next()?.parse().ok()?;
+    let day: u8 = parts.next()?.parse().ok()?;
+    Some(format!(
+        "{day} {} {year}",
+        MONTHS.get(month.checked_sub(1)?)?
+    ))
+}
+fn display_size(bytes: u32) -> String {
+    format!("{} KB", bytes.div_ceil(1000).max(1))
 }
 fn main() -> ExitCode {
     match kobo_sdk::run("habits", Habits::default()) {
@@ -504,6 +1090,89 @@ mod tests {
     }
 
     #[test]
+    fn merging_a_backup_says_so_after_the_save_lands_and_the_next_tap_clears_it() {
+        let mut runner = AppRunner::new(Habits {
+            items: vec![Habit::new("tea".into())],
+            loaded: true,
+            import: Some(Import::Confirm(vec![Habit::new("walk".into())])),
+            ..Habits::default()
+        });
+        runner.action(action_id("import-merge"));
+        runner.store_result(StoreResult::Saved { key: HABITS.into() });
+        let today = format!("{:?}", runner.app().screen());
+        assert!(
+            today.contains("The backup was merged with the habits on this reader."),
+            "{today}"
+        );
+        runner.action(action_id("streaks"));
+        assert!(runner.app().done.is_none());
+    }
+
+    #[test]
+    fn the_import_list_names_backups_made_here_by_date_newest_first() {
+        let older = "a".repeat(64);
+        let newer = "b".repeat(64);
+        let undated = "c".repeat(64);
+        let mut runner = AppRunner::new(Habits {
+            loaded: true,
+            page: Page::Settings,
+            backups: decode_backups(
+                encode_backups(&[
+                    (older.clone(), "2026-11-01".into()),
+                    (newer.clone(), "2026-11-07".into()),
+                ])
+                .as_slice(),
+            ),
+            ..Habits::default()
+        });
+        runner.action(action_id("import-backup"));
+        runner.app_mut().on_store(
+            &mut Context::default(),
+            StoreResult::Shelf(vec![
+                (older, 900),
+                ("photo.jpg".into(), 5),
+                (undated, 2400),
+                (newer, 1200),
+            ]),
+        );
+        let titles: Vec<String> = runner
+            .app()
+            .import_files
+            .iter()
+            .map(|(name, _)| runner.app().backup_title(name))
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Backup of 7 Nov 2026",
+                "Backup of 1 Nov 2026",
+                "Backup made on this reader",
+            ]
+        );
+        let list = format!("{:?}", runner.app().screen());
+        assert!(list.contains("Text backup · 2 KB"), "{list}");
+    }
+
+    #[test]
+    fn with_no_backup_yet_the_import_page_says_to_export_one_first() {
+        let mut runner = AppRunner::new(Habits {
+            loaded: true,
+            page: Page::Settings,
+            ..Habits::default()
+        });
+        runner.action(action_id("import-backup"));
+        runner
+            .app_mut()
+            .on_store(&mut Context::default(), StoreResult::Shelf(Vec::new()));
+        let empty = format!("{:?}", runner.app().screen());
+        assert!(
+            empty.contains("Choose Export a backup in Settings first."),
+            "{empty}"
+        );
+        assert!(!empty.contains("shelf"), "{empty}");
+    }
+
+    #[test]
     fn back_returns_each_page_to_its_parent() {
         let mut app = Habits {
             loaded: true,
@@ -512,15 +1181,15 @@ mod tests {
         assert!(!app.owns_back());
         app.page = Page::Manage;
         assert!(app.owns_back());
-        app.go_back();
+        app.go_back(&mut Context::default());
         assert_eq!(app.page, Page::Today);
         app.page = Page::Settings;
         assert_eq!(app.back_target(), Some(Page::Stats));
-        app.go_back();
+        app.go_back(&mut Context::default());
         assert_eq!(app.page, Page::Stats);
         app.entry.open();
         assert!(app.owns_back());
-        app.go_back();
+        app.go_back(&mut Context::default());
         assert!(!app.entry.is_open());
     }
 
@@ -535,6 +1204,93 @@ mod tests {
         runner.start();
         runner.action(ActionId::BACK);
         assert_eq!(runner.app().page, Page::Stats);
+    }
+
+    /// A backup that cannot be read has to say so on the screen it fails on.
+    ///
+    /// The import screen is returned before the shared banner is reached, so
+    /// the message written when a file turns out not to be a backup was going
+    /// nowhere: the list came back unchanged and the same tap was worth trying
+    /// again forever.
+    #[test]
+    fn a_file_that_is_not_a_backup_says_so_on_the_import_screen() {
+        use kobo_sdk::Node;
+
+        let app = Habits {
+            loaded: true,
+            page: Page::Settings,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: HABITS.to_owned(),
+            value: None,
+        });
+        runner.store_result(StoreResult::Loaded {
+            key: BACKUPS.to_owned(),
+            value: None,
+        });
+        runner.action(action_id("import-backup"));
+        runner.store_result(StoreResult::Shelf(vec![
+            ("habits-backup.txt".to_owned(), 64),
+            ("holiday.png".to_owned(), 4096),
+        ]));
+        assert_eq!(
+            runner.app().import_files,
+            vec![("habits-backup.txt".to_owned(), 64)],
+            "a picture was offered as a habits backup"
+        );
+        runner.action(action_id("import-file-0"));
+        runner.store_result(StoreResult::Denied(StoreError::Missing));
+        assert!(matches!(runner.app().import, Some(Import::Choose)));
+        let screen = runner.app().screen();
+        assert!(
+            screen
+                .nodes
+                .iter()
+                .any(|node| matches!(node, Node::Banner { text, .. } if text.contains("could not be read"))),
+            "the import screen kept the message to itself: {:?}",
+            screen.nodes
+        );
+    }
+
+    #[test]
+    fn a_habit_forgotten_yesterday_can_still_be_marked_done_for_yesterday() {
+        use kobo_ui::{Chrome, CLARA_BW_METRICS};
+
+        let mut runner = AppRunner::new(Habits::default());
+        runner.start();
+        runner.store_result(StoreResult::Loaded {
+            key: HABITS.to_owned(),
+            value: Some(encode(&[Habit::new("Read".into())])),
+        });
+        runner.action(action_id(SHOW_YESTERDAY));
+        let screen = runner.app().screen();
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+        runner.action(action_id("done-0"));
+        let today = Habits::day();
+        assert_eq!(runner.app().items[0].done, vec![today - 1]);
+        assert_eq!(runner.app().items[0].current_streak(today), 1);
+
+        runner.action(action_id(SHOW_TODAY));
+        runner.action(action_id("done-0"));
+        assert_eq!(runner.app().items[0].done, vec![today - 1, today]);
+    }
+
+    #[test]
+    fn a_runtime_that_passes_no_offset_leaves_the_day_on_utc_as_before() {
+        let utc = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after 1970")
+            .as_secs()
+            / 86_400;
+        if std::env::var(kobo_sdk::clock::READER_OFFSET_VARIABLE).is_err() {
+            assert_eq!(u64::from(Habits::day()), utc);
+        }
     }
 
     #[test]
@@ -569,6 +1325,160 @@ mod tests {
             .layout_with(&CLARA_BW_METRICS, &Chrome::default())
             .rect_of_action(action_id("settings"))
             .is_some());
+    }
+
+    #[test]
+    fn the_week_sums_due_done_and_skipped_days() {
+        let today = 20_000;
+        let mut habit = Habit::new("Read".into());
+        habit.done = vec![today - 2, today];
+        habit.skipped = vec![today - 1];
+        let mut archived = Habit::new("Old".into());
+        archived.archived = true;
+        archived.done = vec![today];
+        let (due, done, skipped) = model::week_summary(&[habit, archived], today);
+        assert_eq!((due, done, skipped), (3, 2, 1));
+    }
+
+    #[test]
+    fn habits_added_today_count_only_today_as_due() {
+        let today = 20_000;
+        let mut read = Habit::new("Read".into());
+        read.done = vec![today];
+        let walk = Habit::new("Walk".into());
+        let stretch = Habit::new("Stretch".into());
+        assert_eq!(
+            model::week_summary(&[read, walk, stretch], today),
+            (3, 1, 0)
+        );
+    }
+
+    #[test]
+    fn stats_sums_the_week_and_states_the_rules_at_every_scale() {
+        let today = Habits::day();
+        let mut habit = Habit::new("Read".into());
+        habit.done = vec![today];
+        let app = Habits {
+            items: vec![habit],
+            loaded: true,
+            page: Page::Stats,
+            ..Habits::default()
+        };
+        let screen = app.screen().with_own_back(app.owns_back());
+        let says = |screen: &Screen, needle: &str| {
+            screen.nodes.iter().any(|node| match node {
+                kobo_sdk::Node::Heading { text, .. } | kobo_sdk::Node::Text { text, .. } => {
+                    text.contains(needle)
+                }
+                _ => false,
+            })
+        };
+        assert!(says(&screen, "1 completion"));
+        assert!(!says(&screen, "1 completions"));
+        assert!(says(
+            &screen,
+            "This week: 1 of 1 due day completed, 0 skipped."
+        ));
+        let settings = Habits {
+            loaded: true,
+            page: Page::Settings,
+            ..Habits::default()
+        }
+        .screen();
+        assert!(says(&settings, "A missed day breaks a streak."));
+        assert!(says(&settings, "A skipped day keeps it."));
+        let screens = [screen, settings.with_own_back(true)];
+        for screen in &screens {
+            for (width, height, pixels_per_inch) in
+                [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
+            {
+                for text_scale in kobo_ui::TextScale::STEPS {
+                    let metrics = kobo_sdk::DisplayMetrics {
+                        width,
+                        height,
+                        pixels_per_inch,
+                        text_scale,
+                    };
+                    // A runner installs the face the runtime measures with.
+                    // Without one, this test measured in the built-in fallback
+                    // type whenever it ran before any other test had made one.
+                    let _runner = AppRunner::with_metrics(Habits::default(), metrics);
+                    let chrome = kobo_ui::Chrome::measuring(true);
+                    let diagnostics = screen.diagnostics(&metrics, &chrome);
+                    assert!(
+                        diagnostics.issues.is_empty(),
+                        "{metrics:?}: {:?}",
+                        diagnostics.issues
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_today_offers_add_prominently() {
+        use kobo_ui::{Chrome, CLARA_BW_METRICS};
+
+        let app = Habits {
+            loaded: true,
+            ..Habits::default()
+        };
+        let screen = app.screen().with_own_back(app.owns_back());
+        let laid = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(laid.rect_of_action(action_id("add")).is_some());
+        assert!(screen
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
+            .issues
+            .is_empty());
+        let mut runner = AppRunner::new(app);
+        runner.start();
+        runner.action(action_id("add"));
+        assert!(runner.app().entry.is_open());
+    }
+
+    #[test]
+    fn a_rename_keeps_its_mode_while_typing() {
+        let app = Habits {
+            items: vec![Habit::new("read".into())],
+            loaded: true,
+            page: Page::Manage,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        runner.start();
+        runner.action(action_id("edit-0"));
+        runner.action(action_id("rename"));
+        assert!(runner.app().entry.is_open());
+        // A tap that reaches the app while the reader's keyboard is up, such
+        // as a redraw, does not turn the rename into an add.
+        runner.action(action_id("redraw"));
+        assert_eq!(runner.app().entry_mode, EntryMode::Rename);
+        runner.type_text("read daily");
+        assert_eq!(runner.app().items.len(), 1);
+        assert_eq!(runner.app().items[0].name, "read daily");
+    }
+
+    #[test]
+    fn settings_offers_a_backup_export_and_back_closes_it() {
+        let app = Habits {
+            items: vec![Habit::new("Read".into())],
+            loaded: true,
+            page: Page::Settings,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        runner.start();
+        runner.action(action_id("backup"));
+        let export = runner
+            .app()
+            .export
+            .as_ref()
+            .expect("a backup on its way out");
+        assert_eq!(export.offer().format, ExportFormat::Text);
+        assert_eq!(export.offer().title, "habits-backup");
+        runner.action(ActionId::BACK);
+        assert!(runner.app().export.is_none());
+        assert_eq!(runner.app().page, Page::Settings);
     }
 
     #[test]
@@ -640,7 +1550,7 @@ mod tests {
     }
 
     #[test]
-    fn every_due_habit_has_a_skip_control_on_a_clean_page() {
+    fn every_due_habit_can_be_skipped_from_its_own_menu_on_a_clean_page() {
         use kobo_sdk::Node;
         use kobo_ui::{Chrome, CLARA_BW_METRICS};
 
@@ -651,14 +1561,14 @@ mod tests {
             loaded: true,
             ..Habits::default()
         };
-        for (page, expected_rows, expected_skip, pager) in [
+        for (page, expected_rows, expected_menus, pager) in [
             (
                 0,
                 ["done-0", "done-1", "done-2"].as_slice(),
-                ["skip-0", "skip-1", "skip-2"].as_slice(),
+                ["menu-0", "menu-1", "menu-2"].as_slice(),
                 "due-next",
             ),
-            (1, ["done-3"].as_slice(), ["skip-3"].as_slice(), "due-prev"),
+            (1, ["done-3"].as_slice(), ["menu-3"].as_slice(), "due-prev"),
         ] {
             app.today_page = page;
             let screen = app.screen();
@@ -677,17 +1587,31 @@ mod tests {
                 );
             }
             let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::default());
-            for action in expected_skip.iter().chain([pager].iter()) {
+            for action in expected_menus.iter().chain([pager].iter()) {
                 assert!(
                     layout.rect_of_action(action_id(action)).is_some(),
                     "{action} is reachable"
                 );
             }
+            assert!(!screen.nodes.iter().any(|node| matches!(
+                node,
+                Node::Button { label, .. } if label.starts_with("Skip")
+            )));
             assert!(screen
                 .diagnostics(&CLARA_BW_METRICS, &Chrome::default())
                 .issues
                 .is_empty());
         }
+        // A habit's menu offers the skip, and choosing it closes the menu.
+        app.today_page = 0;
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("menu-1"));
+        let menu = runner.app().screen();
+        let layout = menu.layout_with(&CLARA_BW_METRICS, &Chrome::default());
+        assert!(layout.rect_of_action(action_id("skip-1")).is_some());
+        runner.action(action_id("skip-1"));
+        assert!(runner.app().skip_menu.is_none());
+        assert_eq!(runner.app().items[1].skipped, vec![Habits::day()]);
     }
 
     #[test]
@@ -727,10 +1651,10 @@ mod tests {
         assert!(has_row_action(&runner.app().screen(), "done-0"));
 
         runner.app_mut().page = Page::Manage;
-        assert!(has_row_action(&runner.app().screen(), "cycle-3"));
+        assert!(has_row_action(&runner.app().screen(), "edit-3"));
         runner.action(action_id("manage-prev"));
         assert_eq!(runner.app().manage_page, 0);
-        assert!(has_row_action(&runner.app().screen(), "cycle-0"));
+        assert!(has_row_action(&runner.app().screen(), "edit-0"));
 
         runner.app_mut().page = Page::Streaks;
         assert!(has_row_action(&runner.app().screen(), "streak-3"));
@@ -752,22 +1676,10 @@ mod tests {
             ..Habits::default()
         };
         for (page, expected, pager) in [
-            (
-                0,
-                ["cycle-0", "cycle-1", "cycle-2"].as_slice(),
-                "manage-next",
-            ),
-            (
-                1,
-                ["cycle-3", "cycle-4", "cycle-5"].as_slice(),
-                "manage-next",
-            ),
-            (
-                2,
-                ["cycle-6", "cycle-7", "cycle-8"].as_slice(),
-                "manage-next",
-            ),
-            (3, ["cycle-9"].as_slice(), "manage-prev"),
+            (0, ["edit-0", "edit-1", "edit-2"].as_slice(), "manage-next"),
+            (1, ["edit-3", "edit-4", "edit-5"].as_slice(), "manage-next"),
+            (2, ["edit-6", "edit-7", "edit-8"].as_slice(), "manage-next"),
+            (3, ["edit-9"].as_slice(), "manage-prev"),
         ] {
             app.page = Page::Manage;
             app.manage_page = page;
@@ -894,7 +1806,7 @@ mod tests {
         assert!(title.is_some_and(|title| title.ends_with('…')));
         assert!(today
             .layout_with(&kobo_ui::CLARA_BW_METRICS, &kobo_ui::Chrome::default())
-            .rect_of_action(action_id("skip-0"))
+            .rect_of_action(action_id("menu-0"))
             .is_some());
         let diagnostics =
             today.diagnostics(&kobo_ui::CLARA_BW_METRICS, &kobo_ui::Chrome::default());
@@ -937,12 +1849,14 @@ mod tests {
 
         runner.app_mut().page = Page::Manage;
         let manage = runner.app().screen();
-        assert!(has_row_action(&manage, "cycle-0"));
+        assert!(has_row_action(&manage, "edit-0"));
         assert!(manage
             .diagnostics(&kobo_ui::CLARA_BW_METRICS, &kobo_ui::Chrome::default())
             .issues
             .is_empty());
-        let commands = runner.action(action_id("cycle-0"));
+        runner.action(action_id("edit-0"));
+        assert_eq!(runner.app().page, Page::Edit);
+        let commands = runner.action(action_id("sched-weekdays"));
         let saved = commands.iter().find_map(|command| match command {
             Command::Store(StoreRequest::Save { key, value }) if key == HABITS => Some(value),
             _ => None,
@@ -951,6 +1865,93 @@ mod tests {
         assert_eq!(saved[0].name, long);
         assert_eq!(saved[0].schedule, Schedule::Weekdays);
         assert_eq!(saved[0].skipped, vec![day]);
+    }
+
+    #[test]
+    fn tapping_a_skipped_habit_undoes_the_skip_before_any_completion() {
+        let day = Habits::day();
+        let mut habit = Habit::new("Read".into());
+        habit.skipped = vec![day];
+        let app = Habits {
+            items: vec![habit],
+            loaded: true,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        let commands = runner.action(action_id("done-0"));
+        let saved = commands.iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == HABITS => Some(value),
+            _ => None,
+        });
+        let saved = decode(saved.expect("the unskip must be saved"));
+        assert!(saved[0].skipped.is_empty());
+        assert!(saved[0].done.is_empty());
+        runner.store_result(StoreResult::Saved { key: HABITS.into() });
+        let commands = runner.action(action_id("done-0"));
+        let saved = commands.iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == HABITS => Some(value),
+            _ => None,
+        });
+        assert_eq!(
+            decode(saved.expect("the completion must be saved"))[0].done,
+            vec![day]
+        );
+    }
+
+    #[test]
+    fn the_edit_screen_renames_reschedules_and_archives() {
+        let day = Habits::day();
+        let mut habit = Habit::new("Read".into());
+        habit.done = vec![day];
+        let app = Habits {
+            items: vec![habit],
+            loaded: true,
+            page: Page::Manage,
+            ..Habits::default()
+        };
+        let mut runner = AppRunner::new(app);
+        runner.action(action_id("edit-0"));
+        assert_eq!(runner.app().page, Page::Edit);
+
+        let commands = runner.action(action_id("archive"));
+        let saved = commands.iter().find_map(|command| match command {
+            Command::Store(StoreRequest::Save { key, value }) if key == HABITS => Some(value),
+            _ => None,
+        });
+        assert!(decode(saved.expect("archiving must be saved"))[0].archived);
+        runner.store_result(StoreResult::Saved { key: HABITS.into() });
+        runner.action(action_id("unarchive"));
+        assert!(!runner.app().items[0].archived);
+
+        runner.action(action_id("rename"));
+        assert!(runner.app().entry.is_open());
+        assert_eq!(runner.app().entry.text(), "Read");
+        runner.app_mut().entry.close();
+        assert_eq!(runner.app().items[0].name, "Read");
+
+        runner.action(action_id("ActionId::BACK"));
+        let screen = runner
+            .app()
+            .screen()
+            .with_own_back(runner.app().owns_back());
+        for (width, height, pixels_per_inch) in
+            [(1072, 1448, 300), (758, 1024, 212), (1448, 1072, 300)]
+        {
+            for text_scale in kobo_ui::TextScale::STEPS {
+                let metrics = kobo_sdk::DisplayMetrics {
+                    width,
+                    height,
+                    pixels_per_inch,
+                    text_scale,
+                };
+                let diagnostics = screen.diagnostics(&metrics, &kobo_ui::Chrome::measuring(true));
+                assert!(
+                    diagnostics.issues.is_empty(),
+                    "{metrics:?}: {:?}",
+                    diagnostics.issues
+                );
+            }
+        }
     }
 
     #[test]
@@ -1054,3 +2055,6 @@ mod tests {
         assert!(diagnostics.issues.is_empty(), "{:#?}", diagnostics.issues);
     }
 }
+
+#[cfg(test)]
+mod ui_review_tests;

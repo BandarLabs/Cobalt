@@ -1,0 +1,78 @@
+{
+  "format": "fieldbook-attribution",
+  "photos": [
+    {
+      "asset": "photos/d9aa71bda6f359dcfd2f73e4365f16076f632b8ef62662b6ce0786077fd6cbc9.jpg",
+      "bytes": 16463,
+      "creator": "Cephas",
+      "id": "d9aa71bda6f359dcfd2f73e4365f16076f632b8ef62662b6ce0786077fd6cbc9",
+      "image_url": "https://static.avicommons.org/veery-66ZuzQIMaBIWbBpH-320.jpg",
+      "license": "CC BY-SA 3.0",
+      "license_url": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "sha256": "d9aa71bda6f359dcfd2f73e4365f16076f632b8ef62662b6ce0786077fd6cbc9",
+      "source": "Avicommons",
+      "source_url": "https://avicommons.org/species/veery"
+    },
+    {
+      "asset": "photos/d169db069e22b61fa06cd7057939d65e8e3c6acefc311f54378e91d5d3e887a2.jpg",
+      "bytes": 11551,
+      "creator": "Nigel",
+      "id": "d169db069e22b61fa06cd7057939d65e8e3c6acefc311f54378e91d5d3e887a2",
+      "image_url": "https://static.avicommons.org/houfin-DzFZcHoKwyx9JOmg-320.jpg",
+      "license": "CC BY 2.0",
+      "license_url": "https://creativecommons.org/licenses/by/2.0/",
+      "sha256": "d169db069e22b61fa06cd7057939d65e8e3c6acefc311f54378e91d5d3e887a2",
+      "source": "Avicommons",
+      "source_url": "https://avicommons.org/species/houfin"
+    },
+    {
+      "asset": "photos/e773e9836928f69f508f550a859d6ebb85d26753659703606072582cb9d2ecfd.jpg",
+      "bytes": 16619,
+      "creator": "Adam Jackson",
+      "id": "e773e9836928f69f508f550a859d6ebb85d26753659703606072582cb9d2ecfd",
+      "image_url": "https://static.avicommons.org/bawwar-339593151-320.jpg",
+      "license": "CC0 3.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/3.0/",
+      "sha256": "e773e9836928f69f508f550a859d6ebb85d26753659703606072582cb9d2ecfd",
+      "source": "Avicommons",
+      "source_url": "https://avicommons.org/species/bawwar"
+    },
+    {
+      "asset": "photos/f50178f885f18bb69c59b20c0401644bfd7607f735ec3e6f8afb90900ac1ddc9.jpg",
+      "bytes": 11838,
+      "creator": "Adam Jackson",
+      "id": "f50178f885f18bb69c59b20c0401644bfd7607f735ec3e6f8afb90900ac1ddc9",
+      "image_url": "https://static.avicommons.org/amered-339600708-320.jpg",
+      "license": "CC0 2.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/2.0/",
+      "sha256": "f50178f885f18bb69c59b20c0401644bfd7607f735ec3e6f8afb90900ac1ddc9",
+      "source": "Avicommons",
+      "source_url": "https://avicommons.org/species/amered"
+    },
+    {
+      "asset": "photos/7a6a0cc2823290f7ac7698c229cb7c44e52cbde9b22b27b967c9fac60c39cbb9.jpg",
+      "bytes": 13419,
+      "creator": "Adam Jackson",
+      "id": "7a6a0cc2823290f7ac7698c229cb7c44e52cbde9b22b27b967c9fac60c39cbb9",
+      "image_url": "https://static.avicommons.org/btnwar-339455645-320.jpg",
+      "license": "CC0 3.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/3.0/",
+      "sha256": "7a6a0cc2823290f7ac7698c229cb7c44e52cbde9b22b27b967c9fac60c39cbb9",
+      "source": "Avicommons",
+      "source_url": "https://avicommons.org/species/btnwar"
+    },
+    {
+      "asset": "photos/b6bf82e5ba4ba2b6760e9922867aaece9b979b8d072f379b5a34cc334564b99b.jpg",
+      "bytes": 12719,
+      "creator": "Adam Jackson",
+      "id": "b6bf82e5ba4ba2b6760e9922867aaece9b979b8d072f379b5a34cc334564b99b",
+      "image_url": "https://static.avicommons.org/babwar-339455515-320.jpg",
+      "license": "CC0 3.0",
+      "license_url": "https://creativecommons.org/publicdomain/zero/3.0/",
+      "sha256": "b6bf82e5ba4ba2b6760e9922867aaece9b979b8d072f379b5a34cc334564b99b",
+      "source": "Avicommons",
+      "source_url": "https://avicommons.org/species/babwar"
+    }
+  ],
+  "version": "1"
+}

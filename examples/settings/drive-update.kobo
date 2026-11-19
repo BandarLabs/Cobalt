@@ -1,0 +1,151 @@
+# Software update: the standing choices, and every outcome of a check the
+# simulator can stage. Each choice is read back where the owner looks for
+# it: the row that opens the choices and the Software update row at home.
+# The home list can reflow between pages at the largest text size when a
+# summary gets shorter, so the route finds the home row by what it says.
+wait-for Settings
+tap-paged Software update
+wait-for Check for updates
+expect Stable · Cobalt and apps update on their own
+tap Channel and automatic updates
+wait-for Update Cobalt automatically
+# Each switch applies on the tap. At the largest sizes the lines under the
+# switches give way, so the rows outside this screen are what is read.
+tap-id auto-cobalt
+wait-idle
+tap-id 4294967295
+wait-for Stable · Apps update on their own
+tap-id 4294967295
+wait-for Settings
+maybe-tap-id previous
+tap-paged Stable · Apps update on their own
+wait-for Check for updates
+tap Channel and automatic updates
+wait-for Update apps automatically
+tap-id auto-apps
+wait-idle
+shot settings-update-switches-off
+tap-id 4294967295
+wait-for Stable · Updates only when you ask
+# Going to the background and back keeps them.
+lifecycle background
+lifecycle foreground
+wait-idle
+expect Stable · Updates only when you ask
+# The simulator keeps these choices in memory for one session, so a restart
+# here would prove nothing; the reader keeps them on its storage.
+tap Channel and automatic updates
+wait-for Update Cobalt automatically
+# Choosing the channel already chosen asks nothing.
+tap-id channel-stable
+wait-idle
+expect Update options
+expect-missing Confirm update channel
+# The other channel asks first, says what changes and what is kept, and
+# both Back and Cancel leave the channel alone.
+tap-id channel-beta
+wait-for Confirm update channel
+expect Current channel
+expect New channel
+expect your saved keys are kept
+expect Use Beta updates
+expect Cancel
+shot settings-update-confirm-beta
+tap-id 4294967295
+wait-for Update Cobalt automatically
+tap-id 4294967295
+wait-for Stable · Updates only when you ask
+tap Channel and automatic updates
+tap-id channel-beta
+wait-for Use Beta updates
+tap Use Beta updates
+wait-for Update Cobalt automatically
+expect-missing Confirm update channel
+shot settings-update-options-beta
+# Changing the channel keeps the switches as they were.
+tap-id 4294967295
+wait-for Beta · Updates only when you ask
+expect Check for updates
+tap-id 4294967295
+wait-for Settings
+maybe-tap-id previous
+tap-paged Beta · Updates only when you ask
+wait-for Check for updates
+tap Channel and automatic updates
+tap-id channel-stable
+wait-for Use Stable updates
+expect Nothing is downgraded
+shot settings-update-confirm-stable
+tap Use Stable updates
+wait-for Update Cobalt automatically
+tap-id auto-cobalt
+wait-idle
+tap-id auto-apps
+wait-idle
+tap-id 4294967295
+wait-for Stable · Cobalt and apps update on their own
+# A server that does not answer is a different sentence from no Wi-Fi, and
+# Try again on its banner checks again.
+scenario host-down
+tap Check for updates
+wait-for The update server did not answer.
+expect Try again
+expect-missing Check for updates
+expect Channel and automatic updates
+shot settings-update-host-down
+scenario network-timeout
+tap Try again
+wait-for The update server did not answer.
+# A runtime that refuses Settings the network is not blamed on Wi-Fi.
+scenario permission-denied
+tap Try again
+wait-for Settings is not allowed to use the network
+expect-missing not on Wi-Fi
+shot settings-update-not-allowed
+# No Wi-Fi offers the way to join one, and the home row says the same.
+scenario offline
+tap Try again
+wait-for This reader is not on Wi-Fi.
+expect Join Wi-Fi
+expect Check again
+expect-missing Try again
+# Back from the Wi-Fi page it opens returns here, to check again.
+tap Join Wi-Fi
+wait-for-id toggle
+tap-id 4294967295
+wait-for This reader is not on Wi-Fi.
+tap-id 4294967295
+wait-for Settings
+maybe-tap-id previous
+tap-paged Not on Wi-Fi
+wait-for This reader is not on Wi-Fi.
+shot settings-update-offline-again
+tap Check again
+wait-for This reader is not on Wi-Fi.
+# Changing the channel starts over: the old channel's answer is cleared.
+scenario normal
+tap Channel and automatic updates
+tap-id channel-beta
+tap Use Beta updates
+wait-for Update Cobalt automatically
+tap-id 4294967295
+wait-for Check for updates
+expect-missing This reader is not on Wi-Fi.
+expect Beta · Cobalt and apps update on their own
+# A choice the runtime will not keep is said over the choices, and the
+# switch stays as it was. Once a later choice is kept, nothing on the
+# update screen should still report the refusal.
+scenario permission-denied
+tap Channel and automatic updates
+tap-id auto-apps
+wait-for Cobalt did not allow Settings to do that.
+shot settings-update-choice-refused
+scenario normal
+tap-id auto-apps
+wait-idle
+expect-missing Cobalt did not allow Settings to do that.
+tap-id 4294967295
+wait-for Beta · Cobalt updates on its own
+shot settings-update-after-refusal
+expect-missing Cobalt did not allow Settings to do that.
+expect Check for updates

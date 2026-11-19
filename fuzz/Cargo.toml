@@ -1,0 +1,90 @@
+[package]
+name = "cobalt-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Fuzz targets for the parsers that read what strangers send"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+kobo-doc = { path = "../crates/kobo-doc" }
+kobo-html = { path = "../crates/kobo-html" }
+kobo-json = { path = "../crates/kobo-json" }
+kobo-net = { path = "../crates/kobo-net" }
+kobo-opds = { path = "../crates/kobo-opds" }
+kobo-opml = { path = "../crates/kobo-opml" }
+kobo-protocol = { path = "../crates/kobo-protocol" }
+kobo-xml = { path = "../crates/kobo-xml" }
+
+# A workspace of its own. The targets build with the nightly compiler and link
+# the sanitizer runtime, neither of which the device workspace ever touches.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "json_parse"
+path = "fuzz_targets/json_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xml_scan"
+path = "fuzz_targets/xml_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_text"
+path = "fuzz_targets/html_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gzip_expand"
+path = "fuzz_targets/gzip_expand.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "url_parse"
+path = "fuzz_targets/url_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "document_read"
+path = "fuzz_targets/document_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_decode"
+path = "fuzz_targets/protocol_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opds_parse"
+path = "fuzz_targets/opds_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "opml_parse"
+path = "fuzz_targets/opml_parse.rs"
+test = false
+doc = false
+bench = false

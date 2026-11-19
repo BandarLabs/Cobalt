@@ -1,7 +1,7 @@
 //! Bounded host-side preparation for the Frame application's private shelf.
 
 use image::imageops::{overlay, resize, FilterType};
-use image::{DynamicImage, GrayImage, ImageDecoder, ImageEncoder, ImageReader};
+use image::{DynamicImage, ImageBuffer, ImageDecoder, ImageEncoder, ImageReader};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
@@ -12,7 +12,13 @@ use std::time::UNIX_EPOCH;
 pub const DEFAULT_PANEL: Panel = Panel {
     width: 1072,
     height: 1448,
+    colour: false,
 };
+/// The JPEG quality a colour photograph is prepared at. High enough that the
+/// compression is not what a Kaleido panel's own filter and sixteen levels
+/// per channel will hide anyway, low enough to keep a full panel well under
+/// the shelf ceiling.
+pub const COLOUR_JPEG_QUALITY: u8 = 88;
 pub const MAX_PHOTOS: usize = 500;
 pub const MAX_SOURCE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_SOURCE_PIXELS: u64 = 50_000_000;
@@ -20,11 +26,20 @@ pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_FRAME_CAPACITY: usize = 150 * 1024 * 1024;
 pub const MANIFEST: &str = "manifest.v1";
 pub const MANIFEST_HEADER: &str = "cobalt-frame-v1";
+/// Sidecar recording each photo's panel fit; older app builds ignore it.
+pub const FIT_MANIFEST: &str = "fit.v1";
+/// Sidecar recording the digest of each pushed photo's shelf bytes, so the
+/// reader can verify a transfer; older app builds ignore it.
+pub const DIGEST_MANIFEST: &str = "digests.v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Panel {
     pub width: u32,
     pub height: u32,
+    /// Whether the reader's panel shows colour, from its profile. A
+    /// photograph for a colour reader keeps its colour; one for a greyscale
+    /// reader is reduced to grey here, on the computer, as it always was.
+    pub colour: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -45,6 +60,65 @@ impl Fit {
             _ => Err("--fit must be crop or pad".to_owned()),
         }
     }
+}
+
+/// Encode the per-photo fit sidecar as `id<TAB>crop|pad` lines, ordered by id.
+#[must_use]
+pub fn encode_fit_map(map: &BTreeMap<String, Fit>) -> Vec<u8> {
+    let mut output = String::new();
+    for (id, fit) in map {
+        let value = match fit {
+            Fit::Crop => "crop",
+            Fit::Pad => "pad",
+        };
+        let _ = writeln!(output, "{id}\t{value}");
+    }
+    output.into_bytes()
+}
+
+/// Decode a fit sidecar, skipping lines that are not `id<TAB>crop|pad`.
+#[must_use]
+pub fn decode_fit_map(bytes: &[u8]) -> BTreeMap<String, Fit> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return BTreeMap::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (id, fit) = line.split_once('\t')?;
+            if !valid_id(id) {
+                return None;
+            }
+            Fit::parse(fit).ok().map(|fit| (id.to_owned(), fit))
+        })
+        .collect()
+}
+
+/// Encode the transfer-digest sidecar as `id<TAB>hex` lines, ordered by id.
+#[must_use]
+pub fn encode_digest_map(map: &BTreeMap<String, String>) -> Vec<u8> {
+    let mut output = String::new();
+    for (id, digest) in map {
+        let _ = writeln!(output, "{id}\t{digest}");
+    }
+    output.into_bytes()
+}
+
+/// Decode a transfer-digest sidecar, skipping lines that are not
+/// `id<TAB>64 hex digits`.
+#[must_use]
+pub fn decode_digest_map(bytes: &[u8]) -> BTreeMap<String, String> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return BTreeMap::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (id, digest) = line.split_once('\t')?;
+            (valid_id(id)
+                && digest.len() == 64
+                && digest.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .then(|| (id.to_owned(), digest.to_owned()))
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -132,7 +206,13 @@ impl Manifest {
 #[derive(Clone, Debug)]
 pub struct PreparedPhoto {
     pub photo: Photo,
+    /// The bytes of the shelf entry, when this push carries them: a PNG for a
+    /// greyscale reader, a JPEG for a colour one, under the entry's `.png`
+    /// name either way; see `encode`.
     pub png: Option<Vec<u8>>,
+    /// Digest of the prepared shelf bytes; `None` when the photo was
+    /// already on the shelf and its bytes were not re-prepared.
+    pub shelf_digest: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -167,13 +247,42 @@ pub fn prepare_for_panel(
     delete_missing: bool,
     panel: Panel,
 ) -> Result<Push, String> {
+    prepare_for_panel_excluding(
+        input,
+        fit,
+        existing,
+        delete_missing,
+        panel,
+        &BTreeSet::new(),
+    )
+}
+
+/// The same preparation, skipping input files by relative name. A publisher
+/// that keeps its shelf inside the source folder uses this to leave its own
+/// manifest, sidecars and previously prepared photos out of the next walk.
+///
+/// # Errors
+///
+/// Returns an error when the panel dimensions or prepared shelf are invalid.
+#[allow(clippy::too_many_lines)]
+pub fn prepare_for_panel_excluding(
+    input: &Path,
+    fit: Fit,
+    existing: &Manifest,
+    delete_missing: bool,
+    panel: Panel,
+    exclude: &BTreeSet<String>,
+) -> Result<Push, String> {
     if panel.width == 0
         || panel.height == 0
         || u64::from(panel.width) * u64::from(panel.height) > 8_000_000
     {
         return Err("Frame received unsupported panel dimensions".to_owned());
     }
-    let paths = input_paths(input)?;
+    let paths = input_paths_excluding(input, exclude)?;
+    if paths.is_empty() && !delete_missing {
+        return Err(format!("{} has no supported images", input.display()));
+    }
     if paths.len() > MAX_PHOTOS {
         return Err(format!(
             "{} has {} supported images; Frame accepts at most {MAX_PHOTOS}",
@@ -204,6 +313,7 @@ pub fn prepare_for_panel(
             prepared.push(PreparedPhoto {
                 photo: (*old).clone(),
                 png: None,
+                shelf_digest: None,
             });
             continue;
         }
@@ -226,6 +336,7 @@ pub fn prepare_for_panel(
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("{} has no UTF-8 file name", path.display()))?
             .to_owned();
+        let shelf_digest = blake3::hash(&png).to_hex().to_string();
         prepared.push(PreparedPhoto {
             photo: Photo {
                 id,
@@ -235,6 +346,7 @@ pub fn prepare_for_panel(
                 name,
             },
             png: Some(png),
+            shelf_digest: Some(shelf_digest),
         });
     }
     let wanted = prepared
@@ -293,7 +405,7 @@ pub fn prepare_for_panel(
     })
 }
 
-fn input_paths(input: &Path) -> Result<Vec<PathBuf>, String> {
+fn input_paths_excluding(input: &Path, exclude: &BTreeSet<String>) -> Result<Vec<PathBuf>, String> {
     let metadata =
         fs::metadata(input).map_err(|error| format!("read {}: {error}", input.display()))?;
     let mut paths = Vec::new();
@@ -302,6 +414,12 @@ fn input_paths(input: &Path) -> Result<Vec<PathBuf>, String> {
         paths.push(input.to_path_buf());
     } else if metadata.is_dir() {
         collect(input, &mut paths)?;
+        paths.retain(|path| {
+            path.strip_prefix(input)
+                .ok()
+                .and_then(|relative| relative.to_str())
+                .is_none_or(|relative| !exclude.contains(relative))
+        });
     } else {
         return Err(format!(
             "{} is not a regular file or directory",
@@ -309,9 +427,6 @@ fn input_paths(input: &Path) -> Result<Vec<PathBuf>, String> {
         ));
     }
     paths.sort();
-    if paths.is_empty() {
-        return Err(format!("{} has no supported images", input.display()));
-    }
     Ok(paths)
 }
 
@@ -421,8 +536,30 @@ fn decode(path: &Path, bytes: &[u8]) -> Result<DynamicImage, String> {
     Ok(image)
 }
 
-fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> GrayImage {
-    let source = image.to_luma8();
+/// Fits the photograph to the panel, in colour for a panel that shows it and
+/// in grey for one that does not.
+///
+/// The geometry is the same either way; only the pixel type differs, so the
+/// work is done once, generically, and the caller gets whichever plane the
+/// reader can use. A grey reader never pays for colour it cannot show, and a
+/// colour reader is not handed a photograph with the colour already gone.
+fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> DynamicImage {
+    if panel.colour {
+        fit_buffer(&image.to_rgb8(), fit, panel, image::Rgb([255, 255, 255])).into()
+    } else {
+        fit_buffer(&image.to_luma8(), fit, panel, image::Luma([255])).into()
+    }
+}
+
+fn fit_buffer<P>(
+    source: &ImageBuffer<P, Vec<u8>>,
+    fit: Fit,
+    panel: Panel,
+    paper: P,
+) -> ImageBuffer<P, Vec<u8>>
+where
+    P: image::Pixel<Subpixel = u8> + 'static,
+{
     let (width, height) = source.dimensions();
     match fit {
         Fit::Crop => {
@@ -445,7 +582,7 @@ fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> GrayImage {
                     panel.height,
                 )
             };
-            let scaled = resize(&source, target_width, target_height, FilterType::Lanczos3);
+            let scaled = resize(source, target_width, target_height, FilterType::Lanczos3);
             image::imageops::crop_imm(
                 &scaled,
                 (target_width - panel.width) / 2,
@@ -473,8 +610,8 @@ fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> GrayImage {
                     panel.height,
                 )
             };
-            let scaled = resize(&source, target_width, target_height, FilterType::Lanczos3);
-            let mut canvas = GrayImage::from_pixel(panel.width, panel.height, image::Luma([255]));
+            let scaled = resize(source, target_width, target_height, FilterType::Lanczos3);
+            let mut canvas = ImageBuffer::from_pixel(panel.width, panel.height, paper);
             overlay(
                 &mut canvas,
                 &scaled,
@@ -486,24 +623,49 @@ fn fit_image(image: &DynamicImage, fit: Fit, panel: Panel) -> GrayImage {
     }
 }
 
-fn encode(image: &GrayImage, panel: Panel) -> Result<Vec<u8>, String> {
-    let mut png = Vec::new();
-    image::codecs::png::PngEncoder::new(&mut png)
-        .write_image(
-            image.as_raw(),
-            panel.width,
-            panel.height,
-            image::ExtendedColorType::L8,
-        )
-        .map_err(|error| format!("encode Frame image: {error}"))?;
-    if png.len() > MAX_FRAME_BYTES {
+/// Writes the fitted photograph as the shelf will hold it.
+///
+/// Grey goes out as a PNG, exactly as it always has. Colour goes out as a
+/// JPEG at a quality a photograph does not show, because a colour PNG of a
+/// full panel runs to several megabytes and would fail the ceiling below for
+/// most photographs, and because the shelf is 150 MB for an album. The entry
+/// keeps the `.png` name whichever it holds: the application asks for the
+/// entry by that name, every build of it ever shipped reads the bytes rather
+/// than the name, and a reader with an older Frame still shows the picture,
+/// in grey.
+fn encode(image: &DynamicImage, panel: Panel) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    match image {
+        DynamicImage::ImageRgb8(colour) => {
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, COLOUR_JPEG_QUALITY)
+                .write_image(
+                    colour.as_raw(),
+                    panel.width,
+                    panel.height,
+                    image::ExtendedColorType::Rgb8,
+                )
+                .map_err(|error| format!("encode Frame image: {error}"))?;
+        }
+        other => {
+            let grey = other.to_luma8();
+            image::codecs::png::PngEncoder::new(&mut bytes)
+                .write_image(
+                    grey.as_raw(),
+                    panel.width,
+                    panel.height,
+                    image::ExtendedColorType::L8,
+                )
+                .map_err(|error| format!("encode Frame image: {error}"))?;
+        }
+    }
+    if bytes.len() > MAX_FRAME_BYTES {
         return Err(format!(
             "prepared Frame image is {} MB; the device accepts at most {} MB",
-            png.len() / (1024 * 1024),
+            bytes.len() / (1024 * 1024),
             MAX_FRAME_BYTES / (1024 * 1024)
         ));
     }
-    Ok(png)
+    Ok(bytes)
 }
 
 fn valid_id(id: &str) -> bool {
@@ -522,16 +684,64 @@ fn field(value: &str) -> String {
         .collect()
 }
 
+/// The album a push files its photos under: the folder they came from.
+///
+/// A single photo belongs to the folder it was sent from too. Named after the
+/// file itself, a one-photo push became an album called `IMG_2041.jpg`,
+/// which reads as a file name rather than an album.
 fn album_name(input: &Path) -> String {
-    input
-        .file_name()
-        .or_else(|| input.parent().and_then(Path::file_name))
+    let resolved = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
+    let folder = if resolved.is_file() {
+        resolved.parent().map(Path::to_path_buf)
+    } else {
+        Some(resolved)
+    };
+    folder
+        .as_deref()
+        .and_then(Path::file_name)
         .and_then(|name| name.to_str())
         .map_or_else(|| "Photos".to_owned(), field)
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_single_photo_is_filed_under_the_folder_it_came_from() {
+        let folder = std::env::temp_dir().join(format!("Summer holiday {}", std::process::id()));
+        std::fs::create_dir_all(&folder).expect("folder");
+        let photo = folder.join("IMG_2041.jpg");
+        std::fs::write(&photo, b"x").expect("photo");
+        let expected = folder
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("name")
+            .to_owned();
+        assert_eq!(super::album_name(&photo), expected);
+        assert_eq!(super::album_name(&folder), expected);
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
+    #[test]
+    fn digest_map_round_trips() {
+        let digest = "a".repeat(64);
+        let map = BTreeMap::from([("photo-aaaa".to_owned(), digest.clone())]);
+        let encoded = encode_digest_map(&map);
+        assert_eq!(encoded, format!("photo-aaaa\t{digest}\n").into_bytes());
+        assert_eq!(decode_digest_map(&encoded), map);
+        assert!(decode_digest_map(b"photo-aaaa\tnothex\n").is_empty());
+        assert!(decode_digest_map(b"../bad\tabcdef\n").is_empty());
+    }
+
+    #[test]
+    fn fit_map_round_trips() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("photo-bbbb".to_owned(), Fit::Pad);
+        map.insert("photo-aaaa".to_owned(), Fit::Crop);
+        let encoded = encode_fit_map(&map);
+        assert_eq!(encoded, b"photo-aaaa\tcrop\nphoto-bbbb\tpad\n".to_vec());
+        assert_eq!(decode_fit_map(&encoded), map);
+    }
+
     use super::*;
     use image::{GenericImageView, ImageBuffer, Rgb};
 
@@ -587,6 +797,58 @@ mod tests {
     }
 
     #[test]
+    fn a_colour_panel_keeps_the_photographs_colour_and_a_grey_one_does_not() {
+        let root = std::env::temp_dir().join(format!("frame-host-colour-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("dir");
+        let input = root.join("landscape.png");
+        fixture(&input, 400, 200);
+        let colour = Panel {
+            colour: true,
+            ..DEFAULT_PANEL
+        };
+        for fit in [Fit::Crop, Fit::Pad] {
+            let push = prepare_for_panel(&input, fit, &Manifest::default(), false, colour)
+                .expect("prepare");
+            let bytes = push.photos[0].png.as_ref().expect("new image");
+            let decoded = image::load_from_memory(bytes).expect("output");
+            assert_eq!(decoded.dimensions(), (colour.width, colour.height));
+            assert!(bytes.len() <= MAX_FRAME_BYTES);
+            // The gradient fixture is coloured, so a prepared photograph that
+            // kept its colour has pixels whose channels differ.
+            let rgb = decoded.to_rgb8();
+            assert!(
+                rgb.pixels()
+                    .any(|pixel| pixel[0] != pixel[1] || pixel[1] != pixel[2]),
+                "the colour was lost on the way to a colour panel"
+            );
+            // And it is a JPEG, not a PNG, which is what keeps it under the
+            // ceiling: the entry's name says png and the bytes say otherwise,
+            // deliberately; see `encode`.
+            assert_eq!(&bytes[..2], &[0xFF, 0xD8], "not a JPEG");
+        }
+        let grey = prepare_for_panel(
+            &input,
+            Fit::Crop,
+            &Manifest::default(),
+            false,
+            DEFAULT_PANEL,
+        )
+        .expect("prepare");
+        let bytes = grey.photos[0].png.as_ref().expect("new image");
+        assert_eq!(
+            &bytes[..4],
+            b"\x89PNG",
+            "a grey reader's photograph is still a PNG"
+        );
+        assert_eq!(
+            image::load_from_memory(bytes).expect("output").color(),
+            image::ColorType::L8
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
     fn preparation_uses_the_selected_reader_panel() {
         let root =
             std::env::temp_dir().join(format!("frame-host-other-panel-{}", std::process::id()));
@@ -597,6 +859,7 @@ mod tests {
         let panel = Panel {
             width: 1264,
             height: 1680,
+            colour: false,
         };
         let push =
             prepare_for_panel(&input, Fit::Crop, &Manifest::default(), false, panel).expect("push");

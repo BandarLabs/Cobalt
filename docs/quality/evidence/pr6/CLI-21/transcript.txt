@@ -1,0 +1,34 @@
+stores under KOBO_CONFIG_DIR=/tmp/kobo-batch7-report: readers (clara/beckett) and receipts (real frame/subs sends) written by real earlier CLI runs; pending-send written by the real failed send in this session
+
+=== kobo report --out report.txt (default: redacted) ===
+report written to /tmp/report.txt
+Cobalt diagnostic report
+kobo 0.3.18
+os: linux x86_64
+redacted: file contents, book and photo names, trust material, keys, full serials, file paths
+
+saved readers: 2
+  clara (serial N365…, paired: yes)
+  beckett (serial N418…, paired: no)
+completed setup steps: 
+sends on record: 3
+  (a file) -> sim (frame)
+  (a file) -> sim (frame)
+  (a file) -> sim (frame)
+a send is waiting to be retried (frame)
+=== redaction checks on the exported file (must print 0 0 0) ===
+0
+0
+0
+
+=== kobo report --include-paths to stdout (explicit; names the sent files and the waiting target) ===
+  /tmp/send-photo3.png -> sim (frame)
+  /tmp/send-photo3.png -> sim (frame)
+  /tmp/send-photo3.png -> sim (frame)
+a send is waiting to be retried: to --device 127.0.0.1 (frame)
+
+=== bare kobo report prints its usage (repo convention for bare subcommands) ===
+usage: kobo report [--out FILE] [--include-paths]
+       A diagnostic snapshot for a helper: versions, counts and kinds.
+       Never file contents, trust material, keys or full serials;
+       paths only when --include-paths is given.

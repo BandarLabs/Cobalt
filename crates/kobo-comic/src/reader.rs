@@ -17,6 +17,9 @@ pub struct Memory {
     pub page: usize,
     pub right_to_left: bool,
     pub spreads: bool,
+    /// Whether the page has the panel to itself, with the bar waiting at the
+    /// top edge rather than sitting above the art.
+    pub full_page: bool,
     pub viewport: Viewport,
 }
 impl Memory {
@@ -26,6 +29,9 @@ impl Memory {
             page: 0,
             right_to_left: comic.metadata.right_to_left.unwrap_or(false),
             spreads: false,
+            // The art has the panel unless the reader asks for the bar, as a
+            // book's pages do.
+            full_page: true,
             viewport: Viewport::default(),
         }
     }
@@ -49,6 +55,7 @@ impl Memory {
             .set("anchor", anchor.as_str())
             .set("rtl", self.right_to_left)
             .set("spreads", self.spreads)
+            .set("full", self.full_page)
             .set(
                 "fit",
                 match self.viewport.fit {
@@ -99,6 +106,7 @@ impl Memory {
             page: 0,
             right_to_left: false,
             spreads: false,
+            full_page: true,
             viewport: Viewport::default(),
         };
         Ok(Self::decode_saved(bytes, &default)?.map(|(memory, _)| memory.page.min(pages - 1)))
@@ -165,6 +173,12 @@ impl Memory {
                 page,
                 right_to_left: boolean("rtl")?,
                 spreads: boolean("spreads")?,
+                // Read without insisting on it. Every position saved before
+                // this setting existed has no such key, and `boolean` treats a
+                // missing key as a record it cannot understand, so requiring
+                // it here would lose the reader's place in every comic they
+                // had open.
+                full_page: value.get("full").and_then(Value::as_bool).unwrap_or(true),
                 viewport: Viewport::new(
                     fit,
                     u16::try_from(zoom).map_err(|_| "Invalid zoom.")?,
@@ -318,8 +332,21 @@ impl Reader {
     /// # Errors
     /// Returns the same page errors as normal reading.
     pub fn thumbnail(&mut self, index: usize) -> Result<Picture, ComicError> {
+        self.thumbnail_within(index, 160, 240)
+    }
+    /// A page fitted inside `width` by `height`, for a page list that has
+    /// room for more than a stamp.
+    ///
+    /// # Errors
+    /// Returns the page's decode or resize error.
+    pub fn thumbnail_within(
+        &mut self,
+        index: usize,
+        width: u32,
+        height: u32,
+    ) -> Result<Picture, ComicError> {
         self.decoded(index)?
-            .fit(160, 240)
+            .fit(width.max(1), height.max(1))
             .map_err(|error| ComicError::Image(error.to_string()))
     }
     #[must_use]
@@ -331,6 +358,39 @@ impl Reader {
 #[cfg(test)]
 mod summary_tests {
     use super::*;
+    #[test]
+    fn a_position_saved_before_the_full_page_setting_still_opens() {
+        // The decoder treats a missing key as a record it cannot understand,
+        // so a setting read the same way as the others would have thrown away
+        // the reader's place in every comic they already had open. This one is
+        // read without insisting on it.
+        let comic = Comic {
+            pages: vec!["one.png".into(), "two.png".into()],
+            metadata: crate::Metadata::default(),
+        };
+        let mut memory = Memory::new(&comic);
+        memory.page = 1;
+        let saved = String::from_utf8(memory.encode(&comic).unwrap()).unwrap();
+        let older = saved.replace("\"full\":true,", "");
+        assert!(
+            !older.contains("\"full\""),
+            "the fixture must be a record from before the setting existed"
+        );
+        let (restored, _) = Memory::decode_saved(Some(older.as_bytes()), &memory)
+            .expect("an older record still opens")
+            .expect("and carries its page");
+        assert_eq!(restored.page, 1, "the reader keeps their place");
+        assert!(restored.full_page, "and the page has the panel");
+
+        // A record written now carries the choice, and carries it back.
+        memory.full_page = false;
+        let bytes = memory.encode(&comic).unwrap();
+        let (restored, _) = Memory::decode_saved(Some(&bytes), &memory)
+            .unwrap()
+            .unwrap();
+        assert!(!restored.full_page);
+    }
+
     #[test]
     fn saved_page_uses_the_readers_validation_and_preserves_missing_state() {
         let comic = Comic {

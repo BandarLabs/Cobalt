@@ -1,0 +1,6 @@
+expect 10+5
+expect Rapid · Casual
+expect-missing Rated
+expect Cancel pairing
+clean
+shot pairing-casual

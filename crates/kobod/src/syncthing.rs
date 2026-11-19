@@ -8,13 +8,17 @@ use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const APP_STATE: &str = "/mnt/onboard/.adds/cobalt/state/syncthing";
 const HOME: &str = "/var/lib/cobalt/syncthing";
+/// Left in the engine's home by a session that is ending, so the window it
+/// started, running in a process of its own, ends with it.
+const STOP: &str = "stop-window";
 const ENGINE: &str = "/mnt/onboard/.adds/cobalt/bin/syncthing";
 const ENGINE_SHA256: &str = "e7e0523d8db0328b22ebff5c98bd721c94e295122771c0538414898a06ef8ebf";
 
@@ -30,9 +34,19 @@ const ENGINE_URL: &str =
 /// The most the engine download may be. The reviewed artifact is 27.9 MB.
 const ENGINE_LIMIT: u32 = 48 * 1024 * 1024;
 const SYNC_ROOT: &str = "/mnt/onboard/.adds/cobalt/sync";
+const VAULT_DATA: &str = "/mnt/onboard/.adds/cobalt/data/vault";
+const FRAME_DATA: &str = "/mnt/onboard/.adds/cobalt/data/frame";
 const MAX_WINDOW: Duration = Duration::from_secs(5 * 60);
 const TAIL_WINDOW: Duration = Duration::from_secs(90);
 const POLL: Duration = Duration::from_secs(2);
+
+/// What the Sync app saves when the owner asks for a sync now. Its presence is
+/// the whole request; the window that answers it removes it.
+const REQUEST: &str = "sync-request";
+/// When the last window began, whatever became of it. The schedule counts from
+/// here rather than from the last success, so a computer that is switched off
+/// costs one attempt per interval instead of one every time the runtime looks.
+const LAST_ATTEMPT: &str = "sync-last-attempt";
 
 const FOLDERS: [(&str, &str); 4] = [
     ("vault", "receiveonly"),
@@ -94,7 +108,7 @@ impl Settings {
     }
 }
 
-/// `kobod --syncthing id|pair DEVICE_ID FOLDER|status|window [seconds]|tail|scheduled|stop`.
+/// `kobod --syncthing id|pair DEVICE_ID FOLDER|status|window [seconds]|tail|scheduled|now|stop`.
 pub fn command(arguments: &[String]) -> Result<(), String> {
     let state = Path::new(APP_STATE);
     match arguments {
@@ -120,11 +134,12 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             if let Ok(key) = fs::read_to_string(Path::new(HOME).join("api-key")) {
                 let _ignored = rest_shutdown(key.trim());
             }
-            write_status(state, "stopped\n0\nStopped by the owner.")?;
+            write_status(state, &Status::quiet("stopped", "Stopped by the owner."))?;
             Ok(())
         }
         [action] if action == "tail" => run_window(state, TAIL_WINDOW, "tail"),
         [action] if action == "scheduled" => run_window(state, MAX_WINDOW, "scheduled"),
+        [action] if action == "now" => run_window(state, MAX_WINDOW, "owner"),
         [action, seconds] if action == "window" => {
             let seconds = seconds
                 .parse::<u64>()
@@ -136,40 +151,190 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             )
         }
         _ => Err(
-            "usage: kobod --syncthing id|pair DEVICE_ID vault|frame|books|out|status|stop|tail|scheduled|window SECONDS"
+            "usage: kobod --syncthing id|pair DEVICE_ID vault|frame|books|out|status|stop|tail|scheduled|now|window SECONDS"
                 .to_owned(),
         ),
     }
 }
 
+/// Why the runtime should start a window now, if it should.
+///
+/// Only the device runtime starts windows; a host build of `kobod` carries
+/// this module for its `--syncthing` commands and never asks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub enum Due {
+    /// The owner tapped Sync now, or turned Sync on.
+    Owner,
+    /// The schedule the owner chose has come round.
+    Scheduled,
+}
+
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+impl Due {
+    /// The `kobod` arguments that run this window in a process of its own.
+    ///
+    /// A process rather than a thread, because a window outlives the session
+    /// that started it: the reader may hand back to the stock reader a minute
+    /// into a five minute sync, and a thread would die with the runtime and
+    /// leave the engine running with nobody to stop it.
+    pub const fn arguments(self) -> [&'static str; 2] {
+        match self {
+            Self::Owner => ["--syncthing", "now"],
+            Self::Scheduled => ["--syncthing", "scheduled"],
+        }
+    }
+}
+
+/// Asks the window this session started to stop, because the session is
+/// ending.
+///
+/// A window used to outlive its session on purpose, so a sync begun a minute
+/// before the owner left could finish. What it finished into was a card the
+/// stock reader had just started scanning, a single core the stock reader
+/// needed to start, and a radio the session was about to release. Plugged
+/// into a computer in those five minutes, the reader handed its card over
+/// with the engine still writing to it. So a window ends with its session,
+/// and the sync carries on the next time Cobalt opens.
+///
+/// # Errors
+///
+/// When the request cannot be written; the session then ends the window
+/// itself once it has waited.
+pub fn ask_window_to_stop() -> std::io::Result<()> {
+    fs::write(Path::new(HOME).join(STOP), b"")
+}
+
+/// Puts back a sync whose window the session had to end before it could do
+/// so itself, so it runs again at the next session.
+///
+/// # Errors
+///
+/// When the app's state cannot be written.
+pub fn put_back(due: Due) -> Result<(), String> {
+    let reason = match due {
+        Due::Owner => "owner",
+        Due::Scheduled => "scheduled",
+    };
+    stopped_with_the_session(Path::new(APP_STATE), Path::new(HOME), reason)
+}
+
+/// Clears a request left by a session that ended before its window saw it,
+/// so the next window is not stopped by it as it starts.
+pub fn forget_stop_request() {
+    let _ignored = fs::remove_file(Path::new(HOME).join(STOP));
+}
+
+/// Whether a window is due, read from what the Sync app and earlier windows
+/// left in the app's state.
+///
+/// Nothing on the reader wakes it from sleep yet, so this is asked while
+/// Cobalt is open. An owner's request comes first. A schedule is due once its
+/// interval has passed since the last attempt, or straight away if there has
+/// never been one, so turning Sync on with a schedule starts a sync at once.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub fn due() -> Option<Due> {
+    due_in(Path::new(APP_STATE), epoch_now())
+}
+
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+fn due_in(app_state: &Path, now: u64) -> Option<Due> {
+    let settings = Settings::load(app_state).ok()?;
+    if !settings.enabled {
+        return None;
+    }
+    if app_state.join(REQUEST).is_file() {
+        return Some(Due::Owner);
+    }
+    let interval = u64::from(settings.cadence.seconds()?);
+    let last = read_epoch(app_state, LAST_ATTEMPT);
+    (last == 0 || now >= last.saturating_add(interval)).then_some(Due::Scheduled)
+}
+
+/// Whether a store key the Sync app just saved may have made a window due.
+///
+/// The runtime looks at the schedule once a minute. These two are looked at
+/// at once, because they are taps: Sync now, and Sync turned on or its
+/// schedule changed.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub fn asks_for_a_window(key: &str) -> bool {
+    key == REQUEST || key == "sync-config"
+}
+
+/// Tells the Sync app why the sync it asked for has not started.
+///
+/// The request is kept, so the sync starts by itself once the reader is on
+/// Wi-Fi. Written once rather than every time the runtime looks, because each
+/// write wakes the app to show the same thing again.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub fn waiting_for_wifi() {
+    let app_state = Path::new(APP_STATE);
+    if read_status(app_state).lines().next() == Some("offline") {
+        return;
+    }
+    let _ignored = write_status(
+        app_state,
+        &Status::quiet(
+            "offline",
+            "Sync is waiting for Wi-Fi. It starts by itself when the reader is online.",
+        ),
+    );
+}
+
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+fn read_epoch(app_state: &Path, name: &str) -> u64 {
+    fs::read_to_string(app_state.join(name))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
 fn run_window(app_state: &Path, requested: Duration, reason: &str) -> Result<(), String> {
     let settings = Settings::load(app_state)?;
     if !settings.enabled {
-        write_status(app_state, "disabled\n0\nSync is off.")?;
+        write_status(app_state, &Status::quiet("disabled", "Sync is off."))?;
         return Ok(());
     }
     if !window_is_due(&settings, reason) {
-        write_status(app_state, "waiting\n0\nManual sync only.")?;
+        write_status(
+            app_state,
+            &Status::quiet("waiting", "Sync runs only when you tap Sync now."),
+        )?;
         return Ok(());
     }
     let home = Path::new(HOME);
-    prepare(home)?;
+    if !begin_window(app_state, home)? {
+        return Ok(());
+    }
+    if let Err(detail) = prepare(home) {
+        write_status(app_state, &Status::quiet("failed", detail))?;
+        return Ok(());
+    }
+    // Fetching the engine can take most of a short session.
+    if home.join(STOP).exists() {
+        return stopped_with_the_session(app_state, home, reason);
+    }
     let mut child = match start(home) {
         Ok(child) => child,
         Err(detail) => {
-            write_status(app_state, &format!("failed\n0\n{detail}"))?;
+            write_status(app_state, &Status::quiet("failed", detail))?;
             return Ok(());
         }
     };
-    write_status(app_state, "running\n0\nSyncing folders.")?;
+    write_status(app_state, &Status::quiet("running", "Syncing folders."))?;
     let deadline = Instant::now() + requested;
     let key = fs::read_to_string(home.join("api-key"))
         .map_err(|error| format!("read Sync REST key: {error}"))?;
     let peers = read_peers(home)?;
+    let mut reached = 0;
     loop {
+        if home.join(STOP).exists() {
+            stop(&mut child, &key);
+            return stopped_with_the_session(app_state, home, reason);
+        }
         if !Settings::load(app_state)?.enabled {
             stop(&mut child, &key);
-            write_status(app_state, "paused\n0\nPaused by the owner.")?;
+            write_status(app_state, &Status::quiet("paused", "Sync was turned off."))?;
             return Ok(());
         }
         if child
@@ -179,30 +344,119 @@ fn run_window(app_state: &Path, requested: Duration, reason: &str) -> Result<(),
         {
             write_status(
                 app_state,
-                "failed\n0\nSync engine stopped. Install the platform update again.",
+                &Status::quiet(
+                    "failed",
+                    "The sync engine stopped unexpectedly. Tap Sync now to try again.",
+                ),
             )?;
             return Ok(());
         }
         match folder_state(&key, &peers) {
-            Ok(FolderState::Idle) => {
+            Ok(progress) if progress.idle && progress.conflicts > 0 => {
                 stop(&mut child, &key);
-                write_status(app_state, "idle\n0\nLast sync: complete.")?;
+                conflict_window(app_state, &progress)?;
                 return Ok(());
             }
-            Ok(FolderState::Working(bytes)) => {
-                write_status(app_state, &format!("running\n{bytes}\nSyncing folders."))?;
+            Ok(progress) if progress.idle => {
+                stop(&mut child, &key);
+                complete_window(app_state, &progress)?;
+                return Ok(());
             }
-            Err(detail) => write_status(app_state, &format!("running\n0\n{detail}"))?,
+            Ok(progress) => {
+                reached = reached.max(progress.online);
+                write_status(
+                    app_state,
+                    &Status {
+                        state: "running",
+                        bytes: progress.bytes,
+                        message: "Syncing folders.".to_owned(),
+                        peers: progress.online,
+                        conflicts: progress.conflicts,
+                    },
+                )?;
+            }
+            Err(detail) => write_status(app_state, &Status::quiet("running", detail))?,
         }
         if Instant::now() >= deadline {
             stop(&mut child, &key);
-            write_status(
-                app_state,
-                "timed-out\n0\nSync window ended after five minutes.",
-            )?;
+            write_status(app_state, &timed_out(reached))?;
             return Ok(());
         }
         std::thread::sleep(POLL);
+    }
+}
+
+/// Puts a sync its session stopped back to be run again, and says so.
+///
+/// The attempt is taken back, so the next session syncs as soon as it is on
+/// Wi-Fi instead of waiting out the schedule for a sync that never finished,
+/// and a Sync now tap is asked for again. The engine picks up where it
+/// stopped, so a library too large for one session still gets there.
+fn stopped_with_the_session(app_state: &Path, home: &Path, reason: &str) -> Result<(), String> {
+    let _ignored = fs::remove_file(home.join(STOP));
+    match fs::remove_file(app_state.join(LAST_ATTEMPT)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("take back the Sync attempt: {error}")),
+    }
+    if reason == "owner" {
+        atomic_write(&app_state.join(REQUEST), &epoch_now().to_string(), 0o600)?;
+    }
+    write_status(
+        app_state,
+        &Status::quiet(
+            "stopped",
+            "Sync stopped when you left Cobalt. It carries on the next time you open Cobalt.",
+        ),
+    )
+}
+
+/// Records the attempt and answers the request, and says whether there is
+/// anybody to sync with.
+///
+/// The attempt is recorded before anything can fail, so a sync that cannot
+/// start is not retried every minute: it waits for the next interval or the
+/// next tap. Without a paired computer the answer is no, because five minutes
+/// of radio, or a 28 MB engine download, would buy nothing.
+fn begin_window(app_state: &Path, home: &Path) -> Result<bool, String> {
+    atomic_write(
+        &app_state.join(LAST_ATTEMPT),
+        &epoch_now().to_string(),
+        0o600,
+    )?;
+    match fs::remove_file(app_state.join(REQUEST)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("clear the Sync request: {error}")),
+    }
+    if read_peers(home)?.is_empty() {
+        write_status(
+            app_state,
+            &Status::quiet(
+                "unpaired",
+                "No computer is set up for Sync yet. On the computer, run kobo sync setup.",
+            ),
+        )?;
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+/// Why a sync that ran out of time did not finish, which is one of two very
+/// different things with different fixes.
+fn timed_out(reached: usize) -> Status {
+    Status {
+        peers: reached,
+        ..Status::quiet(
+            "timed-out",
+            if reached == 0 {
+                "The computer was not found. Run kobo sync run on it, keep both on the same \
+                 network, then tap Sync now."
+            } else {
+                "Sync stopped after five minutes with files still to move. The rest move \
+                 next time."
+            },
+        )
     }
 }
 
@@ -213,8 +467,15 @@ fn window_is_due(settings: &Settings, reason: &str) -> bool {
 }
 
 fn initialize(home: &Path) -> Result<(), String> {
+    // Fetched here, not only when a window starts: this is the first thing
+    // `kobo sync setup` asks of the reader, and verifying an engine that has
+    // never been downloaded failed every setup on a reader that had not
+    // synced before.
+    ensure_engine(Path::new(ENGINE))?;
     verify_engine(Path::new(ENGINE))?;
     fs::create_dir_all(home).map_err(|error| format!("create Sync state: {error}"))?;
+    // Windows has no mode bits; the user profile ACL scopes the directory.
+    #[cfg(unix)]
     fs::set_permissions(home, fs::Permissions::from_mode(0o700))
         .map_err(|error| format!("protect Sync state: {error}"))?;
     if !home.join("cert.pem").is_file() || !home.join("key.pem").is_file() {
@@ -246,11 +507,8 @@ fn prepare(home: &Path) -> Result<(), String> {
     }
     let key_path = home.join("api-key");
     if !key_path.exists() {
-        let mut entropy =
-            File::open("/dev/urandom").map_err(|error| format!("open entropy: {error}"))?;
         let mut bytes = [0_u8; 32];
-        entropy
-            .read_exact(&mut bytes)
+        kobo_abi::entropy::random_bytes(&mut bytes)
             .map_err(|error| format!("read entropy: {error}"))?;
         let mut key = String::with_capacity(bytes.len() * 2);
         for byte in bytes {
@@ -399,10 +657,14 @@ fn atomic_write(path: &Path, value: &str, mode: u32) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("remove stale {}: {error}", temporary.display())),
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.write_all(value.as_bytes())
@@ -413,7 +675,6 @@ fn atomic_write(path: &Path, value: &str, mode: u32) -> Result<(), String> {
 }
 
 fn start(home: &Path) -> Result<Child, String> {
-    ensure_engine(Path::new(ENGINE))?;
     verify_engine(Path::new(ENGINE))?;
     Command::new(ENGINE)
         .arg("--home")
@@ -455,11 +716,12 @@ fn ensure_engine(engine: &Path) -> Result<(), String> {
     // never leaves a partial file at a path the next run would take for an
     // installed engine and hand to `verify_engine` as a checksum failure.
     let partial = engine.with_extension("part");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o755)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    options.mode(0o755);
+    let mut file = options
         .open(&partial)
         .map_err(|error| format!("create Sync engine: {error}"))?;
     file.write_all(&bytes)
@@ -477,12 +739,16 @@ fn ensure_engine(engine: &Path) -> Result<(), String> {
 fn verify_engine(engine: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(engine)
         .map_err(|_| "Sync engine is not installed. Check Wi-Fi and try again.".to_owned())?;
-    if !metadata.file_type().is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.mode() & 0o111 == 0
-        || metadata.mode() & 0o022 != 0
-        || metadata.uid() != 0
-    {
+    // Ownership and permission hardening are Unix checks (root-owned, not
+    // group/world-writable, executable). std exposes neither owner nor mode
+    // on Windows, where the daemon does not run outside development; the
+    // digest pin below is the integrity check that still applies everywhere.
+    #[cfg(unix)]
+    let unsafe_metadata =
+        metadata.mode() & 0o111 == 0 || metadata.mode() & 0o022 != 0 || metadata.uid() != 0;
+    #[cfg(windows)]
+    let unsafe_metadata = false;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() || unsafe_metadata {
         return Err(
             "Sync engine is unsafe or corrupt. Install the platform update again.".to_owned(),
         );
@@ -528,6 +794,41 @@ fn sha256(path: &Path) -> Result<String, String> {
         }))
 }
 
+fn conflict_window(app_state: &Path, progress: &WindowProgress) -> Result<(), String> {
+    write_status(
+        app_state,
+        &Status {
+            state: "conflict",
+            bytes: 0,
+            message: format!(
+                "{} file(s) could not sync. Sync tries them again next time.",
+                progress.conflicts
+            ),
+            peers: progress.online,
+            conflicts: progress.conflicts,
+        },
+    )
+}
+
+fn complete_window(app_state: &Path, progress: &WindowProgress) -> Result<(), String> {
+    let now = epoch_now();
+    record_success(app_state, now)?;
+    let ingest_note = match ingest(app_state, now) {
+        Ok(note) => note,
+        Err(detail) => format!(" Some files were not imported: {detail}."),
+    };
+    write_status(
+        app_state,
+        &Status {
+            state: "idle",
+            bytes: 0,
+            message: format!("Sync finished.{ingest_note}"),
+            peers: progress.online,
+            conflicts: 0,
+        },
+    )
+}
+
 fn stop(child: &mut Child, key: &str) {
     let _ignored = rest_shutdown(key);
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -543,37 +844,55 @@ fn stop(child: &mut Child, key: &str) {
     let _ignored = child.wait();
 }
 
-enum FolderState {
-    Idle,
-    Working(u64),
+/// One probe across every folder and peer: how much is left, who is online,
+/// and how many files the engine has given up on for now.
+struct WindowProgress {
+    idle: bool,
+    bytes: u64,
+    online: usize,
+    conflicts: u64,
 }
 
-fn folder_state(key: &str, peers: &[Peer]) -> Result<FolderState, String> {
-    let mut transferred = 0_u64;
+struct FolderProbe {
+    idle: bool,
+    need_bytes: u64,
+    pull_errors: u64,
+}
+
+fn folder_state(key: &str, peers: &[Peer]) -> Result<WindowProgress, String> {
+    let mut idle = true;
+    let mut bytes = 0_u64;
+    let mut conflicts = 0_u64;
     for (name, _) in FOLDERS {
-        match one_folder_state(key, name)? {
-            FolderState::Idle => {}
-            FolderState::Working(bytes) => transferred = transferred.saturating_add(bytes),
-        }
+        let probe = one_folder_state(key, name)?;
+        idle = idle && probe.idle;
+        bytes = bytes.saturating_add(probe.need_bytes);
+        conflicts = conflicts.saturating_add(probe.pull_errors);
     }
+    let mut online = 0_usize;
     for peer in peers {
-        if !peer_connected(key, &peer.device_id)?
-            || !peer_complete(key, &peer.device_id, &peer.folder)?
-        {
-            transferred = transferred.max(1);
+        let connected = peer_connected(key, &peer.device_id)?;
+        if connected {
+            online += 1;
+        }
+        if !connected || !peer_complete(key, &peer.device_id, &peer.folder)? {
+            idle = false;
+            bytes = bytes.max(1);
         }
     }
     if peers.is_empty() {
-        transferred = 1;
+        idle = false;
+        bytes = bytes.max(1);
     }
-    if transferred == 0 {
-        Ok(FolderState::Idle)
-    } else {
-        Ok(FolderState::Working(transferred))
-    }
+    Ok(WindowProgress {
+        idle,
+        bytes,
+        online,
+        conflicts,
+    })
 }
 
-fn one_folder_state(key: &str, folder: &str) -> Result<FolderState, String> {
+fn one_folder_state(key: &str, folder: &str) -> Result<FolderProbe, String> {
     parse_folder_state(&rest_get(
         key,
         &format!("/rest/db/status?folder=kobo-{folder}"),
@@ -635,23 +954,33 @@ fn rest_get(key: &str, target: &str) -> Result<String, String> {
     Ok(answer)
 }
 
-fn parse_folder_state(answer: &str) -> Result<FolderState, String> {
+fn parse_folder_state(answer: &str) -> Result<FolderProbe, String> {
     let state = answer
         .split("\"state\":\"")
         .nth(1)
         .and_then(|value| value.split('"').next())
         .ok_or_else(|| "Sync engine returned an unreadable folder state.".to_owned())?;
-    if state == "idle" {
-        Ok(FolderState::Idle)
-    } else {
-        let bytes = answer
-            .split("\"needBytes\":")
+    let number = |field: &str| -> u64 {
+        answer
+            .split(field)
             .nth(1)
             .and_then(|value| value.split(|c: char| !c.is_ascii_digit()).next())
             .and_then(|value| value.parse().ok())
             .unwrap_or(0)
-            .max(1);
-        Ok(FolderState::Working(bytes))
+    };
+    let pull_errors = number("\"pullErrors\":");
+    if state == "idle" {
+        Ok(FolderProbe {
+            idle: true,
+            need_bytes: 0,
+            pull_errors,
+        })
+    } else {
+        Ok(FolderProbe {
+            idle: false,
+            need_bytes: number("\"needBytes\":").max(1),
+            pull_errors,
+        })
     }
 }
 
@@ -664,14 +993,248 @@ fn rest_shutdown(key: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn write_status(root: &Path, status: &str) -> Result<(), String> {
+/// One line in the app-facing status, in the order the Sync app reads them.
+/// The first three lines are the original contract; an older app ignores the
+/// rest, and a newer app defaults what an older supervisor never wrote.
+struct Status {
+    state: &'static str,
+    bytes: u64,
+    message: String,
+    peers: usize,
+    conflicts: u64,
+}
+
+impl Status {
+    fn quiet(state: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            state,
+            bytes: 0,
+            message: message.into(),
+            peers: 0,
+            conflicts: 0,
+        }
+    }
+
+    fn render(&self, last_success: u64) -> String {
+        format!(
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            self.state, self.bytes, self.message, self.peers, last_success, self.conflicts
+        )
+    }
+}
+
+fn write_status(root: &Path, status: &Status) -> Result<(), String> {
     fs::create_dir_all(root).map_err(|error| format!("create Sync app state: {error}"))?;
-    atomic_write(&root.join("sync-status"), status, 0o600)
+    let last_success = last_success(root);
+    atomic_write(
+        &root.join("sync-status"),
+        &status.render(last_success),
+        0o600,
+    )
+}
+
+fn last_success(root: &Path) -> u64 {
+    fs::read_to_string(root.join("sync-last-success"))
+        .ok()
+        .and_then(|text| text.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn record_success(root: &Path, epoch: u64) -> Result<(), String> {
+    fs::create_dir_all(root).map_err(|error| format!("create Sync app state: {error}"))?;
+    atomic_write(&root.join("sync-last-success"), &format!("{epoch}"), 0o600)
+}
+
+fn epoch_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
+
+/// Folders whose staged content becomes an application shelf once a window
+/// completes: (sync folder, application data root, package marker). Vault
+/// takes a `synced.v1` sidecar shelf (the app merges it next to its own),
+/// Frame a whole `manifest.v1` album (the last publisher wins, exactly as
+/// with the desktop publisher).
+const INGEST: [(&str, &str, &str); 2] = [
+    ("vault", VAULT_DATA, "synced.v1"),
+    ("frame", FRAME_DATA, "manifest.v1"),
+];
+const INGEST_FILES: usize = 512;
+const INGEST_BYTES: u64 = 1024 * 1024 * 1024;
+
+fn ingest(app_state: &Path, epoch: u64) -> Result<String, String> {
+    let mut note = String::new();
+    for (folder, target, marker) in INGEST {
+        let staging = Path::new(SYNC_ROOT).join(folder);
+        let digest_path = app_state.join(format!("sync-ingest-{folder}.digest"));
+        if let Some((files, bytes, digest)) =
+            ingest_folder(&staging, Path::new(target), marker, &digest_path)?
+        {
+            record_ingest(app_state, folder, files, bytes, epoch)?;
+            atomic_write(&digest_path, &digest, 0o600)?;
+            let _ignored = write!(
+                note,
+                " {}: {files} files imported.",
+                if folder == "vault" { "Vault" } else { "Frame" }
+            );
+        }
+    }
+    Ok(note)
+}
+
+/// Mirrors one staged package into an application shelf. Returns the file
+/// count, byte total and content digest when anything changed, `None` when
+/// the folder holds no package or the package is the one already imported.
+/// Deletions never propagate here: removing from a shelf is the application's
+/// own act, not the transport's.
+fn ingest_folder(
+    staging: &Path,
+    target: &Path,
+    marker: &str,
+    digest_path: &Path,
+) -> Result<Option<(u64, u64, String)>, String> {
+    if !staging.join(marker).is_file() {
+        return Ok(None);
+    }
+    let mut files: Vec<(String, u64, u64)> = Vec::new();
+    collect(staging, staging, 0, &mut files)?;
+    let mut digest: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut total = 0_u64;
+    for (path, length, modified) in &files {
+        for byte in path.bytes() {
+            digest = (digest ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        digest = (digest ^ length).wrapping_mul(0x0000_0100_0000_01b3);
+        digest = (digest ^ modified).wrapping_mul(0x0000_0100_0000_01b3);
+        total = total.saturating_add(*length);
+    }
+    if total > INGEST_BYTES {
+        return Err("a synced package is over the 1 GB shelf limit".to_owned());
+    }
+    let digest = format!("{digest:016x}");
+    if fs::read_to_string(digest_path).ok().as_deref() == Some(digest.as_str()) {
+        return Ok(None);
+    }
+    let mut copied = 0_u64;
+    for (path, _, _) in &files {
+        let source = staging.join(path);
+        let destination = target.join(path);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("create {parent:?}: {error}"))?;
+        }
+        let bytes = fs::read(&source).map_err(|error| format!("read {source:?}: {error}"))?;
+        atomic_bytes(&destination, &bytes, 0o600)?;
+        copied += 1;
+    }
+    Ok(Some((copied, total, digest)))
+}
+
+fn collect(
+    root: &Path,
+    directory: &Path,
+    depth: u32,
+    files: &mut Vec<(String, u64, u64)>,
+) -> Result<(), String> {
+    if depth > 8 {
+        return Err("a synced package nests deeper than the shelf allows".to_owned());
+    }
+    let entries =
+        fs::read_dir(directory).map_err(|error| format!("read {directory:?}: {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("read {directory:?}: {error}"))?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| "a synced file name is not UTF-8".to_owned())?;
+        // Syncthing's own markers (.stfolder, .stignore) and editor debris
+        // are transport details, never shelf content.
+        if name.starts_with('.') {
+            continue;
+        }
+        if name.bytes().any(|byte| byte < 0x20) {
+            return Err("a synced file name holds a control character".to_owned());
+        }
+        let path = entry.path();
+        let kind = entry
+            .file_type()
+            .map_err(|error| format!("stat {path:?}: {error}"))?;
+        if kind.is_dir() {
+            collect(root, &path, depth + 1, files)?;
+        } else if kind.is_file() {
+            if files.len() >= INGEST_FILES {
+                return Err(format!("a synced package is over {INGEST_FILES} files"));
+            }
+            let metadata = entry
+                .metadata()
+                .map_err(|error| format!("stat {path:?}: {error}"))?;
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|_| "a synced file escaped its folder".to_owned())?
+                .to_str()
+                .ok_or_else(|| "a synced file name is not UTF-8".to_owned())?
+                .to_owned();
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|when| when.duration_since(UNIX_EPOCH).ok())
+                .map_or(0, |since| since.as_secs());
+            files.push((relative, metadata.len(), modified));
+        }
+    }
+    Ok(())
+}
+
+fn record_ingest(
+    app_state: &Path,
+    folder: &str,
+    files: u64,
+    bytes: u64,
+    epoch: u64,
+) -> Result<(), String> {
+    fs::create_dir_all(app_state).map_err(|error| format!("create Sync app state: {error}"))?;
+    let path = app_state.join("sync-ingest");
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<String> = existing
+        .lines()
+        .filter(|line| !line.starts_with(&format!("{folder}\t")))
+        .map(str::to_owned)
+        .collect();
+    lines.push(format!("{folder}\t{files}\t{bytes}\t{epoch}"));
+    lines.sort();
+    atomic_write(&path, &lines.join("\n"), 0o600)
+}
+
+fn atomic_bytes(
+    path: &Path,
+    value: &[u8],
+    #[cfg_attr(not(unix), allow(unused))] mode: u32,
+) -> Result<(), String> {
+    let temporary = path.with_extension("new");
+    match fs::remove_file(&temporary) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("remove stale {}: {error}", temporary.display())),
+    }
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    let mut file = options
+        .open(&temporary)
+        .map_err(|error| format!("write {}: {error}", temporary.display()))?;
+    file.write_all(value)
+        .map_err(|error| format!("write {}: {error}", temporary.display()))?;
+    file.sync_all()
+        .map_err(|error| format!("sync {}: {error}", temporary.display()))?;
+    drop(file);
+    fs::rename(&temporary, path).map_err(|error| format!("replace {}: {error}", path.display()))
 }
 
 fn read_status(root: &Path) -> String {
     fs::read_to_string(root.join("sync-status"))
-        .unwrap_or_else(|_| "disabled\n0\nSync has not run.".to_owned())
+        .unwrap_or_else(|_| "\n0\nSync has not run yet.".to_owned())
 }
 
 #[cfg(test)]
@@ -751,11 +1314,108 @@ mod tests {
     }
 
     #[test]
+    fn a_window_is_due_when_the_owner_asks_or_the_schedule_comes_round() {
+        let state =
+            std::env::temp_dir().join(format!("cobalt-sync-due-test-{}", std::process::id()));
+        let _ignored = fs::remove_dir_all(&state);
+        fs::create_dir_all(&state).expect("state");
+        let now = 1_790_000_000;
+        // Never set up: nothing is due and nothing is guessed.
+        assert_eq!(due_in(&state, now), None);
+        fs::write(state.join("sync-config"), "true\n0").expect("manual");
+        assert_eq!(due_in(&state, now), None, "manual only waits for a tap");
+        fs::write(state.join(REQUEST), now.to_string()).expect("tap");
+        assert_eq!(due_in(&state, now), Some(Due::Owner));
+        fs::write(state.join("sync-config"), "false\n1").expect("off");
+        assert_eq!(
+            due_in(&state, now),
+            None,
+            "a request never overrides Sync off"
+        );
+        fs::remove_file(state.join(REQUEST)).expect("answered");
+        fs::write(state.join("sync-config"), "true\n1").expect("hourly");
+        assert_eq!(
+            due_in(&state, now),
+            Some(Due::Scheduled),
+            "a schedule with no attempt yet syncs at once"
+        );
+        fs::write(state.join(LAST_ATTEMPT), (now - 600).to_string()).expect("attempt");
+        assert_eq!(due_in(&state, now), None);
+        fs::write(state.join(LAST_ATTEMPT), (now - 3600).to_string()).expect("attempt");
+        assert_eq!(due_in(&state, now), Some(Due::Scheduled));
+        assert!(asks_for_a_window(REQUEST) && asks_for_a_window("sync-config"));
+        assert!(!asks_for_a_window("sync-meta"));
+        let _ignored = fs::remove_dir_all(&state);
+    }
+
+    #[test]
+    fn a_sync_stopped_with_its_session_is_due_again_at_the_next() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-sync-stop-test-{}", std::process::id()));
+        let _ignored = fs::remove_dir_all(&root);
+        let state = root.join("state");
+        let home = root.join("home");
+        fs::create_dir_all(&state).expect("state");
+        fs::create_dir_all(&home).expect("home");
+        let now = epoch_now();
+
+        // A scheduled sync: the attempt it recorded is taken back.
+        fs::write(state.join("sync-config"), "true\n1").expect("hourly");
+        fs::write(state.join(LAST_ATTEMPT), now.to_string()).expect("attempt");
+        fs::write(home.join(STOP), b"").expect("the session asked");
+        assert_eq!(
+            due_in(&state, now),
+            None,
+            "the attempt holds the schedule off"
+        );
+        stopped_with_the_session(&state, &home, "scheduled").expect("stopped");
+        assert_eq!(due_in(&state, now), Some(Due::Scheduled));
+        assert!(!home.join(STOP).exists(), "the request was answered");
+        assert!(read_status(&state).starts_with("stopped"));
+
+        // A Sync now tap on a manual schedule: the tap is asked for again.
+        fs::write(state.join("sync-config"), "true\n0").expect("manual");
+        stopped_with_the_session(&state, &home, "owner").expect("stopped");
+        assert_eq!(due_in(&state, now), Some(Due::Owner));
+        let _ignored = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_sync_that_runs_out_of_time_says_which_of_two_things_went_wrong() {
+        let unreached = timed_out(0);
+        assert_eq!(unreached.state, "timed-out");
+        assert!(
+            unreached.message.contains("kobo sync run"),
+            "{}",
+            unreached.message
+        );
+        let partial = timed_out(1);
+        assert_eq!(partial.peers, 1);
+        assert!(
+            partial.message.contains("still to move"),
+            "{}",
+            partial.message
+        );
+        for status in [unreached, partial] {
+            assert!(!status.message.contains("window"), "{}", status.message);
+        }
+    }
+
+    #[test]
+    fn each_window_runs_in_the_runtime_as_a_command_it_already_understands() {
+        assert_eq!(Due::Owner.arguments(), ["--syncthing", "now"]);
+        assert_eq!(Due::Scheduled.arguments(), ["--syncthing", "scheduled"]);
+    }
+
+    #[test]
     fn only_an_explicit_idle_folder_is_complete() {
-        assert!(matches!(
-            parse_folder_state("HTTP/1.1 200 OK\r\n\r\n{\"state\":\"idle\",\"needBytes\":0}"),
-            Ok(FolderState::Idle)
-        ));
+        let idle = parse_folder_state(
+            "HTTP/1.1 200 OK\r\n\r\n{\"state\":\"idle\",\"needBytes\":0,\"pullErrors\":2}",
+        )
+        .expect("idle probe");
+        assert!(idle.idle);
+        assert_eq!(idle.need_bytes, 0);
+        assert_eq!(idle.pull_errors, 2);
         for state in [
             "starting",
             "scanning",
@@ -768,11 +1428,91 @@ mod tests {
         ] {
             let answer =
                 format!("HTTP/1.1 200 OK\r\n\r\n{{\"state\":\"{state}\",\"needBytes\":0}}");
-            assert!(matches!(
-                parse_folder_state(&answer),
-                Ok(FolderState::Working(1))
-            ));
+            let probe = parse_folder_state(&answer).expect("working probe");
+            assert!(!probe.idle);
+            assert_eq!(probe.need_bytes, 1);
         }
+    }
+
+    #[test]
+    fn an_older_supervisor_status_still_reads_and_a_new_one_renders() {
+        let status = Status {
+            state: "running",
+            bytes: 42,
+            message: "Syncing folders.".to_owned(),
+            peers: 1,
+            conflicts: 0,
+        };
+        assert_eq!(status.render(99), "running\n42\nSyncing folders.\n1\n99\n0");
+        let rendered = status.render(99);
+        let mut lines = rendered.lines();
+        assert_eq!(lines.next(), Some("running"));
+        assert_eq!(lines.next(), Some("42"));
+        assert_eq!(lines.next(), Some("Syncing folders."));
+    }
+
+    #[test]
+    fn ingest_mirrors_a_package_once_and_never_follows_debris() {
+        let temporary =
+            std::env::temp_dir().join(format!("cobalt-sync-ingest-test-{}", std::process::id()));
+        let _ignored = fs::remove_dir_all(&temporary);
+        let staging = temporary.join("staging");
+        let target = temporary.join("target");
+        fs::create_dir_all(staging.join("nested")).expect("staging");
+        fs::create_dir_all(&target).expect("target");
+        fs::write(staging.join("synced.v1"), "{}").expect("marker");
+        fs::write(staging.join("nested/note.md"), "hello").expect("note");
+        fs::write(staging.join(".stfolder"), "").expect("engine marker");
+        fs::write(staging.join(".trashed"), "x").expect("debris");
+        let digest_path = temporary.join("digest");
+
+        let first = ingest_folder(&staging, &target, "synced.v1", &digest_path)
+            .expect("first ingest")
+            .expect("package present");
+        assert_eq!(first.0, 2, "marker plus note, hidden files skipped");
+        assert_eq!(
+            fs::read_to_string(target.join("nested/note.md")).expect("copied note"),
+            "hello"
+        );
+        assert!(!target.join(".stfolder").exists());
+        fs::write(&digest_path, &first.2).expect("record digest");
+
+        assert!(
+            ingest_folder(&staging, &target, "synced.v1", &digest_path)
+                .expect("second ingest")
+                .is_none(),
+            "an unchanged package is not imported twice"
+        );
+
+        fs::write(staging.join("nested/second.md"), "more").expect("new note");
+        let second = ingest_folder(&staging, &target, "synced.v1", &digest_path)
+            .expect("changed ingest")
+            .expect("changed package");
+        assert_eq!(second.0, 3);
+
+        // A staged deletion never removes what the shelf already holds.
+        fs::remove_file(staging.join("nested/note.md")).expect("stage removal");
+        let third =
+            ingest_folder(&staging, &target, "synced.v1", &digest_path).expect("deletion ingest");
+        assert!(third.is_some());
+        assert!(
+            target.join("nested/note.md").is_file(),
+            "the shelf keeps its copy when the transport deletes"
+        );
+        let _ignored = fs::remove_dir_all(&temporary);
+    }
+
+    #[test]
+    fn ingest_report_replaces_only_its_own_folder_line() {
+        let temporary =
+            std::env::temp_dir().join(format!("cobalt-sync-ingest-report-{}", std::process::id()));
+        let _ignored = fs::remove_dir_all(&temporary);
+        record_ingest(&temporary, "vault", 3, 30, 100).expect("vault line");
+        record_ingest(&temporary, "frame", 5, 50, 200).expect("frame line");
+        record_ingest(&temporary, "vault", 4, 40, 300).expect("vault refresh");
+        let report = fs::read_to_string(temporary.join("sync-ingest")).expect("report");
+        assert_eq!(report, "frame\t5\t50\t200\nvault\t4\t40\t300");
+        let _ignored = fs::remove_dir_all(&temporary);
     }
 
     #[test]

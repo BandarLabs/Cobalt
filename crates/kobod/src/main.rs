@@ -6,12 +6,18 @@ use std::env;
 use std::error::Error;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use kobo_protocol::channel;
+
 static VERIFIED_DEVICE_METRICS: OnceLock<kobo_ui::DisplayMetrics> = OnceLock::new();
+/// Whether the verified device's panel has a colour filter, remembered beside
+/// its metrics for the same reason: an application is told once, at the
+/// handshake, and the answer must not change under it.
+static VERIFIED_COLOUR_PANEL: OnceLock<bool> = OnceLock::new();
 
 fn metrics_for_profile(
     profile: &kobo_profile::DeviceProfile,
@@ -61,22 +67,45 @@ fn remember_device_profile(profile: &kobo_profile::DeviceProfile) -> Result<(), 
     }
     VERIFIED_DEVICE_METRICS
         .set(metrics)
-        .map_err(|_| "the verified device metrics could not be retained".to_owned())
+        .map_err(|_| "the verified device metrics could not be retained".to_owned())?;
+    VERIFIED_COLOUR_PANEL
+        .set(profile.colour_panel)
+        .map_err(|_| "the verified panel kind could not be retained".to_owned())
+}
+
+/// Whether the panel applications are told about at the handshake shows
+/// colour: the verified device's answer once a session has started, and the
+/// simulated profile's before then.
+pub fn device_colour_panel() -> bool {
+    VERIFIED_COLOUR_PANEL
+        .get()
+        .copied()
+        .unwrap_or_else(|| simulated_appearance() == kobo_ui::Appearance::Colour)
 }
 
 use std::process::ExitCode;
 
+// The daemon's subsystems serve the device-write entry points, which a
+// Windows host build does not compile. Keep the dead-code lint live on unix
+// and silence the noise in the Windows CI job's build.
+#[cfg_attr(not(unix), allow(dead_code))]
 mod app_link;
 mod app_store;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod autoupdate;
 #[cfg(feature = "device-write")]
 mod blackbox;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod consent;
 #[cfg(feature = "device-write")]
 mod device;
-mod frame;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod syncthing;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod tailscale;
+#[cfg_attr(not(unix), allow(dead_code))]
+mod touch_calibration;
+#[cfg_attr(not(unix), allow(dead_code))]
 mod update;
 
 fn main() -> ExitCode {
@@ -283,7 +312,9 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
 
     let snapshot = kobo_hal::probe_device()?;
-    let profile = kobo_profile::write_ready_profile(&snapshot)
+    // An attended probe, so a firmware branch nobody measured is not a reason
+    // to refuse: the touch node sits beneath the stock reader.
+    let profile = kobo_profile::attended_write_profile(&snapshot)
         .map_err(|blockers| format!("device write refused: {}", blockers.join("; ")))?;
     let touch_path = snapshot
         .touch
@@ -327,14 +358,19 @@ fn touch_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Reads the button device without grabbing it and prints every event.
+/// Reads the button devices without grabbing them and prints every event.
 ///
 /// The point is to learn the keycodes the page-turn and power buttons emit
 /// on hardware nobody has captured yet, at both poses. Numeric codes are
 /// printed verbatim so nothing is lost to an incomplete name table.
+///
+/// The Tolino Shine 5 reports its power key on a separate PMIC input node
+/// rather than on `gpio-keys`, so that node is read alongside the button
+/// device whenever it exists. Each line names the node the event came from.
 fn key_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     use kobo_hal::touch::InputEvent32;
     use std::io::Read;
+    use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
     let seconds: u64 = seconds.parse().unwrap_or(20).min(120);
@@ -342,44 +378,101 @@ fn key_test(seconds: &str) -> Result<(), Box<dyn Error>> {
     let content = std::fs::read_to_string("/proc/bus/input/devices")?;
     let path = discover_key_path(&content)
         .ok_or_else(|| "no gpio-keys device found in /proc/bus/input/devices".to_owned())?;
-    let mut device = std::fs::File::open(&path)?;
-    let name = kobo_abi::input::device_name(&device)?;
-    println!("button device: {} ({name})", path.display());
+    let mut sources = vec![("button", path)];
+    if let Some(power) = kobo_hal::gpio::discover_power_path() {
+        sources.push(("power", power));
+    }
+
+    // One reader thread per node, because a blocking read on either would
+    // starve the other. The threads are left blocked at exit; nothing is
+    // grabbed, so the process ending leaves the devices exactly as found.
+    let (sender, events) = mpsc::channel();
+    for (label, path) in sources {
+        // The button node is what the test is for, so failing to open it ends
+        // the test. The power node is extra: a reader where it cannot be
+        // opened still has buttons worth capturing.
+        let opened = std::fs::File::open(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|device| {
+                kobo_abi::input::device_name(&device)
+                    .map(|name| (device, name))
+                    .map_err(|error| error.to_string())
+            });
+        let (mut device, name) = match opened {
+            Ok(opened) => opened,
+            Err(error) if label == "power" => {
+                println!(
+                    "power device: {} unavailable ({error}); reading buttons only",
+                    path.display()
+                );
+                continue;
+            }
+            Err(error) => return Err(format!("{label} device {}: {error}", path.display()).into()),
+        };
+        println!("{label} device: {} ({name})", path.display());
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let mut buffer = [0_u8; 16 * 64];
+            loop {
+                let read = match device.read(&mut buffer) {
+                    Ok(0) => {
+                        let _ = sender.send(Err((label, "the device closed".to_owned())));
+                        return;
+                    }
+                    Ok(read) => read,
+                    Err(error) => {
+                        let _ = sender.send(Err((label, error.to_string())));
+                        return;
+                    }
+                };
+                for chunk in buffer[..read].chunks_exact(16) {
+                    let Some(event) = InputEvent32::decode(chunk) else {
+                        continue;
+                    };
+                    if sender.send(Ok((label, event))).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+    }
+    drop(sender);
     println!("reading for {seconds}s, no grab; press each button, at both poses");
 
     let deadline = Instant::now() + Duration::from_secs(seconds);
     let started = Instant::now();
-    let mut buffer = [0_u8; 16 * 64];
     let mut count = 0_u32;
-    while Instant::now() < deadline {
-        // A blocking read sits here until a press arrives; the deadline is
-        // only checked between reads, so the capture ends on the first
-        // event after time is up, or at the final press of Enter... it does
-        // not, so the run simply overshoots by however long the last quiet
-        // stretch lasts. Acceptable for an owner-attended probe.
-        let read = device.read(&mut buffer)?;
-        for chunk in buffer[..read].chunks_exact(16) {
-            let Some(event) = InputEvent32::decode(chunk) else {
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+        let Ok(message) = events.recv_timeout(remaining) else {
+            break;
+        };
+        let (label, event) = match message {
+            Ok(received) => received,
+            Err(("power", error)) => {
+                println!("power device stopped: {error}; still reading buttons");
                 continue;
-            };
-            count += 1;
-            let at = started.elapsed().as_millis();
-            let kind = match event.kind {
-                0 => "SYN",
-                1 => "KEY",
-                _ => "???",
-            };
-            let action = match (event.kind, event.value) {
-                (1, 0) => " up",
-                (1, 1) => " down",
-                (1, 2) => " repeat",
-                _ => "",
-            };
-            println!(
-                "{at:>7} ms  {kind} code={} value={}{action}",
-                event.code, event.value
-            );
-        }
+            }
+            Err((label, error)) => {
+                return Err(format!("{label} device failed after {count} events: {error}").into());
+            }
+        };
+        count += 1;
+        let at = started.elapsed().as_millis();
+        let kind = match event.kind {
+            0 => "SYN",
+            1 => "KEY",
+            _ => "???",
+        };
+        let action = match (event.kind, event.value) {
+            (1, 0) => " up",
+            (1, 1) => " down",
+            (1, 2) => " repeat",
+            _ => "",
+        };
+        println!(
+            "{at:>7} ms  {label:<6} {kind} code={} value={}{action}",
+            event.code, event.value
+        );
     }
     println!("captured {count} events");
     Ok(())
@@ -477,7 +570,12 @@ fn restart_reader(state: &Path) -> Result<(), Box<dyn Error>> {
         Ok(())
     };
     match kobo_hal::probe_device() {
-        Ok(snapshot) => match kobo_profile::write_ready_profile(&snapshot) {
+        // Recovery undoes what a session changed, and an owner can run a
+        // session on a profile that is not yet write-ready, so the hardware
+        // facts of the profile that claims this reader are enough here.
+        Ok(snapshot) => match kobo_profile::write_ready_profile(&snapshot)
+            .or_else(|blockers| kobo_profile::claimed_profile(&snapshot).ok_or(blockers))
+        {
             Ok(profile) => {
                 light_recovery = kobo_hal::frontlight::Frontlight::recover(state)
                     .map_err(|error| format!("front light recovery failed: {error}"))
@@ -644,12 +742,15 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
     if socket_path.exists() {
         return Err(format!("socket already exists: {}", socket_path.display()).into());
     }
-    let listener = UnixListener::bind(socket_path)?;
+    let listener = channel::Listener::bind(socket_path)?;
+    // The Unix socket needs owner-only mode bits; the Windows address file
+    // inherits the user profile ACL (see kobo_protocol::channel).
+    #[cfg(unix)]
     fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))?;
     let _socket_guard = SocketGuard(socket_path.to_owned());
     println!("simulation socket ready: {}", socket_path.display());
 
-    let (mut stream, _) = listener.accept()?;
+    let mut stream = listener.accept()?;
     let hello = kobo_protocol::read_from(&mut stream)?;
     let Message::Hello { name } = hello.message else {
         return Err("first application message must be Hello".into());
@@ -661,6 +762,7 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
             version: hello.version,
             request_id: hello.request_id,
             message: Message::Welcome {
+                colour_panel: simulated_appearance() == kobo_ui::Appearance::Colour,
                 width: u16::try_from(metrics.width)?,
                 height: u16::try_from(metrics.height)?,
                 pixels_per_inch: u16::try_from(metrics.pixels_per_inch)?,
@@ -677,26 +779,16 @@ fn serve_simulation(socket_path: &Path, frame_path: &Path) -> Result<(), Box<dyn
 /// host-side credentials, so `kobo-sidekick init` can drop a certificate in
 /// and every host runtime finds it without being told.
 fn host_trust_directory() -> PathBuf {
-    env::var_os("HOME").map_or_else(
+    kobo_abi::home_directory().map_or_else(
         || PathBuf::from(".kobo-trust"),
-        |home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("kobo")
-                .join("trust")
-        },
+        |home| home.join(".config").join("kobo").join("trust"),
     )
 }
 
 fn host_dictionary_directory() -> PathBuf {
-    env::var_os("HOME").map_or_else(
+    kobo_abi::home_directory().map_or_else(
         || PathBuf::from(".kobo-dictionaries"),
-        |home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("kobo")
-                .join("dictionaries")
-        },
+        |home| home.join(".config").join("kobo").join("dictionaries"),
     )
 }
 
@@ -748,7 +840,7 @@ fn apply_preview_orientation<E>(
     reason = "one arm per message type; splitting the dispatch hides it"
 )]
 fn serve_application(
-    stream: &mut UnixStream,
+    stream: &mut channel::Stream,
     frame_path: &Path,
     name: &str,
     metrics: kobo_ui::DisplayMetrics,
@@ -982,6 +1074,8 @@ fn serve_application(
             | Message::ScheduledWake { .. }
             | Message::CoverChanged { .. }
             | Message::PageTurn { .. }
+            | Message::Notices(_)
+            | Message::OpenDocument { .. }
             | Message::ShellEvent(_) => {
                 return Err("application sent a daemon-only message".into());
             }
@@ -995,7 +1089,7 @@ fn serve_application(
 /// write to the same socket and two frames interleaved on a stream protocol is
 /// a stream that can never be read again.
 fn write_shared(
-    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    writer: &std::sync::Arc<std::sync::Mutex<channel::Stream>>,
     frame: &Frame,
 ) -> Result<(), Box<dyn Error>> {
     let mut stream = writer.lock().map_err(|_| "the writer lock was poisoned")?;
@@ -1006,7 +1100,7 @@ fn write_shared(
 /// Hands every finished task to the application, from its own thread.
 fn deliver_outcomes(
     tasks: &std::sync::Arc<std::sync::Mutex<TaskRunner>>,
-    writer: &std::sync::Arc<std::sync::Mutex<UnixStream>>,
+    writer: &std::sync::Arc<std::sync::Mutex<channel::Stream>>,
     peer_version: u8,
 ) {
     loop {
@@ -1052,6 +1146,23 @@ fn deliver_outcomes(
 /// title on real hardware while every frame rendered here looked right.
 fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
     kobo_ui::Chrome::for_screen(screen, name == HOME_APPLICATION, Some(simulated_status()))
+        .with_appearance(simulated_appearance())
+}
+
+/// Colour when the simulated reader's panel has it, so a frame written for a
+/// Clara Colour shows the bar and controls that reader would show, and one
+/// written for a Clara BW shows what it always did.
+fn simulated_appearance() -> kobo_ui::Appearance {
+    let colour = env::var("KOBO_SIM_PROFILE").is_ok_and(|requested| {
+        kobo_profile::SUPPORTED_PROFILES
+            .iter()
+            .any(|profile| profile.id == requested && profile.colour_panel)
+    });
+    if colour {
+        kobo_ui::Appearance::Colour
+    } else {
+        kobo_ui::Appearance::Grey
+    }
 }
 
 /// Everything the band shows, invented and fixed.
@@ -1062,16 +1173,16 @@ fn simulated_chrome(name: &str, screen: &Screen) -> kobo_ui::Chrome {
 /// says anything true. Deliberately not round numbers, so nobody mistakes a
 /// simulated reading for a real one.
 fn simulated_status() -> kobo_ui::Status {
-    kobo_ui::Status {
-        clock: "09:41".to_owned(),
-        signal: kobo_ui::Signal::Strong,
-        battery: Some(kobo_ui::Percent::new(72)),
-        charging: false,
-        // On, so the simulator draws the mark and a layout fault beside the
-        // radio shows up here rather than only on hardware with headphones
-        // paired.
-        bluetooth: true,
-    }
+    // Bluetooth on, so the simulator draws the mark and a layout fault beside
+    // the radio shows up here rather than only on hardware with headphones
+    // paired.
+    kobo_ui::Status::standard(
+        "09:41",
+        Some(kobo_ui::Percent::new(72)),
+        false,
+        kobo_ui::Signal::Strong,
+        true,
+    )
 }
 
 /// The application that is home, and so has no way back to draw.
@@ -1157,9 +1268,14 @@ fn validate_simulation_paths(socket: &Path, frame: &Path) -> Result<(), Box<dyn 
     {
         return Err("simulation directory must be a kobo-sim-* directory under temp".into());
     }
-    let mode = fs::metadata(&parent)?.permissions().mode();
-    if mode & 0o077 != 0 {
-        return Err("simulation directory must not be accessible by group or others".into());
+    // Mode-bit privacy is a Unix check; on Windows the directory inherits
+    // the user profile ACL, which is the same account boundary.
+    #[cfg(unix)]
+    {
+        let mode = fs::metadata(&parent)?.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err("simulation directory must not be accessible by group or others".into());
+        }
     }
     if frame.exists() {
         return Err(format!("frame already exists: {}", frame.display()).into());
@@ -1320,8 +1436,10 @@ mod tests {
         let left = kobo_ui::ensure_way_back(bare, &chrome, "Cobalt");
         assert!(left.top_bar.is_none());
     }
+    #[cfg(unix)]
     use super::validate_simulation_paths;
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 
     /// Killing the daemon outright brought the reader back on hardware and
@@ -1381,6 +1499,9 @@ mod tests {
         assert!(!root.exists());
     }
 
+    // Mode-bit privacy checks are Unix-only; Windows validates paths
+    // without them.
+    #[cfg(unix)]
     #[test]
     fn simulation_paths_require_private_temp_directory() {
         let root = std::env::temp_dir().join(format!("kobo-sim-test-{}", std::process::id()));

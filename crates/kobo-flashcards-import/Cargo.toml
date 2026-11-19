@@ -17,12 +17,16 @@ kobo-flashcards-format = { path = "../kobo-flashcards-format" }
 kobo-doc = { path = "../kobo-doc" }
 kobo-html = { path = "../kobo-html" }
 kobo-image = { path = "../kobo-image" }
+prost = "0.13"
 rusqlite = { version = "0.36.0", features = ["bundled", "collation"] }
 serde = "1.0"
 serde_json = "1.0.140"
 tokio = { version = "1.45", features = ["io-util"] }
 unicase = "=2.6.0"
 zip = { version = "2.2.2", default-features = false, features = ["deflate"] }
+# Current Anki exports compress the collection and media with zstd and list
+# media in a protobuf map; both crates are already pinned by rslib.
+zstd = "0.13"
 # The independent host importer uses rustc 1.88; the device workspace stays on 1.85.1.
 # Keep the reviewed ICU resolution and require the fixed time parser.
 idna_adapter = "=1.2.1"

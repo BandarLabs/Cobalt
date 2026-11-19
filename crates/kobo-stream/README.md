@@ -6,10 +6,16 @@ plain-text changed rows and cursor positions only; no terminal history or
 credentials are written to the reader.
 
 ```sh
-kobo stream init --host 192.168.1.20
-kobo trust set stream --device READER_IP
-kobo stream --interactive -- /bin/sh
+kobo stream init                        # mint the identity, pair the saved reader
+kobo stream terminal                    # share your login shell
+kobo stream --interactive -- /bin/sh    # or share a command of your choice
 ```
+
+`stream init` installs the trust root and writes Paperterm's pairing onto the
+saved reader over SSH, so nothing is typed on the reader. Name another reader
+with `--device READER_IP` or `--reader NAME`, pair the simulator with `--sim`,
+and add certificate addresses with `--host ADDRESS`. `kobo sidekick init`
+pairs Paperterm too. `kobo stream monitor` shares `top`.
 
 The service uses a per-run random session id, requires the six-character
 pairing code on every route, limits readers to sixteen connections, limits
@@ -23,7 +29,6 @@ controlling terminal at the negotiated grid, so terminal applications such as
 `vi` and the shell see the same cursor screen as the reader. Screen
 snapshots are deliberately capped at two per second; input writes go directly
 to the PTY and do not wait for that display cadence.
-
 
 In interactive mode, the laptop and Paperterm send input to the same PTY.
 Laptop input uses raw terminal mode, restored when the child ends. Output is
@@ -41,7 +46,7 @@ See [the captured session](../../apps/paperterm/screenshots/terminal.png).
 
 ## Check the connection before sharing a terminal
 
-After the one-time `stream init` and reader trust setup above, run:
+After the one-time `stream init` above, run:
 
 ```sh
 kobo stream demo

@@ -1,23 +1,31 @@
 {
   "id": "rss-miniflux",
-  "display_name": "RSS Reader \u2014 Miniflux",
-  "short_label": "RSS Reader",
-  "summary": "Read your Miniflux feeds anywhere.",
-  "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi.",
-  "version": "0.1.2",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
-  "glyph": "rss",
+  "display_name": "Digest",
+  "short_label": "Digest",
+  "summary": "Read your Miniflux feeds anywhere. Needs an account.",
+  "page_description": "Bring unread Miniflux articles to your Kobo and keep reading without Wi-Fi. Digest is an unofficial client and is not affiliated with or endorsed by the Miniflux project.",
+  "version": "0.1.14",
+  "release_notes": "When a sync fails before any articles arrive, Digest no longer says you have no unread articles. Suggested feeds no longer repeats the connect screen's account message.",
+  "glyph": "inbox",
   "capabilities": [
     "network"
   ],
   "setup": {
     "steps": [
       {
-        "text": "Have an HTTPS Miniflux instance, either self-hosted or hosted, and create an API token."
+        "text": "Set up the reader once over USB, if you have not already. Miniflux must be reachable over HTTPS.",
+        "command": "kobo setup"
       },
       {
-        "text": "Install the token under the exact name miniflux; the runtime sends it as X-Auth-Token.",
-        "command": "kobo secret set miniflux --device <address>"
+        "text": "In Miniflux, create an API key (Settings, API Keys)."
+      },
+      {
+        "text": "Connect Digest from your computer. It asks for the server and the key, checks them, ties the key to your server, and fills in the address. Open Digest, or tap Check again.",
+        "command": "kobo connect rss-miniflux"
+      },
+      {
+        "text": "With the key in a file instead, the same setup is one command.",
+        "command": "kobo secret set miniflux --app rss-miniflux --server https://miniflux.example --from key.txt"
       }
     ]
   }

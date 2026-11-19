@@ -9,6 +9,9 @@ pub fn may_set(app: &str, name: &str) -> bool {
     (app == "panels" && name == "komga")
         || (app == "calibre-web" && name == "calibre")
         || (app == "rss-miniflux" && name == "miniflux")
+        || (app == "readlater" && name == "wallabag")
+        || (app == "readeck" && name == "readeck")
+        || (app == "post" && name == "hermes-post")
 }
 
 pub(crate) fn path(root: &Path, app: &str, name: &str) -> Option<PathBuf> {
@@ -127,7 +130,23 @@ pub(crate) fn decode(bytes: &str) -> Option<Record> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn may_set_lists_each_supported_pair() {
+        for (app, name) in [
+            ("panels", "komga"),
+            ("calibre-web", "calibre"),
+            ("rss-miniflux", "miniflux"),
+            ("readlater", "wallabag"),
+            ("readeck", "readeck"),
+        ] {
+            assert!(may_set(app, name), "{app}/{name}");
+            assert!(!may_set(app, "other"), "{app} set an undeclared name");
+            assert!(!may_set("other", name), "another app set {name}");
+        }
+    }
 
     #[test]
     fn calibre_account_follows_catalog_and_book_links_only_within_saved_server() {
@@ -260,18 +279,21 @@ mod tests {
         let record = decode(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(record.server, "https://first.example/library");
         assert_eq!(record.value, "reader:  password  ");
-        assert_eq!(
-            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert_eq!(
-            std::fs::metadata(file.parent().unwrap())
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o700
-        );
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(file.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
         install(
             &root,
             "panels",

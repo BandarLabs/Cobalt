@@ -2,23 +2,28 @@
   "id": "kitchencard",
   "display_name": "Kitchen Card",
   "short_label": "Kitchen",
-  "summary": "Keep Mealie recipes handy in a counter-friendly cooking view.",
-  "page_description": "A Mealie companion that keeps tonight's recipe legible, awake, and usable offline at the counter.",
-  "version": "0.1.2",
-  "release_notes": "Rebuilt on a renderer that keeps every control reachable at the largest text sizes, and on a keyboard that can type every character this app asks for.",
-  "glyph": "reader",
+  "summary": "Keep Mealie recipes handy in a counter-friendly cooking view. Needs an account.",
+  "page_description": "A read-only Mealie companion. Pick tonight's recipe and cook one large step at a time, with the screen kept on and the recipe available offline.",
+  "version": "0.1.15",
+  "release_notes": "Cooking timers now count down and say when time is up, even after the reader sleeps. Start cooking carries on from the step you left, and a refused http address says why.",
+  "glyph": "cutlery",
   "capabilities": [
     "network",
-    "keep-awake"
+    "keep-awake",
+    "scheduled-wake"
   ],
   "setup": {
     "steps": [
       {
-        "text": "Make the Mealie API available to the Kobo at https://mealie.local."
+        "text": "Set up the reader once over USB, if you have not already. Mealie must be reachable over HTTPS.",
+        "command": "kobo setup"
       },
       {
-        "text": "Create a long-lived Mealie API token and install it under the exact name mealie.",
-        "command": "kobo secret set mealie --device <address>"
+        "text": "In Mealie, create an API token (your profile, API Tokens)."
+      },
+      {
+        "text": "Connect Kitchen Card from your computer. It asks for the address and the token, checks them, and sets the app up. Open Kitchen Card, or tap Check again.",
+        "command": "kobo connect kitchencard"
       }
     ]
   }

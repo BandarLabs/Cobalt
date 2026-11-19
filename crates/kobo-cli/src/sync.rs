@@ -4,19 +4,34 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::env;
 use std::fmt::Write as _;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const USAGE: &str = "usage: kobo sync setup LOCAL_DIR --folder vault|frame|books|out --device IP\n\
+const USAGE: &str = concat!(
+    "usage: kobo sync setup LOCAL_DIR --folder vault|frame|books|out [--device IP | --reader NAME]\n\
                      \x20      kobo sync run [--foreground] [--seconds 1-86400]\n\
-                     \x20      kobo sync status\n\
-                     \x20      kobo sync stop";
+                     \x20      kobo sync plan [--json]\n\
+                     \x20      kobo sync status [--json]\n\
+                     \x20      kobo sync publish --folder vault|frame\n\
+                     \x20      kobo sync pause\n\
+                     \x20      kobo sync resume\n\
+                     \x20      kobo sync stop\n\
+                     \x20      \n\
+                     \x20      While the peer runs it uses this computer's network. A sleeping\n\
+                     \x20      reader is not kept awake; it syncs during the windows its owner\n\
+                     \x20      opens on the Kobo.\n",
+    crate::targets::saved_reader_note!(),
+);
 const GUI_ADDRESS: &str = "127.0.0.1:8385";
+/// Inside the private Sync home: the packages Syncthing shares for folders
+/// whose app reads a package rather than the owner's files.
+const PACKAGES: &str = "packages";
 const KOBO_KOBOD: &str = "/mnt/onboard/.adds/cobalt/bin/kobod";
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(60);
 const START_TIMEOUT: Duration = Duration::from_secs(15);
@@ -49,7 +64,11 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     match arguments.first().map(String::as_str) {
         Some("setup") => setup(&arguments[1..]),
         Some("run") => run(&arguments[1..]),
-        Some("status") if arguments.len() == 1 => status(),
+        Some("plan") => plan(&arguments[1..]),
+        Some("status") => status(&arguments[1..]),
+        Some("publish") => publish(&arguments[1..]),
+        Some("pause") if arguments.len() == 1 => set_paused(true),
+        Some("resume") if arguments.len() == 1 => set_paused(false),
         Some("stop") if arguments.len() == 1 => stop(),
         _ => Err(USAGE.to_owned()),
     }
@@ -121,6 +140,9 @@ fn setup(arguments: &[String]) -> Result<(), String> {
         );
     }
     add_mapping(&mut state, folder, &local, &home)?;
+    if folder == "vault" {
+        publish_vault(&local, &package_directory(&home, folder)?)?;
+    }
     if let Err(error) = configure_host(&state, &home) {
         if new_home {
             cleanup_new_home(&home);
@@ -135,9 +157,9 @@ fn setup(arguments: &[String]) -> Result<(), String> {
     }
     pair_kobo(device, &host_id, folder)?;
     println!(
-        "Sync mapping ready.\n\n  local folder  {}\n  Kobo folder   sync/{folder}\n  host mode     {}\n  Kobo device   {kobo_id}\n  host device   {host_id}\n  private home  {}\n  Syncthing     {}\n\nThe Kobo service remains owner-controlled. Open Sync on the Kobo, tap Resume Sync,\nthen run 'kobo sync run'. For an attended first test while the reader is awake:\n  kobo shell --device {device} '{KOBO_KOBOD} --syncthing window 300'",
+        "Sync is set up.\n\n  computer folder  {}\n  reader folder    sync/{folder}\n  files go         {}\n  reader ID        {kobo_id}\n  computer ID      {host_id}\n  Sync home        {}\n  Syncthing        {}\n\nNext, run 'kobo sync run' here. Then open Sync on the reader and tap Turn on Sync:\nthe first sync starts at once and takes up to five minutes. After that the reader\nsyncs on its schedule while Cobalt is open on Wi-Fi, or when you tap Sync now.",
         local.display(),
-        host_folder_type(folder),
+        direction_words(folder),
         home.display(),
         state.version
     );
@@ -147,10 +169,11 @@ fn setup(arguments: &[String]) -> Result<(), String> {
 fn add_mapping(state: &mut State, folder: &str, local: &Path, home: &Path) -> Result<(), String> {
     let metadata =
         fs::metadata(local).map_err(|error| format!("inspect {}: {error}", local.display()))?;
+    let (device, inode) = dir_identity(&metadata);
     let mapping = Mapping {
         path: local.to_owned(),
-        device: metadata.dev(),
-        inode: metadata.ino(),
+        device,
+        inode,
     };
     let already_mapped = state.mappings.contains_key(folder);
     if let Some(existing) = state.mappings.get(folder) {
@@ -225,12 +248,24 @@ fn run(arguments: &[String]) -> Result<(), String> {
     protect_home(&home)?;
     let _lock = OperationLock::acquire(&home)?;
     let state = optional_state(&home)?.ok_or_else(|| {
-        "Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first"
+        "Sync is not set up on this computer yet. Run 'kobo sync setup LOCAL_DIR --folder vault' first."
             .to_owned()
     })?;
     verify_state(&state)?;
     if running(&state, &home)? {
         return Err("the dedicated Sync peer is already running".to_owned());
+    }
+    // Vault reads a package, not the notes themselves, so it is packed again
+    // here: the owner's last edits are what the next sync should carry. A
+    // failure is reported and the rest still syncs.
+    if let Some(mapping) = state.mappings.get("vault") {
+        if let Err(error) = package_directory(&home, "vault")
+            .and_then(|package| publish_vault(&mapping.path, &package))
+        {
+            eprintln!(
+                "kobo sync: Vault notes were not packed, so Vault keeps its last copy: {error}"
+            );
+        }
     }
     let mut child = start(&state, &home, false)?;
     write_pid(&home, child.id())?;
@@ -240,15 +275,23 @@ fn run(arguments: &[String]) -> Result<(), String> {
         remove_pid(&home);
         return Err(error);
     }
+    // A peer set up before Vault was packed in the Sync home still shares the
+    // owner's notes folder. Applying the layout on every run moves it.
+    if let Err(error) = apply_layout(&state, &home, &mut child) {
+        let _ignored = child.kill();
+        let _ignored = child.wait();
+        remove_pid(&home);
+        return Err(error);
+    }
     if !foreground {
         println!(
-            "Sync peer started in the background (PID {}).\nRun 'kobo sync status' for folder state and 'kobo sync stop' to stop it.",
+            "Sync is running on this computer in the background (PID {}).\nLeave it running, then tap Sync now on the reader. 'kobo sync status' shows each\nfolder, and 'kobo sync stop' stops this computer's side.",
             child.id()
         );
         return Ok(());
     }
     println!(
-        "Sync peer is running for at most {seconds} seconds; 'kobo sync stop' can end it sooner."
+        "Sync is running on this computer for at most {seconds} seconds and uses its network until then. 'kobo sync stop' ends it sooner."
     );
     let deadline = Instant::now() + Duration::from_secs(seconds);
     while Instant::now() < deadline {
@@ -300,14 +343,183 @@ fn parse_run(arguments: &[String]) -> Result<(bool, u64), String> {
     Ok((foreground, seconds))
 }
 
-fn status() -> Result<(), String> {
+/// One folder as the companion sees it: direction is fixed by the folder,
+/// state and diagnostics come from the daemon when it is running.
+#[derive(Clone, Debug)]
+struct FolderReport {
+    folder: String,
+    direction: &'static str,
+    path: PathBuf,
+    state: String,
+    last_change: Option<u64>,
+    errors: u64,
+}
+
+fn folder_report(state: &State, active: bool, folder: &str, mapping: &Mapping) -> FolderReport {
+    let mut report = FolderReport {
+        folder: (*folder).to_owned(),
+        direction: host_folder_type(folder),
+        path: mapping.path.clone(),
+        state: "not running".to_owned(),
+        last_change: None,
+        errors: 0,
+    };
+    if !active {
+        return report;
+    }
+    let Ok(value) = rest(
+        &state.api_key,
+        "GET",
+        &format!("/rest/db/status?folder=kobo-{folder}"),
+        None,
+    ) else {
+        "starting".clone_into(&mut report.state);
+        return report;
+    };
+    value
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("starting")
+        .clone_into(&mut report.state);
+    // stateChanged is when the folder last entered its current state; for an
+    // idle folder that is the last completed sync pass.
+    report.last_change = value
+        .get("stateChanged")
+        .and_then(Value::as_str)
+        .and_then(rfc3339_epoch);
+    report.errors = value.get("errors").and_then(Value::as_u64).unwrap_or(0)
+        + value.get("pullErrors").and_then(Value::as_u64).unwrap_or(0);
+    report
+}
+
+fn load_state() -> Result<(PathBuf, State), String> {
     let home = host_home()?;
     let state = optional_state(&home)?.ok_or_else(|| {
-        "Sync is not configured; run 'kobo sync setup LOCAL_DIR --folder ... --device IP' first"
+        "Sync is not set up on this computer yet. Run 'kobo sync setup LOCAL_DIR --folder vault' first."
             .to_owned()
     })?;
     verify_state(&state)?;
+    Ok((home, state))
+}
+
+fn parse_json_flag(arguments: &[String]) -> Result<bool, String> {
+    match arguments {
+        [] => Ok(false),
+        [flag] if flag == "--json" => Ok(true),
+        _ => Err(USAGE.to_owned()),
+    }
+}
+
+/// The fixed ingest contract, named here so plan and status can state which
+/// folders an application consumes after a sync completes.
+fn ingest_note(folder: &str) -> &'static str {
+    match folder {
+        "vault" => {
+            "packed into the Sync home and imported into Vault; the notes folder is never written"
+        }
+        "frame" => "imports into Frame when a manifest.v1 album package is present",
+        "books" => "stays plain files for the reader library",
+        _ => "collects exports from the reader",
+    }
+}
+
+fn plan_json(home: &Path, state: &State, reports: &[FolderReport]) -> Value {
+    json!({
+        "format": "kobo-sync-plan",
+        "version": 1,
+        "home": home,
+        "host_id": state.host_id,
+        "kobo_id": state.kobo_id,
+        "syncthing": {
+            "binary": state.binary,
+            "sha256": state.binary_sha256,
+            "version": state.version,
+        },
+        "gui": GUI_ADDRESS,
+        "folders": reports.iter().map(|report| json!({
+            "id": format!("kobo-{}", report.folder),
+            "direction": report.direction,
+            "path": report.path,
+            "ingest": ingest_note(&report.folder),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn plan(arguments: &[String]) -> Result<(), String> {
+    let as_json = parse_json_flag(arguments)?;
+    let (home, state) = load_state()?;
+    let reports = state
+        .mappings
+        .iter()
+        .map(|(folder, mapping)| folder_report(&state, false, folder, mapping))
+        .collect::<Vec<_>>();
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&plan_json(&home, &state, &reports))
+                .map_err(|error| format!("render plan: {error}"))?
+        );
+        return Ok(());
+    }
+    println!(
+        "Sync plan\n  home         {}\n  host device  {}\n  Kobo device  {}\n  Syncthing    {} ({}, sha256 {})\n  API          http://{}",
+        home.display(),
+        state.host_id,
+        state.kobo_id,
+        state.version,
+        state.binary.display(),
+        &state.binary_sha256[..12],
+        GUI_ADDRESS
+    );
+    for report in &reports {
+        println!(
+            "  kobo-{:<6}  {:<12}  {} - {}",
+            report.folder,
+            report.direction,
+            report.path.display(),
+            ingest_note(&report.folder)
+        );
+    }
+    Ok(())
+}
+
+fn status_json(home: &Path, state: &State, active: bool, reports: &[FolderReport]) -> Value {
+    json!({
+        "format": "kobo-sync-status",
+        "version": 1,
+        "running": active,
+        "home": home,
+        "host_id": state.host_id,
+        "kobo_id": state.kobo_id,
+        "syncthing": state.version,
+        "folders": reports.iter().map(|report| json!({
+            "id": format!("kobo-{}", report.folder),
+            "direction": report.direction,
+            "path": report.path,
+            "state": report.state,
+            "last_change": report.last_change,
+            "errors": report.errors,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn status(arguments: &[String]) -> Result<(), String> {
+    let as_json = parse_json_flag(arguments)?;
+    let (home, state) = load_state()?;
     let active = running(&state, &home)?;
+    let reports = state
+        .mappings
+        .iter()
+        .map(|(folder, mapping)| folder_report(&state, active, folder, mapping))
+        .collect::<Vec<_>>();
+    if as_json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&status_json(&home, &state, active, &reports))
+                .map_err(|error| format!("render status: {error}"))?
+        );
+        return Ok(());
+    }
     println!(
         "Dedicated Sync peer: {}\n  home         {}\n  host device  {}\n  Kobo device  {}\n  Syncthing    {}",
         if active { "running" } else { "stopped" },
@@ -316,32 +528,81 @@ fn status() -> Result<(), String> {
         state.kobo_id,
         state.version
     );
-    for (folder, mapping) in &state.mappings {
-        let direction = host_folder_type(folder);
-        let folder_state = if active {
-            rest(
-                &state.api_key,
-                "GET",
-                &format!("/rest/db/status?folder=kobo-{folder}"),
-                None,
-            )
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("state")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            })
-            .unwrap_or_else(|| "starting".to_owned())
-        } else {
-            "not running".to_owned()
-        };
+    for report in &reports {
+        let last = report
+            .last_change
+            .map_or_else(|| "-".to_owned(), |epoch| epoch.to_string());
         println!(
-            "  kobo-{folder:<6}  {direction:<11}  {folder_state:<12}  {}",
-            mapping.path.display()
+            "  kobo-{:<6}  {:<11}  {:<12}  last change {:<12}  errors {:<3}  {}",
+            report.folder,
+            report.direction,
+            report.state,
+            last,
+            report.errors,
+            report.path.display()
         );
     }
     Ok(())
+}
+
+/// Pausing suspends transfers with the paired Kobo without stopping the
+/// dedicated peer; the reader keeps its own schedule.
+fn set_paused(paused: bool) -> Result<(), String> {
+    let (home, state) = load_state()?;
+    if !running(&state, &home)? {
+        return Err("the dedicated Sync peer is not running".to_owned());
+    }
+    let action = if paused { "pause" } else { "resume" };
+    rest(
+        &state.api_key,
+        "POST",
+        &format!("/rest/system/{action}?device={}", state.kobo_id),
+        None,
+    )?;
+    println!(
+        "Sync with the Kobo {}. Resume with 'kobo sync {}'.",
+        if paused { "paused" } else { "resumed" },
+        if paused { "resume" } else { "pause" }
+    );
+    Ok(())
+}
+
+/// Parses the RFC 3339 timestamps Syncthing reports into epoch seconds.
+/// Only the calendar prefix is read; fractional seconds and the zone are
+/// accepted in the shapes Syncthing emits (Z or a numeric offset).
+fn rfc3339_epoch(value: &str) -> Option<u64> {
+    let bytes = value.as_bytes();
+    if bytes.len() < 20 || bytes[4] != b'-' || bytes[7] != b'-' || bytes[10] != b'T' {
+        return None;
+    }
+    let number = |from: usize, to: usize| -> Option<i64> { value.get(from..to)?.parse().ok() };
+    let year = number(0, 4)?;
+    let month = number(5, 7)?;
+    let day = number(8, 10)?;
+    let hour = number(11, 13)?;
+    let minute = number(14, 16)?;
+    let second = number(17, 19)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || minute > 59 {
+        return None;
+    }
+    // Days-from-civil (Howard Hinnant's algorithm).
+    let shifted = if month <= 2 { year - 1 } else { year };
+    let era = shifted.div_euclid(400);
+    let year_of_era = shifted.rem_euclid(400);
+    let month_prime = if month > 2 { month - 3 } else { month + 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    let mut epoch = days * 86_400 + hour * 3_600 + minute * 60 + second;
+    match bytes.get(19) {
+        Some(b'Z' | b'.') => {}
+        Some(b'+' | b'-') if bytes.len() >= 25 => {
+            let offset = number(20, 22)? * 3_600 + number(23, 25)? * 60;
+            epoch -= if bytes[19] == b'+' { offset } else { -offset };
+        }
+        _ => return None,
+    }
+    u64::try_from(epoch).ok()
 }
 
 fn stop() -> Result<(), String> {
@@ -366,11 +627,18 @@ fn stop() -> Result<(), String> {
 }
 
 fn host_home() -> Result<PathBuf, String> {
-    let home = env::var_os("HOME").ok_or("HOME is not set")?;
-    Ok(PathBuf::from(home)
-        .join(".config")
-        .join("kobo")
-        .join("syncthing"))
+    // An explicit root keeps tests and parallel configurations away from the
+    // owner's real Sync home. It must be absolute so every later relative
+    // write stays inside it.
+    if let Some(root) = env::var_os("KOBO_SYNC_HOME") {
+        let root = PathBuf::from(root);
+        if !root.is_absolute() {
+            return Err("KOBO_SYNC_HOME must be an absolute path".to_owned());
+        }
+        return Ok(root);
+    }
+    let home = kobo_abi::home_directory().ok_or("HOME is not set")?;
+    Ok(home.join(".config").join("kobo").join("syncthing"))
 }
 
 fn protect_home(home: &Path) -> Result<(), String> {
@@ -386,8 +654,10 @@ fn protect_home(home: &Path) -> Result<(), String> {
             .map_err(|error| format!("create dedicated Sync home {}: {error}", home.display()))?;
     }
     reject_symlink_components(home, "dedicated Sync home")?;
+    #[cfg(unix)]
     fs::set_permissions(home, fs::Permissions::from_mode(0o700))
-        .map_err(|error| format!("protect dedicated Sync home {}: {error}", home.display()))
+        .map_err(|error| format!("protect dedicated Sync home {}: {error}", home.display()))?;
+    Ok(())
 }
 
 fn secure_directory(input: &Path) -> Result<PathBuf, String> {
@@ -415,7 +685,38 @@ fn secure_directory(input: &Path) -> Result<PathBuf, String> {
     canonical
         .to_str()
         .ok_or_else(|| "LOCAL_DIR must be valid UTF-8 for Syncthing".to_owned())?;
-    Ok(canonical)
+    Ok(simplify_verbatim(canonical))
+}
+
+/// Windows `canonicalize` returns verbatim `\\?\` paths, which compare
+/// unequal to the same path written the ordinary way and print awkwardly in
+/// errors. Strip the prefix for drive-letter paths; genuine UNC paths keep
+/// it, since a bare `\\server\share` loses the distinction.
+#[cfg(windows)]
+fn simplify_verbatim(path: PathBuf) -> PathBuf {
+    use std::path::{Component, Prefix};
+    let mut components = path.components();
+    let rebuilt = match components.next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(drive) => {
+                let mut stripped = PathBuf::from(format!("{}:", char::from(drive)));
+                stripped.extend(components);
+                Some(stripped)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    match rebuilt {
+        Some(stripped) => stripped,
+        None => path,
+    }
+}
+
+/// No verbatim prefix exists off Windows.
+#[cfg(not(windows))]
+fn simplify_verbatim(path: PathBuf) -> PathBuf {
+    path
 }
 
 fn reject_symlink_components(path: &Path, purpose: &str) -> Result<(), String> {
@@ -438,22 +739,21 @@ fn reject_symlink_components(path: &Path, purpose: &str) -> Result<(), String> {
 fn locate_syncthing() -> Result<PathBuf, String> {
     let path = env::var_os("PATH").unwrap_or_default();
     for directory in env::split_paths(&path) {
-        let candidate = directory.join("syncthing");
+        let candidate = directory.join(format!("syncthing{}", env::consts::EXE_SUFFIX));
         let Ok(canonical) = fs::canonicalize(candidate) else {
             continue;
         };
         let Ok(metadata) = fs::metadata(&canonical) else {
             continue;
         };
-        if metadata.is_file()
-            && metadata.permissions().mode() & 0o111 != 0
-            && metadata.permissions().mode() & 0o022 == 0
-        {
+        // Windows has no executable bit; a regular file found on the
+        // search path is the engine candidate there.
+        if metadata.is_file() && executable_engine(&metadata) {
             return Ok(canonical);
         }
     }
     Err(
-        "no safe host 'syncthing' executable was found on PATH. Install it with your OS package manager (macOS: 'brew install syncthing'; Debian/Ubuntu: 'sudo apt install syncthing'; Fedora: 'sudo dnf install syncthing'), then rerun setup. Cobalt never downloads or executes a release binary for you."
+        "no safe host 'syncthing' executable was found on PATH. Install it with your OS package manager (macOS: 'brew install syncthing'; Debian/Ubuntu: 'sudo apt install syncthing'; Fedora: 'sudo dnf install syncthing'; Windows: 'winget install Syncthing.Syncthing'), then rerun setup. Cobalt never downloads or executes a release binary for you."
             .to_owned(),
     )
 }
@@ -505,6 +805,7 @@ fn generate_identity(binary: &Path, home: &Path) -> Result<(), String> {
     for name in ["cert.pem", "key.pem", "config.xml"] {
         let path = home.join(name);
         if path.exists() {
+            #[cfg(unix)]
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
                 .map_err(|error| format!("protect {}: {error}", path.display()))?;
         }
@@ -574,8 +875,7 @@ fn remote(host: &str, script: &str) -> Result<super::RemoteShellOutput, String> 
 
 fn generate_key() -> Result<String, String> {
     let mut bytes = [0_u8; 32];
-    File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
+    kobo_abi::entropy::random_bytes(&mut bytes)
         .map_err(|error| format!("generate private Syncthing API key: {error}"))?;
     Ok(bytes
         .iter()
@@ -593,21 +893,50 @@ fn configure_host(state: &State, home: &Path) -> Result<(), String> {
         let _ignored = child.wait();
         return Err(error);
     }
-    let result = configure_live(state);
+    let result = configure_live(state, home);
     let _ignored = shutdown(state);
     let stop_result = wait_child(&mut child, STOP_TIMEOUT);
     result.and(stop_result)?;
+    #[cfg(unix)]
     fs::set_permissions(home.join("config.xml"), fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("protect dedicated Syncthing config: {error}"))
+        .map_err(|error| format!("protect dedicated Syncthing config: {error}"))?;
+    Ok(())
 }
 
-fn configure_live(state: &State) -> Result<(), String> {
+fn configure_live(state: &State, home: &Path) -> Result<(), String> {
     let config = rest(&state.api_key, "GET", "/rest/config", None)?;
     let folder_template = rest(&state.api_key, "GET", "/rest/config/defaults/folder", None)?;
     let device_template = rest(&state.api_key, "GET", "/rest/config/defaults/device", None)?;
-    let config = configured_json(config, &folder_template, device_template, state);
+    let config = configured_json(config, &folder_template, device_template, state, home);
     rest(&state.api_key, "PUT", "/rest/config", Some(&config))?;
     Ok(())
+}
+
+/// Applies the folder layout to a running peer and confirms it took.
+///
+/// Syncthing restarts its API when a change reaches the API's own settings,
+/// and the request that made the change can lose its answer that way. So a
+/// failed answer is not taken as a failed change: the layout is read back,
+/// and only a layout that is still wrong is an error.
+fn apply_layout(state: &State, home: &Path, child: &mut Child) -> Result<(), String> {
+    let Err(error) = configure_live(state, home) else {
+        return Ok(());
+    };
+    wait_ready(state, child)?;
+    let folders = rest(&state.api_key, "GET", "/rest/config/folders", None)?;
+    let applied = state.mappings.iter().all(|(folder, mapping)| {
+        folders.as_array().is_some_and(|folders| {
+            folders.iter().any(|entry| {
+                entry["id"] == json!(format!("kobo-{folder}"))
+                    && entry["path"] == json!(shared_path(home, folder, mapping))
+            })
+        })
+    });
+    if applied {
+        Ok(())
+    } else {
+        Err(error)
+    }
 }
 
 fn configured_json(
@@ -615,6 +944,7 @@ fn configured_json(
     folder_template: &Value,
     device_template: Value,
     state: &State,
+    home: &Path,
 ) -> Value {
     let folders = state
         .mappings
@@ -623,7 +953,7 @@ fn configured_json(
             let mut entry = folder_template.clone();
             entry["id"] = json!(format!("kobo-{folder}"));
             entry["label"] = json!(format!("Kobo {folder}"));
-            entry["path"] = json!(mapping.path);
+            entry["path"] = json!(shared_path(home, folder, mapping));
             entry["type"] = json!(host_folder_type(folder));
             entry["paused"] = json!(false);
             entry["devices"] = json!([
@@ -653,6 +983,46 @@ fn configured_json(
     config
 }
 
+/// Where this computer's Syncthing shares a folder from.
+///
+/// Vault is shared from its package inside the private Sync home, never from
+/// the owner's notes. The package is a renamed copy of every note, and written
+/// beside the originals it made Obsidian list each note twice.
+fn shared_path(home: &Path, folder: &str, mapping: &Mapping) -> PathBuf {
+    if folder == "vault" {
+        home.join(PACKAGES).join(folder)
+    } else {
+        mapping.path.clone()
+    }
+}
+
+/// The package folder for one sync folder, made private and marked as a
+/// Syncthing folder so the peer shares it the moment it is configured.
+fn package_directory(home: &Path, folder: &str) -> Result<PathBuf, String> {
+    let packages = home.join(PACKAGES);
+    let package = packages.join(folder);
+    for directory in [&packages, &package] {
+        fs::create_dir_all(directory)
+            .map_err(|error| format!("create {}: {error}", directory.display()))?;
+        reject_symlink_components(directory, "Sync package folder")?;
+        #[cfg(unix)]
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("protect {}: {error}", directory.display()))?;
+    }
+    fs::create_dir_all(package.join(".stfolder"))
+        .map_err(|error| format!("mark {} for Syncthing: {error}", package.display()))?;
+    Ok(package)
+}
+
+/// Which way a folder's files go, for people rather than for Syncthing.
+fn direction_words(folder: &str) -> &'static str {
+    if folder == "out" {
+        "from the reader to this computer"
+    } else {
+        "from this computer to the reader"
+    }
+}
+
 fn host_folder_type(folder: &str) -> &'static str {
     if folder == "out" {
         "receiveonly"
@@ -668,10 +1038,11 @@ fn verify_state(state: &State) -> Result<(), String> {
             state.binary.display()
         )
     })?;
+    // Windows has no mode bits; the symlink check and the pinned digest
+    // still guard the engine there, so the boundary narrows but holds.
     if !metadata.is_file()
         || metadata.file_type().is_symlink()
-        || metadata.permissions().mode() & 0o111 == 0
-        || metadata.permissions().mode() & 0o022 != 0
+        || !executable_engine(&metadata)
         || digest_file(&state.binary)? != state.binary_sha256
     {
         return Err(
@@ -690,10 +1061,8 @@ fn verify_mappings(state: &State) -> Result<(), String> {
         let canonical = secure_directory(&mapping.path)?;
         let metadata = fs::metadata(&canonical)
             .map_err(|error| format!("inspect {}: {error}", canonical.display()))?;
-        if canonical != mapping.path
-            || metadata.dev() != mapping.device
-            || metadata.ino() != mapping.inode
-        {
+        let (device, inode) = dir_identity(&metadata);
+        if canonical != mapping.path || device != mapping.device || inode != mapping.inode {
             return Err(format!(
                 "the local directory for kobo-{folder} was replaced or redirected; refusing to synchronize it"
             ));
@@ -712,12 +1081,15 @@ fn start(state: &State, home: &Path, paused: bool) -> Result<Child, String> {
             ));
         }
     }
-    let log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut log_options = OpenOptions::new();
+    log_options.create(true).append(true);
+    #[cfg(unix)]
+    log_options.mode(0o600);
+    let log = log_options
         .open(&log_path)
         .map_err(|error| format!("open private Syncthing log: {error}"))?;
+    #[cfg(unix)]
     fs::set_permissions(&log_path, fs::Permissions::from_mode(0o600))
         .map_err(|error| format!("protect private Syncthing log: {error}"))?;
     let error_log = log
@@ -933,10 +1305,7 @@ fn read_state(home: &Path) -> Result<State, String> {
     let path = home.join("kobo-host.json");
     let metadata =
         fs::symlink_metadata(&path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    if !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.permissions().mode() & 0o077 != 0
-    {
+    if !metadata.is_file() || metadata.file_type().is_symlink() || !private_mode(&metadata) {
         return Err(format!("refusing unsafe Sync state {}", path.display()));
     }
     let value: Value = serde_json::from_slice(
@@ -1025,23 +1394,30 @@ fn optional_state(home: &Path) -> Result<Option<State>, String> {
     }
 }
 
-fn atomic_write(path: &Path, value: &str, mode: u32) -> Result<(), String> {
+fn atomic_write(
+    path: &Path,
+    value: &str,
+    #[cfg_attr(not(unix), allow(unused))] mode: u32,
+) -> Result<(), String> {
     let temporary = path.with_extension("new");
     match fs::remove_file(&temporary) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(format!("remove stale {}: {error}", temporary.display())),
     }
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
+    #[allow(unused_mut)] // Windows has no mode bits to set.
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(mode);
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.write_all(value.as_bytes())
         .map_err(|error| format!("write {}: {error}", temporary.display()))?;
     file.sync_all()
         .map_err(|error| format!("sync {}: {error}", temporary.display()))?;
+    #[cfg(unix)]
     fs::set_permissions(&temporary, fs::Permissions::from_mode(mode))
         .map_err(|error| format!("protect {}: {error}", temporary.display()))?;
     fs::rename(&temporary, path).map_err(|error| format!("replace {}: {error}", path.display()))
@@ -1099,12 +1475,12 @@ impl OperationLock {
     fn acquire(home: &Path) -> Result<Self, String> {
         let path = home.join("operation.lock");
         for _attempt in 0..2 {
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&path)
-            {
+            #[allow(unused_mut)] // Windows has no mode bits to set.
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(0o600);
+            match options.open(&path) {
                 Ok(mut file) => {
                     writeln!(file, "{}", std::process::id())
                         .map_err(|error| format!("write Sync operation lock: {error}"))?;
@@ -1136,6 +1512,10 @@ impl Drop for OperationLock {
     }
 }
 
+/// Whether the process a lock or pid file names is still running.
+///
+/// Unix asks the kernel through `kill -0`.
+#[cfg(unix)]
 fn process_exists(pid: u32) -> bool {
     Command::new("kill")
         .args(["-0", &pid.to_string()])
@@ -1144,6 +1524,41 @@ fn process_exists(pid: u32) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// Windows has no `kill`, and a probe that could not start used to answer
+/// "not running", so every Sync lock looked stale there and two runs could
+/// each delete the other's lock and drive the same Syncthing home at once.
+/// `tasklist` ships with every Windows edition and quotes the PID as its own
+/// CSV field whatever the display language. A probe that cannot run keeps
+/// the lock: an owner can delete a lock that really is stale, but nothing
+/// undoes two runs rewriting one configuration.
+#[cfg(windows)]
+fn process_exists(pid: u32) -> bool {
+    let Ok(output) = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+    else {
+        return true;
+    };
+    !output.status.success() || tasklist_names_pid(&String::from_utf8_lossy(&output.stdout), pid)
+}
+
+/// Whether `tasklist /FO CSV` output lists `pid`. Only the second field is
+/// the PID; the session number further along is quoted the same way and
+/// must not answer for it. A filter that matches nothing prints a localized
+/// notice instead of a row, which has no quoted fields at all.
+#[cfg(any(windows, test))]
+fn tasklist_names_pid(listing: &str, pid: u32) -> bool {
+    let pid = pid.to_string();
+    listing.lines().any(|line| {
+        let line = line.trim();
+        line.starts_with('"')
+            && line.ends_with('"')
+            && line[1..line.len() - 1].split("\",\"").nth(1) == Some(pid.as_str())
+    })
 }
 
 fn valid_device_id(value: &str) -> bool {
@@ -1164,9 +1579,520 @@ fn valid_hex(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+/// Packs the raw files in a mapped folder into the exact package the
+/// reader's ingest mirrors onto an application shelf: Vault takes a
+/// `synced.v1` manifest beside `synced-note-*.md` files, Frame a
+/// `manifest.v1` album. Publishing is the host half of the ingest contract;
+/// the daemon then carries the package like any other file.
+fn publish(arguments: &[String]) -> Result<(), String> {
+    let folder = match arguments {
+        [flag, folder] if flag == "--folder" => folder.as_str(),
+        _ => return Err(USAGE.to_owned()),
+    };
+    let (home, state) = load_state()?;
+    let mapping = state.mappings.get(folder).ok_or_else(|| {
+        format!("The {folder} folder is not set up. Run 'kobo sync setup LOCAL_DIR --folder {folder}' first.")
+    })?;
+    match folder {
+        "vault" => publish_vault(&mapping.path, &package_directory(&home, folder)?),
+        "frame" => publish_frame(&mapping.path),
+        _ => Err(format!(
+            "folder {folder} syncs as plain files; no application package is needed"
+        )),
+    }
+}
+
+/// Packs the notes in `source` into `package`, which is what Syncthing
+/// carries to the reader. The owner's folder is only read.
+///
+/// Repacking is idempotent: the previous package is planned against, then
+/// rewritten only where content moved.
+fn publish_vault(source: &Path, package: &Path) -> Result<(), String> {
+    use kobo_vault_host::{
+        plan_prefixed, Manifest, Push, MAX_NOTES, SYNCED_MANIFEST, SYNCED_PREFIX,
+    };
+    let forgotten = forget_old_copies(source)?;
+    let manifest_path = package.join(SYNCED_MANIFEST);
+    let existing = match fs::read(&manifest_path) {
+        Ok(bytes) => Manifest::decode(&bytes)
+            .map_err(|error| format!("existing {SYNCED_MANIFEST} in the Vault package: {error}"))?,
+        Err(_) => Manifest {
+            notes: Vec::new(),
+            failures: Vec::new(),
+        },
+    };
+    // Still excluded from the walk, so a copy an older publish left behind
+    // and the owner has since edited is never packed as a second note.
+    let excludes = [SYNCED_MANIFEST.to_owned(), SYNCED_PREFIX.to_owned()];
+    let walk = super::vault::walk(source, &excludes)?;
+    let offered = walk.offered.len();
+    let push = plan_prefixed(
+        &existing,
+        walk.offered.clone(),
+        walk.failures.clone(),
+        SYNCED_PREFIX,
+    )?;
+    super::vault::print_plan(&push, &walk);
+    if push.manifest.notes.len() > MAX_NOTES {
+        return Err(format!("Vault holds at most {MAX_NOTES} synced notes"));
+    }
+    for prepared in &push.notes {
+        let name = Push::note_name(&prepared.note_id);
+        atomic_write(
+            &package.join(&name),
+            &String::from_utf8_lossy(&prepared.markdown),
+            0o600,
+        )?;
+    }
+    // A package file that has gone missing is written again from the note it
+    // stands for, so a damaged package heals on the next publish.
+    for note in &push.manifest.notes {
+        let path = package.join(Push::note_name(&note.id));
+        if path.is_file() {
+            continue;
+        }
+        if let Some(offer) = walk
+            .offered
+            .iter()
+            .find(|offer| offer.digest == note.digest)
+        {
+            atomic_write(&path, &String::from_utf8_lossy(&offer.body), 0o600)?;
+        }
+    }
+    for removed in &push.removed {
+        let _ignored = fs::remove_file(package.join(Push::note_name(&removed.id)));
+    }
+    let encoded = push.manifest.encode();
+    atomic_write(
+        &manifest_path,
+        std::str::from_utf8(&encoded).map_err(|_| "the packed shelf is not UTF-8")?,
+        0o600,
+    )?;
+    println!("Packed {offered} note(s) for Vault. The next sync carries them to the reader.");
+    if forgotten > 0 {
+        println!(
+            "Removed {forgotten} duplicate note(s) that an older kobo sync publish wrote into {}.",
+            source.display()
+        );
+    }
+    Ok(())
+}
+
+/// Removes the package an older publish wrote into the owner's own folder.
+///
+/// Publishing once wrote a renamed copy of every note beside the original, so
+/// Obsidian listed each note twice. Only copies that older package's manifest
+/// lists, under its own prefix, whose bytes still match the digest it
+/// recorded, are removed: a copy the owner has since edited is theirs now and
+/// stays. The manifest goes last, and only once nothing it lists is left.
+fn forget_old_copies(source: &Path) -> Result<usize, String> {
+    use kobo_vault_host::{digest, Manifest, Push, SYNCED_MANIFEST, SYNCED_PREFIX};
+    let manifest_path = source.join(SYNCED_MANIFEST);
+    if !fs::symlink_metadata(&manifest_path).is_ok_and(|metadata| metadata.is_file()) {
+        return Ok(0);
+    }
+    let Ok(old) = fs::read(&manifest_path)
+        .map_err(|_| ())
+        .and_then(|bytes| Manifest::decode(&bytes).map_err(|_| ()))
+    else {
+        // Not a package this tool wrote, so not this tool's to remove.
+        return Ok(0);
+    };
+    let mut removed = 0;
+    let mut kept = 0;
+    for note in &old.notes {
+        let named_by_us = note.id.starts_with(SYNCED_PREFIX)
+            && note
+                .id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+        let copy = source.join(Push::note_name(&note.id));
+        if !named_by_us {
+            kept += 1;
+            continue;
+        }
+        if !fs::symlink_metadata(&copy).is_ok_and(|metadata| metadata.is_file()) {
+            continue;
+        }
+        let bytes = fs::read(&copy).map_err(|error| format!("read {}: {error}", copy.display()))?;
+        if digest(&bytes) == note.digest {
+            fs::remove_file(&copy)
+                .map_err(|error| format!("remove {}: {error}", copy.display()))?;
+            removed += 1;
+        } else {
+            kept += 1;
+        }
+    }
+    if kept == 0 {
+        fs::remove_file(&manifest_path)
+            .map_err(|error| format!("remove {}: {error}", manifest_path.display()))?;
+    }
+    Ok(removed)
+}
+
+/// Packs the images in the mapped frame folder into a whole `manifest.v1`
+/// album, prepared for the reader's default panel. The shelf lives inside
+/// the source folder, so the walk skips its own output: the manifest, the
+/// sidecars and every photo the manifest already lists. Mirror semantics
+/// hold for the owner's sources - a removed photo leaves the album - and
+/// owner files are never modified.
+fn publish_frame(folder: &Path) -> Result<(), String> {
+    use kobo_frame_host::{
+        prepare_for_panel_excluding, Fit, Manifest, DEFAULT_PANEL, DIGEST_MANIFEST, FIT_MANIFEST,
+        MANIFEST, MAX_FRAME_CAPACITY,
+    };
+    let existing = match fs::read(folder.join(MANIFEST)) {
+        Ok(bytes) => Manifest::decode(&bytes)
+            .map_err(|error| format!("existing {MANIFEST} in the sync folder: {error}"))?,
+        Err(_) => Manifest { photos: Vec::new() },
+    };
+    let mut exclude = existing
+        .photos
+        .iter()
+        .map(kobo_frame_host::Photo::shelf_name)
+        .collect::<std::collections::BTreeSet<_>>();
+    for sidecar in [MANIFEST, DIGEST_MANIFEST, FIT_MANIFEST] {
+        exclude.insert(sidecar.to_owned());
+    }
+    let push =
+        prepare_for_panel_excluding(folder, Fit::Crop, &existing, true, DEFAULT_PANEL, &exclude)?;
+    let mut total = 0_usize;
+    for photo in &push.manifest.photos {
+        total = total.saturating_add(match fs::metadata(folder.join(photo.shelf_name())) {
+            Ok(metadata) => usize::try_from(metadata.len()).unwrap_or(usize::MAX),
+            Err(_) => push
+                .photos
+                .iter()
+                .find(|prepared| prepared.photo.id == photo.id)
+                .and_then(|prepared| prepared.png.as_ref())
+                .map_or(0, Vec::len),
+        });
+    }
+    if total > MAX_FRAME_CAPACITY {
+        return Err(format!(
+            "this would use {} MB for Frame photos; its capacity is {} MB",
+            total / (1024 * 1024),
+            MAX_FRAME_CAPACITY / (1024 * 1024)
+        ));
+    }
+    for prepared in push.photos.iter().filter(|prepared| prepared.png.is_some()) {
+        let name = prepared.photo.shelf_name();
+        let partial = folder.join(format!(".{name}.writing"));
+        fs::write(&partial, prepared.png.as_ref().expect("filtered"))
+            .map_err(|error| format!("write Frame photo {name}: {error}"))?;
+        fs::rename(&partial, folder.join(&name))
+            .map_err(|error| format!("publish Frame photo {name}: {error}"))?;
+    }
+    let partial = folder.join(format!(".{MANIFEST}.writing"));
+    fs::write(&partial, push.manifest.encode())
+        .map_err(|error| format!("write Frame manifest: {error}"))?;
+    fs::rename(&partial, folder.join(MANIFEST))
+        .map_err(|error| format!("publish Frame manifest: {error}"))?;
+    for photo in &push.removed {
+        let _ignored = fs::remove_file(folder.join(photo.shelf_name()));
+    }
+    println!(
+        "Packed {} photo(s) into {MANIFEST} for the {}x{} panel. The next sync carries the album to Frame.",
+        push.manifest.photos.len(),
+        DEFAULT_PANEL.width,
+        DEFAULT_PANEL.height
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+fn dir_identity(metadata: &fs::Metadata) -> (u64, u64) {
+    (metadata.dev(), metadata.ino())
+}
+
+/// Windows std has no stable device/inode identity, so the sync-root guard
+/// relies on the canonical path there: redirection is still refused, but a
+/// delete-and-recreate at the same path is not detected. Documented weaker
+/// boundary.
+#[cfg(not(unix))]
+fn dir_identity(_metadata: &fs::Metadata) -> (u64, u64) {
+    (0, 0)
+}
+
+#[cfg(unix)]
+fn executable_engine(metadata: &fs::Metadata) -> bool {
+    metadata.permissions().mode() & 0o111 != 0 && metadata.permissions().mode() & 0o022 == 0
+}
+
+#[cfg(not(unix))]
+fn executable_engine(_metadata: &fs::Metadata) -> bool {
+    true
+}
+
+#[cfg(unix)]
+fn private_mode(metadata: &fs::Metadata) -> bool {
+    metadata.permissions().mode().trailing_zeros() >= 6
+}
+
+/// The dedicated Sync home lives under the account profile on Windows, whose
+/// ACL already scopes it to the account.
+#[cfg(not(unix))]
+fn private_mode(_metadata: &fs::Metadata) -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rfc3339_epoch_reads_syncthing_timestamps() {
+        assert_eq!(rfc3339_epoch("1970-01-01T00:00:00Z"), Some(0));
+        // Numeric zones shift the instant; a +05:30 stamp is 5.5 hours earlier.
+        assert_eq!(
+            rfc3339_epoch("2026-09-17T07:39:00+05:30"),
+            rfc3339_epoch("2026-09-17T02:09:00Z")
+        );
+        assert_eq!(
+            rfc3339_epoch("2026-09-17T02:09:00.123456789Z"),
+            rfc3339_epoch("2026-09-17T02:09:00Z")
+        );
+        assert_eq!(rfc3339_epoch("not a time"), None);
+        assert_eq!(rfc3339_epoch("2026-13-17T02:09:00Z"), None);
+    }
+
+    #[test]
+    fn plan_marks_the_ingest_contract_per_folder() {
+        assert!(ingest_note("vault").contains("notes folder is never written"));
+        assert!(ingest_note("frame").contains("manifest.v1"));
+        assert!(!ingest_note("books").contains("import"));
+    }
+
+    #[test]
+    fn folder_report_is_honest_when_the_daemon_is_down() {
+        let state = State {
+            binary: PathBuf::from("/bin/false"),
+            binary_sha256: "0".repeat(64),
+            version: "v2.0.9".to_owned(),
+            api_key: "key".to_owned(),
+            host_id: "HOST".to_owned(),
+            kobo_id: "KOBO".to_owned(),
+            mappings: BTreeMap::new(),
+        };
+        let mapping = Mapping {
+            path: PathBuf::from("/tmp/notes"),
+            device: 1,
+            inode: 1,
+        };
+        let report = folder_report(&state, false, "vault", &mapping);
+        assert_eq!(report.state, "not running");
+        assert_eq!(report.direction, "sendonly");
+        assert_eq!(report.last_change, None);
+        assert_eq!(report.errors, 0);
+    }
+
+    #[test]
+    fn explicit_sync_home_root_wins_and_must_be_absolute() {
+        // No other test in this binary reads KOBO_SYNC_HOME.
+        let absolute = std::env::temp_dir().join("cobalt-sync-home-test");
+        env::set_var("KOBO_SYNC_HOME", &absolute);
+        assert_eq!(host_home().expect("absolute root"), absolute);
+        env::set_var("KOBO_SYNC_HOME", "relative");
+        assert!(host_home().is_err());
+        env::remove_var("KOBO_SYNC_HOME");
+    }
+
+    #[test]
+    fn host_folder_directions_protect_owner_originals() {
+        assert_eq!(host_folder_type("vault"), "sendonly");
+        assert_eq!(host_folder_type("frame"), "sendonly");
+        assert_eq!(host_folder_type("books"), "sendonly");
+        assert_eq!(host_folder_type("out"), "receiveonly");
+    }
+
+    /// Every file name directly in `folder`, sorted, Syncthing's marker aside.
+    fn names(folder: &Path) -> Vec<String> {
+        let mut names = fs::read_dir(folder)
+            .expect("list")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .into_string()
+                    .expect("utf-8")
+            })
+            .filter(|name| name != ".stfolder")
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn publish_vault_packs_raw_notes_and_unpublishes_removed_ones() {
+        let root = test_root("publish-vault");
+        let notes = root.join("notes");
+        fs::create_dir_all(&notes).expect("notes");
+        let package = package_directory(&root.join("home"), "vault").expect("package");
+        fs::write(notes.join("Alpha.md"), "# Alpha\nsee [[Beta]]").expect("note a");
+        fs::write(notes.join("Beta.md"), "Beta body").expect("note b");
+        publish_vault(&notes, &package).expect("first publish");
+        // The owner's folder is only read: Obsidian sees exactly its own notes.
+        assert_eq!(names(&notes), ["Alpha.md", "Beta.md"]);
+        let manifest = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(manifest.notes.len(), 2);
+        assert!(manifest
+            .notes
+            .iter()
+            .all(|note| note.id.starts_with("synced-note-")));
+        assert_eq!(
+            manifest
+                .notes
+                .iter()
+                .find(|note| note.path == "Alpha.md")
+                .expect("alpha")
+                .links,
+            vec!["Beta"]
+        );
+        for note in &manifest.notes {
+            assert!(package.join(format!("{}.md", note.id)).is_file());
+        }
+        // A second publish with unchanged inputs changes nothing.
+        publish_vault(&notes, &package).expect("idempotent publish");
+        let again = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(again.notes, manifest.notes);
+        // Removing a raw note drops its package file; every other raw note
+        // stays exactly where the owner put it.
+        let dropped = manifest
+            .notes
+            .iter()
+            .find(|note| note.path == "Alpha.md")
+            .expect("alpha")
+            .id
+            .clone();
+        fs::remove_file(notes.join("Alpha.md")).expect("remove raw");
+        publish_vault(&notes, &package).expect("third publish");
+        let final_manifest = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(final_manifest.notes.len(), 1);
+        assert!(!package.join(format!("{dropped}.md")).exists());
+        assert_eq!(names(&notes), ["Beta.md"]);
+        // A package file lost from the Sync home is written again.
+        let kept = &final_manifest.notes[0].id;
+        fs::remove_file(package.join(format!("{kept}.md"))).expect("lose a package file");
+        publish_vault(&notes, &package).expect("healing publish");
+        assert_eq!(
+            fs::read_to_string(package.join(format!("{kept}.md"))).expect("healed"),
+            "Beta body"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn copies_an_older_publish_left_beside_the_notes_are_removed_and_never_packed() {
+        let root = test_root("publish-vault-migration");
+        let notes = root.join("notes");
+        fs::create_dir_all(&notes).expect("notes");
+        for (name, body) in [("One.md", "one"), ("Two.md", "two"), ("Three.md", "three")] {
+            fs::write(notes.join(name), body).expect("note");
+        }
+        // What an older publish did: the package written into the notes
+        // themselves, three notes becoming seven files.
+        let older = root.join("older");
+        fs::create_dir_all(&older).expect("older");
+        publish_vault(&notes, &older).expect("older package");
+        for name in names(&older) {
+            fs::copy(older.join(&name), notes.join(&name)).expect("copy beside the notes");
+        }
+        assert_eq!(names(&notes).len(), 7);
+        let package = package_directory(&root.join("home"), "vault").expect("package");
+        publish_vault(&notes, &package).expect("publish");
+        assert_eq!(names(&notes), ["One.md", "Three.md", "Two.md"]);
+        let manifest = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(manifest.notes.len(), 3, "each note is packed once");
+
+        // A copy the owner edited since is theirs: it stays, and so does the
+        // manifest that names it, but neither is packed as a note.
+        for name in names(&older) {
+            fs::copy(older.join(&name), notes.join(&name)).expect("copy again");
+        }
+        let edited = names(&older)
+            .into_iter()
+            .find(|name| name.starts_with("synced-note-"))
+            .expect("a copy");
+        fs::write(notes.join(&edited), "edited on the computer").expect("edit");
+        publish_vault(&notes, &package).expect("publish with an edited copy");
+        assert_eq!(
+            names(&notes),
+            [
+                "One.md".to_owned(),
+                "Three.md".to_owned(),
+                "Two.md".to_owned(),
+                edited,
+                "synced.v1".to_owned()
+            ]
+        );
+        let manifest = kobo_vault_host::Manifest::decode(
+            &fs::read(package.join("synced.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(manifest.notes.len(), 3);
+        // Something else that happens to be called synced.v1 is not ours.
+        fs::write(notes.join("synced.v1"), "the owner's own file").expect("unrelated");
+        publish_vault(&notes, &package).expect("publish beside an unrelated file");
+        assert!(notes.join("synced.v1").is_file());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    // A valid 1x1 PNG.
+    const TINY_PNG: [u8; 67] = [
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f,
+        0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00,
+        0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+        0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+    ];
+
+    #[test]
+    fn publish_frame_packs_an_album_and_never_reingests_its_own_output() {
+        let root =
+            std::env::temp_dir().join(format!("cobalt-sync-frame-test-{}", std::process::id()));
+        fs::create_dir_all(&root).expect("root");
+        fs::write(root.join("photo-one.png"), TINY_PNG).expect("photo");
+        publish_frame(&root).expect("first publish");
+        let manifest = kobo_frame_host::Manifest::decode(
+            &fs::read(root.join("manifest.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(manifest.photos.len(), 1);
+        assert!(root.join(manifest.photos[0].shelf_name()).is_file());
+        // A second publish walks the same folder, skips its own shelf and
+        // changes nothing.
+        publish_frame(&root).expect("idempotent publish");
+        let again = kobo_frame_host::Manifest::decode(
+            &fs::read(root.join("manifest.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert_eq!(again.photos.len(), 1);
+        assert_eq!(again.photos[0].id, manifest.photos[0].id);
+        // Removing the source drops the photo and its shelf file; the raw
+        // file was never modified.
+        assert_eq!(fs::read(root.join("photo-one.png")).expect("raw"), TINY_PNG);
+        fs::remove_file(root.join("photo-one.png")).expect("remove source");
+        publish_frame(&root).expect("mirror publish");
+        let final_manifest = kobo_frame_host::Manifest::decode(
+            &fs::read(root.join("manifest.v1")).expect("manifest"),
+        )
+        .expect("decode");
+        assert!(final_manifest.photos.is_empty());
+        assert!(!root.join(manifest.photos[0].shelf_name()).exists());
+        fs::remove_dir_all(root).expect("cleanup");
+    }
 
     fn test_root(name: &str) -> PathBuf {
         let base = env::var_os("CARGO_TARGET_DIR").map_or_else(
@@ -1213,15 +2139,39 @@ mod tests {
     }
 
     #[test]
+    fn a_tasklist_row_names_its_pid_and_a_no_match_notice_names_none() {
+        let row = "\"syncthing.exe\",\"4242\",\"Console\",\"1\",\"52,148 K\"\r\n";
+        assert!(tasklist_names_pid(row, 4242));
+        assert!(!tasklist_names_pid(row, 424));
+        assert!(!tasklist_names_pid(row, 1));
+        assert!(!tasklist_names_pid(
+            "INFO: No tasks are running which match the specified criteria.\r\n",
+            4242
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn simplify_verbatim_strips_drive_letter_prefixes_only() {
+        let verbatim = PathBuf::from(r"\\?\D:\a\b");
+        assert_eq!(super::simplify_verbatim(verbatim), PathBuf::from(r"D:\a\b"));
+        let unc = PathBuf::from(r"\\?\UNC\server\share");
+        assert_eq!(super::simplify_verbatim(unc.clone()), unc);
+    }
+
+    #[test]
     fn local_roots_reject_parent_traversal_and_symlinks() {
         let root = test_root("paths");
         let real = root.join("real");
         fs::create_dir(&real).expect("real");
         assert_eq!(secure_directory(&real).expect("secure"), real);
         assert!(secure_directory(Path::new("../elsewhere")).is_err());
-        let link = root.join("link");
-        std::os::unix::fs::symlink(&real, &link).expect("symlink");
-        assert!(secure_directory(&link).is_err());
+        #[cfg(unix)]
+        {
+            let link = root.join("link");
+            std::os::unix::fs::symlink(&real, &link).expect("symlink");
+            assert!(secure_directory(&link).is_err());
+        }
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1234,33 +2184,47 @@ mod tests {
         let metadata = fs::metadata(&local).expect("metadata");
         let id = "AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAA2";
         let state = State {
+            // "/usr/bin/syncthing" is not absolute on Windows; the test
+            // binary itself is an absolute path on both.
+            #[cfg(unix)]
             binary: PathBuf::from("/usr/bin/syncthing"),
+            #[cfg(windows)]
+            binary: std::env::current_exe().expect("test binary"),
             binary_sha256: "a".repeat(64),
             version: "syncthing v2.0.9".to_owned(),
             api_key: "b".repeat(64),
             host_id: id.to_owned(),
             kobo_id: id.replace('A', "B"),
-            mappings: BTreeMap::from([(
-                "vault".to_owned(),
-                Mapping {
-                    path: local.clone(),
-                    device: metadata.dev(),
-                    inode: metadata.ino(),
-                },
-            )]),
+            mappings: BTreeMap::from([{
+                let (device, inode) = dir_identity(&metadata);
+                (
+                    "vault".to_owned(),
+                    Mapping {
+                        path: local.clone(),
+                        device,
+                        inode,
+                    },
+                )
+            }]),
         };
         write_state(&root, &state).expect("write");
-        let mode = fs::metadata(root.join("kobo-host.json"))
-            .expect("state metadata")
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o077, 0);
+        #[cfg(unix)]
+        {
+            let mode = fs::metadata(root.join("kobo-host.json"))
+                .expect("state metadata")
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o077, 0);
+        }
         assert_eq!(read_state(&root).expect("read"), state);
-        fs::remove_dir(&local).expect("remove root");
-        let decoy = root.join("decoy");
-        fs::create_dir(&decoy).expect("decoy");
-        std::os::unix::fs::symlink(&decoy, &local).expect("replace root with a symlink");
-        assert!(verify_mappings(&state).is_err());
+        #[cfg(unix)]
+        {
+            fs::remove_dir(&local).expect("remove root");
+            let decoy = root.join("decoy");
+            fs::create_dir(&decoy).expect("decoy");
+            std::os::unix::fs::symlink(&decoy, &local).expect("replace root with a symlink");
+            assert!(verify_mappings(&state).is_err());
+        }
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1302,31 +2266,37 @@ mod tests {
         fs::create_dir_all(&out).expect("out");
         let mapping = |path: PathBuf| {
             let metadata = fs::metadata(&path).expect("metadata");
+            let (device, inode) = dir_identity(&metadata);
             Mapping {
                 path,
-                device: metadata.dev(),
-                inode: metadata.ino(),
+                device,
+                inode,
             }
         };
         let host_id = "AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAAA-AAAAAA2";
         let kobo_id = "BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBBB-BBBBBB2";
         let state = State {
+            #[cfg(unix)]
             binary: PathBuf::from("/usr/bin/syncthing"),
+            #[cfg(windows)]
+            binary: std::env::current_exe().expect("test binary"),
             binary_sha256: "a".repeat(64),
             version: "syncthing v2.0.9".to_owned(),
             api_key: "b".repeat(64),
             host_id: host_id.to_owned(),
             kobo_id: kobo_id.to_owned(),
             mappings: BTreeMap::from([
-                ("out".to_owned(), mapping(out)),
+                ("out".to_owned(), mapping(out.clone())),
                 ("vault".to_owned(), mapping(vault)),
             ]),
         };
+        let home = root.join("home");
         let config = configured_json(
             json!({"gui": {}, "options": {}}),
             &json!({"rescanIntervalS": 3600}),
             json!({"compression": "metadata"}),
             &state,
+            &home,
         );
         assert_eq!(config["gui"]["address"], GUI_ADDRESS);
         assert_eq!(config["gui"]["apiKey"], "b".repeat(64));
@@ -1342,6 +2312,13 @@ mod tests {
         assert_eq!(folders[0]["type"], "receiveonly");
         assert_eq!(folders[1]["id"], "kobo-vault");
         assert_eq!(folders[1]["type"], "sendonly");
+        // Out is the owner's own folder; Vault is its package in the Sync
+        // home, so nothing is ever written beside the owner's notes.
+        assert_eq!(folders[0]["path"], json!(out));
+        assert_eq!(
+            folders[1]["path"],
+            json!(home.join("packages").join("vault"))
+        );
         for folder in folders {
             assert_eq!(folder["devices"][0]["deviceID"], host_id);
             assert_eq!(folder["devices"][1]["deviceID"], kobo_id);
