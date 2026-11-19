@@ -48,7 +48,32 @@ use std::path::{Path, PathBuf};
 /// is plugged in by USB, and where both sideloaded books and the stock
 /// reader's own downloads sit. Cobalt's data root is where applications
 /// publish their shelves.
-pub const ROOTS: &[&str] = &["/mnt/onboard", "/mnt/onboard/.adds/cobalt/data", "/mnt/sd"];
+///
+/// [`SYNCED_BOOKS`] is the folder of books the owner shares from a computer.
+/// It is a root of its own because it sits under `.adds`, which the walk of
+/// the card never enters: the folder belongs to the sync engine, which keeps
+/// its bookkeeping beside the books and would lose track of a file moved out
+/// from under it, so the books stay where they land and the library comes to
+/// them. Without it a book shared from a computer arrived on the reader and
+/// appeared nowhere on it.
+///
+/// It is last, and a root added after it goes after it. An identifier starts
+/// with its root's place in this list, and Books keeps each reading position
+/// and cover under the identifier, so moving a root forgets the place in
+/// every book under the roots that follow it.
+pub const ROOTS: &[&str] = &[
+    "/mnt/onboard",
+    "/mnt/onboard/.adds/cobalt/data",
+    "/mnt/sd",
+    SYNCED_BOOKS,
+];
+
+/// Where the Sync app's `books` folder lands on the card.
+///
+/// Receive-only on the reader: what is in it is what the computer shared,
+/// plus the engine's own marker and whatever it is part-way through writing,
+/// all of it hidden, and a hidden file is never listed.
+pub const SYNCED_BOOKS: &str = "/mnt/onboard/.adds/cobalt/sync/books";
 
 /// Directory names never descended into, matched at any depth, besides every
 /// hidden directory.
@@ -353,7 +378,7 @@ fn walk(
             }
             continue;
         }
-        if !kind.is_file() {
+        if !kind.is_file() || hidden(name) {
             continue;
         }
         let named = Kind::from_name(name);
@@ -518,7 +543,7 @@ pub fn resolve_in(roots: &[PathBuf], id: &str) -> Option<PathBuf> {
         .map(|part| part.as_os_str().to_str())
         .collect::<Option<Vec<_>>>()?;
     let name = parts.pop()?;
-    if parts.iter().any(|part| skipped_directory(part)) {
+    if hidden(name) || parts.iter().any(|part| skipped_directory(part)) {
         return None;
     }
     (Kind::from_name(name).is_some() || is_unnamed_epub(&real, name)).then_some(real)
@@ -594,6 +619,20 @@ pub(crate) fn wire_path(root: &Path, path: &Path) -> Option<String> {
 /// visible names in [`SKIPPED`].
 pub(crate) fn skipped_directory(name: &str) -> bool {
     name.starts_with('.') || SKIPPED.contains(&name)
+}
+
+/// Whether a file is hidden, which nothing an owner put on the shelf is.
+///
+/// The sync engine writes an arriving book under a hidden temporary name and
+/// gives it its real one only when every byte has landed. That name ends in
+/// `.tmp` today, which no kind is listed by, but a book half arrived is a
+/// file of the wrong length that would open as a damaged one, so it is kept
+/// off the shelf by being hidden rather than by how its name happens to end.
+/// The engine's ignore list is hidden the same way. So is the sidecar a Mac
+/// leaves beside every file it copies, `._Bleak House.epub`, which was listed
+/// as a second Bleak House that could not be opened.
+fn hidden(name: &str) -> bool {
+    name.starts_with('.')
 }
 
 /// The path an identifier names under the compiled-in [`ROOTS`].
@@ -999,6 +1038,59 @@ mod tests {
         let listing = list_in(&[root]);
         assert_eq!(listing.entries.len(), 1);
         assert_eq!(listing.entries[0].title, "Letter");
+    }
+
+    #[test]
+    fn the_folder_of_synced_books_is_a_root_and_no_older_root_moved_to_make_room() {
+        // An identifier begins with its root's place in the list, and every
+        // kept reading position is filed under an identifier.
+        assert_eq!(
+            super::ROOTS[..3],
+            ["/mnt/onboard", "/mnt/onboard/.adds/cobalt/data", "/mnt/sd"]
+        );
+        assert_eq!(super::ROOTS[3], super::SYNCED_BOOKS);
+        assert_eq!(super::SYNCED_BOOKS, "/mnt/onboard/.adds/cobalt/sync/books");
+    }
+
+    #[test]
+    fn a_synced_book_is_listed_and_one_still_arriving_is_not() {
+        let card = scratch("sync-card");
+        let synced = scratch("sync-books");
+        fs::create_dir_all(synced.join(".stfolder")).expect("the engine's marker");
+        fs::create_dir_all(synced.join(".stversions")).expect("the engine's old copies");
+        fs::create_dir_all(synced.join("Essays")).expect("a folder the owner made");
+        fs::write(synced.join("River.epub"), a_book_called("River")).expect("an arrived book");
+        fs::write(synced.join("Essays/Tides.md"), b"# Tides").expect("an arrived note");
+        for partial in [
+            ".syncthing.Harbour.epub.tmp",
+            "~syncthing~Harbour.epub.tmp",
+            "Essays/.syncthing.Salt.md.tmp",
+        ] {
+            fs::write(synced.join(partial), b"PK\x03\x04 half a book").expect("a partial");
+        }
+        fs::write(synced.join(".stignore"), b"*.part").expect("the engine's ignore list");
+        fs::write(synced.join(".stfolder/marker.txt"), b"").expect("a marker file");
+        fs::write(synced.join(".stversions/River.epub"), b"an older River").expect("an old copy");
+        fs::write(synced.join("._River.epub"), b"a sidecar").expect("a copying sidecar");
+
+        let roots = [card, synced];
+        let listed: Vec<_> = list_in(&roots)
+            .entries
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(listed, ["1/River.epub", "1/Essays/Tides.md"]);
+        assert!(read_in(&roots, "1/River.epub").is_some());
+        for id in [
+            "1/.syncthing.Harbour.epub.tmp",
+            "1/~syncthing~Harbour.epub.tmp",
+            "1/.stignore",
+            "1/.stfolder/marker.txt",
+            "1/.stversions/River.epub",
+            "1/._River.epub",
+        ] {
+            assert!(read_in(&roots, id).is_none(), "{id} was readable");
+        }
     }
 
     #[test]
