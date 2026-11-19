@@ -136,32 +136,69 @@ pub(crate) fn deliver_to_folders(
             return Ok(Saved::Already(name.unwrap_or_default()));
         }
     }
-    let stem = stem_of(&article.file_name);
+    let name = place(
+        &folder,
+        stem_of(&article.file_name),
+        ".epub",
+        &article.epub,
+        "article",
+    )?;
+    announce(inbox, "clip", &notice(article, &name), "article")?;
+    Ok(Saved::New(name))
+}
+
+/// Saves `bytes` in `folder` as `stem` and `suffix`, or under the first
+/// numbered name that is free, and returns the name it took.
+///
+/// Written under a hidden name first, so nothing that lists the folder ever
+/// shows half a file, and then linked rather than renamed, because a link
+/// fails on a name that is taken where a rename would replace it. That is
+/// what makes "never replaces a different file of the same name" hold even
+/// when two sends finish at the same moment. `what` is the thing being saved,
+/// for the sentence a failure is reported in.
+pub(crate) fn place(
+    folder: &Path,
+    stem: &str,
+    suffix: &str,
+    bytes: &[u8],
+    what: &str,
+) -> Result<String, String> {
     let partial = folder.join(format!(".{}.writing", unique()));
-    fs::write(&partial, &article.epub)
-        .map_err(|error| format!("could not write the article: {error}"))?;
+    fs::write(&partial, bytes).map_err(|error| {
+        let _ = fs::remove_file(&partial);
+        format!("could not write the {what}: {error}")
+    })?;
     let mut number = 1;
     let name = loop {
-        let name = numbered(stem, number);
-        let path = folder.join(&name);
-        // Linked rather than renamed, because a link fails on a name that is
-        // taken where a rename would replace it.
-        match fs::hard_link(&partial, &path) {
+        let name = numbered(stem, number, suffix);
+        match fs::hard_link(&partial, folder.join(&name)) {
             Ok(()) => break name,
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => number += 1,
             Err(error) => {
                 let _ = fs::remove_file(&partial);
-                return Err(format!("could not save the article: {error}"));
+                return Err(format!("could not save the {what}: {error}"));
             }
         }
     };
     let _ = fs::remove_file(&partial);
-    let record = notice(article, &name);
+    Ok(name)
+}
+
+/// Drops a notice record into `inbox`, so the reader says `what` arrived.
+///
+/// The runtime takes any finished `.json` it finds there, so the record is
+/// written under a hidden name and moved, and only after the file it
+/// announces is in place: a notice for something not yet on the card would
+/// open nothing. `tag` starts the record's name and says which command wrote
+/// it to anybody looking in the folder.
+pub(crate) fn announce(inbox: &Path, tag: &str, record: &str, what: &str) -> Result<(), String> {
     let waiting = inbox.join(format!(".{}.writing", unique()));
     fs::write(&waiting, record)
-        .and_then(|()| fs::rename(&waiting, inbox.join(format!("clip-{}.json", unique()))))
-        .map_err(|error| format!("saved the article but could not announce it: {error}"))?;
-    Ok(Saved::New(name))
+        .and_then(|()| fs::rename(&waiting, inbox.join(format!("{tag}-{}.json", unique()))))
+        .map_err(|error| {
+            let _ = fs::remove_file(&waiting);
+            format!("saved the {what} but could not announce it: {error}")
+        })
 }
 
 /// What a clipped book is known by, as its package writes it.
@@ -201,6 +238,20 @@ fn deliver_to_device(host: &str, article: &Article, patience: Duration) -> Resul
     let output =
         super::run_remote_shell(&format!("root@{host}"), &device_script(article), patience)
             .map_err(Missed::Away)?;
+    taken(host, &output, "article")
+}
+
+/// What the reader at `host` did with `what`, from what its script said.
+///
+/// The script's last word is the only thing believed: `saved=` once the file
+/// and its notice are both in place, `already=` when it found the copy it
+/// had. Anything else is a miss, and which kind decides whether trying again
+/// later can help.
+pub(crate) fn taken(
+    host: &str,
+    output: &super::RemoteShellOutput,
+    what: &str,
+) -> Result<Saved, Missed> {
     let said = String::from_utf8_lossy(&output.stdout);
     if output.status.success() {
         if let Some(name) = said.lines().find_map(|line| line.strip_prefix("saved=")) {
@@ -211,7 +262,7 @@ fn deliver_to_device(host: &str, article: &Article, patience: Duration) -> Resul
         }
     }
     let error = super::remote_shell_error(
-        format!("the reader at {host} did not take the article"),
+        format!("the reader at {host} did not take the {what}"),
         &output.stdout,
         &output.stderr,
     );
@@ -232,16 +283,10 @@ fn deliver_to_device(host: &str, article: &Article, patience: Duration) -> Resul
 /// already on the shelf, archived or not, is found by its identifier first
 /// and nothing is written.
 pub(crate) fn device_script(article: &Article) -> String {
-    let stem = super::base64_encode(stem_of(&article.file_name).as_bytes());
     let mark = super::base64_encode(identity_of(&article.epub).unwrap_or_default().as_bytes());
     let (before, after) = notice_halves(article);
     format!(
-        "set -eu\n\
-         umask 022\n\
-         dir='{DEVICE_ARTICLES}'\n\
-         inbox='{DEVICE_INBOX}'\n\
-         mkdir -p \"$dir\" \"$inbox\"\n\
-         stem=$(printf '%s' '{stem}' | base64 -d)\n\
+        "{opening}\
          mark=$(printf '%s' '{mark}' | base64 -d)\n\
          if [ -n \"$mark\" ]; then\n\
          for held in \"$dir\"/*.epub; do\n\
@@ -252,17 +297,59 @@ pub(crate) fn device_script(article: &Article) -> String {
          base64 -d > \"$partial\" <<'KOBO_ARTICLE'\n\
          {epub}\n\
          KOBO_ARTICLE\n\
-         name=\"$stem.epub\"\n\
+         {settling}{announcing}",
+        opening = opening_script(DEVICE_ARTICLES, stem_of(&article.file_name)),
+        epub = super::base64_encode(&article.epub),
+        settling = settling_script(".epub"),
+        announcing = announcing_script("clip", &before, &after),
+    )
+}
+
+/// How a script that saves into `dir` on the reader begins: the folder and
+/// the inbox made, and `$stem` holding the name to save under.
+///
+/// The stem is the one value an owner or a web page chose, so it travels
+/// base64 encoded and is only ever used inside double quotes.
+pub(crate) fn opening_script(dir: &str, stem: &str) -> String {
+    format!(
+        "set -eu\n\
+         umask 022\n\
+         dir='{dir}'\n\
+         inbox='{DEVICE_INBOX}'\n\
+         mkdir -p \"$dir\" \"$inbox\"\n\
+         stem=$(printf '%s' '{stem}' | base64 -d)\n",
+        stem = super::base64_encode(stem.as_bytes()),
+    )
+}
+
+/// The lines that move a finished `$partial` into `$dir` as `$stem` and
+/// `suffix`, or under the first numbered name that is free, leaving the name
+/// it took in `$name`.
+///
+/// `suffix` is written into the script as it is, so it is only ever one of
+/// the few this program knows, never part of a name somebody typed.
+pub(crate) fn settling_script(suffix: &str) -> String {
+    format!(
+        "name=\"$stem{suffix}\"\n\
          n=2\n\
-         while [ -e \"$dir/$name\" ]; do name=\"$stem ($n).epub\"; n=$((n + 1)); done\n\
+         while [ -e \"$dir/$name\" ]; do name=\"$stem ($n){suffix}\"; n=$((n + 1)); done\n\
          mv \"$partial\" \"$dir/$name\"\n\
-         sync\n\
-         record=\"$inbox/.clip-$$.writing\"\n\
+         sync\n"
+    )
+}
+
+/// The lines that announce `$name` and report it saved, which end a script.
+///
+/// `before` and `after` are the notice record either side of the name, which
+/// only the reader knows once it has found a free one. The record is moved
+/// into the inbox whole, as the file it announces was moved into its folder.
+pub(crate) fn announcing_script(tag: &str, before: &str, after: &str) -> String {
+    format!(
+        "record=\"$inbox/.{tag}-$$.writing\"\n\
          {{ printf '%s' '{before}' | base64 -d; printf '%s' \"$name\"; printf '%s' '{after}' | base64 -d; }} > \"$record\"\n\
-         mv \"$record\" \"$inbox/clip-$(date +%s)-$$.json\"\n\
+         mv \"$record\" \"$inbox/{tag}-$(date +%s)-$$.json\"\n\
          sync\n\
          printf 'saved=%s\\n' \"$name\"\n",
-        epub = super::base64_encode(&article.epub),
         before = super::base64_encode(before.as_bytes()),
         after = super::base64_encode(after.as_bytes()),
     )
@@ -287,9 +374,15 @@ fn notice_halves(article: &Article) -> (String, String) {
     if let Some(site) = article.site.as_deref().filter(|site| !site.is_empty()) {
         record = record.set("source", site);
     }
-    let mut before = record.build().to_json();
+    around_the_name(&record.build(), ARTICLES)
+}
+
+/// A notice `record` split where the path of a file saved in `folder` goes:
+/// everything up to the file's name, and what closes the record after it.
+pub(crate) fn around_the_name(record: &kobo_json::Value, folder: &str) -> (String, String) {
+    let mut before = record.to_json();
     before.pop();
-    before.push_str(&format!(",\"path\":\"{ARTICLES}/"));
+    before.push_str(&format!(",\"path\":\"{folder}/"));
     (before, "\"}".to_owned())
 }
 
@@ -297,11 +390,11 @@ fn stem_of(file_name: &str) -> &str {
     file_name.strip_suffix(".epub").unwrap_or(file_name)
 }
 
-fn numbered(stem: &str, number: u32) -> String {
+fn numbered(stem: &str, number: u32, suffix: &str) -> String {
     if number <= 1 {
-        format!("{stem}.epub")
+        format!("{stem}{suffix}")
     } else {
-        format!("{stem} ({number}).epub")
+        format!("{stem} ({number}){suffix}")
     }
 }
 
