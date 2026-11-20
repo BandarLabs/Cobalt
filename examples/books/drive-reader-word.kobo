@@ -13,7 +13,7 @@ wait 700
 input touch 3 57 -1;0 0 0
 wait-for No dictionary on this reader has this word.
 expect move
-expect kobo dict install
+expect kobo dict install FILE
 shot books-word
 tap Highlight
 wait-for Marker 1

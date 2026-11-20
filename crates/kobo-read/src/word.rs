@@ -271,8 +271,8 @@ impl Reader {
                 None => screen
                     .heading(kobo_ui::drawable_in(&held.word, Face::Text))
                     .text("No dictionary on this reader has this word.")
-                    .secondary("To add a dictionary, run this on your computer.")
-                    .command("kobo dict install"),
+                    .secondary("To add one, run this on your computer with a dictionary file.")
+                    .command("kobo dict install FILE"),
                 Some(entry) => {
                     let screen = screen
                         .heading(kobo_ui::drawable_in(&entry.headword, Face::Text))
@@ -424,14 +424,14 @@ mod tests {
             [
                 "heron",
                 "No dictionary on this reader has this word.",
-                "To add a dictionary, run this on your computer.",
-                "kobo dict install",
+                "To add one, run this on your computer with a dictionary file.",
+                "kobo dict install FILE",
             ]
         );
         assert!(
             screen.nodes.iter().any(|node| matches!(
                 node,
-                Node::Quote { role: QuoteRole::Command, text, .. } if text == "kobo dict install"
+                Node::Quote { role: QuoteRole::Command, text, .. } if text == "kobo dict install FILE"
             )),
             "the command is set as a command, not inside a sentence"
         );
