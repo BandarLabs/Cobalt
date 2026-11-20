@@ -3,8 +3,8 @@
   "display_name": "Readeck",
   "short_label": "Readeck",
   "summary": "Read and search your saved Readeck articles. Needs an account.",
-  "version": "0.1.8",
-  "release_notes": "Articles kept for offline reading now open without Wi-Fi, and refreshing keeps your list on screen. The inbox shows its page count, the reading controls have text size again, and an address typed without https:// is accepted.",
+  "version": "0.1.9",
+  "release_notes": "Find words in an article and go to any page from the reading controls. With the bar shown, the foot of the page says where you are.",
   "glyph": "paperclip",
   "capabilities": [
     "network",
