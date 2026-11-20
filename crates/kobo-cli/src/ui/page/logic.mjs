@@ -242,10 +242,16 @@ export function appObstacle(app, reader) {
   return "";
 }
 
-// What the Reader place says about one reader and offers to do with it.
+// What the Reader place offers to do with one reader, and the reason when
+// the thing an owner would expect is not on offer.
 //
-//   headline   the one sentence that is true of this reader now
-//   detail     what follows from it, when something does
+// What the reader has and what this computer has are facts and are shown as
+// facts, in the table. Nothing here restates them. `reason` is only ever
+// why something cannot be done: Cobalt cannot go on this reader, there is
+// nothing here to install, the reader is ahead of this computer, what is on
+// it is damaged. When everything is in order it is empty.
+//
+//   reason     why the expected action is missing, or ""
 //   primary    "install", "update" or null: the one thing to do next
 //   repair     whether installing again is offered as a lesser action
 //   removable  whether Cobalt can be taken off
@@ -253,75 +259,31 @@ export function readerStanding(reader, computer) {
   const release = computer?.release ?? null;
   const noRelease = computer?.release_problem ?? "";
   const on = reader.cobalt?.cobalt_version ?? null;
+  const refused = reader.supported ? "" : `Cobalt cannot be installed on this reader. ${sentence(reader.refusal)}`;
 
   if (reader.cobalt_problem) {
-    return {
-      headline: "The Cobalt on this reader is damaged.",
-      detail: reader.cobalt_problem,
-      primary: release && reader.supported ? "install" : null,
-      repair: false,
-      removable: true,
-    };
+    return { reason: reader.cobalt_problem, primary: release && reader.supported ? "install" : null, repair: false, removable: true };
   }
   if (!on) {
-    if (!reader.supported) {
-      return {
-        headline: "Cobalt cannot be installed on this reader.",
-        detail: sentence(reader.refusal),
-        primary: null,
-        repair: false,
-        removable: false,
-      };
-    }
+    if (refused) return { reason: refused, primary: null, repair: false, removable: false };
     return release
-      ? {
-          headline: "Cobalt is not on this reader yet.",
-          detail: `This computer has Cobalt ${release} ready to install.`,
-          primary: "install",
-          repair: false,
-          removable: false,
-        }
-      : {
-          headline: "Cobalt is not on this reader yet.",
-          detail: noRelease,
-          primary: null,
-          repair: false,
-          removable: false,
-        };
+      ? { reason: "", primary: "install", repair: false, removable: false }
+      : { reason: noRelease, primary: null, repair: false, removable: false };
   }
   switch (reader.standing) {
     case "behind":
-      return {
-        headline: `This reader has Cobalt ${on}.`,
-        detail: `This computer has ${release}, which is newer.`,
-        primary: reader.supported ? "update" : null,
-        repair: false,
-        removable: true,
-      };
+      return { reason: refused, primary: refused ? null : "update", repair: false, removable: true };
     case "ahead":
       return {
-        headline: `This reader has Cobalt ${on}.`,
-        detail: `That is newer than the ${release} on this computer. Run kobo update in a terminal before changing this reader's Cobalt from here.`,
+        reason: `The Cobalt on this reader is newer than the ${release} on this computer. Run kobo update in a terminal before changing it from here.`,
         primary: null,
         repair: false,
         removable: true,
       };
     case "current":
-      return {
-        headline: `This reader has Cobalt ${on}.`,
-        detail: "That is the release on this computer. The reader also updates itself over Wi-Fi.",
-        primary: null,
-        repair: reader.supported,
-        removable: true,
-      };
+      return { reason: "", primary: null, repair: !refused, removable: true };
     default:
-      return {
-        headline: `This reader has Cobalt ${on}.`,
-        detail: noRelease,
-        primary: null,
-        repair: false,
-        removable: true,
-      };
+      return { reason: noRelease, primary: null, repair: false, removable: true };
   }
 }
 
@@ -347,8 +309,11 @@ export function appSections(installed, catalog, query) {
     return {
       ...app,
       // The catalog's entry knows the version on offer; the reader's own
-      // record knows only what it has.
+      // record knows only what it has. The catalog's line about what the
+      // app does is the app's own, from its signed manifest, and is used in
+      // place of the runtime's line for a built-in copy.
       version: entry ? entry.version : app.version,
+      summary: entry?.summary || app.summary,
       update_available: entry ? Boolean(entry.update_available) : false,
       runs_on_this_reader: entry ? entry.runs_on_this_reader !== false : true,
       minimum_cobalt_version: entry ? entry.minimum_cobalt_version : app.minimum_cobalt_version,

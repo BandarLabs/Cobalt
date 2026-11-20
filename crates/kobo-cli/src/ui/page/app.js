@@ -236,11 +236,11 @@ function drawReader() {
     // written to it, and pulling the cable now can lose the end of it.
     const reader = view.state?.readers.find(found => found.volume === local.job.volume);
     const extra = reader && h("div", { class: "note" },
-      h("p", null, "The reader is still connected. Eject it before you unplug it, so everything written is on it. ",
+      h("p", null, "The reader is still connected. Eject it before you unplug it. ",
         view.state.computer.ejects && plain("Eject it now", () => eject(reader))));
     return slot.replaceChildren(...jobView(local.job, {
       done: DONE[local.job.title] ?? "Done.",
-      waiting: "This takes a minute or two. Leave the reader plugged in until the steps for it appear here.",
+      waiting: "Leave the reader plugged in.",
       extra,
       after: afterFailure(local.job, view.state),
       back,
@@ -263,37 +263,29 @@ function noReader() {
     return [
       h("h2", null, "This computer is not letting Cobalt read the reader."),
       h("p", { class: "reading" }, "A drive is mounted at ", h("span", { class: "path" }, pathText(missing.volume)),
-        mac ? ", and macOS refused to let the kobo command open it. It asks once, and the answer was no." : ", and the system refused to let the kobo command open it."),
+        mac ? ", and macOS refused to let the kobo command open it." : ", and the system refused to let the kobo command open it."),
       mac && h("ol", { class: "steps reading" },
         h("li", null, "Open System Settings, then Privacy & Security, then Files and Folders."),
         h("li", null, "Find the terminal app you ran kobo ui from and turn on Removable Volumes."),
         h("li", null, "Unplug the reader, plug it in again and tap Connect.")),
-      h("p", { class: "quiet small" }, "This window notices by itself once the drive can be read."),
     ].filter(Boolean);
   }
   if (missing.kind === "unconnected") {
     return [
       h("h2", null, "The reader is plugged in but has not connected."),
-      h("p", { class: "reading" }, "Tap Connect on its screen. Until then it only charges, and its storage stays hidden from this computer."),
-      h("p", { class: "reading" }, "If the question has gone from its screen, unplug the cable and plug it in again."),
-      h("p", { class: "quiet small" }, "Waiting for the reader to connect."),
+      h("p", { class: "reading" }, "Tap Connect on its screen, or unplug the cable and plug it in again if the question has gone."),
     ];
   }
   return [
     note(view.reader.notice),
     h("h2", null, "No reader is connected."),
-    h("p", { class: "reading" }, "Plug your Kobo into this computer and it appears here by itself."),
-    h("ol", { class: "steps reading" },
-      h("li", null, "Use a cable that carries data, plugged straight into the computer and not through a hub. A cable that only charges looks the same."),
-      h("li", null, "The reader asks whether to connect. Tap Connect. It stays hidden from the computer until you do.")),
-    h("p", { class: "quiet small" }, "Looking for a reader."),
+    h("p", { class: "reading" }, "Plug in your Kobo with a cable that carries data and tap Connect on its screen."),
   ].filter(Boolean);
 }
 
 function severalReaders(readers) {
   return [
     h("h2", null, `${readers.length} readers are connected.`),
-    h("p", { class: "reading" }, "Choose the one to work on. Nothing is done to a reader you did not choose."),
     h("ul", { class: "entries" }, readers.map(reader =>
       h("li", null,
         h("div", null, h("span", { class: "name" }, reader.model), h("span", { class: "version" }, `firmware ${reader.firmware}`)),
@@ -302,6 +294,9 @@ function severalReaders(readers) {
   ];
 }
 
+// One reader: its name, what is true of it as a table, and what can be done.
+// A sentence appears only when it is the reason something cannot be done,
+// or the code's own account of what untested means for this reader.
 function oneReader({ reader, among }) {
   const computer = view.state.computer;
   const local = view.reader;
@@ -314,10 +309,10 @@ function oneReader({ reader, among }) {
     h("dl", { class: "facts" },
       h("dt", null, "Firmware"), h("dd", null, reader.firmware),
       h("dt", null, "Cobalt"), h("dd", null, cobalt),
+      computer.release && [h("dt", null, "This computer has"), h("dd", null, `Cobalt ${computer.release}`)],
       Number.isFinite(reader.free_bytes) && [h("dt", null, "Free space"), h("dd", null, fileSize(reader.free_bytes))],
       h("dt", null, "Connected at"), h("dd", { class: "path" }, pathText(reader.volume))),
-    h("p", { class: "lead" }, standing.headline),
-    standing.detail && h("p", { class: "reading" }, prose(standing.detail)),
+    note(standing.reason, !reader.supported || Boolean(reader.cobalt_problem)),
     standing.primary && !locked && note(sentence(reader.untested)),
     locked && note("This reader's storage is mounted read-only, so nothing can be written to it. Eject it, unplug it, restart the reader and connect it again.", true),
     note(local.error, true),
@@ -352,7 +347,7 @@ function planView(reader, plan) {
   const path = plan.undo ? "/api/reader/remove" : "/api/reader/install";
   return [
     h("h2", null, plan.undo ? "What removing Cobalt changes" : `What installing Cobalt ${release} changes`),
-    h("p", { class: "quiet" }, `On the ${reader.model} at `, h("span", { class: "path" }, pathText(reader.volume)), ". Nothing is written until you agree below."),
+    h("p", { class: "quiet" }, `${reader.model} at `, h("span", { class: "path" }, pathText(reader.volume))),
     h("ol", { class: "plan" }, plan.lines.map(line => h("li", null, planStep(line)))),
     note(sentence(plan.untested)),
     note(local.error, true),
@@ -426,10 +421,10 @@ function drawApps() {
     const chosen = view.state ? chosenReader(view.state.readers, view.volume) : { kind: "none" };
     const why =
       !view.state ? "Looking for a reader."
-      : chosen.kind === "none" ? "No reader is connected. Plug one in and tap Connect on its screen, and its apps are listed here."
-      : chosen.kind === "several" ? "More than one reader is connected. Choose one in Reader first."
-      : "This reader does not have Cobalt yet. Install it in Reader, and its apps are listed here.";
-    return appsHead.replaceChildren(h("p", { class: "reading" }, why), view.state && h("p", null, h("a", { href: "#reader" }, "Go to Reader")) || "");
+      : chosen.kind === "none" ? "Connect a reader to see its apps."
+      : chosen.kind === "several" ? "Choose one of the connected readers in Reader first."
+      : "Install Cobalt on this reader first, in Reader.";
+    return appsHead.replaceChildren(h("p", { class: "reading" }, why));
   }
   const busy = Boolean(local.job?.running);
   appsHead.replaceChildren(...[
@@ -442,7 +437,7 @@ function drawApps() {
     !local.job && local.said && note(local.said),
     local.problem && h("div", { class: "note wrong" }, h("p", null, prose(local.problem)), h("p", null, plain("Try again", loadApps))),
     local.changed && !busy && h("div", { class: "note" },
-      h("p", null, "Eject the reader before you unplug it, so the change is fully written. ",
+      h("p", null, "Eject the reader before you unplug it. ",
         view.state.computer.ejects && plain("Eject it now", () => eject(reader)))),
   ].filter(Boolean));
   drawAppLists();
@@ -461,7 +456,7 @@ function drawAppLists() {
     const asking = local.removing === app.id;
     return h("li", null,
       h("div", null, h("span", { class: "name" }, app.title), h("span", { class: "version" }, app.installed_version ?? app.version)),
-      h("p", { class: "about" }, asking ? `Remove ${app.title}? Its data is kept, so installing it again picks up where it left off.`
+      h("p", { class: "about" }, asking ? `Remove ${app.title}? Its data is kept.`
         : app.update_available && !app.runs_on_this_reader ? `Version ${app.version} needs Cobalt ${app.minimum_cobalt_version} or newer.` : app.summary),
       h("div", { class: "does" }, asking
         ? [button("Remove", () => removeApp(reader, app), { disabled: busy }), button("Keep", () => { local.removing = null; drawAppLists(); })]
@@ -486,7 +481,7 @@ function drawAppLists() {
       h("h3", null, "On this reader"),
       sections.updates.length > 1 && local.query.trim() === "" && h("p", null, button(`Update all ${sections.updates.length}`, () => install(sections.updates), { disabled: busy })),
       onReader.length > 0 ? h("ul", { class: "entries" }, onReader)
-        : h("p", { class: "quiet" }, local.query ? "None of them match." : "No apps yet. The ones below can be installed.")),
+        : h("p", { class: "quiet" }, local.query ? "None of them match." : "No apps are installed. Install one from the list below.")),
     !nothing && local.catalog && h("div", { class: "part" },
       h("h3", null, "Available"),
       offered.length > 0 ? h("ul", { class: "entries" }, offered) : h("p", { class: "quiet" }, local.query ? "None of them match." : "Everything published is on this reader.")),
@@ -533,7 +528,7 @@ async function removeApp(reader, app) {
   try {
     const left = await change("/api/apps/remove", { volume: reader.volume, id: app.id });
     local.installed = left.apps;
-    local.said = `${app.title} is removed. Its data is kept.`;
+    local.said = `${app.title} is removed.`;
     local.changed = true;
     loadApps();
   } catch (error) {
@@ -555,16 +550,15 @@ function drawBrowser() {
         h("p", null, step.paths.length > 0 ? `One step is left, in ${browser.title} itself. ${step.instruction}` : step.instruction),
         step.paths.map(path => h("p", { class: "row" }, h("span", { class: "path" }, pathText(path)), copyButton(path))),
         step.notes.map(text => h("p", { class: "quiet" }, text))),
-      !browser.set_up && local.said[browser.id] && h("p", { class: "about wide" }, local.said[browser.id]),
+      local.said[browser.id] && h("p", { class: "about wide" }, local.said[browser.id]),
       h("div", { class: "does" }, browser.set_up
         ? button("Remove", () => act("remove"), { disabled: local.busy !== "" })
         : button("Set up", () => act("setup"), { disabled: local.busy !== "" })));
   });
   slots.browser.replaceChildren(...[
-    h("p", { class: "reading" }, "Send to Kobo adds three things to your browser’s right-click menu: send this page, send this link, and send the selection. Each arrives on the reader as a book, without the menus and advertisements."),
     note(local.problem, true),
     local.list === null && h("p", { class: "quiet" }, "Looking for browsers."),
-    local.list?.length === 0 && h("p", { class: "reading" }, "No browser that Send to Kobo works with was found on this computer. It works with Chrome, Edge, Brave, Chromium and Firefox, and with Safari on a Mac."),
+    local.list?.length === 0 && h("p", { class: "reading" }, "Install Chrome, Edge, Brave, Chromium or Firefox to use Send to Kobo."),
     rows.length > 0 && h("ul", { class: "entries" }, rows),
   ].filter(Boolean));
 }
@@ -598,7 +592,11 @@ async function setBrowser(browser, verb) {
   try {
     const done = await change(`/api/browsers/${verb}`, { browser: browser.id });
     local.list = done.browsers;
-    local.said[browser.id] = verb === "remove" ? `Send to Kobo is gone from ${browser.title}. Remove the extension on ${browser.title}’s own extensions page too.` : "";
+    // What Send to Kobo is, said once, to the owner who has just asked for
+    // it; and after a removal, the one thing that is left for them to do.
+    local.said[browser.id] = verb === "remove"
+      ? `Remove the extension on ${browser.title}’s own extensions page too.`
+      : "Send to Kobo adds Send page, Send link and Send selection to the right-click menu.";
   } catch (error) {
     local.problem = error.message;
   }
@@ -631,8 +629,8 @@ function drawSend() {
   const saved = local.info?.readers ?? [];
   sendTo.replaceChildren(...[
     !local.info && h("p", { class: "quiet" }, "Looking for saved readers."),
-    local.info && saved.length === 0 && note("No reader is saved on this computer yet. One is saved when it comes back on Wi-Fi after Cobalt is installed from Reader. Until then a web article waits here, and a file has nowhere to go."),
-    saved.length === 1 && h("p", { class: "quiet" }, `These go over Wi-Fi to the reader saved as “${saved[0].name}”.`),
+    local.info && saved.length === 0 && note("No reader is saved on this computer yet, so a file cannot be sent and an article waits. Installing Cobalt from Reader saves one."),
+    saved.length === 1 && h("p", { class: "quiet" }, `To “${saved[0].name}”, over Wi-Fi.`),
     saved.length > 1 && h("p", null,
       h("label", { class: "over", htmlFor: "send-to" }, "Send to"),
       h("select", { class: "field", id: "send-to", onchange: event => { local.reader = event.target.value; } },
@@ -647,7 +645,7 @@ function drawSend() {
 
   const waiting = local.info?.waiting ?? [];
   queueArea.replaceChildren(...[
-    waiting.length === 0 && h("p", { class: "quiet" }, "Nothing is waiting. An article sent while the reader is asleep waits here and goes when the reader is next awake."),
+    waiting.length === 0 && h("p", { class: "quiet" }, "Nothing is waiting."),
     waiting.length > 0 && h("ul", { class: "entries" }, waiting.map(article =>
       h("li", null, h("div", null, h("span", { class: "name" }, article.title)), article.site && h("p", { class: "about" }, article.site)))),
     waiting.length > 0 && h("div", { class: "actions" }, button("Send them now", () => startSend("queue", "/api/send/queue", {}), { disabled: busy })),
@@ -689,8 +687,7 @@ function fileView(file, job, busy) {
   }
   const zone = h("div", { class: "drop" },
     note(file.problem, true),
-    h("p", null, button("Choose a file", () => picker.click(), { disabled: busy }), " or drag one onto this box."),
-    h("p", { class: "quiet small" }, "Photos go to Frame, PDF scores to Music Stand, Markdown notes to Vault, OPML lists to Feeds, CBZ comics to Panels, story files to Parser and Anki decks to Flashcards."));
+    h("p", null, button("Choose a file", () => picker.click(), { disabled: busy }), " or drag one onto this box."));
   zone.addEventListener("dragover", event => { event.preventDefault(); zone.classList.add("over"); });
   zone.addEventListener("dragleave", () => zone.classList.remove("over"));
   zone.addEventListener("drop", event => { event.preventDefault(); zone.classList.remove("over"); if (event.dataTransfer.files[0] && !busy) receive(event.dataTransfer.files[0]); });
@@ -793,7 +790,7 @@ async function refresh() {
   view.state = state;
   view.stateText = text;
   if (state.readers.length > 0) view.reader.notice = "";
-  document.getElementById("colophon").replaceChildren(h("span", null, `kobo ${state.computer.kobo}`), h("span", null, "For this computer only."));
+  document.getElementById("colophon").textContent = `kobo ${state.computer.kobo}`;
   if (first) resume(state.jobs);
   drawReader();
   drawApps();

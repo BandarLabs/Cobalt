@@ -281,15 +281,8 @@ const withCobalt = (version, standing, more = {}) => ({
 });
 
 test("a reader without Cobalt is offered an install only when there is one to give it", () => {
-  const offered = readerStanding(clara, computer);
-  assert.equal(offered.headline, "Cobalt is not on this reader yet.");
-  assert.equal(offered.detail, "This computer has Cobalt 0.3.37 ready to install.");
-  assert.equal(offered.primary, "install");
-  assert.equal(offered.removable, false);
-
-  const nothing = readerStanding(clara, without);
-  assert.equal(nothing.primary, null);
-  assert.equal(nothing.detail, without.release_problem);
+  assert.deepEqual(readerStanding(clara, computer), { reason: "", primary: "install", repair: false, removable: false });
+  assert.deepEqual(readerStanding(clara, without), { reason: without.release_problem, primary: null, repair: false, removable: false });
 });
 
 test("a reader Cobalt cannot start on is told why and offered nothing", () => {
@@ -297,34 +290,29 @@ test("a reader Cobalt cannot start on is told why and offered nothing", () => {
     { ...clara, supported: false, refusal: "firmware 5.2.190625 cannot start Cobalt: NickelMenu does not hook the 5.x firmware" },
     computer
   );
-  assert.equal(refused.headline, "Cobalt cannot be installed on this reader.");
-  assert.equal(refused.detail, "Firmware 5.2.190625 cannot start Cobalt: NickelMenu does not hook the 5.x firmware.");
+  assert.equal(
+    refused.reason,
+    "Cobalt cannot be installed on this reader. Firmware 5.2.190625 cannot start Cobalt: NickelMenu does not hook the 5.x firmware."
+  );
   assert.equal(refused.primary, null);
   assert.equal(refused.repair, false);
   assert.equal(refused.removable, false);
 });
 
 test("a reader with Cobalt is offered an update only when this computer's release is newer", () => {
-  const behind = readerStanding(withCobalt("0.3.30", "behind"), computer);
-  assert.equal(behind.headline, "This reader has Cobalt 0.3.30.");
-  assert.equal(behind.detail, "This computer has 0.3.37, which is newer.");
-  assert.equal(behind.primary, "update");
-  assert.equal(behind.removable, true);
-
-  const current = readerStanding(withCobalt("0.3.37", "current"), computer);
-  assert.equal(current.primary, null);
-  assert.equal(current.repair, true);
-  assert.equal(current.removable, true);
+  assert.deepEqual(readerStanding(withCobalt("0.3.30", "behind"), computer), { reason: "", primary: "update", repair: false, removable: true });
+  // In order, nothing is said: the table already shows both releases.
+  assert.deepEqual(readerStanding(withCobalt("0.3.37", "current"), computer), { reason: "", primary: null, repair: true, removable: true });
 
   const ahead = readerStanding(withCobalt("0.4.0", "ahead"), computer);
   assert.equal(ahead.primary, null);
   assert.equal(ahead.repair, false);
-  assert.match(ahead.detail, /newer than the 0\.3\.37 on this computer/);
-  assert.match(ahead.detail, /kobo update/);
+  assert.match(ahead.reason, /newer than the 0\.3\.37 on this computer/);
+  assert.match(ahead.reason, /kobo update/);
 
   const unknown = readerStanding(withCobalt("0.3.30", "unknown"), without);
   assert.equal(unknown.primary, null);
-  assert.equal(unknown.detail, without.release_problem);
+  assert.equal(unknown.reason, without.release_problem);
   assert.equal(unknown.removable, true);
 });
 
@@ -332,8 +320,9 @@ test("Cobalt can always be taken off, even from a reader it can no longer be put
   const stranded = readerStanding(withCobalt("0.3.30", "behind", { supported: false, refusal: "firmware 5.2 cannot start Cobalt" }), computer);
   assert.equal(stranded.primary, null);
   assert.equal(stranded.removable, true);
+  assert.match(stranded.reason, /^Cobalt cannot be installed on this reader\. Firmware 5\.2/);
   const damaged = readerStanding({ ...clara, cobalt_problem: "The Cobalt on the reader does not say which release it is." }, computer);
-  assert.equal(damaged.headline, "The Cobalt on this reader is damaged.");
+  assert.equal(damaged.reason, "The Cobalt on the reader does not say which release it is.");
   assert.equal(damaged.primary, "install");
   assert.equal(damaged.removable, true);
 });
@@ -364,6 +353,11 @@ test("the reader's apps come first, with what the catalog knows about each, then
   assert.deepEqual(sections.updates, ["almanac"]);
   assert.equal(sections.total, 4);
   assert.equal(sections.installed[0].version, "1.2.0");
+  // What the app does is said in the catalog's words where it is in the
+  // catalog, and in the reader's own where it is not.
+  const blurbed = appSections([app("rss", "Feeds", { installed_version: "1.0.0", summary: "The runtime's line." })], [app("rss", "Feeds", { summary: "Follow feeds." })], "");
+  assert.equal(blurbed.installed[0].summary, "Follow feeds.");
+  assert.equal(appSections([app("rss", "Feeds", { summary: "The runtime's line." })], null, "").installed[0].summary, "The runtime's line.");
   assert.equal(sections.installed[0].installed_version, "1.0.0");
   assert.equal(sections.installed[0].update_available, true);
   assert.equal(sections.installed[1].update_available, false);
