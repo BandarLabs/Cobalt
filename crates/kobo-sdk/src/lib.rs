@@ -31,9 +31,9 @@ pub use kobo_protocol::{
     ShellEvent, ShellRequest, StoreError, StoreRequest, StoreResult, StreamError, Task, TaskError,
     TaskId, TaskOutcome, UpdateChannel, UpdateMethod, WifiNetwork, CACHE_PREFIX, MAX_CACHE_KEYS,
     MAX_FONT_BYTES, MAX_HEADERS, MAX_HEADER_NAME, MAX_HEADER_VALUE, MAX_INLINE_PICTURE_BYTES,
-    MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES, MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES,
-    MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK, MAX_STORE_KEYS, MAX_STORE_VALUE,
-    MAX_TASK_BYTES, MAX_URL_LEN,
+    MAX_LIBRARY_DOCUMENT_BYTES, MAX_LIBRARY_RANGE_BYTES, MAX_LOOKUP_WORD_BYTES, MAX_PICTURE_BYTES,
+    MAX_PICTURE_CHUNK_BYTES, MAX_RADIO_DEVICES, MAX_RADIO_NAME, MAX_SHELF_CHUNK, MAX_SHELL_CHUNK,
+    MAX_STORE_KEYS, MAX_STORE_VALUE, MAX_TASK_BYTES, MAX_URL_LEN,
 };
 /// The runtime's notices, as the launcher shows them.
 pub use kobo_protocol::{Notice, NoticeList, NoticeTarget, MAX_NOTICES, NOTICES_VERSION};
@@ -2619,6 +2619,33 @@ impl Device<'_> {
     /// Reads one listed document by the identifier the listing returned.
     pub fn read_library(&mut self, id: impl Into<String>) {
         self.request(DeviceRequest::ReadLibrary { id: id.into() });
+    }
+
+    /// Reads part of one listed document: at most `length` bytes of it from
+    /// `offset`, answered with [`DeviceResult::LibraryRange`].
+    ///
+    /// This is how a document too large for [`Device::read_library`] is had:
+    /// ask from the start, keep what arrives, and ask again from where it
+    /// ended until the pieces add up to the `size` each answer states. Every
+    /// answer also carries a `stamp`. One whose `size` or `stamp` differs
+    /// from the first answer's means the file was replaced part-way through,
+    /// and the pieces already in hand are not pieces of it.
+    ///
+    /// `length` is held to between one byte and [`MAX_LIBRARY_RANGE_BYTES`],
+    /// because a request outside that cannot be sent at all.
+    ///
+    /// A runtime released before this request cannot read it, and ends the
+    /// session of an application that sends it. So ask
+    /// [`Device::read_identity`] first, and send this only when the
+    /// `runtime_version` that comes back is the release the application
+    /// shipped with.
+    pub fn read_library_range(&mut self, id: impl Into<String>, offset: u32, length: u32) {
+        let most = u32::try_from(MAX_LIBRARY_RANGE_BYTES).unwrap_or(u32::MAX);
+        self.request(DeviceRequest::ReadLibraryRange {
+            id: id.into(),
+            offset,
+            length: length.clamp(1, most),
+        });
     }
 
     /// Deletes one delivered article, by the identifier a listing returned.
@@ -5516,6 +5543,80 @@ mod task_tests {
         assert_eq!(
             runner.app().outcomes,
             vec![(TaskId(1), TaskOutcome::Failed(TaskError::Denied))]
+        );
+    }
+
+    #[test]
+    fn a_library_range_is_asked_for_within_what_the_wire_carries_and_answered_to_its_asker() {
+        #[derive(Default)]
+        struct Reader {
+            answered: Vec<(DeviceRequest, DeviceResult)>,
+        }
+        impl KoboApp for Reader {
+            fn on_start(&mut self, context: &mut Context) {
+                context
+                    .device()
+                    .read_library_range("0/Atlas.epub", 0, u32::MAX);
+                context.device().read_library_range("0/Atlas.epub", 7, 0);
+                context.device().read_library_range("0/Atlas.epub", 9, 512);
+            }
+            fn on_action(&mut self, _context: &mut Context, _action: ActionId) {}
+            fn on_device_result(
+                &mut self,
+                _context: &mut Context,
+                request: DeviceRequest,
+                result: DeviceResult,
+            ) {
+                self.answered.push((request, result));
+            }
+        }
+        let mut runner = AppRunner::new(Reader::default());
+        let asked: Vec<(u32, u32)> = runner
+            .start()
+            .into_iter()
+            .filter_map(|command| match command {
+                Command::Device(DeviceRequest::ReadLibraryRange { id, offset, length }) => {
+                    assert_eq!(id, "0/Atlas.epub");
+                    Some((offset, length))
+                }
+                _ => None,
+            })
+            .collect();
+        let piece = u32::try_from(MAX_LIBRARY_RANGE_BYTES).expect("a piece fits the wire");
+        assert_eq!(asked, [(0, piece), (7, 1), (9, 512)]);
+        for (offset, length) in &asked {
+            let frame = Frame {
+                version: kobo_protocol::VERSION,
+                request_id: 1,
+                message: Message::DeviceRequest(DeviceRequest::ReadLibraryRange {
+                    id: "0/Atlas.epub".into(),
+                    offset: *offset,
+                    length: *length,
+                }),
+            };
+            assert!(
+                kobo_protocol::encode(&frame).is_ok(),
+                "a range the SDK asked for cannot be sent"
+            );
+        }
+        let range = DeviceResult::LibraryRange {
+            id: "0/Atlas.epub".into(),
+            offset: 0,
+            size: 3,
+            stamp: 11,
+            bytes: b"PK\x03".to_vec(),
+        };
+        runner.device_result(range.clone());
+        assert_eq!(
+            runner.app().answered,
+            [(
+                DeviceRequest::ReadLibraryRange {
+                    id: "0/Atlas.epub".into(),
+                    offset: 0,
+                    length: piece,
+                },
+                range
+            )]
         );
     }
 
