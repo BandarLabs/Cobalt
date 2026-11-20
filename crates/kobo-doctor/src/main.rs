@@ -591,6 +591,7 @@ fn print_tailscale_readiness() {
             "absent (expected; every listening port is reachable from a tailnet)"
         }
     );
+    print_kernel_routing_support();
     let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
     match mounts
         .lines()
@@ -599,6 +600,90 @@ fn print_tailscale_readiness() {
         Some(line) => println!("  /mnt/onboard: {line}"),
         None => println!("  /mnt/onboard: not mounted"),
     }
+}
+
+/// What the kernel offers for carrying other devices' traffic, the way a
+/// Linux exit node or subnet router ordinarily does it.
+///
+/// The Tailscale service does not use any of this. It has the daemon carry
+/// that traffic itself, exactly because nothing was known about these on any
+/// reader. They are reported so that the next person knows: a reader whose
+/// kernel has a packet filter with address translation could let the kernel
+/// do the forwarding, which is faster than a daemon on one core.
+///
+/// Each line is as far as a read can go. The forwarding switch is a fact.
+/// Connection tracking and the older tables are facts when present. The
+/// newer packet filter has no file that announces it, so its line comes from
+/// the kernel's own list of symbols: finding them proves the code is in the
+/// running kernel, and not finding them does not prove a module could not
+/// be loaded. Whether any of it works is something only using it shows.
+fn print_kernel_routing_support() {
+    let forwarding = std::fs::read_to_string("/proc/sys/net/ipv4/ip_forward");
+    println!(
+        "  kernel forwarding switch: {}",
+        match forwarding.as_deref().map(str::trim) {
+            Ok("0") => "off (Tailscale here does not need it on)",
+            Ok(_) => "on",
+            Err(_) => "unreadable",
+        }
+    );
+    println!(
+        "  connection tracking: {}",
+        if Path::new("/proc/sys/net/netfilter/nf_conntrack_max").exists() {
+            "present"
+        } else {
+            "not present"
+        }
+    );
+    let tables = std::fs::read_to_string("/proc/net/ip_tables_names").unwrap_or_default();
+    let tables = tables.split_whitespace().collect::<Vec<_>>();
+    println!(
+        "  older packet filter tables: {}",
+        if tables.is_empty() {
+            "none".to_owned()
+        } else {
+            tables.join(", ")
+        }
+    );
+    match std::fs::read_to_string("/proc/kallsyms") {
+        Ok(symbols) => {
+            let found = packet_filter_in(&symbols);
+            println!(
+                "  newer packet filter in the running kernel: {}",
+                if found.is_empty() {
+                    "no symbols found (a module on disk would not show here)".to_owned()
+                } else {
+                    found.join(", ")
+                }
+            );
+        }
+        Err(_) => println!(
+            "  newer packet filter in the running kernel: unknown (/proc/kallsyms cannot be read)"
+        ),
+    }
+}
+
+/// Which parts of the newer packet filter the kernel's symbol list shows:
+/// the filter itself, address translation, and the rule that rewrites a
+/// packet's source to the reader's own address.
+fn packet_filter_in(symbols: &str) -> Vec<&'static str> {
+    let has = |prefix: &str| {
+        symbols.lines().any(|line| {
+            line.split_whitespace()
+                .nth(2)
+                .is_some_and(|name| name.starts_with(prefix))
+        })
+    };
+    [
+        ("nf_tables_", "nf_tables"),
+        ("nft_nat", "address translation"),
+        ("nft_masq", "masquerade"),
+        ("nft_ct", "connection tracking rules"),
+    ]
+    .into_iter()
+    .filter(|(prefix, _)| has(prefix))
+    .map(|(_, name)| name)
+    .collect()
 }
 
 /// Whether the kernel's list of miscellaneous devices names the tunnel
@@ -723,6 +808,21 @@ mod tests {
             " 62 tunnel4\n130 watchdog\n"
         ));
         assert!(!super::tunnel_driver_registered(""));
+    }
+
+    #[test]
+    fn the_newer_packet_filter_is_reported_part_by_part_from_the_kernels_symbols() {
+        let symbols = "c0a1b2c0 T nf_tables_newtable\nc0a1b300 t nft_masq_ipv4_eval\tnft_masq_ipv4\nc0a1b400 t nft_nat_eval\nc0a1b500 T tun_get_socket\n";
+        assert_eq!(
+            super::packet_filter_in(symbols),
+            ["nf_tables", "address translation", "masquerade"]
+        );
+        // A kernel with none of it, and a name that only contains one.
+        assert!(super::packet_filter_in(
+            "c0a1b500 T tun_get_socket\nc0a1b600 T my_nf_tables_helper\n"
+        )
+        .is_empty());
+        assert!(super::packet_filter_in("").is_empty());
     }
 
     #[test]
