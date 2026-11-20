@@ -936,7 +936,7 @@ fn eject(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
     }
     match (shared.machine.eject)(&reader.volume) {
         Ok(()) => Response::ok(&json!({ "ejected": true })),
-        Err(error) => failed(&error),
+        Err(error) => failed(&super::reasons::eject(&error)),
     }
 }
 

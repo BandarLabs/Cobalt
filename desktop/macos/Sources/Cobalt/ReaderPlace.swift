@@ -474,20 +474,20 @@ private struct JobPane: View {
             onTheReader
         }
         if !scene.said.isEmpty {
-            Folded(title: "Everything it said") { SaidView(blocks: scene.said) }
+            Folded(title: "Details") { SaidView(blocks: scene.said) }
         }
-        HStack {
-            Spacer()
-            Button("Done") { Task { await store.dismissReaderJob() } }
-                .leading()
-                .keyboardShortcut(.defaultAction)
-        }
+        // One button that carries on sits at the leading edge, as on the
+        // way in. Only a pair of choices goes to the far side, like the two
+        // under a plan.
+        Button("Done") { Task { await store.dismissReaderJob() } }
+            .leading()
+            .keyboardShortcut(.defaultAction)
     }
 
     @ViewBuilder
     private func failed(_ scene: JobScene) -> some View {
         Note(scene.reason, detail: scene.aftermath, kind: .caution)
-        Folded(title: "Everything it said") { SaidView(blocks: scene.next) }
+        Folded(title: "Details") { SaidView(blocks: scene.next) }
         HStack(spacing: 10) {
             Spacer()
             Button("Back") { Task { await store.dismissReaderJob() } }

@@ -156,7 +156,9 @@ impl Job {
             "reason": progress
                 .finish
                 .filter(|finish| !finish.ok)
-                .and_then(|_| super::reasons::reason(self.kind, &progress.text)),
+                .and_then(|_| {
+                    super::reasons::reason(self.kind, self.volume.as_deref(), &progress.text)
+                }),
             "text": &progress.text[start..],
             "next": progress.dropped + progress.text.len(),
         })

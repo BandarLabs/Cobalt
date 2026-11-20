@@ -20,13 +20,80 @@
 use super::jobs::Kind;
 
 /// The owner's reason for a failed job, from everything the job said.
-pub fn reason(kind: Kind, said: &str) -> Option<String> {
+pub fn reason(kind: Kind, volume: Option<&str>, said: &str) -> Option<String> {
     let stopped_on = stopped_on(said)?;
     match kind {
+        Kind::Reader if reader_went(&stopped_on, volume) => {
+            Some("The reader was disconnected before this finished.")
+        }
         Kind::Reader => writing_to_the_reader(&stopped_on),
         Kind::Send => sending(&stopped_on),
     }
     .map(str::to_owned)
+}
+
+/// Whether a job stopped because the reader it was writing to went away.
+///
+/// Three things have to be true, because each alone is true of other
+/// failures. The sentence names a file on that reader. The system said the
+/// file, or the device under it, was not there. And the reader is not there
+/// now: a file that is merely missing from a reader still on the cable is a
+/// different failure, and a reader the job ejected itself is not named in
+/// the sentence it stops on afterwards.
+fn reader_went(stopped_on: &str, volume: Option<&str>) -> bool {
+    let Some(volume) = volume.filter(|volume| !volume.is_empty()) else {
+        return false;
+    };
+    let not_there = os_error_number(stopped_on).is_some_and(|number| {
+        if cfg!(windows) {
+            // ERROR_PATH_NOT_FOUND, ERROR_NOT_READY, ERROR_DEVICE_NOT_CONNECTED
+            matches!(number, 3 | 21 | 1167)
+        } else {
+            // ENOENT, EIO, ENXIO
+            matches!(number, 2 | 5 | 6)
+        }
+    });
+    not_there && stopped_on.contains(volume) && !std::path::Path::new(volume).exists()
+}
+
+/// Why a reader could not be ejected, when macOS refused.
+///
+/// The command reports the tool it ran, where the reader is mounted and the
+/// tool's own words, which give the program that still has something open
+/// by its number and its path. The owner is told which program, when the
+/// tool says, and what to do. What other systems say is an instruction
+/// already and is passed on as it is.
+pub fn eject(said: &str) -> String {
+    if !said.starts_with("diskutil eject ") {
+        return said.to_owned();
+    }
+    let user = said
+        .split_once("dissented by PID ")
+        .and_then(|(_, after)| after.split_once('('))
+        .and_then(|(_, after)| after.split_once(')'))
+        .and_then(|(path, _)| program_named(path));
+    match user {
+        Some(program) => format!(
+            "The reader could not be ejected because {program} is still using it. Close what \
+             it has open from the reader, then eject again."
+        ),
+        None => "The reader could not be ejected because something on this computer is still \
+                 using it. Close any file or window from the reader, then eject again."
+            .to_owned(),
+    }
+}
+
+/// A program's name as its owner knows it, from where it runs.
+///
+/// An app runs from inside a folder named for it, and that name is the one
+/// in the Dock. Anything else is known by the name of its file.
+fn program_named(path: &str) -> Option<&str> {
+    let parts = path.split('/').filter(|part| !part.is_empty());
+    let app = parts
+        .clone()
+        .find_map(|part| part.strip_suffix(".app"))
+        .filter(|name| !name.is_empty());
+    app.or_else(|| parts.last())
 }
 
 /// The sentence a command stopped on: the last line it wrote in its own
@@ -153,11 +220,9 @@ enum Trouble {
 /// The standard library ends such a sentence with the system's own number
 /// for the error, which is the one part of it that does not change with the
 /// language the system speaks. The numbers are each system's own. A reader
-/// that has gone has numbers too, and they are left alone: a front end knows
-/// a reader has gone by looking for it, which is surer than a number.
+/// that has gone has numbers too, and those are read by `reader_went`.
 fn os_error(sentence: &str) -> Option<Trouble> {
-    let after = sentence.rsplit_once("(os error ")?.1;
-    let number: i32 = after.split(')').next()?.parse().ok()?;
+    let number = os_error_number(sentence)?;
     if cfg!(windows) {
         match number {
             // ERROR_HANDLE_DISK_FULL, ERROR_DISK_FULL
@@ -181,6 +246,12 @@ fn os_error(sentence: &str) -> Option<Trouble> {
     }
 }
 
+/// The system's own number for the error a sentence ends on.
+fn os_error_number(sentence: &str) -> Option<i32> {
+    let after = sentence.rsplit_once("(os error ")?.1;
+    after.split(')').next()?.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,7 +268,7 @@ mod tests {
             "/home/owner/.local/share/kobo/releases/0.3.37-stable/cobalt-0.3.37-KoboRoot.tgz checksum failed: expected aa, found bb",
             "refusing prebuilt package: unexpected member",
         ] {
-            let reason = reason(Kind::Reader, &ended_on(sentence)).expect("a reason");
+            let reason = reason(Kind::Reader, None, &ended_on(sentence)).expect("a reason");
             assert!(reason.contains("nothing was put on the reader"), "{reason}");
             assert!(!reason.contains('/'), "a path reached the owner: {reason}");
         }
@@ -208,14 +279,14 @@ mod tests {
         if cfg!(windows) {
             return;
         }
-        let full = reason(
-            Kind::Reader,
+        let full = reason(Kind::Reader, None,
             &ended_on("write /Volumes/KOBOeReader/.adds/cobalt/bin/kobod: No space left on device (os error 28)"),
         )
         .expect("a reason");
         assert!(full.contains("ran out of room"), "{full}");
         let locked = reason(
             Kind::Reader,
+            None,
             &ended_on("create /Volumes/KOBOeReader/.adds: Read-only file system (os error 30)"),
         )
         .expect("a reason");
@@ -223,6 +294,7 @@ mod tests {
         for number in [1, 13] {
             let refused = reason(
                 Kind::Reader,
+                None,
                 &ended_on(&format!(
                     "create /Volumes/KOBOeReader/.adds: refused (os error {number})"
                 )),
@@ -241,6 +313,7 @@ mod tests {
     fn a_send_with_no_reader_or_a_silent_one_never_names_a_command() {
         let none = reason(
             Kind::Send,
+            None,
             &ended_on("No reader saved. Run kobo setup with the reader plugged in, or kobo pair."),
         )
         .expect("a reason");
@@ -251,7 +324,7 @@ mod tests {
             "No reader answered within 60 s. Wake it (press power), check Wi-Fi in Cobalt Settings, and run this again.",
             "No reader is answering. Wake it (press power), check Wi-Fi in Cobalt Settings, and run this again.",
         ] {
-            let silent = reason(Kind::Send, &ended_on(sentence)).expect("a reason");
+            let silent = reason(Kind::Send, None, &ended_on(sentence)).expect("a reason");
             assert!(silent.contains("did not answer"), "{silent}");
             assert!(!silent.contains("kobo") && !silent.contains("run "), "{silent}");
         }
@@ -281,6 +354,7 @@ mod tests {
         assert_eq!(
             reason(
                 Kind::Reader,
+                None,
                 &ended_on("the reader runs firmware 5.1, which is not supported")
             ),
             None
@@ -288,25 +362,31 @@ mod tests {
         assert_eq!(
             reason(
                 Kind::Send,
+                None,
                 &ended_on("that page is a list of links, not an article")
             ),
             None
         );
         assert_eq!(
-            reason(Kind::Reader, "it said nothing in its own name\n"),
+            reason(Kind::Reader, None, "it said nothing in its own name\n"),
             None
         );
         // A reader that has gone is the front end's to notice.
         assert_eq!(
             reason(
                 Kind::Reader,
+                None,
                 &ended_on("write /Volumes/KOBOeReader/x: No such file or directory (os error 2)")
             ),
             None
         );
         // One kind's failures are not looked for in the other's words.
         assert_eq!(
-            reason(Kind::Reader, &ended_on("No reader saved. Run kobo setup.")),
+            reason(
+                Kind::Reader,
+                None,
+                &ended_on("No reader saved. Run kobo setup.")
+            ),
             None
         );
     }
@@ -317,7 +397,7 @@ mod tests {
         if cfg!(windows) {
             return;
         }
-        let reason = reason(Kind::Reader, said).expect("a reason");
+        let reason = reason(Kind::Reader, None, said).expect("a reason");
         assert!(reason.contains("ran out of room"), "{reason}");
     }
 
@@ -347,8 +427,64 @@ mod tests {
     }
 
     #[test]
+    fn a_reader_pulled_out_under_a_job_is_said_to_have_been_disconnected() {
+        if cfg!(windows) {
+            return;
+        }
+        let gone = "/Volumes/a-reader-that-is-not-plugged-in";
+        let said = ended_on(&format!(
+            "could not write {gone}/.adds/cobalt.staging/bin/kobod: No such file or directory (os error 2)"
+        ));
+        assert_eq!(
+            reason(Kind::Reader, Some(gone), &said).as_deref(),
+            Some("The reader was disconnected before this finished.")
+        );
+        // A file missing from a reader that is still there is not that.
+        let here = std::env::temp_dir();
+        let here = here.to_string_lossy();
+        let missing = ended_on(&format!(
+            "read {here}/no-such-file: No such file or directory (os error 2)"
+        ));
+        assert_eq!(reason(Kind::Reader, Some(&here), &missing), None);
+        // Nor is a sentence about some other place, or a job with no reader.
+        let elsewhere = ended_on("read /somewhere/else: No such file or directory (os error 2)");
+        assert_eq!(reason(Kind::Reader, Some(gone), &elsewhere), None);
+        assert_eq!(reason(Kind::Reader, None, &said), None);
+    }
+
+    #[test]
+    fn a_refused_eject_names_the_program_in_the_way_and_not_the_tool() {
+        // What diskutil prints on macOS when a file on the volume is open.
+        let app = "diskutil eject /Volumes/KOBOeReader failed: Unmount of disk4 failed: at least one volume could not be unmounted\nUnmount was dissented by PID 623 (/System/Applications/Preview.app/Contents/MacOS/Preview)\nDissenter parent PPID 1 (/sbin/launchd)";
+        assert_eq!(
+            eject(app),
+            "The reader could not be ejected because Preview is still using it. Close what it has open from the reader, then eject again."
+        );
+        let tool = "diskutil eject /Volumes/KOBOeReader failed: Unmount of disk4 failed: at least one volume could not be unmounted\nUnmount was dissented by PID 63705 (/usr/bin/perl)";
+        assert!(
+            eject(tool).contains("because perl is still using it"),
+            "{}",
+            eject(tool)
+        );
+        let unsaid = eject("diskutil eject /Volumes/KOBOeReader failed: Volume failed to eject");
+        assert!(
+            unsaid.contains("something on this computer is still using it"),
+            "{unsaid}"
+        );
+        for told in [eject(app), eject(tool), unsaid] {
+            assert!(
+                !told.contains("diskutil") && !told.contains("/Volumes"),
+                "{told}"
+            );
+        }
+        // Another system's instruction is passed on as it is.
+        let linux = "eject /media/owner/KOBOeReader yourself, then restart the reader";
+        assert_eq!(eject(linux), linux);
+    }
+
+    #[test]
     fn only_the_sentence_it_stopped_on_is_read() {
         let said = "kobo: \"kobo\" is not answering. Wake it.\nTrying once more.\nkobo: that page is a list of links, not an article\n";
-        assert_eq!(reason(Kind::Send, said), None);
+        assert_eq!(reason(Kind::Send, None, said), None);
     }
 }

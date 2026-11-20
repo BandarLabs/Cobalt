@@ -560,7 +560,7 @@ enum Scenarios {
                 stage.say(StandIn.routes(["GET /api/state": state(), "POST /api/reader/eject": ok(["ejected": true])]))
                 await store.eject(volume: clara)
             }),
-            Scenario(name: "reader-eject-failed", routes: ["GET /api/state": withCobalt, "POST /api/reader/eject": refuse(500, "failed", "The reader could not be ejected: diskutil eject /Volumes/KOBOeReader failed, because a file on it is open in Preview.")], act: { store, _ in await store.eject(volume: clara) }),
+            Scenario(name: "reader-eject-failed", routes: ["GET /api/state": withCobalt, "POST /api/reader/eject": refuse(500, "failed", "The reader could not be ejected because Preview is still using it. Close what it has open from the reader, then eject again.")], act: { store, _ in await store.eject(volume: clara) }),
             Scenario(name: "reader-plan-install", routes: ["GET /api/state": state([reader()]), "GET /api/plan": installPlan], act: { store, _ in await store.openPlan(undo: false) }),
             Scenario(name: "reader-plan-remove", routes: ["GET /api/state": withCobalt, "GET /api/plan": removePlan], act: { store, _ in await store.openPlan(undo: true) }),
             Scenario(name: "reader-plan-busy", routes: ["GET /api/state": state([reader()]), "GET /api/plan": installPlan, "POST /api/reader/install": refuse(409, "busy", "Installing apps is still running on this reader. Wait for it to finish, then try again.")], act: { store, _ in
@@ -617,7 +617,7 @@ enum Scenarios {
                 name: "reader-failed-gone",
                 routes: [
                     "GET /api/state": state([], jobs: [running(3, "Updating Cobalt")]),
-                    "GET /api/job": job(3, "Updating Cobalt", running: false, ok: false, text: found + "kobo: could not write /Volumes/KOBOeReader/.adds/cobalt.staging/bin/kobod: No such file or directory (os error 2)\n"),
+                    "GET /api/job": job(3, "Updating Cobalt", running: false, ok: false, text: found + "kobo: could not write /Volumes/KOBOeReader/.adds/cobalt.staging/bin/kobod: No such file or directory (os error 2)\n", reason: "The reader was disconnected before this finished."),
                 ],
                 act: { store, _ in await store.tick() }
             ),

@@ -356,7 +356,7 @@ private struct SendStatus: View {
                         .controlSize(.small)
                 }
             }
-            Folded(title: "Everything it said") { SaidView(blocks: Said.reflow(job.text)) }
+            Folded(title: "Details") { SaidView(blocks: Said.reflow(job.text)) }
         }
     }
 }
