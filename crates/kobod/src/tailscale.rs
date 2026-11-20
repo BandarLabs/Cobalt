@@ -136,6 +136,15 @@ const LARGEST_ANSWER: u64 = 2 * 1024 * 1024;
 /// filled by a feature most owners never open is a library that will not save.
 const ROOM_NEEDED: u64 = 160 * 1024 * 1024;
 
+/// How much of the archive is fetched, and so held in memory, at once.
+///
+/// The archive is 37 MB and the reader has half a gigabyte for everything.
+/// Fetched whole, it sat in memory for the length of the download and again
+/// while it was written out. Each piece costs a connection of its own, so
+/// the size is a trade: at four megabytes the download is ten requests and
+/// never more than one of them is in memory.
+const PIECE: u32 = 4 * 1024 * 1024;
+
 /// Room the root filesystem must have before the programs are put on it.
 ///
 /// They are 70 MB, and the margin on top is not politeness: the firmware
@@ -241,6 +250,8 @@ struct Layout {
     engine: Engine,
     /// Free room the book partition must have before a download.
     room: u64,
+    /// How much of the download is asked for, and held, at a time.
+    piece: u32,
     timing: Timing,
 }
 
@@ -266,6 +277,7 @@ impl Layout {
             sync_engine: PathBuf::from(crate::syncthing::ENGINE),
             engine: PINNED,
             room: ROOM_NEEDED,
+            piece: PIECE,
             timing: DEVICE_TIMING,
         }
     }
@@ -1357,8 +1369,8 @@ fn supervise(supervisor: &Supervisor) -> End {
             "Downloading Tailscale. This takes a few minutes the first time.",
         ));
     }
-    if let Err(why) = ensure_engine(layout, &|| {
-        kobo_net::fetch(layout.engine.url, layout.engine.limit).ok()
+    if let Err(why) = ensure_engine(layout, &|offset, length| {
+        kobo_net::fetch_from(layout.engine.url, offset, length, None, &[]).ok()
     }) {
         if layout.kept && why == NO_ROOM_TO_STAY {
             // Not a failure to retry: the service runs with the session
@@ -2492,9 +2504,9 @@ fn engine_is_installed(layout: &Layout) -> bool {
 /// would run. Only the two programs are taken out of the archive; the service
 /// files that travel with them are for a different kind of computer.
 ///
-/// `fetch` is the download, passed in so the tests can hand over an archive
-/// without a network.
-fn ensure_engine(layout: &Layout, fetch: &dyn Fn() -> Option<Vec<u8>>) -> Result<(), String> {
+/// `fetch` is the download, one piece at a time, passed in so the tests can
+/// hand over an archive without a network.
+fn ensure_engine(layout: &Layout, fetch: Fetch) -> Result<(), String> {
     if engine_is_installed(layout) {
         return Ok(());
     }
@@ -2545,25 +2557,51 @@ fn ensure_engine(layout: &Layout, fetch: &dyn Fn() -> Option<Vec<u8>>) -> Result
 const NO_ROOM: &str =
     "The reader does not have room for Tailscale. Free 160 MB of storage and try again.";
 
-/// Fetches the archive, checks it, and puts it beside where it will unpack.
-fn download(
-    layout: &Layout,
-    fetch: &dyn Fn() -> Option<Vec<u8>>,
-    archive: &Path,
-) -> Result<(), String> {
-    let bytes = fetch().ok_or_else(|| {
-        "Tailscale could not be downloaded. Check Wi-Fi and try again.".to_owned()
-    })?;
-    if kobo_net::sha256::hex_digest(&bytes) != layout.engine.archive_sha256 {
-        return Err("The Tailscale download did not match its checksum.".to_owned());
-    }
-    fs::write(archive, &bytes).map_err(|error| {
+/// One piece of the download: at most the second number of bytes, starting
+/// the first number of bytes in. Fewer, or none, means the archive ended
+/// there. `None` means the piece could not be had.
+type Fetch<'a> = &'a dyn Fn(u32, u32) -> Option<Vec<u8>>;
+
+/// Fetches the archive a piece at a time into the file it will be unpacked
+/// from, and checks the whole of it against its digest.
+///
+/// The digest is taken as the pieces go by, so nothing has to be read back
+/// and nothing larger than a piece is ever in memory. What is written is
+/// not trusted until the last piece has arrived and the digest is the pinned
+/// one; until then it is a file with a name nothing runs.
+fn download(layout: &Layout, fetch: Fetch, archive: &Path) -> Result<(), String> {
+    let saved = |error: std::io::Error| {
         if error.kind() == std::io::ErrorKind::StorageFull {
             NO_ROOM.to_owned()
         } else {
             format!("The Tailscale download could not be saved: {error}")
         }
-    })
+    };
+    let mut file = File::create(archive).map_err(saved)?;
+    let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
+    let mut offset = 0_u32;
+    loop {
+        let piece = fetch(offset, layout.piece).ok_or_else(|| {
+            "Tailscale could not be downloaded. Check Wi-Fi and try again.".to_owned()
+        })?;
+        let length = u32::try_from(piece.len()).unwrap_or(u32::MAX);
+        offset = offset.saturating_add(length);
+        // More than was asked for, or more than the archive could ever be,
+        // is not the archive.
+        if length > layout.piece || offset > layout.engine.limit {
+            return Err("The Tailscale download did not match its checksum.".to_owned());
+        }
+        hash.update(&piece);
+        file.write_all(&piece).map_err(saved)?;
+        if length < layout.piece {
+            break;
+        }
+    }
+    file.sync_all().map_err(saved)?;
+    if hex(hash.finish().as_ref()) != layout.engine.archive_sha256 {
+        return Err("The Tailscale download did not match its checksum.".to_owned());
+    }
+    Ok(())
 }
 
 /// Takes the two programs out of the archive and gives them their names.
@@ -2680,12 +2718,14 @@ fn sha256(path: &Path) -> Result<String, String> {
         }
         hash.update(&bytes[..count]);
     }
-    Ok(hash
-        .finish()
-        .as_ref()
+    Ok(hex(hash.finish().as_ref()))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes
         .iter()
-        .fold(String::with_capacity(64), |mut hex, byte| {
+        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
             let _ignored = write!(hex, "{byte:02x}");
             hex
-        }))
+        })
 }

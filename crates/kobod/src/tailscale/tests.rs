@@ -151,6 +151,8 @@ fn reader(name: &str) -> (PathBuf, Layout) {
             limit: 1024 * 1024,
         },
         room: 0,
+        // Small enough that the committed archive arrives in several.
+        piece: 100,
         timing: Timing {
             poll: Duration::from_millis(20),
             refresh: Duration::from_millis(80),
@@ -431,6 +433,16 @@ fn bare_reader(name: &str) -> (PathBuf, Layout) {
     (root, layout)
 }
 
+/// A server holding `bytes`, answering for one piece at a time the way the
+/// real one answers a request for a range.
+fn serving(bytes: &[u8]) -> impl Fn(u32, u32) -> Option<Vec<u8>> + '_ {
+    move |offset, length| {
+        let from = (offset as usize).min(bytes.len());
+        let to = from.saturating_add(length as usize).min(bytes.len());
+        Some(bytes[from..to].to_vec())
+    }
+}
+
 fn nothing_is_installed(layout: &Layout) -> bool {
     fs::read_dir(&layout.bin).map_or(true, |entries| entries.count() == 0)
 }
@@ -438,7 +450,7 @@ fn nothing_is_installed(layout: &Layout) -> bool {
 #[test]
 fn a_verified_download_installs_the_two_programs_and_nothing_else() {
     let (_, layout) = bare_reader("engine-install");
-    ensure_engine(&layout, &|| Some(ARCHIVE.to_vec())).expect("install");
+    ensure_engine(&layout, &serving(ARCHIVE)).expect("install");
     let mut names = fs::read_dir(&layout.bin)
         .expect("bin")
         .map(|entry| {
@@ -455,7 +467,75 @@ fn a_verified_download_installs_the_two_programs_and_nothing_else() {
     assert_eq!(names, ["tailscale", "tailscaled"]);
     assert!(verify_engine(&layout).is_ok());
     // Installed is installed: the next start does not download again.
-    ensure_engine(&layout, &|| panic!("downloaded a second time")).expect("second look");
+    ensure_engine(&layout, &|_, _| panic!("downloaded a second time")).expect("second look");
+}
+
+#[test]
+fn the_download_arrives_in_pieces_and_is_never_held_whole() {
+    let (_, layout) = bare_reader("engine-pieces");
+    let asked = std::sync::Mutex::new(Vec::new());
+    ensure_engine(&layout, &|offset, length| {
+        let piece = serving(ARCHIVE)(offset, length)?;
+        asked.lock().expect("asked").push((offset, piece.len()));
+        Some(piece)
+    })
+    .expect("install");
+    // 304 bytes, a hundred at a time: each piece starts where the last
+    // ended, and none is larger than was asked for.
+    assert_eq!(
+        *asked.lock().expect("asked"),
+        [(0, 100), (100, 100), (200, 100), (300, 4)]
+    );
+    assert!(verify_engine(&layout).is_ok());
+}
+
+#[test]
+fn an_archive_that_ends_exactly_at_the_end_of_a_piece_is_still_finished() {
+    let (_, mut layout) = bare_reader("engine-exact");
+    layout.piece = 152;
+    let pieces = AtomicUsize::new(0);
+    ensure_engine(&layout, &|offset, length| {
+        pieces.fetch_add(1, Ordering::SeqCst);
+        serving(ARCHIVE)(offset, length)
+    })
+    .expect("install");
+    // Two full pieces, then the empty one that says there is no more.
+    assert_eq!(pieces.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn a_piece_that_cannot_be_had_leaves_nothing_behind() {
+    let (_, layout) = bare_reader("engine-piece-lost");
+    let refused = ensure_engine(&layout, &|offset, length| {
+        (offset < 200)
+            .then(|| serving(ARCHIVE)(offset, length))
+            .flatten()
+    })
+    .expect_err("refused");
+    assert_eq!(
+        refused,
+        "Tailscale could not be downloaded. Check Wi-Fi and try again."
+    );
+    assert!(nothing_is_installed(&layout));
+}
+
+#[test]
+fn a_download_that_runs_past_what_the_archive_could_be_is_cut_off() {
+    let (_, mut layout) = bare_reader("engine-endless");
+    layout.engine.limit = 250;
+    let pieces = AtomicUsize::new(0);
+    assert!(ensure_engine(&layout, &|_, length| {
+        pieces.fetch_add(1, Ordering::SeqCst);
+        // A server that never runs out.
+        Some(vec![0; length as usize])
+    })
+    .is_err());
+    assert_eq!(pieces.load(Ordering::SeqCst), 3);
+    assert!(nothing_is_installed(&layout));
+    // And one that sends more than it was asked for is not believed.
+    let (_, layout) = bare_reader("engine-oversized");
+    assert!(ensure_engine(&layout, &|_, _| Some(ARCHIVE.to_vec())).is_err());
+    assert!(nothing_is_installed(&layout));
 }
 
 #[test]
@@ -464,7 +544,7 @@ fn a_download_with_the_wrong_digest_installs_nothing() {
     let mut tampered = ARCHIVE.to_vec();
     let last = tampered.len() - 1;
     tampered[last] ^= 1;
-    let refused = ensure_engine(&layout, &|| Some(tampered.clone())).expect_err("refused");
+    let refused = ensure_engine(&layout, &serving(&tampered)).expect_err("refused");
     assert_eq!(
         refused,
         "The Tailscale download did not match its checksum."
@@ -476,7 +556,7 @@ fn a_download_with_the_wrong_digest_installs_nothing() {
 fn a_download_cut_short_installs_nothing() {
     let (_, layout) = bare_reader("engine-truncated");
     let half = ARCHIVE[..ARCHIVE.len() / 2].to_vec();
-    assert!(ensure_engine(&layout, &|| Some(half.clone())).is_err());
+    assert!(ensure_engine(&layout, &serving(&half)).is_err());
     assert!(nothing_is_installed(&layout));
 }
 
@@ -486,7 +566,7 @@ fn an_archive_that_will_not_unpack_installs_nothing() {
     // Pinned to its own digest, so the only thing left to object is tar.
     let half = ARCHIVE[..ARCHIVE.len() / 2].to_vec();
     layout.engine.archive_sha256 = leaked(kobo_net::sha256::hex_digest(&half));
-    let refused = ensure_engine(&layout, &|| Some(half.clone())).expect_err("refused");
+    let refused = ensure_engine(&layout, &serving(&half)).expect_err("refused");
     assert!(
         refused.starts_with("Tailscale could not be unpacked"),
         "{refused}"
@@ -497,7 +577,7 @@ fn an_archive_that_will_not_unpack_installs_nothing() {
 #[test]
 fn a_download_that_fails_says_to_check_wifi_and_leaves_nothing() {
     let (_, layout) = bare_reader("engine-offline");
-    let refused = ensure_engine(&layout, &|| None).expect_err("refused");
+    let refused = ensure_engine(&layout, &|_, _| None).expect_err("refused");
     assert_eq!(
         refused,
         "Tailscale could not be downloaded. Check Wi-Fi and try again."
@@ -510,7 +590,7 @@ fn a_card_without_room_is_refused_before_anything_is_downloaded() {
     let (_, mut layout) = bare_reader("engine-full");
     layout.room = u64::MAX;
     let refused =
-        ensure_engine(&layout, &|| panic!("downloaded onto a full card")).expect_err("refused");
+        ensure_engine(&layout, &|_, _| panic!("downloaded onto a full card")).expect_err("refused");
     assert_eq!(refused, NO_ROOM);
     assert!(nothing_is_installed(&layout));
 }
@@ -521,7 +601,7 @@ fn a_program_that_is_not_the_one_pinned_is_not_installed_from_a_good_archive() {
     // The archive is the pinned one, so only the program's own digest stands
     // between a repacked archive and a daemon run as root.
     layout.engine.daemon_sha256 = ARCHIVE_CLI_SHA256;
-    let refused = ensure_engine(&layout, &|| Some(ARCHIVE.to_vec())).expect_err("refused");
+    let refused = ensure_engine(&layout, &serving(ARCHIVE)).expect_err("refused");
     assert_eq!(refused, "A Tailscale program did not match its checksum.");
     assert!(nothing_is_installed(&layout));
 }
@@ -530,9 +610,11 @@ fn a_program_that_is_not_the_one_pinned_is_not_installed_from_a_good_archive() {
 fn a_program_swapped_on_the_card_is_refused_and_fetched_again() {
     let (_, layout) = bare_reader("engine-swapped");
     let downloads = AtomicUsize::new(0);
-    let fetch = || {
-        downloads.fetch_add(1, Ordering::SeqCst);
-        Some(ARCHIVE.to_vec())
+    let fetch = |offset: u32, length: u32| {
+        if offset == 0 {
+            downloads.fetch_add(1, Ordering::SeqCst);
+        }
+        serving(ARCHIVE)(offset, length)
     };
     ensure_engine(&layout, &fetch).expect("install");
     // What a computer with the reader mounted over USB can do in a second.
@@ -1568,7 +1650,10 @@ fn the_runtime_is_copied_to_the_root_filesystem_once_for_each_build() {
     let runtime = root.join("runtime");
     fs::write(&runtime, b"build one").expect("runtime");
     // The programs are already there, so only the runtime is in question.
-    ensure_engine(&kept, &|| panic!("downloaded although the card had them")).expect("programs");
+    ensure_engine(&kept, &|_, _| {
+        panic!("downloaded although the card had them")
+    })
+    .expect("programs");
     prepare_to_stay(&kept, &runtime).expect("prepare");
     let copy = root.join("kept-bin/kobod");
     assert_eq!(fs::read(&copy).expect("copy"), b"build one");
@@ -1594,7 +1679,7 @@ fn programs_on_the_card_that_no_longer_verify_are_not_copied_to_the_root_filesys
     );
     let downloads = AtomicUsize::new(0);
     // The download is then the only source, and here it is the wrong one.
-    let refused = ensure_engine(&kept, &|| {
+    let refused = ensure_engine(&kept, &|_, _| {
         downloads.fetch_add(1, Ordering::SeqCst);
         None
     });
@@ -1679,7 +1764,10 @@ fn a_sweep_leaves_a_kept_daemon_and_its_names_alone() {
 #[test]
 fn signing_out_also_takes_the_programs_off_the_root_filesystem() {
     let (root, layout, kept) = kept_reader("sign-out-kept");
-    ensure_engine(&kept, &|| panic!("downloaded although the card had them")).expect("programs");
+    ensure_engine(&kept, &|_, _| {
+        panic!("downloaded although the card had them")
+    })
+    .expect("programs");
     fs::create_dir_all(&layout.home).expect("home");
     fs::write(layout.app_state.join(REQUEST), SIGN_OUT).expect("request");
     sign_out_while_off(&layout).expect("sign out");
