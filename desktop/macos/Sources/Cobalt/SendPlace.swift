@@ -349,8 +349,7 @@ private struct SendStatus: View {
         } else if job.ok == true {
             SaidView(blocks: Said.reflow(job.text))
         } else {
-            let reason = Said.sentence(Said.failure(job.text))
-            Note(reason.isEmpty ? "The command stopped without saying why." : reason, kind: .caution)
+            Note(job.whyFailed, kind: .caution)
             if Privacy.looksKeptOffNetwork(job.text) {
                 let advice = Privacy.localNetwork(origin: store.origin)
                 Note(advice.headline, detail: advice.detail) {

@@ -201,10 +201,13 @@ enum Scenarios {
         )
     }
 
-    private static func job(_ id: Int, _ title: String, running: Bool, ok succeeded: Bool? = nil, text: String = "", kind: String = "reader", volume: String? = clara) -> StandIn.Reply {
+    /// `reason` is the server's own sentence for a failure it knows, quoted
+    /// from the server as the commands' output is quoted from the commands.
+    private static func job(_ id: Int, _ title: String, running: Bool, ok succeeded: Bool? = nil, text: String = "", kind: String = "reader", volume: String? = clara, reason: String? = nil) -> StandIn.Reply {
         ok([
             "id": id, "kind": kind, "title": title, "running": running, "ok": succeeded ?? NSNull(),
             "code": succeeded == false ? 1 : NSNull(), "text": text, "next": text.utf8.count, "volume": volume ?? NSNull(),
+            "reason": reason ?? NSNull(),
         ])
     }
 
@@ -568,7 +571,7 @@ enum Scenarios {
         ]
     }
 
-    private static func installing(_ name: String, text: String, after seconds: TimeInterval = 0, ok succeeded: Bool? = nil, title: String = "Installing Cobalt", plan: StandIn.Reply = installPlan, undo: Bool = false) -> Scenario {
+    private static func installing(_ name: String, text: String, after seconds: TimeInterval = 0, ok succeeded: Bool? = nil, title: String = "Installing Cobalt", plan: StandIn.Reply = installPlan, undo: Bool = false, reason: String? = nil) -> Scenario {
         Scenario(
             name: name,
             routes: [
@@ -576,7 +579,7 @@ enum Scenarios {
                 "GET /api/plan": plan,
                 "POST /api/reader/install": ok(["job": 3]),
                 "POST /api/reader/remove": ok(["job": 3]),
-                "GET /api/job": job(3, title, running: succeeded == nil, ok: succeeded, text: text),
+                "GET /api/job": job(3, title, running: succeeded == nil, ok: succeeded, text: text, reason: reason),
             ],
             act: { store, _ in
                 await store.openPlan(undo: undo)
@@ -592,7 +595,7 @@ enum Scenarios {
             installing("reader-installing-steps", text: waitingForWifi, after: 95),
             installing("reader-installed", text: installed, ok: true),
             installing("reader-removed", text: removed, ok: true, title: "Removing Cobalt", plan: removePlan, undo: true),
-            installing("reader-failed", text: truncated, ok: false),
+            installing("reader-failed", text: truncated, ok: false, reason: "The copy of Cobalt kept on this computer is damaged, so nothing was put on the reader."),
             Scenario(
                 name: "reader-installing-quiet",
                 routes: ["GET /api/state": state([reader()], jobs: [running(3, "Installing Cobalt")]), "GET /api/job": job(3, "Installing Cobalt", running: true, text: found)],
@@ -715,7 +718,7 @@ enum Scenarios {
             }),
             sending("send-sending", running: true, text: "preparing Winter.cbz for Panels\n"),
             sending("send-sent", running: false, ok: true, text: "preparing Winter.cbz for Panels\nSent Winter.cbz to Panels on kobo.\n"),
-            sending("send-failed", running: false, ok: false, text: "preparing Winter.cbz for Panels\nkobo: No reader saved. Run kobo setup with the reader plugged in, or kobo pair.\n"),
+            sending("send-failed", running: false, ok: false, text: "preparing Winter.cbz for Panels\nkobo: \"kobo\" is not answering. Wake it (press power), check Wi-Fi in Cobalt Settings, and run this again.\n", reason: "The reader did not answer. Wake it with its power button and check that it is on the same Wi-Fi as this computer."),
             sending("send-network-denied", running: false, ok: false, text: "preparing Winter.cbz for Panels\nkobo: could not reach the reader at 192.168.1.20: No route to host (os error 65)\n"),
             Scenario(name: "send-unsupported", place: .send, routes: with(sendBase, ["POST /api/send/file": refuse(422, "unsupported_file", "No app on the reader takes a .numbers file, so Budget.numbers has nowhere to go.")]), act: { store, _ in
                 await store.loadSend()
@@ -740,11 +743,11 @@ enum Scenarios {
         ]
     }
 
-    private static func sending(_ name: String, running: Bool, ok succeeded: Bool? = nil, text: String) -> Scenario {
+    private static func sending(_ name: String, running: Bool, ok succeeded: Bool? = nil, text: String, reason: String? = nil) -> Scenario {
         Scenario(name: name, place: .send, routes: with(sendBase, [
             "POST /api/send/file": ok(["upload": 7, "name": "Winter.cbz", "bytes": 4096, "app": ["name": "panels", "title": "Panels", "purpose": "comics"]]),
             "POST /api/send/start": ok(["job": 8]),
-            "GET /api/job": job(8, "Sending Winter.cbz", running: running, ok: succeeded, text: text, kind: "send", volume: nil),
+            "GET /api/job": job(8, "Sending Winter.cbz", running: running, ok: succeeded, text: text, kind: "send", volume: nil, reason: reason),
         ]), act: { store, _ in
             await store.loadSend()
             await store.offer(file: file("Winter.cbz", bytes: 4096))

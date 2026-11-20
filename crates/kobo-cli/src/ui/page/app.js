@@ -16,7 +16,6 @@ import {
   browserStep,
   chosenReader,
   elapsed,
-  failure,
   fileSize,
   galleryStep,
   installingNeeds,
@@ -33,6 +32,7 @@ import {
   tileStanding,
   uploadRefusal,
   webAddress,
+  whyFailed,
 } from "/logic.mjs";
 import {
   CONNECT_PATIENCE,
@@ -202,7 +202,7 @@ function follow(id, draw, finished) {
   const look = async () => {
     try {
       const report = await ask(`/api/job?id=${id}&from=${job.next}`);
-      Object.assign(job, { title: report.title, text: job.text + report.text, next: report.next, running: report.running, ok: report.ok, volume: report.volume ?? job.volume, setup: report.setup ?? job.setup });
+      Object.assign(job, { title: report.title, text: job.text + report.text, next: report.next, running: report.running, ok: report.ok, reason: report.reason ?? null, volume: report.volume ?? job.volume, setup: report.setup ?? job.setup });
     } catch (error) {
       if (error.status === 404) Object.assign(job, { running: false, ok: false, text: `${job.text}\nkobo: this job is no longer remembered\n` });
     }
@@ -223,7 +223,7 @@ function jobView(job, { done, waiting, extra, after, back, again }) {
   if (!job.running && !job.ok) {
     return [
       h("h2", null, `${job.title} did not finish.`),
-      note(sentence(failure(job.text)) || "The command stopped without saying why.", true),
+      note(whyFailed(job) || "The command stopped without saying why.", true),
       after && h("p", { class: "reading" }, after),
       h("details", { class: "whole" }, h("summary", null, "Everything it said"), said(job.text)),
       h("div", { class: "actions" }, again && primary("Try again", again), button("Back", back)),
@@ -497,7 +497,7 @@ function arrivalView(job) {
   if (scene === "failed") {
     return [
       h("h2", null, title),
-      note(sentence(failure(job.text)) || "It stopped without saying why.", true),
+      note(whyFailed(job) || "It stopped without saying why.", true),
       afterFailure(job, view.state) && h("p", { class: "reading" }, afterFailure(job, view.state)),
       whole,
       h("div", { class: "actions" }, job.again && primary("Try again", job.again), button("Back", back)),
@@ -1125,7 +1125,7 @@ function sendStatus(job) {
   if (!job) return null;
   if (job.running) return h("div", null, h("div", { class: "working", role: "progressbar", "aria-label": job.title }), said(job.text));
   if (job.ok) return said(job.text);
-  return h("div", null, note(sentence(failure(job.text)) || "The command stopped without saying why.", true),
+  return h("div", null, note(whyFailed(job) || "The command stopped without saying why.", true),
     h("details", { class: "whole" }, h("summary", null, "Everything it said"), said(job.text)));
 }
 

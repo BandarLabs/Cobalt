@@ -231,8 +231,10 @@ public struct JobReport: Decodable, Equatable, Sendable {
     public var next: Int
     public var volume: String?
     public var setup: SetupProgress?
+    /// Why it failed, in the window's own words, when the server has them.
+    public var reason: String?
 
-    enum CodingKeys: String, CodingKey { case id, kind, title, running, ok, code, text, next, volume, setup }
+    enum CodingKeys: String, CodingKey { case id, kind, title, running, ok, code, text, next, volume, setup, reason }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -243,6 +245,7 @@ public struct JobReport: Decodable, Equatable, Sendable {
         ok = try container.decodeIfPresent(Bool.self, forKey: .ok)
         code = try container.decodeIfPresent(Int.self, forKey: .code)
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
         next = try container.decode(Int.self, forKey: .next)
         volume = try container.decodeIfPresent(String.self, forKey: .volume)
         setup = try container.decodeIfPresent(SetupProgress.self, forKey: .setup)

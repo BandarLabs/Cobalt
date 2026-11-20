@@ -32,6 +32,7 @@ import {
   tileStanding,
   uploadRefusal,
   webAddress,
+  whyFailed,
 } from "../crates/kobo-cli/src/ui/page/logic.mjs";
 
 const page = join(dirname(fileURLToPath(import.meta.url)), "../crates/kobo-cli/src/ui/page");
@@ -136,6 +137,18 @@ test("a command named on a line of its own after a colon is kept as a command", 
       { kind: "para", text: "Then try again." },
     ]
   );
+});
+
+test("a failed job is explained in the server's words when it has some, and the command's when it has not", () => {
+  const said = "preparing Winter.cbz for Panels\nkobo: \"kobo\" is not answering. Wake it (press power), check Wi-Fi in Cobalt Settings, and run this again.\n";
+  const told = "The reader did not answer. Wake it with its power button and check that it is on the same Wi-Fi as this computer.";
+  assert.equal(whyFailed({ text: said, reason: told }), told);
+  // A server that says nothing, or only spaces, leaves the command's sentence.
+  for (const reason of [undefined, null, "", "  "]) {
+    assert.equal(whyFailed({ text: "kobo: that page is a list of links, not an article\n", reason }), "That page is a list of links, not an article.");
+  }
+  assert.equal(whyFailed({ text: "it stopped\n" }), "");
+  assert.equal(whyFailed(undefined), "");
 });
 
 test("the reason a command failed is its last error line, without the command's name", () => {

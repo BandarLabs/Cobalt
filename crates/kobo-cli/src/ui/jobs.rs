@@ -129,6 +129,11 @@ impl Job {
     /// `next` is the offset to ask from next time. Offsets count from the
     /// first byte the job ever said, so a page that fell behind a dropped
     /// stretch simply resumes at the oldest text still held.
+    ///
+    /// `reason` is there for a job that failed in a way an owner can be told
+    /// about in the window's own words, and is what to show in place of the
+    /// sentence the command stopped on. It is read from everything the job
+    /// said, not from the part being asked for.
     #[must_use]
     pub fn report(&self, from: usize) -> Value {
         let Ok(progress) = self.progress.lock() else {
@@ -148,6 +153,10 @@ impl Job {
             "running": progress.finish.is_none(),
             "ok": progress.finish.map(|finish| finish.ok),
             "code": progress.finish.and_then(|finish| finish.code),
+            "reason": progress
+                .finish
+                .filter(|finish| !finish.ok)
+                .and_then(|_| super::reasons::reason(self.kind, &progress.text)),
             "text": &progress.text[start..],
             "next": progress.dropped + progress.text.len(),
         })

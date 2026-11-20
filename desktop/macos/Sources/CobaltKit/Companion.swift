@@ -802,6 +802,7 @@ public final class Companion: ObservableObject {
             job.running = report.running
             job.ok = report.ok
             job.code = report.code
+            job.reason = report.reason
             job.volume = report.volume ?? job.volume
             job.setup = report.setup ?? job.setup
             set(job, in: slot)

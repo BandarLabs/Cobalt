@@ -379,6 +379,30 @@ struct ReaderPlaceTests {
         #expect(JobScene.scene(for: wordless, state: nil, now: Date()).reason == "The command stopped without saying why.")
     }
 
+    @Test("A failure the server has words for is told in them, and the command's sentence is kept for the rest")
+    func serversReason() throws {
+        let told = "The copy of Cobalt kept on this computer is damaged, so nothing was put on the reader."
+        var job = FollowedJob(id: 1, kind: .reader, title: "Installing Cobalt", volume: nil, began: Date())
+        job.running = false
+        job.ok = false
+        job.text = "found Kobo Clara BW\nkobo: /Users/owner/kept/cobalt.tgz is truncated: manifest says 2 bytes, found 1\n"
+        #expect(job.whyFailed == "/Users/owner/kept/cobalt.tgz is truncated: manifest says 2 bytes, found 1.")
+        job.reason = told
+        #expect(job.whyFailed == told)
+        #expect(JobScene.scene(for: job, state: nil, now: Date()).reason == told)
+        // What the command said is still there to be read.
+        #expect(JobScene.scene(for: job, state: nil, now: Date()).next.contains(.error("/Users/owner/kept/cobalt.tgz is truncated: manifest says 2 bytes, found 1")))
+        // A server that sends only spaces has said nothing.
+        job.reason = "  "
+        #expect(job.whyFailed.hasPrefix("/Users/owner"))
+
+        let sent = #"{"id": 1, "kind": "reader", "title": "Installing Cobalt", "running": false, "ok": false, "code": 1, "text": "", "next": 0, "reason": "It is damaged."}"#
+        #expect(try JSONDecoder().decode(JobReport.self, from: Data(sent.utf8)).reason == "It is damaged.")
+        // A server from before reasons sends none, and that is not an error.
+        let older = #"{"id": 1, "kind": "reader", "title": "Installing Cobalt", "running": false, "ok": false, "code": 1, "text": "", "next": 0}"#
+        #expect(try JSONDecoder().decode(JobReport.self, from: Data(older.utf8)).reason == nil)
+    }
+
     @Test("A reader pulled out under a running job is remarked on, and one the install ejected itself is not")
     func pulledMidway() async {
         let board = Board([

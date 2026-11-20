@@ -29,6 +29,18 @@ public struct FollowedJob: Equatable, Identifiable, Sendable {
     public var again: Again?
     /// How far a first install has got, when the server says.
     public var setup: SetupProgress?
+    /// Why it failed, in the window's own words, when the server has them.
+    public var reason: String?
+
+    /// What to tell the owner about a failure. For the failures it knows,
+    /// the server says it with no file or command in it. For the rest it is
+    /// the sentence the command stopped on, and failing that, that it said
+    /// nothing.
+    public var whyFailed: String {
+        if let reason, !reason.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return reason }
+        let stoppedOn = Said.sentence(Said.failure(text))
+        return stoppedOn.isEmpty ? "The command stopped without saying why." : stoppedOn
+    }
 
     public init(id: Int, kind: JobKind, title: String, volume: String?, began: Date, again: Again? = nil) {
         self.id = id
@@ -153,8 +165,7 @@ public struct JobScene: Equatable, Sendable {
         let reader = state?.readers.first { $0.volume == job.volume }
         if job.failed {
             var scene = JobScene(phase: .failed, heading: "\(job.title.isEmpty ? "The work" : job.title) did not finish.")
-            let reason = Said.sentence(Said.failure(job.text))
-            scene.reason = reason.isEmpty ? "The command stopped without saying why." : reason
+            scene.reason = job.whyFailed
             scene.aftermath = Advice.afterFailure(volume: job.volume, state: state)
             scene.next = Said.reflow(job.text)
             return scene

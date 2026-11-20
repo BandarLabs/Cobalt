@@ -127,6 +127,14 @@ export function failure(text) {
   return reasons.length > 0 ? reasons[reasons.length - 1].text : "";
 }
 
+// Why a job failed, as the owner is told it. For the failures it knows, the
+// server says it in the window's own words, with no file or command in it.
+// For the rest it is the sentence the command stopped on.
+export function whyFailed(job) {
+  const told = String(job?.reason ?? "").trim();
+  return told !== "" ? told : sentence(failure(job?.text ?? ""));
+}
+
 // A sentence as it should begin and end on a page. The commands write some
 // of their reasons to follow a colon, in lower case and unpunctuated.
 export function sentence(text) {
