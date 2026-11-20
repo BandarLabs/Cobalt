@@ -83,7 +83,9 @@ Pictures are fitted to the reader's screen and turned grey. `--colour`
 keeps their colour and `--no-pictures` leaves them out. At most 40 pictures
 are fetched and a book that goes to the reader is kept under the 4 MB Books
 opens; pictures past either limit are left out, and the command says how
-many. A page with no article on it is refused with the reason.
+many. A page with no article on it, such as a section front, an archive or
+a list of threads, is refused with the reason. So is a page whose article
+could not be kept whole: a clip either holds the article or says why not.
 
 The article goes to the reader `kobo setup` saved, or to `--reader NAME`,
 `--device IP` or `--sim`, over the connection `kobo send` uses, into the
