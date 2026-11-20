@@ -141,6 +141,9 @@ pub enum Refusal {
     NotAWebPage(&'static str),
     /// No block of readable text was found.
     NotAnArticle,
+    /// Most of what was found sits in menus, side notes or forms, which a
+    /// book leaves out, so what would be saved is not the article.
+    MostlyLeftOut,
     /// The page has more elements than extraction will walk.
     TooComplex { elements: usize, limit: usize },
     /// The page itself is too large.
@@ -178,6 +181,10 @@ impl std::fmt::Display for Refusal {
             Self::NotAnArticle => out.write_str(
                 "No article was found on this page. It may be a home page, a list of links, \
                  or a page that only fills itself in with scripts.",
+            ),
+            Self::MostlyLeftOut => out.write_str(
+                "Most of this page's text is in menus, side notes or forms, which a book \
+                 leaves out, so the article could not be saved whole.",
             ),
             Self::TooComplex { elements, limit } => write!(
                 out,
@@ -376,7 +383,38 @@ fn pictures_word(count: usize) -> String {
 /// its bytes.
 const PER_PICTURE: usize = 512;
 
-/// The article rebuilt for a book, with its lead figure put back.
+/// The least of an article a book may hold and still be offered as that
+/// article, as a fraction of the text that was there to keep: half.
+///
+/// The rules that leave furniture out are guesses, and a guess that goes
+/// wrong takes the story with it. A magazine article once clipped as "Saved"
+/// with one paragraph of forty in the book, because nothing weighed what was
+/// kept against what was dropped. Furniture inside a real article is a small
+/// part of it, a twentieth or less on every page and fixture measured, so a
+/// rule that has taken more than it left has not found furniture. Half is
+/// the line: it is far from where honest clips sit, and past it "most of the
+/// article is missing" is simply true.
+const LEAST_KEPT: (usize, usize) = (1, 2);
+
+/// Whether leaving `left_out` letters out of `body` cost it most of its
+/// text, by [`LEAST_KEPT`].
+fn lost_most(body: &body::Body, left_out: usize) -> bool {
+    let kept = body::letters_kept(&body.nodes);
+    let (least, of) = LEAST_KEPT;
+    kept * of < (kept + left_out) * least
+}
+
+/// The article rebuilt for a book, with its lead figure put back, and
+/// checked to be most of what the extractor found.
+///
+/// Text lost to names is recovered: a class or an id is the page's own word
+/// for a box, the extractor's choice is a measurement of where the page's
+/// text is, and when the two disagree about most of an article the word is
+/// the one that is wrong. The body is rebuilt with names ignored, which lets
+/// the page's real sign-up box back in beside the story, and that is the
+/// better mistake. Text lost to what an element is cannot be recovered the
+/// same way, since a form is a form whatever the page meant by it, so that
+/// is refused in a sentence.
 fn rebuilt_body(
     article: &extract::Article,
     page: &str,
@@ -396,18 +434,18 @@ fn rebuilt_body(
     if let Some(figure) = &article.lead_figure {
         root.prepend_html(figure.as_str());
     }
-    let body = body::rebuild(
-        &root,
-        page,
-        title,
-        article.byline.as_deref(),
-        body::Names::Trusted,
-    );
-    if has_words(&body.nodes) {
-        Ok(body)
-    } else {
-        Err(Refusal::NotAnArticle)
+    let rebuild = |names| body::rebuild(&root, page, title, article.byline.as_deref(), names);
+    let mut body = rebuild(body::Names::Trusted);
+    if lost_most(&body, body.left_to_names) {
+        body = rebuild(body::Names::Ignored);
     }
+    if !has_words(&body.nodes) {
+        return Err(Refusal::NotAnArticle);
+    }
+    if lost_most(&body, body.left_to_kind) {
+        return Err(Refusal::MostlyLeftOut);
+    }
+    Ok(body)
 }
 
 /// The page's preview picture, for the title page of an article that kept
@@ -784,4 +822,110 @@ fn fetch_pictures(
         ));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PAGE: &str = "https://example.org/essays/tides";
+
+    /// A paragraph of the story, numbered so each can be looked for.
+    fn paragraph(number: usize) -> String {
+        format!(
+            "<p>Paragraph {number}. The tide comes in twice a day, pulled by the moon and, to \
+             a lesser degree, by the sun, and the harbour fills and empties with it.</p>"
+        )
+    }
+
+    fn written(article_html: &str) -> Result<String, Refusal> {
+        let article = extract::Article {
+            content: format!("<div id=\"readability-page-1\">{article_html}</div>"),
+            ..extract::Article::default()
+        };
+        let body = rebuilt_body(&article, PAGE, "Tides")?;
+        let mut out = String::new();
+        body::render_body(&body, &[], &mut out);
+        Ok(out)
+    }
+
+    #[test]
+    fn an_article_set_in_boxes_named_for_a_paywall_is_kept_whole() {
+        // Three boxes, none of them most of the article by itself, so each
+        // is taken for furniture and together they are the story.
+        let boxed = |numbers: [usize; 2]| {
+            format!(
+                "<div class=\"paywall-content\">{}{}</div>",
+                paragraph(numbers[0]),
+                paragraph(numbers[1])
+            )
+        };
+        let html = format!(
+            "{}{}{}<form><p>Your email address</p><button>Sign up</button></form>{}",
+            paragraph(1),
+            boxed([2, 3]),
+            boxed([4, 5]),
+            boxed([6, 7]),
+        );
+        let out = written(&html).expect("a book");
+        for number in 1..=7 {
+            assert!(out.contains(&format!("Paragraph {number}.")), "{out}");
+        }
+        assert!(!out.contains("Sign up") && !out.contains("email address"));
+    }
+
+    #[test]
+    fn furniture_that_is_the_smaller_part_of_an_article_is_still_left_out() {
+        let html = format!(
+            "{}{}<div class=\"related\">{}</div>{}",
+            paragraph(1),
+            paragraph(2),
+            paragraph(3),
+            paragraph(4),
+        );
+        let out = written(&html).expect("a book");
+        assert!(out.contains("Paragraph 1.") && out.contains("Paragraph 4."));
+        assert!(!out.contains("Paragraph 3."), "{out}");
+    }
+
+    #[test]
+    fn a_page_whose_text_is_mostly_in_its_forms_and_side_notes_is_refused_in_a_sentence() {
+        let html = format!(
+            "<p>Welcome back.</p><aside>{}{}</aside><form>{}</form>",
+            paragraph(1),
+            paragraph(2),
+            paragraph(3),
+        );
+        let refusal = written(&html).expect_err("one line is not this page's article");
+        assert_eq!(refusal, Refusal::MostlyLeftOut);
+        assert_eq!(
+            refusal.to_string(),
+            "Most of this page's text is in menus, side notes or forms, which a book leaves out, \
+             so the article could not be saved whole."
+        );
+    }
+
+    #[test]
+    fn an_article_with_a_side_note_and_a_form_in_it_is_not_refused() {
+        let html = format!(
+            "{}<aside>{}</aside>{}<form><button>Sign up</button></form>{}",
+            paragraph(1),
+            paragraph(2),
+            paragraph(3),
+            paragraph(4),
+        );
+        let out = written(&html).expect("a book");
+        assert!(out.contains("Paragraph 4.") && !out.contains("Paragraph 2."));
+    }
+
+    #[test]
+    fn what_a_page_hides_is_not_counted_as_text_the_article_lost() {
+        let html = format!(
+            "<p>Shown.</p><div hidden>{}{}</div><div aria-hidden=\"true\">{}</div>",
+            paragraph(1),
+            paragraph(2),
+            paragraph(3),
+        );
+        assert_eq!(written(&html).as_deref(), Ok("<p>Shown.</p>\n"));
+    }
 }

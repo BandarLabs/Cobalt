@@ -15,6 +15,7 @@
 //! the ones that failed taken out before anything is written: a picture that
 //! could not be fetched leaves no broken reference and no orphaned caption.
 
+use std::cell::Cell;
 use std::fmt::Write as _;
 
 use dom_query::NodeRef;
@@ -27,6 +28,14 @@ const DROPPED: [&str; 31] = [
     "canvas", "svg", "form", "input", "button", "select", "textarea", "nav", "aside", "footer",
     "dialog", "menu", "map", "area", "link", "meta", "head", "title", "source", "track", "label",
     "fieldset",
+];
+
+/// The dropped elements that hold words a reader saw on the page: menus,
+/// side notes, forms and their labels. The rest of [`DROPPED`] is scripts,
+/// styles and embedded media, whose text was never the page's prose. Kept
+/// apart so that a book can say how much of the page went with them.
+const DROPPED_WORDS: [&str; 9] = [
+    "nav", "aside", "footer", "form", "fieldset", "label", "button", "dialog", "menu",
 ];
 
 /// Words that, as a whole word of an element's class or id, usually name
@@ -209,6 +218,10 @@ pub struct Picture {
 pub struct Body {
     pub nodes: Vec<Node>,
     pub pictures: Vec<Picture>,
+    /// Letters left out because a class or an id named them furniture.
+    pub left_to_names: usize,
+    /// Letters left out because they sat in a menu, a side note or a form.
+    pub left_to_kind: usize,
 }
 
 struct Walk<'a> {
@@ -226,6 +239,10 @@ struct Walk<'a> {
     /// therefore say nothing about the paragraphs, headings and lists that
     /// carry them here.
     prose_words: Vec<&'static str>,
+    /// Letters left out so far, by what took them. Counted where an element
+    /// is dropped, which the walk does through a shared reference.
+    left_to_names: Cell<usize>,
+    left_to_kind: Cell<usize>,
 }
 
 /// Rebuilds the article at `root` for a book.
@@ -250,11 +267,15 @@ pub fn rebuild(
         code: 0,
         names,
         prose_words: words_on_prose(root),
+        left_to_names: Cell::new(0),
+        left_to_kind: Cell::new(0),
     };
     let nodes = walk.flow(&root.children(), 0);
     let mut body = Body {
         nodes,
         pictures: walk.pictures,
+        left_to_names: walk.left_to_names.get(),
+        left_to_kind: walk.left_to_kind.get(),
     };
     tidy(&mut body.nodes);
     drop_header_lines(&mut body.nodes, byline);
@@ -734,12 +755,22 @@ impl Walk<'_> {
 
     fn dropped(&self, node: &NodeRef<'_>, name: &str) -> bool {
         if DROPPED.contains(&name) {
+            if DROPPED_WORDS.contains(&name) {
+                self.left_to_kind
+                    .set(self.left_to_kind.get() + letters(node));
+            }
             return true;
         }
+        // Not counted as lost: what a page hides, the reader never saw.
         if node.has_attr("hidden") || node.attr("aria-hidden").as_deref() == Some("true") {
             return true;
         }
-        self.code == 0 && self.furniture(node, name)
+        if self.code == 0 && self.furniture(node, name) {
+            self.left_to_names
+                .set(self.left_to_names.get() + letters(node));
+            return true;
+        }
+        false
     }
 
     /// Whether an element whose class or id names furniture is furniture.
@@ -1454,6 +1485,20 @@ pub fn settle(nodes: &mut Vec<Node>, usable: &[Option<String>]) {
             _ => has_content(&element.children),
         },
     });
+}
+
+/// Letters of text the rebuilt body holds, ignoring whitespace, for weighing
+/// what was kept against what was left out.
+#[must_use]
+pub fn letters_kept(nodes: &[Node]) -> usize {
+    nodes
+        .iter()
+        .map(|node| match node {
+            Node::Text(text) => text.chars().filter(|c| !c.is_whitespace()).count(),
+            Node::Element(element) => letters_kept(&element.children),
+            Node::Picture(_) => 0,
+        })
+        .sum()
 }
 
 /// Whether the body still holds a picture.
