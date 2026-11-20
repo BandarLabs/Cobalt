@@ -875,6 +875,9 @@ enum Interrupt {
     Orphaned,
     SignOut,
     SwitchedOff,
+    /// The claim to be the one supervisor no longer names this one, so
+    /// another is running and this one has to get out of its way.
+    Displaced,
     /// The owner changed something only a fresh start can honour: whether
     /// the reader stays connected outside Cobalt, which is a different
     /// supervisor's job, or whether it carries traffic for other devices,
@@ -903,6 +906,8 @@ struct Supervisor<'a> {
     /// What is being advertised now, and where it stands.
     advertised: std::cell::RefCell<Routing>,
     notes: std::cell::RefCell<RoutingNotes>,
+    /// What this supervisor wrote to claim being the only one.
+    claim: String,
 }
 
 impl<'a> Supervisor<'a> {
@@ -925,6 +930,7 @@ impl<'a> Supervisor<'a> {
             cannot_route: std::cell::Cell::new(false),
             advertised: std::cell::RefCell::default(),
             notes: std::cell::RefCell::default(),
+            claim: new_claim(),
         }
     }
 
@@ -940,6 +946,11 @@ impl<'a> Supervisor<'a> {
 
     fn interrupted(&self) -> Option<Interrupt> {
         self.catch_up();
+        if fs::read_to_string(self.layout.home.join(SUPERVISOR_PID))
+            .is_ok_and(|held| held != self.claim)
+        {
+            return Some(Interrupt::Displaced);
+        }
         if self.layout.home.join(STOP).exists() {
             return Some(Interrupt::SessionEnding);
         }
@@ -1087,6 +1098,9 @@ impl<'a> Supervisor<'a> {
                 self.say(&Status::quiet("signed-out", SIGNED_OUT));
             }
             Interrupt::SwitchedOff => self.say(&Status::quiet("off", OFF)),
+            // The supervisor that holds the claim is the one whose word
+            // about the service is true. This one says nothing.
+            Interrupt::Displaced => return End::Settled,
             // The other kind of supervisor is about to be started in this
             // one's place, so what the owner sees is a start.
             Interrupt::OtherKind => self.say(&Status::quiet("starting", "Starting Tailscale.")),
@@ -1136,7 +1150,7 @@ fn run(layout: &Layout) -> End {
         // Nothing to take down; the session starts the right one next.
         return End::Settled;
     }
-    if let Err(end) = claim(layout) {
+    if let Err(end) = claim(layout, &supervisor.claim) {
         return end;
     }
     if !layout.kept && !choices.outside {
@@ -1145,7 +1159,12 @@ fn run(layout: &Layout) -> End {
         let _ignored = fs::remove_dir_all(&layout.kept_bin);
     }
     let end = supervise(&supervisor);
-    let _ignored = fs::remove_file(layout.home.join(SUPERVISOR_PID));
+    // Only its own claim: one that names another supervisor is not this
+    // one's to remove.
+    let pid_file = layout.home.join(SUPERVISOR_PID);
+    if fs::read_to_string(&pid_file).is_ok_and(|held| held == supervisor.claim) {
+        let _ignored = fs::remove_file(pid_file);
+    }
     end
 }
 
@@ -1231,20 +1250,96 @@ fn prepare_to_stay(layout: &Layout, runtime: &Path) -> Result<(), String> {
 }
 
 /// Makes this the one supervisor, and clears what the last one left.
-fn claim(layout: &Layout) -> Result<(), End> {
+///
+/// Two supervisors would each take the other's daemon for a leftover, so
+/// being the only one cannot rest on looking and then writing: two that look
+/// in the same moment both find nobody. The claim is a file whose name can
+/// be given only once. This one's claim is written out whole under a name of
+/// its own and then linked to the shared name, which the filesystem refuses
+/// if the name is taken, and which never shows anybody a half-written claim
+/// to mistake for a dead one.
+///
+/// A claim whose owner is gone is moved aside before another is made, and
+/// what was moved is looked at, because a rival may have replaced the dead
+/// claim with a live one in the moment between reading it and moving it.
+/// That one is put back. Should a third have claimed in that same moment,
+/// the supervisor that was displaced finds out at its next look, since every
+/// supervisor keeps checking that the claim still names it, and leaves.
+fn claim(layout: &Layout, token: &str) -> Result<(), End> {
     prepare_home(layout).map_err(End::Later)?;
     let pid_file = layout.home.join(SUPERVISOR_PID);
-    if live_supervisor(layout).is_some() {
-        // Two would each take the other's daemon for a leftover.
-        return Err(End::Later(
-            "another Tailscale supervisor is already running".to_owned(),
-        ));
-    }
-    atomic_write(&pid_file, std::process::id().to_string().as_bytes(), 0o600)
-        .map_err(End::Later)?;
+    // Names nobody else can be using, this claim's own word in each, so two
+    // claimants never write through the same temporary name.
+    let word = token.replace(' ', "-");
+    let own = layout.home.join(format!("claim-{word}"));
+    let aside = layout.home.join(format!("claim-{word}.stale"));
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&own)
+        .and_then(|mut file| file.write_all(token.as_bytes()))
+        .map_err(|error| End::Later(format!("write the Tailscale supervisor's claim: {error}")))?;
+    let settled = settle_claim(layout, &pid_file, &own, &aside);
+    let _ignored = fs::remove_file(&own);
+    settled?;
     sweep_in(layout);
     forget_stop_request_in(layout);
     Ok(())
+}
+
+fn settle_claim(layout: &Layout, pid_file: &Path, own: &Path, aside: &Path) -> Result<(), End> {
+    for _ in 0..8 {
+        match fs::hard_link(own, pid_file) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(End::Later(format!(
+                    "claim the Tailscale supervisor: {error}"
+                )))
+            }
+        }
+        let held = fs::read_to_string(pid_file).unwrap_or_default();
+        if claimant_is_alive(layout, &held) {
+            return Err(End::Later(
+                "another Tailscale supervisor is already running".to_owned(),
+            ));
+        }
+        if fs::rename(pid_file, aside).is_ok() {
+            let taken = fs::read_to_string(aside).unwrap_or_default();
+            if taken != held && claimant_is_alive(layout, &taken) {
+                let _ignored = fs::hard_link(aside, pid_file);
+            }
+            let _ignored = fs::remove_file(aside);
+        }
+    }
+    Err(End::Later(
+        "the Tailscale supervisor's claim could not be settled".to_owned(),
+    ))
+}
+
+/// Whether the supervisor a claim names is still running. A claim is the
+/// claimant's process number and a word that tells its claims apart.
+fn claimant_is_alive(layout: &Layout, claim: &str) -> bool {
+    claim
+        .split_whitespace()
+        .next()
+        .and_then(|pid| pid.parse().ok())
+        .is_some_and(|pid| process_names(layout, pid, "--tailscale"))
+}
+
+/// A claim no other supervisor's can equal: this process, and a word made
+/// from the clock and a count, so two started in one process differ too.
+fn new_claim() -> String {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    format!(
+        "{} {nanos:x}-{}",
+        std::process::id(),
+        COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
 }
 
 fn supervise(supervisor: &Supervisor) -> End {
@@ -1508,16 +1603,28 @@ fn sign_out_while_off(layout: &Layout) -> Result<(), String> {
     write_status(layout, &Status::quiet("signed-out", SIGNED_OUT))
 }
 
+/// Waits for the supervisor that was asked to stop, for as long as there is
+/// one.
+///
+/// Watching for its claim to disappear is not the same thing. A supervisor
+/// that crashed leaves its claim behind, and whoever waited on the file then
+/// waited out the whole patience for a process that was already gone.
 fn wait_for_supervisor_to_leave(layout: &Layout) {
-    let pid_file = layout.home.join(SUPERVISOR_PID);
     let deadline = Instant::now() + layout.timing.stop + layout.timing.poll * 2;
-    while pid_file.exists() && Instant::now() < deadline {
+    while live_supervisor(layout).is_some() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }
 }
 
+/// The process number a file records: its first word, so a supervisor's
+/// claim and a daemon's bare number are read the same way.
 fn recorded_pid(path: &Path) -> Option<u32> {
-    fs::read_to_string(path).ok()?.trim().parse().ok()
+    fs::read_to_string(path)
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// Whether process `pid` was started with `word` among its arguments.

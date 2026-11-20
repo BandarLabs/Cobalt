@@ -1796,3 +1796,100 @@ fn choices_saved_before_the_routing_switches_existed_are_read_as_off() {
     assert!(choices.on && choices.outside);
     assert!(!choices.exit_node && !choices.share_network && !choices.routes());
 }
+
+// Being the only supervisor.
+
+/// Makes the kernel, as these tests show it, say that this test process is
+/// a supervisor, so a claim it holds reads as held by something alive.
+fn this_process_is_a_supervisor(root: &Path) {
+    let entry = root.join("proc").join(std::process::id().to_string());
+    fs::create_dir_all(&entry).expect("proc entry");
+    fs::write(entry.join("cmdline"), b"/bin/kobod\0--tailscale\0run\0").expect("cmdline");
+}
+
+#[test]
+fn of_many_supervisors_starting_in_the_same_moment_exactly_one_gets_the_claim() {
+    let (root, layout) = reader("claim-race");
+    this_process_is_a_supervisor(&root);
+    for round in 0..40 {
+        let start = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let claimants = (0..8)
+            .map(|_| {
+                let layout = layout.clone();
+                let start = std::sync::Arc::clone(&start);
+                std::thread::spawn(move || {
+                    let token = new_claim();
+                    start.wait();
+                    claim(&layout, &token).is_ok().then_some(token)
+                })
+            })
+            .collect::<Vec<_>>();
+        let winners = claimants
+            .into_iter()
+            .filter_map(|claimant| claimant.join().expect("claimant"))
+            .collect::<Vec<_>>();
+        assert_eq!(winners.len(), 1, "round {round}: {winners:?}");
+        // And the claim on disk is the winner's, whole.
+        let pid_file = layout.home.join(SUPERVISOR_PID);
+        assert_eq!(fs::read_to_string(&pid_file).expect("claim"), winners[0]);
+        fs::remove_file(pid_file).expect("release");
+        // Nothing of the losers' is left lying in the daemon's home.
+        let left = fs::read_dir(&layout.home)
+            .expect("home")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect::<Vec<_>>();
+        assert!(left.is_empty(), "round {round}: {left:?}");
+    }
+}
+
+#[test]
+fn a_claim_whose_owner_is_gone_is_taken_over_whatever_it_says() {
+    let (_, layout) = reader("claim-stale");
+    fs::create_dir_all(&layout.home).expect("home");
+    for stale in ["4242 1a2b-0", "4242", "", "not a claim at all\n"] {
+        let pid_file = layout.home.join(SUPERVISOR_PID);
+        fs::write(&pid_file, stale).expect("stale claim");
+        let token = new_claim();
+        claim(&layout, &token).expect("claim");
+        assert_eq!(fs::read_to_string(&pid_file).expect("claim"), token);
+        fs::remove_file(pid_file).expect("release");
+    }
+}
+
+#[test]
+fn a_supervisor_whose_claim_was_taken_gets_out_of_the_way_without_a_word() {
+    let (root, layout, supervisor) = connected_reader("displaced");
+    let daemon = recorded_pid(&layout.home.join(DAEMON_PID)).expect("daemon recorded");
+    // Another supervisor holds the claim now, however that came about.
+    record_supervisor(&root, &layout, b"/bin/kobod\0--tailscale\0run\0");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert!(!alive(daemon));
+    // It neither removed the other's claim nor spoke over it.
+    assert_eq!(
+        fs::read_to_string(layout.home.join(SUPERVISOR_PID)).expect("claim"),
+        "4242"
+    );
+    assert_eq!(state(&layout), "running");
+}
+
+#[test]
+fn waiting_for_a_supervisor_ends_when_it_is_gone_not_when_its_claim_is() {
+    let (root, layout) = reader("wait-gone");
+    record_supervisor(&root, &layout, b"/bin/kobod\0--tailscale\0run\0");
+    let proc_entry = root.join("proc/4242");
+    let crash = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(250));
+        // It crashed: the process is gone and its claim is still there.
+        fs::remove_dir_all(proc_entry).expect("process gone");
+    });
+    let began = Instant::now();
+    wait_for_supervisor_to_leave(&layout);
+    let waited = began.elapsed();
+    crash.join().expect("crash");
+    assert!(layout.home.join(SUPERVISOR_PID).exists());
+    assert!(
+        waited >= Duration::from_millis(200) && waited < Duration::from_millis(1500),
+        "waited {waited:?} of a patience of {:?}",
+        layout.timing.stop + layout.timing.poll * 2
+    );
+}
