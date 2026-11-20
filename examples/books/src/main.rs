@@ -33,7 +33,7 @@ mod covers;
 mod ranges;
 
 use articles::{Kept, Said};
-use covers::{Cover, Described, Recent, Thumb};
+use covers::{Cover, Described, Recent, Thumb, DESCRIBED};
 use kobo_bookview::positions::{Progress, KEY as READING};
 use kobo_bookview::{BookView, Step};
 use kobo_read::Outcome;
@@ -81,8 +81,6 @@ const QUIET_CHECK_EVERY_MS: u64 = 5 * 60 * 1000;
 /// Where to send an owner for anything Books cannot open itself.
 const IN_KOBO_READER: &str = "To get there, tap Kobo reader at the foot of the Cobalt home screen.";
 
-/// Store key for what reading each book told the shelf: name, author, cover.
-const DESCRIBED: &str = "described-v1";
 /// Store key for the books opened most recently, newest first.
 const RECENT: &str = "recent-v1";
 /// How many recently opened books are remembered.
@@ -409,6 +407,9 @@ struct Books {
     /// What reading each book once told the shelf, by library identifier.
     described: BTreeMap<String, Described>,
     record: Record,
+    /// How many store values that record was last read from or kept in, so
+    /// a shorter record empties the ones it no longer needs.
+    described_parts: usize,
     /// The books opened most recently, newest first, with how far into each.
     recent: Vec<Recent>,
     /// Real covers in memory, by library identifier.
@@ -487,6 +488,7 @@ impl Books {
             truncated: false,
             described: BTreeMap::new(),
             record: Record::Unread,
+            described_parts: 0,
             recent: Vec::new(),
             covers: BTreeMap::new(),
             lettered: BTreeMap::new(),
@@ -865,13 +867,26 @@ impl Books {
     /// that stopped short.
     fn notices(&self, screen: ScreenBuilder) -> ScreenBuilder {
         let screen = self.place_notice(screen);
-        if self.truncated {
+        if !self.truncated {
+            return screen;
+        }
+        // The runtime stops for one of two reasons and says only that it
+        // stopped. A listing as long as a listing can be stopped at the
+        // count; a shorter one stopped at a folder it would not go into.
+        let most = kobo_sdk::permissions::library::MAX_ENTRIES;
+        if self.documents.len() >= most {
             screen.banner(
                 BannerLevel::Info,
-                "This reader holds more books than Books can list. Some are not shown.",
+                format!(
+                    "This reader holds more than the {} books Books lists. Some are not shown.",
+                    grouped(most)
+                ),
             )
         } else {
-            screen
+            screen.banner(
+                BannerLevel::Info,
+                "Books did not reach every folder on this reader. Some books are not shown.",
+            )
         }
     }
 
@@ -893,10 +908,14 @@ impl Books {
                     let document = &self.documents[index];
                     document.belongs_here() && !articles::is_article(&document.id)
                 };
-                let mut members: Vec<usize> =
-                    opened.into_iter().filter(|&index| shelved(index)).collect();
-                for index in 0..self.documents.len() {
-                    if shelved(index) && !members.contains(&index) {
+                // Marked off as they are placed rather than looked for among
+                // the ones already placed: with two thousand books on the
+                // card that search was two million comparisons, each time
+                // the shelf was drawn or a page was turned.
+                let mut placed = vec![false; self.documents.len()];
+                let mut members = Vec::new();
+                for index in opened.into_iter().chain(0..self.documents.len()) {
+                    if shelved(index) && !std::mem::replace(&mut placed[index], true) {
                         members.push(index);
                     }
                 }
@@ -1671,9 +1690,21 @@ impl Books {
     }
 
     fn save_described(&mut self, context: &mut Context) {
-        let bytes = covers::encode_described(&self.described);
-        if bytes.len() <= MAX_STORE_VALUE {
-            context.store().save(DESCRIBED, bytes);
+        // A record past all its parts is left as the store has it. What was
+        // learned since is read out of the books again on the next start.
+        if let Some(parts) = covers::encode_described(&self.described, MAX_STORE_VALUE) {
+            let count = parts.len();
+            for (index, part) in parts.into_iter().enumerate() {
+                context.store().save(covers::described_key(index), part);
+            }
+            // Parts a longer record used before are emptied, which is also
+            // where reading stops.
+            for index in count..self.described_parts {
+                context
+                    .store()
+                    .save(covers::described_key(index), Vec::new());
+            }
+            self.described_parts = count;
         }
         self.record = Record::Kept;
     }
@@ -2245,12 +2276,25 @@ impl KoboApp for Books {
                 self.progress.load(result);
                 self.show(context);
             }
-            DESCRIBED => {
+            key if covers::described_part(key).is_some() => {
+                let index = covers::described_part(key).unwrap_or_default();
+                if index != self.described_parts || self.record != Record::Unread {
+                    return;
+                }
                 if let StoreResult::Loaded {
                     value: Some(bytes), ..
                 } = result
                 {
-                    self.described = covers::decode_described(&bytes);
+                    if !bytes.is_empty() {
+                        self.described.extend(covers::decode_described(&bytes));
+                        self.described_parts = index + 1;
+                        // Parts are read one after another, and the first
+                        // empty or missing one is the end.
+                        if index + 1 < covers::DESCRIBED_PARTS {
+                            context.store().load(covers::described_key(index + 1));
+                            return;
+                        }
+                    }
                 }
                 self.record = Record::Kept;
                 let documents = std::mem::take(&mut self.documents);
@@ -2570,6 +2614,19 @@ fn now_millis() -> Option<u64> {
         .map(|now| now.unix_millis)
 }
 
+/// A count as it is written for a person: 2,000 rather than 2000.
+fn grouped(count: usize) -> String {
+    let digits = count.to_string();
+    let mut out = String::new();
+    for (place, digit) in digits.chars().enumerate() {
+        if place > 0 && (digits.len() - place) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
 fn megabytes(bytes: u32) -> String {
     format!("{:.1} MB", f64::from(bytes) / (1024.0 * 1024.0))
 }
@@ -2749,6 +2806,10 @@ mod tests {
         recent: Option<Vec<u8>>,
     ) -> Vec<Command> {
         let mut commands = Vec::new();
+        // A record that was kept is followed by a question about its next
+        // part, which Books asks on reading the first and so is answered
+        // after everything it asked as it started.
+        let more = described.as_ref().is_some_and(|record| !record.is_empty());
         for (key, value) in [
             (READING, reading),
             (DESCRIBED, described),
@@ -2759,6 +2820,12 @@ mod tests {
             commands.extend(runner.store_result(StoreResult::Loaded {
                 key: key.into(),
                 value,
+            }));
+        }
+        if more {
+            commands.extend(runner.store_result(StoreResult::Loaded {
+                key: covers::described_key(1),
+                value: None,
             }));
         }
         commands
@@ -3098,7 +3165,8 @@ mod tests {
         answer_start(
             &mut runner,
             None,
-            Some(covers::encode_described(&described)),
+            covers::encode_described(&described, kobo_sdk::MAX_STORE_VALUE)
+                .map(|mut parts| parts.remove(0)),
             None,
         );
         let asked = runner.device_result(DeviceResult::Library {
@@ -3808,15 +3876,173 @@ mod tests {
         assert_eq!(order, ["Notes", "Timetable", "Piranesi"]);
     }
 
+    /// A card of `count` documents filed the way a managed library files
+    /// them, an author to a folder and a book to a folder inside it. Every
+    /// seventh is a PDF, which is listed and opens elsewhere.
+    fn a_card_of(count: u32) -> Vec<LibraryEntry> {
+        (0..count)
+            .map(|n| {
+                entry(
+                    &format!(
+                        "0/Library/Author {n:04}/Title {n:04} ({n})/Title {n:04} - Author {n:04}.epub"
+                    ),
+                    &format!("Title {n:04}"),
+                    if n % 7 == 0 { 5 } else { 1 },
+                    900_000 + n,
+                    true,
+                )
+            })
+            .collect()
+    }
+
     #[test]
-    fn a_listing_that_stopped_short_says_so() {
+    fn a_listing_that_stopped_short_says_which_way_it_stopped() {
         let mut runner = AppRunner::new(Books::empty());
         runner.start();
         let text = words(&shown(runner.device_result(DeviceResult::Library {
             entries: vec![entry("0/notes.md", "Notes", 2, 80, true)],
             truncated: true,
         })));
-        assert!(text.contains("Some are not shown"), "{text}");
+        assert!(text.contains("did not reach every folder"), "{text}");
+        assert!(text.contains("Some books are not shown"), "{text}");
+
+        let most = u32::try_from(kobo_sdk::permissions::library::MAX_ENTRIES).expect("a count");
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        let home = shown(runner.device_result(DeviceResult::Library {
+            entries: a_card_of(most),
+            truncated: true,
+        }));
+        let text = words(&home);
+        assert!(
+            text.contains("more than the 2,000 books Books lists"),
+            "{text}"
+        );
+        assert!(home.validate(&CLARA_BW_METRICS).is_empty());
+    }
+
+    #[test]
+    fn a_card_of_two_thousand_books_is_shelved_whole_and_paged_to_its_last_book() {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        answer_start(&mut runner, None, None, None);
+        let home = shown(runner.device_result(DeviceResult::Library {
+            entries: a_card_of(2_000),
+            truncated: false,
+        }));
+        let text = words(&home);
+        // 286 of the 2,000 are PDFs and stand on the Kobo reader's shelf.
+        assert!(text.contains("1714 books"), "{text}");
+        assert!(text.contains("286 books"), "{text}");
+        assert!(
+            !text.contains("not shown"),
+            "a whole listing was called partial: {text}"
+        );
+        assert!(home.validate(&CLARA_BW_METRICS).is_empty());
+
+        let first = shown(runner.action(action_id("shelf-library")));
+        assert_eq!(portrait_tiles(&first).len(), SHELF_PAGE);
+        assert!(first.validate(&CLARA_BW_METRICS).is_empty());
+        let second = words(&shown(runner.action(action_id(super::NEXT))));
+        assert!(second.contains("Title 0008"), "{second}");
+
+        // Straight to the far end, as three hundred taps on Next would.
+        runner.app_mut().page = usize::MAX;
+        let last = shown(runner.action(action_id(super::PREVIOUS)));
+        let text = words(&last);
+        assert!(text.contains("Title 1999"), "{text}");
+        assert!(last.validate(&CLARA_BW_METRICS).is_empty());
+        let final_book = runner
+            .app()
+            .documents
+            .iter()
+            .position(|document| document.title == "Title 1999")
+            .expect("listed");
+        let opening = runner.action(action_id(&format!("book-{final_book}")));
+        assert!(
+            requests(&opening)
+                .iter()
+                .any(|request| matches!(request, DeviceRequest::ReadLibrary { .. })),
+            "the last book of a full card could not be tapped"
+        );
+    }
+
+    #[test]
+    fn what_books_learned_about_a_full_card_is_kept_in_parts_and_read_back_at_the_next_start() {
+        let described: std::collections::BTreeMap<String, covers::Described> = a_card_of(2_000)
+            .into_iter()
+            .map(|entry| {
+                (
+                    entry.id,
+                    covers::Described {
+                        bytes: entry.bytes,
+                        listed: entry.title.clone(),
+                        title: Some(format!(
+                            "{} and the rest of what its package calls it",
+                            entry.title
+                        )),
+                        author: Some("An Author With A Name Of Ordinary Length".to_owned()),
+                        cover: covers::Cover::Missing,
+                    },
+                )
+            })
+            .collect();
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        answer_start(&mut runner, None, None, None);
+        runner.app_mut().described.clone_from(&described);
+        runner.app_mut().record = super::Record::Changed;
+        let kept: Vec<(String, Vec<u8>)> = runner
+            .lifecycle(kobo_sdk::Lifecycle::Background)
+            .into_iter()
+            .filter_map(|command| match command {
+                Command::Store(StoreRequest::Save { key, value })
+                    if covers::described_part(&key).is_some() =>
+                {
+                    Some((key, value))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(kept.len() > 1, "a record of 2,000 books fitted one value");
+        assert!(kept
+            .iter()
+            .all(|(_, value)| value.len() <= kobo_sdk::MAX_STORE_VALUE));
+        assert_eq!(kept[0].0, DESCRIBED);
+
+        // The next start reads the first part with everything else, then
+        // each further part on reading the one before, to the first that is
+        // not there.
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        let mut parts = kept.into_iter().map(|(_, value)| value);
+        for (key, value) in [
+            (READING.to_owned(), None),
+            (DESCRIBED.to_owned(), parts.next()),
+            (RECENT.to_owned(), None),
+            (articles::RECORD.to_owned(), None),
+            (articles::PAIRING.to_owned(), None),
+        ] {
+            runner.store_result(StoreResult::Loaded { key, value });
+        }
+        assert_eq!(
+            runner.app().record,
+            super::Record::Unread,
+            "read before it was whole"
+        );
+        for index in 1.. {
+            let value = parts.next();
+            let last = value.is_none();
+            runner.store_result(StoreResult::Loaded {
+                key: covers::described_key(index),
+                value,
+            });
+            if last {
+                break;
+            }
+        }
+        assert_eq!(runner.app().record, super::Record::Kept);
+        assert_eq!(runner.app().described, described);
     }
 
     #[test]
