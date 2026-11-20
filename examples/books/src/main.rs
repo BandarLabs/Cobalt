@@ -1132,18 +1132,7 @@ impl Books {
         let members = self.members(pile);
         let screen = self.article_prefix(pile);
         if members.is_empty() {
-            let (heading, words) = if pile == Shelf::Archive {
-                (
-                    "No archived articles",
-                    "Articles you archive are kept here, out of the way.",
-                )
-            } else {
-                (
-                    "No articles yet",
-                    "Web pages you send from your computer arrive here. Sync asks it for any that are waiting.",
-                )
-            };
-            return screen.splash(Some(Glyph::News), heading, words).build();
+            return self.no_articles(screen, pile);
         }
         let now = kobo_sdk::clock::SystemClock::reader().now().ok();
         let rows: Vec<(String, String)> = members
@@ -1229,6 +1218,35 @@ impl Books {
         screen.build()
     }
 
+    /// An Articles shelf, or its archive, with nothing on it.
+    fn no_articles(&self, screen: ScreenBuilder, pile: Shelf) -> Screen {
+        if pile == Shelf::Archive {
+            return screen
+                .splash(
+                    Some(Glyph::News),
+                    "No archived articles",
+                    "Articles you archive are kept here, out of the way.",
+                )
+                .build();
+        }
+        let screen = screen.heading("No articles yet");
+        // One thing to type at a time: with a step already on the panel for
+        // a sync that failed, how a first article is sent can wait until
+        // that one is taken.
+        if self.says_what_to_run(pile) {
+            return screen.build();
+        }
+        // The shelf used to say that pages sent from a computer arrive here,
+        // and not how one is sent, which left an owner who had just paired
+        // looking at an empty shelf with nothing to do.
+        screen
+            .text("An article is a web page sent here from your computer, set as a book without the menus and advertisements. In the computer's browser, right-click a page and choose Send to Kobo.")
+            .text("If the browser has no Send to Kobo yet, add it by running this once in a terminal on the computer:")
+            .command("kobo clip install --all")
+            .secondary("It ends by naming one step to take in the browser. An article sent while this reader was asleep waits on the computer until you tap Sync.")
+            .build()
+    }
+
     /// The bar and the line under it, which the list is measured beneath.
     fn article_prefix(&self, pile: Shelf) -> ScreenBuilder {
         let mut screen = ScreenBuilder::new("books-articles")
@@ -1251,17 +1269,32 @@ impl Books {
             .as_ref()
             .filter(|_| pile == Shelf::Articles)
         {
-            let (words, trouble) = said.text();
+            let line = said.line();
             screen = screen.banner(
-                if trouble {
+                if line.trouble {
                     BannerLevel::Error
                 } else {
                     BannerLevel::Info
                 },
-                words,
+                line.words,
             );
+            if let Some((lead, command)) = line.next {
+                screen = screen.text(lead).command(command);
+            }
         }
         screen
+    }
+
+    /// Whether the shelf is showing a step to take on the computer, which
+    /// an empty shelf makes room for by saying less itself.
+    fn says_what_to_run(&self, pile: Shelf) -> bool {
+        pile == Shelf::Articles
+            && !self.articles.delete_failed
+            && self
+                .articles
+                .said
+                .as_ref()
+                .is_some_and(|said| said.line().next.is_some())
     }
 
     fn confirm_delete(&self) -> Screen {
@@ -5092,18 +5125,121 @@ mod tests {
         runner.start();
         let commands = runner.action(action_id("sync"));
         assert!(post_of(&commands).is_none());
-        assert!(words(&shown(commands)).contains("kobo sidekick init"));
+        let screen = shown(commands);
+        assert_eq!(commands_on(&screen), ["kobo sidekick init"]);
+        let text = words(&screen);
+        assert!(text.contains("Sync is not set up"), "{text}");
+        assert!(text.contains("once on the computer:"), "{text}");
+    }
+
+    /// What a screen sets apart as something to type on a computer, as the
+    /// owner would type it: the hyphens of a command travel as the kind
+    /// that does not break a line.
+    fn commands_on(screen: &Screen) -> Vec<String> {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Quote {
+                    role: kobo_sdk::QuoteRole::Command,
+                    text,
+                    ..
+                } => Some(text.replace('\u{2011}', "-")),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Everything a screen says that is not a command to type.
+    fn sentences_on(screen: &Screen) -> String {
+        screen
+            .nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Banner { text, .. }
+                | Node::Text { text, .. }
+                | Node::Heading { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     #[test]
-    fn an_empty_articles_shelf_says_where_articles_come_from() {
+    fn every_way_sync_fails_fits_the_shelf_with_its_command_set_apart_from_its_sentence() {
+        use articles::Said;
+        for said in [
+            Said::Waiting(1),
+            Said::Waiting(7),
+            Said::NotAnswering,
+            Said::Offline,
+            Said::Refused,
+            Said::Outdated,
+            Said::ComputerTrouble,
+            Said::NotPaired,
+        ] {
+            let line = said.line();
+            // On a shelf with articles on it, and on one with none.
+            let mut full = with_articles();
+            let mut empty = Books::empty();
+            empty.articles.computer = Some(("192.168.1.10:9331".to_owned(), "abc234".to_owned()));
+            empty.articles.loaded = true;
+            for (books, holds_articles) in [(&mut full, true), (&mut empty, false)] {
+                books.view = View::Shelf(Shelf::Articles);
+                books.articles.said = Some(said.clone());
+                let mut context = kobo_sdk::Context::default();
+                let screen = books.shelf(&mut context, Shelf::Articles);
+                let issues = screen.validate(&CLARA_BW_METRICS);
+                assert!(issues.is_empty(), "{said:?}: {issues:?}");
+                let sentences = sentences_on(&screen);
+                assert!(sentences.contains(&line.words), "{said:?}: {sentences}");
+                assert!(
+                    !sentences.contains("kobo "),
+                    "{said:?} put a command inside a sentence: {sentences}"
+                );
+                let expected: Vec<String> = line
+                    .next
+                    .iter()
+                    .map(|(_, command)| (*command).to_owned())
+                    .collect();
+                if holds_articles || line.next.is_some() {
+                    assert_eq!(commands_on(&screen), expected, "{said:?}");
+                } else {
+                    // Nothing to type for the failure, so the empty shelf
+                    // still says how a first article is sent.
+                    assert_eq!(commands_on(&screen), ["kobo clip install --all"]);
+                }
+                if holds_articles {
+                    assert!(
+                        words(&screen).contains("A new unread one"),
+                        "{said:?} pushed every article off the first page"
+                    );
+                } else {
+                    assert!(words(&screen).contains("No articles yet"), "{said:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_articles_shelf_says_how_a_first_article_is_sent() {
         let mut books = Books::empty();
         books.articles.computer = Some(("192.168.1.10:9331".to_owned(), "abc234".to_owned()));
         books.articles.loaded = true;
         books.view = View::Shelf(Shelf::Articles);
         let mut runner = AppRunner::new(books);
-        let said = words(&shown(runner.start()));
+        let screen = shown(runner.start());
+        let said = words(&screen);
         assert!(said.contains("No articles yet"), "{said}");
         assert!(said.contains("Sync"), "{said}");
+        // How the first one gets here, in something an owner can do: the
+        // menu in their browser, and the one command that puts it there.
+        assert!(
+            said.contains("right-click a page and choose Send to Kobo"),
+            "{said}"
+        );
+        assert_eq!(commands_on(&screen), ["kobo clip install --all"]);
+        assert!(!sentences_on(&screen).contains("kobo "), "{said}");
+        assert!(screen.validate(&CLARA_BW_METRICS).is_empty());
     }
 }
