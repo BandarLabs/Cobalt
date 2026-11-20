@@ -53,6 +53,7 @@ use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Glyph
 use unicode_segmentation::UnicodeSegmentation;
 
 mod find;
+mod place;
 mod word;
 
 /// Where something is in a book, independent of how the book is set.
@@ -661,6 +662,13 @@ pub struct Reader {
     /// The words a search has just taken the reader to, as a block and the
     /// bytes of it they cover, marked on the page until it is turned.
     found: Option<(Locator, u32, u32)>,
+    /// The room kept at the foot of every page for the line that says where
+    /// the reader is, and nothing when the page has the whole panel.
+    foot: i32,
+    /// How wide that line may be.
+    foot_width: i32,
+    /// The pages a chapter starts on, in order, for counting to the next.
+    chapter_starts: Vec<usize>,
     /// The word a finger is being held to account for, while its screen is up.
     word: Option<word::Held>,
     /// The field a note on that word is typed into.
@@ -681,6 +689,9 @@ impl Reader {
             navigation: Vec::new(),
             find: find::Find::default(),
             found: None,
+            foot: 0,
+            foot_width: 0,
+            chapter_starts: Vec::new(),
             word: None,
             note: kobo_sdk::keyboard::TextEntry::new(),
             document,
@@ -716,12 +727,16 @@ impl Reader {
         // the layout engine drops them without saying anything.
         let mut metrics = *panel;
         metrics.text_scale = self.memory.scale;
-        // Nothing is reserved at the foot. A reading page has no bar, no page
-        // number and no arrows under it: the sides of the page turn it, as on
-        // the stock reader, and the place in the book is in the controls.
-        // Measured without the bar when the bar is out of sight: when it is
-        // called back it is drawn over the page rather than above it.
+        // A reading page has no bar and no arrows under it: the sides of the
+        // page turn it, as on the stock reader. Measured without the bar when
+        // the bar is out of sight: when it is called back it is drawn over
+        // the page rather than above it. A page that keeps its bar keeps a
+        // line at its foot for the place as well, and the room for that line
+        // comes off the page here, before a word of the book is set.
         let mut area = metrics.prose_area_in(!self.memory.full_page, false, Face::Reading);
+        self.foot = self.foot_room(panel, area);
+        self.foot_width = area.width;
+        area.height = area.height.saturating_sub(self.foot).max(1);
         if let Some(problem) = &self.problem {
             let notice = kobo_ui::with_text_scale(panel.text_scale, || {
                 kobo_ui::banner_height(problem, area.width, panel)
@@ -747,6 +762,7 @@ impl Reader {
         });
         decorate_annotation_ranges(&self.document, &self.memory.annotations, &mut pages);
         self.pages = pages;
+        self.chapter_starts = self.chapter_pages();
         self.cut = capped || self.document.truncated;
         self.page = self.page_holding_place(self.memory.at, self.memory.within);
     }
@@ -1787,14 +1803,15 @@ impl Reader {
         }
     }
 
-    /// Which page of how many, said in the controls rather than under the
-    /// page.
+    /// Which page of how many, for the controls and for the foot of a page
+    /// that keeps one.
     ///
     /// It used to sit at the foot with an arrow either side, a strip of the
-    /// panel taken from every page to repeat what the sides of the page
-    /// already do. The stock reader keeps the page to the words and gives the
-    /// place when its menu is opened, and so does this. One page has no place
-    /// worth stating, so it says nothing rather than "1 of 1".
+    /// panel a finger tall taken from every page to repeat what the sides of
+    /// the page already do. The arrows are gone for good. What a page that
+    /// keeps its bar carries now is one quiet line and no control, which the
+    /// `place` module sets. One page has no place worth stating, so it says
+    /// nothing rather than "1 of 1".
     fn place_in_book(&self) -> Option<(u16, u16)> {
         let pages = self.page_count();
         if pages <= 1 {
@@ -1810,9 +1827,9 @@ impl Reader {
             .reading(true)
             .owns_back(!self.navigation.is_empty())
             .text_scale(self.memory.scale)
-            // The book's name, ellipsised if it must be. The place it used to
-            // hold moved to the foot, where a Kobo reader looks for it, which
-            // freed the bar for the one thing a top bar is for.
+            // The book's name, ellipsised if it must be. The place is said at
+            // the foot, where a Kobo reader looks for it, which leaves the bar
+            // for the one thing a top bar is for.
             .top_bar(title.to_owned())
             // A visible way in, as well as the middle column. A gesture nobody
             // is told about is a feature nobody has: every setting behind this
@@ -1893,7 +1910,9 @@ impl Reader {
             };
         }
         if let Some(problem) = &self.problem {
-            screen = screen.banner(self.problem_level, problem.clone());
+            // Room was taken off the page for this notice when it was raised,
+            // so the place keeps its own under it.
+            screen = self.with_place(screen.banner(self.problem_level, problem.clone()));
         } else if self.pending && self.near_downloaded_end() {
             // The next chunk was asked for and has not landed yet. Said here,
             // at the foot, so a page turn that runs out of downloaded book
@@ -1912,6 +1931,12 @@ impl Reader {
                 BannerLevel::Attention,
                 "This copy stops here rather than ending. Some of the book is missing.",
             );
+        } else {
+            // Not under either of the two notices above. Nothing was kept
+            // back for those, so on a page that keeps a line for the place
+            // they are drawn in that line's room, and the place gives way to
+            // the one thing on the page that matters more than it does.
+            screen = self.with_place(screen);
         }
         // The gesture is what gets used; the bar is how anyone learns the
         // gesture is there. Tapping the side of the panel turns the page on
@@ -1933,9 +1958,9 @@ impl Reader {
             screen = screen.hold(action::MARKING);
         }
         if self.chrome == Chrome::Hidden {
-            // No panel and no bar over the page: a book, the reader's own
-            // hands, and the muted place at the foot. This is the point of the
-            // reading screen.
+            // No panel over the page: a book, the reader's own hands, and the
+            // muted place at the foot when the bar is kept. This is the point
+            // of the reading screen.
             return screen
                 .build()
                 .with_auto_hidden_top_bar(self.memory.full_page);
