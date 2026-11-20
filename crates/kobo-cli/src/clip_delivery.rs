@@ -335,14 +335,31 @@ pub(crate) fn opening_script(dir: &str, stem: &str) -> String {
 /// `suffix`, or under the first numbered name that is free, leaving the name
 /// it took in `$name`.
 ///
+/// Looking for a free name and then moving onto it leaves a moment between
+/// the two, and two sends that finish in it both find the same name free:
+/// the second move replaces the first book and both report it saved. The
+/// card has no links to fail on a taken name, as [`place`] relies on, so the
+/// name is taken first instead. With `set -C` the shell creates the file
+/// only if nothing has that name, in one step, and whoever loses goes on to
+/// the next number. The empty file holds the name until the move replaces
+/// it, and is taken away again if the move fails.
+///
+/// A name that cannot be created and is not there either is one the card
+/// refuses, and no number would change that, so the script stops and says
+/// so. The claim runs in a subshell because a shell is allowed to end the
+/// whole script when a redirection on `:` fails.
+///
 /// `suffix` is written into the script as it is, so it is only ever one of
 /// the few this program knows, never part of a name somebody typed.
 pub(crate) fn settling_script(suffix: &str) -> String {
     format!(
         "name=\"$stem{suffix}\"\n\
          n=2\n\
-         while [ -e \"$dir/$name\" ]; do name=\"$stem ($n){suffix}\"; n=$((n + 1)); done\n\
-         mv \"$partial\" \"$dir/$name\"\n\
+         until ( set -C; : > \"$dir/$name\" ) 2>/dev/null; do\n\
+         if [ ! -e \"$dir/$name\" ]; then echo \"the card would not take the name $name\" >&2; exit 1; fi\n\
+         name=\"$stem ($n){suffix}\"; n=$((n + 1))\n\
+         done\n\
+         if ! mv -f \"$partial\" \"$dir/$name\"; then rm -f \"$dir/$name\"; exit 1; fi\n\
          sync\n"
     )
 }
@@ -906,6 +923,79 @@ mod tests {
         let _ = fs::remove_dir_all(&card);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn sends_that_finish_together_each_keep_their_own_book() {
+        let card = scratch("together-card");
+        let shelf = card.join("Articles");
+        fs::create_dir_all(&shelf).expect("the shelf");
+        let senders: Vec<_> = (0..12)
+            .map(|sender| {
+                let shelf = shelf.clone();
+                std::thread::spawn(move || {
+                    let script = format!(
+                        "set -eu\ndir='{dir}'\nstem='Tides'\n\
+                         partial=\"$dir/.send-$$.writing\"\n\
+                         printf '%s' 'edition {sender}' > \"$partial\"\n\
+                         {settling}\
+                         printf '%s' \"$name\"\n",
+                        dir = shelf.to_string_lossy(),
+                        settling = settling_script(".epub"),
+                    );
+                    let output = std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(script)
+                        .output()
+                        .expect("sh runs");
+                    assert!(output.status.success(), "{output:?}");
+                    String::from_utf8_lossy(&output.stdout).into_owned()
+                })
+            })
+            .collect();
+        let mut names: Vec<String> = senders
+            .into_iter()
+            .map(|sender| sender.join().expect("a sender finished"))
+            .collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 12, "every send was told a name of its own");
+        let mut editions: Vec<String> = fs::read_dir(&shelf)
+            .expect("listed")
+            .flatten()
+            .map(|entry| fs::read_to_string(entry.path()).expect("a book"))
+            .collect();
+        editions.sort();
+        let mut sent: Vec<String> = (0..12).map(|sender| format!("edition {sender}")).collect();
+        sent.sort();
+        assert_eq!(
+            editions, sent,
+            "no book was replaced and nothing else was left"
+        );
+        let _ = fs::remove_dir_all(&card);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_name_the_card_refuses_stops_the_send_and_holds_nothing() {
+        let card = scratch("refusing-card");
+        let script = format!(
+            "set -eu\ndir='{dir}'\nstem='Tides'\npartial=\"$dir/.send-$$.writing\"\n{settling}",
+            dir = card.join("no-such-shelf").to_string_lossy(),
+            settling = settling_script(".epub"),
+        );
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .output()
+            .expect("sh runs");
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("would not take the name Tides.epub"),
+            "{output:?}"
+        );
+        let _ = fs::remove_dir_all(&card);
+    }
+
     #[test]
     fn a_book_without_an_identifier_has_nothing_to_look_for() {
         assert_eq!(identity_of(b"book of Tides"), None);
@@ -962,15 +1052,15 @@ mod tests {
         let script = device_script(&article("Robert'); rm -rf /"));
         assert!(!script.contains("rm -rf"), "a title reached the shell");
         assert!(script.contains("/mnt/onboard/Articles"));
+        let claimed = script
+            .find("( set -C; : > \"$dir/$name\" )")
+            .expect("the name is taken only if nothing has it");
         let saved = script
-            .find("mv \"$partial\"")
+            .find("mv -f \"$partial\"")
             .expect("the book is moved into place");
         let announced = script.find("mv \"$record\"").expect("the notice is moved");
+        assert!(claimed < saved, "the name is taken before the book moves");
         assert!(saved < announced, "the notice must follow the book");
-        assert!(
-            script.contains("while [ -e \"$dir/$name\" ]"),
-            "a clash is numbered"
-        );
     }
 
     #[test]

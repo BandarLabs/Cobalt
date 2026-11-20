@@ -1035,7 +1035,7 @@ mod tests {
         assert!(head.contains("full="), "a card without room is said so");
         let begun = head.find(": > \"$partial\"").expect("the copy is begun");
         assert!(checked < begun, "room is asked for before the copy");
-        let saved = head.find("mv \"$partial\"").expect("moved into place");
+        let saved = head.find("mv -f \"$partial\"").expect("moved into place");
         let announced = head.find("mv \"$record\"").expect("the notice is moved");
         assert!(saved < announced, "the notice must follow the book");
         assert_eq!(
