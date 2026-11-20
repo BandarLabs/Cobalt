@@ -302,7 +302,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case #selector(sendFile(_:)), #selector(sendWebAddress(_:)):
             return working && store.send.job?.running != true
         case #selector(findApp(_:)):
-            return working && store.appsReader != nil
+            // The store can be searched with no reader plugged in.
+            return working
         case #selector(checkAgain(_:)):
             return working
         case #selector(installCobalt(_:)):
