@@ -234,6 +234,36 @@ pub fn catalog_using(
     }
 }
 
+/// How many bytes each application in the cached catalog occupies once it is
+/// installed, by id.
+///
+/// The listing the Store draws from carries no sizes, because the panel has
+/// never needed one: the reader installs and finds out. A computer about to
+/// write to a mounted reader can do better and say beforehand that something
+/// will not fit, and the size it needs is the binary's, which the signed
+/// manifest in the catalog already states.
+///
+/// # Errors
+///
+/// As [`catalog_using`], except that a channel with no cached catalog is an
+/// error here: there is nothing to read sizes from.
+pub fn catalog_sizes_using(
+    root: &Path,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+) -> Result<Vec<(String, u64)>, DeviceError> {
+    Ok(read_channel_catalog(root, channel, key)?
+        .entries()
+        .iter()
+        .map(|entry| {
+            (
+                entry.manifest().id().to_owned(),
+                entry.manifest().binary_bytes(),
+            )
+        })
+        .collect())
+}
+
 /// Lists every installed Store application whose signed manifest verifies.
 ///
 /// This is what the launcher draws its first screen from, so it checks the
@@ -2229,6 +2259,34 @@ mod tests {
             }
         );
         assert!(!plan.install);
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_cached_catalog_says_how_large_each_application_is_and_nothing_without_one() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        assert_eq!(
+            catalog_sizes_using(&root, UpdateChannel::Stable, &key),
+            Err(DeviceError::NotFound)
+        );
+        let (json, signature, _) = release(&seed);
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+        assert_eq!(
+            catalog_sizes_using(&root, UpdateChannel::Stable, &key).expect("sizes"),
+            [(
+                "word-count".to_owned(),
+                "word-count app binary".len() as u64
+            )]
+        );
         let _ignored = fs::remove_dir_all(root);
     }
 
