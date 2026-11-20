@@ -111,6 +111,15 @@ fn feed_links(html: &str, home: &kobo_net::Address) -> Vec<String> {
         if comments {
             continue;
         }
+        // A link written without its scheme, `//feeds.example/tide`, means
+        // the scheme the page came by. That is HTTPS here, and the resolver
+        // refuses the short form outright, so it is spelled out first: a
+        // site that names its feed on another host this way would otherwise
+        // be passed over for paths its own host does not have.
+        let href = match href.strip_prefix("//") {
+            Some(rest) => format!("https://{rest}"),
+            None => href,
+        };
         if let Ok(resolved) = kobo_net::resolve_redirect(home, &href) {
             if kobo_net::parse(&resolved).is_ok() {
                 links.push(resolved);
@@ -188,6 +197,14 @@ mod tests {
             title="The Tide Letter Feed" href="https://feeds.example.net/tide?a=1&amp;b=2">"#;
         let found = candidates(page, "https://www.tide.example/about");
         assert_eq!(found[0], "https://feeds.example.net/tide?a=1&b=2");
+    }
+
+    #[test]
+    fn a_feed_named_without_its_scheme_is_followed_over_https() {
+        let page = br#"<link rel="alternate" type="application/atom+xml"
+            title="The Tide Letter" href="//feeds.example.net/tide.xml">"#;
+        let found = candidates(page, "https://www.tide.example/");
+        assert_eq!(found[0], "https://feeds.example.net/tide.xml");
     }
 
     #[test]
