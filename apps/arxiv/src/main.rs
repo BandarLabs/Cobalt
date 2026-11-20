@@ -2154,6 +2154,39 @@ impl KoboApp for Arxiv {
             return;
         }
 
+        // The reader first, while a paper is open in it: its page turns, its
+        // type panel, its light, its contents, its marks and its dictionary
+        // are all actions of its own, and none of them is this application's
+        // to recognise. Back is among them and is offered before this
+        // application answers it: after a jump to a found passage or to
+        // another part of the paper it returns to the page that was left,
+        // and only Back from the page itself leaves the paper.
+        if self.view == View::FullText {
+            if let Some(outcome) = self.book.act(context, action) {
+                match outcome {
+                    Outcome::Close if self.from_library => {
+                        self.close_paper(context);
+                        self.view = View::Library;
+                        self.open = None;
+                    }
+                    Outcome::Close => {
+                        self.close_paper(context);
+                        self.view = View::Paper;
+                        self.open_abstract(context);
+                    }
+                    Outcome::Light(level) => context.device().set_frontlight(level),
+                    // The reader asks after anything worth keeping: a mark,
+                    // a note, a page turn, a change of type size. Ignoring it
+                    // is what used to lose every highlight in this
+                    // application the moment a paper was closed.
+                    Outcome::Save => self.save_place(context),
+                    Outcome::Elsewhere | Outcome::Repaint => {}
+                }
+                self.show(context);
+                return;
+            }
+        }
+
         if action == ActionId::BACK {
             self.trouble = None;
             match self.view {
@@ -2205,36 +2238,6 @@ impl KoboApp for Arxiv {
             }
             self.show(context);
             return;
-        }
-
-        // The reader first, while a paper is open in it: its page turns, its
-        // type panel, its light, its contents, its marks and its dictionary
-        // are all actions of its own, and none of them is this application's
-        // to recognise.
-        if self.view == View::FullText {
-            if let Some(outcome) = self.book.act(context, action) {
-                match outcome {
-                    Outcome::Close if self.from_library => {
-                        self.close_paper(context);
-                        self.view = View::Library;
-                        self.open = None;
-                    }
-                    Outcome::Close => {
-                        self.close_paper(context);
-                        self.view = View::Paper;
-                        self.open_abstract(context);
-                    }
-                    Outcome::Light(level) => context.device().set_frontlight(level),
-                    // The reader asks after anything worth keeping: a mark,
-                    // a note, a page turn, a change of type size. Ignoring it
-                    // is what used to lose every highlight in this
-                    // application the moment a paper was closed.
-                    Outcome::Save => self.save_place(context),
-                    Outcome::Elsewhere | Outcome::Repaint => {}
-                }
-                self.show(context);
-                return;
-            }
         }
 
         if action == action_id(LIBRARY) {
