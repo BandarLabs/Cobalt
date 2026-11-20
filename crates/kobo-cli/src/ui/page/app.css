@@ -4,8 +4,9 @@
  * The page takes its look from the thing it is for: a reader's screen. A warm
  * off-white ground, near-black text, a book face for anything meant to be
  * read and the system face for anything meant to be pressed. One colour
- * besides ink, used only where the eye has to find something: a link, the
- * focused control, work in progress. Structure comes from type size, weight
+ * besides ink, the blue of the project's own mark taken dark enough to read
+ * as text on paper, used only where the eye has to find something: a link,
+ * the focused control, work in progress. Structure comes from type size, weight
  * and space, and from hairlines where two things need telling apart, never
  * from a box around a box.
  *
@@ -33,8 +34,8 @@
   --soft: #5f5d55;
   --rule: rgba(27, 26, 23, 0.14);
   --edge: rgba(27, 26, 23, 0.38);
-  --accent: #1d3f95;
-  --wash: rgba(29, 63, 149, 0.1);
+  --accent: #2b5597;
+  --wash: rgba(43, 85, 151, 0.1);
 
   color-scheme: light dark;
 }
@@ -47,8 +48,8 @@
     --soft: #a29f94;
     --rule: rgba(233, 230, 220, 0.15);
     --edge: rgba(233, 230, 220, 0.4);
-    --accent: #a3b8ff;
-    --wash: rgba(163, 184, 255, 0.14);
+    --accent: #8fb3ea;
+    --wash: rgba(143, 179, 234, 0.14);
   }
 }
 

@@ -50,6 +50,15 @@ pub struct Desk {
     pub fetched: Arc<Mutex<Vec<String>>>,
 }
 
+impl Drop for Desk {
+    /// Takes the folders away with the test. A server started on them may
+    /// still be answering on another thread, which costs it nothing: every
+    /// test has made its assertions by the time its desk is dropped.
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
 impl Desk {
     /// Makes a reader's book partition under this desk and plugs it in.
     /// `cobalt` is the release installed on it, when one is.
