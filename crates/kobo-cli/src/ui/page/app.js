@@ -8,10 +8,14 @@
 
 import {
   PLACES,
+  absence,
+  afterFailure,
   afterwards,
+  appObstacle,
   appSections,
   browserStep,
   chosenReader,
+  elapsed,
   failure,
   fileSize,
   linked,
@@ -49,31 +53,48 @@ class Refused extends Error {
   }
 }
 
-async function answered(request) {
+// Nothing waits for ever. A question is answered in well under a second
+// when the server is there at all, so one that has had no answer in the
+// time allowed is treated as unanswered and said to be.
+async function answered(path, options, patience) {
   let response;
   try {
-    response = await request;
-  } catch {
-    throw new Refused("This window could not reach the kobo ui command behind it.", 0);
+    response = await fetch(path, { ...options, signal: AbortSignal.timeout(patience) });
+  } catch (error) {
+    const waited = error?.name === "TimeoutError";
+    throw new Refused(
+      waited
+        ? `No answer came in ${elapsed(patience)}. The kobo ui command may be busy or may have stopped; try again.`
+        : "This window could not reach the kobo ui command behind it.",
+      0
+    );
   }
   const body = await response.json().catch(() => null);
   if (response.status === 401) {
     lose();
     throw new Refused("", 401);
   }
-  if (!response.ok) throw new Refused(body?.error || `The request was refused (${response.status}).`, response.status);
+  if (!response.ok) {
+    const refused = new Refused(body?.error || `The request was refused (${response.status}).`, response.status);
+    refused.kind = body?.kind ?? "failed";
+    throw refused;
+  }
   return body ?? {};
 }
 
-const ask = path => answered(fetch(path, { cache: "no-store" }));
+const ask = (path, patience = 20_000) => answered(path, { cache: "no-store" }, patience);
 
-const change = (path, body = {}) =>
+// Changes are given longer than questions: fetching the catalog is a
+// download, and setting up a browser runs a command.
+const change = (path, body = {}, patience = 90_000) =>
   answered(
-    fetch(path, {
+    path,
+    {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Kobo-Token": token },
       body: JSON.stringify(body),
-    })
+    },
+    patience
   );
 
 // A file goes up through the older request object because it is the one
@@ -153,11 +174,11 @@ function said(text) {
 
 // Follows a job to its end, drawing again each time it has said more.
 function follow(id, draw, finished) {
-  const job = { id, title: "", text: "", next: 0, running: true, ok: null };
+  const job = { id, title: "", text: "", next: 0, running: true, ok: null, volume: null, started: Date.now() };
   const look = async () => {
     try {
       const report = await ask(`/api/job?id=${id}&from=${job.next}`);
-      Object.assign(job, { title: report.title, text: job.text + report.text, next: report.next, running: report.running, ok: report.ok });
+      Object.assign(job, { title: report.title, text: job.text + report.text, next: report.next, running: report.running, ok: report.ok, volume: report.volume ?? job.volume });
     } catch (error) {
       if (error.status === 404) Object.assign(job, { running: false, ok: false, text: `${job.text}\nkobo: this job is no longer remembered\n` });
     }
@@ -174,11 +195,12 @@ function follow(id, draw, finished) {
 // What it said is led by the steps for the owner once it has got to them,
 // with the report of what it did folded away above, so that somebody
 // waiting to be told what to do with the reader is told first.
-function jobView(job, { done, waiting, extra, back, again }) {
+function jobView(job, { done, waiting, extra, after, back, again }) {
   if (!job.running && !job.ok) {
     return [
       h("h2", null, `${job.title} did not finish.`),
       note(sentence(failure(job.text)) || "The command stopped without saying why.", true),
+      after && h("p", { class: "reading" }, after),
       h("details", { class: "whole" }, h("summary", null, "Everything it said"), said(job.text)),
       h("div", { class: "actions" }, again && primary("Try again", again), button("Back", back)),
     ];
@@ -187,7 +209,7 @@ function jobView(job, { done, waiting, extra, back, again }) {
   return [
     h("h2", null, job.running ? job.title || "Working" : done),
     job.running && h("div", { class: "working", role: "progressbar", "aria-label": job.title }),
-    job.running && report.length === 0 && h("p", { class: "quiet" }, waiting),
+    job.running && h("p", { class: "quiet" }, report.length === 0 ? `${waiting} ` : "", `${elapsed(Date.now() - job.started)} so far.`),
     !job.running && extra,
     said(next),
     report.length > 0 && h("details", { class: "whole" }, h("summary", null, "What was done to the reader"), said(report)),
@@ -220,6 +242,7 @@ function drawReader() {
       done: DONE[local.job.title] ?? "Done.",
       waiting: "This takes a minute or two. Leave the reader plugged in until the steps for it appear here.",
       extra,
+      after: afterFailure(local.job, view.state),
       back,
       again: local.job.again,
     }).filter(Boolean));
@@ -234,6 +257,28 @@ function drawReader() {
 }
 
 function noReader() {
+  const missing = absence(view.state);
+  const mac = view.state.computer.os === "macos";
+  if (missing.kind === "blocked") {
+    return [
+      h("h2", null, "This computer is not letting Cobalt read the reader."),
+      h("p", { class: "reading" }, "A drive is mounted at ", h("span", { class: "path" }, pathText(missing.volume)),
+        mac ? ", and macOS refused to let the kobo command open it. It asks once, and the answer was no." : ", and the system refused to let the kobo command open it."),
+      mac && h("ol", { class: "steps reading" },
+        h("li", null, "Open System Settings, then Privacy & Security, then Files and Folders."),
+        h("li", null, "Find the terminal app you ran kobo ui from and turn on Removable Volumes."),
+        h("li", null, "Unplug the reader, plug it in again and tap Connect.")),
+      h("p", { class: "quiet small" }, "This window notices by itself once the drive can be read."),
+    ].filter(Boolean);
+  }
+  if (missing.kind === "unconnected") {
+    return [
+      h("h2", null, "The reader is plugged in but has not connected."),
+      h("p", { class: "reading" }, "Tap Connect on its screen. Until then it only charges, and its storage stays hidden from this computer."),
+      h("p", { class: "reading" }, "If the question has gone from its screen, unplug the cable and plug it in again."),
+      h("p", { class: "quiet small" }, "Waiting for the reader to connect."),
+    ];
+  }
   return [
     note(view.reader.notice),
     h("h2", null, "No reader is connected."),
@@ -263,21 +308,24 @@ function oneReader({ reader, among }) {
   const standing = readerStanding(reader, computer);
   const cobalt = reader.cobalt ? `${reader.cobalt.cobalt_version}, ${reader.cobalt.channel} channel` : "Not installed";
   const plan = undo => openPlan(reader, undo);
+  const locked = reader.writable === false;
   return [
     h("h2", null, reader.model),
     h("dl", { class: "facts" },
       h("dt", null, "Firmware"), h("dd", null, reader.firmware),
       h("dt", null, "Cobalt"), h("dd", null, cobalt),
+      Number.isFinite(reader.free_bytes) && [h("dt", null, "Free space"), h("dd", null, fileSize(reader.free_bytes))],
       h("dt", null, "Connected at"), h("dd", { class: "path" }, pathText(reader.volume))),
     h("p", { class: "lead" }, standing.headline),
     standing.detail && h("p", { class: "reading" }, prose(standing.detail)),
-    standing.primary && note(sentence(reader.untested)),
+    standing.primary && !locked && note(sentence(reader.untested)),
+    locked && note("This reader's storage is mounted read-only, so nothing can be written to it. Eject it, unplug it, restart the reader and connect it again.", true),
     note(local.error, true),
     h("div", { class: "actions" },
-      standing.primary === "install" && primary("Install Cobalt", () => plan(false)),
-      standing.primary === "update" && primary(`Update to ${computer.release}`, () => plan(false)),
-      standing.repair && button("Install again", () => plan(false)),
-      standing.removable && button("Remove Cobalt", () => plan(true)),
+      !locked && standing.primary === "install" && primary("Install Cobalt", () => plan(false)),
+      !locked && standing.primary === "update" && primary(`Update to ${computer.release}`, () => plan(false)),
+      !locked && standing.repair && button("Install again", () => plan(false)),
+      !locked && standing.removable && button("Remove Cobalt", () => plan(true)),
       computer.ejects && button("Eject", () => eject(reader))),
     (reader.cobalt || among) && h("p", { class: "after" },
       reader.cobalt && h("a", { href: "#apps" }, "The apps on this reader"),
@@ -420,13 +468,16 @@ function drawAppLists() {
         : [app.update_available && app.runs_on_this_reader && button(`Update to ${app.version}`, () => install([app.id]), { disabled: busy }),
            button("Remove", () => { local.removing = app.id; drawAppLists(); }, { disabled: busy })]));
   });
-  const offered = sections.available.map(app =>
-    h("li", null,
-      h("div", null, h("span", { class: "name" }, app.title), h("span", { class: "version" }, app.version)),
+  const offered = sections.available.map(app => {
+    const obstacle = appObstacle(app, reader);
+    return h("li", null,
+      h("div", null, h("span", { class: "name" }, app.title),
+        h("span", { class: "version" }, Number.isFinite(app.bytes) ? `${app.version}, ${fileSize(app.bytes)}` : app.version)),
       h("p", { class: "about" }, app.summary),
-      h("div", { class: "does" }, app.runs_on_this_reader
-        ? button("Install", () => install([app.id]), { disabled: busy })
-        : h("span", { class: "quiet small" }, `Needs Cobalt ${app.minimum_cobalt_version}`))));
+      h("div", { class: "does" }, obstacle
+        ? h("span", { class: "quiet small" }, obstacle)
+        : button("Install", () => install([app.id]), { disabled: busy })));
+  });
 
   const nothing = local.query.trim() !== "" && onReader.length + offered.length === 0;
   appsLists.replaceChildren(...[
@@ -455,7 +506,7 @@ async function loadApps() {
     const volume = encodeURIComponent(reader.volume);
     const here = await ask(`/api/apps?volume=${volume}`);
     if (local.key === key) { local.installed = here.apps; drawApps(); }
-    const published = await change("/api/apps/catalog", { volume: reader.volume });
+    const published = await change("/api/apps/catalog", { volume: reader.volume }, 120_000);
     if (local.key === key) local.catalog = published.apps;
   } catch (error) {
     if (local.key === key) local.problem = error.message;
@@ -761,6 +812,13 @@ function resume(jobs) {
 }
 
 addEventListener("hashchange", () => show(placeFor(location.hash)));
+// Closing the window does not stop what is running: the command behind it
+// finishes the job before it exits. The browser's own question is still
+// asked, because an owner who closes the tab mid-install should do it
+// knowing the reader is being written to.
+addEventListener("beforeunload", event => {
+  if ([view.reader.job, view.apps.job, view.send.job].some(job => job?.running)) event.preventDefault();
+});
 // Tells the server the window is closing, so it can stop without waiting
 // out its idle limit. Sent so that it outlives the page it is sent from.
 addEventListener("pagehide", () => {

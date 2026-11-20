@@ -6,10 +6,14 @@ import { fileURLToPath } from "node:url";
 
 import {
   PLACES,
+  absence,
+  afterFailure,
   afterwards,
+  appObstacle,
   appSections,
   browserStep,
   chosenReader,
+  elapsed,
   failure,
   fileSize,
   linked,
@@ -224,6 +228,47 @@ test("one reader needs no choosing and two are never chosen between for the owne
   assert.deepEqual(chosenReader([clara, libra], "/Volumes/Gone"), { kind: "several", readers: [clara, libra] });
   // A choice made among two is not held against the one that is left.
   assert.deepEqual(chosenReader([clara], libra.volume), { kind: "one", reader: clara });
+});
+
+test("no reader showing is told apart: nothing plugged in, Connect not tapped, or kept from us", () => {
+  assert.deepEqual(absence({ readers: [], attached: 0, blocked: [] }), { kind: "none" });
+  assert.deepEqual(absence({ readers: [], attached: null, blocked: [] }), { kind: "none" });
+  assert.deepEqual(absence({ readers: [] }), { kind: "none" });
+  assert.deepEqual(absence(null), { kind: "none" });
+  assert.deepEqual(absence({ readers: [], attached: 1, blocked: [] }), { kind: "unconnected" });
+  assert.deepEqual(absence({ readers: [], attached: 1, blocked: ["/Volumes/KOBOeReader"] }), { kind: "blocked", volume: "/Volumes/KOBOeReader" });
+  // A reader that is mounted is a reader, whatever else is on the bus.
+  assert.deepEqual(absence({ readers: [clara], attached: 2, blocked: [] }), { kind: "present" });
+});
+
+test("after a job fails the owner is told what the reader has, or that it cannot be read", () => {
+  const job = { volume: clara.volume, running: false, ok: false };
+  assert.match(afterFailure(job, { readers: [] }), /no longer connected/);
+  assert.equal(afterFailure(job, { readers: [clara] }), "The reader is still connected and has no Cobalt on it.");
+  assert.equal(
+    afterFailure(job, { readers: [{ ...clara, cobalt: { cobalt_version: "0.3.30", channel: "stable" } }] }),
+    "The reader is still connected and has Cobalt 0.3.30 on it."
+  );
+  assert.match(afterFailure(job, { readers: [{ ...clara, cobalt_problem: "does not say which release it is" }] }), /damaged/);
+  // A job that was not about a reader says nothing about one.
+  assert.equal(afterFailure({ volume: null }, { readers: [clara] }), "");
+});
+
+test("a wait is counted in seconds and then in minutes", () => {
+  assert.equal(elapsed(0), "0 s");
+  assert.equal(elapsed(59_900), "59 s");
+  assert.equal(elapsed(60_000), "1 min");
+  assert.equal(elapsed(200_000), "3 min 20 s");
+  assert.equal(elapsed(-5), "0 s");
+});
+
+test("an app that cannot go on this reader says what stands in the way", () => {
+  const reader = { free_bytes: 400_000 };
+  assert.equal(appObstacle({ runs_on_this_reader: true, fits: true, bytes: 1 }, reader), "");
+  assert.equal(appObstacle({ runs_on_this_reader: true, fits: null, bytes: null }, reader), "");
+  assert.equal(appObstacle({ runs_on_this_reader: false, minimum_cobalt_version: "0.4.0", fits: false, bytes: 9 }, reader), "Needs Cobalt 0.4.0 or newer.");
+  assert.equal(appObstacle({ runs_on_this_reader: true, fits: false, bytes: 1_900_412 }, reader), "Needs 1.9 MB; the reader has 400 KB free.");
+  assert.equal(appObstacle({ runs_on_this_reader: true, fits: false, bytes: 1_900_412 }, {}), "Needs 1.9 MB.");
 });
 
 const computer = { release: "0.3.37", release_problem: null };
@@ -462,7 +507,9 @@ test("every request the page makes is to its own server and carries the session 
   // Nothing else in the script reaches the network: every fetch and every
   // opened request is one of those three, or the goodbye.
   const reached = [...script.matchAll(/\bfetch\(\s*([^,)]+)/g)].map(found => found[1]);
-  assert.deepEqual(reached.sort(), ['"/api/goodbye"', "path", "path"]);
+  assert.deepEqual(reached.sort(), ['"/api/goodbye"', "path"]);
+  // And every one of them gives up after a stated time instead of waiting.
+  assert.match(script, /fetch\(path, \{ \.\.\.options, signal: AbortSignal\.timeout\(patience\) \}\)/);
   assert.deepEqual([...script.matchAll(/\.open\(([^)]*)\)/g)].map(found => found[1]), ['"POST", path']);
   for (const other of ["WebSocket", "EventSource", "sendBeacon", "importScripts", "import("]) {
     assert.ok(!script.includes(other), `app.js uses ${other}`);

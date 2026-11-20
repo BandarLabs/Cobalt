@@ -181,6 +181,67 @@ export function chosenReader(readers, chosenVolume) {
   return chosen ? { kind: "one", reader: chosen, among: readers } : { kind: "several", readers };
 }
 
+// Why no reader is showing, when none is.
+//
+// "No reader" used to cover three different things, and the advice for one
+// is wrong for the others: telling somebody to plug in a reader that is
+// plugged in and waiting for a tap, or one the system is keeping this
+// program from reading, sends them to the cable when the answer is on the
+// reader's screen or in System Settings.
+//
+//   "blocked"      a drive that looks like a reader is mounted and the
+//                  system will not let the kobo command read it
+//   "unconnected"  a Kobo is on the USB bus with no drive, so Connect has
+//                  not been tapped on its screen
+//   "none"         nothing is plugged in, as far as can be told
+export function absence(state) {
+  const mounted = state?.readers?.length ?? 0;
+  if (mounted > 0) return { kind: "present" };
+  const blocked = state?.blocked ?? [];
+  if (blocked.length > 0) return { kind: "blocked", volume: blocked[0] };
+  if (Number.isInteger(state?.attached) && state.attached > mounted) return { kind: "unconnected" };
+  return { kind: "none" };
+}
+
+// What is on the reader after a job that did not finish, said so that the
+// owner knows where they stand before deciding what to do next.
+//
+// A failed install does not leave a half-installed Cobalt: setup writes
+// beside the old copy and swaps, so the reader has what it had or what was
+// being installed. Which of the two is read from the reader, not assumed.
+// A reader that is no longer mounted cannot be read, and that is said too,
+// because pulling the cable is the commonest reason a job fails.
+export function afterFailure(job, state) {
+  if (!job?.volume) return "";
+  const reader = (state?.readers ?? []).find(found => found.volume === job.volume);
+  if (!reader) {
+    return "The reader is no longer connected, so what is on it cannot be read. Plug it in again and tap Connect; this window then says what it has.";
+  }
+  if (reader.cobalt_problem) return "The reader is still connected. The Cobalt on it is damaged; installing again replaces it.";
+  if (reader.cobalt) return `The reader is still connected and has Cobalt ${reader.cobalt.cobalt_version} on it.`;
+  return "The reader is still connected and has no Cobalt on it.";
+}
+
+// How long something has been going, to the precision anybody wants while
+// waiting for it.
+export function elapsed(milliseconds) {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.floor(seconds / 60);
+  return seconds % 60 === 0 ? `${minutes} min` : `${minutes} min ${seconds % 60} s`;
+}
+
+// Why an app that is offered cannot be installed on this reader as it
+// stands, or nothing when it can.
+export function appObstacle(app, reader) {
+  if (app.runs_on_this_reader === false) return `Needs Cobalt ${app.minimum_cobalt_version} or newer.`;
+  if (app.fits === false) {
+    const free = Number.isFinite(reader?.free_bytes) ? `; the reader has ${fileSize(reader.free_bytes)} free` : "";
+    return `Needs ${fileSize(app.bytes)}${free}.`;
+  }
+  return "";
+}
+
 // What the Reader place says about one reader and offers to do with it.
 //
 //   headline   the one sentence that is true of this reader now
