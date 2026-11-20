@@ -77,13 +77,13 @@ const SUFFIXES: [&str; 9] = [
 /// The limit a file of `bytes` is over, when it is larger than Books opens.
 ///
 /// The one place this command asks whether Books will open a file. Books
-/// reads a document through the runtime, which hands over at most
-/// [`kobo_protocol::MAX_LIBRARY_DOCUMENT_BYTES`]; when that limit moves this
+/// reads a document from the runtime a range at a time, up to
+/// [`kobo_protocol::MAX_LIBRARY_OPENABLE_BYTES`]; when that limit moves this
 /// follows it, and every sentence that tells an owner a file is too large for
 /// Books is worded from the number returned here. A larger file is sent
 /// anyway, because the card is also where the Kobo's own reader looks.
 pub(crate) fn larger_than_books_opens(bytes: u64) -> Option<u64> {
-    let limit = u64::try_from(kobo_protocol::MAX_LIBRARY_DOCUMENT_BYTES).unwrap_or(u64::MAX);
+    let limit = u64::try_from(kobo_protocol::MAX_LIBRARY_OPENABLE_BYTES).unwrap_or(u64::MAX);
     (bytes > limit).then_some(limit)
 }
 
@@ -1107,7 +1107,7 @@ mod tests {
     fn the_owner_is_told_when_a_file_is_larger_than_books_opens() {
         // Written against the limit itself, which another change is free to
         // move.
-        let limit = u64::try_from(kobo_protocol::MAX_LIBRARY_DOCUMENT_BYTES).expect("fits");
+        let limit = u64::try_from(kobo_protocol::MAX_LIBRARY_OPENABLE_BYTES).expect("fits");
         assert_eq!(larger_than_books_opens(limit), None);
         assert_eq!(larger_than_books_opens(limit + 1), Some(limit));
         assert_eq!(reading_note(Kind::Epub, limit), None);

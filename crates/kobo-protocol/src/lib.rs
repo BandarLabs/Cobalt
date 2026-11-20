@@ -2116,6 +2116,13 @@ pub const MAX_LIBRARY_DOCUMENT_BYTES: usize = 4 * 1024 * 1024;
 /// panel and reads touches, so a larger piece is a longer moment in which the
 /// reader does neither.
 pub const MAX_LIBRARY_RANGE_BYTES: usize = MAX_SHELF_CHUNK;
+/// The largest document Books opens, a range at a time.
+///
+/// Books decides this and keeps its reasons beside its own use of it. The
+/// number stands here as well because the computer has to say, before a copy
+/// that may take minutes, whether the book being sent will open when it
+/// lands, and two copies of one number would one day disagree.
+pub const MAX_LIBRARY_OPENABLE_BYTES: usize = 32 * 1024 * 1024;
 
 /// One document the owner already has, as far as a shelf is concerned.
 #[derive(Clone, Debug, Eq, PartialEq)]

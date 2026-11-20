@@ -135,6 +135,10 @@ const LARGEST_WHOLE: u32 = 4 * 1024 * 1024;
 /// scanned pages, which the Kobo reader shows better than a reflowing one.
 const LARGEST_OPENABLE: u32 = 32 * 1024 * 1024;
 
+// The computer tells an owner whether a book will open before sending it,
+// from the copy of this number the protocol carries.
+const _: () = assert!(LARGEST_OPENABLE as usize == kobo_sdk::MAX_LIBRARY_OPENABLE_BYTES);
+
 /// Whether the runtime under Books hands a book over a range at a time.
 ///
 /// Books ships with the runtime, so the two are the same release except
