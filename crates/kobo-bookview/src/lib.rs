@@ -595,6 +595,64 @@ impl BookView {
         Some(outcome)
     }
 
+    /// Takes a finger held on the page.
+    ///
+    /// What an application forwards from `on_text_hold`, and all it has to do
+    /// to give its reader a dictionary, a highlight on one word and a note
+    /// beside it. A hold that landed on a word of the book opens that word's
+    /// screen and asks the runtime's dictionaries about it; any other hold is
+    /// offered to the reader as the plain action it also is, which is how the
+    /// list of paragraphs to mark is still reached from a heading or a quote.
+    ///
+    /// `None` when nothing is open or the hold was not the reader's, exactly
+    /// as [`BookView::act`] answers, so the application treats the two alike.
+    pub fn hold(
+        &mut self,
+        context: &mut Context,
+        action: kobo_ui::ActionId,
+        hit: kobo_sdk::TextHit,
+    ) -> Option<Outcome> {
+        let metrics = context.metrics();
+        let reader = self.reader.as_mut()?;
+        if action == kobo_sdk::action_id(kobo_read::action::MARKING) {
+            if let Some(word) = reader.hold(hit, &metrics) {
+                // A word the runtime will not take a question about has no
+                // answer on its way, and a screen left saying it is looking
+                // would say so for ever.
+                if !context.device().lookup_word(word.clone(), None::<String>) {
+                    reader.define(&word, Vec::new());
+                }
+                return Some(Outcome::Repaint);
+            }
+        }
+        self.act(context, action)
+    }
+
+    /// Takes the runtime's answer to a word this view asked about.
+    ///
+    /// Returns whether the screen changed and is worth redrawing.
+    /// Applications pass every device result here rather than filtering
+    /// first, as they do for [`BookView::took_light`]: an answer to something
+    /// else, or for a word the reader has already let go of, is ignored. A
+    /// refusal counts as an answer with nothing in it, because the question
+    /// is settled either way and the screen should stop saying it is looking.
+    pub fn took_definition(
+        &mut self,
+        request: &kobo_sdk::DeviceRequest,
+        result: &kobo_sdk::DeviceResult,
+    ) -> bool {
+        let kobo_sdk::DeviceRequest::LookupWord { word, .. } = request else {
+            return false;
+        };
+        let entries = match result {
+            kobo_sdk::DeviceResult::Dictionary { entries, .. } => entries.clone(),
+            _ => Vec::new(),
+        };
+        self.reader
+            .as_mut()
+            .is_some_and(|reader| reader.define(word, entries))
+    }
+
     /// Carries the picture pipeline forward when one of its tasks lands.
     ///
     /// An application passes every finished task here; a task that was not
