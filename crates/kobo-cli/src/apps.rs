@@ -1,6 +1,9 @@
 //! Offline owner setup guides from the same metadata used by the Store.
 use std::fmt::Write;
 
+#[path = "apps_usb.rs"]
+pub mod usb;
+
 pub const HELP: &str = "App setup guides
 
   kobo apps                    List bundled apps
@@ -16,14 +19,35 @@ Examples:
   kobo apps setup lichess
   kobo apps setup music stand
 
-Guides describe this CLI's bundled catalog, not what is installed on a reader.";
+Guides describe this CLI's bundled catalog, not what is installed on a reader.
+For that, plug the reader in:
+
+  kobo apps installed          List the apps on the reader
+  kobo apps available          List the published apps it can install
+  kobo apps install APP...     Install apps, or update ones already there
+  kobo apps remove APP         Remove an app and keep its data
+
+kobo apps install --help says more about those four.";
 
 pub fn command(arguments: &[String]) -> Result<(), String> {
-    if arguments
+    let help = arguments
         .iter()
-        .any(|argument| matches!(argument.as_str(), "--help" | "-h"))
-        || arguments.first().is_some_and(|first| first == "help")
+        .any(|argument| matches!(argument.as_str(), "--help" | "-h"));
+    // The verbs that act on a plugged-in reader are answered before the
+    // bundled catalog is read, because they have nothing to do with it: they
+    // list and install what is published, on a reader, not what this build
+    // was compiled with.
+    if let Some((verb, rest)) = arguments
+        .split_first()
+        .filter(|(verb, _)| usb::handles(verb))
     {
+        if help {
+            println!("{}", usb::HELP);
+            return Ok(());
+        }
+        return usb::command(verb, rest);
+    }
+    if help || arguments.first().is_some_and(|first| first == "help") {
         println!("{HELP}");
         return Ok(());
     }
@@ -49,7 +73,8 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         }
         _ => {
             return Err(crate::console::usage(
-                "kobo apps [search WORD | setup APP | connect APP]",
+                "kobo apps [search WORD | setup APP | connect APP | installed | available | \
+                 install APP... | remove APP]",
             ))
         }
     }

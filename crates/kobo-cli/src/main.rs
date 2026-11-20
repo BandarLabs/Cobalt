@@ -8705,6 +8705,8 @@ Getting started:
                          below (run with no options to be asked)
   pair [NAME]            Save or rename a reader that is already on Wi-Fi
   apps [search WORD | setup APP]  Find apps and read their setup steps
+  apps installed | available | install APP... | remove APP
+                         See and change the apps on a reader connected by USB
   update [--channel stable|beta]  Update this kobo command
 
 Send things to your apps. These go to the reader kobo setup saved; add
