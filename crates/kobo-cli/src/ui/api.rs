@@ -76,6 +76,11 @@ pub const ROUTES: &[Route] = &[
     },
     Route {
         method: "GET",
+        path: "/path.mjs",
+        handle: page::path,
+    },
+    Route {
+        method: "GET",
         path: "/api/state",
         handle: state,
     },

@@ -1,6 +1,6 @@
 //! The page itself, carried inside the program.
 //!
-//! Four files, compiled in, so the window works on a computer with no
+//! Five files, compiled in, so the window works on a computer with no
 //! network and cannot be changed by anything on disk. None of them names
 //! another origin: no font, script, stylesheet or image is fetched from
 //! anywhere but this server, and the response headers forbid the browser
@@ -15,6 +15,7 @@ const INDEX: &str = include_str!("page/index.html");
 const STYLE: &str = include_str!("page/app.css");
 const SCRIPT: &str = include_str!("page/app.js");
 const LOGIC: &str = include_str!("page/logic.mjs");
+const PATH: &str = include_str!("page/path.mjs");
 
 /// Where the page's markup carries the request token.
 const TOKEN_PLACE: &str = "{{request-token}}";
@@ -46,6 +47,12 @@ pub fn logic(_: &Arc<Shared>, _: &mut Request<'_>) -> Response {
     Response::file("text/javascript; charset=utf-8", LOGIC.as_bytes())
 }
 
+/// `GET /path.mjs`: what the page decides on the way from a new reader to
+/// one this computer can send to, kept apart for the same reason.
+pub fn path(_: &Arc<Shared>, _: &mut Request<'_>) -> Response {
+    Response::file("text/javascript; charset=utf-8", PATH.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,6 +72,7 @@ mod tests {
             ("app.css", STYLE),
             ("app.js", SCRIPT),
             ("logic.mjs", LOGIC),
+            ("path.mjs", PATH),
         ] {
             let lowered = text.to_ascii_lowercase();
             for loader in [
