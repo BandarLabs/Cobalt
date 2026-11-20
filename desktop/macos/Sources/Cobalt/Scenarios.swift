@@ -19,6 +19,7 @@ enum Scenarios {
         var routes: [String: StandIn.Reply] = [:]
         var appVersion: String? = "0.3.37"
         var origin: Origin = .finder
+        var shots: Shots = .all
         /// Set when the window never gets a server, and why.
         var lost: Lost?
         /// The connection is still being made when the state is drawn.
@@ -32,7 +33,20 @@ enum Scenarios {
         var question: (@MainActor (Companion) -> NSAlert?)?
 
         func stage(rendering: Bool = true) async -> Staged {
-            let stage = StandIn.stage(StandIn.routes(routes))
+            let answers = StandIn.routes(routes)
+            let shots = shots
+            let stage = StandIn.stage { asked in
+                guard asked.path == "/api/shot" else { return answers(asked) }
+                let name = asked.query["name"] ?? ""
+                switch shots {
+                case .none:
+                    return .json(502, #"{"error": "The picture could not be fetched: this computer does not seem to be online.", "kind": "unreachable"}"#)
+                case .failing(let names) where names.contains(name):
+                    return .json(502, #"{"error": "The picture could not be fetched.", "kind": "unreachable"}"#)
+                case .all, .failing:
+                    return .bytes(200, Scenarios.picture(named: name), type: "image/png")
+                }
+            }
             let desk = Desk()
             desk.rendering = rendering
             let lost = lost
@@ -237,26 +251,154 @@ enum Scenarios {
         ]
     }
 
+    /// One app as the store describes it. The names of the pictures are the
+    /// ones the project's site publishes, so a render given that folder
+    /// shows the real screens.
+    private static func known(_ id: String, _ title: String, _ summary: String, _ version: String = "1.0.0", shots: [(String, String)] = [], description: String? = nil, needs: [String] = [], access: [String] = [], notes: String = "", setup: [[String: Any]] = []) -> [String: Any] {
+        [
+            "id": id, "title": title, "summary": summary, "needs": needs, "description": description ?? summary,
+            "version": version, "release_notes": notes, "minimum_cobalt_version": "0.3.30", "access": access, "setup": setup,
+            "shots": shots.map { ["name": $0.0, "caption": $0.1, "width": 1072, "height": 1448] as [String: Any] },
+        ]
+    }
+
+    private static let summaries: [String: String] = [
+        "rss": "Follow sites and read their articles as pages.",
+        "panels": "Read comics from CBZ files, a page or a panel at a time.",
+        "vault": "Keep Markdown notes on the reader.",
+        "backgammon": "Play complete solo or pass-and-play backgammon on one Kobo.",
+        "crossword": "Solve a crossword with the on-screen keyboard.",
+        "sudoku": "Solve sudoku puzzles with pencil marks.",
+        "nonograms": "Solve picture logic puzzles.",
+        "habits": "Tick off the things you mean to do every day.",
+        "todo": "Keep a list of things to do.",
+        "atlas": "Carry offline maps of the places you choose.",
+        "homepanel": "See and switch the things in your home.",
+        "syncthing": "Keep a folder on the reader in step with your computer.",
+        "terminal": "Run a shell on the reader.",
+        "gallery": "See every interface component on real hardware.",
+        "tide-table": "See high and low water for a harbour, a month ahead.",
+    ]
+
+    private static let longDescription = """
+    Solve a full-size crossword on the reader. The grid fills the top of the screen and the clue for the square you are on sits under it; tap a square to move, tap it again to turn from across to down.
+
+    Letters go in with an on-screen keyboard that takes the bottom third of the screen and leaves the grid where it was, so nothing jumps when you start typing. A wrong letter is not marked until you ask, and asking is a choice in the menu and not a button beside the grid, so it cannot be pressed by accident.
+
+    Puzzles are plain files in the format most free crosswords are published in. Send one from your computer and it appears in the list; the reader keeps your place in each, and a finished puzzle stays finished. Nothing is fetched from the network, and the app works the same on a train as at home.
+
+    A puzzle with a rebus square, a circled square or a shaded one is drawn as its setter meant it. Diagramless puzzles are not supported, and a puzzle larger than twenty-three squares a side is refused with a sentence that says so, because the squares would be too small to tap.
+    """
+
+    private static let storeAnswer = ok([
+        "groups": [
+            ["id": "reading", "title": "Reading and listening", "apps": ["rss", "panels", "vault"]],
+            ["id": "games", "title": "Games", "apps": ["backgammon", "crossword", "sudoku", "nonograms"]],
+            ["id": "everyday", "title": "Everyday tools", "apps": ["habits", "todo", "atlas"]],
+            ["id": "home-and-computer", "title": "Home and computer", "apps": ["homepanel", "syncthing"]],
+            ["id": "developers", "title": "For developers", "apps": ["terminal", "gallery"]],
+        ] as [[String: Any]],
+        "apps": [
+            "rss": known("rss", "Feeds", summaries["rss"]!, "1.4.0", shots: [("feeds.png", "The list of sites, with how many articles are unread")], access: ["Use the network."], notes: "Articles keep their pictures when they are saved for reading offline."),
+            "panels": known("panels", "Panels", summaries["panels"]!, "1.0.0", shots: [("panels.png", "A page of a comic, whole"), ("panels/library.png", "The comics on the reader"), ("panels/reader.png", "One panel filling the screen")]),
+            "vault": known("vault", "Vault", summaries["vault"]!, "1.1.0", shots: [("vault.png", "A note open for reading")]),
+            "backgammon": known("backgammon", "Backgammon", summaries["backgammon"]!, "1.0.1", shots: [("backgammon.png", "Backgammon in the middle of a game against the computer"), ("backgammon/backgammon-opening.png", "A new game against the computer"), ("backgammon/backgammon-match.png", "The score of a match to five points")], description: "Play complete backgammon on one Kobo, solo against the computer or passing the reader between two people. The doubling cube, the Crawford rule and matches to a number of points are all there, and a game left half way is where you left it.", notes: "Against the computer, the cube is now offered when it should be."),
+            "crossword": known("crossword", "Crossword", summaries["crossword"]!, "2.1.0", shots: [("crossword.png", "A puzzle part way through"), ("crossword/crossword-play.png", "The keyboard up, with the clue above it"), ("crossword/completed.png", "A finished puzzle")], description: longDescription, notes: "Rebus squares take more than one letter."),
+            "sudoku": known("sudoku", "Sudoku", summaries["sudoku"]!, shots: [("sudoku.png", "A puzzle with pencil marks")]),
+            "nonograms": known("nonograms", "Nonograms", summaries["nonograms"]!, shots: [("nonograms.png", "A fifteen by fifteen puzzle")]),
+            "habits": known("habits", "Habits", summaries["habits"]!, shots: [("habits.png", "A week of habits")]),
+            "todo": known("todo", "To Do", summaries["todo"]!, shots: [("todo.png", "A list with two things done")]),
+            "atlas": known("atlas", "Atlas", summaries["atlas"]!, "0.8.0"),
+            "homepanel": known("homepanel", "Home Panel", summaries["homepanel"]!, shots: [("homepanel.png", "The lights and the heating in one room")], needs: ["Needs your computer.", "Needs a Home Assistant server on your network."], access: ["Use the network."], setup: [
+                ["text": "Set up the reader once over USB.", "command": "kobo setup", "link": NSNull()],
+                ["text": "Give the reader the address of your server and a token for it.", "command": "kobo secret set homepanel", "link": ["label": "Home Panel README", "url": "https://bandarlabs.github.io/Cobalt/apps/homepanel/"]],
+            ]),
+            "syncthing": known("syncthing", "Syncthing", summaries["syncthing"]!, shots: [("syncthing.png", "A folder in step, and when it last changed")], needs: ["Needs your computer."], access: ["Use the network.", "Read and write the reader's library."]),
+            "terminal": known("terminal", "Terminal", summaries["terminal"]!, shots: [("terminal.png", "A shell on the reader")]),
+            "gallery": known("gallery", "Components", summaries["gallery"]!, shots: [("components.png", "Buttons, lists and type at their real size")]),
+        ] as [String: Any],
+    ])
+
     private static let onReader = ok(["apps": [
-        entry("almanac", "Almanac", "Sunrise, sunset and the moon for where you are.", "1.0.0", installed: "1.0.0"),
-        entry("rss", "Feeds", "The sites you follow, fetched over Wi-Fi and read as pages.", "1.3.0", installed: "1.3.0"),
-        entry("panels", "Panels", "Comics from CBZ files, a page or a panel at a time.", "0.9.2", installed: "0.9.2"),
-        entry("vault", "Vault", "Markdown notes, kept on the reader.", "1.1.0", installed: "1.1.0"),
+        entry("backgammon", "Backgammon", summaries["backgammon"]!, "1.0.0", installed: "1.0.0", bytes: 640_300),
+        entry("rss", "Feeds", summaries["rss"]!, "1.3.0", installed: "1.3.0"),
+        entry("panels", "Panels", summaries["panels"]!, "0.9.2", installed: "0.9.2"),
+        entry("vault", "Vault", summaries["vault"]!, "1.1.0", installed: "1.1.0"),
     ]])
 
     private static let published = ok(["apps": [
-        entry("almanac", "Almanac", "Sunrise, sunset and the moon for where you are.", "1.2.0", installed: "1.0.0", update: true),
-        entry("rss", "Feeds", "The sites you follow, fetched over Wi-Fi and read as pages.", "1.4.0", installed: "1.3.0", update: true),
-        entry("panels", "Panels", "Comics from CBZ files, a page or a panel at a time.", "1.0.0", installed: "0.9.2", update: true, runs: false, minimum: "0.4.0"),
-        entry("vault", "Vault", "Markdown notes, kept on the reader.", "1.1.0", installed: "1.1.0"),
-        entry("backgammon", "Backgammon", "The board game, against the reader.", "1.0.1", bytes: 640_300),
-        entry("crossword", "Crossword", "A daily puzzle, filled in with the on-screen keyboard.", "2.1.0", bytes: 2_310_000),
-        entry("atlas", "Atlas", "Offline maps of the places you choose.", "0.8.0", bytes: 412_000_000, fits: false),
-        entry("tide-table", "Tide Table", "High and low water for a harbour, a month ahead.", "1.0.0", runs: false, minimum: "0.4.0", bytes: 388_000),
+        entry("backgammon", "Backgammon", summaries["backgammon"]!, "1.0.1", installed: "1.0.0", update: true, bytes: 640_300),
+        entry("rss", "Feeds", summaries["rss"]!, "1.4.0", installed: "1.3.0", update: true),
+        entry("panels", "Panels", summaries["panels"]!, "1.0.0", installed: "0.9.2", update: true, runs: false, minimum: "0.4.0"),
+        entry("vault", "Vault", summaries["vault"]!, "1.1.0", installed: "1.1.0"),
+        entry("crossword", "Crossword", summaries["crossword"]!, "2.1.0", bytes: 2_310_000),
+        entry("sudoku", "Sudoku", summaries["sudoku"]!, "1.0.0", bytes: 880_000),
+        entry("nonograms", "Nonograms", summaries["nonograms"]!, "1.0.0", bytes: 910_000),
+        entry("habits", "Habits", summaries["habits"]!, "1.0.0", bytes: 720_000),
+        entry("todo", "To Do", summaries["todo"]!, "1.0.0", bytes: 700_000),
+        entry("atlas", "Atlas", summaries["atlas"]!, "0.8.0", bytes: 412_000_000, fits: false),
+        entry("homepanel", "Home Panel", summaries["homepanel"]!, "1.0.0", bytes: 1_400_000),
+        entry("syncthing", "Syncthing", summaries["syncthing"]!, "1.0.0", bytes: 9_800_000),
+        entry("terminal", "Terminal", summaries["terminal"]!, "1.0.0", bytes: 1_100_000),
+        entry("gallery", "Components", summaries["gallery"]!, "1.0.0", bytes: 1_911_388),
+        entry("tide-table", "Tide Table", summaries["tide-table"]!, "1.0.0", runs: false, minimum: "0.4.0", bytes: 388_000),
     ]])
 
     private static let withCobalt = state([reader(standing: "current", cobalt: "0.3.37")])
-    private static let appsBase: [String: StandIn.Reply] = ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", free: 310_000_000)]), "GET /api/apps": onReader, "POST /api/apps/catalog": published]
+    private static let appsBase: [String: StandIn.Reply] = [
+        "GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", free: 310_000_000)]),
+        "GET /api/store": storeAnswer, "GET /api/apps": onReader, "POST /api/apps/catalog": published,
+    ]
+
+    /// A folder of real pictures to answer with, when the render is given
+    /// one. Without it each picture is a plain drawing of a screen.
+    nonisolated(unsafe) static var pictures: URL?
+    nonisolated(unsafe) private static var drawn: [String: Data] = [:]
+    private nonisolated static let drawing = NSLock()
+
+    /// The bytes for a picture: the published one when there is a folder of
+    /// them and it is there, and otherwise a stand-in drawn here, so the
+    /// render needs nothing but itself.
+    ///
+    /// Called from whichever thread the stand-in server answers on, so the
+    /// store of pictures already made is kept under a lock.
+    nonisolated static func picture(named name: String) -> Data {
+        drawing.lock()
+        defer { drawing.unlock() }
+        if let found = drawn[name] { return found }
+        var data = pictures.flatMap { try? Data(contentsOf: $0.appendingPathComponent(name)) }
+        if data == nil {
+            let size = NSSize(width: 1072, height: 1448)
+            if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1072, pixelsHigh: 1448, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
+               let context = NSGraphicsContext(bitmapImageRep: bitmap) {
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                NSColor.white.setFill()
+                NSRect(origin: .zero, size: size).fill()
+                let title = (name as NSString).lastPathComponent.replacingOccurrences(of: ".png", with: "")
+                NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 54, weight: .semibold), .foregroundColor: NSColor.black]).draw(at: NSPoint(x: 72, y: 1300))
+                NSColor(white: 0.25, alpha: 1).setFill()
+                NSRect(x: 72, y: 1268, width: 928, height: 3).fill()
+                NSColor(white: 0.55, alpha: 1).setFill()
+                for row in 0..<16 {
+                    NSRect(x: 72, y: 1180 - CGFloat(row) * 64, width: row % 4 == 3 ? 520 : 928, height: 14).fill()
+                }
+                NSGraphicsContext.restoreGraphicsState()
+                data = bitmap.representation(using: .png, properties: [:])
+            }
+        }
+        let bytes = data ?? Data()
+        drawn[name] = bytes
+        return bytes
+    }
+
+    /// Which pictures the stand-in server can supply.
+    enum Shots {
+        case all
+        /// The computer is offline and nothing is cached.
+        case none
+        case failing(Set<String>)
+    }
 
     private static let chromeStep = "Chrome: open chrome://extensions, turn on Developer mode, choose Load unpacked and pick\n  /Users/owner/.config/kobo/clip/extension"
     private static let safariStep = "Safari: right-click a link and choose Services, then Send to Kobo. For the page you are on, select its address and do the same.\n  A full Safari extension needs a signed Mac app, which this is not."
@@ -380,48 +522,63 @@ enum Scenarios {
         ),
     ]
 
+    private static func loaded(_ more: (@MainActor (Companion) async -> Void)? = nil) -> @MainActor (Companion, Desk) async -> Void {
+        { store, _ in
+            await store.loadStore()
+            await store.loadApps()
+            // The pictures the grid opens on, fetched before it is drawn so
+            // the image is of the place as it settles and not mid-arrival.
+            for app in store.store.store?.apps.values.sorted(by: { $0.id < $1.id }) ?? [] {
+                if let first = app.shots.first { await store.loadShot(first.name) }
+            }
+            await more?(store)
+        }
+    }
+
+    private static func page(_ id: String, _ more: (@MainActor (Companion) async -> Void)? = nil) -> @MainActor (Companion, Desk) async -> Void {
+        loaded { store in
+            for shot in store.store.store?.apps[id]?.shots ?? [] { await store.loadShot(shot.name) }
+            store.open(app: id)
+            await more?(store)
+        }
+    }
+
     private static let apps: [Scenario] = [
-        Scenario(name: "apps-no-reader", place: .apps, routes: ["GET /api/state": state()]),
-        Scenario(name: "apps-no-cobalt", place: .apps, routes: ["GET /api/state": state([reader()])]),
-        Scenario(name: "apps-two-readers", place: .apps, routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37"), reader(volume: libra, model: "Kobo Libra 2")])]),
-        Scenario(name: "apps-reading", place: .apps, routes: ["GET /api/state": withCobalt, "GET /api/apps": .silence]),
-        Scenario(name: "apps-fetching", place: .apps, routes: with(appsBase, ["POST /api/apps/catalog": .silence]), act: { store, _ in await midway { await store.loadApps() } }),
-        Scenario(name: "apps-list", place: .apps, routes: appsBase, act: { store, _ in await store.loadApps() }),
-        Scenario(name: "apps-catalog-unreachable", place: .apps, routes: with(appsBase, ["POST /api/apps/catalog": refuse(502, "unreachable", "The app catalog could not be reached: this computer does not seem to be online.")]), act: { store, _ in await store.loadApps() }),
-        Scenario(name: "apps-catalog-integrity", place: .apps, routes: with(appsBase, ["POST /api/apps/catalog": refuse(502, "integrity", "The app catalog was fetched and its signature does not match the key Cobalt was built with, so it was not used.")]), act: { store, _ in await store.loadApps() }),
-        Scenario(name: "apps-reader-unreadable", place: .apps, routes: ["GET /api/state": withCobalt, "GET /api/apps": refuse(500, "failed", "The apps on the reader could not be read: .adds/cobalt/apps is not a folder.")], act: { store, _ in await store.loadApps() }),
-        Scenario(name: "apps-search", place: .apps, routes: appsBase, act: { store, _ in
-            await store.loadApps()
-            store.search("board")
+        Scenario(name: "store-browse", place: .apps, routes: appsBase, act: loaded()),
+        Scenario(name: "store-no-reader", place: .apps, routes: ["GET /api/state": state(), "GET /api/store": storeAnswer], act: loaded()),
+        Scenario(name: "store-no-cobalt", place: .apps, routes: ["GET /api/state": state([reader()]), "GET /api/store": storeAnswer], act: loaded()),
+        Scenario(name: "store-two-readers", place: .apps, routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37"), reader(volume: libra, model: "Kobo Libra 2")]), "GET /api/store": storeAnswer], act: loaded()),
+        Scenario(name: "store-reading", place: .apps, routes: with(appsBase, ["GET /api/apps": .silence]), act: { store, _ in
+            await store.loadStore()
+            await midway { await store.loadApps() }
         }),
-        Scenario(name: "apps-no-match", place: .apps, routes: appsBase, act: { store, _ in
-            await store.loadApps()
-            store.search("spreadsheet")
+        Scenario(name: "store-fetching", place: .apps, routes: with(appsBase, ["POST /api/apps/catalog": .silence]), act: { store, _ in
+            await store.loadStore()
+            await midway { await store.loadApps() }
         }),
-        Scenario(name: "apps-installing", place: .apps, routes: with(appsBase, ["POST /api/apps/install": ok(["job": 5]), "GET /api/job": job(5, "Installing apps", running: true, text: "Almanac 1.2.0: installed\nFeeds 1.4.0: fetching\n")]), act: { store, _ in
-            await store.loadApps()
-            await store.installApps(["almanac", "rss"])
-        }),
-        Scenario(name: "apps-installed", place: .apps, routes: with(appsBase, ["POST /api/apps/install": ok(["job": 5]), "GET /api/job": job(5, "Installing an app", running: false, ok: true, text: "Backgammon 1.0.1: installed\n")]), act: { store, _ in
-            await store.loadApps()
-            await store.installApps(["backgammon"])
-        }),
-        Scenario(name: "apps-install-incomplete", place: .apps, routes: with(appsBase, ["POST /api/apps/install": ok(["job": 5]), "GET /api/job": job(5, "Installing apps", running: false, ok: false, text: "Almanac 1.2.0: installed\nkobo: Feeds 1.4.0 was not installed: its package does not match the digest in the catalog. Nothing of it was kept.\n")]), act: { store, _ in
-            await store.loadApps()
-            await store.installApps(["almanac", "rss"])
-        }),
-        Scenario(name: "apps-no-room", place: .apps, routes: with(appsBase, ["POST /api/apps/install": refuse(409, "no_room", "Crossword needs 2.3 MB and the reader has 1.1 MB free. Remove something from the reader and try again.")]), act: { store, _ in
-            await store.loadApps()
-            await store.installApps(["crossword"])
-        }),
-        Scenario(name: "apps-read-only", place: .apps, routes: with(appsBase, ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", writable: false)])]), act: { store, _ in await store.loadApps() }),
-        Scenario(name: "apps-removed", place: .apps, routes: with(appsBase, ["POST /api/apps/remove": ok(["apps": [] as [Any], "removed": ["id": "vault", "title": "Vault"]])]), act: { store, _ in
-            await store.loadApps()
-            if let vault = store.shelf.installed.first(where: { $0.id == "vault" }) { await store.removeApp(vault.app) }
-        }),
-        Scenario(name: "apps-remove-ask", place: .apps, routes: appsBase, act: { store, _ in await store.loadApps() }, question: { store in
-            store.shelf.installed.first { $0.id == "vault" }.map { Questions.removal(of: $0.app) }
-        }),
+        Scenario(name: "store-offline", place: .apps, routes: with(appsBase, ["POST /api/apps/catalog": refuse(502, "unreachable", "The app catalog could not be reached: this computer does not seem to be online.")]), shots: .none, act: loaded()),
+        Scenario(name: "store-picture-fails", place: .apps, routes: appsBase, shots: .failing(["crossword.png", "habits.png"]), act: loaded()),
+        Scenario(name: "store-catalog-integrity", place: .apps, routes: with(appsBase, ["POST /api/apps/catalog": refuse(502, "integrity", "The app catalog was fetched and its signature does not match the key Cobalt was built with, so it was not used.")]), act: loaded()),
+        Scenario(name: "store-reader-unreadable", place: .apps, routes: with(appsBase, ["GET /api/apps": refuse(500, "failed", "The apps on the reader could not be read: .adds/cobalt/apps is not a folder.")]), act: loaded()),
+        Scenario(name: "store-without-store", place: .apps, routes: with(appsBase, ["GET /api/store": refuse(404, "not_found", "There is nothing at that address.")]), act: loaded()),
+        Scenario(name: "store-search", place: .apps, routes: appsBase, act: loaded { store in store.search("puzzle") }),
+        Scenario(name: "store-no-match", place: .apps, routes: appsBase, act: loaded { store in store.search("spreadsheet") }),
+        Scenario(name: "store-installing", place: .apps, routes: with(appsBase, ["POST /api/apps/install": ok(["job": 5]), "GET /api/job": job(5, "Installing apps", running: true, text: "Backgammon 1.0.1: installed\nFeeds 1.4.0: fetching\n")]), act: loaded { store in await store.installApps(["backgammon", "rss"]) }),
+        Scenario(name: "store-installed", place: .apps, routes: with(appsBase, ["POST /api/apps/install": ok(["job": 5]), "GET /api/job": job(5, "Installing an app", running: false, ok: true, text: "Crossword 2.1.0: installed\n")]), act: loaded { store in await store.installApps(["crossword"]) }),
+        Scenario(name: "store-install-incomplete", place: .apps, routes: with(appsBase, ["POST /api/apps/install": ok(["job": 5]), "GET /api/job": job(5, "Installing apps", running: false, ok: false, text: "Backgammon 1.0.1: installed\nkobo: Feeds 1.4.0 was not installed: its package does not match the digest in the catalog. Nothing of it was kept.\n")]), act: loaded { store in await store.installApps(["backgammon", "rss"]) }),
+        Scenario(name: "store-no-room", place: .apps, routes: with(appsBase, ["POST /api/apps/install": refuse(409, "no_room", "Syncthing needs 9.8 MB and the reader has 1.1 MB free. Remove something from the reader and try again.")]), act: loaded { store in await store.installApps(["syncthing"]) }),
+        Scenario(name: "store-read-only", place: .apps, routes: with(appsBase, ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", writable: false)])]), act: loaded()),
+        Scenario(name: "store-removed", place: .apps, routes: with(appsBase, ["POST /api/apps/remove": ok(["apps": [] as [Any], "removed": ["id": "vault", "title": "Vault"]])]), act: loaded { store in await store.removeApp(id: "vault", title: "Vault") }),
+        Scenario(name: "store-app-update", place: .apps, routes: appsBase, act: page("backgammon")),
+        Scenario(name: "store-app-long", place: .apps, routes: appsBase, act: page("crossword")),
+        Scenario(name: "store-app-setup", place: .apps, routes: appsBase, act: page("homepanel")),
+        Scenario(name: "store-app-no-shots", place: .apps, routes: appsBase, act: page("atlas")),
+        Scenario(name: "store-app-needs-newer", place: .apps, routes: appsBase, act: page("tide-table")),
+        Scenario(name: "store-app-update-needs-newer", place: .apps, routes: appsBase, act: page("panels")),
+        Scenario(name: "store-app-no-reader", place: .apps, routes: ["GET /api/state": state(), "GET /api/store": storeAnswer], act: page("backgammon")),
+        Scenario(name: "store-app-picture-fails", place: .apps, routes: appsBase, shots: .failing(["crossword/crossword-play.png"]), act: page("crossword")),
+        Scenario(name: "store-app-installing", place: .apps, routes: with(appsBase, ["POST /api/apps/install": ok(["job": 5]), "GET /api/job": job(5, "Installing an app", running: true, text: "Crossword 2.1.0: fetching\n")]), act: page("crossword") { store in await store.installApps(["crossword"]) }),
+        Scenario(name: "apps-remove-ask", place: .apps, routes: appsBase, act: loaded(), question: { _ in Questions.removal(of: "Vault") }),
     ]
 
     private static let browserAndSend: [Scenario] = [

@@ -84,9 +84,9 @@ enum Questions {
         return alert
     }
 
-    static func removal(of app: AppEntry) -> NSAlert {
+    static func removal(of title: String) -> NSAlert {
         let alert = NSAlert()
-        alert.messageText = "Remove \(app.title) from this reader?"
+        alert.messageText = "Remove \(title) from this reader?"
         alert.informativeText = "Its data is kept."
         alert.addButton(withTitle: "Remove")
         alert.addButton(withTitle: "Cancel")
@@ -94,12 +94,12 @@ enum Questions {
         return alert
     }
 
-    static func askToRemove(_ app: AppEntry, store: Companion) {
-        let alert = removal(of: app)
+    static func askToRemove(id: String, title: String, store: Companion) {
+        let alert = removal(of: title)
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }
-            Task { await store.removeApp(app) }
+            Task { await store.removeApp(id: id, title: title) }
         }
     }
 

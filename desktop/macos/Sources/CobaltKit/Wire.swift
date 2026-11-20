@@ -321,6 +321,114 @@ public struct Upload: Decodable, Equatable, Sendable {
     public var choices: [SendApp]?
 }
 
+/// A picture of an app on the reader's screen.
+public struct Shot: Decodable, Equatable, Sendable, Identifiable {
+    /// What the server knows the picture by, and what it is asked for as.
+    public var name: String
+    public var caption: String
+    public var width: Int
+    public var height: Int
+
+    public var id: String { name }
+
+    enum CodingKeys: String, CodingKey { case name, caption, width, height }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        caption = try container.decodeIfPresent(String.self, forKey: .caption) ?? ""
+        // A reader's screen, which is what nearly every picture is of, when
+        // the server does not say.
+        width = try container.decodeIfPresent(Int.self, forKey: .width) ?? 1072
+        height = try container.decodeIfPresent(Int.self, forKey: .height) ?? 1448
+    }
+}
+
+public struct StoreLink: Decodable, Equatable, Sendable {
+    public var label: String
+    public var url: String
+}
+
+/// One thing to do before an app is of use, as `kobo apps setup` puts it.
+public struct SetupStep: Decodable, Equatable, Sendable {
+    public var text: String
+    public var command: String?
+    public var link: StoreLink?
+}
+
+/// An app as the store describes it, whatever reader is or is not plugged
+/// in.
+public struct StoreApp: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var title: String
+    public var summary: String
+    public var needs: [String]
+    public var description: String
+    public var version: String
+    public var releaseNotes: String
+    public var minimumCobaltVersion: String?
+    public var access: [String]
+    public var setup: [SetupStep]
+    public var shots: [Shot]
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, summary, needs, description, version, releaseNotes, minimumCobaltVersion, access, setup, shots
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? id
+        summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        needs = try container.decodeIfPresent([String].self, forKey: .needs) ?? []
+        description = try container.decodeIfPresent(String.self, forKey: .description) ?? ""
+        version = try container.decodeIfPresent(String.self, forKey: .version) ?? ""
+        releaseNotes = try container.decodeIfPresent(String.self, forKey: .releaseNotes) ?? ""
+        minimumCobaltVersion = try container.decodeIfPresent(String.self, forKey: .minimumCobaltVersion)
+        access = try container.decodeIfPresent([String].self, forKey: .access) ?? []
+        setup = try container.decodeIfPresent([SetupStep].self, forKey: .setup) ?? []
+        shots = try container.decodeIfPresent([Shot].self, forKey: .shots) ?? []
+    }
+}
+
+public struct StoreGroup: Decodable, Equatable, Sendable, Identifiable {
+    public var id: String
+    public var title: String
+    public var apps: [String]
+}
+
+/// The whole store: every app the kobo command was built knowing, in the
+/// groups the project's website lists them in. It needs no reader and no
+/// network.
+public struct Store: Decodable, Equatable, Sendable {
+    public var groups: [StoreGroup]
+    public var apps: [String: StoreApp]
+
+    enum CodingKeys: String, CodingKey { case groups, apps }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        groups = try container.decodeIfPresent([StoreGroup].self, forKey: .groups) ?? []
+        // The apps are keyed by id, and ids have hyphens in them that the
+        // snake-case reading of keys would otherwise leave alone or mangle,
+        // so the keys are read as they are written.
+        let plain = try container.nestedContainer(keyedBy: AnyKey.self, forKey: .apps)
+        var apps: [String: StoreApp] = [:]
+        for key in plain.allKeys {
+            let app = try plain.decode(StoreApp.self, forKey: key)
+            apps[app.id] = app
+        }
+        self.apps = apps
+    }
+
+    private struct AnyKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+}
+
 extension JSONDecoder {
     /// The decoder every answer goes through, in the app, the tests and the
     /// renders alike.

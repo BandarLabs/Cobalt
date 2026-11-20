@@ -615,14 +615,14 @@ struct AppsPlaceTests {
         await store.loadApps()
         let feeds = store.shelf.installed[0].app
         board["GET /api/apps"] = .json(200, #"{"apps": []}"#)
-        await store.removeApp(feeds)
+        await store.removeApp(id: feeds.id, title: feeds.title)
         #expect(store.apps.said == "Feeds is removed. Its data is kept.")
         #expect(store.apps.changed)
         #expect(store.shelf.installed.isEmpty)
         #expect(store.apps.removing == nil)
 
         board["POST /api/apps/remove"] = .json(404, refusal("not_found", "Feeds is not installed on this reader."))
-        await store.removeApp(feeds)
+        await store.removeApp(id: feeds.id, title: feeds.title)
         #expect(store.apps.refusal?.kind == .notFound)
         #expect(store.apps.refusal?.sentence == "Feeds is not installed on this reader.")
     }

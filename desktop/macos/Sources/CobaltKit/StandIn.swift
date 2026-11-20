@@ -23,6 +23,8 @@ public final class StandIn: URLProtocol, @unchecked Sendable {
 
     public enum Reply: Sendable {
         case json(Int, String)
+        /// Bytes that are not JSON: a picture.
+        case bytes(Int, Data, type: String)
         /// The connection fails the way the system reports it.
         case fail(URLError.Code)
         /// Nothing comes back at all, which is how a wait is held open for
@@ -141,6 +143,11 @@ public final class StandIn: URLProtocol, @unchecked Sendable {
             let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: Data(text.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        case .bytes(let status, let data, let type):
+            let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": type])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
         case .fail(let code):
             client?.urlProtocol(self, didFailWithError: URLError(code))

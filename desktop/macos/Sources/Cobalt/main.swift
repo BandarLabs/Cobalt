@@ -22,6 +22,9 @@ if let directory = value(after: "--render-states") {
     application.setActivationPolicy(.accessory)
     let scale = value(after: "--scale").flatMap(Double.init).map { CGFloat($0) } ?? 2
     let only = value(after: "--only")
+    // A folder of the project's published screenshots, to draw the store
+    // with real pictures in it. Without one, plain stand-ins are drawn.
+    Scenarios.pictures = value(after: "--pictures").map { URL(fileURLWithPath: $0, isDirectory: true) }
     Task { @MainActor in
         let status = await Renderer.run(into: URL(fileURLWithPath: directory), only: only, scale: scale)
         exit(status)
@@ -29,6 +32,7 @@ if let directory = value(after: "--render-states") {
     application.run()
 } else if let name = value(after: "--show-state") {
     application.setActivationPolicy(.accessory)
+    Scenarios.pictures = value(after: "--pictures").map { URL(fileURLWithPath: $0, isDirectory: true) }
     Task { @MainActor in
         let shown = await Renderer.show(name, narrow: arguments.contains("--narrow"), dark: arguments.contains("--dark"))
         if !shown {

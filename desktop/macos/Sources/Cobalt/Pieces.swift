@@ -5,6 +5,9 @@ import SwiftUI
 /// A place's content: one column of reading on paper, scrolling when it is
 /// longer than the window.
 struct Pane<Content: View>: View {
+    /// How wide the column may run. Reading wants it narrow; a grid of
+    /// pictures can use more.
+    var width: CGFloat = Paper.column
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -12,7 +15,7 @@ struct Pane<Content: View>: View {
             VStack(alignment: .leading, spacing: 18) {
                 content
             }
-            .frame(maxWidth: Paper.column, alignment: .leading)
+            .frame(maxWidth: width, alignment: .leading)
             .padding(.horizontal, 28)
             .padding(.top, 22)
             .padding(.bottom, 32)

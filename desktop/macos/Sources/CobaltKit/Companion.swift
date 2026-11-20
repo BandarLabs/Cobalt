@@ -47,6 +47,24 @@ public struct AppsDesk: Equatable, Sendable {
     public var removing: String?
 }
 
+/// How far a picture has got.
+public enum ShotState: Equatable, Sendable {
+    case loading
+    case loaded(Data)
+    /// It could not be had. The place shows where it would have been and
+    /// asks again only when the owner next opens the app's page.
+    case failed
+}
+
+public struct StoreDesk: Equatable, Sendable {
+    public var store: Store?
+    public var problem: Failure?
+    /// The app whose page is open, when one is.
+    public var open: String?
+    /// Every picture asked for this session, by the name the store gives it.
+    public var shots: [String: ShotState] = [:]
+}
+
 public struct BrowserDesk: Equatable, Sendable {
     public var list: [Browser]?
     /// Why the browsers could not be listed.
@@ -107,6 +125,7 @@ public final class Companion: ObservableObject {
     @Published public private(set) var chosenVolume: String?
     @Published public private(set) var reader = ReaderDesk()
     @Published public private(set) var apps = AppsDesk()
+    @Published public private(set) var store = StoreDesk()
     @Published public private(set) var browser = BrowserDesk()
     @Published public private(set) var send = SendDesk()
 
@@ -124,6 +143,8 @@ public final class Companion: ObservableObject {
     private var client: Client?
     private var misses = 0
     private var lastMiss: Failure?
+    private var shotsInFlight = 0
+    private var shotsWaiting: [String] = []
 
     public init(
         place: Place = .reader,
@@ -156,6 +177,12 @@ public final class Companion: ObservableObject {
 
     public var shelf: Shelf {
         Shelf.arrange(installed: apps.installed, catalog: apps.catalog, query: apps.query)
+    }
+
+    /// The store laid over what the reader has. Any reader will do for
+    /// browsing, and none: what can be installed is another matter.
+    public var storefront: Storefront {
+        Storefront.arrange(store: store.store, installed: apps.installed, catalog: apps.catalog, query: apps.query)
     }
 
     public var versionTrouble: VersionTrouble? {
@@ -379,16 +406,16 @@ public final class Companion: ObservableObject {
         }
     }
 
-    public func removeApp(_ app: AppEntry) async {
+    public func removeApp(id: String, title: String) async {
         guard let client, let reader = appsReader, apps.removing == nil else { return }
         apps.refusal = nil
         apps.said = ""
-        apps.removing = app.id
+        apps.removing = id
         do {
-            let left = try await client.removeApp(volume: reader.volume, id: app.id)
+            let left = try await client.removeApp(volume: reader.volume, id: id)
             apps.removing = nil
             apps.installed = left.apps
-            apps.said = "\(app.title) is removed. Its data is kept."
+            apps.said = "\(title) is removed. Its data is kept."
             apps.changed = true
             await loadApps()
         } catch {
@@ -399,6 +426,71 @@ public final class Companion: ObservableObject {
 
     public func dismissAppsJob() {
         apps.job = nil
+    }
+
+    /// Reads the store. It is compiled into the kobo command, so this asks
+    /// for nothing that a reader or a network would have to supply.
+    public func loadStore() async {
+        guard let client else { return }
+        do {
+            let fresh = try await client.store()
+            if store.store != fresh { store.store = fresh }
+            store.problem = nil
+        } catch {
+            store.problem = heard(error)
+        }
+    }
+
+    public func open(app id: String) {
+        // A picture that could not be had is asked for again when its
+        // app's page is next opened, and at no other time, so a computer
+        // that is offline is not asked the same thing in a loop.
+        for shot in store.store?.apps[id]?.shots ?? [] where store.shots[shot.name] == .failed {
+            store.shots[shot.name] = nil
+        }
+        store.open = id
+    }
+
+    public func closeApp() {
+        store.open = nil
+    }
+
+    /// Asks for a picture that is on screen or about to be. Nothing is
+    /// fetched twice, and only a few are fetched at once: the server may be
+    /// getting each from the network, and a grid of thirty should not ask
+    /// for thirty together.
+    public func wantShot(_ name: String) {
+        guard client != nil, store.shots[name] == nil else { return }
+        store.shots[name] = .loading
+        shotsWaiting.append(name)
+        pumpShots()
+    }
+
+    /// Fetches one picture and returns when the record has it or has given
+    /// up on it.
+    public func loadShot(_ name: String) async {
+        guard let client else { return }
+        if case .loaded = store.shots[name] { return }
+        store.shots[name] = .loading
+        do {
+            let data = try await client.shot(named: name)
+            store.shots[name] = data.isEmpty ? .failed : .loaded(data)
+        } catch {
+            _ = heard(error)
+            store.shots[name] = .failed
+        }
+    }
+
+    private func pumpShots() {
+        while shotsInFlight < 3, !shotsWaiting.isEmpty {
+            let name = shotsWaiting.removeFirst()
+            shotsInFlight += 1
+            Task {
+                await self.loadShot(name)
+                self.shotsInFlight -= 1
+                self.pumpShots()
+            }
+        }
     }
 
     public func dismissAppsNote() {

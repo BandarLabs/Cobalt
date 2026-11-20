@@ -27,6 +27,9 @@ public struct Patience: Equatable, Sendable {
     public var change: TimeInterval = 30
     public var catalog: TimeInterval = 75
     public var uploadSilence: TimeInterval = 60
+    /// A picture is fetched from the project's site by the server the
+    /// first time it is asked for, so it is allowed longer than a question.
+    public var picture: TimeInterval = 30
 
     public init() {}
 
@@ -35,6 +38,7 @@ public struct Patience: Equatable, Sendable {
         change = everything
         catalog = everything
         uploadSilence = everything
+        picture = everything
     }
 }
 
@@ -110,6 +114,24 @@ public final class Client: Sendable {
 
     public func removeApp(volume: String, id: String) async throws -> AppRemoved {
         try await change("/api/apps/remove", ["volume": .text(volume), "id": .text(id)])
+    }
+
+    /// Every app the kobo command knows of. No reader and no network.
+    public func store() async throws -> Store {
+        try await ask("/api/store")
+    }
+
+    /// One picture, as the bytes of a PNG.
+    public func shot(named name: String) async throws -> Data {
+        let request = try request("/api/shot", ["name": name], method: "GET", within: patience.picture)
+        do {
+            let (data, response) = try await transport.data(for: request)
+            return try Self.accepted(data, response)
+        } catch let failure as Failure {
+            throw failure
+        } catch {
+            throw Self.failure(from: error)
+        }
     }
 
     public func browsers() async throws -> [Browser] {
@@ -235,6 +257,18 @@ public final class Client: Sendable {
     }
 
     private static func answer<Answer: Decodable>(_ data: Data, _ response: URLResponse) throws -> Answer {
+        do {
+            return try JSONDecoder.wire.decode(Answer.self, from: accepted(data, response))
+        } catch let failure as Failure {
+            throw failure
+        } catch {
+            throw Failure.malformed
+        }
+    }
+
+    /// The body of an answer the server said yes with, or the refusal it
+    /// said no with.
+    private static func accepted(_ data: Data, _ response: URLResponse) throws -> Data {
         guard let response = response as? HTTPURLResponse else { throw Failure.malformed }
         guard (200..<300).contains(response.statusCode) else {
             let body = try? JSONDecoder().decode(RefusalBody.self, from: data)
@@ -245,11 +279,7 @@ public final class Client: Sendable {
                 status: response.statusCode
             )
         }
-        do {
-            return try JSONDecoder.wire.decode(Answer.self, from: data)
-        } catch {
-            throw Failure.malformed
-        }
+        return data
     }
 
     /// Sorts the system's many ways of saying a request did not arrive into
