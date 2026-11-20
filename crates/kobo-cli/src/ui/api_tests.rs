@@ -652,6 +652,8 @@ fn the_state_says_which_readers_are_saved_and_whether_one_is_still_to_be_found()
     assert!(!reply.body.contains("N418000000000"));
 }
 
+// The stand-in for the kobo command is a shell script.
+#[cfg(unix)]
 #[test]
 fn looking_again_runs_the_search_for_the_reader_that_is_waiting_and_for_no_other() {
     let (running, desk) = running("find");
@@ -680,6 +682,8 @@ fn looking_again_runs_the_search_for_the_reader_that_is_waiting_and_for_no_other
     assert_eq!(state["jobs"][0]["setup"]["stage"], report["setup"]["stage"]);
 }
 
+// The stand-in for the kobo command is a shell script.
+#[cfg(unix)]
 #[test]
 fn an_install_says_where_it_has_got_to_and_other_jobs_say_nothing_of_the_kind() {
     let (running, desk) = running("stages");
