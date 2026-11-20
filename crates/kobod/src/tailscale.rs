@@ -12,6 +12,19 @@
 //! applications on the reader can reach the owner's own servers. It forwards
 //! nothing, advertises nothing and offers no Tailscale SSH.
 //!
+//! Two things beyond that are the owner's to switch on, each off until they
+//! do: offering the reader as an exit node, and sharing the network its Wi-Fi
+//! is on. Neither is done the way a Linux router does it. That way needs the
+//! kernel to forward and translate packets, which needs a packet filter the
+//! reader's firmware gives every sign of not having, and leaves rules and
+//! settings in the firmware's kernel behind a daemon that is killed. Instead
+//! the daemon is asked to carry that traffic itself, in its own process,
+//! while the reader's own address stays on the kernel's tunnel. That last
+//! part is the point of doing it this way and not with the daemon's fully
+//! userspace mode, which hands every connection for the reader to loopback
+//! and so offers the tailnet the ports this runtime keeps there. See
+//! [`Routing`].
+//!
 //! Unless the owner asks otherwise, the service runs while Cobalt is open and
 //! stops when the reader is handed back, for the reasons a Sync window does.
 //! Nothing would be watching the daemon under the stock reader, and its
@@ -284,13 +297,135 @@ impl Layout {
     }
 }
 
+/// The daemon setting that makes it carry routed traffic itself.
+///
+/// With it, connections a tailnet device sends through this reader, to the
+/// internet or to the network the reader is on, are ended inside the daemon
+/// and made again from the reader as ordinary connections of its own. That
+/// needs nothing from the kernel but the tunnel: no forwarding switch, no
+/// packet filter, no address translation. It is how the daemon routes by
+/// default on network storage boxes, which are short of the same things.
+///
+/// It is a setting the daemon documents nowhere and reads once, at start.
+/// So this module does not take its word for it: after bringing the reader
+/// up it looks for the complaint a daemon that is still relying on the
+/// kernel always makes on a reader, and backs out if it finds one. A new pin
+/// has to be checked for this name like it is checked for its digests.
+const FORWARD_IN_THE_DAEMON: &str = "TS_DEBUG_NETSTACK_SUBNETS";
+
+/// What the reader offers to carry for other devices on the tailnet.
+///
+/// Both are off unless the owner turned them on, and both wait for the
+/// tailnet's admin console to approve them before any device can use them.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Routing {
+    /// Other devices may send their internet traffic through this reader.
+    exit_node: bool,
+    /// The network the reader's Wi-Fi is on, offered to the tailnet.
+    network: Option<String>,
+}
+
+impl Routing {
+    const fn any(&self) -> bool {
+        self.exit_node || self.network.is_some()
+    }
+}
+
+/// Why the reader's network is not being shared.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NotShared {
+    /// No Wi-Fi network right now. Whatever was shared before still is,
+    /// since nothing can reach it either way until Wi-Fi is back.
+    NoNetwork,
+    NotPrivate,
+    TooLarge,
+}
+
+impl NotShared {
+    const fn why(self) -> &'static str {
+        match self {
+            Self::NoNetwork => {
+                "The reader is not on a Wi-Fi network yet, so there is nothing to share."
+            }
+            Self::NotPrivate => {
+                "The Wi-Fi this reader is on is not a private home network, so it is not shared."
+            }
+            Self::TooLarge => "The Wi-Fi network this reader is on is too large to share.",
+        }
+    }
+}
+
+/// The network the reader's Wi-Fi is on, as the tailnet would be offered it.
+///
+/// Worked out from the kernel's routing table and never from a setting: the
+/// network to share is the one the reader is actually on, and a reader
+/// carried to another house is on another one. Only a private range is ever
+/// offered, because offering anything else would be claiming somebody else's
+/// addresses for every device that trusts this tailnet's routes. And only
+/// one of an ordinary size. A network of sixteen million addresses is not
+/// somebody's home, and advertising it would take that whole range away
+/// from every other device on the tailnet.
+fn shared_network(layout: &Layout) -> Result<String, NotShared> {
+    let table = fs::read_to_string(layout.proc.join("net/route")).unwrap_or_default();
+    parse_shared_network(&table)
+}
+
+fn parse_shared_network(table: &str) -> Result<String, NotShared> {
+    // Interface, destination, gateway, flags, three counters, mask. The
+    // addresses are printed as the reader's processor holds them, which on
+    // every Kobo is least significant byte first.
+    let rows = table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            let word = |index: usize| u32::from_str_radix(fields.get(index)?, 16).ok();
+            Some((*fields.first()?, word(1)?, word(2)?, word(7)?))
+        })
+        .filter(|(interface, ..)| *interface != INTERFACE)
+        .collect::<Vec<_>>();
+    let (wifi, ..) = rows
+        .iter()
+        .find(|(_, destination, _, mask)| *destination == 0 && *mask == 0)
+        .ok_or(NotShared::NoNetwork)?;
+    let (_, destination, _, mask) = rows
+        .iter()
+        .find(|(interface, _, gateway, mask)| interface == wifi && *gateway == 0 && *mask != 0)
+        .ok_or(NotShared::NoNetwork)?;
+    let network = std::net::Ipv4Addr::from(destination.to_le_bytes());
+    let mask = u32::from_be_bytes(mask.to_le_bytes());
+    let prefix = mask.leading_ones();
+    if mask.count_ones() != prefix || !network.is_private() {
+        return Err(NotShared::NotPrivate);
+    }
+    if !(16..=30).contains(&prefix) {
+        return Err(NotShared::TooLarge);
+    }
+    Ok(format!("{network}/{prefix}"))
+}
+
 /// What the owner chose, one word a line as the app saves it. Lines an older
 /// app never wrote are off.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "four switches the owner sets one at a time; any other shape is sixteen variants"
+)]
 struct Choices {
     on: bool,
     /// Stay on the tailnet after Cobalt hands the screen back.
     outside: bool,
+    /// Offer this reader as an exit node.
+    exit_node: bool,
+    /// Share the network the reader's Wi-Fi is on.
+    share_network: bool,
+}
+
+impl Choices {
+    /// Whether the reader is asked to carry traffic for other devices.
+    const fn routes(self) -> bool {
+        self.exit_node || self.share_network
+    }
 }
 
 /// Whether the book partition is mounted where the app's files are.
@@ -327,6 +462,8 @@ fn choices(layout: &Layout) -> Option<Choices> {
     Some(Choices {
         on: next(),
         outside: next(),
+        exit_node: next(),
+        share_network: next(),
     })
 }
 
@@ -355,6 +492,21 @@ struct Status {
     /// Why the reader cannot stay connected outside Cobalt, when the owner
     /// asked for that and it could not be arranged. Empty otherwise.
     cannot_stay: String,
+    /// Where the two routing choices stand, and the network being shared.
+    routing: RoutingNotes,
+}
+
+/// What the app is told about the exit node and the shared network: for
+/// each, nothing when it is off, `waiting` until the tailnet's admin console
+/// has approved it, `approved`, or `unavailable` with the reason beside it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct RoutingNotes {
+    exit_node: &'static str,
+    network: &'static str,
+    /// The network being offered, as written in the admin console.
+    shared: String,
+    exit_node_why: String,
+    network_why: String,
 }
 
 impl Status {
@@ -367,9 +519,20 @@ impl Status {
     }
 
     fn render(&self) -> String {
+        let routing = &self.routing;
         format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n",
-            self.state, self.address, self.message, self.sign_in, self.name, self.cannot_stay
+            "{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+            self.state,
+            self.address,
+            self.message,
+            self.sign_in,
+            self.name,
+            self.cannot_stay,
+            routing.exit_node,
+            routing.network,
+            routing.shared,
+            routing.exit_node_why,
+            routing.network_why
         )
     }
 }
@@ -382,6 +545,9 @@ const LEFT_COBALT: &str =
 const SIGNED_OUT: &str =
     "Signed out. If this reader is still listed in your Tailscale admin console, remove it there.";
 const STOPPED: &str = "Tailscale stopped. It starts again the next time you open Cobalt.";
+const CANNOT_ROUTE: &str =
+    "Tailscale on this reader could not carry traffic for other devices, so \
+     it is not an exit node and does not share its network.";
 const NO_ROOM_TO_STAY: &str = "The reader's system storage does not have the 110 MB free that \
      staying connected outside Cobalt needs. Tailscale runs while Cobalt is open instead.";
 
@@ -709,8 +875,10 @@ enum Interrupt {
     Orphaned,
     SignOut,
     SwitchedOff,
-    /// The owner changed whether the reader stays connected outside Cobalt,
-    /// which is a different supervisor's job, started from a different place.
+    /// The owner changed something only a fresh start can honour: whether
+    /// the reader stays connected outside Cobalt, which is a different
+    /// supervisor's job, or whether it carries traffic for other devices,
+    /// which the daemon is told once, as it starts.
     OtherKind,
 }
 
@@ -726,6 +894,15 @@ struct Supervisor<'a> {
     unsaid: std::cell::RefCell<Option<Status>>,
     /// Why this reader is not staying connected although its owner asked.
     cannot_stay: String,
+    /// The routing choices this supervisor started with. The daemon learns
+    /// them from its environment, so a change is a new start.
+    asked: Choices,
+    /// Set when the daemon turned out not to be carrying traffic itself, so
+    /// nothing is advertised that would then go nowhere.
+    cannot_route: std::cell::Cell<bool>,
+    /// What is being advertised now, and where it stands.
+    advertised: std::cell::RefCell<Routing>,
+    notes: std::cell::RefCell<RoutingNotes>,
 }
 
 impl<'a> Supervisor<'a> {
@@ -744,6 +921,10 @@ impl<'a> Supervisor<'a> {
             known: std::cell::Cell::new(known),
             unsaid: std::cell::RefCell::new(None),
             cannot_stay: cannot_stay.trim().to_owned(),
+            asked: known,
+            cannot_route: std::cell::Cell::new(false),
+            advertised: std::cell::RefCell::default(),
+            notes: std::cell::RefCell::default(),
         }
     }
 
@@ -777,13 +958,96 @@ impl<'a> Supervisor<'a> {
         if !choices.on {
             return Some(Interrupt::SwitchedOff);
         }
-        (staying(self.layout, choices) != self.layout.kept).then_some(Interrupt::OtherKind)
+        (staying(self.layout, choices) != self.layout.kept
+            || choices.exit_node != self.asked.exit_node
+            || choices.share_network != self.asked.share_network)
+            .then_some(Interrupt::OtherKind)
+    }
+
+    /// Works out what to advertise now: what the owner asked for, less
+    /// whatever this reader has shown it cannot do, with the network read
+    /// fresh, because a reader carried to another Wi-Fi is on another one.
+    fn plan(&self) -> Routing {
+        let mut notes = RoutingNotes::default();
+        let mut plan = Routing::default();
+        if self.cannot_route.get() {
+            if self.asked.exit_node {
+                notes.exit_node = "unavailable";
+                CANNOT_ROUTE.clone_into(&mut notes.exit_node_why);
+            }
+            if self.asked.share_network {
+                notes.network = "unavailable";
+                CANNOT_ROUTE.clone_into(&mut notes.network_why);
+            }
+        } else {
+            if self.asked.exit_node {
+                plan.exit_node = true;
+                notes.exit_node = "waiting";
+            }
+            if self.asked.share_network {
+                match shared_network(self.layout) {
+                    Ok(network) => {
+                        notes.network = "waiting";
+                        notes.shared.clone_from(&network);
+                        plan.network = Some(network);
+                    }
+                    Err(why) => {
+                        notes.network = "unavailable";
+                        why.why().clone_into(&mut notes.network_why);
+                    }
+                }
+            }
+        }
+        *self.notes.borrow_mut() = notes;
+        *self.advertised.borrow_mut() = plan.clone();
+        plan
+    }
+
+    /// Whether what is advertised should be advertised again from scratch:
+    /// the daemon has said it is not forwarding after all, or the reader is
+    /// now on a different network from the one it is offering.
+    fn routing_changed(&self, report: &Report) -> bool {
+        let advertised = self.advertised.borrow().clone();
+        if advertised.any() && report.not_forwarding {
+            self.cannot_route.set(true);
+            return true;
+        }
+        if !self.asked.share_network || self.cannot_route.get() {
+            return false;
+        }
+        match shared_network(self.layout) {
+            Ok(network) => advertised.network.as_ref() != Some(&network),
+            // Offline, the old offer stands: nothing reaches it either way.
+            Err(NotShared::NoNetwork) => false,
+            Err(_) => advertised.network.is_some(),
+        }
+    }
+
+    /// Records what the tailnet has approved of what is being advertised.
+    fn note_approvals(&self, report: &Report) {
+        let advertised = self.advertised.borrow();
+        let mut notes = self.notes.borrow_mut();
+        if advertised.exit_node {
+            notes.exit_node = if report.exit_node_approved {
+                "approved"
+            } else {
+                "waiting"
+            };
+        }
+        if let Some(network) = &advertised.network {
+            notes.network = if report.allowed.iter().any(|allowed| allowed == network) {
+                "approved"
+            } else {
+                "waiting"
+            };
+        }
     }
 
     /// Says what happened, or remembers it for when the card is back.
     fn say(&self, status: &Status) {
         let status = Status {
             cannot_stay: self.cannot_stay.clone(),
+            routing: self.notes.borrow().clone(),
             ..status.clone()
         };
         if !card_present(self.layout) {
@@ -1013,7 +1277,7 @@ fn supervise(supervisor: &Supervisor) -> End {
         return supervisor.leave(&mut Daemon::absent(), interrupt);
     }
     supervisor.say(&Status::quiet("starting", "Starting Tailscale."));
-    let mut daemon = match Daemon::start(layout) {
+    let mut daemon = match Daemon::start(layout, supervisor.asked.routes()) {
         Ok(daemon) => daemon,
         Err(why) => {
             supervisor.say(&Status::quiet("failed", why.clone()));
@@ -1318,7 +1582,12 @@ impl Daemon {
     /// because a file sent to the reader lands on the root filesystem, where
     /// nothing would ever collect it and a large one would fill the partition
     /// the firmware updates itself onto.
-    fn start(layout: &Layout) -> Result<Self, String> {
+    ///
+    /// A fourth is set only when the owner asked the reader to carry traffic
+    /// for other devices: the daemon is told to do that forwarding itself,
+    /// and is given more room to do it in. With neither switch on, the
+    /// daemon is started exactly as a leaf always was.
+    fn start(layout: &Layout, routes: bool) -> Result<Self, String> {
         verify_engine(layout)?;
         prepare_home(layout)?;
         ensure_loopback(layout);
@@ -1332,12 +1601,15 @@ impl Daemon {
             .arg(layout.socket())
             .arg(format!("--tun={INTERFACE}"))
             .arg("--no-logs-no-support")
-            .env("GOMEMLIMIT", "48MiB")
+            .env("GOMEMLIMIT", if routes { "96MiB" } else { "48MiB" })
             .env("GOGC", "50")
             .env("TS_DISABLE_TAILDROP", "true")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
+        if routes {
+            command.env(FORWARD_IN_THE_DAEMON, "true");
+        }
         // A group of its own, so it can be asked to leave by signal without
         // the supervisor asking itself to leave as well.
         kobo_abi::process_group::configure(&mut command);
@@ -1469,6 +1741,15 @@ struct Report {
     sign_in: Option<String>,
     address: String,
     name: String,
+    /// Whether the kernel's tunnel is in use. If it ever is not, the daemon
+    /// is in the mode that hands the reader's connections to loopback.
+    tunnel: bool,
+    /// Whether the daemon says packets it was asked to route will not be.
+    not_forwarding: bool,
+    /// Offered as an exit node and approved in the admin console.
+    exit_node_approved: bool,
+    /// The addresses the tailnet will route to this reader.
+    allowed: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1503,6 +1784,31 @@ fn parse_report(json: &str) -> Option<Report> {
         name: text(own.and_then(|own| own.get("DNSName")))
             .trim_end_matches('.')
             .to_owned(),
+        tunnel: value.get("TUN").and_then(kobo_json::Value::as_bool) != Some(false),
+        not_forwarding: value
+            .get("Health")
+            .and_then(kobo_json::Value::as_array)
+            .is_some_and(|health| {
+                health
+                    .iter()
+                    .filter_map(kobo_json::Value::as_str)
+                    .any(says_not_forwarding)
+            }),
+        exit_node_approved: own
+            .and_then(|own| own.get("ExitNodeOption"))
+            .and_then(kobo_json::Value::as_bool)
+            == Some(true),
+        allowed: own
+            .and_then(|own| own.get("AllowedIPs"))
+            .and_then(kobo_json::Value::as_array)
+            .map(|allowed| {
+                allowed
+                    .iter()
+                    .filter_map(kobo_json::Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -1615,7 +1921,12 @@ fn sync_hosts(layout: &Layout) {
 /// take the service down with an error nobody on the reader could read. Each
 /// thing a leaf must not do is then named as well, so that what this reader
 /// is does not depend on a default staying what it is today.
-fn up_command(layout: &Layout) -> Command {
+///
+/// The two things an owner may switch on each change exactly one of these
+/// words and nothing else: the exit node, and the network that is shared.
+/// The firewall is left alone in every case, because the forwarding those
+/// need is done inside the daemon and not by the kernel.
+fn up_command(layout: &Layout, routing: &Routing) -> Command {
     let mut command = layout.ask();
     command
         .arg("up")
@@ -1623,8 +1934,11 @@ fn up_command(layout: &Layout) -> Command {
         .arg("--accept-dns=false")
         .arg("--accept-routes=false")
         .arg("--ssh=false")
-        .arg("--advertise-exit-node=false")
-        .arg("--advertise-routes=")
+        .arg(format!("--advertise-exit-node={}", routing.exit_node))
+        .arg(format!(
+            "--advertise-routes={}",
+            routing.network.as_deref().unwrap_or_default()
+        ))
         .arg("--exit-node=")
         .arg("--shields-up=false")
         .arg("--netfilter-mode=off")
@@ -1655,7 +1969,8 @@ fn forward_lines<R: Read + Send + 'static>(reader: R, sender: mpsc::Sender<Strin
 /// phone still has to be answered within a couple of seconds.
 fn bring_up(supervisor: &Supervisor, daemon: &mut Daemon) -> Result<(), End> {
     let layout = supervisor.layout;
-    let mut child = match up_command(layout)
+    let routing = supervisor.plan();
+    let mut child = match up_command(layout, &routing)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1678,8 +1993,11 @@ fn bring_up(supervisor: &Supervisor, daemon: &mut Daemon) -> Result<(), End> {
     }
     let started = Instant::now();
     let mut announced = false;
+    let mut not_forwarding = false;
     let finished = loop {
-        announced |= announce_sign_in(supervisor, &lines, layout.timing.poll);
+        let said = read_what_up_says(supervisor, &lines, layout.timing.poll);
+        announced |= said.sign_in;
+        not_forwarding |= said.not_forwarding;
         let interrupt = supervisor.interrupted();
         let gone = daemon.exited();
         let patience = if announced {
@@ -1704,15 +2022,45 @@ fn bring_up(supervisor: &Supervisor, daemon: &mut Daemon) -> Result<(), End> {
         }
     };
     if finished {
+        if routing.any() && not_forwarding {
+            // The daemon expects the kernel to forward, which this reader's
+            // does not do, so what was just advertised would go nowhere.
+            // Taken back at once, and the owner is told why.
+            supervisor.cannot_route.set(true);
+            return bring_up(supervisor, daemon);
+        }
         return Ok(());
     }
     Err(explain_failed_start(supervisor, daemon, announced))
 }
 
-/// Puts a sign-in link on the screen if the command has printed one, waiting
-/// up to `patience` for the next line. Returns whether it did.
-fn announce_sign_in(supervisor: &Supervisor, lines: &Receiver<String>, patience: Duration) -> bool {
-    let mut announced = false;
+/// What the command that brings the reader up printed while it ran.
+#[derive(Clone, Copy, Debug, Default)]
+struct Said {
+    sign_in: bool,
+    not_forwarding: bool,
+}
+
+/// Whether a line from the daemon or its command says that routed packets
+/// will not be forwarded.
+///
+/// This is how a daemon that was asked to carry traffic itself and is not
+/// doing so gives itself away. One that is doing so never checks the
+/// kernel's forwarding switch; one that expects the kernel to forward finds
+/// the switch off, as it is on a reader, and says so.
+fn says_not_forwarding(line: &str) -> bool {
+    line.contains("IP forwarding is disabled") || line.contains("IP forwarding is off")
+}
+
+/// Reads what the command has printed, waiting up to `patience` for the next
+/// line: a sign-in link goes straight to the screen, and a complaint that
+/// nothing will be forwarded is remembered.
+fn read_what_up_says(
+    supervisor: &Supervisor,
+    lines: &Receiver<String>,
+    patience: Duration,
+) -> Said {
+    let mut said = Said::default();
     let mut wait = patience;
     loop {
         match lines.recv_timeout(wait) {
@@ -1722,18 +2070,19 @@ fn announce_sign_in(supervisor: &Supervisor, lines: &Receiver<String>, patience:
                         sign_in: link.to_owned(),
                         ..Status::quiet("needs-login", "Approve this reader to finish.")
                     });
-                    announced = true;
+                    said.sign_in = true;
                 }
+                said.not_forwarding |= says_not_forwarding(&line);
                 // Whatever else is already waiting is read without a pause.
                 wait = Duration::ZERO;
             }
-            Err(RecvTimeoutError::Timeout) => return announced,
+            Err(RecvTimeoutError::Timeout) => return said,
             Err(RecvTimeoutError::Disconnected) => {
                 // Both pipes are closed, so the command is finishing. The
                 // caller's loop still gets a pause, or it would spin until
                 // the command has been collected.
                 std::thread::sleep(patience.min(Duration::from_millis(50)));
-                return announced;
+                return said;
             }
         }
     }
@@ -1797,8 +2146,28 @@ fn keep_up(supervisor: &Supervisor, daemon: &mut Daemon) -> Result<(), End> {
                 return Err(supervisor.fail(daemon, &refusal, End::Settled));
             }
             match report(layout) {
+                Some(report) if !report.tunnel => {
+                    // The mode this module refuses on purpose. Every port on
+                    // loopback is on the tailnet for as long as it lasts.
+                    return Err(supervisor.fail(
+                        daemon,
+                        &Status::quiet(
+                            "refused",
+                            "Tailscale stopped using the reader's tunnel, which would have \
+                             opened the reader's private ports to your tailnet, so it was \
+                             stopped.",
+                        ),
+                        End::Settled,
+                    ));
+                }
                 Some(report) if report.backend == Backend::Running => {
                     unanswered = 0;
+                    if supervisor.routing_changed(&report) {
+                        // Advertised again from the start, with what is now
+                        // known: the same road as a first start.
+                        return Ok(());
+                    }
+                    supervisor.note_approvals(&report);
                     supervisor.say(&Status {
                         address: report.address,
                         name: report.name,

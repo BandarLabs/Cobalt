@@ -17,6 +17,7 @@ const DAEMON: &str = r#"#!/bin/sh
 root=$(dirname "$(dirname "$0")")
 printf '%s\n' "$@" > "$root/daemon-args"
 printf '%s\n' "GOMEMLIMIT=$GOMEMLIMIT" "GOGC=$GOGC" "TS_DISABLE_TAILDROP=$TS_DISABLE_TAILDROP" > "$root/daemon-env"
+printf '%s\n' "TS_DEBUG_NETSTACK_SUBNETS=$TS_DEBUG_NETSTACK_SUBNETS" > "$root/daemon-forwarding"
 sock=""
 while [ $# -gt 0 ]; do
   if [ "$1" = "--socket" ]; then sock="$2"; fi
@@ -48,6 +49,15 @@ case "$verb" in
     : > "$root/logged-out" ;;
   up)
     printf '%s\n' "$@" > "$root/up-args"
+    echo "$*" >> "$root/up-history"
+    # What a daemon that expects the kernel to forward says on a reader
+    # whenever it is asked to advertise anything.
+    case "$*" in
+      *--advertise-exit-node=true*|*--advertise-routes=1*)
+        if [ -e "$root/kernel-forwards" ]; then
+          echo "Warning: IP forwarding is disabled, subnet routing/exit nodes will not work." >&2
+        fi ;;
+    esac
     case "$(cat "$root/up-mode" 2>/dev/null)" in
       login)
         echo "To authenticate, visit:" >&2
@@ -523,7 +533,7 @@ fn a_program_swapped_on_the_card_is_refused_and_fetched_again() {
     // What a computer with the reader mounted over USB can do in a second.
     script(&layout.daemon(), "#!/bin/sh\necho owned\n");
     assert!(verify_engine(&layout).is_err());
-    assert!(Daemon::start(&layout).is_err());
+    assert!(Daemon::start(&layout, false).is_err());
     ensure_engine(&layout, &fetch).expect("reinstall");
     assert_eq!(downloads.load(Ordering::SeqCst), 2);
     assert_eq!(
@@ -670,16 +680,19 @@ fn a_reader_nobody_has_set_up_is_off() {
 fn a_signed_in_reader_comes_up_and_is_taken_down_with_the_session() {
     let (root, layout, supervisor) = connected_reader("session");
     assert_eq!(
-        status(&layout),
+        status(&layout)[..5],
         [
             "running",
             "100.64.0.7",
             "Connected.",
             "",
             "kobo-cobalt.example.ts.net",
-            ""
         ]
     );
+    // Nothing was asked for beyond being on the tailnet, so the lines about
+    // staying connected, the exit node and the shared network are empty.
+    assert_eq!(status(&layout).len(), 11);
+    assert!(status(&layout)[5..].iter().all(String::is_empty));
     eventually("the tailnet names are written", || {
         fs::read_to_string(&layout.hosts).is_ok_and(|hosts| hosts.contains("desk.example.ts.net"))
     });
@@ -1491,4 +1504,295 @@ fn the_kept_supervisor_is_started_from_the_copy_with_nowhere_on_the_card_to_stan
         ]
     );
     assert!(!kept.home.join(CANNOT_STAY).exists());
+}
+
+// Carrying traffic for other devices: the exit node and the shared network.
+
+const LEAF_FLAGS: [&str; 11] = [
+    "--reset",
+    "--accept-dns=false",
+    "--accept-routes=false",
+    "--ssh=false",
+    "--advertise-exit-node=false",
+    "--advertise-routes=",
+    "--exit-node=",
+    "--shields-up=false",
+    "--netfilter-mode=off",
+    "--hostname=kobo-cobalt",
+    "--timeout=8s",
+];
+
+/// The same choices with the two routing ones: exit node, then shared
+/// network.
+fn choose_routing(layout: &Layout, exit_node: bool, share_network: bool) {
+    fs::write(
+        layout.app_state.join(CONFIG),
+        format!("true\nfalse\n{exit_node}\n{share_network}\n"),
+    )
+    .expect("config");
+}
+
+/// The kernel's routing table for a reader on a home network, as the kernel
+/// prints it: addresses in hexadecimal, least significant byte first.
+const HOME_ROUTES: &str =
+    "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT
+wlan0\t00000000\t0101A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0
+tailscale0\t0000A40A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0
+wlan0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0
+";
+
+fn routes(rows: &str) -> String {
+    format!(
+        "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\tMTU\tWindow\tIRTT\n{rows}"
+    )
+}
+
+/// A reader on a home network, connected, with the owner's routing choices
+/// as given.
+fn routing_reader(
+    name: &str,
+    exit_node: bool,
+    share_network: bool,
+) -> (PathBuf, Layout, std::thread::JoinHandle<End>) {
+    let (root, layout) = reader(name);
+    choose_routing(&layout, exit_node, share_network);
+    fs::write(root.join("proc/net/route"), HOME_ROUTES).expect("routes");
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    (root, layout, supervisor)
+}
+
+fn stop(layout: &Layout, supervisor: std::thread::JoinHandle<End>) {
+    ask_to_stop_in(layout).expect("ask");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+}
+
+#[test]
+fn each_routing_switch_changes_its_own_flag_and_no_other() {
+    for (case, exit_node, share_network) in [
+        ("neither", false, false),
+        ("exit", true, false),
+        ("share", false, true),
+        ("both", true, true),
+    ] {
+        let (root, layout, supervisor) =
+            routing_reader(&format!("flags-{case}"), exit_node, share_network);
+        // What a leaf is brought up with, changed in exactly the places the
+        // owner's two choices name. The firewall, the resolver, Tailscale
+        // SSH and the rest are a leaf's whatever was switched on.
+        let mut expected = LEAF_FLAGS.map(str::to_owned);
+        if exit_node {
+            expected[4] = "--advertise-exit-node=true".to_owned();
+        }
+        if share_network {
+            expected[5] = "--advertise-routes=192.168.1.0/24".to_owned();
+        }
+        assert_eq!(recorded(&root, "up-args"), expected, "{case}");
+        // The daemon is told to carry traffic itself, and given more room,
+        // only when there is traffic to carry.
+        let environment = fs::read_to_string(root.join("daemon-env")).expect("environment");
+        let forwarding = recorded(&root, "daemon-forwarding");
+        if exit_node || share_network {
+            assert!(environment.contains("GOMEMLIMIT=96MiB"), "{case}");
+            assert_eq!(forwarding, ["TS_DEBUG_NETSTACK_SUBNETS=true"], "{case}");
+        } else {
+            assert!(environment.contains("GOMEMLIMIT=48MiB"), "{case}");
+            assert_eq!(forwarding, ["TS_DEBUG_NETSTACK_SUBNETS="], "{case}");
+        }
+        stop(&layout, supervisor);
+    }
+}
+
+#[test]
+fn what_is_switched_on_waits_for_the_admin_console_and_then_says_approved() {
+    let (root, layout, supervisor) = routing_reader("approval", true, true);
+    assert_eq!(
+        status(&layout)[6..],
+        ["waiting", "waiting", "192.168.1.0/24", "", ""]
+    );
+    // Approved in the admin console: the tailnet now routes both to it.
+    fs::write(
+        root.join("status.json"),
+        r#"{"BackendState":"Running","TUN":true,"Health":[],
+            "Self":{"DNSName":"kobo-cobalt.example.ts.net.","TailscaleIPs":["100.64.0.7"],
+                    "ExitNodeOption":true,
+                    "AllowedIPs":["100.64.0.7/32","192.168.1.0/24","0.0.0.0/0","::/0"]}}"#,
+    )
+    .expect("status");
+    eventually("the approval is seen", || {
+        status(&layout)[6..8] == ["approved", "approved"]
+    });
+    stop(&layout, supervisor);
+}
+
+#[test]
+fn a_daemon_that_is_not_carrying_traffic_itself_is_never_left_advertising() {
+    let (root, layout) = reader("not-forwarding");
+    choose_routing(&layout, true, true);
+    fs::write(root.join("proc/net/route"), HOME_ROUTES).expect("routes");
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    // A build that did not take the setting, relying on a kernel that does
+    // not forward.
+    fs::write(root.join("kernel-forwards"), b"").expect("marker");
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    let history = recorded(&root, "up-history");
+    assert_eq!(history.len(), 2, "{history:?}");
+    assert!(history[0].contains("--advertise-exit-node=true"));
+    // Taken back at once: the reader is a plain leaf again.
+    assert_eq!(recorded(&root, "up-args"), LEAF_FLAGS);
+    assert_eq!(
+        status(&layout)[6..],
+        ["unavailable", "unavailable", "", CANNOT_ROUTE, CANNOT_ROUTE]
+    );
+    stop(&layout, supervisor);
+}
+
+#[test]
+fn a_complaint_about_forwarding_that_arrives_later_takes_the_offer_back_too() {
+    let (root, layout, supervisor) = routing_reader("not-forwarding-later", true, false);
+    assert_eq!(status(&layout)[6], "waiting");
+    fs::write(
+        root.join("status.json"),
+        r#"{"BackendState":"Running","TUN":true,
+            "Health":["Subnet routing is enabled, but IP forwarding is disabled. Check that IP forwarding is enabled on your machine."],
+            "Self":{"DNSName":"kobo-cobalt.example.ts.net.","TailscaleIPs":["100.64.0.7"]}}"#,
+    )
+    .expect("status");
+    eventually("the offer is taken back", || {
+        status(&layout)[6] == "unavailable"
+    });
+    assert_eq!(recorded(&root, "up-args"), LEAF_FLAGS);
+    stop(&layout, supervisor);
+}
+
+#[test]
+fn a_daemon_that_stops_using_the_kernels_tunnel_is_stopped() {
+    let (root, layout, supervisor) = routing_reader("no-tunnel", true, false);
+    // The mode that hands every connection for the reader to loopback.
+    fs::write(
+        root.join("status.json"),
+        r#"{"BackendState":"Running","TUN":false,
+            "Self":{"DNSName":"kobo-cobalt.example.ts.net.","TailscaleIPs":["100.64.0.7"]}}"#,
+    )
+    .expect("status");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(!layout.home.join(DAEMON_PID).exists());
+}
+
+#[test]
+fn changing_a_routing_switch_ends_the_supervisor_so_the_daemon_starts_afresh() {
+    let (_, layout, supervisor) = connected_reader("routing-toggled");
+    choose_routing(&layout, true, false);
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(state(&layout), "starting");
+    assert!(!layout.home.join(DAEMON_PID).exists());
+    assert_eq!(wanted_in(&layout), Some(Want::Run));
+}
+
+#[test]
+fn a_reader_carried_to_another_home_offers_that_network_instead() {
+    let (root, layout, supervisor) = routing_reader("moved", false, true);
+    assert_eq!(status(&layout)[8], "192.168.1.0/24");
+    fs::write(
+        root.join("proc/net/route"),
+        routes(
+            "wlan0\t00000000\t01000A0A\t0003\t0\t0\t0\t00000000\t0\t0\t0\n\
+             wlan0\t00000A0A\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n",
+        ),
+    )
+    .expect("routes");
+    eventually("the new network is offered", || {
+        status(&layout)[8] == "10.10.0.0/24"
+    });
+    assert!(recorded(&root, "up-args").contains(&"--advertise-routes=10.10.0.0/24".to_owned()));
+    // Off Wi-Fi altogether, the offer stands: nothing reaches it either way.
+    fs::write(root.join("proc/net/route"), routes("")).expect("routes");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(status(&layout)[8], "10.10.0.0/24");
+    stop(&layout, supervisor);
+}
+
+#[test]
+fn only_a_private_network_of_an_ordinary_size_is_ever_offered() {
+    assert_eq!(
+        parse_shared_network(HOME_ROUTES).as_deref(),
+        Ok("192.168.1.0/24")
+    );
+    // A /20 at 172.16.16.0, as a larger home or small office has.
+    assert_eq!(
+        parse_shared_network(&routes(
+            "wlan0\t00000000\t011010AC\t0003\t0\t0\t0\t00000000\t0\t0\t0\n\
+             wlan0\t001010AC\t00000000\t0001\t0\t0\t0\t00F0FFFF\t0\t0\t0\n"
+        ))
+        .as_deref(),
+        Ok("172.16.16.0/20")
+    );
+    // A public network, such as a hotel that hands out real addresses.
+    assert_eq!(
+        parse_shared_network(&routes(
+            "wlan0\t00000000\t017100CB\t0003\t0\t0\t0\t00000000\t0\t0\t0\n\
+             wlan0\t007100CB\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+        )),
+        Err(NotShared::NotPrivate)
+    );
+    // All of 10.0.0.0/8.
+    assert_eq!(
+        parse_shared_network(&routes(
+            "wlan0\t00000000\t0100000A\t0003\t0\t0\t0\t00000000\t0\t0\t0\n\
+             wlan0\t0000000A\t00000000\t0001\t0\t0\t0\t000000FF\t0\t0\t0\n"
+        )),
+        Err(NotShared::TooLarge)
+    );
+    // No Wi-Fi: only the tunnel's own routes, which are never the answer.
+    assert_eq!(
+        parse_shared_network(&routes(
+            "tailscale0\t00000000\t00000000\t0001\t0\t0\t0\t00000000\t0\t0\t0\n\
+             tailscale0\t0000A40A\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+        )),
+        Err(NotShared::NoNetwork)
+    );
+    assert_eq!(parse_shared_network(""), Err(NotShared::NoNetwork));
+}
+
+#[test]
+fn a_network_that_cannot_be_shared_says_why_and_the_exit_node_is_unaffected() {
+    let (root, layout) = reader("share-public");
+    choose_routing(&layout, true, true);
+    fs::write(
+        root.join("proc/net/route"),
+        routes(
+            "wlan0\t00000000\t017100CB\t0003\t0\t0\t0\t00000000\t0\t0\t0\n\
+             wlan0\t007100CB\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n",
+        ),
+    )
+    .expect("routes");
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    assert_eq!(
+        status(&layout)[6..],
+        [
+            "waiting",
+            "unavailable",
+            "",
+            "",
+            NotShared::NotPrivate.why()
+        ]
+    );
+    let flags = recorded(&root, "up-args");
+    assert!(flags.contains(&"--advertise-exit-node=true".to_owned()));
+    assert!(flags.contains(&"--advertise-routes=".to_owned()));
+    stop(&layout, supervisor);
+}
+
+#[test]
+fn choices_saved_before_the_routing_switches_existed_are_read_as_off() {
+    let (_, layout) = reader("old-choices");
+    fs::write(layout.app_state.join(CONFIG), "true\ntrue\n").expect("config");
+    let choices = choices(&layout).expect("card present");
+    assert!(choices.on && choices.outside);
+    assert!(!choices.exit_node && !choices.share_network && !choices.routes());
 }
