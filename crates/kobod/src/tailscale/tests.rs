@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 const DAEMON: &str = r#"#!/bin/sh
 root=$(dirname "$(dirname "$0")")
 printf '%s\n' "$@" > "$root/daemon-args"
+printf '%s\n' "$0" > "$root/daemon-path"
 printf '%s\n' "GOMEMLIMIT=$GOMEMLIMIT" "GOGC=$GOGC" "TS_DISABLE_TAILDROP=$TS_DISABLE_TAILDROP" > "$root/daemon-env"
 printf '%s\n' "TS_DEBUG_NETSTACK_SUBNETS=$TS_DEBUG_NETSTACK_SUBNETS" > "$root/daemon-forwarding"
 sock=""
@@ -150,7 +151,8 @@ fn reader(name: &str) -> (PathBuf, Layout) {
             cli_sha256: leaked(sha256(&root.join("bin/tailscale")).expect("digest")),
             limit: 1024 * 1024,
         },
-        room: 0,
+        card_room: 0,
+        system_room: 0,
         // Small enough that the committed archive arrives in several.
         piece: 100,
         timing: Timing {
@@ -588,7 +590,7 @@ fn a_download_that_fails_says_to_check_wifi_and_leaves_nothing() {
 #[test]
 fn a_card_without_room_is_refused_before_anything_is_downloaded() {
     let (_, mut layout) = bare_reader("engine-full");
-    layout.room = u64::MAX;
+    layout.card_room = u64::MAX;
     let refused =
         ensure_engine(&layout, &|_, _| panic!("downloaded onto a full card")).expect_err("refused");
     assert_eq!(refused, NO_ROOM);
@@ -1601,19 +1603,31 @@ fn asking_to_stay_ends_the_session_supervisor_so_the_kept_one_can_start() {
 }
 
 #[test]
-fn no_longer_asking_to_stay_ends_the_kept_supervisor_and_clears_the_root_filesystem() {
+fn no_longer_asking_to_stay_ends_the_kept_supervisor_and_keeps_the_programs_it_ran() {
     let (root, layout, kept) = kept_reader("to-session");
     let supervisor = supervise_in_background(&kept);
     eventually("the tunnel comes up", || state(&layout) == "running");
     choose(&layout, true, false);
     assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
     assert_eq!(wanted_in(&layout), Some(Want::Run));
-    assert!(root.join("kept-bin/tailscaled").exists());
-    // The supervisor that ends with its session takes the programs off the
-    // firmware's partition as it starts.
-    fs::write(root.join("up-mode"), "fail").expect("mode");
-    assert!(matches!(run(&layout), End::Later(_)));
-    assert!(!root.join("kept-bin").exists());
+    // The supervisor that ends with its session runs the same copy, so
+    // nothing is copied a second time and nothing is run from the card.
+    let first = fs::metadata(root.join("kept-bin/tailscaled"))
+        .expect("programs")
+        .ino();
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    assert_eq!(
+        recorded(&root, "daemon-path"),
+        [root.join("kept-bin/tailscaled").to_str().expect("path")]
+    );
+    assert_eq!(
+        fs::metadata(root.join("kept-bin/tailscaled"))
+            .expect("programs")
+            .ino(),
+        first
+    );
+    stop(&layout, supervisor);
 }
 
 #[test]
@@ -1627,8 +1641,9 @@ fn a_supervisor_started_as_the_wrong_kind_does_nothing() {
 
 #[test]
 fn staying_without_room_on_the_system_partition_runs_with_the_session_and_says_why() {
-    let (root, layout, mut kept) = kept_reader("kept-room");
-    kept.room = u64::MAX;
+    let (root, mut layout, _) = kept_reader("kept-room");
+    layout.system_room = u64::MAX;
+    let kept = layout.clone().kept();
     let runtime = root.join("runtime");
     fs::write(&runtime, b"this runtime").expect("runtime");
     stay(&kept, &runtime).expect("stay");
@@ -2186,4 +2201,73 @@ fn waiting_for_a_supervisor_ends_when_it_is_gone_not_when_its_claim_is() {
         "waited {waited:?} of a patience of {:?}",
         layout.timing.stop + layout.timing.poll * 2
     );
+}
+
+// Where the programs are run from.
+
+#[test]
+fn a_session_runs_the_programs_from_the_root_filesystem_not_from_the_card() {
+    let (root, layout, supervisor) = connected_reader("placed");
+    assert_eq!(
+        recorded(&root, "daemon-path"),
+        [root.join("kept-bin/tailscaled").to_str().expect("path")]
+    );
+    // What a writer of the card can do after the check: replace the command
+    // the supervisor goes on running every minute. It is not the copy that
+    // is run, so nothing changes.
+    script(&layout.card_bin.join("tailscale"), "#!/bin/sh\nexit 1\n");
+    script(&layout.card_bin.join("tailscaled"), "#!/bin/sh\nexit 1\n");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(state(&layout), "running");
+    stop(&layout, supervisor);
+    // The next start does not trust the copy for having been checked once,
+    // and does not take the card's changed programs either.
+    let installed = layout.clone().on_the_root_filesystem();
+    assert!(verify_engine(&installed).is_ok());
+    assert!(verify_engine(&layout).is_err());
+}
+
+#[test]
+fn a_reader_without_room_on_its_root_filesystem_runs_them_from_the_card() {
+    let (root, mut layout) = reader("placed-card");
+    layout.system_room = u64::MAX;
+    switch(&layout, true);
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    assert_eq!(
+        recorded(&root, "daemon-path"),
+        [root.join("bin/tailscaled").to_str().expect("path")]
+    );
+    assert!(!root.join("kept-bin").exists(), "written without room");
+    stop(&layout, supervisor);
+}
+
+#[test]
+fn programs_swapped_on_the_card_before_a_start_are_never_copied_or_run() {
+    let (root, layout) = reader("placed-swapped");
+    switch(&layout, true);
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    // Swapped over USB while the reader was off, and no network to fetch
+    // the real ones again.
+    script(
+        &layout.card_bin.join("tailscaled"),
+        "#!/bin/sh\necho owned > \"$(dirname \"$0\")/../owned\"\n",
+    );
+    assert!(matches!(run(&layout), End::Later(_)));
+    assert!(!root.join("owned").exists(), "the swapped program was run");
+    assert!(!root.join("daemon-args").exists());
+    assert!(!root.join("kept-bin/tailscaled").exists());
+    assert_eq!(state(&layout), "failed");
+}
+
+#[test]
+fn switching_tailscale_off_takes_the_programs_off_the_root_filesystem() {
+    let (root, layout, supervisor) = connected_reader("placed-off");
+    assert!(root.join("kept-bin/tailscaled").exists());
+    switch(&layout, false);
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert!(!root.join("kept-bin").exists());
+    // The card keeps its copy, so switching on again downloads nothing.
+    assert!(verify_engine(&layout).is_ok());
 }

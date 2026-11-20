@@ -53,6 +53,12 @@
 //!   there is owned by root whatever wrote it. So each program is checked
 //!   against a pinned digest every time the daemon is started, and ownership
 //!   is not treated as evidence of anything.
+//! * A check is only as good as the place checked. A program verified on
+//!   the card and then run from the card can be a different program by the
+//!   time it runs, to anything able to write the card in between. So where
+//!   the root filesystem has the room, the programs are copied there,
+//!   verified there, and run from there, and the card's copy is only where
+//!   they are copied from. See [`place`] for the reader without the room.
 //! * `/dev` is rebuilt at every boot, so the tunnel's device node is made on
 //!   every start rather than once at install.
 //! * The reader ships no packet filter tools, so the daemon is told to leave
@@ -248,8 +254,10 @@ struct Layout {
     /// allowed for as long as it is that program holding it.
     sync_engine: PathBuf,
     engine: Engine,
-    /// Free room the book partition must have before a download.
-    room: u64,
+    /// Free room the book partition must have before a download, and the
+    /// root filesystem before the programs are put on it.
+    card_room: u64,
+    system_room: u64,
     /// How much of the download is asked for, and held, at a time.
     piece: u32,
     timing: Timing,
@@ -276,19 +284,41 @@ impl Layout {
                 .unwrap_or_else(|| PathBuf::from("/usr/sbin/sshd")),
             sync_engine: PathBuf::from(crate::syncthing::ENGINE),
             engine: PINNED,
-            room: ROOM_NEEDED,
+            card_room: ROOM_NEEDED,
+            system_room: KEPT_ROOM,
             piece: PIECE,
             timing: DEVICE_TIMING,
+        }
+    }
+
+    /// The same reader with its programs on the root filesystem.
+    fn on_the_root_filesystem(self) -> Self {
+        Self {
+            bin: self.kept_bin.clone(),
+            ..self
         }
     }
 
     /// The same reader, for the supervisor that stays after the session.
     fn kept(self) -> Self {
         Self {
-            bin: self.kept_bin.clone(),
-            room: KEPT_ROOM,
             kept: true,
-            ..self
+            ..self.on_the_root_filesystem()
+        }
+    }
+
+    /// Whether this supervisor's programs are somewhere a computer with the
+    /// card in its hands cannot write.
+    fn off_the_card(&self) -> bool {
+        self.bin != self.card_bin
+    }
+
+    /// The room that has to be free where the programs are going.
+    fn room(&self) -> u64 {
+        if self.off_the_card() {
+            self.system_room
+        } else {
+            self.card_room
         }
     }
 
@@ -563,6 +593,8 @@ const STOPPED: &str = "Tailscale stopped. It starts again the next time you open
 const CANNOT_ROUTE: &str =
     "Tailscale on this reader could not carry traffic for other devices, so \
      it is not an exit node and does not share its network.";
+const NO_SYSTEM_ROOM: &str =
+    "The reader's system storage ran out of room for Tailscale. It will try again from the card.";
 const NO_ROOM_TO_STAY: &str = "The reader's system storage does not have the 110 MB free that \
      staying connected outside Cobalt needs. Tailscale runs while Cobalt is open instead.";
 
@@ -1112,7 +1144,13 @@ impl<'a> Supervisor<'a> {
                 forget_node(self.layout);
                 self.say(&Status::quiet("signed-out", SIGNED_OUT));
             }
-            Interrupt::SwitchedOff => self.say(&Status::quiet("off", OFF)),
+            Interrupt::SwitchedOff => {
+                // Switched off, nothing of this stays on the firmware's
+                // partition but the key that makes switching on again a
+                // matter of seconds. The card keeps its copy to copy from.
+                let _ignored = fs::remove_dir_all(&self.layout.kept_bin);
+                self.say(&Status::quiet("off", OFF));
+            }
             // The supervisor that holds the claim is the one whose word
             // about the service is true. This one says nothing.
             Interrupt::Displaced => return End::Settled,
@@ -1152,7 +1190,48 @@ impl<'a> Supervisor<'a> {
     }
 }
 
+/// Decides where a supervisor that ends with its session runs its programs
+/// from: the root filesystem where it has the room, the card where it does
+/// not.
+///
+/// From the root filesystem, what is checked is what is run. Nothing but
+/// root on the reader can write there, and a computer holding the card
+/// cannot reach it, so the digest taken before each start is of the bytes
+/// that start.
+///
+/// From the card that is not quite true, and a reader without the room is
+/// left with the difference rather than without the service. The programs
+/// are verified where they lie and run from where they lie, so anything able
+/// to write the card between the check and the start, or to replace the
+/// command the supervisor goes on running every minute, decides what runs
+/// as root. During a session that is nothing a computer can do, because the
+/// card is not exported while Cobalt has the screen, and nothing an app can
+/// do, because apps are confined away from this folder. It is something
+/// only a process that is already root on the reader can do, which gains
+/// nothing by it. The other copy closes it anyway, where it fits, because
+/// that sentence stops being true the day something less than root can
+/// write the card.
+fn place(layout: &Layout) -> Layout {
+    let system = layout.clone().on_the_root_filesystem();
+    let installed = system.daemon().is_file() && system.cli().is_file();
+    let room = kobo_abi::free_space(&system.bin)
+        .or_else(|| system.bin.parent().and_then(kobo_abi::free_space))
+        // Not knowing is not room: this is the firmware's own partition.
+        .is_some_and(|free| free >= system.room());
+    if installed || room {
+        system
+    } else {
+        layout.clone()
+    }
+}
+
 fn run(layout: &Layout) -> End {
+    let placed = if layout.kept {
+        layout.clone()
+    } else {
+        place(layout)
+    };
+    let layout = &placed;
     let supervisor = Supervisor::new(layout);
     let choices = supervisor.choices();
     if !choices.on {
@@ -1167,11 +1246,6 @@ fn run(layout: &Layout) -> End {
     }
     if let Err(end) = claim(layout, &supervisor.claim) {
         return end;
-    }
-    if !layout.kept && !choices.outside {
-        // The owner is not asking to stay connected, so nothing of ours is
-        // left on the firmware's partition beyond the key.
-        let _ignored = fs::remove_dir_all(&layout.kept_bin);
     }
     let end = supervise(&supervisor);
     // Only its own claim: one that names another supervisor is not this
@@ -1245,7 +1319,7 @@ fn prepare_to_stay(layout: &Layout, runtime: &Path) -> Result<(), String> {
     } else {
         fs::metadata(runtime).map_err(own)?.len()
     };
-    let needed = if programs { 0 } else { layout.room }.saturating_add(runtime_bytes);
+    let needed = if programs { 0 } else { layout.room() }.saturating_add(runtime_bytes);
     if kobo_abi::free_space(&layout.bin).is_some_and(|free| free < needed) {
         return Err(NO_ROOM_TO_STAY.to_owned());
     }
@@ -2512,10 +2586,10 @@ fn ensure_engine(layout: &Layout, fetch: Fetch) -> Result<(), String> {
     }
     // Whatever is there failed its check, so none of it is kept.
     let staging = layout.bin.join("unpack.part");
-    // For a reader that is kept connected the archive waits on the card,
-    // which has the room; the root filesystem is asked to hold only the two
-    // programs it will keep.
-    let archive = if layout.kept && card_present(layout) {
+    // When the programs are going onto the root filesystem the archive waits
+    // on the card, which has the room; the root filesystem is asked to hold
+    // only the two programs it will keep.
+    let archive = if layout.off_the_card() && card_present(layout) {
         layout.card_bin.join("tailscale.tgz.part")
     } else {
         layout.bin.join("tailscale.tgz.part")
@@ -2529,10 +2603,12 @@ fn ensure_engine(layout: &Layout, fetch: Fetch) -> Result<(), String> {
     clear();
     if kobo_abi::free_space(&layout.bin)
         .or_else(|| layout.bin.parent().and_then(kobo_abi::free_space))
-        .is_some_and(|free| free < layout.room)
+        .is_some_and(|free| free < layout.room())
     {
         return Err(if layout.kept {
             NO_ROOM_TO_STAY
+        } else if layout.off_the_card() {
+            NO_SYSTEM_ROOM
         } else {
             NO_ROOM
         }
@@ -2655,15 +2731,15 @@ fn install_checked(layout: &Layout, staged: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Copies the programs a reader already downloaded to the card, for a
-/// supervisor that is kept, instead of downloading them a second time.
+/// Copies the programs a reader already downloaded to the card onto the
+/// root filesystem, instead of downloading them a second time.
 ///
 /// The card's copy is not trusted for having been checked once. Each program
 /// is compared with its pin where it lies and again where it lands, because
 /// the card is the partition a computer can rewrite and the root filesystem
 /// is where the result will be run from as root for days.
 fn copy_from_the_card(layout: &Layout, staging: &Path) -> Result<(), ()> {
-    if !layout.kept || !card_present(layout) {
+    if !layout.off_the_card() || !card_present(layout) {
         return Err(());
     }
     for (name, digest) in [

@@ -78,15 +78,15 @@ What it costs:
   going.
 - **Only while the reader is awake.** The Kobo software switches Wi-Fi off
   when the reader sleeps, and the reader cannot be reached until it wakes.
-- **About 110 MB of the reader's system storage.** The programs are copied
-  there, because the book partition is handed to a computer when you plug in
-  USB and nothing can keep running from it. A reader without the room says so
-  under the switch and runs Tailscale while Cobalt is open instead.
+- **Room in the reader's system storage.** The programs and the runtime that
+  watches them have to run from there, because the book partition is handed
+  to a computer when you plug in USB and nothing can keep running from it. A
+  reader without 110 MB free says so under the switch and runs Tailscale
+  while Cobalt is open instead.
 - **Nothing starts it when the reader restarts.** Open Cobalt once and it
   connects again.
 
-Plugging the reader into a computer does not stop it. Switching the option
-off removes the programs from system storage.
+Plugging the reader into a computer does not stop it.
 
 ### Offer as an exit node
 
@@ -165,24 +165,36 @@ the names of your tailnet's computers are kept in a marked block in
   happens over USB and cannot reach that partition. Use **Sign out** in the
   app first. If the reader is offline when you sign out, also remove it in
   the admin console.
-- **The two Tailscale programs** are on the book partition beside the Sync
-  engine, about 70 MB. They are checked against pinned digests every time
-  they are started, and downloaded again after each Cobalt update.
-- **With Stay connected outside Cobalt on**, a second copy of the programs
-  and a copy of the Cobalt runtime that supervises them are in
-  `/var/lib/cobalt/tailscale-bin`, checked the same way. Switching the option
-  off, or signing out, removes them.
+- **The two Tailscale programs**, about 70 MB, are downloaded to the book
+  partition beside the Sync engine, and downloaded again after each Cobalt
+  update.
+- **They are run from the reader's system storage**, in
+  `/var/lib/cobalt/tailscale-bin`, when it has 110 MB free. The book
+  partition can be rewritten by any computer the reader is plugged into, so
+  the programs are copied from it, checked against pinned digests where they
+  land, and checked again before every start. Switching Tailscale off, or
+  signing out, removes that copy.
+- **On a reader without that room they are run from the book partition**,
+  checked the same way before every start. The difference is that something
+  able to write the book partition while Cobalt is open could change a
+  program after it was checked. A computer cannot, because the partition is
+  not handed over while Cobalt has the screen, and an app cannot, because
+  apps are kept out of that folder. Only something already running as root on
+  the reader could.
+- **With Stay connected outside Cobalt on**, a copy of the Cobalt runtime
+  that supervises them is in the same folder.
 
 ## How it runs
 
 The app saves one word, on or off. The runtime does the rest
 (`crates/kobod/src/tailscale.rs`):
 
-1. Checks that the kernel has a tunnel driver and that nothing unsafe is
-   listening.
+1. Checks that the kernel has a tunnel driver and that everything listening
+   on the reader is something it can account for.
 2. Downloads the pinned build, `tailscale_1.104.7_arm.tgz`, from
-   `pkgs.tailscale.com` if it is not installed, and refuses anything that
-   does not match the digests compiled into the runtime.
+   `pkgs.tailscale.com` if it is not installed, four megabytes at a time
+   straight to a file, and refuses anything that does not match the digests
+   compiled into the runtime.
 3. Starts `tailscaled` with its state under `/var/lib/cobalt/tailscale`, log
    upload and file transfer off, and a memory limit sized for a reader.
 4. Runs `tailscale up` with every leaf setting named and anything set by hand
