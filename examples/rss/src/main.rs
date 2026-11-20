@@ -263,6 +263,31 @@ struct Page {
     /// How many words the page must cut to before it is read in the
     /// teaser's place.
     floor: usize,
+    /// Whether the feed's own words say there is more than it gave. Only
+    /// then is anything said when the page had no more: a short post that
+    /// was whole all along is read as it is, without a word about a page
+    /// that had nothing to add.
+    promised_more: bool,
+    /// The feed's own copy, cut as a kept article is, when it has pictures
+    /// to keep. A short post is asked for its page like any teaser, and if
+    /// the page has no more this is kept in its place, as it was before
+    /// pages were asked for at all.
+    own: Option<String>,
+}
+
+impl Page {
+    fn behind(item: &feed::Item, id: String) -> Self {
+        Self {
+            id,
+            link: item.link.trim().to_owned(),
+            floor: whole::article_floor(item),
+            promised_more: whole::promises_more(item),
+            own: item
+                .html
+                .contains("<img")
+                .then(|| kobo_html::article::main_content(&item.html)),
+        }
+    }
 }
 
 /// What one saved feed holds, counted once as it arrives.
@@ -988,11 +1013,7 @@ impl Feeds {
             }
             share -= 1;
             self.page_budget = self.page_budget.saturating_sub(1);
-            self.pages.push_back(Page {
-                id,
-                link: item.link.trim().to_owned(),
-                floor: whole::article_floor(item),
-            });
+            self.pages.push_back(Page::behind(item, id));
         }
         self.next_page(context);
     }
@@ -1077,7 +1098,7 @@ impl Feeds {
                     self.took_article(context, page, &cut, text, waiting);
                     return;
                 }
-                self.notes.found_no_article(context, &page.id);
+                self.settled_for_the_feed(context, page);
                 NO_MORE_ON_THE_PAGE
             }
             TaskOutcome::Failed(error) => match error {
@@ -1097,7 +1118,7 @@ impl Feeds {
                 | kobo_sdk::TaskError::NoCredential
                 | kobo_sdk::TaskError::TooLarge
                 | kobo_sdk::TaskError::NotFound => {
-                    self.notes.found_no_article(context, &page.id);
+                    self.settled_for_the_feed(context, page);
                     PAGE_REFUSED
                 }
             },
@@ -1105,8 +1126,25 @@ impl Feeds {
         };
         if waiting {
             self.open_from_feed(context);
-            if let Some(reader) = self.reader.reader_mut() {
-                reader.report(said);
+            if page.promised_more {
+                if let Some(reader) = self.reader.reader_mut() {
+                    reader.report(said);
+                }
+            }
+        }
+    }
+
+    /// The page behind an item had no more to give, or the site would not
+    /// give it: what the feed carried is the article, and is treated as one.
+    ///
+    /// It is written down so the site is not asked again, and the feed's own
+    /// copy is kept with its pictures, which is what happened to every
+    /// illustrated article before pages were asked for.
+    fn settled_for_the_feed(&mut self, context: &mut Context, page: &Page) {
+        self.notes.found_no_article(context, &page.id);
+        if let Some(own) = &page.own {
+            if !self.keeper.is_kept(&page.id) && !self.keeper.is_keeping(&page.id) {
+                self.keeper.keep_markup(context, &page.id, &page.link, own);
             }
         }
     }
@@ -1871,11 +1909,7 @@ impl Feeds {
             .article
             .and_then(|index| self.items.get(index))
             .filter(|item| whole::is_teaser(item, self.home()))
-            .map(|item| Page {
-                id: self.reading_id.clone().unwrap_or_default(),
-                link: item.link.trim().to_owned(),
-                floor: whole::article_floor(item),
-            })
+            .map(|item| Page::behind(item, self.reading_id.clone().unwrap_or_default()))
             .filter(|page| !self.notes.found_nothing(&page.id));
         if page.is_some_and(|page| self.get_article(context, page)) {
             return;
@@ -5651,9 +5685,9 @@ mod tests {
     const TEASERS: &str = "<rss><channel><title>The Harbour Post</title>\
         <link>https://example.com/</link>\
         <item><title>The wall is to be rebuilt</title><link>https://example.com/wall</link>\
-        <description>The council voted on Tuesday to rebuild the harbour wall.</description></item>\
+        <description>The council voted on Tuesday to rebuild the harbour wall. [\u{2026}]</description></item>\
         <item><title>Ferry times change</title><link>https://example.com/ferry</link>\
-        <description>The first sailing moves to half past six from Monday.</description></item>\
+        <description>The first sailing moves to half past six from Monday. [\u{2026}]</description></item>\
         </channel></rss>";
 
     /// The page behind the first teaser, with a menu around the story and a
@@ -5689,7 +5723,22 @@ mod tests {
     /// The teaser feed open on its list of articles, as it is after a
     /// refresh, with nothing kept yet.
     fn reading_teasers() -> AppRunner<Feeds> {
-        let parsed = super::feed::parse(TEASERS.as_bytes()).unwrap();
+        reading(TEASERS)
+    }
+
+    /// A short post the feed carries whole, with its picture, and with
+    /// nothing in it to say there is more elsewhere.
+    const SHORT_POST: &str = "<rss><channel><title>The Harbour Post</title>\
+        <link>https://example.com/</link>\
+        <item><title>The crane is back</title><link>https://example.com/crane</link>\
+        <description>&lt;p&gt;The crane on the east quay is working again.&lt;/p&gt;\
+        &lt;p&gt;&lt;img src=\"https://example.com/crane.png\" alt=\"\"/&gt;&lt;/p&gt;\
+        &lt;p&gt;It lifted its first boat this morning and the yard is open to visitors \
+        again from nine until four.&lt;/p&gt;</description></item>\
+        </channel></rss>";
+
+    fn reading(feed: &str) -> AppRunner<Feeds> {
+        let parsed = super::feed::parse(feed.as_bytes()).unwrap();
         let mut app = Feeds {
             loaded: true,
             view: View::Items,
@@ -5767,6 +5816,40 @@ mod tests {
         let shown = said(&commands);
         assert!(shown.contains("The council voted on Tuesday"), "{shown}");
         assert!(!shown.contains(super::NO_MORE_ON_THE_PAGE), "{shown}");
+    }
+
+    #[test]
+    fn a_short_post_that_was_whole_all_along_is_read_without_a_word_and_kept() {
+        let id = |runner: &AppRunner<Feeds>| {
+            super::article_id(&runner.app().items[0], &following()[0].url)
+        };
+        // Its page has nothing to add.
+        let mut runner = reading(SHORT_POST);
+        let asked = fetched(&runner.action(action_id("item-0")));
+        assert_eq!(asked.len(), 1, "a short post is asked for its page");
+        let stub = b"<html><body><h1>The crane is back</h1></body></html>";
+        let commands = runner.task_outcome(asked[0].0, TaskOutcome::Completed(stub.to_vec()));
+        let shown = said(&commands);
+        assert!(shown.contains("The crane on the east quay"), "{shown}");
+        assert!(!shown.contains(super::NO_MORE_ON_THE_PAGE), "{shown}");
+        let post = id(&runner);
+        assert!(runner.app().notes.found_nothing(&post));
+        assert!(
+            runner.app().keeper.is_keeping(&post),
+            "the feed's own copy was not kept with its picture"
+        );
+
+        // The site refuses, or its page is larger than is fetched.
+        for error in [kobo_sdk::TaskError::TooLarge, kobo_sdk::TaskError::NotFound] {
+            let mut runner = reading(SHORT_POST);
+            let asked = fetched(&runner.action(action_id("item-0")));
+            let commands = runner.task_outcome(asked[0].0, TaskOutcome::Failed(error));
+            let shown = said(&commands);
+            assert!(shown.contains("The crane on the east quay"), "{shown}");
+            assert!(!shown.contains(super::PAGE_REFUSED), "{error:?}: {shown}");
+            let post = id(&runner);
+            assert!(runner.app().keeper.is_keeping(&post), "{error:?}");
+        }
     }
 
     #[test]

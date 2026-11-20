@@ -54,7 +54,13 @@ const TRAILING_WORDS: usize = 1000;
 /// Matched in the last line or two only, and in lower case. They are English
 /// because the feeds measured were; a feed in another language is judged on
 /// its length and on the ellipsis, which is the same in all of them.
-const TRAILS_OFF: [&str; 9] = [
+///
+/// "The post … appeared first on …" is not among them. A site's software
+/// adds that line to every item it sends, the whole ones as well as the cut
+/// ones, so it says where an item came from and nothing about how much of it
+/// arrived. Counting it sent every article of a feed that carries them whole
+/// off to its site for a page that had no more to give.
+const TRAILS_OFF: [&str; 8] = [
     "[\u{2026}]",
     "[...]",
     "continue reading",
@@ -63,7 +69,6 @@ const TRAILS_OFF: [&str; 9] = [
     "read the full",
     "read the rest",
     "keep reading",
-    "appeared first on",
 ];
 
 /// How much of the end of a body is searched for [`TRAILS_OFF`], in bytes.
@@ -228,6 +233,17 @@ fn trails_off(body: &str) -> bool {
     }
     let tail = body[from..].to_lowercase();
     TRAILS_OFF.iter().any(|mark| tail.contains(mark))
+}
+
+/// Whether the feed itself says there is more of this item than it carries.
+///
+/// A short post and a cut one are both sent for their page, because by
+/// length alone they are the same thing. They part when the page has no more
+/// to give: the cut one was promised more and its reader is told it did not
+/// come, and the short one was whole all along, so there is nothing to say.
+#[must_use]
+pub fn promises_more(item: &feed::Item) -> bool {
+    trails_off(&item.body)
 }
 
 /// Whether the feed gave only a teaser for this item, with the article behind
@@ -478,8 +494,8 @@ fn decode(bytes: &[u8]) -> Option<BTreeMap<String, Found>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        article_floor, article_in, decode, encode, is_teaser, site_name, Found, Home, Notes,
-        ARTICLE_WORDS, WHOLE_WORDS,
+        article_floor, article_in, decode, encode, is_teaser, promises_more, site_name, Found,
+        Home, Notes, ARTICLE_WORDS, WHOLE_WORDS,
     };
     use crate::feed::Item;
     use kobo_sdk::{Command, Context, StoreRequest, StoreResult};
@@ -525,6 +541,21 @@ mod tests {
         for link in ["", "http://example.com/harbour", "/harbour"] {
             assert!(!is_teaser(&item(link, summary), HOME), "{link}");
         }
+    }
+
+    #[test]
+    fn the_line_a_site_signs_every_item_with_does_not_make_a_whole_article_a_teaser() {
+        let whole = format!(
+            "{}The post Harbour appeared first on Example.",
+            "word ".repeat(WHOLE_WORDS + 40)
+        );
+        let article = item("https://example.com/harbour", &whole);
+        assert!(!is_teaser(&article, HOME));
+        assert!(!promises_more(&article));
+        assert!(promises_more(&item(
+            "https://example.com/harbour",
+            "The council voted on Tuesday [\u{2026}]"
+        )));
     }
 
     #[test]
