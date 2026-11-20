@@ -38,6 +38,7 @@ use kobo_bookview::positions::{Progress, KEY as READING};
 use kobo_bookview::{BookView, Step};
 use kobo_read::Outcome;
 use kobo_sdk::clock::Clock as _;
+use kobo_sdk::keyboard::{TextEntry, Typing};
 use kobo_sdk::{
     action_id, document_preview, typographic_cover, ActionId, BandAlign, BannerLevel, Context,
     DeviceRequest, DeviceResult, Glyph, KoboApp, LibraryEntry, PictureHandle, Position, Screen,
@@ -72,6 +73,9 @@ const CONFIRM_DELETE: &str = "confirm-delete";
 const KEEP_ARTICLE: &str = "keep-article";
 const CANCEL_OPEN: &str = "cancel-open";
 const OPEN_AGAIN: &str = "open-again";
+const SEARCH: &str = "search";
+const CLEAR_SEARCH: &str = "clear-search";
+const SORT: &str = "sort";
 
 /// How long after one check Books leaves the computer alone when it comes
 /// back to the panel. Opening Books asks; flicking in and out of it should
@@ -83,6 +87,8 @@ const IN_KOBO_READER: &str = "To get there, tap Kobo reader at the foot of the C
 
 /// Store key for the books opened most recently, newest first.
 const RECENT: &str = "recent-v1";
+/// Store key for the order the owner keeps the Library shelf in.
+const ORDER: &str = "library-order-v1";
 /// How many recently opened books are remembered.
 const RECENT_LIMIT: usize = 24;
 /// How many covers are kept in the store.
@@ -368,6 +374,42 @@ impl Shelf {
     }
 }
 
+/// The order the Library shelf stands in.
+///
+/// Recently opened first was the only one, and it is right for the handful
+/// of books somebody is in the middle of. It is no way to find one book
+/// among several hundred never opened, which stood in whatever order their
+/// file names sorted. The choice is kept, because a shelf that forgets how
+/// its owner arranged it is rearranged every morning.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Order {
+    #[default]
+    Recent,
+    Title,
+    Author,
+}
+
+impl Order {
+    const ALL: [Self; 3] = [Self::Recent, Self::Title, Self::Author];
+
+    /// The action that chooses it, which is also what is kept in the store.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Recent => "order-recent",
+            Self::Title => "order-title",
+            Self::Author => "order-author",
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Recent => "Recently opened",
+            Self::Title => "Title",
+            Self::Author => "Author",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum View {
     Home,
@@ -434,6 +476,8 @@ struct Books {
     asked_to_open: Option<String>,
     /// The Articles shelf: what is known about each article, and Sync.
     articles: articles::State,
+    /// How the Library shelf is arranged and what it is narrowed to.
+    library: Arranged,
     /// Whether this runtime hands a large book over in ranges.
     ranges: Ranges,
     /// The large book on its way in, if one is. One at a time, because each
@@ -444,6 +488,18 @@ struct Books {
     /// arriving, so the note about it says that rather than calling it
     /// damaged.
     replaced: bool,
+}
+
+/// How the owner has the Library shelf: its order, and a search of it.
+#[derive(Debug, Default)]
+struct Arranged {
+    order: Order,
+    /// Whether the menu of orders is open.
+    sorting: bool,
+    /// The field a search is typed into.
+    search: TextEntry,
+    /// What the shelf is narrowed to, or empty for all of it.
+    query: String,
 }
 
 /// A large book being put together, and what for.
@@ -498,6 +554,7 @@ impl Books {
             on_panel: BTreeSet::new(),
             placed: BTreeMap::new(),
             articles: articles::State::default(),
+            library: Arranged::default(),
             ranges: Ranges::Unasked,
             fetching: None,
             replaced: false,
@@ -541,6 +598,17 @@ impl Books {
         self.on_panel.clear();
         let screen = match self.view {
             View::Home => self.home(context),
+            View::Shelf(Shelf::Library) if self.library.search.is_open() => {
+                ScreenBuilder::new("books-search")
+                    .top_bar(Shelf::Library.title())
+                    .text_entry_with_hint(
+                        &self.library.search,
+                        "Search the library",
+                        "Part of a title or an author's name",
+                        "Search",
+                    )
+                    .build()
+            }
             View::Shelf(pile) => self.shelf(context, pile),
             View::Opening(index) if self.opening_in_ranges() => self.arriving(context, index),
             View::Opening(_) => match self.came_from {
@@ -788,20 +856,36 @@ impl Books {
         if pile.lists_articles() {
             return self.article_shelf(context, pile);
         }
-        let screen = ScreenBuilder::new("books-shelf")
-            .top_bar(pile.title())
-            .owns_back(true);
-        let members = self.members(pile);
+        let members = self.standing_on(pile);
         if members.is_empty() {
-            return screen
-                .splash(
+            let searched = pile == Shelf::Library && !self.library.query.is_empty();
+            let bare = ScreenBuilder::new("books-shelf")
+                .top_bar(pile.title())
+                .owns_back(true);
+            return if searched {
+                ScreenBuilder::new("books-shelf")
+                    .top_bar(format!("Search: {}", self.library.query))
+                    .owns_back(true)
+                    .top_bar_action(CLEAR_SEARCH, "Clear")
+                    .splash(
+                        Some(Glyph::Book),
+                        "Nothing found",
+                        format!(
+                            "No title or author in the library has {} in it.",
+                            self.library.query
+                        ),
+                    )
+                    .build()
+            } else {
+                bare.splash(
                     Some(Glyph::Book),
                     "Nothing on this shelf",
                     "Books you add or open appear here.",
                 )
-                .build();
+                .build()
+            };
         }
-        let mut screen = self.notices(screen);
+        let mut screen = self.shelf_prefix(pile, self.library.sorting);
         let pages = self.pages(context, pile, members.len());
         self.page = self.page.min(pages.len().saturating_sub(1));
         let page: Vec<usize> = pages
@@ -820,6 +904,75 @@ impl Books {
             screen = screen.page_turns(PREVIOUS, NEXT).page_position(page, total);
         }
         screen.build()
+    }
+
+    /// The bar of a shelf of covers and everything that stands above the
+    /// covers, which is what a page of them is measured under.
+    ///
+    /// The Library shelf carries Search in its bar and the order it stands
+    /// in under it. While it is narrowed by a search the bar says what was
+    /// searched for and offers Clear in Search's place, because a shelf of
+    /// four books with nothing to say why reads as a library that lost the
+    /// rest. The bar says it rather than a line under it: a line there took
+    /// a whole row of covers off every page of results.
+    fn shelf_prefix(&self, pile: Shelf, sorting: bool) -> ScreenBuilder {
+        if pile != Shelf::Library {
+            return self.notices(
+                ScreenBuilder::new("books-shelf")
+                    .top_bar(pile.title())
+                    .owns_back(true),
+            );
+        }
+        let screen = ScreenBuilder::new("books-shelf").owns_back(true);
+        let screen = if self.library.query.is_empty() {
+            self.notices(
+                screen
+                    .top_bar(pile.title())
+                    .top_bar_action(SEARCH, "Search"),
+            )
+        } else {
+            self.notices(
+                screen
+                    .top_bar(format!("Search: {}", self.library.query))
+                    .top_bar_action(CLEAR_SEARCH, "Clear"),
+            )
+        };
+        let chosen = Order::ALL
+            .iter()
+            .position(|order| *order == self.library.order)
+            .unwrap_or_default();
+        screen.picker(
+            SORT,
+            "Sort",
+            sorting,
+            chosen,
+            Order::ALL.map(|order| (order.name(), order.label())),
+        )
+    }
+
+    /// The documents a shelf is showing: all of it, or on the Library shelf
+    /// the part a search narrowed it to.
+    ///
+    /// Kept apart from [`Self::members`], which the home screen counts and
+    /// piles from: a search is of the shelf it was typed on and must not
+    /// change how many books home says the library holds.
+    fn standing_on(&self, pile: Shelf) -> Vec<usize> {
+        let mut members = self.members(pile);
+        if pile != Shelf::Library || self.library.query.is_empty() {
+            return members;
+        }
+        let sought = folded(&self.library.query);
+        let words: Vec<&str> = sought.split_whitespace().collect();
+        members.retain(|&index| {
+            let document = &self.documents[index];
+            let about = folded(&format!(
+                "{} {}",
+                document.title,
+                document.author.as_deref().unwrap_or_default()
+            ));
+            words.iter().all(|word| about.contains(word))
+        });
+        members
     }
 
     /// Book tiles for these documents: the cover, the author, how far in.
@@ -918,6 +1071,22 @@ impl Books {
                     if shelved(index) && !std::mem::replace(&mut placed[index], true) {
                         members.push(index);
                     }
+                }
+                let title = |index: usize| folded(&self.documents[index].title);
+                match self.library.order {
+                    Order::Recent => {}
+                    Order::Title => members.sort_by_cached_key(|&index| title(index)),
+                    // A book that names no author, or has not been read for
+                    // one yet, stands after those that do rather than
+                    // before every A.
+                    Order::Author => members.sort_by_cached_key(|&index| {
+                        let author = self.documents[index].author.as_deref();
+                        (
+                            author.is_none(),
+                            author.map(folded).unwrap_or_default(),
+                            title(index),
+                        )
+                    }),
                 }
                 members
             }
@@ -1380,13 +1549,7 @@ impl Books {
     fn pages(&self, context: &Context, pile: Shelf, count: usize) -> Vec<Vec<usize>> {
         // Measured under the banners, so a notice with its action line takes
         // room from the grid's page rather than squeezing every tile.
-        let placed = self
-            .notices(
-                ScreenBuilder::new("books-shelf")
-                    .top_bar(pile.title())
-                    .owns_back(true),
-            )
-            .build();
+        let placed = self.shelf_prefix(pile, false).build();
         let pages = context.paginate_tiles_under(count, TileShape::Portrait, false, &placed);
         if pages.is_empty() {
             vec![Vec::new()]
@@ -1985,6 +2148,76 @@ impl Books {
         false
     }
 
+    /// Search and order on the Library shelf. Returns whether the action
+    /// was one of theirs.
+    fn library_action(&mut self, context: &mut Context, action: ActionId) -> bool {
+        if self.view != View::Shelf(Shelf::Library) {
+            return false;
+        }
+        match self.library.search.handle(action) {
+            Some(Typing::Submitted(words)) => {
+                self.library.query = words;
+                self.page = 0;
+                self.show(context);
+                return true;
+            }
+            // Backing out of the field leaves the shelf as it was, narrowed
+            // or not.
+            Some(_) => {
+                self.show(context);
+                return true;
+            }
+            None => {}
+        }
+        if action == action_id(SEARCH) {
+            self.library.sorting = false;
+            self.library.search.open();
+            self.show(context);
+            return true;
+        }
+        if action == action_id(CLEAR_SEARCH) {
+            self.library.query.clear();
+            self.page = 0;
+            self.show(context);
+            return true;
+        }
+        if action == action_id(SORT) {
+            self.library.sorting = !self.library.sorting;
+            self.show(context);
+            return true;
+        }
+        if let Some(order) = Order::ALL
+            .into_iter()
+            .find(|order| action == action_id(order.name()))
+        {
+            self.library.sorting = false;
+            if order != self.library.order {
+                self.library.order = order;
+                self.page = 0;
+                context
+                    .store()
+                    .save(ORDER, order.name().as_bytes().to_vec());
+            }
+            self.show(context);
+            return true;
+        }
+        // Back undoes the nearest thing first: the open menu, then the
+        // search, and only then the shelf.
+        if action == action_id(BACK) || action == ActionId::BACK {
+            if std::mem::take(&mut self.library.sorting) {
+                self.show(context);
+                return true;
+            }
+            if !self.library.query.is_empty() {
+                self.library.query.clear();
+                self.page = 0;
+                self.show(context);
+                return true;
+            }
+        }
+        false
+    }
+
     /// The Articles shelf's taps. Returns whether the action was one.
     fn article_action(&mut self, context: &mut Context, action: ActionId) -> bool {
         let shelf_of = |books: &Self, id: Option<&str>| {
@@ -2264,6 +2497,7 @@ impl KoboApp for Books {
         context.store().load(RECENT);
         context.store().load(articles::RECORD);
         context.store().load(articles::PAIRING);
+        context.store().load(ORDER);
         if self.documents.is_empty() {
             context.device().list_library();
         }
@@ -2299,6 +2533,24 @@ impl KoboApp for Books {
                 self.record = Record::Kept;
                 let documents = std::mem::take(&mut self.documents);
                 self.take_documents(documents);
+                if matches!(self.view, View::Home | View::Shelf(_)) {
+                    self.show(context);
+                }
+            }
+            ORDER => {
+                if let StoreResult::Loaded {
+                    value: Some(bytes), ..
+                } = result
+                {
+                    // A name this build does not know, from a later one or a
+                    // damaged value, leaves the shelf as it was.
+                    if let Some(order) = Order::ALL
+                        .into_iter()
+                        .find(|order| order.name().as_bytes() == bytes.as_slice())
+                    {
+                        self.library.order = order;
+                    }
+                }
                 if matches!(self.view, View::Home | View::Shelf(_)) {
                     self.show(context);
                 }
@@ -2435,6 +2687,9 @@ impl KoboApp for Books {
         if self.article_action(context, action) {
             return;
         }
+        if self.library_action(context, action) {
+            return;
+        }
         if action == action_id(RELIST) {
             self.library_failed = false;
             context.device().list_library();
@@ -2456,6 +2711,8 @@ impl KoboApp for Books {
             .find(|shelf| action == action_id(shelf.name()))
         {
             self.page = 0;
+            self.library.query.clear();
+            self.library.sorting = false;
             self.view = View::Shelf(shelf);
             self.show(context);
             return;
@@ -2489,7 +2746,7 @@ impl KoboApp for Books {
         }
         if let View::Shelf(shelf) = self.view {
             if action == action_id(NEXT) || action == action_id(PREVIOUS) {
-                let count = self.members(shelf).len();
+                let count = self.standing_on(shelf).len();
                 let pages = self.pages(context, shelf, count).len().max(1);
                 self.page = if action == action_id(NEXT) {
                     (self.page + 1).min(pages - 1)
@@ -2612,6 +2869,53 @@ fn now_millis() -> Option<u64> {
         .now()
         .ok()
         .map(|now| now.unix_millis)
+}
+
+/// A name as a search compares it: in lower case and without its accents.
+///
+/// The reader's keyboard types plain letters far more easily than marked
+/// ones, and nobody searching for Bronte should have to find the diaeresis
+/// first. Covers the Latin letters European names are written in, as a
+/// table, because that is what a title on this shelf and a query from that
+/// keyboard are made of. A name in another script is compared as it is,
+/// which is still an exact match. Marks written as separate characters
+/// after their letter, as some files carry them, are dropped.
+fn folded(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for letter in text.chars().flat_map(char::to_lowercase) {
+        let plain = match letter {
+            '\u{0300}'..='\u{036f}' => "",
+            'à'..='å' | 'ā' | 'ă' | 'ą' => "a",
+            'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => "c",
+            'ď' | 'đ' | 'ð' => "d",
+            'è'..='ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => "e",
+            'ĝ' | 'ğ' | 'ġ' | 'ģ' => "g",
+            'ĥ' | 'ħ' => "h",
+            'ì'..='ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => "i",
+            'ĵ' => "j",
+            'ķ' => "k",
+            'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => "l",
+            'ñ' | 'ń' | 'ņ' | 'ň' => "n",
+            'ò'..='ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => "o",
+            'ŕ' | 'ŗ' | 'ř' => "r",
+            'ś' | 'ŝ' | 'ş' | 'š' => "s",
+            'ţ' | 'ť' | 'ŧ' => "t",
+            'ù'..='ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => "u",
+            'ŵ' => "w",
+            'ý' | 'ÿ' | 'ŷ' => "y",
+            'ź' | 'ż' | 'ž' => "z",
+            'ß' => "ss",
+            'æ' => "ae",
+            'œ' => "oe",
+            'þ' => "th",
+            other => {
+                out.push(other);
+                continue;
+            }
+        };
+        out.push_str(plain);
+    }
+    out
 }
 
 /// A count as it is written for a person: 2,000 rather than 2000.
@@ -2816,6 +3120,7 @@ mod tests {
             (RECENT, recent),
             (articles::RECORD, None),
             (articles::PAIRING, None),
+            (super::ORDER, None),
         ] {
             commands.extend(runner.store_result(StoreResult::Loaded {
                 key: key.into(),
@@ -4022,6 +4327,7 @@ mod tests {
             (RECENT.to_owned(), None),
             (articles::RECORD.to_owned(), None),
             (articles::PAIRING.to_owned(), None),
+            (super::ORDER.to_owned(), None),
         ] {
             runner.store_result(StoreResult::Loaded { key, value });
         }
@@ -4043,6 +4349,254 @@ mod tests {
         }
         assert_eq!(runner.app().record, super::Record::Kept);
         assert_eq!(runner.app().described, described);
+    }
+
+    /// Books on a card of four books, three of them read for their names
+    /// and authors on an earlier start, with the Library shelf open.
+    fn on_a_named_shelf(order: Option<&[u8]>) -> AppRunner<Books> {
+        let books = [
+            (
+                "0/a.epub",
+                "wuthering",
+                "Wuthering Heights",
+                "Emily Bront\u{eb}",
+                1_000,
+            ),
+            (
+                "0/b.epub",
+                "jane",
+                "Jane Eyre",
+                "Charlotte Bront\u{eb}",
+                1_001,
+            ),
+            ("0/c.epub", "sea", "The Open Sea", "A. Mariner", 1_002),
+        ];
+        let described: std::collections::BTreeMap<String, covers::Described> = books
+            .iter()
+            .map(|(id, listed, title, author, bytes)| {
+                (
+                    (*id).to_owned(),
+                    covers::Described {
+                        bytes: *bytes,
+                        listed: (*listed).to_owned(),
+                        title: Some((*title).to_owned()),
+                        author: Some((*author).to_owned()),
+                        cover: covers::Cover::Missing,
+                    },
+                )
+            })
+            .collect();
+        let record = covers::encode_described(&described, kobo_sdk::MAX_STORE_VALUE)
+            .map(|mut parts| parts.remove(0));
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        for (key, value) in [
+            (READING, None),
+            (DESCRIBED, record),
+            (RECENT, None),
+            (articles::RECORD, None),
+            (articles::PAIRING, None),
+            (super::ORDER, order.map(<[u8]>::to_vec)),
+        ] {
+            runner.store_result(StoreResult::Loaded {
+                key: key.into(),
+                value,
+            });
+        }
+        runner.store_result(StoreResult::Loaded {
+            key: covers::described_key(1),
+            value: None,
+        });
+        let mut entries: Vec<LibraryEntry> = books
+            .iter()
+            .map(|(id, listed, _, _, bytes)| entry(id, listed, 1, *bytes, true))
+            .collect();
+        entries.push(entry("0/d.md", "\u{c9}mile Zola, notes", 2, 80, true));
+        runner.device_result(DeviceResult::Library {
+            entries,
+            truncated: false,
+        });
+        runner.action(action_id("shelf-library"));
+        runner
+    }
+
+    fn titles(screen: &Screen) -> Vec<String> {
+        portrait_tiles(screen)
+            .into_iter()
+            .map(|tile| tile.label)
+            .collect()
+    }
+
+    #[test]
+    fn a_name_is_compared_without_its_case_or_its_accents() {
+        assert_eq!(super::folded("Charlotte BRONT\u{cb}"), "charlotte bronte");
+        assert_eq!(super::folded("\u{c9}mile Zola"), "emile zola");
+        assert_eq!(
+            super::folded("Stra\u{df}e, \u{c6}on, \u{152}uvre"),
+            "strasse, aeon, oeuvre"
+        );
+        assert_eq!(
+            super::folded("Dvo\u{159}\u{e1}k \u{141}\u{f3}d\u{17a}"),
+            "dvorak lodz"
+        );
+        // The same name with its marks as characters of their own.
+        assert_eq!(super::folded("Bronte\u{308}"), "bronte");
+        // Another script is left as it is, which still matches itself.
+        assert_eq!(super::folded("\u{6751}\u{4e0a}"), "\u{6751}\u{4e0a}");
+    }
+
+    #[test]
+    fn searching_the_library_finds_a_title_or_an_author_whatever_its_case_or_accents() {
+        let mut runner = on_a_named_shelf(None);
+        let field = runner.action(action_id(super::SEARCH));
+        assert!(
+            requests(&field)
+                .iter()
+                .any(|request| matches!(request, DeviceRequest::TypeText { .. })),
+            "Search did not ask the runtime for its keyboard"
+        );
+        let found = shown(runner.type_text("BRONTE"));
+        assert_eq!(titles(&found), ["Wuthering Heights", "Jane Eyre"]);
+        let text = words(&found);
+        assert!(text.contains("Clear"), "{text}");
+        assert_eq!(
+            found.top_bar.as_ref().map(|bar| bar.title.as_str()),
+            Some("Search: BRONTE")
+        );
+        assert!(found.validate(&CLARA_BW_METRICS).is_empty());
+        // Home still counts the whole library while its shelf is narrowed.
+        assert_eq!(runner.app().members(Shelf::Library).len(), 4);
+
+        for (typed, expected) in [
+            // A title carrying an accent, typed without one.
+            ("emile", vec!["\u{c9}mile Zola, notes"]),
+            // Words from the title and the author, in either order.
+            ("charlotte eyre", vec!["Jane Eyre"]),
+            ("  open   SEA ", vec!["The Open Sea"]),
+            // An accent typed where the name has none still finds it.
+            ("\u{e9}yre", vec!["Jane Eyre"]),
+        ] {
+            runner.action(action_id(super::CLEAR_SEARCH));
+            runner.action(action_id(super::SEARCH));
+            let found = shown(runner.type_text(typed));
+            assert_eq!(titles(&found), expected, "{typed:?}");
+        }
+
+        runner.action(action_id(super::CLEAR_SEARCH));
+        runner.action(action_id(super::SEARCH));
+        let nothing = shown(runner.type_text("xyzzy"));
+        let text = words(&nothing);
+        assert!(text.contains("Nothing found"), "{text}");
+        assert!(text.contains("has xyzzy in it"), "{text}");
+        assert!(text.contains("Clear"), "{text}");
+    }
+
+    #[test]
+    fn back_undoes_a_search_before_it_leaves_the_shelf_and_backing_out_of_the_field_changes_nothing(
+    ) {
+        let mut runner = on_a_named_shelf(None);
+        runner.action(action_id(super::SEARCH));
+        let all = shown(runner.cancel_text());
+        assert_eq!(
+            titles(&all).len(),
+            4,
+            "backing out of the field narrowed the shelf"
+        );
+        assert_eq!(runner.app().view, View::Shelf(Shelf::Library));
+
+        runner.action(action_id(super::SEARCH));
+        assert_eq!(titles(&shown(runner.type_text("sea"))), ["The Open Sea"]);
+        let cleared = shown(runner.action(ActionId::BACK));
+        assert_eq!(titles(&cleared).len(), 4);
+        assert_eq!(runner.app().view, View::Shelf(Shelf::Library));
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Home);
+    }
+
+    #[test]
+    fn the_library_stands_in_the_order_its_owner_chose_and_the_choice_is_kept() {
+        let mut runner = on_a_named_shelf(None);
+        let shelf = shown(runner.action(action_id(super::SORT)));
+        let text = words(&shelf);
+        for label in ["Sort: Recently opened", "Title", "Author"] {
+            assert!(text.contains(label), "{label}: {text}");
+        }
+        // A menu open over a shelf of covers puts all five inks on the
+        // panel, as it does in the gallery of components. Nothing else
+        // about the screen is remarked on.
+        let issues = shelf.validate(&CLARA_BW_METRICS);
+        assert!(
+            issues
+                .iter()
+                .all(|issue| matches!(issue.kind, kobo_ui::LayoutIssueKind::ToneBudget { .. })),
+            "{issues:?}"
+        );
+
+        let chosen = runner.action(action_id("order-title"));
+        assert_eq!(
+            saved(&chosen, super::ORDER).as_deref(),
+            Some(&b"order-title"[..]),
+            "the choice was not kept"
+        );
+        let by_title = shown(chosen);
+        assert_eq!(
+            titles(&by_title),
+            [
+                "\u{c9}mile Zola, notes",
+                "Jane Eyre",
+                "The Open Sea",
+                "Wuthering Heights"
+            ]
+        );
+        assert!(words(&by_title).contains("Sort: Title"));
+        assert!(
+            !runner.app().library.sorting,
+            "the menu stayed open after a choice"
+        );
+
+        runner.action(action_id(super::SORT));
+        let by_author = shown(runner.action(action_id("order-author")));
+        // By the name as it is written, then the book with none.
+        assert_eq!(
+            titles(&by_author),
+            [
+                "The Open Sea",
+                "Jane Eyre",
+                "Wuthering Heights",
+                "\u{c9}mile Zola, notes"
+            ]
+        );
+
+        // The next start puts the shelf back the way it was left.
+        let mut runner = on_a_named_shelf(Some(b"order-author"));
+        let again = shown(runner.action(action_id(super::SORT)));
+        assert!(words(&again).contains("Sort: Author"));
+        assert_eq!(titles(&again)[0], "The Open Sea");
+        // A value this build has no order for leaves the shelf alone.
+        let runner = on_a_named_shelf(Some(b"order-by-colour"));
+        assert_eq!(runner.app().library.order, super::Order::Recent);
+    }
+
+    #[test]
+    fn back_closes_the_menu_of_orders_before_anything_else_and_a_search_keeps_its_order() {
+        let mut runner = on_a_named_shelf(Some(b"order-title"));
+        runner.action(action_id(super::SORT));
+        assert!(runner.app().library.sorting);
+        runner.action(ActionId::BACK);
+        assert!(!runner.app().library.sorting);
+        assert_eq!(runner.app().view, View::Shelf(Shelf::Library));
+
+        runner.action(action_id(super::SEARCH));
+        let found = shown(runner.type_text("e"));
+        assert_eq!(
+            titles(&found),
+            [
+                "\u{c9}mile Zola, notes",
+                "Jane Eyre",
+                "The Open Sea",
+                "Wuthering Heights"
+            ]
+        );
     }
 
     #[test]
@@ -4297,6 +4851,7 @@ mod tests {
             "the next part is read"
         );
         answer(articles::PAIRING.to_owned(), None);
+        answer(super::ORDER.to_owned(), None);
         let commands = answer(articles::part_key(1), Some(part("read", true)));
         assert!(asked(&commands, &articles::part_key(2)));
         answer(articles::part_key(2), None);
@@ -4457,6 +5012,7 @@ mod tests {
                 articles::PAIRING,
                 Some(b"192.168.1.10:9331|abc234".to_vec()),
             ),
+            (super::ORDER, None),
         ] {
             commands.extend(runner.store_result(StoreResult::Loaded {
                 key: key.into(),
