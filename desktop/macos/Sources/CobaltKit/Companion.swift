@@ -412,8 +412,19 @@ public final class Companion: ObservableObject {
     public func rename(saved name: String, to new: String) async {
         guard let client else { return }
         reader.error = ""
+        // The two things wrong with a name that need no server to see. The
+        // rest of the rules are the server's, and it says which was broken.
+        let wanted = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        if wanted.isEmpty {
+            reader.error = "Give the reader a name."
+            return
+        }
+        if wanted.count > 40 {
+            reader.error = "Use a name of 40 characters or fewer."
+            return
+        }
         do {
-            state?.saved = try await client.renameReader(name, to: new.trimmingCharacters(in: .whitespacesAndNewlines))
+            state?.saved = try await client.renameReader(name, to: wanted)
         } catch {
             reader.error = heard(error).sentence
         }

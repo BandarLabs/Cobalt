@@ -19,7 +19,9 @@ struct Pane<Content: View>: View {
             .padding(.horizontal, 28)
             .padding(.top, 22)
             .padding(.bottom, 32)
-            .frame(maxWidth: .infinity)
+            // Every column starts at the same left edge whatever its width,
+            // so nothing moves sideways when the owner changes place.
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Paper.ground)
     }

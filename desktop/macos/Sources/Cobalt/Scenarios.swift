@@ -501,6 +501,8 @@ enum Scenarios {
         Scenario(name: "reader-none-with-saved", routes: ["GET /api/state": state(saved: [["name": "kobo", "volume": NSNull()], ["name": "study", "volume": NSNull()]])]),
         Scenario(name: "reader-current-with-saved", routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", savedAs: "kobo")], saved: linked)]),
         Scenario(name: "reader-rename-refused", routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", savedAs: "kobo")], saved: linked), "POST /api/readers/rename": refuse(409, "refused", "Another reader is already saved as “study”.")], act: { store, _ in await store.rename(saved: "kobo", to: "study") }),
+        Scenario(name: "path-add-another", routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", savedAs: "kobo")], saved: linked)], act: { _, desk in desk.addingReader = true }),
+        Scenario(name: "reader-rename-too-long", routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", savedAs: "kobo")], saved: linked)], act: { store, _ in await store.rename(saved: "kobo", to: String(repeating: "the reader in the study ", count: 3)) }),
         Scenario(name: "ask-rename", routes: ["GET /api/state": withCobalt], question: { _ in Questions.renaming("kobo").0 }),
         Scenario(name: "ask-forget", routes: ["GET /api/state": withCobalt], question: { _ in Questions.forgetting("kobo") }),
     ]

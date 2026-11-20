@@ -1055,6 +1055,14 @@ struct FirstRunTests {
         await store.forget(saved: "study")
         #expect(store.saved.map(\.name) == ["bedside"])
 
+        // A name that is empty or too long is turned away before anything is sent.
+        let sent = stage.asked.count
+        await store.rename(saved: "bedside", to: "   ")
+        #expect(store.reader.error == "Give the reader a name.")
+        await store.rename(saved: "bedside", to: String(repeating: "x", count: 41))
+        #expect(store.reader.error == "Use a name of 40 characters or fewer.")
+        #expect(stage.asked.count == sent)
+
         board["POST /api/readers/rename"] = .json(409, refusal("refused", "Another reader is already saved as “study”."))
         await store.rename(saved: "bedside", to: "study")
         #expect(store.reader.error == "Another reader is already saved as “study”.")

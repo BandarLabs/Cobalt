@@ -107,7 +107,7 @@ private struct VersionBanner: View {
         .padding(.horizontal, 28)
         .padding(.top, 14)
         .padding(.bottom, 2)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(Paper.ground)
         .accessibilityElement(children: .combine)
     }

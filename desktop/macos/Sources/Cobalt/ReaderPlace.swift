@@ -6,11 +6,14 @@ import SwiftUI
 /// and Cobalt, the plan before anything is written, and the work itself.
 struct ReaderPlace: View {
     @EnvironmentObject private var store: Companion
+    @EnvironmentObject private var desk: Desk
 
     var body: some View {
         Group {
             if let job = store.reader.job {
                 JobPane(job: job)
+            } else if desk.addingReader, store.state != nil {
+                AddReader()
             } else if store.state == nil {
                 Standstill(headline: "Looking for a reader.", detail: "", working: true) {}
             } else if store.awaitingReader, store.chosen == .none {
@@ -423,11 +426,22 @@ private struct JobPane: View {
         if !scene.quiet.isEmpty {
             Note(scene.quiet)
         }
-        if scene.turned {
-            SaidView(blocks: scene.next)
+        if scene.turned, !scene.stages.isEmpty {
+            onTheReader
         }
         if !scene.said.isEmpty {
             Folded(title: "Everything it has said") { SaidView(blocks: scene.said) }
+        }
+    }
+
+    /// What to do with the reader after an install, in the owner's words.
+    /// A kobo command too old to report its stages still prints its own
+    /// account of these steps; that stays behind the disclosure with the
+    /// rest of what it said.
+    private var onTheReader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Heading("On the reader")
+            SaidView(blocks: FirstRun.onTheReader(menuCorner: store.state?.readers.first { $0.volume == job.volume }?.menuCorner ?? store.lastMenuCorner).enumerated().map { .step($0.offset + 1, $0.element) })
         }
     }
 
@@ -450,11 +464,11 @@ private struct JobPane: View {
         if !store.reader.error.isEmpty {
             Note(store.reader.error, kind: .caution)
         }
-        if !scene.next.isEmpty {
-            SaidView(blocks: scene.next)
+        if !scene.stages.isEmpty {
+            onTheReader
         }
-        if !scene.report.isEmpty {
-            Folded(title: "What was done to the reader") { SaidView(blocks: scene.report) }
+        if !scene.said.isEmpty {
+            Folded(title: "Everything it said") { SaidView(blocks: scene.said) }
         }
         HStack {
             Spacer()

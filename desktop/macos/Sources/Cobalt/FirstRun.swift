@@ -210,6 +210,7 @@ struct LookAgain: View {
 /// The readers this computer is linked to, each by the name it sends to.
 struct SavedReaders: View {
     @EnvironmentObject private var store: Companion
+    @EnvironmentObject private var desk: Desk
 
     var body: some View {
         if !store.saved.isEmpty {
@@ -236,9 +237,34 @@ struct SavedReaders: View {
                     .padding(.vertical, 9)
                 }
                 Divider().overlay(Paper.rule)
+                Button("Add Another Reader") { desk.addingReader = true }
+                    .padding(.top, 12)
             }
             .padding(.top, 10)
         }
+    }
+}
+
+/// The first step of the path, shown to an owner who has asked to add a
+/// reader while another is plugged in or saved. It gives way by itself
+/// when a new reader appears.
+struct AddReader: View {
+    @EnvironmentObject private var store: Companion
+    @EnvironmentObject private var desk: Desk
+
+    var body: some View {
+        Pane {
+            HStack(alignment: .center, spacing: 18) {
+                ReaderDrawing(model: "A reader", screen: .blank, present: false)
+                Text("Add another reader")
+                    .font(Paper.serif(24))
+                    .accessibilityAddTraits(.isHeader)
+            }
+            Prose("Plug in the Kobo with a cable that carries data and tap Connect on its screen.")
+            Button("Back") { desk.addingReader = false }
+                .keyboardShortcut(.cancelAction)
+        }
+        .onChange(of: store.state?.readers.count ?? 0) { _ in desk.addingReader = false }
     }
 }
 

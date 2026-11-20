@@ -60,6 +60,8 @@ enum Paper {
 /// fills in.
 @MainActor
 final class Desk: ObservableObject {
+    /// The owner has asked to add another reader and is being shown how.
+    @Published var addingReader = false
     /// Raised to send the keyboard to the web address field, from the menu.
     @Published var addressFocus = 0
     /// True while the window is being drawn to a file. A window that is not

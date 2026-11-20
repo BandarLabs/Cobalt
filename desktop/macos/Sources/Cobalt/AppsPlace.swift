@@ -198,9 +198,11 @@ private struct Tile: View {
                         .font(Paper.serif(19))
                         .lineLimit(1)
                     if !entry.summary.isEmpty {
+                        // Whole, however long: the row grows to the
+                        // tallest of its tiles and nothing ends in dots.
                         Text(entry.summary)
                             .foregroundStyle(.secondary)
-                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                             .multilineTextAlignment(.leading)
                     }
                     if let fact {
