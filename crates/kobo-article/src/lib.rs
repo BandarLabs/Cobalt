@@ -515,14 +515,18 @@ fn rebuilt_body(
         root.prepend_html(figure.as_str());
     }
     let rebuild = |names| body::rebuild(&root, page, title, article.byline.as_deref(), names);
+    // Weighed together. Names and kinds each taking a third leave a third,
+    // and neither alone had taken more than it left, so a book of a third
+    // of its article went out as whole.
+    let lost = |body: &body::Body| lost_most(body, body.left_to_names + body.left_to_kind);
     let mut body = rebuild(body::Names::Trusted);
-    if lost_most(&body, body.left_to_names) {
+    if lost(&body) && body.left_to_names > 0 {
         body = rebuild(body::Names::Ignored);
     }
     if !has_words(&body.nodes) {
         return Err(Refusal::NotAnArticle);
     }
-    if lost_most(&body, body.left_to_kind) {
+    if lost(&body) {
         return Err(Refusal::MostlyLeftOut);
     }
     if is_list_of_links(article.page_text, &body) {
@@ -969,6 +973,26 @@ mod tests {
         let out = written(&html).expect("a book");
         assert!(out.contains("Paragraph 1.") && out.contains("Paragraph 4."));
         assert!(!out.contains("Paragraph 3."), "{out}");
+    }
+
+    #[test]
+    fn text_lost_partly_to_names_and_partly_to_side_notes_is_weighed_together() {
+        // A third in a box named for furniture, a third in a side note and a
+        // third in the open: neither rule alone took more than was left.
+        let html = format!(
+            "{}{}<div class=\"promo\">{}{}</div><aside>{}{}</aside>",
+            paragraph(1),
+            paragraph(2),
+            paragraph(3),
+            paragraph(4),
+            paragraph(5),
+            paragraph(6),
+        );
+        let out = written(&html).expect("a book");
+        for number in 1..=4 {
+            assert!(out.contains(&format!("Paragraph {number}.")), "{out}");
+        }
+        assert!(!out.contains("Paragraph 5."), "{out}");
     }
 
     #[test]
