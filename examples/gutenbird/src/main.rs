@@ -4611,6 +4611,17 @@ impl KoboApp for Gutenbird {
             }
         }
         if action == ActionId::BACK {
+            // The shared reader has first call on Back while a book is open.
+            // After a jump to a found passage or to another part of the book
+            // it goes back to the page that was left, and only Back from the
+            // page itself leaves the book: handled here first, it closed the
+            // book out from under a reader who had only looked something up.
+            if self.view == View::Reading && self.read_action(context, action) {
+                if self.view == View::Reading {
+                    self.show(context);
+                }
+                return;
+            }
             if self.view == View::Reading {
                 let metrics = context.metrics();
                 if let Some(reader) = self.book.reader_mut() {
