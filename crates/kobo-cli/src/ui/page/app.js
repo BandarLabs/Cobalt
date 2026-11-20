@@ -34,6 +34,22 @@ import {
   uploadRefusal,
   webAddress,
 } from "/logic.mjs";
+import {
+  CONNECT_PATIENCE,
+  NEXT_THINGS,
+  UNPLUG_PATIENCE,
+  arrivalScene,
+  connecting,
+  copying,
+  installSteps,
+  looking,
+  needsLinking,
+  notFoundCauses,
+  onTheKobo,
+  plainPlan,
+  stillLooking,
+  withoutReader,
+} from "/path.mjs";
 
 const token = document.querySelector('meta[name="kobo-token"]').content;
 
@@ -46,7 +62,7 @@ const view = {
   state: null,
   stateText: "",
   volume: null,
-  reader: { plan: null, job: null, error: "", notice: "" },
+  reader: { plan: null, job: null, error: "", notice: "", adding: false, renaming: null, forgetting: null, corner: null, sought: false, unconnectedSince: null, unplugSince: null },
   apps: { key: "", installed: null, catalog: null, problem: "", loading: false, query: "", job: null, removing: null, said: "", changed: false },
   browser: { list: null, problem: "", busy: "", said: {} },
   send: { info: null, reader: "", job: null, jobFor: "", file: { stage: "idle" }, address: { problem: "", said: "" }, queue: { said: "" } },
@@ -186,7 +202,7 @@ function follow(id, draw, finished) {
   const look = async () => {
     try {
       const report = await ask(`/api/job?id=${id}&from=${job.next}`);
-      Object.assign(job, { title: report.title, text: job.text + report.text, next: report.next, running: report.running, ok: report.ok, volume: report.volume ?? job.volume });
+      Object.assign(job, { title: report.title, text: job.text + report.text, next: report.next, running: report.running, ok: report.ok, volume: report.volume ?? job.volume, setup: report.setup ?? job.setup });
     } catch (error) {
       if (error.status === 404) Object.assign(job, { running: false, ok: false, text: `${job.text}\nkobo: this job is no longer remembered\n` });
     }
@@ -238,6 +254,7 @@ const DONE = {
 function drawReader() {
   const local = view.reader;
   const slot = slots.reader;
+  if (local.job && isArrival(local.job)) return slot.replaceChildren(...arrivalView(local.job).flat().filter(Boolean));
   if (local.job) {
     const back = () => { local.job = null; local.error = ""; drawReader(); refresh(); };
     // A reader still mounted after a finished job has not seen what was
@@ -257,7 +274,7 @@ function drawReader() {
   }
   if (!view.state) return slot.replaceChildren(h("p", { class: "quiet" }, "Looking for a reader."));
   const chosen = chosenReader(view.state.readers, view.volume);
-  if (chosen.kind === "none") return slot.replaceChildren(...noReader());
+  if (chosen.kind === "none") return slot.replaceChildren(...awayView());
   if (chosen.kind === "several") return slot.replaceChildren(...severalReaders(chosen.readers));
   if (local.plan?.volume === chosen.reader.volume) return slot.replaceChildren(...planView(chosen.reader, local.plan).filter(Boolean));
   local.plan = null;
@@ -270,8 +287,7 @@ function noReader() {
   if (missing.kind === "blocked") {
     return [
       h("h2", null, "This computer is not letting Cobalt read the reader."),
-      h("p", { class: "reading" }, "A drive is mounted at ", h("span", { class: "path" }, pathText(missing.volume)),
-        mac ? ", and macOS refused to let the kobo command open it." : ", and the system refused to let the kobo command open it."),
+      h("p", { class: "reading" }, mac ? "A Kobo is connected, and macOS refused to let this read it." : "A Kobo is connected, and the system refused to let this read it."),
       mac && h("ol", { class: "steps reading" },
         h("li", null, "Open System Settings, then Privacy & Security, then Files and Folders."),
         h("li", null, "Find the terminal app you ran kobo ui from and turn on Removable Volumes."),
@@ -279,15 +295,23 @@ function noReader() {
     ].filter(Boolean);
   }
   if (missing.kind === "unconnected") {
+    // How long it has been on the cable without connecting decides what is
+    // said, so the page is drawn again when that changes.
+    const local = view.reader;
+    local.unconnectedSince ??= Date.now();
+    const waited = Date.now() - local.unconnectedSince;
+    if (waited < CONNECT_PATIENCE) setTimeout(drawReader, CONNECT_PATIENCE - waited + 50);
+    const advice = connecting(waited);
     return [
-      h("h2", null, "The reader is plugged in but has not connected."),
-      h("p", { class: "reading" }, "Tap Connect on its screen, or unplug the cable and plug it in again if the question has gone."),
-    ];
+      h("h2", null, advice.title),
+      advice.causes.length > 0 && h("ul", { class: "reading causes" }, advice.causes.map(cause => h("li", null, cause))),
+    ].filter(Boolean);
   }
+  view.reader.unconnectedSince = null;
   return [
     note(view.reader.notice),
-    h("h2", null, "No reader is connected."),
-    h("p", { class: "reading" }, "Plug in your Kobo with a cable that carries data and tap Connect on its screen."),
+    h("h2", null, "Plug in your Kobo."),
+    h("p", { class: "reading" }, "Use a cable that carries data. Some only charge."),
   ].filter(Boolean);
 }
 
@@ -312,6 +336,9 @@ function oneReader({ reader, among }) {
   const cobalt = reader.cobalt ? `${reader.cobalt.cobalt_version}, ${reader.cobalt.channel} channel` : "Not installed";
   const plan = undo => openPlan(reader, undo);
   const locked = reader.writable === false;
+  // A reader with Cobalt that this computer never saved is linked by the
+  // same install, which is what gives this computer its way in.
+  const linking = needsLinking(reader) && standing.repair && !locked;
   return [
     h("h2", null, reader.model),
     h("dl", { class: "facts" },
@@ -319,15 +346,17 @@ function oneReader({ reader, among }) {
       h("dt", null, "Cobalt"), h("dd", null, cobalt),
       computer.release && [h("dt", null, "This computer has"), h("dd", null, `Cobalt ${computer.release}`)],
       Number.isFinite(reader.free_bytes) && [h("dt", null, "Free space"), h("dd", null, fileSize(reader.free_bytes))],
-      h("dt", null, "Connected at"), h("dd", { class: "path" }, pathText(reader.volume))),
+      reader.saved_as && [h("dt", null, "Saved as"), h("dd", null, reader.saved_as)]),
     note(standing.reason, !reader.supported || Boolean(reader.cobalt_problem)),
+    linking && note("This computer has not been set up to send to this Kobo."),
     standing.primary && !locked && note(sentence(reader.untested)),
     locked && note("This reader's storage is mounted read-only, so nothing can be written to it. Eject it, unplug it, restart the reader and connect it again.", true),
     note(local.error, true),
     h("div", { class: "actions" },
       !locked && standing.primary === "install" && primary("Install Cobalt", () => plan(false)),
       !locked && standing.primary === "update" && primary(`Update to ${computer.release}`, () => plan(false)),
-      !locked && standing.repair && button("Install again", () => plan(false)),
+      linking && primary("Link this computer", () => plan(false)),
+      !locked && standing.repair && !linking && button("Install again", () => plan(false)),
       !locked && standing.removable && button("Remove Cobalt", () => plan(true)),
       computer.ejects && button("Eject", () => eject(reader))),
     (reader.cobalt || among) && h("p", { class: "after" },
@@ -351,13 +380,15 @@ async function openPlan(reader, undo) {
 function planView(reader, plan) {
   const local = view.reader;
   const release = view.state.computer.release;
-  const verb = plan.undo ? "Remove Cobalt" : reader.cobalt ? `Update to ${release}` : `Install Cobalt ${release}`;
+  const verb = plan.undo ? "Remove Cobalt" : needsLinking(reader) && reader.standing === "current" ? "Link this computer" : reader.cobalt ? `Update to ${release}` : `Install Cobalt ${release}`;
   const path = plan.undo ? "/api/reader/remove" : "/api/reader/install";
   return [
     h("h2", null, plan.undo ? "What removing Cobalt changes" : `What installing Cobalt ${release} changes`),
-    h("p", { class: "quiet" }, `${reader.model} at `, h("span", { class: "path" }, pathText(reader.volume))),
-    h("ol", { class: "plan" }, plan.lines.map(line => h("li", null, planStep(line)))),
+    h("p", { class: "quiet" }, reader.model),
+    h("ul", { class: "reading causes" }, plainPlan(reader, view.state.computer, plan.undo).map(line => h("li", null, line))),
     note(sentence(plan.untested)),
+    h("details", { class: "whole" }, h("summary", null, "Exactly what changes"),
+      h("ol", { class: "plan" }, plan.lines.map(line => h("li", null, planStep(line))))),
     note(local.error, true),
     h("div", { class: "actions" }, primary(verb, () => startReader(path, reader.volume)), button("Cancel", () => { local.plan = null; local.error = ""; drawReader(); })),
   ];
@@ -370,8 +401,13 @@ async function startReader(path, volume) {
     const { job } = await change(path, { volume });
     local.plan = null;
     local.notice = "";
+    local.sought = false;
+    local.corner = view.state?.readers.find(reader => reader.volume === volume)?.menu_corner ?? null;
     local.job = follow(job, drawReader, refresh);
     local.job.volume = volume;
+    // Known to be an install before its first report says so, so the page
+    // goes straight to its steps.
+    if (path === "/api/reader/install") local.job.setup = { stage: "writing", notes: [] };
     local.job.again = () => { local.job = null; startReader(path, volume); };
   } catch (error) {
     local.error = error.message;
@@ -392,6 +428,195 @@ async function eject(reader) {
   }
   drawReader();
   drawApps();
+}
+
+// The way in.
+//
+// A first reader is walked from the cable to the first thing sent to it,
+// one step on the page at a time. Which step it is comes from path.mjs,
+// which reads it from what the server reports, so a page closed half way
+// opens again on the same step. The command's own account of what it did
+// is kept, behind a disclosure, for whoever wants it.
+
+const isArrival = job => Boolean(job.setup) || /^(Installing Cobalt|Installing Cobalt again|Updating Cobalt|Looking for the reader)$/.test(job.title ?? "");
+
+// The four things an install does, each marked with how far it has got.
+function advance(stage) {
+  const SAID = { done: "done", doing: "in progress", yours: "for you to do", stopped: "stopped here", todo: "" };
+  return h("ol", { class: "advance" }, installSteps(stage).map(step =>
+    h("li", { class: step.state, "aria-current": step.state === "doing" || step.state === "yours" ? "step" : null },
+      h("span", null, step.text, SAID[step.state] && h("span", { class: "unseen" }, `, ${SAID[step.state]}`)))));
+}
+
+async function startFind() {
+  const local = view.reader;
+  local.error = "";
+  try {
+    const { job } = await change("/api/reader/find", {});
+    local.job = follow(job, drawReader, refresh);
+    Object.assign(local.job, { title: "Looking for the reader", setup: { stage: "finding", waited: 0, limit: 300, notes: [] } });
+  } catch (error) {
+    local.error = error.message;
+  }
+  drawReader();
+}
+
+// Ejects the reader an install has finished copying to, then looks for it.
+async function ejectThenFind(volume) {
+  const local = view.reader;
+  local.error = "";
+  try {
+    await change("/api/reader/eject", { volume });
+    await refresh();
+    return startFind();
+  } catch (error) {
+    local.error = error.message;
+  }
+  drawReader();
+}
+
+function arrivalView(job) {
+  const local = view.reader;
+  const setup = job.setup ?? { stage: "writing" };
+  const computer = view.state?.computer ?? {};
+  // How long the page has been waiting to see the cable come out. It is
+  // drawn again when that wait is up, in case nothing else changes.
+  if (setup.stage === "finding") {
+    if (!local.unplugSince) setTimeout(drawReader, UNPLUG_PATIENCE + 50);
+    local.unplugSince ??= Date.now();
+  } else {
+    local.unplugSince = null;
+  }
+  const { scene, title, plugged } = arrivalScene(job, view.state, local.unplugSince ? Date.now() - local.unplugSince : 0);
+  const back = () => { local.job = null; local.error = ""; local.adding = false; drawReader(); refresh(); };
+  const whole = job.text ? h("details", { class: "whole" }, h("summary", null, "Everything the command said"), said(job.text)) : null;
+  const notes = (setup.notes ?? []).map(text => note(text));
+  const lookAgain = h("div", { class: "actions" }, primary("Look again", startFind), button("Not now", back));
+  const steps = advance(setup.stage ?? "writing");
+
+  if (scene === "failed") {
+    return [
+      h("h2", null, title),
+      note(sentence(failure(job.text)) || "It stopped without saying why.", true),
+      afterFailure(job, view.state) && h("p", { class: "reading" }, afterFailure(job, view.state)),
+      whole,
+      h("div", { class: "actions" }, job.again && primary("Try again", job.again), button("Back", back)),
+    ];
+  }
+  if (scene === "writing") {
+    return [
+      h("h2", null, title),
+      h("div", { class: "working", role: "progressbar", "aria-label": title }),
+      steps,
+      h("p", { class: "quiet" }, job.title === "Looking for the reader" ? "" : `${copying(Date.now() - job.started)} `, `${elapsed(Date.now() - job.started)} so far.`),
+      whole,
+    ];
+  }
+  if (scene === "eject") {
+    // Ejected by hand, or by the system's own button: the reader going is
+    // the thing to see, and the search starts by itself.
+    const mounted = view.state?.readers.some(reader => reader.volume === job.volume);
+    if (!mounted && !local.error && !local.sought) { local.sought = true; startFind(); }
+    return [
+      h("h2", null, title),
+      steps,
+      note(local.error, true),
+      computer.ejects
+        ? h("div", { class: "actions" }, primary("Eject", () => ejectThenFind(job.volume)))
+        : h("p", { class: "reading" }, "Eject it the way this computer ejects a USB drive. This page carries on when it has gone."),
+      whole,
+    ];
+  }
+  if (scene === "unplug") return [h("h2", null, title), steps, whole];
+  if (scene === "on_kobo") {
+    const search = looking(setup);
+    return [
+      h("h2", null, title),
+      h("ol", { class: "steps reading" }, onTheKobo(local.corner, plugged).map(step => h("li", null, step))),
+      h("progress", { max: search.limit, value: search.waited, "aria-label": "Looking for the Kobo on Wi-Fi" }),
+      h("p", { class: "quiet" }, `Looking for it on Wi-Fi, ${search.text}.`),
+      note(stillLooking(setup)),
+      whole,
+    ];
+  }
+  if (scene === "securing") return [h("h2", null, title), h("div", { class: "working", role: "progressbar", "aria-label": "Saving the Kobo" }), steps, whole];
+  if (scene === "ready") {
+    return [
+      h("h2", null, title),
+      notes,
+      h("ul", { class: "entries next" }, NEXT_THINGS.map(thing =>
+        h("li", null, h("div", null, h("a", { class: "name", href: thing.href, onclick: () => { local.job = null; } }, thing.label))))),
+      h("div", { class: "actions" }, button("Done", back)),
+      whole,
+    ].flat();
+  }
+  if (scene === "not_found") {
+    return [
+      h("h2", null, title),
+      h("ul", { class: "reading causes" }, notFoundCauses(computer).map(cause => h("li", null, cause))),
+      note(local.error, true),
+      lookAgain,
+      whole,
+    ];
+  }
+  const what = scene === "several"
+    ? "Give it a minute to settle on one, then look again."
+    : "Join the Wi-Fi network the Kobo is on, then look again.";
+  return [h("h2", null, title), h("p", { class: "reading" }, what), note(local.error, true), lookAgain, whole];
+}
+
+// The Reader place with nothing plugged in and nothing going on: the way in
+// for a first reader, the rest of the way for one that was set up and not
+// found, or the readers this computer already knows.
+function awayView() {
+  const local = view.reader;
+  const kind = withoutReader(view.state, local.adding);
+  if (kind === "waiting") {
+    return [
+      note(local.notice),
+      h("h2", null, "Finish on the Kobo."),
+      h("ol", { class: "steps reading" }, onTheKobo(local.corner).map(step => h("li", null, step))),
+      note(local.error, true),
+      h("div", { class: "actions" }, primary("Look for it on Wi-Fi", startFind)),
+    ].filter(Boolean);
+  }
+  if (kind === "saved") {
+    const act = async (path, body) => {
+      local.error = "";
+      try {
+        await change(path, body);
+        Object.assign(local, { renaming: null, forgetting: null });
+        await refresh();
+      } catch (error) {
+        local.error = error.message;
+      }
+      drawReader();
+    };
+    return [
+      note(local.notice),
+      h("h2", null, "Saved on this computer"),
+      note(local.error, true),
+      h("ul", { class: "entries level" }, view.state.saved.map(reader => {
+        if (local.renaming === reader.name) {
+          const field = h("input", { class: "field", value: reader.name, maxLength: 40, "aria-label": `A new name for ${reader.name}` });
+          return h("li", null,
+            h("form", { class: "row", onsubmit: event => { event.preventDefault(); act("/api/readers/rename", { name: reader.name, to: field.value.trim() }); } },
+              field, h("button", { type: "submit", class: "button primary" }, "Save")),
+            h("div", { class: "does" }, button("Cancel", () => { local.renaming = null; local.error = ""; drawReader(); })));
+        }
+        const asking = local.forgetting === reader.name;
+        return h("li", null,
+          h("div", null, h("span", { class: "name" }, reader.name)),
+          asking && h("p", { class: "about" }, `Forget “${reader.name}”? Nothing on the Kobo changes.`),
+          h("div", { class: "does" }, asking
+            ? [button("Forget", () => act("/api/readers/forget", { name: reader.name })), button("Keep", () => { local.forgetting = null; drawReader(); })]
+            : [button("Rename", () => { Object.assign(local, { renaming: reader.name, forgetting: null, error: "" }); drawReader(); }),
+               button("Forget", () => { Object.assign(local, { forgetting: reader.name, renaming: null, error: "" }); drawReader(); })]));
+      })),
+      h("div", { class: "actions" }, button("Add another reader", () => { local.adding = true; drawReader(); })),
+    ].filter(Boolean);
+  }
+  return [...noReader(), local.adding && h("p", { class: "after" }, plain("Cancel", () => { local.adding = false; drawReader(); }))].filter(Boolean);
 }
 
 // Pictures.
@@ -1047,7 +1272,10 @@ async function refresh() {
 function resume(jobs) {
   const reader = runningJob(jobs, "reader");
   if (reader && /app/.test(reader.title)) view.apps.job = follow(reader.id, drawApps, () => { view.apps.changed = true; loadApps(); });
-  else if (reader) view.reader.job = follow(reader.id, drawReader, refresh);
+  else if (reader) {
+    view.reader.job = follow(reader.id, drawReader, refresh);
+    Object.assign(view.reader.job, { title: reader.title, volume: reader.volume, setup: reader.setup });
+  }
   const sending = runningJob(jobs, "send");
   if (sending) {
     view.send.jobFor = /article/.test(sending.title) ? (/waiting/.test(sending.title) ? "queue" : "address") : "file";

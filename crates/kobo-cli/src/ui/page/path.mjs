@@ -75,14 +75,38 @@ export function installSteps(stage) {
 
 // What an owner does on the Kobo itself once it is unplugged. The corner
 // its menu is in depends on its firmware and is only known while it is
-// plugged in, so a page opened afterwards says both.
-export function onTheKobo(menuCorner) {
-  const corner = menuCorner ? `at the ${menuCorner}` : "at the bottom right, or the top left on an older Kobo";
+// plugged in, so a page opened afterwards says both. `plugged` is for the
+// page that has waited a while to see the cable come out and has not: it
+// stops waiting and says so as the first step.
+export function onTheKobo(menuCorner, plugged = false) {
+  const corner = menuCorner ? `at the ${menuCorner}` : "at the bottom right (the top left on an older Kobo)";
   return [
+    plugged ? "Unplug it, if it is still plugged in." : null,
     "Wait about a minute while it restarts. It shows Updating, then its home screen.",
     "Join Wi-Fi on it, if it is not on already.",
     `Open the menu ${corner} and choose Cobalt.`,
-  ];
+  ].filter(Boolean);
+}
+
+// How long the page waits to see the cable come out before it stops
+// waiting. Not every system can say what is on the cable, and one that
+// says a Kobo is still there when it is not would otherwise hold an owner
+// on "unplug it" for the whole five minutes.
+export const UNPLUG_PATIENCE = 30_000;
+
+// What is said under a copy that is still going: the one thing not to do,
+// and after a while that it has not stalled.
+export function copying(waitedFor) {
+  return waitedFor < 120_000 ? "Leave the Kobo plugged in." : "Still copying, which is slow on some Kobos. Leave it plugged in.";
+}
+
+// What is said once the search has used half its time: what has to be true
+// of the Kobo for it to answer, since one of those is what is missing.
+export function stillLooking(setup) {
+  const search = looking(setup);
+  return search.waited * 2 >= search.limit
+    ? "Not found yet. The Kobo has to be awake, on the same Wi-Fi network as this computer, and showing Cobalt."
+    : "";
 }
 
 // Why a Kobo that was set up has not been found on Wi-Fi, most likely
@@ -117,7 +141,7 @@ export function looking(setup) {
 // out the reader cannot restart, so the one thing to say is to unplug it;
 // only then are the steps on the Kobo itself worth reading. Where the
 // system cannot say what is on the cable, both are shown together.
-export function arrivalScene(job, state) {
+export function arrivalScene(job, state, unplugWaited = 0) {
   const setup = job?.setup ?? null;
   const stage = !job ? "" : !job.running && job.ok === false ? "failed" : setup?.stage ?? "writing";
   const name = setup?.saved_as ? `“${setup.saved_as}”` : "The Kobo";
@@ -126,9 +150,8 @@ export function arrivalScene(job, state) {
       return { scene: "eject", title: "Eject the Kobo.", again: false };
     case "finding": {
       const plugged = (state?.readers?.length ?? 0) > 0 || (state?.attached ?? 0) > 0;
-      return plugged
-        ? { scene: "unplug", title: "Unplug the Kobo.", again: false }
-        : { scene: "on_kobo", title: "Now, on the Kobo.", again: false };
+      if (plugged && unplugWaited < UNPLUG_PATIENCE) return { scene: "unplug", title: "Unplug the Kobo.", again: false, plugged };
+      return { scene: "on_kobo", title: "Now, on the Kobo.", again: false, plugged };
     }
     case "securing":
       return { scene: "securing", title: "Found it.", again: false };
@@ -150,9 +173,9 @@ export function arrivalScene(job, state) {
 // The three things worth doing with a reader that has just been set up,
 // each a place in this window.
 export const NEXT_THINGS = [
-  { href: "#apps", label: "Add apps", about: "Games, feeds, a to-do list and more, from the store." },
-  { href: "#browser", label: "Add Send to Kobo to your browser", about: "Send the page you are reading to the Kobo." },
-  { href: "#send", label: "Send a book or an article", about: "A file from this computer, or a web address." },
+  { href: "#apps", label: "Add apps" },
+  { href: "#browser", label: "Add Send to Kobo to your browser" },
+  { href: "#send", label: "Send a book or an article" },
 ];
 
 // What the Reader place is showing when no install is going on: the way in

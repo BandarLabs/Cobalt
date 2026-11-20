@@ -7,14 +7,17 @@ import { fileURLToPath } from "node:url";
 import {
   CONNECT_PATIENCE,
   NEXT_THINGS,
+  UNPLUG_PATIENCE,
   arrivalScene,
   connecting,
+  copying,
   installSteps,
   looking,
   needsLinking,
   notFoundCauses,
   onTheKobo,
   plainPlan,
+  stillLooking,
   withoutReader,
 } from "../crates/kobo-cli/src/ui/page/path.mjs";
 
@@ -59,6 +62,8 @@ test("an install is four things that advance, and the one the owner does is mark
 test("each moment of an install is one screen with one heading", () => {
   const scene = (work, state = { readers: [], attached: 0 }) => arrivalScene(work, state);
   assert.deepEqual(scene(job("writing")), { scene: "writing", title: "Installing Cobalt", again: false });
+  assert.equal(copying(0), "Leave the Kobo plugged in.");
+  assert.match(copying(120_000), /^Still copying/);
   assert.deepEqual(scene(job("writing", { title: "Updating Cobalt" })).title, "Updating Cobalt");
   // A job the server says nothing structured about is still an install.
   assert.equal(scene({ title: "Installing Cobalt", running: true, ok: null }).scene, "writing");
@@ -84,6 +89,12 @@ test("while the Kobo is being looked for, the cable coming out is what moves the
   // on "unplug it" for ever.
   assert.equal(arrivalScene(work, { readers: [], attached: null }).scene, "on_kobo");
   assert.equal(arrivalScene(work, null).scene, "on_kobo");
+  // Nor does one that says a Kobo is still there when it has gone: after a
+  // while the page moves on, and says to unplug it as the first step.
+  const stuck = arrivalScene(work, { readers: [], attached: 1 }, UNPLUG_PATIENCE);
+  assert.deepEqual([stuck.scene, stuck.plugged], ["on_kobo", true]);
+  assert.equal(onTheKobo("bottom right", stuck.plugged)[0], "Unplug it, if it is still plugged in.");
+  assert.equal(onTheKobo("bottom right", stuck.plugged).length, 4);
 });
 
 test("the steps on the Kobo name the corner its menu is in when that is known", () => {
@@ -93,7 +104,7 @@ test("the steps on the Kobo name the corner its menu is in when that is known", 
   assert.match(known[1], /Wi-Fi/);
   assert.equal(known[2], "Open the menu at the bottom right and choose Cobalt.");
   assert.equal(onTheKobo("top left")[2], "Open the menu at the top left and choose Cobalt.");
-  assert.match(onTheKobo(null)[2], /bottom right, or the top left on an older Kobo/);
+  assert.equal(onTheKobo(null)[2], "Open the menu at the bottom right (the top left on an older Kobo) and choose Cobalt.");
 });
 
 test("a Kobo that was not found is given its likely causes and never a command", () => {
@@ -109,6 +120,9 @@ test("the search is shown against its limit", () => {
   assert.deepEqual(looking({ waited: 80, limit: 300 }), { waited: 80, limit: 300, text: "1 min 20 s of 5 min" });
   assert.deepEqual(looking({ waited: 999, limit: 300 }).waited, 300);
   assert.deepEqual(looking(null), { waited: 0, limit: 300, text: "0 s of 5 min" });
+  // Half way through it says what has to be true for the Kobo to answer.
+  assert.equal(stillLooking({ waited: 140, limit: 300 }), "");
+  assert.match(stillLooking({ waited: 150, limit: 300 }), /^Not found yet\. The Kobo has to be awake/);
 });
 
 test("the plan is said in an owner's words, and says what macOS will ask before it asks", () => {
@@ -154,4 +168,14 @@ test("nothing on the way in is the command's wording or something to type", () =
     assert.ok(!said.replaceAll("!==", "").replaceAll("!job", "").replaceAll("!state", "").replaceAll("!reader", "").replaceAll("!adding", "").includes(banned), `path.mjs uses ${banned}`);
   }
   assert.deepEqual(NEXT_THINGS.map(thing => thing.href), ["#apps", "#browser", "#send"]);
+});
+
+test("the way in decides and never asks: it reaches nothing but the page's other module", () => {
+  for (const reach of ["fetch(", "XMLHttpRequest", "WebSocket", "EventSource", "sendBeacon", "import(", "document.", "localStorage"]) {
+    assert.ok(!source.includes(reach), `path.mjs uses ${reach}`);
+  }
+  assert.deepEqual([...source.matchAll(/from "([^"]+)"/g)].map(found => found[1]), ["./logic.mjs"]);
+  // The page loads it from its own server, by a path and not an address.
+  const script = readFileSync(join(page, "app.js"), "utf8");
+  assert.ok(script.includes('} from "/path.mjs";'));
 });

@@ -953,6 +953,103 @@ button.shot {
   background: var(--paper);
 }
 
+/* The way in.
+ *
+ * What an install does is a short numbered list in which each line is
+ * done, being done, the owner's to do, or still to come. Done is a tick in
+ * place of the number and the line set back to grey; the line that matters
+ * now is the one in ink. Nothing is boxed or coloured: the eye finds the
+ * dark line.
+ */
+
+.advance {
+  max-width: 30rem;
+  margin: var(--s5) 0;
+  padding: 0;
+  border-bottom: 1px solid var(--rule);
+  list-style: none;
+  counter-reset: step;
+}
+
+.advance li {
+  display: grid;
+  grid-template-columns: var(--s6) minmax(0, 1fr);
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--rule);
+  color: var(--soft);
+  counter-increment: step;
+}
+
+.advance li::before {
+  content: counter(step);
+  font-variant-numeric: tabular-nums;
+}
+
+.advance li.done::before {
+  content: "\2713";
+}
+
+.advance li.doing,
+.advance li.yours,
+.advance li.stopped {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Said to a screen reader and to nobody else. */
+.unseen {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.causes {
+  max-width: 38rem;
+  margin: var(--s4) 0;
+  padding-left: var(--s5);
+}
+
+.causes li {
+  margin-bottom: var(--s2);
+  padding-left: var(--s1);
+}
+
+#place-reader progress {
+  max-width: 30rem;
+  margin: var(--s5) 0 var(--s2);
+}
+
+#place-reader .steps {
+  max-width: 38rem;
+  margin-top: var(--s4);
+}
+
+.entries.next {
+  max-width: 38rem;
+  margin-top: var(--s5);
+}
+
+.entries.next .name {
+  font: 400 18px/26px var(--serif);
+}
+
+/* A row that is a name and its buttons, with nothing under the name, sets
+   the two on one line. */
+.entries.level > li {
+  align-items: center;
+}
+
+#place-reader .working {
+  max-width: 30rem;
+}
+
+.entries form.row {
+  grid-column: 1;
+}
+
 .noscript {
   max-width: 40rem;
   margin: var(--s7) auto;
