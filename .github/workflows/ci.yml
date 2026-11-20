@@ -13,9 +13,14 @@ on:
 
 # A newer push to a pull request makes the run on the older commit an answer
 # nobody is waiting for, so it is stopped. A channel branch keeps every run:
-# each of its commits is a merge somebody may need the result of.
+# each of its commits is a merge somebody may need the result of, and the
+# beta release waits on this workflow passing for its exact commit. Runs
+# that share a group are not only cancelled while running: a run still
+# waiting is dropped when a newer one joins, whatever cancel-in-progress
+# says. So a push gets a group of its own, and only a pull request's runs
+# share one.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
