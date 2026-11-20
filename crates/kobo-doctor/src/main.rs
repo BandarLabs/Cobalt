@@ -513,39 +513,67 @@ fn observe(
     Ok(())
 }
 
-/// Read-only Tailscale readiness facts (P0 probe).
+/// What can be read, without touching anything, about whether Tailscale
+/// could run on this reader.
 ///
-/// Every line is a `/proc`/`/sys`/metadata read; nothing is created, written
-/// or brought up. The facts answer the four questions the experimental
-/// Tailscale supervisor (crates/kobod/src/tailscale.rs) depends on: whether
-/// the tun node already exists, whether `/dev` is devtmpfs (so creating the
-/// node per start is viable), whether loopback is up, and how much memory the
-/// daemon would have. `iptables` is expected to be absent, which is why the
-/// supervisor runs with `--netfilter-mode=off`.
+/// Every line is a read of a file the kernel publishes or of a path's
+/// existence; nothing is created, opened for writing or brought up. That
+/// limits what this can claim, and each line says which side of the limit it
+/// is on. Whether the kernel has a tunnel driver is only half answered here:
+/// a driver that is registered is certain, one that is not may still be a
+/// module the kernel loads when the device node is first opened, and only
+/// the supervisor in `crates/kobod/src/tailscale.rs` opens it. The device node
+/// existing says nothing either way, since anybody can make one. What is
+/// listening is the other thing worth reading before a tailnet is joined,
+/// because the supervisor refuses to start while telnet or FTP are up or
+/// while root can still log in over SSH with a password.
 fn print_tailscale_readiness() {
-    println!("tailscale readiness (read-only, experimental):");
+    println!("tailscale readiness (read-only):");
+    let misc = std::fs::read_to_string("/proc/misc").ok();
     println!(
-        "  tun node: {}",
+        "  kernel tunnel driver: {}",
+        match misc.as_deref().map(tunnel_driver_registered) {
+            Some(true) => "registered",
+            Some(false) =>
+                "not registered (it may still load when the node is opened; starting Tailscale finds out)",
+            None => "unknown (/proc/misc cannot be read)",
+        }
+    );
+    println!(
+        "  tunnel device node: {}",
         if Path::new("/dev/net/tun").exists() {
-            "present"
+            "present (proves nothing about the driver)"
         } else {
-            "absent (supervisor creates it on each start)"
+            "absent (made on every start; /dev is rebuilt at boot)"
         }
     );
-    let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
-    let dev_is_devtmpfs = mounts
-        .lines()
-        .any(|line| line.split_whitespace().nth(1) == Some("/dev") && line.contains("devtmpfs"));
+    let flags = std::fs::read_to_string("/sys/class/net/lo/flags").unwrap_or_default();
     println!(
-        "  /dev filesystem: {}",
-        if dev_is_devtmpfs {
-            "devtmpfs (node must be recreated after every boot)"
-        } else {
-            "not devtmpfs (verify manually)"
+        "  loopback: {}",
+        match interface_is_up(&flags) {
+            Some(true) => "up",
+            Some(false) => "down (brought up on start)",
+            None => "unknown",
         }
     );
-    let lo = std::fs::read_to_string("/sys/class/net/lo/operstate").unwrap_or_default();
-    println!("  loopback: {}", lo.trim());
+    let listening = ["/proc/net/tcp", "/proc/net/tcp6"]
+        .iter()
+        .filter_map(|table| std::fs::read_to_string(table).ok())
+        .flat_map(|table| listening_ports(&table))
+        .collect::<Vec<_>>();
+    for (port, name, consequence) in [
+        (
+            22,
+            "ssh",
+            "must refuse root a password before Tailscale starts",
+        ),
+        (23, "telnet", "Tailscale will not start while this is up"),
+        (21, "ftp", "Tailscale will not start while this is up"),
+    ] {
+        if listening.contains(&port) {
+            println!("  listening: {name} on {port} ({consequence})");
+        }
+    }
     let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
     for key in ["MemTotal", "MemAvailable"] {
         if let Some(line) = meminfo.lines().find(|line| line.starts_with(key)) {
@@ -553,24 +581,59 @@ fn print_tailscale_readiness() {
         }
     }
     println!(
-        "  iptables binary: {}",
+        "  packet filter tools: {}",
         if ["/sbin/iptables", "/usr/sbin/iptables"]
             .iter()
             .any(|path| Path::new(path).exists())
         {
-            "present (unexpected)"
+            "present (unexpected; the daemon is still told to leave the firewall alone)"
         } else {
-            "absent (expected; netfilter-mode=off)"
+            "absent (expected; every listening port is reachable from a tailnet)"
         }
     );
-    let onboard = mounts
+    let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+    match mounts
         .lines()
         .find(|line| line.split_whitespace().nth(1) == Some("/mnt/onboard"))
-        .map(str::to_owned);
-    match onboard {
+    {
         Some(line) => println!("  /mnt/onboard: {line}"),
         None => println!("  /mnt/onboard: not mounted"),
     }
+}
+
+/// Whether the kernel's list of miscellaneous devices names the tunnel
+/// driver, which registers as `tun` whatever its minor number.
+fn tunnel_driver_registered(misc: &str) -> bool {
+    misc.lines()
+        .any(|line| line.split_whitespace().nth(1) == Some("tun"))
+}
+
+/// Whether an interface's flags say it is up.
+///
+/// The flags and not `operstate`, which reads `unknown` on a loopback that is
+/// working, so a report built on it said the same thing on every reader.
+fn interface_is_up(flags: &str) -> Option<bool> {
+    u32::from_str_radix(flags.trim().trim_start_matches("0x"), 16)
+        .ok()
+        .map(|flags| flags & 1 == 1)
+}
+
+/// The TCP ports something is listening on at an address other machines can
+/// reach, from the kernel's socket table.
+fn listening_ports(table: &str) -> Vec<u16> {
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let (address, port) = fields.nth(1)?.rsplit_once(':')?;
+            let listening = fields.nth(1)? == "0A";
+            let loopback = matches!(address, "0100007F" | "00000000000000000000000001000000");
+            (listening && !loopback)
+                .then(|| u16::from_str_radix(port, 16).ok())
+                .flatten()
+        })
+        .collect()
 }
 
 /// Positional read: `FileExt` on Unix, the `seek_read` equivalent on Windows.
@@ -650,6 +713,31 @@ fn hwconfig_revision_fields(output: &str) -> Vec<&str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_tunnel_driver_is_found_by_name_in_the_kernels_device_list() {
+        assert!(super::tunnel_driver_registered(
+            " 59 memory_bandwidth\n200 tun\n130 watchdog\n"
+        ));
+        // A name that only contains it, and a list without it.
+        assert!(!super::tunnel_driver_registered(
+            " 62 tunnel4\n130 watchdog\n"
+        ));
+        assert!(!super::tunnel_driver_registered(""));
+    }
+
+    #[test]
+    fn loopback_is_read_from_its_flags_not_its_operstate() {
+        assert_eq!(super::interface_is_up("0x49\n"), Some(true));
+        assert_eq!(super::interface_is_up("0x8\n"), Some(false));
+        assert_eq!(super::interface_is_up("unknown\n"), None);
+    }
+
+    #[test]
+    fn listening_ports_leave_out_loopback_and_open_connections() {
+        let table = "  sl  local_address rem_address   st\n   0: 00000000:0016 00000000:0000 0A\n   1: 0100007F:20E0 00000000:0000 0A\n   2: 0A00000C:0016 0A000002:C1A2 01\n";
+        assert_eq!(super::listening_ports(table), [22]);
+    }
+
     #[test]
     fn a_recording_request_is_read_as_seconds_and_a_rate() {
         assert_eq!(super::parse_record_request("20:2"), Ok((20, 2)));
