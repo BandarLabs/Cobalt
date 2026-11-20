@@ -513,6 +513,36 @@ route generations through a ten-minute soak without adding network lifecycle
 operations. It is a diagnostic harness, not a fix. Do not toggle Wi-Fi until
 its passive soak has completed.
 
+### Tailscale across a session
+
+No reader has run the Tailscale service yet. Everything about it has been
+tested against stand-ins for the two Tailscale programs, so every claim below
+about a kernel is a question, not an answer.
+
+The service needs the kernel's tunnel driver, and nothing in the repository
+says which firmware builds have it. The two kernels in the support matrix,
+4.9.77 on the MediaTek readers and 4.1.15 on the i.MX6 ones, are both recent
+enough for the Tailscale programs themselves, which need 3.2. Whether either
+was built with the driver is unknown. `kobo doctor` reads what it can without
+touching anything: the driver being registered in `/proc/misc` is certain,
+and its absence there is not proof, because a module would only load when the
+device node is first opened. The supervisor opens the node before it does
+anything else, and a kernel without the driver produces **Not supported** in
+the app rather than a daemon that fails later. There is no fallback to
+Tailscale's userspace networking. That mode hands tailnet connections to
+loopback, which would offer the tailnet the ports this runtime deliberately
+keeps on loopback, such as the Sync engine's.
+
+Tailscale is started by the session when its switch is on and ended before
+the stock reader comes back, ahead of the supplicant hand-back described
+above, so the tunnel is never up while the radio changes owner. It does not
+run under the stock reader or while the reader sleeps. What has not been
+measured on any reader: the daemon's memory beside a running app, whether its
+link monitoring disturbs the hand-back, how long a reconnect takes after the
+radio returns, and whether the daemon's routing works without the packet
+filter tools the firmware lacks. The app's README lists the evidence to
+capture on a first run.
+
 ### The three watchdogs
 
 Three separate things on this device will reset it, and for a long time they
