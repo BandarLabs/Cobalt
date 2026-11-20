@@ -1,1 +1,754 @@
-/* placeholder */
+/*
+ * Paper and ink.
+ *
+ * The page takes its look from the thing it is for: a reader's screen. A warm
+ * off-white ground, near-black text, a book face for anything meant to be
+ * read and the system face for anything meant to be pressed. One colour
+ * besides ink, used only where the eye has to find something: a link, the
+ * focused control, work in progress. Structure comes from type size, weight
+ * and space, and from hairlines where two things need telling apart, never
+ * from a box around a box.
+ *
+ * Every measure is a step of one scale, so that two things which look
+ * related are the same distance apart everywhere.
+ */
+
+:root {
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --s8: 64px;
+
+  --sans: -apple-system, system-ui, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", P052, Georgia, serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --paper: #f6f4ed;
+  --sunk: #eeebe1;
+  --ink: #1b1a17;
+  --soft: #5f5d55;
+  --rule: rgba(27, 26, 23, 0.14);
+  --edge: rgba(27, 26, 23, 0.38);
+  --accent: #1d3f95;
+  --wash: rgba(29, 63, 149, 0.1);
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #171613;
+    --sunk: #1f1e1a;
+    --ink: #e9e6dc;
+    --soft: #a29f94;
+    --rule: rgba(233, 230, 220, 0.15);
+    --edge: rgba(233, 230, 220, 0.4);
+    --accent: #a3b8ff;
+    --wash: rgba(163, 184, 255, 0.14);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/22px var(--sans);
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+::selection {
+  background: var(--wash);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* The frame: places down the side on a wide window, across the top on a
+   narrow one. */
+
+.frame {
+  display: grid;
+  grid-template-columns: 13.5rem minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.masthead {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: var(--s7) var(--s5) var(--s5) var(--s6);
+  border-right: 1px solid var(--rule);
+}
+
+.wordmark {
+  font: 400 26px/32px var(--serif);
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  text-decoration: none;
+  align-self: flex-start;
+}
+
+.places {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  margin-top: var(--s6);
+  margin-left: calc(-1 * var(--s3));
+}
+
+.places a {
+  padding: 5px var(--s3);
+  border-left: 2px solid transparent;
+  color: var(--soft);
+  text-decoration: none;
+}
+
+.places a:hover {
+  color: var(--ink);
+}
+
+.places a[aria-current="page"] {
+  border-left-color: var(--ink);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.colophon {
+  margin: auto 0 0;
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.colophon span {
+  display: block;
+}
+
+.column {
+  width: 100%;
+  max-width: 44rem;
+  padding: var(--s7) var(--s7) var(--s8);
+}
+
+/* Type. */
+
+h1 {
+  margin: 0 0 var(--s6);
+  font: 400 34px/40px var(--serif);
+  letter-spacing: -0.005em;
+}
+
+h2 {
+  margin: 0 0 var(--s2);
+  font: 400 24px/30px var(--serif);
+}
+
+h3 {
+  margin: var(--s6) 0 var(--s2);
+  font: 600 14px/20px var(--sans);
+  color: var(--soft);
+}
+
+p {
+  margin: 0 0 var(--s3);
+}
+
+.lead {
+  font: 400 20px/29px var(--serif);
+  margin-bottom: var(--s3);
+}
+
+.reading,
+.reading p,
+.reading li {
+  font: 400 17px/26px var(--serif);
+}
+
+.quiet {
+  color: var(--soft);
+}
+
+.small {
+  font-size: 13px;
+  line-height: 19px;
+}
+
+a {
+  color: var(--accent);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+code,
+.path {
+  font: 13px/20px var(--mono);
+  overflow-wrap: break-word;
+}
+
+/* A note set apart from what it sits in: a rule down its left and nothing
+   else. The heavier rule is for what went wrong. */
+
+.note {
+  margin: var(--s5) 0;
+  padding: 2px 0 2px var(--s4);
+  border-left: 2px solid var(--edge);
+}
+
+.note > :last-child {
+  margin-bottom: 0;
+}
+
+.note.wrong {
+  border-left-color: var(--ink);
+}
+
+
+/* Facts: a name and what it is, a hairline between each pair. */
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  margin: var(--s5) 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.facts dt,
+.facts dd {
+  margin: 0;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.facts dt {
+  padding-right: var(--s6);
+  color: var(--soft);
+}
+
+.facts dd {
+  overflow-wrap: anywhere;
+}
+
+/* Controls. */
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 5px 14px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: transparent;
+  font: 500 15px/20px var(--sans);
+  white-space: nowrap;
+  cursor: default;
+}
+
+.button:hover:not(:disabled) {
+  background: var(--sunk);
+}
+
+.button:active:not(:disabled) {
+  border-color: var(--ink);
+}
+
+.button.primary {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.button.primary:hover:not(:disabled) {
+  background: var(--ink);
+  opacity: 0.86;
+}
+
+.button:disabled {
+  opacity: 0.42;
+}
+
+.plain {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s2);
+  margin-top: var(--s5);
+}
+
+.after {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2) var(--s5);
+  margin-top: var(--s5);
+}
+
+.field {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  background: var(--paper);
+}
+
+.field::placeholder {
+  color: var(--soft);
+  opacity: 0.8;
+}
+
+select.field {
+  width: auto;
+  max-width: 100%;
+}
+
+label.over {
+  display: block;
+  margin-bottom: var(--s1);
+  color: var(--soft);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.row {
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+}
+
+.row .field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Work in progress: a hairline with a short run of colour moving along it.
+   Nothing spins and nothing counts up, because nothing knows how long. */
+
+.working {
+  position: relative;
+  height: 2px;
+  margin: var(--s4) 0 var(--s5);
+  overflow: hidden;
+  background: var(--rule);
+}
+
+.working::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 28%;
+  background: var(--accent);
+  animation: along 1.8s ease-in-out infinite;
+}
+
+@keyframes along {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(360%);
+  }
+}
+
+progress {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin: var(--s3) 0;
+  accent-color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working::after {
+    animation: none;
+    width: 100%;
+    opacity: 0.45;
+  }
+}
+
+/* What a command said, set as something to read. */
+
+.said {
+  margin-top: var(--s4);
+}
+
+.said p,
+.said li,
+.said dd,
+.said dt {
+  font: 400 16px/25px var(--serif);
+}
+
+.said h3:first-child {
+  margin-top: 0;
+}
+
+.said ol,
+.said ul,
+.steps {
+  margin: 0 0 var(--s4);
+  padding-left: var(--s5);
+}
+
+.said li,
+.steps li {
+  margin-bottom: var(--s2);
+  padding-left: var(--s1);
+}
+
+.said ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.said ul li {
+  padding-left: var(--s4);
+  border-left: 1px solid var(--rule);
+  margin-bottom: 0;
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.said pre {
+  margin: 0 0 var(--s3);
+  font: 13px/20px var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.said .facts {
+  margin: 0 0 var(--s4);
+}
+
+.said .facts dt,
+.said .facts dd {
+  font: inherit;
+  padding: 6px 0;
+}
+
+.said .facts dt {
+  padding-right: var(--s5);
+}
+
+.said .error {
+  font-weight: 600;
+}
+
+.plan {
+  margin: var(--s4) 0 0;
+  padding: 0;
+  list-style: none;
+  border-bottom: 1px solid var(--rule);
+}
+
+.plan li {
+  padding: var(--s3) 0;
+  border-top: 1px solid var(--rule);
+  font: 400 16px/25px var(--serif);
+  overflow-wrap: anywhere;
+}
+
+details.whole {
+  margin-top: var(--s5);
+}
+
+details.whole summary {
+  color: var(--soft);
+  cursor: pointer;
+  width: fit-content;
+}
+
+/* Lists of things with something to do beside each: apps, browsers, what
+   is waiting. A hairline above each entry and one below the last. */
+
+.entries {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-bottom: 1px solid var(--rule);
+}
+
+.entries > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--s1) var(--s5);
+  align-items: start;
+  padding: var(--s3) 0 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.entries .name {
+  font-weight: 600;
+}
+
+.entries .version {
+  margin-left: var(--s2);
+  color: var(--soft);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.entries .about {
+  grid-column: 1;
+  margin: 0;
+  color: var(--soft);
+  font: 400 15px/22px var(--serif);
+}
+
+.entries .about.path {
+  font: 13px/20px var(--mono);
+}
+
+.entries .does {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: flex;
+  gap: var(--s2);
+  align-items: center;
+}
+
+.entries .wide {
+  grid-column: 1 / -1;
+}
+
+/* An entry with something written under it keeps its button on the first
+   line, beside the name, so the two do not collide lower down. */
+.entries .tall .does {
+  grid-row: 1;
+}
+
+.entries .tall .wide {
+  grid-row: 2;
+}
+
+.entries .step {
+  margin-top: var(--s2);
+}
+
+.entries .step p {
+  margin-bottom: var(--s2);
+  font: 400 15px/22px var(--serif);
+}
+
+.entries .step .row {
+  align-items: start;
+  justify-content: space-between;
+  gap: var(--s4);
+}
+
+.entries .step .path {
+  padding-top: 6px;
+}
+
+.entries .state {
+  color: var(--soft);
+  font-weight: 400;
+  margin-left: var(--s2);
+}
+
+.toolbar {
+  display: flex;
+  gap: var(--s3);
+  align-items: end;
+  margin-bottom: var(--s5);
+}
+
+.toolbar .grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.strip {
+  margin: 0 0 var(--s5);
+  padding: var(--s3) 0 var(--s1);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+
+.strip .working {
+  margin: var(--s2) 0 var(--s3);
+}
+
+.strip p {
+  margin-bottom: var(--s2);
+}
+
+/* Somewhere to put a file. The one dashed line on the page, because it is
+   the one place something is dragged to. */
+
+.drop {
+  margin-top: var(--s2);
+  padding: var(--s5);
+  border: 1px dashed var(--edge);
+  border-radius: 8px;
+}
+
+.drop.over {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--wash);
+}
+
+.drop p:last-child {
+  margin-bottom: 0;
+}
+
+.choices {
+  margin: var(--s3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.choices label {
+  display: flex;
+  gap: var(--s2);
+  align-items: baseline;
+  padding: var(--s1) 0;
+}
+
+.choices input {
+  accent-color: var(--accent);
+  margin: 0;
+  transform: translateY(1px);
+}
+
+.part + .part {
+  margin-top: var(--s7);
+}
+
+.part > h2 {
+  margin-bottom: var(--s3);
+}
+
+.noscript {
+  max-width: 40rem;
+  margin: var(--s7) auto;
+  padding: 0 var(--s5);
+  font: 400 17px/26px var(--serif);
+}
+
+/* A narrow window: the places move to the top and everything else keeps
+   its proportions on a tighter measure. */
+
+@media (max-width: 760px) {
+  .frame {
+    display: block;
+  }
+
+  .masthead {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s2) var(--s5);
+    padding: var(--s4) var(--s5) 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .wordmark {
+    font-size: 22px;
+    line-height: 28px;
+  }
+
+  .places {
+    flex-direction: row;
+    gap: var(--s4);
+    margin: 0 0 -1px;
+    flex: 1 0 100%;
+  }
+
+  .places a {
+    padding: var(--s2) 0 10px;
+    border-left: 0;
+    border-bottom: 2px solid transparent;
+  }
+
+  .places a[aria-current="page"] {
+    border-bottom-color: var(--ink);
+  }
+
+  .colophon {
+    display: none;
+  }
+
+  .column {
+    padding: var(--s6) var(--s5) var(--s7);
+  }
+
+  h1 {
+    font-size: 28px;
+    line-height: 34px;
+    margin-bottom: var(--s5);
+  }
+
+  h2 {
+    font-size: 21px;
+    line-height: 27px;
+  }
+
+  .lead {
+    font-size: 18px;
+    line-height: 26px;
+  }
+
+  .entries > li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .entries .does,
+  .entries .tall .does,
+  .entries .tall .wide {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .entries .does {
+    margin-top: var(--s2);
+  }
+
+  .toolbar {
+    flex-wrap: wrap;
+  }
+}

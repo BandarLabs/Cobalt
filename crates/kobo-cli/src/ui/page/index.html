@@ -11,6 +11,48 @@
 <script type="module" src="/app.js"></script>
 </head>
 <body>
-<main id="app"></main>
+<div class="frame">
+  <header class="masthead">
+    <a class="wordmark" href="#reader">Cobalt</a>
+    <nav class="places" aria-label="Places">
+      <a href="#reader" data-place="reader">Reader</a>
+      <a href="#apps" data-place="apps">Apps</a>
+      <a href="#browser" data-place="browser">Browser</a>
+      <a href="#send" data-place="send">Send</a>
+    </nav>
+    <p class="colophon" id="colophon"></p>
+  </header>
+
+  <main class="column">
+    <section id="place-reader" aria-labelledby="title-reader" hidden>
+      <h1 id="title-reader">Reader</h1>
+      <div data-body></div>
+    </section>
+
+    <section id="place-apps" aria-labelledby="title-apps" hidden>
+      <h1 id="title-apps">Apps</h1>
+      <div data-body></div>
+    </section>
+
+    <section id="place-browser" aria-labelledby="title-browser" hidden>
+      <h1 id="title-browser">Browser</h1>
+      <div data-body></div>
+    </section>
+
+    <section id="place-send" aria-labelledby="title-send" hidden>
+      <h1 id="title-send">Send</h1>
+      <div data-body></div>
+    </section>
+
+    <section id="place-lost" aria-labelledby="title-lost" hidden>
+      <h1 id="title-lost">This window has stopped</h1>
+      <p class="lead">The kobo ui command behind this window is no longer running, so nothing here can be done from it.</p>
+      <p>Run <code>kobo ui</code> in a terminal to open a new one. Anything that had finished is still done.</p>
+    </section>
+  </main>
+</div>
+<noscript>
+  <p class="noscript">This page needs JavaScript, which is turned off in this browser. Every task here is also a command: kobo setup, kobo apps, kobo clip and kobo send.</p>
+</noscript>
 </body>
 </html>

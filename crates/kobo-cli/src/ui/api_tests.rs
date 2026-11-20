@@ -278,6 +278,10 @@ fn installing_updating_and_removing_cobalt_run_setup_with_its_confirmation_given
     let reply = page.post("/api/reader/install", &volume_body(&installed));
     let report = page.finished(reply.json()["job"].as_u64().expect("a job"));
     assert_eq!(report["title"], "Updating Cobalt");
+    let same = desk.plug("same", CLARA_BW, Some("0.3.37"));
+    let reply = page.post("/api/reader/install", &volume_body(&same));
+    let report = page.finished(reply.json()["job"].as_u64().expect("a job"));
+    assert_eq!(report["title"], "Installing Cobalt again");
 
     let reply = page.post("/api/reader/remove", &volume_body(&installed));
     let report = page.finished(reply.json()["job"].as_u64().expect("a job"));
@@ -292,9 +296,9 @@ fn installing_updating_and_removing_cobalt_run_setup_with_its_confirmation_given
 
     // The jobs are in the state a reloaded page starts from.
     let jobs = page.get("/api/state").json()["jobs"].clone();
-    assert_eq!(jobs.as_array().expect("jobs").len(), 3);
-    assert_eq!(jobs[2]["title"], "Removing Cobalt");
-    assert_eq!(jobs[2]["running"], false);
+    assert_eq!(jobs.as_array().expect("jobs").len(), 4);
+    assert_eq!(jobs[3]["title"], "Removing Cobalt");
+    assert_eq!(jobs[3]["running"], false);
 }
 
 #[cfg(unix)]
@@ -422,7 +426,6 @@ fn apps_are_listed_installed_updated_and_removed_through_the_signed_catalog() {
         said.contains("Orrery 2.0.0 needs Cobalt 999.0.0 or newer, and this reader has 0.3.37.")
     );
     assert!(said.contains("The catalog has no app with the id sundial."));
-    assert!(said.contains("Eject the reader before you unplug it"));
     assert_eq!(report["ok"], false, "two of the three failed");
     assert_eq!(report["title"], "Installing apps");
 

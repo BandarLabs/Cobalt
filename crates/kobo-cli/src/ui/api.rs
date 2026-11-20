@@ -591,10 +591,14 @@ fn install_cobalt(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         arguments.push("--release-dir".to_owned());
         arguments.push(directory.to_string_lossy().into_owned());
     }
-    let title = if usb::Installation::on(&reader.volume).is_ok() {
-        "Updating Cobalt"
-    } else {
-        "Installing Cobalt"
+    // Named for what the owner will see happen. Setup does the same thing in
+    // all three cases; it is the reader that differs.
+    let title = match usb::Installation::on(&reader.volume) {
+        Ok(installation) if Ok(&installation.version) == shared.machine.release.as_ref() => {
+            "Installing Cobalt again"
+        }
+        Ok(_) => "Updating Cobalt",
+        Err(_) => "Installing Cobalt",
     };
     start_command(shared, Kind::Reader, title, arguments, None, || {})
 }
@@ -772,7 +776,6 @@ fn install_apps(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
                 }
             };
             let mut failures = 0;
-            let mut changed = false;
             for id in &ids {
                 let Some(app) = apps.iter().find(|app| app.id == *id) else {
                     failures += 1;
@@ -784,20 +787,12 @@ fn install_apps(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
                     app.title, app.version
                 ));
                 match installation.install(app, &machine.key, fetch) {
-                    Ok(outcome) => {
-                        changed |= outcome.changed();
-                        job.say(&format!("{}\n", outcome.sentence(&app.title)));
-                    }
+                    Ok(outcome) => job.say(&format!("{}\n", outcome.sentence(&app.title))),
                     Err(error) => {
                         failures += 1;
                         job.say(&format!("{}\n", console::display(&error)));
                     }
                 }
-            }
-            if changed {
-                job.say(
-                    "\nEject the reader before you unplug it, so the change is fully written.\n",
-                );
             }
             Finish {
                 ok: failures == 0,
