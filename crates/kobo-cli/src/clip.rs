@@ -38,8 +38,8 @@ the next clip that finds the reader awake. --later keeps it waiting without
 trying now. --out saves it to a file or folder on this computer instead and
 sends nothing.
 
-install adds Send to Kobo to a browser's right-click menu, and uninstall
-takes it away again.";
+install adds Send to Kobo to a browser's toolbar and right-click menu, and
+uninstall takes it away again.";
 
 struct Request {
     source: Source,

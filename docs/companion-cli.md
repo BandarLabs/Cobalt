@@ -108,11 +108,14 @@ also asks, without a word unless something arrives, each time it opens.
 ### From the browser
 
 `kobo clip install --browser chrome` (or `edge`, `brave`, `chromium`,
-`firefox`, `safari`, or `--all` for every one found here) adds Send page to
-Kobo, Send link to Kobo and Send selection to Kobo to the browser's
-right-click menu. The extension sends the page as you see it, so a page you
-signed in to read clips as it reads, and a notification says Sending to
-your Kobo, then Landed on your Kobo or Waiting for your Kobo.
+`firefox`, `safari`, or `--all` for every one found here) adds a Send to
+Kobo button to the browser's toolbar, which sends the page you are on with
+one click or with Alt+Shift+K, and adds Send page to Kobo, Send link to Kobo
+and Send selection to Kobo to the right-click menu. The extension sends the
+page as you see it, so a page you signed in to read clips as it reads, and a
+notification says Sending to your Kobo, then Landed on your Kobo or Waiting
+for your Kobo. A browser may keep the button in its extensions menu until
+you pin it, and its shortcuts page is where to change the keys.
 
 Install writes the small manifest each browser reads to find `kobo` (in your
 own profile folders, or under `HKEY_CURRENT_USER` on Windows) and copies the
