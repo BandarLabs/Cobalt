@@ -27,11 +27,21 @@ use super::http::{Malformed, Response};
 use super::jobs::{self, Finish, Kind};
 use super::page;
 use super::server::{Request, Route, Shared};
+use super::surroundings::{self, Room};
 use crate::apps::usb;
 use crate::clip_delivery as delivery;
 use crate::clip_install::{self, Browser, Os, Registration};
 use crate::detect::{self, Companion};
 use crate::{console, readers, setup};
+
+/// Which shape of answers this is.
+///
+/// Raised when a field a front end relies on changes meaning or goes away,
+/// never for an addition. The Mac app is installed beside this command but
+/// is a separate program, so the two can be different releases for as long
+/// as an update takes; a front end that sees a number it was not written
+/// for says so instead of drawing answers it may be misreading.
+const API: u32 = 1;
 
 /// The route the page calls as it closes.
 pub const GOODBYE: &str = "/api/goodbye";
@@ -168,6 +178,15 @@ pub type Eject = Box<dyn Fn(&Path) -> Result<(), String> + Send + Sync>;
 /// How the mounted readers are found.
 pub type Readers = Box<dyn Fn() -> Vec<setup::Mounted> + Send + Sync>;
 
+/// How a volume's free space and writability are read.
+pub type RoomOf = Box<dyn Fn(&Path) -> Room + Send + Sync>;
+
+/// How the drives the system would not let this process read are found.
+pub type Blocked = Box<dyn Fn() -> Vec<PathBuf> + Send + Sync>;
+
+/// How the Kobos on the USB bus are counted, when this system can count.
+pub type Attached = Box<dyn Fn() -> Option<usize> + Send + Sync>;
+
 /// What the handlers know about the computer they are running on.
 ///
 /// Everything that reaches outside this process is a field here: where
@@ -189,6 +208,9 @@ pub struct Machine {
     pub fetch: Transport,
     pub key: Ed25519PublicKey,
     pub eject: Eject,
+    pub room: RoomOf,
+    pub blocked: Blocked,
+    pub attached: Attached,
     pub home: PathBuf,
     /// The companion's own folder: saved readers, the clip queue, the
     /// extension.
@@ -257,9 +279,18 @@ impl Machine {
         let program = std::env::current_exe()
             .and_then(fs::canonicalize)
             .map_err(|error| format!("could not find this kobo command: {error}"))?;
-        let readers: Readers = match volume {
-            Some(volume) => Box::new(move || setup::read_reader(&volume).into_iter().collect()),
-            None => Box::new(setup::mounted_readers),
+        let (readers, blocked): (Readers, Blocked) = match volume {
+            Some(volume) => {
+                let named = volume.clone();
+                (
+                    Box::new(move || setup::read_reader(&volume).into_iter().collect()),
+                    Box::new(move || surroundings::refused(std::slice::from_ref(&named))),
+                )
+            }
+            None => (
+                Box::new(setup::mounted_readers),
+                Box::new(|| surroundings::refused(&surroundings::removable_volumes())),
+            ),
         };
         Ok(Self {
             program,
@@ -270,6 +301,9 @@ impl Machine {
             fetch: Box::new(usb::published),
             key: usb::release_key()?,
             eject: Box::new(setup::eject),
+            room: Box::new(surroundings::room),
+            blocked,
+            attached: Box::new(surroundings::kobos_attached),
             home: kobo_abi::home_directory().unwrap_or_default(),
             config: delivery::config_root(),
             uploads: Mutex::default(),
@@ -360,15 +394,60 @@ fn text<'a>(body: &'a Value, field: &str) -> Option<&'a str> {
 }
 
 fn bad(message: &str) -> Response {
-    Response::refusal(400, "Bad Request", message)
+    Response::refusal(400, "Bad Request", "bad_request", message)
 }
 
-fn conflict(message: &str) -> Response {
-    Response::refusal(409, "Conflict", message)
+fn conflict(kind: &str, message: &str) -> Response {
+    Response::refusal(409, "Conflict", kind, console::display(message))
 }
 
 fn failed(message: &str) -> Response {
-    Response::refusal(500, "Internal Server Error", console::display(message))
+    Response::refusal(
+        500,
+        "Internal Server Error",
+        "failed",
+        console::display(message),
+    )
+}
+
+/// The answer when a job of the same kind is already running.
+fn busy(title: &str) -> Response {
+    conflict(
+        "busy",
+        &format!("{title} has not finished yet. Wait for it, then try again."),
+    )
+}
+
+/// A failure from the reader's app store, as the status and kind that tell
+/// a front end what it was.
+fn store_failed(failure: &usb::Failure) -> Response {
+    let (status, reason, kind) = match failure.trouble {
+        usb::Trouble::Unreachable => (502, "Bad Gateway", "unreachable"),
+        usb::Trouble::Integrity => (502, "Bad Gateway", "integrity"),
+        usb::Trouble::Missing => (404, "Not Found", "not_found"),
+        usb::Trouble::TooOld => (409, "Conflict", "refused"),
+        usb::Trouble::Write => (500, "Internal Server Error", "write_failed"),
+        usb::Trouble::Other => (500, "Internal Server Error", "failed"),
+    };
+    Response::refusal(status, reason, kind, &failure.said)
+}
+
+/// Refuses to start writing to a card that is mounted read-only.
+///
+/// A reader's card comes up read-only when its filesystem was left dirty,
+/// usually by a cable pulled without ejecting. Every write would fail one
+/// file in, with whatever the system happens to say; this says what is
+/// wrong and what clears it before anything is attempted.
+fn card_takes_writes(shared: &Shared, reader: &setup::Mounted) -> Result<(), Response> {
+    if (shared.machine.room)(&reader.volume).writable == Some(false) {
+        return Err(conflict(
+            "read_only",
+            "The reader's storage is mounted read-only, so nothing can be written to it. \
+             Eject it, unplug it, restart the reader and connect it again. If it comes back \
+             read-only, its storage needs repairing from the reader's own settings.",
+        ));
+    }
+    Ok(())
 }
 
 /// The mounted reader a request names.
@@ -389,6 +468,7 @@ fn named_reader(shared: &Shared, volume: Option<&str>) -> Result<setup::Mounted,
             Response::refusal(
                 404,
                 "Not Found",
+                "gone",
                 "That reader is no longer connected. Plug it in and tap Connect on its screen.",
             )
         })
@@ -397,9 +477,7 @@ fn named_reader(shared: &Shared, volume: Option<&str>) -> Result<setup::Mounted,
 /// Refuses while a job is writing to a reader.
 fn reader_is_free(shared: &Shared) -> Result<(), Response> {
     match shared.jobs.busy(Kind::Reader) {
-        Some(title) => Err(conflict(&format!(
-            "{title} has not finished yet. Wait for it, then try again."
-        ))),
+        Some(title) => Err(busy(&title)),
         None => Ok(()),
     }
 }
@@ -409,6 +487,7 @@ fn start_command(
     shared: &Arc<Shared>,
     kind: Kind,
     title: &str,
+    volume: Option<&Path>,
     arguments: Vec<String>,
     directory: Option<PathBuf>,
     after: impl FnOnce() + Send + 'static,
@@ -417,14 +496,13 @@ fn start_command(
     let started = shared.jobs.start(
         kind,
         title,
+        volume,
         move |job| jobs::run_child(&program, &arguments, directory.as_deref(), job),
         after,
     );
     match started {
         Ok(id) => Response::ok(&json!({ "job": id })),
-        Err(busy) => conflict(&format!(
-            "{busy} has not finished yet. Wait for it, then try again."
-        )),
+        Err(title) => busy(&title),
     }
 }
 
@@ -469,6 +547,7 @@ fn reader_json(machine: &Machine, reader: &setup::Mounted) -> Value {
         .as_ref()
         .and_then(|cobalt| cobalt.get("cobalt_version"))
         .and_then(Value::as_str);
+    let room = (machine.room)(&reader.volume);
     json!({
         "volume": reader.volume.to_string_lossy(),
         "model": model,
@@ -480,6 +559,8 @@ fn reader_json(machine: &Machine, reader: &setup::Mounted) -> Value {
         "standing": standing(version, machine.release.as_ref()),
         "cobalt": cobalt,
         "cobalt_problem": cobalt_problem,
+        "free_bytes": room.free,
+        "writable": room.writable,
     })
 }
 
@@ -492,13 +573,26 @@ fn state(shared: &Arc<Shared>, _: &mut Request<'_>) -> Response {
         .map(|reader| reader_json(machine, reader))
         .collect();
     Response::ok(&json!({
+        "api": API,
         "computer": {
             "kobo": env!("CARGO_PKG_VERSION"),
+            "os": if cfg!(target_os = "macos") {
+                "macos"
+            } else if cfg!(windows) {
+                "windows"
+            } else {
+                "linux"
+            },
             "release": machine.release.as_ref().ok(),
             "release_problem": machine.release.as_ref().err(),
             "ejects": cfg!(target_os = "macos"),
             "upload_limit": shared.limits.upload,
         },
+        "attached": (machine.attached)(),
+        "blocked": (machine.blocked)()
+            .iter()
+            .map(|volume| volume.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
         "readers": readers,
         "jobs": shared.jobs.summaries(),
     }))
@@ -533,7 +627,7 @@ fn plan(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
     };
     let identified = match identified {
         Ok(identified) => identified,
-        Err(reason) => return conflict(&reason),
+        Err(reason) => return conflict("refused", &reason),
     };
     Response::ok(&json!({
         "undo": undo,
@@ -575,10 +669,13 @@ fn install_cobalt(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         Err(refusal) => return refusal,
     };
     if let Err(reason) = setup::install_profile(&reader) {
-        return conflict(&reason);
+        return conflict("refused", &reason);
     }
     if let Err(problem) = &shared.machine.release {
-        return conflict(problem);
+        return conflict("refused", problem);
+    }
+    if let Err(refusal) = card_takes_writes(shared, &reader) {
+        return refusal;
     }
     let mut arguments = vec![
         "setup".to_owned(),
@@ -600,7 +697,15 @@ fn install_cobalt(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         Ok(_) => "Updating Cobalt",
         Err(_) => "Installing Cobalt",
     };
-    start_command(shared, Kind::Reader, title, arguments, None, || {})
+    start_command(
+        shared,
+        Kind::Reader,
+        title,
+        Some(&reader.volume),
+        arguments,
+        None,
+        || {},
+    )
 }
 
 /// `POST /api/reader/remove`: takes Cobalt off the reader with
@@ -614,6 +719,9 @@ fn remove_cobalt(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         Ok(reader) => reader,
         Err(refusal) => return refusal,
     };
+    if let Err(refusal) = card_takes_writes(shared, &reader) {
+        return refusal;
+    }
     let arguments = vec![
         "setup".to_owned(),
         "--undo".to_owned(),
@@ -626,6 +734,7 @@ fn remove_cobalt(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         shared,
         Kind::Reader,
         "Removing Cobalt",
+        Some(&reader.volume),
         arguments,
         None,
         || {},
@@ -652,10 +761,15 @@ fn eject(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
 }
 
 /// The installation on the reader a request names, with the store held.
+///
+/// `writes` says whether the answer will write to the card, so that a card
+/// mounted read-only is refused with its own sentence instead of with
+/// whatever the first failed write happens to say.
 fn with_installation(
     shared: &Arc<Shared>,
     volume: Option<&str>,
-    answer: impl FnOnce(&usb::Installation) -> Result<Value, String>,
+    writes: bool,
+    answer: impl FnOnce(&usb::Installation) -> Result<Value, usb::Failure>,
 ) -> Response {
     let reader = match named_reader(shared, volume) {
         Ok(reader) => reader,
@@ -664,9 +778,14 @@ fn with_installation(
     if let Err(refusal) = reader_is_free(shared) {
         return refusal;
     }
+    if writes {
+        if let Err(refusal) = card_takes_writes(shared, &reader) {
+            return refusal;
+        }
+    }
     let installation = match usb::Installation::on(&reader.volume) {
         Ok(installation) => installation,
-        Err(error) => return conflict(console::display(&error)),
+        Err(error) => return conflict("no_cobalt", &error),
     };
     let Ok(_held) = shared.machine.store.lock() else {
         return failed("the reader's app store is in use");
@@ -676,17 +795,50 @@ fn with_installation(
             value["reader"] = usb::installation_json(&installation);
             Response::ok(&value)
         }
-        Err(error) => failed(&error),
+        Err(failure) => store_failed(&failure),
     }
 }
 
-fn apps_json(installation: &usb::Installation, apps: &[kobo_protocol::AppInfo]) -> Value {
+/// What installing an app needs beyond its own bytes: the staged manifest
+/// and signature beside the binary, and the directory entries for all
+/// three. Generous, because being told something fits and then watching it
+/// fail is worse than being told it does not.
+const ROOM_TO_SPARE: u64 = 256 * 1024;
+
+/// The apps as a front end lists them, each with how large it is once
+/// installed and whether the reader has room for it, where either is known.
+fn apps_json(
+    machine: &Machine,
+    installation: &usb::Installation,
+    apps: &[kobo_protocol::AppInfo],
+) -> Value {
+    let sizes = installation.sizes(&machine.key);
+    let free = (machine.room)(&installation.volume).free;
     json!({
         "apps": apps
             .iter()
-            .map(|app| usb::app_json(installation, app))
+            .map(|app| {
+                let mut entry = usb::app_json(installation, app);
+                let bytes = sizes.get(&app.id).copied();
+                entry["bytes"] = json!(bytes);
+                entry["fits"] = json!(bytes
+                    .zip(free)
+                    .map(|(bytes, free)| bytes.saturating_add(ROOM_TO_SPARE) <= free));
+                entry
+            })
             .collect::<Vec<_>>(),
     })
+}
+
+/// A size as an owner reads it, in the decimal units a reader's own
+/// storage screen uses.
+fn megabytes(bytes: u64) -> String {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a size shown to one decimal place of a megabyte"
+    )]
+    let megabytes = bytes as f64 / 1_000_000.0;
+    format!("{megabytes:.1} MB")
 }
 
 /// `GET /api/apps`: the apps on the reader, from the volume alone.
@@ -697,9 +849,9 @@ fn apps_json(installation: &usb::Installation, apps: &[kobo_protocol::AppInfo]) 
 /// to. It changes nothing an owner chose and is the same whoever asks.
 fn installed_apps(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
     let volume = request.head.query("volume");
-    with_installation(shared, volume.as_deref(), |installation| {
+    with_installation(shared, volume.as_deref(), false, |installation| {
         let apps = installation.installed(&shared.machine.key)?;
-        Ok(apps_json(installation, &apps))
+        Ok(apps_json(&shared.machine, installation, &apps))
     })
 }
 
@@ -711,10 +863,10 @@ fn catalog(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         Ok(body) => body,
         Err(refusal) => return refusal,
     };
-    with_installation(shared, text(&body, "volume"), |installation| {
+    with_installation(shared, text(&body, "volume"), true, |installation| {
         let machine = &shared.machine;
         let apps = installation.available(&machine.key, |url, most| (machine.fetch)(url, most))?;
-        Ok(apps_json(installation, &apps))
+        Ok(apps_json(machine, installation, &apps))
     })
 }
 
@@ -741,9 +893,12 @@ fn install_apps(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
     let Some(ids) = ids.filter(|ids| !ids.is_empty() && ids.len() <= MOST_APPS) else {
         return bad("Name the apps to install by their ids.");
     };
+    if let Err(refusal) = card_takes_writes(shared, &reader) {
+        return refusal;
+    }
     let installation = match usb::Installation::on(&reader.volume) {
         Ok(installation) => installation,
-        Err(error) => return conflict(console::display(&error)),
+        Err(error) => return conflict("no_cobalt", &error),
     };
     let title = if ids.len() == 1 {
         "Installing an app"
@@ -754,58 +909,79 @@ fn install_apps(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
     let started = shared.jobs.start(
         Kind::Reader,
         title,
-        move |job| {
-            let machine = &working.machine;
-            let Ok(_held) = machine.store.lock() else {
-                job.say("The reader's app store is in use.\n");
-                return Finish {
-                    ok: false,
-                    code: None,
-                };
-            };
-            let fetch = |url: &str, most: u32| (machine.fetch)(url, most);
-            job.say("Fetching the signed app catalog.\n");
-            let apps = match installation.available(&machine.key, fetch) {
-                Ok(apps) => apps,
-                Err(error) => {
-                    job.say(&format!("{}\n", console::display(&error)));
-                    return Finish {
-                        ok: false,
-                        code: None,
-                    };
-                }
-            };
-            let mut failures = 0;
-            for id in &ids {
-                let Some(app) = apps.iter().find(|app| app.id == *id) else {
-                    failures += 1;
-                    job.say(&format!("The catalog has no app with the id {id}.\n"));
-                    continue;
-                };
-                job.say(&format!(
-                    "Fetching and checking {} {}.\n",
-                    app.title, app.version
-                ));
-                match installation.install(app, &machine.key, fetch) {
-                    Ok(outcome) => job.say(&format!("{}\n", outcome.sentence(&app.title))),
-                    Err(error) => {
-                        failures += 1;
-                        job.say(&format!("{}\n", console::display(&error)));
-                    }
-                }
-            }
-            Finish {
-                ok: failures == 0,
-                code: None,
-            }
-        },
+        Some(&reader.volume),
+        move |job| install_each(&working.machine, &installation, &ids, job),
         || {},
     );
     match started {
         Ok(id) => Response::ok(&json!({ "job": id })),
-        Err(busy) => conflict(&format!(
-            "{busy} has not finished yet. Wait for it, then try again."
-        )),
+        Err(title) => busy(&title),
+    }
+}
+
+/// The work of an app install: the catalog once, then each app in turn. One
+/// that fails is said and counted and the rest still run.
+fn install_each(
+    machine: &Machine,
+    installation: &usb::Installation,
+    ids: &[String],
+    job: &jobs::Job,
+) -> Finish {
+    let failed = Finish {
+        ok: false,
+        code: None,
+    };
+    let Ok(_held) = machine.store.lock() else {
+        job.say("The reader's app store is in use.\n");
+        return failed;
+    };
+    let fetch = |url: &str, most: u32| (machine.fetch)(url, most);
+    job.say("Fetching the signed app catalog.\n");
+    let apps = match installation.available(&machine.key, fetch) {
+        Ok(apps) => apps,
+        Err(error) => {
+            job.say(&format!("{error}\n"));
+            return failed;
+        }
+    };
+    let sizes = installation.sizes(&machine.key);
+    let mut failures = 0;
+    for id in ids {
+        let Some(app) = apps.iter().find(|app| app.id == *id) else {
+            failures += 1;
+            job.say(&format!("The catalog has no app with the id {id}.\n"));
+            continue;
+        };
+        // Asked afresh for each app, since the one before it took room.
+        let free = (machine.room)(&installation.volume).free;
+        if let Some((bytes, free)) = sizes.get(id).copied().zip(free) {
+            if bytes.saturating_add(ROOM_TO_SPARE) > free {
+                failures += 1;
+                job.say(&format!(
+                    "{} needs {} and the reader has {} free. Remove something from the \
+                     reader and try again.\n",
+                    app.title,
+                    megabytes(bytes),
+                    megabytes(free)
+                ));
+                continue;
+            }
+        }
+        job.say(&format!(
+            "Fetching and checking {} {}.\n",
+            app.title, app.version
+        ));
+        match installation.install(app, &machine.key, fetch) {
+            Ok(outcome) => job.say(&format!("{}\n", outcome.sentence(&app.title))),
+            Err(error) => {
+                failures += 1;
+                job.say(&format!("{error}\n"));
+            }
+        }
+    }
+    Finish {
+        ok: failures == 0,
+        code: None,
     }
 }
 
@@ -818,15 +994,18 @@ fn remove_app(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
     let Some(id) = text(&body, "id").filter(|id| kobo_protocol::valid_app_id(id)) else {
         return bad("Name the app to remove by its id.");
     };
-    with_installation(shared, text(&body, "volume"), |installation| {
+    with_installation(shared, text(&body, "volume"), true, |installation| {
         let key = &shared.machine.key;
         let before = installation.installed(key)?;
         let app = before
             .iter()
             .find(|app| app.id == id)
-            .ok_or_else(|| format!("{id} is not installed on this reader."))?;
+            .ok_or_else(|| usb::Failure {
+                trouble: usb::Trouble::Missing,
+                said: format!("{id} is not installed on this reader."),
+            })?;
         installation.remove(&app.id, key)?;
-        let mut answer = apps_json(installation, &installation.installed(key)?);
+        let mut answer = apps_json(&shared.machine, installation, &installation.installed(key)?);
         answer["removed"] = json!({ "id": app.id, "title": app.title });
         Ok(answer)
     })
@@ -1036,7 +1215,12 @@ fn receive_file(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         }
         Err(detect::ChooseError::Message(why)) => {
             let _ = fs::remove_dir_all(&folder);
-            return Response::refusal(422, "Unprocessable Content", console::display(&why));
+            return Response::refusal(
+                422,
+                "Unprocessable Content",
+                "unsupported_file",
+                console::display(&why),
+            );
         }
     }
     if let Ok(mut uploads) = machine.uploads.lock() {
@@ -1098,10 +1282,8 @@ fn send_file(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         Ok(flags) => arguments.extend(flags),
         Err(refusal) => return refusal,
     }
-    if let Some(busy) = shared.jobs.busy(Kind::Send) {
-        return conflict(&format!(
-            "{busy} has not finished yet. Wait for it, then try again."
-        ));
+    if let Some(title) = shared.jobs.busy(Kind::Send) {
+        return busy(&title);
     }
     let wanted = body.get("upload").and_then(Value::as_u64);
     let upload = machine.uploads.lock().ok().and_then(|mut uploads| {
@@ -1115,6 +1297,7 @@ fn send_file(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         return Response::refusal(
             404,
             "Not Found",
+            "not_found",
             "That file is no longer here. Choose it again.",
         );
     };
@@ -1126,6 +1309,7 @@ fn send_file(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         shared,
         Kind::Send,
         &format!("Sending {}", upload.name),
+        None,
         arguments,
         Some(upload.folder),
         move || {
@@ -1175,6 +1359,7 @@ fn send_address(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         shared,
         Kind::Send,
         "Sending an article",
+        None,
         arguments,
         None,
         || {},
@@ -1196,6 +1381,7 @@ fn send_waiting(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         shared,
         Kind::Send,
         "Sending waiting articles",
+        None,
         arguments,
         None,
         || {},
@@ -1215,7 +1401,12 @@ fn job(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         .unwrap_or(0);
     match id.and_then(|id| shared.jobs.find(id)) {
         Some(job) => Response::ok(&job.report(from)),
-        None => Response::refusal(404, "Not Found", "That job is not remembered any more."),
+        None => Response::refusal(
+            404,
+            "Not Found",
+            "not_found",
+            "That job is not remembered any more.",
+        ),
     }
 }
 

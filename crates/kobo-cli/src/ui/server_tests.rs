@@ -354,6 +354,116 @@ fn a_request_that_changes_something_must_come_from_this_page_and_carry_its_token
 }
 
 #[test]
+fn the_app_gets_in_with_its_own_token_and_nothing_a_browser_would_send() {
+    let (running, desk, volume) = started("app");
+    let state = running.app("GET", "/api/state", "");
+    assert_eq!(state.status, 200, "{}", state.body);
+    assert_eq!(state.header("set-cookie"), None);
+    assert_eq!(state.json()["readers"][0]["model"], "Kobo Clara BW");
+    let reply = running.app("POST", "/api/reader/eject", &body_for(&volume));
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(*desk.ejected.lock().expect("ejected"), [volume]);
+    // The same methods and routes as for the page.
+    assert_eq!(running.app("GET", "/api/reader/eject", "").status, 405);
+    assert_eq!(running.app("POST", "/api/state", "{}").status, 405);
+    assert_eq!(running.app("GET", "/api/nothing", "").status, 404);
+    // The launch address was never used and still has not been spent.
+    assert!(running.shared.session.launch_address().is_some());
+}
+
+#[test]
+fn a_wrong_app_token_is_refused_even_beside_everything_the_page_would_need() {
+    let (running, desk, volume) = started("app-wrong");
+    let page = running.open();
+    let before = Desk::listing(&desk.root);
+    let body = body_for(&volume);
+    let app = running.shared.session.app_token().to_owned();
+    let cookie_value = page.cookie.trim_start_matches("kobo_ui=").to_owned();
+    for offered in [
+        "Bearer 0000".to_owned(),
+        "Bearer ".to_owned(),
+        String::new(),
+        app.clone(),
+        format!("bearer {app}"),
+        format!("Basic {app}"),
+        format!("Bearer {}", page.token),
+        format!("Bearer {cookie_value}"),
+        format!("Bearer {app} extra"),
+    ] {
+        for (method, path) in [("GET", "/api/state"), ("POST", "/api/reader/eject")] {
+            // With the page's cookie, origin and token all present and
+            // right: a request that offers an app token is judged on it.
+            let reply = running.send(&format!(
+                "{method} {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: {offered}\r\n\
+                 Cookie: {}\r\nX-Kobo-Token: {}\r\nContent-Length: {}\r\n\r\n{body}",
+                running.host(),
+                page.cookie,
+                page.token,
+                body.len()
+            ));
+            assert_eq!(reply.status, 401, "{offered:?} {method} {path}");
+            assert_eq!(reply.kind(), "session");
+        }
+    }
+    // Said twice, it is not read at all.
+    let twice = running.send(&format!(
+        "GET /api/state HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {app}\r\n\
+         Authorization: Bearer 0000\r\n\r\n",
+        running.host()
+    ));
+    assert_eq!(twice.status, 400);
+    // And the right token to the wrong name is still the wrong name.
+    let renamed = running.send(&format!(
+        "GET /api/state HTTP/1.1\r\nHost: attacker.example\r\nAuthorization: Bearer {app}\r\n\r\n"
+    ));
+    assert_eq!(renamed.status, 403);
+    assert!(untouched(&desk, &running, &before));
+}
+
+#[test]
+fn the_apps_token_is_no_use_to_a_page_that_has_learnt_it() {
+    let (running, desk, volume) = started("app-origin");
+    let before = Desk::listing(&desk.root);
+    let body = body_for(&volume);
+    let app = running.shared.session.app_token().to_owned();
+    // A browser attaches an origin to what a page sends and a page cannot
+    // take it off. With one, the app's token opens nothing, whoever's
+    // origin it is.
+    for origin in [
+        running.origin(),
+        "https://attacker.example".to_owned(),
+        "null".to_owned(),
+    ] {
+        for (method, path) in [("GET", "/api/state"), ("POST", "/api/reader/eject")] {
+            let reply = running.send(&format!(
+                "{method} {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {app}\r\n\
+                 Origin: {origin}\r\nContent-Length: {}\r\n\r\n{body}",
+                running.host(),
+                body.len()
+            ));
+            assert_eq!(reply.status, 403, "{origin} {method} {path}");
+            assert_eq!(reply.kind(), "session");
+        }
+    }
+    assert!(untouched(&desk, &running, &before));
+}
+
+#[test]
+fn the_app_asking_keeps_the_server_alive_as_the_page_asking_does() {
+    let (machine, _desk) = make_desk("app-presence");
+    let running = Running::start(machine, Limits::default(), brief(60_000, 400));
+    for _ in 0..6 {
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(running.app("GET", "/api/state", "").status, 200);
+    }
+    assert_eq!(running.stopped(), None);
+    assert_eq!(
+        running.stops_within(Duration::from_secs(5)),
+        Some(Stopped::Idle)
+    );
+}
+
+#[test]
 fn asking_never_changes_anything_and_changing_is_never_done_by_asking() {
     let (running, desk, volume) = started("methods");
     let page = running.open();
@@ -737,6 +847,7 @@ fn nothing_stops_the_server_while_a_job_is_still_running() {
         .start(
             Kind::Reader,
             "Installing Cobalt",
+            None,
             move |_| {
                 let _ = held.recv();
                 Finish {

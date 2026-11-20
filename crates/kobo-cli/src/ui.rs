@@ -8,12 +8,21 @@
 //! process to this computer, and the page asks this process to call the
 //! functions and run the commands that were already here.
 //!
-//! A page in a browser rather than a native toolkit, because the toolkit
-//! would be several hundred new dependencies under a strict audit and a
-//! second program to sign on every system, and the page is neither. On a
-//! Mac the page is shown in a small window of its own when that window is
-//! installed beside this command; everywhere else, and on a Mac without it,
-//! it opens in the default browser.
+//! The process serves a small JSON interface and two front ends use it. On
+//! a Mac, when the Cobalt app is installed beside this command, the app is
+//! the front end: a native program that asks this process for everything
+//! and draws it with the system's own controls. Everywhere else, and on a
+//! Mac without the app, the front end is a page this process also serves,
+//! opened in the default browser. A cross-platform toolkit would have been
+//! several hundred new dependencies under a strict audit and one more
+//! program to sign on every system; a page and one small Mac app are not.
+//!
+//! The app and this command find each other from either end. Run from a
+//! terminal, this command starts the app and hands it the session. Opened
+//! from the Dock, the app starts this command with `--for-app` and is
+//! handed the session the same way. In both, what is handed over is one
+//! line on a pipe only the two of them hold, never an argument, which any
+//! account on the computer could read from the process list.
 //!
 //! # What keeps other things out
 //!
@@ -34,6 +43,9 @@
 //!   this computer.
 //! * Every request that changes anything must also come from this page and
 //!   carry a second token only the page was given.
+//! * The Mac app has a token of its own in place of the cookie, sent on
+//!   every request, and a request that carries it together with a browser's
+//!   `Origin` is refused, so the token is no use to a page that learnt it.
 //!
 //! The rules are in [`guard`], the order they are applied in is in
 //! [`server`], and each has a test that sees it refuse.
@@ -44,11 +56,15 @@ mod http;
 mod jobs;
 mod page;
 mod server;
+mod surroundings;
 #[cfg(test)]
 mod testing;
 
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::console;
 
@@ -69,15 +85,18 @@ It stays open until you close the window or press Ctrl-C here.
 Every task in the window is also a command: kobo setup, kobo apps, kobo clip
 and kobo send.";
 
-/// How the page gets in front of the owner.
+/// How the companion gets in front of the owner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Showing {
-    /// The Cobalt window when it is installed, else the default browser.
+    /// The Cobalt app when it is installed, else the default browser.
     Best,
     /// The default browser, because it was asked for.
     Browser,
     /// Nothing is opened; the address is printed.
     Nothing,
+    /// The Cobalt app is already running and started this command. It is
+    /// told where the server is and nothing is opened.
+    ForApp,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -98,6 +117,7 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
         match word.as_str() {
             "--browser" => options.showing = Showing::Browser,
             "--no-open" => options.showing = Showing::Nothing,
+            "--for-app" => options.showing = Showing::ForApp,
             "--volume" | "-v" => {
                 let path = words
                     .next()
@@ -143,14 +163,26 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         server::Limits::default(),
         server::Patience::default(),
     )?;
-    let address = server
-        .shared
-        .session
+    let session = &server.shared.session;
+    let handed = handoff(session.port, session.app_token());
+
+    if options.showing == Showing::ForApp {
+        // The one line the app is waiting for, and nothing else on this
+        // stream, ever: the app reads it as data.
+        println!("{handed}");
+        std::io::stdout()
+            .flush()
+            .map_err(|error| format!("could not tell the app where the server is: {error}"))?;
+        server.serve(when_input_ends());
+        let _ = std::fs::remove_dir_all(scratch);
+        return Ok(());
+    }
+
+    let address = session
         .launch_address()
         .ok_or("the session's address could not be made")?;
-
     let mut window = None;
-    match show(options.showing, &program, &address) {
+    match show(options.showing, &program, &address, &handed) {
         Shown::Window(child) => {
             window = Some(child);
             println!("Cobalt is open in its own window. Close the window to finish, or press Ctrl-C here.");
@@ -194,9 +226,42 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// What the app is told: where the server is, the token that is its way
+/// in, and which release this command is, as one line of JSON.
+///
+/// The release is there so the app can notice it was installed with a
+/// different one and say so, before it has asked the server anything.
+fn handoff(port: u16, token: &str) -> String {
+    serde_json::json!({
+        "address": format!("http://127.0.0.1:{port}"),
+        "token": token,
+        "kobo": env!("CARGO_PKG_VERSION"),
+    })
+    .to_string()
+}
+
+/// Says when this process's standard input has ended.
+///
+/// The app that starts this command keeps the other end of that pipe open
+/// for as long as it lives and never writes to it. The pipe ending is
+/// therefore the app ending, however it ended: quit, crashed or killed. A
+/// process cannot be told that its parent died, but it is always told that
+/// a pipe closed, which is why the app's lifetime is tied to one.
+fn when_input_ends() -> impl FnMut() -> bool {
+    let ended = Arc::new(AtomicBool::new(false));
+    let seen = Arc::clone(&ended);
+    std::thread::spawn(move || {
+        let mut unread = [0_u8; 64];
+        let mut input = std::io::stdin();
+        while matches!(input.read(&mut unread), Ok(read) if read > 0) {}
+        seen.store(true, Ordering::SeqCst);
+    });
+    move || ended.load(Ordering::SeqCst)
+}
+
 /// What was put in front of the owner.
 enum Shown {
-    /// The Cobalt window, as a child of this process.
+    /// The Cobalt app, as a child of this process.
     Window(Child),
     Browser,
     /// Nothing, by request or because nothing could be opened, with the
@@ -204,12 +269,12 @@ enum Shown {
     Nothing(Option<String>),
 }
 
-fn show(showing: Showing, program: &Path, address: &str) -> Shown {
-    if showing == Showing::Nothing {
+fn show(showing: Showing, program: &Path, address: &str, handed: &str) -> Shown {
+    if matches!(showing, Showing::Nothing | Showing::ForApp) {
         return Shown::Nothing(None);
     }
     if showing == Showing::Best {
-        if let Some(child) = window_beside(program).and_then(|window| open_window(&window, address))
+        if let Some(child) = window_beside(program).and_then(|window| open_window(&window, handed))
         {
             return Shown::Window(child);
         }
@@ -239,22 +304,39 @@ fn window_beside(program: &Path) -> Option<PathBuf> {
     window.is_file().then_some(window)
 }
 
-/// Starts the Cobalt window as a child of this process.
+/// Starts the Cobalt app as a child of this process and hands it the
+/// session.
 ///
-/// Run directly, not through the system's `open`, for two reasons. A child
-/// can be waited on, so the moment the window closes is known exactly and
-/// the server stops with it. And a child is in this terminal's foreground
-/// group, so Ctrl-C closes the window as well as the server, where a
-/// window started through `open` would be left showing a page whose server
-/// had gone.
-fn open_window(window: &Path, address: &str) -> Option<Child> {
-    Command::new(window)
-        .arg(address)
-        .stdin(Stdio::null())
+/// Run directly, not through the system's `open`, for three reasons. A
+/// child can be given a pipe, which is the only way to hand over a secret
+/// that no other process can read. A child can be waited on, so the moment
+/// the app quits is known exactly and the server stops with it. And a child
+/// is in this terminal's foreground group, so Ctrl-C closes the app as well
+/// as the server, where an app started through `open` would be left
+/// showing a server that had gone.
+///
+/// The app is told to read its standard input by the environment, and the
+/// line is written there and the pipe closed. If the app does not take it,
+/// there is no app, and the caller falls back to the browser.
+fn open_window(window: &Path, handed: &str) -> Option<Child> {
+    let mut child = Command::new(window)
+        .env("COBALT_UI_HANDOFF", "stdin")
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .ok()
+        .ok()?;
+    let delivered = child
+        .stdin
+        .take()
+        .is_some_and(|mut pipe| writeln!(pipe, "{handed}").is_ok());
+    if delivered {
+        Some(child)
+    } else {
+        let _ = child.kill();
+        let _ = child.wait();
+        None
+    }
 }
 
 /// Hands the address to the default browser.
@@ -341,15 +423,57 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_opened_when_the_owner_asked_for_the_address() {
-        assert!(matches!(
-            show(
-                Showing::Nothing,
-                Path::new("/nowhere/kobo"),
-                "http://127.0.0.1:1/?token=x"
-            ),
-            Shown::Nothing(None)
-        ));
+    fn nothing_is_opened_when_the_owner_asked_for_the_address_or_the_app_is_already_there() {
+        for showing in [Showing::Nothing, Showing::ForApp] {
+            assert!(matches!(
+                show(
+                    showing,
+                    Path::new("/nowhere/kobo"),
+                    "http://127.0.0.1:1/?token=x",
+                    "{}"
+                ),
+                Shown::Nothing(None)
+            ));
+        }
+        assert_eq!(
+            parse(&words(&["--for-app"])).expect("for the app").showing,
+            Showing::ForApp
+        );
+    }
+
+    #[test]
+    fn the_app_is_handed_one_line_naming_the_server_its_token_and_this_release() {
+        let line = handoff(53124, "abc123");
+        assert!(!line.contains('\n'));
+        let told: serde_json::Value = serde_json::from_str(&line).expect("one JSON object");
+        assert_eq!(told["address"], "http://127.0.0.1:53124");
+        assert_eq!(told["token"], "abc123");
+        assert_eq!(told["kobo"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_session_reaches_the_app_on_its_input_and_never_on_its_command_line() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let folder = std::env::temp_dir().join(format!("kobo-ui-handoff-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("folder");
+        // A stand-in for the app: it records how it was started and what it
+        // was sent, the way the app reads them.
+        let app = folder.join("app");
+        std::fs::write(
+            &app,
+            "#!/bin/sh\necho \"args:$*\" > \"$0.saw\"\necho \"told:$COBALT_UI_HANDOFF\" >> \"$0.saw\"\n\
+             cat >> \"$0.saw\"\n",
+        )
+        .expect("stand-in");
+        std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).expect("executable");
+        let mut child = open_window(&app, "{\"token\":\"secret\"}").expect("started");
+        child.wait().expect("the stand-in ends when its input does");
+        let saw = std::fs::read_to_string(folder.join("app.saw")).expect("what it saw");
+        assert_eq!(saw, "args:\ntold:stdin\n{\"token\":\"secret\"}\n");
+        assert!(open_window(&folder.join("no-such-app"), "{}").is_none());
+        let _ = std::fs::remove_dir_all(folder);
     }
 
     #[test]

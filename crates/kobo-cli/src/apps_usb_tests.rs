@@ -383,7 +383,10 @@ fn a_catalog_signed_with_another_key_is_refused_and_leaves_nothing_on_the_reader
     let error = installation
         .available(&other, |url, maximum| published.fetch(url, maximum))
         .expect_err("a catalog this key did not sign");
-    assert!(error.contains("does not match its published signature and digest"));
+    assert_eq!(error.trouble, Trouble::Integrity);
+    assert!(error
+        .said
+        .contains("does not match its published signature and digest"));
     assert!(!volume.join(".adds/cobalt/store").join("catalog").exists());
     let _ = fs::remove_dir_all(volume);
 }

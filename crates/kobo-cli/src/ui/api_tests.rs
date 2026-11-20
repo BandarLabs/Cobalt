@@ -28,6 +28,10 @@ fn the_state_names_each_reader_and_how_its_cobalt_stands_without_its_serial() {
     assert_eq!(empty["computer"]["release"], "0.3.37");
     assert_eq!(empty["computer"]["release_problem"], Value::Null);
     assert_eq!(empty["jobs"], json!([]));
+    assert_eq!(empty["api"], 1);
+    assert!(["macos", "linux", "windows"].contains(&empty["computer"]["os"].as_str().expect("os")));
+    assert_eq!(empty["attached"], Value::Null);
+    assert_eq!(empty["blocked"], json!([]));
 
     let fresh = desk.plug("fresh", CLARA_BW, None);
     let behind = desk.plug("behind", CLARA_BW, Some("0.3.30"));
@@ -71,6 +75,8 @@ fn the_state_names_each_reader_and_how_its_cobalt_stands_without_its_serial() {
     assert_eq!(found["untested"], Value::Null);
     assert_eq!(found["cobalt"], Value::Null);
     assert_eq!(found["standing"], "absent");
+    assert_eq!(found["free_bytes"], 1_000_000_000_u64);
+    assert_eq!(found["writable"], true);
 
     let found = reader("behind");
     assert_eq!(found["volume"], behind.to_string_lossy().as_ref());
@@ -438,7 +444,8 @@ fn apps_are_listed_installed_updated_and_removed_through_the_signed_catalog() {
     assert_eq!(removed["removed"]["title"], "Almanac");
     assert_eq!(removed["apps"], json!([]));
     let again = page.post("/api/apps/remove", &body);
-    assert_eq!(again.status, 500);
+    assert_eq!(again.status, 404);
+    assert_eq!(again.kind(), "not_found");
     assert_eq!(again.error(), "almanac is not installed on this reader.");
 }
 
@@ -474,6 +481,236 @@ fn an_install_names_apps_by_valid_ids_and_a_reader_without_cobalt_has_no_apps() 
 }
 
 #[test]
+fn what_the_bus_and_the_system_say_about_readers_that_are_not_mounted_is_passed_on() {
+    let (running, desk) = running("surroundings");
+    let page = running.open();
+    desk.plug("reader", CLARA_BW, None);
+    // Two Kobos on the bus and one mounted: the other is waiting for
+    // Connect. One drive the system is keeping from us.
+    *desk.attached.lock().expect("attached") = Some(2);
+    desk.blocked
+        .lock()
+        .expect("blocked")
+        .push(PathBuf::from("/Volumes/KOBOeReader 1"));
+    let state = page.get("/api/state").json();
+    assert_eq!(state["attached"], 2);
+    assert_eq!(state["readers"].as_array().expect("readers").len(), 1);
+    assert_eq!(state["blocked"], json!(["/Volumes/KOBOeReader 1"]));
+}
+
+#[test]
+fn every_refusal_says_what_kind_it_is() {
+    let (running, desk) = running("kinds");
+    let page = running.open();
+    let bare = desk.plug("bare", CLARA_BW, None);
+    let five = desk.plug("five", FIRMWARE_FIVE, None);
+    let with = desk.plug("with", CLARA_BW, Some("0.3.37"));
+    let volume = |path: &Path| {
+        json!({ "volume": path.to_string_lossy(), "ids": ["almanac"], "id": "almanac" }).to_string()
+    };
+    let gone =
+        json!({ "volume": "/Volumes/Unplugged", "ids": ["almanac"], "id": "almanac" }).to_string();
+
+    let cases = [
+        (page.post("/api/reader/install", &gone), 404, "gone"),
+        (
+            page.post("/api/reader/install", &volume(&five)),
+            409,
+            "refused",
+        ),
+        (
+            page.post("/api/apps/catalog", &volume(&bare)),
+            409,
+            "no_cobalt",
+        ),
+        (
+            page.post("/api/apps/remove", &volume(&with)),
+            404,
+            "not_found",
+        ),
+        (page.post("/api/reader/eject", "{}"), 400, "bad_request"),
+        (
+            page.post("/api/reader/eject", "not json"),
+            400,
+            "bad_request",
+        ),
+        (page.get("/api/job?id=99"), 404, "not_found"),
+        (page.get("/api/nothing"), 404, "not_found"),
+        (page.get("/api/reader/eject"), 405, "bad_request"),
+        (
+            page.post_bytes("/api/send/file?name=notes.xyz", b"?"),
+            422,
+            "unsupported_file",
+        ),
+        (
+            page.post("/api/send/start", r#"{"upload":999}"#),
+            404,
+            "not_found",
+        ),
+        (
+            page.post("/api/send/address", r#"{"url":"nope"}"#),
+            400,
+            "bad_request",
+        ),
+        (
+            running.send(&format!(
+                "GET /api/state HTTP/1.1\r\nHost: {}\r\n\r\n",
+                running.host()
+            )),
+            401,
+            "session",
+        ),
+        (
+            running.send("GET /api/state HTTP/1.1\r\nHost: attacker.example\r\n\r\n"),
+            403,
+            "session",
+        ),
+    ];
+    for (reply, status, kind) in &cases {
+        assert_eq!(
+            (reply.status, reply.kind().as_str()),
+            (*status, *kind),
+            "{}",
+            reply.body
+        );
+        assert!(!reply.error().is_empty());
+    }
+}
+
+#[test]
+fn a_catalog_out_of_reach_an_altered_one_and_a_busy_reader_are_each_their_own_kind() {
+    let (running, desk) = running("kinds-store");
+    let page = running.open();
+    let with = desk.plug("with", CLARA_BW, Some("0.3.37"));
+    let body = volume_body(&with);
+
+    desk.offline
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let unreachable = page.post("/api/apps/catalog", &body);
+    assert_eq!(
+        (unreachable.status, unreachable.kind().as_str()),
+        (502, "unreachable")
+    );
+    assert!(unreachable.error().contains("could not be reached"));
+    desk.offline
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    desk.tampered
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let altered = page.post("/api/apps/catalog", &body);
+    assert_eq!(
+        (altered.status, altered.kind().as_str()),
+        (502, "integrity")
+    );
+    assert!(altered.error().contains("Nothing was changed"));
+    assert!(
+        !with.join(".adds/cobalt/store").join("catalog").exists(),
+        "an altered catalog is not kept"
+    );
+
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    running
+        .shared
+        .jobs
+        .start(
+            Kind::Reader,
+            "Updating Cobalt",
+            None,
+            move |_| {
+                let _ = held.recv();
+                Finish {
+                    ok: true,
+                    code: None,
+                }
+            },
+            || {},
+        )
+        .expect("started");
+    let busy = page.post("/api/reader/remove", &body);
+    assert_eq!((busy.status, busy.kind().as_str()), (409, "busy"));
+    release.send(()).expect("let the job end");
+}
+
+#[test]
+fn nothing_is_started_on_a_card_that_is_mounted_read_only() {
+    let (running, desk) = running("read-only");
+    let page = running.open();
+    let volume = desk.plug("reader", CLARA_BW, Some("0.3.37"));
+    desk.room.lock().expect("room").writable = Some(false);
+    let state = page.get("/api/state").json();
+    assert_eq!(state["readers"][0]["writable"], false);
+    let body = json!({ "volume": volume.to_string_lossy(), "ids": ["almanac"], "id": "almanac" })
+        .to_string();
+    for path in [
+        "/api/reader/install",
+        "/api/reader/remove",
+        "/api/apps/catalog",
+        "/api/apps/install",
+        "/api/apps/remove",
+    ] {
+        let reply = page.post(path, &body);
+        assert_eq!(
+            (reply.status, reply.kind().as_str()),
+            (409, "read_only"),
+            "{path}"
+        );
+        assert!(reply.error().contains("mounted read-only"));
+    }
+    assert!(desk.commands().is_empty());
+    assert!(desk.fetched.lock().expect("fetched").is_empty());
+    assert!(running.shared.jobs.summaries().is_empty());
+    // Reading what is on it is still answered, and so is ejecting it,
+    // which is the way out.
+    let asked = query_value(&volume.to_string_lossy());
+    assert_eq!(page.get(&format!("/api/apps?volume={asked}")).status, 200);
+    assert_eq!(page.post("/api/reader/eject", &body).status, 200);
+    // A system that cannot say whether the card takes writes is not
+    // treated as one that says it does not.
+    desk.room.lock().expect("room").writable = None;
+    assert_eq!(page.post("/api/apps/catalog", &body).status, 200);
+}
+
+#[test]
+fn an_app_is_listed_with_its_size_and_is_not_installed_where_it_does_not_fit() {
+    let (running, desk) = running("fits");
+    let page = running.open();
+    let volume = desk.plug("reader", CLARA_BW, Some("0.3.37"));
+    let body = volume_body(&volume);
+    let asked = query_value(&volume.to_string_lossy());
+
+    // Before any catalog has been fetched for this reader nothing is known
+    // about sizes, and nothing is claimed.
+    let catalog = page.post("/api/apps/catalog", &body).json();
+    let almanac = &catalog["apps"][0];
+    assert_eq!(almanac["bytes"], "almanac 1.0.0 binary".len());
+    assert_eq!(almanac["fits"], true);
+
+    desk.room.lock().expect("room").free = Some(100_000);
+    let tight = page.post("/api/apps/catalog", &body).json();
+    assert_eq!(tight["apps"][0]["fits"], false);
+    let reply = page.post(
+        "/api/apps/install",
+        &json!({ "volume": volume.to_string_lossy(), "ids": ["almanac"] }).to_string(),
+    );
+    let report = page.finished(reply.json()["job"].as_u64().expect("a job"));
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["volume"], volume.to_string_lossy().as_ref());
+    assert!(report["text"]
+        .as_str()
+        .expect("text")
+        .contains("Almanac needs 0.0 MB and the reader has 0.1 MB free. Remove something from the reader and try again."));
+    assert_eq!(
+        page.get(&format!("/api/apps?volume={asked}")).json()["apps"],
+        json!([])
+    );
+
+    // A system that cannot say how much is free leaves the question open.
+    desk.room.lock().expect("room").free = None;
+    let unknown = page.post("/api/apps/catalog", &body).json();
+    assert_eq!(unknown["apps"][0]["fits"], Value::Null);
+    assert_eq!(unknown["apps"][0]["bytes"], "almanac 1.0.0 binary".len());
+}
+
+#[test]
 fn the_apps_on_a_reader_are_left_alone_while_something_is_writing_to_it() {
     let (running, desk) = running("apps-busy");
     let page = running.open();
@@ -485,6 +722,7 @@ fn the_apps_on_a_reader_are_left_alone_while_something_is_writing_to_it() {
         .start(
             Kind::Reader,
             "Updating Cobalt",
+            None,
             move |_| {
                 let _ = held.recv();
                 Finish {

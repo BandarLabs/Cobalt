@@ -187,17 +187,36 @@ impl Shared {
             return Response::refusal(
                 403,
                 "Forbidden",
+                "session",
                 "This server answers only to its own address on this computer.",
             );
         }
-        let method = head.method.as_str();
+        let method = head.method.clone();
+        let method = method.as_str();
         // `OPTIONS` lands here too. It is how a browser asks whether another
         // origin may send a request, and the answer is that none may.
         if method != "GET" && method != "POST" {
-            return Response::refusal(405, "Method Not Allowed", "Method Not Allowed")
-                .with("Allow", "GET, POST".to_owned());
+            return not_allowed("GET, POST");
         }
         let path = head.path().to_owned();
+        // The native app's way in: its own token on every request, in place
+        // of the cookie and the page's token. Decided before anything a
+        // browser could have sent is looked at, and a request that offers a
+        // token here is judged on that alone, so a wrong one is refused even
+        // if a good cookie rides along with it.
+        if let Some(authorization) = head.header("authorization") {
+            if !self.session.holds_app_token(Some(authorization)) {
+                return stranger(&path);
+            }
+            // The app is not a page and sends no `Origin`. A request that
+            // carries both the app's token and an origin was made by a
+            // browser, where that token has no business being, so it is
+            // refused however right the token is.
+            if head.header("origin").is_some() {
+                return not_this_page();
+            }
+            return self.route(method, &path, head, stream);
+        }
         let known = self.session.holds_cookie(head.cookie(guard::COOKIE));
         if method == "GET" && path == "/" {
             if let Some(token) = head.query("token") {
@@ -222,41 +241,43 @@ impl Shared {
         if !known {
             return stranger(&path);
         }
-        let Some(route) = api::ROUTES.iter().find(|route| route.path == path) else {
-            return Response::refusal(404, "Not Found", "Not Found");
-        };
-        if route.method != method {
-            return Response::refusal(405, "Method Not Allowed", "Method Not Allowed")
-                .with("Allow", route.method.to_owned());
-        }
         if method == "POST" {
-            if !guard::origin_is_ours(head.header("origin"), port) {
-                return Response::refusal(
-                    403,
-                    "Forbidden",
-                    "This request did not come from this page.",
-                );
-            }
             // Sent by every current browser and impossible for a page to
-            // forge. Checked only when present, because its absence is an
-            // older browser, not an attack; `Origin` above is the rule.
-            if head
-                .header("sec-fetch-site")
-                .is_some_and(|site| site != "same-origin")
+            // forge. `Sec-Fetch-Site` is checked only when present, because
+            // its absence is an older browser, not an attack; `Origin` is
+            // the rule.
+            if !guard::origin_is_ours(head.header("origin"), port)
+                || head
+                    .header("sec-fetch-site")
+                    .is_some_and(|site| site != "same-origin")
             {
-                return Response::refusal(
-                    403,
-                    "Forbidden",
-                    "This request did not come from this page.",
-                );
+                return not_this_page();
             }
             if !self.session.holds_token(head.header(guard::TOKEN_HEADER)) {
                 return Response::refusal(
                     403,
                     "Forbidden",
+                    "session",
                     "This request did not carry this session's token. Reload the page.",
                 );
             }
+        }
+        self.route(method, &path, head, stream)
+    }
+
+    /// Hands a request that has passed every rule to what it asked for.
+    fn route(
+        self: &Arc<Self>,
+        method: &str,
+        path: &str,
+        head: Head,
+        stream: &mut dyn Read,
+    ) -> Response {
+        let Some(route) = api::ROUTES.iter().find(|route| route.path == path) else {
+            return Response::refusal(404, "Not Found", "not_found", "Not Found");
+        };
+        if route.method != method {
+            return not_allowed(route.method);
         }
         self.heard(path == api::GOODBYE);
         (route.handle)(
@@ -303,6 +324,25 @@ impl Shared {
     }
 }
 
+fn not_allowed(allowed: &str) -> Response {
+    Response::refusal(
+        405,
+        "Method Not Allowed",
+        "bad_request",
+        "Method Not Allowed",
+    )
+    .with("Allow", allowed.to_owned())
+}
+
+fn not_this_page() -> Response {
+    Response::refusal(
+        403,
+        "Forbidden",
+        "session",
+        "This request did not come from this page.",
+    )
+}
+
 /// Sends the browser to the page's plain address.
 ///
 /// This is what takes the launch token out of the address bar, the history
@@ -336,7 +376,7 @@ fn stranger(path: &str) -> Response {
             extra: Vec::new(),
         }
     } else {
-        Response::refusal(401, "Unauthorized", "Unauthorized")
+        Response::refusal(401, "Unauthorized", "session", "Unauthorized")
     }
 }
 

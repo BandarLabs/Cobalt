@@ -11,6 +11,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -23,6 +24,7 @@ use kobo_protocol::DeviceError;
 
 use super::api::Machine;
 use super::server::{Limits, Patience, Server, Shared, Stopped};
+use super::surroundings::Room;
 use crate::setup;
 
 const SEED: [u8; 32] = [7; 32];
@@ -48,6 +50,16 @@ pub struct Desk {
     pub ejected: Arc<Mutex<Vec<PathBuf>>>,
     /// Addresses the catalog transport was asked for.
     pub fetched: Arc<Mutex<Vec<String>>>,
+    /// Set to take this computer off the network.
+    pub offline: Arc<AtomicBool>,
+    /// Set to have the catalog arrive with one byte changed.
+    pub tampered: Arc<AtomicBool>,
+    /// What every volume answers when asked how much room it has.
+    pub room: Arc<Mutex<Room>>,
+    /// Drives the system is refusing to let this process read.
+    pub blocked: Arc<Mutex<Vec<PathBuf>>>,
+    /// How many Kobos the USB bus reports, when it reports.
+    pub attached: Arc<Mutex<Option<usize>>>,
 }
 
 impl Drop for Desk {
@@ -145,6 +157,20 @@ pub fn make_desk(name: &str) -> (Machine, Desk) {
         Arc::clone(&fetched),
         Arc::clone(&ejected),
     );
+    let offline = Arc::new(AtomicBool::new(false));
+    let tampered = Arc::new(AtomicBool::new(false));
+    let space = Arc::new(Mutex::new(Room {
+        free: Some(1_000_000_000),
+        writable: Some(true),
+    }));
+    let blocked: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
+    let attached: Arc<Mutex<Option<usize>>> = Arc::default();
+    let (down, bent) = (Arc::clone(&offline), Arc::clone(&tampered));
+    let (roomy, kept_out, on_the_bus) = (
+        Arc::clone(&space),
+        Arc::clone(&blocked),
+        Arc::clone(&attached),
+    );
     let machine = Machine {
         program,
         readers: Box::new(move || {
@@ -159,13 +185,23 @@ pub fn make_desk(name: &str) -> (Machine, Desk) {
         scratch: root.join("scratch"),
         fetch: Box::new(move |url, _| {
             asked.lock().expect("fetched").push(url.to_owned());
-            answers.get(url).cloned().ok_or(DeviceError::NotFound)
+            if down.load(Ordering::SeqCst) {
+                return Err(DeviceError::Unreachable);
+            }
+            let mut answer = answers.get(url).cloned().ok_or(DeviceError::NotFound)?;
+            if bent.load(Ordering::SeqCst) && url == kobod::app_store::CATALOG_URL {
+                answer[10] ^= 1;
+            }
+            Ok(answer)
         }),
         key: derive_public_key(&SEED).expect("fixture key"),
         eject: Box::new(move |volume| {
             gone.lock().expect("ejected").push(volume.to_owned());
             Ok(())
         }),
+        room: Box::new(move |_| *roomy.lock().expect("room")),
+        blocked: Box::new(move || kept_out.lock().expect("blocked").clone()),
+        attached: Box::new(move || *on_the_bus.lock().expect("attached")),
         home: root.join("home"),
         config: root.join("config"),
         uploads: Mutex::default(),
@@ -179,6 +215,11 @@ pub fn make_desk(name: &str) -> (Machine, Desk) {
             plugged,
             ejected,
             fetched,
+            offline,
+            tampered,
+            room: space,
+            blocked,
+            attached,
         },
     )
 }
@@ -352,6 +393,17 @@ impl Running {
         }
     }
 
+    /// Asks as the Mac app asks: its own token, and nothing a browser sends.
+    pub fn app(&self, method: &str, path: &str, body: &str) -> Reply {
+        self.send(&format!(
+            "{method} {path} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\n\
+             Content-Length: {}\r\n\r\n{body}",
+            self.host(),
+            self.shared.session.app_token(),
+            body.len()
+        ))
+    }
+
     /// Sends exactly these bytes and reads the whole answer.
     pub fn send(&self, request: &str) -> Reply {
         self.send_bytes(request.as_bytes())
@@ -413,6 +465,11 @@ impl Reply {
     pub fn json(&self) -> serde_json::Value {
         serde_json::from_str(&self.body)
             .unwrap_or_else(|error| panic!("not JSON ({error}): {:?}", self.body))
+    }
+
+    /// The kind a refusal said it was.
+    pub fn kind(&self) -> String {
+        self.json()["kind"].as_str().unwrap_or_default().to_owned()
     }
 
     /// The reason a refusal gave.

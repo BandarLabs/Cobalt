@@ -68,6 +68,58 @@ pub fn handles(verb: &str) -> bool {
     matches!(verb, "installed" | "available" | "install" | "remove")
 }
 
+/// What kind of thing went wrong, for a caller that does more with a
+/// failure than print it.
+///
+/// The sentence is for the owner and is all the command line shows. The
+/// companion window reads the kind as well, because what to offer next
+/// differs: a catalog that could not be reached is tried again, a download
+/// that failed its signature is reported, a reader that could not be written
+/// to is looked at.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Trouble {
+    /// The catalog or a package could not be reached.
+    Unreachable,
+    /// Something did not match its signature or digest.
+    Integrity,
+    /// What was asked for is not in the catalog, or not on the reader.
+    Missing,
+    /// The reader's Cobalt is too old for the package.
+    TooOld,
+    /// The volume could not be read or written.
+    Write,
+    /// Anything else.
+    Other,
+}
+
+/// A failure: what kind, and the sentence that says it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Failure {
+    pub trouble: Trouble,
+    pub said: String,
+}
+
+impl Failure {
+    fn other(said: impl Into<String>) -> Self {
+        Self {
+            trouble: Trouble::Other,
+            said: said.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.said)
+    }
+}
+
+impl From<Failure> for String {
+    fn from(failure: Failure) -> Self {
+        failure.said
+    }
+}
+
 /// A Cobalt installation on a mounted reader.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Installation {
@@ -141,7 +193,7 @@ impl Installation {
     /// # Errors
     ///
     /// When an installed package cannot be read or does not verify.
-    pub fn installed(&self, key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, String> {
+    pub fn installed(&self, key: &Ed25519PublicKey) -> Result<Vec<AppInfo>, Failure> {
         kobod::app_store::installed_using(&self.root, key)
             .map_err(|error| self.explain(error, "read the apps on the reader"))
     }
@@ -166,7 +218,7 @@ impl Installation {
         &self,
         key: &Ed25519PublicKey,
         fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
-    ) -> Result<Vec<AppInfo>, String> {
+    ) -> Result<Vec<AppInfo>, Failure> {
         let mut apps = kobod::app_store::refresh_using(&self.root, self.channel, key, fetch)
             .map_err(|error| self.explain(error, "fetch the app catalog"))?;
         apps.retain(|app| !kobo_app_store::is_public_reserved_app_id(&app.id));
@@ -201,13 +253,16 @@ impl Installation {
         app: &AppInfo,
         key: &Ed25519PublicKey,
         fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
-    ) -> Result<Outcome, String> {
+    ) -> Result<Outcome, Failure> {
         if !self.runs(app) {
-            return Err(format!(
-                "{} {} needs Cobalt {} or newer, and this reader has {}. Update the reader \
-                 first: kobo setup",
-                app.title, app.version, app.minimum_cobalt_version, self.version
-            ));
+            return Err(Failure {
+                trouble: Trouble::TooOld,
+                said: format!(
+                    "{} {} needs Cobalt {} or newer, and this reader has {}. Update the \
+                     reader first: kobo setup",
+                    app.title, app.version, app.minimum_cobalt_version, self.version
+                ),
+            });
         }
         let before = app.installed_version.clone();
         let mut damaged = false;
@@ -248,11 +303,14 @@ impl Installation {
             .find(|installed| installed.id == app.id)
             .and_then(|installed| installed.installed_version);
         if after.as_deref() != Some(app.version.as_str()) {
-            return Err(format!(
-                "{} was written to the reader but does not read back as version {}. Check that \
-                 the reader is still connected and try again.",
-                app.title, app.version
-            ));
+            return Err(Failure {
+                trouble: Trouble::Write,
+                said: format!(
+                    "{} was written to the reader but does not read back as version {}. Check \
+                     that the reader is still connected and try again.",
+                    app.title, app.version
+                ),
+            });
         }
         self.tidy();
         Ok(match before {
@@ -275,12 +333,15 @@ impl Installation {
     ///
     /// When the app is part of Cobalt, is not installed, or the volume
     /// cannot be written.
-    pub fn remove(&self, id: &str, key: &Ed25519PublicKey) -> Result<(), String> {
+    pub fn remove(&self, id: &str, key: &Ed25519PublicKey) -> Result<(), Failure> {
         kobod::app_store::uninstall_using(&self.root, id, key).map_err(|error| match error {
-            DeviceError::NotFound => format!("{id} is not installed on this reader."),
-            DeviceError::InvalidInput => {
-                format!("{id} is part of Cobalt and cannot be removed on its own.")
-            }
+            DeviceError::NotFound => Failure {
+                trouble: Trouble::Missing,
+                said: format!("{id} is not installed on this reader."),
+            },
+            DeviceError::InvalidInput => Failure::other(format!(
+                "{id} is part of Cobalt and cannot be removed on its own."
+            )),
             other => self.explain(other, &format!("remove {id}")),
         })?;
         self.tidy();
@@ -310,34 +371,56 @@ impl Installation {
     /// "the reader could not complete the request" is accurate. Here the
     /// same failure is this computer unable to write to a drive, and telling
     /// an owner their reader failed sends them to the wrong device.
-    fn explain(&self, error: DeviceError, doing: &str) -> String {
-        let why = match error {
-            DeviceError::Unreachable | DeviceError::TimedOut => {
+    fn explain(&self, error: DeviceError, doing: &str) -> Failure {
+        let (trouble, why) = match error {
+            DeviceError::Unreachable | DeviceError::TimedOut => (
+                Trouble::Unreachable,
                 "the app catalog could not be reached. Check this computer's internet \
                  connection and try again."
-                    .to_owned()
-            }
-            DeviceError::Integrity => {
+                    .to_owned(),
+            ),
+            DeviceError::Integrity => (
+                Trouble::Integrity,
                 "what was downloaded, or what is on the reader, does not match its published \
                  signature and digest. Nothing was changed. Try again; if it keeps happening, \
                  report it."
-                    .to_owned()
-            }
-            DeviceError::NotFound => format!(
-                "it is not where the {} catalog is published. Try again later; if it keeps \
-                 happening, report it.",
-                self.channel_name()
+                    .to_owned(),
             ),
-            DeviceError::InvalidInput => {
-                "the catalog or package was not something this reader can use.".to_owned()
-            }
-            DeviceError::Backend | DeviceError::Authentication => format!(
-                "the reader at {} could not be written to. Check that it is still connected \
-                 and showing Connected, and that it has free space.",
-                self.volume.display()
+            DeviceError::NotFound => (
+                Trouble::Missing,
+                format!(
+                    "it is not where the {} catalog is published. Try again later; if it keeps \
+                     happening, report it.",
+                    self.channel_name()
+                ),
+            ),
+            DeviceError::InvalidInput => (
+                Trouble::Other,
+                "the catalog or package was not something this reader can use.".to_owned(),
+            ),
+            DeviceError::Backend | DeviceError::Authentication => (
+                Trouble::Write,
+                format!(
+                    "the reader at {} could not be written to. Check that it is still \
+                     connected and showing Connected, and that it has free space.",
+                    self.volume.display()
+                ),
             ),
         };
-        format!("Could not {doing}: {why}")
+        Failure {
+            trouble,
+            said: format!("Could not {doing}: {why}"),
+        }
+    }
+
+    /// How many bytes each app the reader's cached catalog offers takes up
+    /// once installed, by id. Empty when no catalog has been fetched for
+    /// this reader yet, which only means nothing can be said about sizes.
+    #[must_use]
+    pub fn sizes(&self, key: &Ed25519PublicKey) -> std::collections::BTreeMap<String, u64> {
+        kobod::app_store::catalog_sizes_using(&self.root, self.channel, key)
+            .map(|sizes| sizes.into_iter().collect())
+            .unwrap_or_default()
     }
 }
 
@@ -819,6 +902,7 @@ fn install_named(
             installation
                 .install(app, key, &mut fetch)
                 .map(|outcome| (app, outcome))
+                .map_err(String::from)
         });
         match outcome {
             Ok((app, outcome)) => {

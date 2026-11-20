@@ -85,6 +85,10 @@ pub struct Job {
     pub kind: Kind,
     /// What the job is doing, in the page's words: "Installing Cobalt".
     pub title: String,
+    /// The mounted reader the job is writing to, when it is writing to one.
+    /// A front end holds this against the readers still plugged in to tell
+    /// a job that failed from one whose reader was pulled out from under it.
+    pub volume: Option<String>,
     progress: Mutex<Progress>,
 }
 
@@ -140,6 +144,7 @@ impl Job {
             "id": self.id,
             "kind": self.kind.word(),
             "title": self.title,
+            "volume": self.volume,
             "running": progress.finish.is_none(),
             "ok": progress.finish.map(|finish| finish.ok),
             "code": progress.finish.and_then(|finish| finish.code),
@@ -160,6 +165,7 @@ impl Job {
             "id": self.id,
             "kind": self.kind.word(),
             "title": self.title,
+            "volume": self.volume,
             "running": finish.is_none(),
             "ok": finish.map(|finish| finish.ok),
         })
@@ -186,6 +192,7 @@ impl Jobs {
         self: &Arc<Self>,
         kind: Kind,
         title: &str,
+        volume: Option<&Path>,
         work: impl FnOnce(&Job) -> Finish + Send + 'static,
         after: impl FnOnce() + Send + 'static,
     ) -> Result<u64, String> {
@@ -201,6 +208,7 @@ impl Jobs {
                 id: list.0,
                 kind,
                 title: title.to_owned(),
+                volume: volume.map(|volume| volume.to_string_lossy().into_owned()),
                 progress: Mutex::default(),
             });
             list.1.push_back(Arc::clone(&job));
@@ -381,6 +389,7 @@ mod tests {
             .start(
                 Kind::Reader,
                 "Installing Cobalt",
+                None,
                 |job| {
                     job.say("one\n");
                     job.say("two\n");
@@ -405,6 +414,7 @@ mod tests {
             .start(
                 Kind::Send,
                 "Sending",
+                None,
                 |job| {
                     job.say("caf\u{e9} one\n");
                     done(false)
@@ -428,6 +438,7 @@ mod tests {
             .start(
                 Kind::Send,
                 "Talking",
+                None,
                 |job| {
                     for _ in 0..(MOST_TEXT / 1000 + 50) {
                         job.say(&"x".repeat(1000));
@@ -456,6 +467,7 @@ mod tests {
             .start(
                 Kind::Reader,
                 "Installing Cobalt",
+                None,
                 move |_| {
                     let _ = held.recv();
                     done(true)
@@ -464,7 +476,7 @@ mod tests {
             )
             .expect("started");
         assert_eq!(
-            jobs.start(Kind::Reader, "Removing Cobalt", |_| done(true), || {})
+            jobs.start(Kind::Reader, "Removing Cobalt", None, |_| done(true), || {})
                 .expect_err("the reader is busy"),
             "Installing Cobalt"
         );
@@ -474,14 +486,14 @@ mod tests {
         );
         assert!(jobs.any_running());
         let other = jobs
-            .start(Kind::Send, "Sending", |_| done(true), || {})
+            .start(Kind::Send, "Sending", None, |_| done(true), || {})
             .expect("a send does not wait for an install");
         wait_for(&jobs, other);
         release.send(()).expect("release the first job");
         wait_for(&jobs, first);
         assert!(!jobs.any_running());
         assert_eq!(jobs.busy(Kind::Reader), None);
-        jobs.start(Kind::Reader, "Removing Cobalt", |_| done(true), || {})
+        jobs.start(Kind::Reader, "Removing Cobalt", None, |_| done(true), || {})
             .expect("the reader is free again");
     }
 
@@ -494,6 +506,7 @@ mod tests {
             .start(
                 Kind::Send,
                 "Sending",
+                None,
                 |_| done(false),
                 move || *seen.lock().expect("flag") = true,
             )
@@ -508,7 +521,7 @@ mod tests {
         let mut ids = Vec::new();
         for _ in 0..MOST_FINISHED + 3 {
             let id = jobs
-                .start(Kind::Send, "Sending", |_| done(true), || {})
+                .start(Kind::Send, "Sending", None, |_| done(true), || {})
                 .expect("started");
             wait_for(&jobs, id);
             ids.push(id);
@@ -524,9 +537,7 @@ mod tests {
     fn a_child_is_run_to_its_end_with_both_streams_shown_and_its_status_kept() {
         let jobs = Arc::new(Jobs::default());
         let id = jobs
-            .start(
-                Kind::Reader,
-                "Running",
+            .start(Kind::Reader, "Running", None,
                 |job| {
                     run_child(
                         Path::new("/bin/sh"),
@@ -565,6 +576,7 @@ mod tests {
             .start(
                 Kind::Send,
                 "Listing",
+                None,
                 move |job| run_child(Path::new("/bin/ls"), &[], Some(&cwd), job),
                 || {},
             )
@@ -582,6 +594,7 @@ mod tests {
             .start(
                 Kind::Send,
                 "Running",
+                None,
                 |job| run_child(Path::new("/no/such/program/anywhere"), &[], None, job),
                 || {},
             )
@@ -611,6 +624,7 @@ mod tests {
             id: 1,
             kind: Kind::Send,
             title: String::new(),
+            volume: None,
             progress: Mutex::default(),
         };
         // "é" is 0xC3 0xA9; the reads split it, and a stray 0xFF follows.

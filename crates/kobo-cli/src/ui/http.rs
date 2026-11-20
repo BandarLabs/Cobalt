@@ -56,6 +56,7 @@ const SAID_ONCE: &[&str] = &[
     "transfer-encoding",
     "x-kobo-token",
     "sec-fetch-site",
+    "authorization",
 ];
 
 /// A request's first line and headers, and whatever of the body arrived in
@@ -316,18 +317,29 @@ impl Response {
         Self::json(200, "OK", value)
     }
 
-    /// A refusal, as JSON with the reason in `error`, which is the one
-    /// field the page shows to the owner as it is.
+    /// A refusal, as JSON: the reason in `error`, which is the one field a
+    /// front end shows to the owner as it is, and what sort of refusal it
+    /// is in `kind`, which is the one a front end decides on. The sentence
+    /// may be reworded freely; the kinds are the contract.
     #[must_use]
-    pub fn refusal(status: u16, reason: &'static str, error: &str) -> Self {
-        Self::json(status, reason, &serde_json::json!({ "error": error }))
+    pub fn refusal(status: u16, reason: &'static str, kind: &str, error: &str) -> Self {
+        Self::json(
+            status,
+            reason,
+            &serde_json::json!({ "error": error, "kind": kind }),
+        )
     }
 
     /// The answer to a request that could not be read.
     #[must_use]
     pub fn malformed(why: Malformed) -> Self {
         let (status, reason) = why.status();
-        Self::refusal(status, reason, reason)
+        let kind = if why == Malformed::TooLarge {
+            "too_large"
+        } else {
+            "bad_request"
+        };
+        Self::refusal(status, reason, kind, reason)
     }
 
     /// One of the page's own files.

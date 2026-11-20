@@ -87,6 +87,7 @@ pub struct Session {
     launch: Mutex<Option<String>>,
     cookie: String,
     request: String,
+    app: String,
 }
 
 /// What became of an attempt to trade the launch token for the cookie.
@@ -111,6 +112,7 @@ impl Session {
             launch: Mutex::new(Some(secret()?)),
             cookie: secret()?,
             request: secret()?,
+            app: secret()?,
         })
     }
 
@@ -164,6 +166,29 @@ impl Session {
     #[must_use]
     pub fn holds_token(&self, offered: Option<&str>) -> bool {
         offered.is_some_and(|offered| same(offered, &self.request))
+    }
+
+    /// The native app's token, for the one process it is handed to.
+    ///
+    /// The Mac app is not a browser: it has no cookie jar worth trusting and
+    /// no origin, so it is given a secret of its own and presents it on every
+    /// request. It is drawn for every session and useless until it has been
+    /// given to somebody, which only the launch of the app does, over a pipe
+    /// that no other process holds an end of.
+    #[must_use]
+    pub fn app_token(&self) -> &str {
+        &self.app
+    }
+
+    /// Whether `authorization` is the app's token, offered the way the app
+    /// offers it. The scheme is matched exactly, so a browser's cached
+    /// `Basic` credentials or a token pasted without its scheme are simply
+    /// not it.
+    #[must_use]
+    pub fn holds_app_token(&self, authorization: Option<&str>) -> bool {
+        authorization
+            .and_then(|offered| offered.strip_prefix("Bearer "))
+            .is_some_and(|offered| same(offered, &self.app))
     }
 
     /// The request token, for the page it is served inside and nothing else.
@@ -283,6 +308,32 @@ mod tests {
         assert!(!session.holds_token(Some(&cookie)));
         assert!(!session.holds_token(Some(launch)));
         assert!(!session.holds_token(None));
+    }
+
+    #[test]
+    fn the_apps_token_is_a_fourth_secret_and_only_passes_with_its_scheme() {
+        let session = Session::new(4100).expect("session");
+        let app = session.app_token().to_owned();
+        assert_eq!(app.len(), 64);
+        assert_ne!(app, session.request_token());
+        assert!(!session.set_cookie().contains(&app));
+        assert!(!session.launch_address().expect("address").contains(&app));
+        assert!(session.holds_app_token(Some(&format!("Bearer {app}"))));
+        for other in [
+            app.clone(),
+            format!("bearer {app}"),
+            format!("Bearer  {app}"),
+            format!("Basic {app}"),
+            format!("Bearer {}", session.request_token()),
+            "Bearer ".to_owned(),
+            String::new(),
+        ] {
+            assert!(!session.holds_app_token(Some(&other)), "{other:?}");
+        }
+        assert!(!session.holds_app_token(None));
+        // Nor does it open either of the page's doors.
+        assert!(!session.holds_cookie(Some(&app)));
+        assert!(!session.holds_token(Some(&app)));
     }
 
     #[test]
