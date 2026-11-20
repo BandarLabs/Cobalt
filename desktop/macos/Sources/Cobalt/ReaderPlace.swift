@@ -138,7 +138,7 @@ private struct SeveralReaders: View {
                         }
                         Spacer(minLength: 8)
                         Button("Choose") { store.choose(volume: reader.volume) }
-                            .accessibilityLabel("Choose the \(reader.model) at \(reader.volume)")
+                            .accessibilityLabel("Choose the \(reader.model), \(diskName(of: reader))")
                     }
                     .padding(.vertical, 10)
                 }
@@ -147,9 +147,16 @@ private struct SeveralReaders: View {
         }
     }
 
+    /// What tells two readers apart: what is on each, and the name its disk
+    /// has in the Finder. The name and not where it is mounted, which is a
+    /// path and means nothing to someone choosing between two readers.
     private func summary(of reader: Reader) -> String {
         let cobalt = reader.cobalt.map { "Cobalt \($0.cobaltVersion)" } ?? "No Cobalt"
-        return "\(cobalt) · \(reader.volume)"
+        return "\(cobalt) · \(diskName(of: reader))"
+    }
+
+    private func diskName(of reader: Reader) -> String {
+        URL(fileURLWithPath: reader.volume).lastPathComponent
     }
 }
 
@@ -252,7 +259,6 @@ private struct OneReader: View {
             if let free = reader.freeBytes {
                 fact("Free space", Advice.fileSize(free))
             }
-            fact("Connected at", reader.volume)
         }
         .font(.callout)
     }
@@ -314,7 +320,7 @@ private struct PlanPane: View {
                     .font(Paper.serif(24))
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                Text("On the \(reader.model) at \(reader.volume).")
+                Text("On the \(reader.model).")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -430,7 +436,7 @@ private struct JobPane: View {
             onTheReader
         }
         if !scene.said.isEmpty {
-            Folded(title: "Everything it has said") { SaidView(blocks: scene.said) }
+            Folded(title: "Details") { SaidView(blocks: scene.said) }
         }
     }
 

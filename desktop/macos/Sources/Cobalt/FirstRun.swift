@@ -56,12 +56,22 @@ struct SetupPane: View {
         switch setup.stage {
         case .eject: return "Cobalt is on the reader."
         case .finding, .securing: return "Finding the reader"
-        case .ready: return "\(setup.savedAs ?? "The reader") is ready."
+        case .ready: return readyHeading
         case .notFound: return "The reader was not found on Wi-Fi."
         case .several: return "More than one reader answered."
         case .noNetwork: return "This computer is not on a network."
         default: return scene.heading
         }
+    }
+
+    /// A reader the owner named is called by that name. One saved under
+    /// the name every first reader gets is "kobo", which is no name at all
+    /// at the head of a sentence.
+    private var readyHeading: String {
+        guard let name = setup.savedAs, name.lowercased() != "kobo" else {
+            return "Your Kobo is ready."
+        }
+        return "\(name) is ready."
     }
 
     var body: some View {
@@ -100,7 +110,7 @@ struct SetupPane: View {
                 Note(store.reader.error, kind: .caution)
             }
             if !scene.said.isEmpty {
-                Folded(title: "Everything it has said") { SaidView(blocks: scene.said) }
+                Folded(title: "Details") { SaidView(blocks: scene.said) }
             }
         }
     }
@@ -163,12 +173,9 @@ struct SetupPane: View {
             Button("Add Send to Kobo to a Browser") { leave(for: .browser) }
             Button("Send an Article or a Book") { leave(for: .send) }
         }
-        HStack {
-            Spacer()
-            Button("Done") { Task { await store.dismissReaderJob() } }
-                .leading()
-                .keyboardShortcut(.defaultAction)
-        }
+        Button("Done") { Task { await store.dismissReaderJob() } }
+            .leading()
+            .keyboardShortcut(.defaultAction)
     }
 
     private func leave(for place: Place) {
