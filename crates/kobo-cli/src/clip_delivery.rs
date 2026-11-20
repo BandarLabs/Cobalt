@@ -22,6 +22,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 /// article by it, and the runtime deletes only inside it.
 pub const ARTICLES: &str = "Articles";
 
+/// The folder on the card a sent book or document is delivered to.
+///
+/// Its own folder rather than the card's root or `Articles`: Books files
+/// whatever is in `Articles` on the articles shelf, where a novel would sit
+/// among clippings and be offered for deletion with them, and a folder named
+/// for what it holds is where an owner looking over USB expects to find the
+/// books they sent.
+pub const BOOKS: &str = "Books";
+
 /// Where the runtime reads notice records from, on the reader.
 const DEVICE_INBOX: &str = "/mnt/onboard/.adds/cobalt/state/notices/inbox";
 const DEVICE_ARTICLES: &str = "/mnt/onboard/Articles";

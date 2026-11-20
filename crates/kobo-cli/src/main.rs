@@ -16,6 +16,7 @@ mod apps;
 mod authorize;
 mod beta_store_smoke;
 mod birds;
+mod books;
 mod bootstrap;
 mod clip;
 mod clip_delivery;
@@ -549,8 +550,11 @@ const SEND_USAGE: &str = concat!(
     "\n",
     "Sends a file or folder to the app on the reader that opens it, adds it to\n",
     "what is already there, and says which app received it:\n",
+    "  EPUB books, text and HTML files,    Books, in the Books folder on the\n",
+    "    or a folder of them               reader's card\n",
     "  photos, or a folder of them         Frame\n",
-    "  a PDF                               Music Stand or Needles: you are asked\n",
+    "  a PDF                               Music Stand, Needles or Books: you\n",
+    "                                      are asked\n",
     "  a folder of PDF scores              Music Stand\n",
     "  Markdown notes, or a folder of them Vault\n",
     "  OPML lists                          Feeds\n",
@@ -559,6 +563,8 @@ const SEND_USAGE: &str = concat!(
     "  APKG/COLPKG decks                   Flashcards, which imports them first\n",
     "\n",
     "--to APP chooses the app yourself, for a file more than one app opens.\n",
+    "--to books sends a PDF or a Markdown file to Books as a document. Books\n",
+    "lists a PDF or a Kobo EPUB, and the Kobo's own reader opens it.\n",
     "--replace sends to an app that keeps one thing at a time (Panels keeps\n",
     "one comic) without asking first.\n",
     "--preview renders or checks the file on this computer; nothing is sent.\n",
@@ -666,7 +672,7 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    send_dispatch(
+    let shelved = send_dispatch(
         chosen,
         &file,
         &device_flags,
@@ -676,7 +682,12 @@ fn send_file(arguments: &[String]) -> Result<(), String> {
         &receipts_path,
         sha,
     )?;
-    println!("Sent {file} to {} on {reader_label}.", chosen.title());
+    // Books answers for itself: it is the one app that can find it already
+    // holds the file, and "Sent" would then be untrue.
+    match shelved {
+        Some(outcome) => println!("{}", outcome.said(&file, &reader_label)),
+        None => println!("Sent {file} to {} on {reader_label}.", chosen.title()),
+    }
     Ok(())
 }
 
@@ -710,7 +721,9 @@ fn send_target(resolved: &targets::Target) -> Result<(String, Vec<String>, Strin
 ///
 /// Decks are a two-step import and Fanshelf fetches its own books. Each says
 /// how it is done instead of pretending a push happened, and neither claims
-/// success: nothing reached the reader.
+/// success: nothing reached the reader. Fanshelf is only ever reached by
+/// naming it, now that a book goes to Books, so its answer says where the
+/// file can go.
 fn not_a_push(chosen: detect::Companion, file: &str) -> Option<Result<(), String>> {
     let advice = match chosen {
         detect::Companion::Flashcards => format!(
@@ -719,8 +732,9 @@ fn not_a_push(chosen: detect::Companion, file: &str) -> Option<Result<(), String
              kobo flashcards stage COLLECTION.cobfc --kobo-root MOUNT"
         ),
         detect::Companion::Fanshelf => format!(
-            "{file} is an EPUB book. Fanshelf downloads the works on its shelf itself: add \
-             the work from the app on the reader."
+            "Fanshelf downloads the works on its shelf itself and takes no files: add the \
+             work from the app on the reader. To read {file} on the reader, send it to \
+             Books:\n  kobo send {file} --to books"
         ),
         _ => return None,
     };
@@ -770,6 +784,11 @@ fn replacing_is_agreed(
 /// only past its acknowledgement clear the pending send and write the
 /// receipt. An interrupted transfer keeps the one and never gains the other,
 /// which is what makes the next send a resume rather than a duplicate.
+///
+/// Returns what Books did with the file when Books took it, for the line
+/// that ends the send. A book the reader already held is acknowledged like
+/// one that was copied, so it earns its receipt too and the next send of the
+/// same file is answered without waking the reader.
 #[allow(clippy::too_many_arguments)]
 fn send_dispatch(
     chosen: detect::Companion,
@@ -780,7 +799,7 @@ fn send_dispatch(
     ledger: &mut receipts::Receipts,
     receipts_path: &std::path::Path,
     sha: Option<String>,
-) -> Result<(), String> {
+) -> Result<Option<books::Outcome>, String> {
     let pending_path = receipts::pending_path();
     let pending = receipts::Pending {
         file: file.to_owned(),
@@ -792,7 +811,15 @@ fn send_dispatch(
     }
     let mut forwarded = vec!["push".to_owned(), file.to_owned()];
     forwarded.extend(device_flags.iter().cloned());
+    let mut shelved = None;
     let sent = match chosen {
+        detect::Companion::Books => {
+            let reader = match device_flags {
+                [_, host] => clip_delivery::Reader::Device(host.clone()),
+                _ => clip_delivery::Reader::Simulator,
+            };
+            books::send(Path::new(file), &reader).map(|outcome| shelved = Some(outcome))
+        }
         detect::Companion::Frame => frame::command(&forwarded),
         detect::Companion::Feeds => feeds::command(&forwarded),
         detect::Companion::Panels => panels::command(&forwarded),
@@ -804,7 +831,7 @@ fn send_dispatch(
             // Answered by not_a_push before anything is resolved, so these
             // never reach a transfer.
             receipts::Pending::clear(&pending_path);
-            return Ok(());
+            return Ok(None);
         }
     };
     if let Err(error) = sent {
@@ -819,7 +846,7 @@ fn send_dispatch(
     }
     receipts::Pending::clear(&pending_path);
     let Some(sha) = sha else {
-        return Ok(());
+        return Ok(shelved);
     };
     ledger.record(receipts::Receipt {
         file: file.to_owned(),
@@ -833,7 +860,7 @@ fn send_dispatch(
             "note: the send's receipt could not be written ({error}); the send itself finished"
         );
     }
-    Ok(())
+    Ok(shelved)
 }
 
 /// Sends a notes folder, or one note, to Vault.
@@ -1036,7 +1063,7 @@ fn pick_companion(
     }
     let names: Vec<String> = candidates
         .iter()
-        .map(|companion| format!("{}, for {}", companion.title(), companion.purpose()))
+        .map(|companion| companion.offer())
         .collect();
     println!("{question}");
     let stdin = std::io::stdin();
@@ -1078,6 +1105,7 @@ fn send_preview(
                 panels::command(&forwarded)
             }
         }
+        detect::Companion::Books => books::preview(file),
         detect::Companion::Feeds => feeds::command(&["check".to_owned(), file.to_owned()]),
         detect::Companion::Parser => parser_command(&["inspect".to_owned(), file.to_owned()]),
         detect::Companion::Vault => vault::command(&["preview".to_owned(), file.to_owned()]),
@@ -1107,7 +1135,7 @@ fn send_preview(
         }
         detect::Companion::Fanshelf => {
             println!(
-                "{file} is an EPUB book. Fanshelf shelves works it downloads itself: add the work from the app on the reader."
+                "Fanshelf shelves works it downloads itself and takes no files: add the work from the app on the reader. To read {file} on the reader, send it to Books: kobo send {file} --to books"
             );
             Ok(())
         }
@@ -4941,10 +4969,35 @@ fn run_remote_shell(
     run_shell_session(remote_shell_command(remote), script, timeout)
 }
 
+/// [`run_remote_shell`] for a script too large to build as one string.
+///
+/// `feed` writes the script to the reader's shell a piece at a time. A book
+/// of a few hundred megabytes travels as base64 inside its script, and held
+/// whole it would be in memory three times over: as the file, as its
+/// encoding, and as the copy the writer thread takes. Fed in pieces it is
+/// there once.
+fn run_remote_shell_fed(
+    remote: &str,
+    feed: impl FnOnce(&mut dyn Write) -> std::io::Result<()> + Send + 'static,
+    timeout: Duration,
+) -> Result<RemoteShellOutput, String> {
+    run_fed_session(remote_shell_command(remote), feed, timeout)
+}
+
 /// [`run_remote_shell`] over an `ssh` command the caller has already shaped.
 fn run_shell_session(
-    mut command: Command,
+    command: Command,
     script: &str,
+    timeout: Duration,
+) -> Result<RemoteShellOutput, String> {
+    let script = script.as_bytes().to_vec();
+    run_fed_session(command, move |stdin| stdin.write_all(&script), timeout)
+}
+
+/// One shell session on the reader, its script written by `feed`.
+fn run_fed_session(
+    mut command: Command,
+    feed: impl FnOnce(&mut dyn Write) -> std::io::Result<()> + Send + 'static,
     timeout: Duration,
 ) -> Result<RemoteShellOutput, String> {
     command
@@ -4960,10 +5013,9 @@ fn run_shell_session(
     let stdout = take_remote_pipe(&mut child, stdout_handle, "stdout")?;
     let stderr_handle = child.stderr.take();
     let stderr = take_remote_pipe(&mut child, stderr_handle, "stderr")?;
-    let script = script.as_bytes().to_vec();
     let writer = thread::spawn(move || -> std::io::Result<()> {
         let mut stdin = stdin;
-        stdin.write_all(&script)?;
+        feed(&mut stdin)?;
         stdin.flush()
     });
     let stdout_reader = thread::spawn(move || read_remote_pipe(stdout));
