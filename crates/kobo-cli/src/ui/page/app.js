@@ -287,7 +287,7 @@ function noReader() {
   if (missing.kind === "blocked") {
     return [
       h("h2", null, "This computer is not letting Cobalt read the reader."),
-      h("p", { class: "reading" }, mac ? "A Kobo is connected, and macOS refused to let this read it." : "A Kobo is connected, and the system refused to let this read it."),
+      !mac && h("p", { class: "reading" }, "Check that your account may open the Kobo’s drive, then unplug it and plug it in again."),
       mac && h("ol", { class: "steps reading" },
         h("li", null, "Open System Settings, then Privacy & Security, then Files and Folders."),
         h("li", null, "Find the terminal app you ran kobo ui from and turn on Removable Volumes."),
