@@ -362,18 +362,32 @@ const TAILSCALE_RETRY: Duration = Duration::from_secs(10 * 60);
 /// daemon ten to leave cleanly; this is both, with some to spare.
 const TAILSCALE_STOP_PATIENCE: Duration = Duration::from_secs(20);
 
+/// How soon the runtime looks again after asking a supervisor from another
+/// build to leave. It takes a couple of seconds to notice and up to ten to
+/// stop its daemon, and the reader is off the tailnet until one of this
+/// build replaces it.
+const TAILSCALE_RECHECK: Duration = Duration::from_secs(4);
+
 /// The Tailscale supervisor this session starts, so the switch in the
 /// Tailscale app actually brings the reader onto the tailnet.
 ///
 /// Nothing else starts it. The app can only save what the owner chose;
 /// running a daemon needs the runtime's own privileges, and nothing on the
-/// reader runs while Cobalt is closed. So the service is started when a
-/// session finds it switched on, and ended with the session like a Sync
-/// window, for the same reason: nothing Cobalt started may still be running
-/// once the stock reader is.
+/// reader runs it at boot. So the service is started when a session finds it
+/// switched on, and ended with the session like a Sync window, for the same
+/// reason: nothing Cobalt started may still be running once the stock reader
+/// is.
+///
+/// The one exception is the owner's to make. A reader asked to stay connected
+/// outside Cobalt gets a supervisor of its own on the root filesystem, which
+/// this session starts if none is running, adopts if one already is, and
+/// leaves alone when it ends.
 #[derive(Default)]
 struct TailscaleService {
-    running: Option<Child>,
+    /// What this session started and is still waiting on, with why: a
+    /// supervisor that ends with the session, or the short step that starts
+    /// one that does not.
+    running: Option<(Child, crate::tailscale::Want)>,
     checked: Option<Instant>,
     /// Set when the Tailscale app saved something that may change what should
     /// be running, so a tap is answered at once.
@@ -386,20 +400,17 @@ struct TailscaleService {
 
 impl TailscaleService {
     fn tend(&mut self, online: bool) {
-        if !self.asked
-            && self
-                .checked
-                .is_some_and(|at| at.elapsed() < TAILSCALE_CHECK)
-        {
-            return;
-        }
-        // A tap is the owner trying again, so it does not wait out a failure.
-        if std::mem::take(&mut self.asked) {
+        use crate::tailscale::{Standing, Want};
+        let asked = std::mem::take(&mut self.asked);
+        if asked {
+            // A tap is the owner trying again, so it does not wait out a
+            // failure, and whatever could not be arranged last time is asked
+            // for again.
             self.retry_after = None;
+            crate::tailscale::try_staying_again();
         }
-        self.checked = Some(Instant::now());
-        if let Some(supervisor) = &mut self.running {
-            match supervisor.try_wait() {
+        if let Some((started, _)) = &mut self.running {
+            match started.try_wait() {
                 // It reads the app's choices itself while it runs.
                 Ok(None) => return,
                 Ok(Some(status)) if !status.success() => {
@@ -408,12 +419,40 @@ impl TailscaleService {
                 }
                 _ => {}
             }
+            // Looked at again now rather than at the next interval: the step
+            // that starts a kept supervisor ends in a second or two, and what
+            // it left decides what happens next.
             self.running = None;
+        } else if !asked
+            && self
+                .checked
+                .is_some_and(|at| at.elapsed() < TAILSCALE_CHECK)
+        {
+            return;
         }
+        self.checked = Some(Instant::now());
         if !std::mem::replace(&mut self.swept, true) {
             // A session that ended badly can leave a daemon with nobody
-            // watching it and its names in the hosts file.
+            // watching it and its names in the hosts file. A supervisor kept
+            // on purpose is not that, and the sweep leaves it alone.
+            crate::tailscale::try_staying_again();
             crate::tailscale::sweep();
+        }
+        match crate::tailscale::standing() {
+            Standing::Nothing => {}
+            // Adopted as it stands. Starting a second beside it would give
+            // the reader two daemons fighting over one tunnel.
+            Standing::Kept => return,
+            Standing::Stale => {
+                // From another build of the runtime, so its pins and its
+                // rules may not be this one's. Asked to leave, and looked for
+                // again shortly, when one of this build can be started.
+                if let Err(error) = crate::tailscale::ask_to_stop() {
+                    trace(&format!("could not ask tailscale to stop: {error}"));
+                }
+                self.checked = Instant::now().checked_sub(TAILSCALE_CHECK - TAILSCALE_RECHECK);
+                return;
+            }
         }
         let Some(want) = crate::tailscale::wanted() else {
             return;
@@ -421,7 +460,7 @@ impl TailscaleService {
         if self.retry_after.is_some_and(|at| Instant::now() < at) {
             return;
         }
-        if want == crate::tailscale::Want::Run && !online {
+        if want != Want::SignOut && !online {
             crate::tailscale::waiting_for_wifi();
             return;
         }
@@ -441,7 +480,7 @@ impl TailscaleService {
         match started {
             Ok(supervisor) => {
                 trace(&format!("tailscale started ({want:?})"));
-                self.running = Some(supervisor);
+                self.running = Some((supervisor, want));
             }
             Err(error) => trace(&format!("tailscale could not start: {error}")),
         }
@@ -454,31 +493,41 @@ impl TailscaleService {
     /// interface, its routes and its names with it before the stock reader
     /// restarts the radio underneath. A supervisor that has not stopped by the
     /// deadline is ended, and whatever it left is swept up after it.
+    ///
+    /// A supervisor the owner asked to keep is not this session's to end. It
+    /// was started detached, it is found by none of this, and the sweep
+    /// leaves a daemon alone while its supervisor is alive.
     fn finish(&mut self) {
-        if let Some(mut supervisor) = self.running.take() {
-            if matches!(supervisor.try_wait(), Ok(None)) {
+        if let Some((mut started, want)) = self.running.take() {
+            // Only a supervisor that ends with the session is asked to stop.
+            // The same request left for the step that starts a kept one
+            // would be read by the supervisor it has just started.
+            let ends_with_session = want == crate::tailscale::Want::Run;
+            if ends_with_session && matches!(started.try_wait(), Ok(None)) {
                 if let Err(error) = crate::tailscale::ask_to_stop() {
                     trace(&format!("could not ask tailscale to stop: {error}"));
                 }
-                let deadline = Instant::now() + TAILSCALE_STOP_PATIENCE;
-                while matches!(supervisor.try_wait(), Ok(None)) {
-                    if Instant::now() >= deadline {
-                        let _ignored = kobo_abi::process_group::signal(
-                            supervisor.id(),
-                            kobo_abi::process_group::SIGKILL,
-                        );
-                        let _ignored = supervisor.wait();
-                        trace("tailscale did not stop in time and was ended");
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(100));
+            }
+            let deadline = Instant::now() + TAILSCALE_STOP_PATIENCE;
+            while matches!(started.try_wait(), Ok(None)) {
+                if Instant::now() >= deadline {
+                    let _ignored = kobo_abi::process_group::signal(
+                        started.id(),
+                        kobo_abi::process_group::SIGKILL,
+                    );
+                    let _ignored = started.wait();
+                    trace("tailscale did not stop in time and was ended");
+                    break;
                 }
+                thread::sleep(Duration::from_millis(100));
+            }
+            if ends_with_session {
+                crate::tailscale::forget_stop_request();
             }
         }
         // Also when nothing was started here: the daemon runs in a group of
         // its own, so this is what ends one whose supervisor was killed.
         crate::tailscale::sweep();
-        crate::tailscale::forget_stop_request();
     }
 }
 

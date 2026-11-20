@@ -104,18 +104,23 @@ fn leaked(text: String) -> &'static str {
 /// loopback up, and nothing listening.
 fn reader(name: &str) -> (PathBuf, Layout) {
     let root = scratch(name);
-    for folder in ["state", "bin", "proc/net", "interfaces/lo"] {
+    for folder in ["card/state", "bin", "proc/net", "interfaces/lo"] {
         fs::create_dir_all(root.join(folder)).expect("layout folder");
     }
+    mount_card(&root);
     fs::write(root.join("hosts"), HOSTS).expect("hosts");
     fs::write(root.join("tun"), b"").expect("tunnel node");
     fs::write(root.join("interfaces/lo/flags"), "0x49\n").expect("loopback flags");
     script(&root.join("bin/tailscaled"), DAEMON);
     script(&root.join("bin/tailscale"), CLI);
     let layout = Layout {
-        app_state: root.join("state"),
+        app_state: root.join("card/state"),
         home: root.join("home"),
         bin: root.join("bin"),
+        card_bin: root.join("bin"),
+        kept_bin: root.join("kept-bin"),
+        card: root.join("card"),
+        kept: false,
         hosts: root.join("hosts"),
         tun_node: root.join("tun"),
         proc: root.join("proc"),
@@ -145,11 +150,39 @@ fn reader(name: &str) -> (PathBuf, Layout) {
 }
 
 fn switch(layout: &Layout, on: bool) {
+    choose(layout, on, false);
+}
+
+/// What the app saves: the switch, then whether to stay connected outside
+/// Cobalt.
+fn choose(layout: &Layout, on: bool, outside: bool) {
+    fs::write(layout.app_state.join(CONFIG), format!("{on}\n{outside}\n")).expect("config");
+}
+
+/// The kernel's list of mounts with the card in it.
+fn mount_card(root: &Path) {
     fs::write(
-        layout.app_state.join(CONFIG),
-        if on { "true\n" } else { "false\n" },
+        root.join("proc/mounts"),
+        format!(
+            "rootfs / rootfs rw 0 0\n/dev/mmcblk0p3 {} vfat rw,noatime 0 0\n",
+            root.join("card").display()
+        ),
     )
-    .expect("config");
+    .expect("mounts");
+}
+
+/// The card handed to a computer over USB: gone from the list of mounts,
+/// with the empty folder it mounts on left behind on the root filesystem.
+fn hand_card_to_a_computer(root: &Path) {
+    fs::write(root.join("proc/mounts"), "rootfs / rootfs rw 0 0\n").expect("mounts");
+    fs::rename(root.join("card"), root.join("card-away")).expect("unmount");
+    fs::create_dir(root.join("card")).expect("mount point");
+}
+
+fn take_card_back(root: &Path) {
+    fs::remove_dir(root.join("card")).expect("the mount point was written to");
+    fs::rename(root.join("card-away"), root.join("card")).expect("mount");
+    mount_card(root);
 }
 
 fn status(layout: &Layout) -> Vec<String> {
@@ -643,7 +676,8 @@ fn a_signed_in_reader_comes_up_and_is_taken_down_with_the_session() {
             "100.64.0.7",
             "Connected.",
             "",
-            "kobo-cobalt.example.ts.net"
+            "kobo-cobalt.example.ts.net",
+            ""
         ]
     );
     eventually("the tailnet names are written", || {
@@ -1129,4 +1163,332 @@ fn the_pinned_build_is_named_consistently() {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
     }
     assert_ne!(PINNED.daemon_sha256, PINNED.cli_sha256);
+}
+
+// Staying connected after Cobalt hands the screen back.
+
+/// A reader whose owner asked it to stay connected, as the supervisor that
+/// is kept sees it: its programs on the root filesystem, not the card.
+fn kept_reader(name: &str) -> (PathBuf, Layout, Layout) {
+    let (root, layout) = reader(name);
+    choose(&layout, true, true);
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    let kept = layout.clone().kept();
+    (root, layout, kept)
+}
+
+#[test]
+fn the_owner_decides_which_kind_of_supervisor_the_session_starts() {
+    let (_, layout) = reader("which-kind");
+    choose(&layout, true, false);
+    assert_eq!(wanted_in(&layout), Some(Want::Run));
+    choose(&layout, true, true);
+    assert_eq!(wanted_in(&layout), Some(Want::Stay));
+    // Staying is a way of being on, not a way of turning it on.
+    choose(&layout, false, true);
+    assert_eq!(wanted_in(&layout), None);
+    // What an app from before the second switch saved.
+    fs::write(layout.app_state.join(CONFIG), "true").expect("config");
+    assert_eq!(wanted_in(&layout), Some(Want::Run));
+}
+
+#[test]
+fn a_kept_supervisor_runs_from_the_root_filesystem_and_copies_its_programs_there() {
+    let (root, layout, kept) = kept_reader("kept-programs");
+    assert_eq!(kept.daemon(), root.join("kept-bin/tailscaled"));
+    let supervisor = supervise_in_background(&kept);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    // Taken from the card's copy without a second download, and it is the
+    // root filesystem's copy that is running.
+    assert!(verify_engine(&kept).is_ok());
+    let daemon = recorded_pid(&kept.home.join(DAEMON_PID)).expect("daemon recorded");
+    assert!(alive(daemon));
+    assert_eq!(
+        status(&layout)[5],
+        "",
+        "it is staying, so nothing to explain"
+    );
+    ask_to_stop_in(&kept).expect("ask");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(status(&layout)[..3], ["stopped", "", STOPPED]);
+    assert_eq!(fs::read_to_string(&kept.hosts).expect("hosts"), HOSTS);
+    assert!(!alive(daemon));
+}
+
+#[test]
+fn a_kept_supervisor_is_not_ended_by_losing_whoever_started_it() {
+    let (_, layout, kept) = kept_reader("kept-orphan");
+    let mut supervisor = Supervisor::new(&kept);
+    supervisor.parent = 0;
+    assert_eq!(supervisor.interrupted(), None);
+    // The kind that ends with its session takes the same loss as its notice.
+    choose(&layout, true, false);
+    let mut attached = Supervisor::new(&layout);
+    attached.parent = 0;
+    assert_eq!(attached.interrupted(), Some(Interrupt::Orphaned));
+}
+
+#[test]
+fn a_card_handed_to_a_computer_stops_nothing_and_is_not_written_to() {
+    let (root, layout, kept) = kept_reader("kept-usb");
+    let supervisor = supervise_in_background(&kept);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    let daemon = recorded_pid(&kept.home.join(DAEMON_PID)).expect("daemon recorded");
+
+    hand_card_to_a_computer(&root);
+    // Long enough for several looks at the switch and several at the daemon.
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(alive(daemon), "an unmounted card was read as switched off");
+    assert_eq!(
+        fs::read_dir(root.join("card"))
+            .expect("mount point")
+            .count(),
+        0,
+        "something was written under the mount point while the card was away"
+    );
+    // The computer tidied the status away; it is written again on return.
+    fs::remove_file(root.join("card-away/state").join(STATUS)).expect("remove status");
+    take_card_back(&root);
+    eventually("the status is written again", || {
+        state(&layout) == "running"
+    });
+    assert!(alive(daemon));
+
+    // And a switch turned off once the card is back is obeyed.
+    choose(&layout, false, true);
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(state(&layout), "off");
+    assert!(!alive(daemon));
+}
+
+#[test]
+fn what_happened_while_the_card_was_away_is_said_when_it_returns() {
+    let (root, layout, kept) = kept_reader("kept-unsaid");
+    let supervisor = supervise_in_background(&kept);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    hand_card_to_a_computer(&root);
+    // The daemon dies while a computer has the card.
+    let daemon = recorded_pid(&kept.home.join(DAEMON_PID)).expect("daemon recorded");
+    kobo_abi::process_group::signal(daemon, kobo_abi::process_group::SIGKILL).expect("kill");
+    assert!(matches!(
+        supervisor.join().expect("supervisor"),
+        End::Later(_)
+    ));
+    assert_eq!(fs::read_to_string(&kept.hosts).expect("hosts"), HOSTS);
+    assert_eq!(
+        fs::read_dir(root.join("card"))
+            .expect("mount point")
+            .count(),
+        0
+    );
+    take_card_back(&root);
+    // The supervisor is gone, so the stale word is corrected by the sweep
+    // the next session makes.
+    assert_eq!(state(&layout), "running");
+    sweep_in(&layout);
+    assert_eq!(state(&layout), "stopped");
+}
+
+#[test]
+fn asking_to_stay_ends_the_session_supervisor_so_the_kept_one_can_start() {
+    let (_, layout, supervisor) = connected_reader("to-kept");
+    choose(&layout, true, true);
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(state(&layout), "starting");
+    assert!(!layout.home.join(DAEMON_PID).exists());
+    assert_eq!(wanted_in(&layout), Some(Want::Stay));
+}
+
+#[test]
+fn no_longer_asking_to_stay_ends_the_kept_supervisor_and_clears_the_root_filesystem() {
+    let (root, layout, kept) = kept_reader("to-session");
+    let supervisor = supervise_in_background(&kept);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    choose(&layout, true, false);
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(wanted_in(&layout), Some(Want::Run));
+    assert!(root.join("kept-bin/tailscaled").exists());
+    // The supervisor that ends with its session takes the programs off the
+    // firmware's partition as it starts.
+    fs::write(root.join("up-mode"), "fail").expect("mode");
+    assert!(matches!(run(&layout), End::Later(_)));
+    assert!(!root.join("kept-bin").exists());
+}
+
+#[test]
+fn a_supervisor_started_as_the_wrong_kind_does_nothing() {
+    let (root, layout, kept) = kept_reader("wrong-kind");
+    assert_eq!(run(&layout), End::Settled);
+    choose(&layout, true, false);
+    assert_eq!(run(&kept), End::Settled);
+    assert!(!root.join("daemon-args").exists());
+}
+
+#[test]
+fn staying_without_room_on_the_system_partition_runs_with_the_session_and_says_why() {
+    let (root, layout, mut kept) = kept_reader("kept-room");
+    kept.room = u64::MAX;
+    let runtime = root.join("runtime");
+    fs::write(&runtime, b"this runtime").expect("runtime");
+    stay(&kept, &runtime).expect("stay");
+    assert!(!root.join("kept-bin/kobod").exists(), "copied without room");
+    assert_eq!(wanted_in(&layout), Some(Want::Run));
+
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    assert_eq!(status(&layout)[5], NO_ROOM_TO_STAY);
+    // The owner frees room and asks again.
+    try_staying_again_in(&layout);
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(wanted_in(&layout), Some(Want::Stay));
+}
+
+#[test]
+fn the_runtime_is_copied_to_the_root_filesystem_once_for_each_build() {
+    let (root, _, kept) = kept_reader("kept-runtime");
+    let runtime = root.join("runtime");
+    fs::write(&runtime, b"build one").expect("runtime");
+    // The programs are already there, so only the runtime is in question.
+    ensure_engine(&kept, &|| panic!("downloaded although the card had them")).expect("programs");
+    prepare_to_stay(&kept, &runtime).expect("prepare");
+    let copy = root.join("kept-bin/kobod");
+    assert_eq!(fs::read(&copy).expect("copy"), b"build one");
+    assert_eq!(
+        fs::metadata(&copy).expect("copy").permissions().mode() & 0o777,
+        0o700
+    );
+    let first = fs::metadata(&copy).expect("copy").ino();
+    prepare_to_stay(&kept, &runtime).expect("prepare again");
+    assert_eq!(fs::metadata(&copy).expect("copy").ino(), first);
+    // An update: the same path, another build.
+    fs::write(&runtime, b"build two, longer").expect("runtime");
+    prepare_to_stay(&kept, &runtime).expect("prepare after update");
+    assert_eq!(fs::read(&copy).expect("copy"), b"build two, longer");
+}
+
+#[test]
+fn programs_on_the_card_that_no_longer_verify_are_not_copied_to_the_root_filesystem() {
+    let (_, layout, kept) = kept_reader("kept-swapped");
+    script(
+        &layout.card_bin.join("tailscaled"),
+        "#!/bin/sh\necho owned\n",
+    );
+    let downloads = AtomicUsize::new(0);
+    // The download is then the only source, and here it is the wrong one.
+    let refused = ensure_engine(&kept, &|| {
+        downloads.fetch_add(1, Ordering::SeqCst);
+        None
+    });
+    assert!(refused.is_err());
+    assert_eq!(downloads.load(Ordering::SeqCst), 1);
+    assert!(!kept.daemon().exists());
+    assert!(!kept.cli().exists());
+}
+
+#[test]
+fn password_login_reopening_under_a_tunnel_that_is_up_takes_the_tunnel_down() {
+    let (root, layout, supervisor) = connected_reader("guard-again");
+    // A hardening nobody confirmed has just undone itself.
+    fs::write(root.join("proc/net/tcp"), SOCKETS).expect("sockets");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(!layout.home.join(DAEMON_PID).exists());
+    assert_eq!(fs::read_to_string(&layout.hosts).expect("hosts"), HOSTS);
+}
+
+/// A supervisor that the kernel says is running, without running one.
+fn record_supervisor(root: &Path, layout: &Layout, arguments: &[u8]) {
+    fs::create_dir_all(&layout.home).expect("home");
+    fs::write(layout.home.join(SUPERVISOR_PID), "4242").expect("pid");
+    fs::create_dir_all(root.join("proc/4242")).expect("proc");
+    fs::write(root.join("proc/4242/cmdline"), arguments).expect("cmdline");
+}
+
+#[test]
+fn a_session_adopts_a_kept_supervisor_of_its_own_build_and_replaces_any_other() {
+    let (root, _, kept) = kept_reader("standing");
+    let runtime = root.join("runtime");
+    fs::write(&runtime, b"this build").expect("runtime");
+    assert_eq!(standing_in(&kept, &runtime), Standing::Nothing);
+
+    fs::create_dir_all(&kept.bin).expect("kept bin");
+    fs::write(
+        kept.bin.join(KEPT_RUNTIME_FROM),
+        build_stamp(&runtime).expect("stamp"),
+    )
+    .expect("stamp");
+    record_supervisor(&root, &kept, b"/var/kobod\0--tailscale\0keep\0");
+    assert_eq!(standing_in(&kept, &runtime), Standing::Kept);
+
+    // Cobalt was updated since: the same path is another build now.
+    fs::write(&runtime, b"the build after this one").expect("runtime");
+    assert_eq!(standing_in(&kept, &runtime), Standing::Stale);
+
+    // A supervisor that should have ended with its session is not adopted.
+    fs::write(
+        kept.bin.join(KEPT_RUNTIME_FROM),
+        build_stamp(&runtime).expect("stamp"),
+    )
+    .expect("stamp");
+    record_supervisor(&root, &kept, b"/mnt/kobod\0--tailscale\0run\0");
+    assert_eq!(standing_in(&kept, &runtime), Standing::Stale);
+
+    // A number that now belongs to the stock reader is nothing of ours.
+    record_supervisor(&root, &kept, b"/usr/local/Kobo/nickel\0");
+    assert_eq!(standing_in(&kept, &runtime), Standing::Nothing);
+}
+
+#[test]
+fn a_sweep_leaves_a_kept_daemon_and_its_names_alone() {
+    let (root, mut layout) = reader("sweep-kept");
+    layout.timing.stop = Duration::from_millis(300);
+    hosts::write(&layout.hosts, &["100.64.0.1\ta.ts.net a".to_owned()]).expect("names");
+    let mut child = stray(&root, &layout, &layout.daemon());
+    record_supervisor(&root, &layout, b"/var/kobod\0--tailscale\0keep\0");
+    sweep_in(&layout);
+    assert!(alive(child.id()), "a kept daemon was swept away");
+    assert!(fs::read_to_string(&layout.hosts)
+        .expect("hosts")
+        .contains("a.ts.net"));
+    // Once its supervisor is gone it is a leftover like any other.
+    fs::remove_file(layout.home.join(SUPERVISOR_PID)).expect("supervisor gone");
+    sweep_in(&layout);
+    child.wait().expect("ended");
+    assert_eq!(fs::read_to_string(&layout.hosts).expect("hosts"), HOSTS);
+}
+
+#[test]
+fn signing_out_also_takes_the_programs_off_the_root_filesystem() {
+    let (root, layout, kept) = kept_reader("sign-out-kept");
+    ensure_engine(&kept, &|| panic!("downloaded although the card had them")).expect("programs");
+    fs::create_dir_all(&layout.home).expect("home");
+    fs::write(layout.app_state.join(REQUEST), SIGN_OUT).expect("request");
+    sign_out_while_off(&layout).expect("sign out");
+    assert!(!root.join("kept-bin").exists());
+    assert!(!layout.home.exists());
+}
+
+#[test]
+fn the_kept_supervisor_is_started_from_the_copy_with_nowhere_on_the_card_to_stand() {
+    let (root, _, kept) = kept_reader("kept-detach");
+    // A runtime that only says how it was started, and where it stood.
+    let runtime = root.join("runtime");
+    script(
+        &runtime,
+        "#!/bin/sh\nroot=$(dirname \"$(dirname \"$0\")\")\n{ printf '%s\\n' \"$0\" \"$@\"; pwd; } > \"$root/kept-started\"\n",
+    );
+    stay(&kept, &runtime).expect("stay");
+    eventually("the kept supervisor is started", || {
+        recorded(&root, "kept-started").len() == 4
+    });
+    assert_eq!(
+        recorded(&root, "kept-started"),
+        [
+            root.join("kept-bin/kobod").to_str().expect("path"),
+            "--tailscale",
+            "keep",
+            "/",
+        ]
+    );
+    assert!(!kept.home.join(CANNOT_STAY).exists());
 }

@@ -12,11 +12,23 @@
 //! applications on the reader can reach the owner's own servers. It forwards
 //! nothing, advertises nothing and offers no Tailscale SSH.
 //!
-//! The service runs while Cobalt is open and stops when the reader is handed
-//! back, for the reasons a Sync window does. Nothing would be watching the
-//! daemon under the stock reader, and its programs live on the partition the
-//! reader exports over USB, so a daemon still running from it when the owner
-//! plugs in a cable is running from a filesystem a computer is rewriting.
+//! Unless the owner asks otherwise, the service runs while Cobalt is open and
+//! stops when the reader is handed back, for the reasons a Sync window does.
+//! Nothing would be watching the daemon under the stock reader, and its
+//! programs live on the partition the reader exports over USB, so a daemon
+//! still running from it when the owner plugs in a cable is running from a
+//! filesystem a computer is rewriting.
+//!
+//! An owner who wants the reader reachable after leaving Cobalt can switch
+//! that on, and then both objections are answered rather than ignored. The
+//! programs, and a copy of this runtime to supervise them, are put on the
+//! root filesystem, which is never exported. That supervisor is started
+//! detached the way the recovery watchdog is, so it outlives the session,
+//! and it is the same supervisor: it keeps checking what the reader offers
+//! the tailnet, takes the names out of the hosts file when it stops, and
+//! treats the card being away, while a computer has it, as nothing having
+//! been said. Nothing starts it at boot. After a restart it comes back the
+//! next time Cobalt is opened.
 //!
 //! Constraints this is built around:
 //!
@@ -61,6 +73,13 @@ const APP_STATE: &str = "/mnt/onboard/.adds/cobalt/state/tailscale";
 const HOME: &str = "/var/lib/cobalt/tailscale";
 /// The two programs, on the book partition beside the Sync engine.
 const BIN_DIR: &str = "/mnt/onboard/.adds/cobalt/bin/tailscale";
+/// The two programs again, with a copy of this runtime, on the root
+/// filesystem, for a reader that stays connected after Cobalt hands the
+/// screen back. Beside the daemon's home rather than inside it, so signing
+/// out, which empties the home, does not also mean downloading 70 MB again.
+const KEPT_BIN_DIR: &str = "/var/lib/cobalt/tailscale-bin";
+/// The partition the stock reader hands to a computer over USB.
+const CARD: &str = "/mnt/onboard";
 
 /// The name this reader asks for on the tailnet. A second reader on the same
 /// tailnet is given the same name with a number after it.
@@ -85,6 +104,14 @@ const SUPERVISOR_PID: &str = "supervisor.pid";
 /// first time this fails on a reader nobody has tried.
 const DAEMON_LOG: &str = "tailscaled.log";
 const LOG_LINES: usize = 200;
+/// Left in the daemon's home when staying connected could not be arranged,
+/// holding the sentence that says why, so the service runs with the session
+/// instead of failing to start in a loop.
+const CANNOT_STAY: &str = "cannot-stay";
+/// The copy of this runtime that supervises a reader kept connected, and
+/// the note beside it of which build it was copied from.
+const KEPT_RUNTIME: &str = "kobod";
+const KEPT_RUNTIME_FROM: &str = "kobod.from";
 
 /// The most a status answer may be. A tailnet large enough to pass this is
 /// not one whose names this reader was going to list.
@@ -95,6 +122,13 @@ const LARGEST_ANSWER: u64 = 2 * 1024 * 1024;
 /// the stock reader's library database lives on the same partition and a card
 /// filled by a feature most owners never open is a library that will not save.
 const ROOM_NEEDED: u64 = 160 * 1024 * 1024;
+
+/// Room the root filesystem must have before the programs are put on it.
+///
+/// They are 70 MB, and the margin on top is not politeness: the firmware
+/// unpacks its own updates onto this partition, and a reader that cannot
+/// update because a feature filled its system storage has been broken by it.
+const KEPT_ROOM: u64 = 110 * 1024 * 1024;
 
 /// The upstream build this runtime will run, and no other.
 ///
@@ -172,7 +206,15 @@ const DEVICE_TIMING: Timing = Timing {
 struct Layout {
     app_state: PathBuf,
     home: PathBuf,
+    /// Where this supervisor's programs are: the card's copy for one that
+    /// ends with its session, the root filesystem's for one that is kept.
     bin: PathBuf,
+    card_bin: PathBuf,
+    kept_bin: PathBuf,
+    /// Where the book partition is mounted, when it is.
+    card: PathBuf,
+    /// Whether this supervisor is meant to outlive the session.
+    kept: bool,
     hosts: PathBuf,
     tun_node: PathBuf,
     /// `/proc`, for who is listening and for whether a process is ours.
@@ -193,6 +235,10 @@ impl Layout {
             app_state: PathBuf::from(APP_STATE),
             home: PathBuf::from(HOME),
             bin: PathBuf::from(BIN_DIR),
+            card_bin: PathBuf::from(BIN_DIR),
+            kept_bin: PathBuf::from(KEPT_BIN_DIR),
+            card: PathBuf::from(CARD),
+            kept: false,
             hosts: PathBuf::from("/etc/hosts"),
             tun_node: PathBuf::from("/dev/net/tun"),
             proc: PathBuf::from("/proc"),
@@ -205,6 +251,16 @@ impl Layout {
             engine: PINNED,
             room: ROOM_NEEDED,
             timing: DEVICE_TIMING,
+        }
+    }
+
+    /// The same reader, for the supervisor that stays after the session.
+    fn kept(self) -> Self {
+        Self {
+            bin: self.kept_bin.clone(),
+            room: KEPT_ROOM,
+            kept: true,
+            ..self
         }
     }
 
@@ -228,21 +284,67 @@ impl Layout {
     }
 }
 
-/// What the owner chose. A missing or unreadable choice is off, because the
+/// What the owner chose, one word a line as the app saves it. Lines an older
+/// app never wrote are off.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Choices {
+    on: bool,
+    /// Stay on the tailnet after Cobalt hands the screen back.
+    outside: bool,
+}
+
+/// Whether the book partition is mounted where the app's files are.
+///
+/// It is not while a computer has it over USB. The folder it mounts on is
+/// still there then, empty, on the root filesystem, so asking whether a file
+/// exists gets a confident wrong answer: every switch reads as off, and a
+/// status written there lands on the wrong partition and is hidden the moment
+/// the card comes back. The kernel's list of mounts is the only honest
+/// witness.
+fn card_present(layout: &Layout) -> bool {
+    fs::read_to_string(layout.proc.join("mounts")).is_ok_and(|mounts| {
+        mounts.lines().any(|line| {
+            line.split_whitespace()
+                .nth(1)
+                .is_some_and(|at| Path::new(at) == layout.card)
+        })
+    })
+}
+
+/// What the owner chose, or `None` when that cannot be known right now
+/// because the card is away.
+///
+/// With the card present, a choice that is missing or unreadable is off: the
 /// only safe reading of "nobody said" for a service that opens the reader to
 /// a network is that nobody asked for it.
-fn enabled(layout: &Layout) -> bool {
-    fs::read_to_string(layout.app_state.join(CONFIG))
-        .is_ok_and(|text| text.lines().next() == Some("true"))
+fn choices(layout: &Layout) -> Option<Choices> {
+    if !card_present(layout) {
+        return None;
+    }
+    let text = fs::read_to_string(layout.app_state.join(CONFIG)).unwrap_or_default();
+    let mut lines = text.lines();
+    let mut next = || lines.next() == Some("true");
+    Some(Choices {
+        on: next(),
+        outside: next(),
+    })
+}
+
+/// Whether this reader is to stay connected after the session: the owner
+/// asked for it, and nothing has said it cannot be arranged.
+fn staying(layout: &Layout, choices: Choices) -> bool {
+    choices.outside && !layout.home.join(CANNOT_STAY).exists()
 }
 
 fn sign_out_requested(layout: &Layout) -> bool {
-    fs::read_to_string(layout.app_state.join(REQUEST)).is_ok_and(|text| text.trim() == SIGN_OUT)
+    card_present(layout)
+        && fs::read_to_string(layout.app_state.join(REQUEST))
+            .is_ok_and(|text| text.trim() == SIGN_OUT)
 }
 
 /// The app-facing status, one field a line in the order the app reads them.
-/// The first four lines are the original contract; the name was added after,
-/// and an app that predates it ignores the line.
+/// The first four lines are the original contract; the rest were added after,
+/// and an app that predates a line ignores it.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Status {
     state: &'static str,
@@ -250,6 +352,9 @@ struct Status {
     message: String,
     sign_in: String,
     name: String,
+    /// Why the reader cannot stay connected outside Cobalt, when the owner
+    /// asked for that and it could not be arranged. Empty otherwise.
+    cannot_stay: String,
 }
 
 impl Status {
@@ -263,8 +368,8 @@ impl Status {
 
     fn render(&self) -> String {
         format!(
-            "{}\n{}\n{}\n{}\n{}\n",
-            self.state, self.address, self.message, self.sign_in, self.name
+            "{}\n{}\n{}\n{}\n{}\n{}\n",
+            self.state, self.address, self.message, self.sign_in, self.name, self.cannot_stay
         )
     }
 }
@@ -276,6 +381,9 @@ const LEFT_COBALT: &str =
     "Tailscale stopped when you left Cobalt. It starts again the next time you open Cobalt.";
 const SIGNED_OUT: &str =
     "Signed out. If this reader is still listed in your Tailscale admin console, remove it there.";
+const STOPPED: &str = "Tailscale stopped. It starts again the next time you open Cobalt.";
+const NO_ROOM_TO_STAY: &str = "The reader's system storage does not have the 110 MB free that \
+     staying connected outside Cobalt needs. Tailscale runs while Cobalt is open instead.";
 
 fn read_status(layout: &Layout) -> String {
     fs::read_to_string(layout.app_state.join(STATUS))
@@ -316,14 +424,19 @@ fn atomic_write(path: &Path, value: &[u8], mode: u32) -> Result<(), String> {
     fs::rename(&temporary, path).map_err(|error| format!("replace {}: {error}", path.display()))
 }
 
-/// `kobod --tailscale run|status|stop|sign-out`.
+/// `kobod --tailscale run|stay|keep|status|stop|sign-out`.
+///
+/// `run` is the supervisor that ends with its session. `stay` prepares the
+/// root filesystem and starts `keep`, the same supervisor detached, from the
+/// copy of this runtime it put there.
 ///
 /// # Errors
 ///
-/// `run` fails when the service could not be brought up for a reason that
-/// may pass by itself, which is how the runtime knows to try again later. A
-/// run that ended because the owner has something to do first succeeds: the
-/// status says what, and trying again without them would change nothing.
+/// `run` and `keep` fail when the service could not be brought up for a
+/// reason that may pass by itself, which is how the runtime knows to try
+/// again later. A run that ended because the owner has something to do first
+/// succeeds: the status says what, and trying again without them would change
+/// nothing.
 pub fn command(arguments: &[String]) -> Result<(), String> {
     let layout = Layout::device();
     match arguments {
@@ -331,6 +444,15 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             End::Settled => Ok(()),
             End::Later(why) => Err(why),
         },
+        [action] if action == "keep" => match run(&layout.kept()) {
+            End::Settled => Ok(()),
+            End::Later(why) => Err(why),
+        },
+        [action] if action == "stay" => {
+            let runtime = std::env::current_exe()
+                .map_err(|error| format!("find this runtime to copy: {error}"))?;
+            stay(&layout.kept(), &runtime)
+        }
         [action] if action == "status" => {
             print!("{}", read_status(&layout));
             Ok(())
@@ -343,7 +465,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
             Ok(())
         }
         [action] if action == "sign-out" => sign_out_while_off(&layout),
-        _ => Err("usage: kobod --tailscale run|status|stop|sign-out".to_owned()),
+        _ => Err("usage: kobod --tailscale run|stay|keep|status|stop|sign-out".to_owned()),
     }
 }
 
@@ -356,6 +478,8 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
 pub enum Want {
     /// The owner has Tailscale switched on.
     Run,
+    /// Switched on, and to stay connected after Cobalt hands the screen back.
+    Stay,
     /// The owner asked for this reader's key to be forgotten.
     SignOut,
 }
@@ -370,6 +494,7 @@ impl Want {
     pub const fn arguments(self) -> [&'static str; 2] {
         match self {
             Self::Run => ["--tailscale", "run"],
+            Self::Stay => ["--tailscale", "stay"],
             Self::SignOut => ["--tailscale", "sign-out"],
         }
     }
@@ -385,7 +510,87 @@ fn wanted_in(layout: &Layout) -> Option<Want> {
     if sign_out_requested(layout) {
         return Some(Want::SignOut);
     }
-    enabled(layout).then_some(Want::Run)
+    let choices = choices(layout).filter(|choices| choices.on)?;
+    Some(if staying(layout, choices) {
+        Want::Stay
+    } else {
+        Want::Run
+    })
+}
+
+/// What is already supervising Tailscale when a session looks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub enum Standing {
+    Nothing,
+    /// A supervisor kept from an earlier session, made from this build. It
+    /// is adopted as it stands: it reads the owner's choices itself.
+    Kept,
+    /// A supervisor from another build of the runtime, whose pins and rules
+    /// may not be this build's. It is asked to leave so one can be started.
+    Stale,
+}
+
+/// Looks for a supervisor that outlived the session that started it.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub fn standing() -> Standing {
+    std::env::current_exe().map_or(Standing::Nothing, |runtime| {
+        standing_in(&Layout::device().kept(), &runtime)
+    })
+}
+
+fn standing_in(layout: &Layout, runtime: &Path) -> Standing {
+    let Some(supervisor) = live_supervisor(layout) else {
+        return Standing::Nothing;
+    };
+    let copied_from = fs::read_to_string(layout.bin.join(KEPT_RUNTIME_FROM)).ok();
+    if process_names(layout, supervisor, "keep")
+        && copied_from.is_some()
+        && copied_from == build_stamp(runtime)
+    {
+        Standing::Kept
+    } else {
+        Standing::Stale
+    }
+}
+
+/// The supervisor recorded in the daemon's home, if it is still running and
+/// still a supervisor.
+fn live_supervisor(layout: &Layout) -> Option<u32> {
+    recorded_pid(&layout.home.join(SUPERVISOR_PID))
+        .filter(|pid| *pid != std::process::id() && process_names(layout, *pid, "--tailscale"))
+}
+
+/// What identifies a build of the runtime cheaply enough to ask on every
+/// look: its version, its size and when it was written. An update changes at
+/// least the last, and nothing here has to read ten megabytes to find out.
+fn build_stamp(runtime: &Path) -> Option<String> {
+    let metadata = fs::metadata(runtime).ok()?;
+    let written = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    Some(format!(
+        "{} {} {written}",
+        env!("CARGO_PKG_VERSION"),
+        metadata.len()
+    ))
+}
+
+/// Lets staying connected be tried again, because the owner just changed
+/// something or a new session has begun.
+///
+/// The reason it could not be arranged last time, usually room, is the kind
+/// of thing an owner fixes and then expects to be noticed.
+#[cfg_attr(not(feature = "device-write"), allow(dead_code))]
+pub fn try_staying_again() {
+    try_staying_again_in(&Layout::device());
+}
+
+fn try_staying_again_in(layout: &Layout) {
+    let _ignored = fs::remove_file(layout.home.join(CANNOT_STAY));
 }
 
 /// Whether a store key the Tailscale app just saved may change what should
@@ -446,6 +651,12 @@ pub fn sweep() {
 }
 
 fn sweep_in(layout: &Layout) {
+    // A supervisor that is running owns everything this would clear. The one
+    // that can be found here is the kind kept past its session, and its
+    // daemon is not a leftover.
+    if live_supervisor(layout).is_some() {
+        return;
+    }
     stop_recorded_daemon(layout);
     let _ignored = hosts::write(&layout.hosts, &[]);
     let _ignored = fs::remove_file(layout.socket());
@@ -498,6 +709,9 @@ enum Interrupt {
     Orphaned,
     SignOut,
     SwitchedOff,
+    /// The owner changed whether the reader stays connected outside Cobalt,
+    /// which is a different supervisor's job, started from a different place.
+    OtherKind,
 }
 
 /// One run of the service, from nothing to the tunnel being taken down.
@@ -506,14 +720,51 @@ struct Supervisor<'a> {
     /// The process that started this one. A different answer later means it
     /// died and this was adopted, which is the only notice an orphan gets.
     parent: u32,
+    /// What the owner last chose, for while the card is away and cannot say.
+    known: std::cell::Cell<Choices>,
+    /// A status that could not be written because the card was away.
+    unsaid: std::cell::RefCell<Option<Status>>,
+    /// Why this reader is not staying connected although its owner asked.
+    cannot_stay: String,
 }
 
-impl Supervisor<'_> {
+impl<'a> Supervisor<'a> {
+    fn new(layout: &'a Layout) -> Self {
+        let known = choices(layout).unwrap_or_default();
+        // Read once: it is written before this supervisor is started and
+        // cleared only by the owner asking again, which starts another.
+        let cannot_stay = if known.outside && !layout.kept {
+            fs::read_to_string(layout.home.join(CANNOT_STAY)).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        Self {
+            layout,
+            parent: std::os::unix::process::parent_id(),
+            known: std::cell::Cell::new(known),
+            unsaid: std::cell::RefCell::new(None),
+            cannot_stay: cannot_stay.trim().to_owned(),
+        }
+    }
+
+    /// What the owner chose, as far as it can be known. While the card is
+    /// away the last answer stands: a computer holding the card is not the
+    /// owner switching anything off.
+    fn choices(&self) -> Choices {
+        if let Some(fresh) = choices(self.layout) {
+            self.known.set(fresh);
+        }
+        self.known.get()
+    }
+
     fn interrupted(&self) -> Option<Interrupt> {
+        self.catch_up();
         if self.layout.home.join(STOP).exists() {
             return Some(Interrupt::SessionEnding);
         }
-        if std::os::unix::process::parent_id() != self.parent {
+        // A supervisor that is kept has no session to be orphaned by: being
+        // adopted by init is how it was started.
+        if !self.layout.kept && std::os::unix::process::parent_id() != self.parent {
             return Some(Interrupt::Orphaned);
         }
         // Asked before the switch is read: the app saves the request and
@@ -522,12 +773,36 @@ impl Supervisor<'_> {
         if sign_out_requested(self.layout) {
             return Some(Interrupt::SignOut);
         }
-        (!enabled(self.layout)).then_some(Interrupt::SwitchedOff)
+        let choices = self.choices();
+        if !choices.on {
+            return Some(Interrupt::SwitchedOff);
+        }
+        (staying(self.layout, choices) != self.layout.kept).then_some(Interrupt::OtherKind)
     }
 
+    /// Says what happened, or remembers it for when the card is back.
     fn say(&self, status: &Status) {
-        if let Err(error) = write_status(self.layout, status) {
+        let status = Status {
+            cannot_stay: self.cannot_stay.clone(),
+            ..status.clone()
+        };
+        if !card_present(self.layout) {
+            *self.unsaid.borrow_mut() = Some(status);
+            return;
+        }
+        self.unsaid.borrow_mut().take();
+        if let Err(error) = write_status(self.layout, &status) {
             eprintln!("kobod: tailscale status not written: {error}");
+        }
+    }
+
+    /// Writes the status the card missed while a computer had it.
+    fn catch_up(&self) {
+        if !card_present(self.layout) {
+            return;
+        }
+        if let Some(status) = self.unsaid.borrow_mut().take() {
+            let _ignored = write_status(self.layout, &status);
         }
     }
 
@@ -548,8 +823,18 @@ impl Supervisor<'_> {
                 self.say(&Status::quiet("signed-out", SIGNED_OUT));
             }
             Interrupt::SwitchedOff => self.say(&Status::quiet("off", OFF)),
+            // The other kind of supervisor is about to be started in this
+            // one's place, so what the owner sees is a start.
+            Interrupt::OtherKind => self.say(&Status::quiet("starting", "Starting Tailscale.")),
             Interrupt::SessionEnding | Interrupt::Orphaned => {
-                self.say(&Status::quiet("stopped", LEFT_COBALT));
+                self.say(&Status::quiet(
+                    "stopped",
+                    if self.layout.kept {
+                        STOPPED
+                    } else {
+                        LEFT_COBALT
+                    },
+                ));
             }
         }
         forget_stop_request_in(self.layout);
@@ -575,34 +860,121 @@ impl Supervisor<'_> {
 }
 
 fn run(layout: &Layout) -> End {
-    let supervisor = Supervisor {
-        layout,
-        parent: std::os::unix::process::parent_id(),
-    };
-    if !enabled(layout) {
+    let supervisor = Supervisor::new(layout);
+    let choices = supervisor.choices();
+    if !choices.on {
         sweep_in(layout);
         supervisor.say(&Status::quiet("off", OFF));
         return End::Settled;
     }
+    if staying(layout, choices) != layout.kept {
+        // Started as one kind of supervisor when the owner wants the other.
+        // Nothing to take down; the session starts the right one next.
+        return End::Settled;
+    }
     if let Err(end) = claim(layout) {
         return end;
+    }
+    if !layout.kept && !choices.outside {
+        // The owner is not asking to stay connected, so nothing of ours is
+        // left on the firmware's partition beyond the key.
+        let _ignored = fs::remove_dir_all(&layout.kept_bin);
     }
     let end = supervise(&supervisor);
     let _ignored = fs::remove_file(layout.home.join(SUPERVISOR_PID));
     end
 }
 
+/// Arranges for the reader to stay connected, then starts the supervisor
+/// that does it and returns.
+///
+/// Run by the session in a process of its own, because copying a runtime is
+/// not work for the loop that draws the screen. When it cannot be arranged
+/// the reason is left where the session and the app will find it, and this
+/// still succeeds: the service then runs with the session, which is better
+/// than not running, and trying again would fail the same way.
+fn stay(layout: &Layout, runtime: &Path) -> Result<(), String> {
+    if live_supervisor(layout).is_some() {
+        return Ok(());
+    }
+    if let Err(why) = prepare_to_stay(layout, runtime) {
+        prepare_home(layout)?;
+        return atomic_write(&layout.home.join(CANNOT_STAY), why.as_bytes(), 0o600);
+    }
+    // Detached the way the recovery watchdog is: started by a shell that has
+    // already gone, so it belongs to no session that ends. Its own session
+    // where the reader can give it one, and never a directory on the card to
+    // stand in, or the stock reader could not hand the card to a computer.
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(
+            r#"cd / || exit 1
+if command -v setsid >/dev/null 2>&1; then
+  nohup setsid "$0" --tailscale keep >/dev/null 2>&1 &
+else
+  nohup "$0" --tailscale keep >/dev/null 2>&1 &
+fi"#,
+        )
+        .arg(layout.bin.join(KEPT_RUNTIME))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(drop)
+        .map_err(|error| format!("start the kept Tailscale supervisor: {error}"))
+}
+
+/// Puts a copy of this runtime on the root filesystem, after checking that
+/// it and the programs will fit.
+///
+/// The copy is what makes the supervisor independent of the card. A
+/// supervisor run from the card would be a program whose own file a computer
+/// can replace, or the stock reader unmount, while it is running.
+fn prepare_to_stay(layout: &Layout, runtime: &Path) -> Result<(), String> {
+    let copy = layout.bin.join(KEPT_RUNTIME);
+    let stamp = build_stamp(runtime).ok_or("This runtime could not be read to copy it.")?;
+    let current = copy.is_file()
+        && fs::read_to_string(layout.bin.join(KEPT_RUNTIME_FROM)).is_ok_and(|from| from == stamp);
+    let programs = layout.daemon().is_file() && layout.cli().is_file();
+    if current && programs {
+        return Ok(());
+    }
+    let own = |error: std::io::Error| format!("Tailscale could not be set up to stay: {error}");
+    fs::create_dir_all(&layout.bin).map_err(own)?;
+    fs::set_permissions(&layout.bin, fs::Permissions::from_mode(0o700)).map_err(own)?;
+    let runtime_bytes = if current {
+        0
+    } else {
+        fs::metadata(runtime).map_err(own)?.len()
+    };
+    let needed = if programs { 0 } else { layout.room }.saturating_add(runtime_bytes);
+    if kobo_abi::free_space(&layout.bin).is_some_and(|free| free < needed) {
+        return Err(NO_ROOM_TO_STAY.to_owned());
+    }
+    if !current {
+        let partial = layout.bin.join("kobod.part");
+        fs::copy(runtime, &partial)
+            .and_then(|_| fs::set_permissions(&partial, fs::Permissions::from_mode(0o700)))
+            .and_then(|()| kobo_protocol::durability::sync_file(&partial))
+            .and_then(|()| fs::rename(&partial, &copy))
+            .map_err(|error| {
+                let _ignored = fs::remove_file(&partial);
+                own(error)
+            })?;
+        atomic_write(&layout.bin.join(KEPT_RUNTIME_FROM), stamp.as_bytes(), 0o600)?;
+    }
+    Ok(())
+}
+
 /// Makes this the one supervisor, and clears what the last one left.
 fn claim(layout: &Layout) -> Result<(), End> {
     prepare_home(layout).map_err(End::Later)?;
     let pid_file = layout.home.join(SUPERVISOR_PID);
-    if let Some(other) = recorded_pid(&pid_file) {
-        if other != std::process::id() && process_names(layout, other, "--tailscale") {
-            // Two would each take the other's daemon for a leftover.
-            return Err(End::Later(
-                "another Tailscale supervisor is already running".to_owned(),
-            ));
-        }
+    if live_supervisor(layout).is_some() {
+        // Two would each take the other's daemon for a leftover.
+        return Err(End::Later(
+            "another Tailscale supervisor is already running".to_owned(),
+        ));
     }
     atomic_write(&pid_file, std::process::id().to_string().as_bytes(), 0o600)
         .map_err(End::Later)?;
@@ -626,6 +998,13 @@ fn supervise(supervisor: &Supervisor) -> End {
     if let Err(why) = ensure_engine(layout, &|| {
         kobo_net::fetch(layout.engine.url, layout.engine.limit).ok()
     }) {
+        if layout.kept && why == NO_ROOM_TO_STAY {
+            // Not a failure to retry: the service runs with the session
+            // instead, and the app says why it is not staying.
+            let _ignored = atomic_write(&layout.home.join(CANNOT_STAY), why.as_bytes(), 0o600);
+            supervisor.say(&Status::quiet("starting", "Starting Tailscale."));
+            return End::Settled;
+        }
         supervisor.say(&Status::quiet("failed", why.clone()));
         return End::Later(why);
     }
@@ -663,7 +1042,12 @@ fn preflight(layout: &Layout) -> Option<Status> {
             "This reader's software has no tunnel support, so Tailscale cannot run on it.",
         ));
     }
-    match exposure(layout) {
+    refusal(exposure(layout))
+}
+
+/// The words for a reader that should not be on a tailnet as it stands.
+fn refusal(exposure: Exposure) -> Option<Status> {
+    match exposure {
         Exposure::Acceptable => None,
         Exposure::PasswordLogin => Some(Status::quiet(
             "refused",
@@ -845,6 +1229,9 @@ fn prepare_home(layout: &Layout) -> Result<(), String> {
 /// the key is on the root filesystem, which USB does not reach.
 fn forget_node(layout: &Layout) {
     let _ignored = fs::remove_dir_all(&layout.home);
+    // And the programs kept beside it, so a reader being given away carries
+    // nothing of this on the firmware's partition.
+    let _ignored = fs::remove_dir_all(&layout.kept_bin);
     let _ignored = fs::remove_file(layout.app_state.join(REQUEST));
 }
 
@@ -1402,6 +1789,13 @@ fn keep_up(supervisor: &Supervisor, daemon: &mut Daemon) -> Result<(), End> {
         }
         if asked.is_none_or(|at| at.elapsed() >= layout.timing.refresh) {
             asked = Some(Instant::now());
+            // Asked again every time, not only before joining. What the
+            // reader listens on can change under a tunnel that is up: a
+            // hardening nobody confirmed undoes itself after five minutes,
+            // and a reader kept connected for days has days for that.
+            if let Some(refusal) = refusal(exposure(layout)) {
+                return Err(supervisor.fail(daemon, &refusal, End::Settled));
+            }
             match report(layout) {
                 Some(report) if report.backend == Backend::Running => {
                     unanswered = 0;
@@ -1453,7 +1847,14 @@ fn ensure_engine(layout: &Layout, fetch: &dyn Fn() -> Option<Vec<u8>>) -> Result
     }
     // Whatever is there failed its check, so none of it is kept.
     let staging = layout.bin.join("unpack.part");
-    let archive = layout.bin.join("tailscale.tgz.part");
+    // For a reader that is kept connected the archive waits on the card,
+    // which has the room; the root filesystem is asked to hold only the two
+    // programs it will keep.
+    let archive = if layout.kept && card_present(layout) {
+        layout.card_bin.join("tailscale.tgz.part")
+    } else {
+        layout.bin.join("tailscale.tgz.part")
+    };
     let clear = || {
         let _ignored = fs::remove_dir_all(&staging);
         let _ignored = fs::remove_file(&archive);
@@ -1461,10 +1862,26 @@ fn ensure_engine(layout: &Layout, fetch: &dyn Fn() -> Option<Vec<u8>>) -> Result
     let _ignored = fs::remove_file(layout.daemon());
     let _ignored = fs::remove_file(layout.cli());
     clear();
+    if kobo_abi::free_space(&layout.bin)
+        .or_else(|| layout.bin.parent().and_then(kobo_abi::free_space))
+        .is_some_and(|free| free < layout.room)
+    {
+        return Err(if layout.kept {
+            NO_ROOM_TO_STAY
+        } else {
+            NO_ROOM
+        }
+        .to_owned());
+    }
     fs::create_dir_all(&staging)
         .map_err(|error| format!("create the Tailscale folder: {error}"))?;
-    let installed =
-        download(layout, fetch, &archive).and_then(|()| unpack(layout, &archive, &staging));
+    let installed = copy_from_the_card(layout, &staging).or_else(|()| {
+        if let Some(folder) = archive.parent() {
+            fs::create_dir_all(folder)
+                .map_err(|error| format!("create the Tailscale folder: {error}"))?;
+        }
+        download(layout, fetch, &archive).and_then(|()| unpack(layout, &archive, &staging))
+    });
     clear();
     installed.inspect_err(|_| {
         let _ignored = fs::remove_file(layout.daemon());
@@ -1481,9 +1898,6 @@ fn download(
     fetch: &dyn Fn() -> Option<Vec<u8>>,
     archive: &Path,
 ) -> Result<(), String> {
-    if kobo_abi::free_space(&layout.bin).is_some_and(|free| free < layout.room) {
-        return Err(NO_ROOM.to_owned());
-    }
     let bytes = fetch().ok_or_else(|| {
         "Tailscale could not be downloaded. Check Wi-Fi and try again.".to_owned()
     })?;
@@ -1526,22 +1940,52 @@ fn unpack(layout: &Layout, archive: &Path, staging: &Path) -> Result<(), String>
             format!("Tailscale could not be unpacked: {}", said.trim())
         });
     }
+    install_checked(layout, &staging.join(folder))
+}
+
+/// Gives the two programs in `staged` their names, once each is the one
+/// that was pinned.
+fn install_checked(layout: &Layout, staged: &Path) -> Result<(), String> {
     let members = [
         ("tailscaled", layout.daemon(), layout.engine.daemon_sha256),
         ("tailscale", layout.cli(), layout.engine.cli_sha256),
     ];
     for (name, _, digest) in &members {
-        if sha256(&staging.join(folder).join(name))? != *digest {
+        if sha256(&staged.join(name))? != *digest {
             return Err("A Tailscale program did not match its checksum.".to_owned());
         }
     }
     for (name, installed, _) in &members {
-        let unpacked = staging.join(folder).join(name);
-        fs::set_permissions(&unpacked, fs::Permissions::from_mode(0o755))
-            .and_then(|()| fs::rename(&unpacked, installed))
+        let staged = staged.join(name);
+        fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))
+            .and_then(|()| fs::rename(&staged, installed))
             .map_err(|error| format!("Tailscale could not be installed: {error}"))?;
     }
     Ok(())
+}
+
+/// Copies the programs a reader already downloaded to the card, for a
+/// supervisor that is kept, instead of downloading them a second time.
+///
+/// The card's copy is not trusted for having been checked once. Each program
+/// is compared with its pin where it lies and again where it lands, because
+/// the card is the partition a computer can rewrite and the root filesystem
+/// is where the result will be run from as root for days.
+fn copy_from_the_card(layout: &Layout, staging: &Path) -> Result<(), ()> {
+    if !layout.kept || !card_present(layout) {
+        return Err(());
+    }
+    for (name, digest) in [
+        ("tailscaled", layout.engine.daemon_sha256),
+        ("tailscale", layout.engine.cli_sha256),
+    ] {
+        let source = layout.card_bin.join(name);
+        if sha256(&source).ok().as_deref() != Some(digest) {
+            return Err(());
+        }
+        fs::copy(&source, staging.join(name)).map_err(drop)?;
+    }
+    install_checked(layout, staging).map_err(drop)
 }
 
 /// Refuses programs this build did not pin by digest.
