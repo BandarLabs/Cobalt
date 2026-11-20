@@ -14,5 +14,5 @@ wait-for the private network between your own devices
 tap Sign out
 wait-for This reader forgets its key
 tap-id sign-out-confirmed
-wait-for Tailscale is off. Nothing reaches this reader over a tailnet.
+wait-for Off. Nothing reaches this reader over a tailnet.
 expect-missing 100.64.0.7

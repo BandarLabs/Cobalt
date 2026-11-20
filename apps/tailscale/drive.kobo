@@ -1,6 +1,6 @@
 expect Tailscale
-expect Tailscale is off. Nothing reaches this reader over a tailnet.
-expect Off. This reader is not on a tailnet.
+expect Off. Nothing reaches this reader over a tailnet.
+expect-missing Status
 expect-missing Refresh
 expect-missing Address
 clean
@@ -10,7 +10,7 @@ shot tailscale-off
 tap-id toggle
 wait-for Runs while Cobalt is open.
 expect Starting
-expect-missing Tailscale is off
+expect-missing Nothing reaches this reader
 clean
 shot tailscale-starting
 tap About Tailscale
@@ -32,7 +32,7 @@ wait-for Runs while Cobalt is open.
 # The switch is kept across a restart.
 restart
 wait-for Runs while Cobalt is open.
-expect-missing Tailscale is off
+expect-missing Nothing reaches this reader
 wait 62000
 wait-for Tailscale has not started.
 expect Not started
@@ -40,5 +40,5 @@ expect Try again
 clean
 shot tailscale-not-started
 tap-id toggle
-wait-for Tailscale is off. Nothing reaches this reader over a tailnet.
+wait-for Off. Nothing reaches this reader over a tailnet.
 expect-missing Try again

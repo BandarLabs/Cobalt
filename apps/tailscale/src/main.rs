@@ -161,12 +161,11 @@ impl Tailscale {
 
     fn banner(&self) -> Option<(BannerLevel, String)> {
         if !self.enabled {
-            let words = if self.status.state == "signed-out" && !self.status.message.is_empty() {
-                self.status.message.clone()
-            } else {
-                "Tailscale is off. Nothing reaches this reader over a tailnet.".to_owned()
-            };
-            return Some((BannerLevel::Info, words));
+            // Off is said once, by the switch and the line under it. A banner
+            // and a status line saying it again made the first screen anyone
+            // sees repeat itself three times.
+            return (self.status.state == "signed-out" && !self.status.message.is_empty())
+                .then(|| (BannerLevel::Info, self.status.message.clone()));
         }
         if self.stalled {
             return Some((
@@ -207,7 +206,7 @@ impl Tailscale {
         let summary = if self.enabled {
             "Runs while Cobalt is open."
         } else {
-            "Off. This reader is not on a tailnet."
+            "Off. Nothing reaches this reader over a tailnet."
         };
         let mut rows = Vec::with_capacity(2);
         if self.waiting_for_approval() {
@@ -237,7 +236,10 @@ impl Tailscale {
             "What it does, what it opens, and signing out.",
             Glyph::Globe,
         ));
-        let mut facts = vec![("Status", self.state_words().to_owned())];
+        let mut facts = Vec::with_capacity(3);
+        if self.enabled {
+            facts.push(("Status", self.state_words().to_owned()));
+        }
         if self.connected() {
             if !self.status.name.is_empty() {
                 facts.push(("Name", self.status.name.clone()));
@@ -512,7 +514,7 @@ mod tests {
             saves(&turned_off),
             [(CONFIG.to_owned(), "false".to_owned())]
         );
-        assert!(words(screen(&turned_off)).contains("Tailscale is off."));
+        assert!(words(screen(&turned_off)).contains("Off. Nothing reaches this reader"));
     }
 
     #[test]
