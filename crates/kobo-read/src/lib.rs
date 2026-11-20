@@ -1545,6 +1545,13 @@ impl Reader {
                     // papers and feed items, and reaching the end of any of
                     // them is not a problem.
                     self.tell(BannerLevel::Info, "This is the end.");
+                    // The notice takes room from the page, and a page with
+                    // less room can spill its last lines onto a new one. The
+                    // end is the last page as it stands now, so that is the
+                    // one shown. The notice used to sit on the page before
+                    // it, under a sentence cut short, and the next turn took
+                    // it away again.
+                    self.page = self.pages.len().saturating_sub(1);
                     Outcome::Repaint
                 }
             }
@@ -7231,6 +7238,49 @@ mod tests {
         // same guess pagination made: a page that agrees with its own wrong
         // arithmetic still pours words off the panel.
         no_cell_falls_off_a_page(&reader);
+    }
+
+    /// Turning past the end again and again, as a thumb resting on the edge
+    /// does. With the bar kept, the notice costs the last page enough room
+    /// to spill a line onto a new page, and the reader stayed where it was:
+    /// "This is the end." under a paragraph that was not the last one.
+    #[test]
+    fn the_end_is_said_on_the_last_page_however_often_the_page_is_turned_past_it() {
+        let panel = kobo_ui::CLARA_BW_METRICS;
+        let paragraph =
+            "Saturn disappears from view when the Moon moves in front of it. ".repeat(12);
+        let html = format!(
+            "<h2>Saturn</h2>{}<p>The last words of all.</p>",
+            format!("<p>{paragraph}</p>").repeat(14)
+        );
+        for full_page in [true, false] {
+            let memory = Memory {
+                full_page,
+                ..Memory::default()
+            };
+            let mut reader = Reader::open(kobo_doc::html::parse(&html), memory, &panel);
+            while reader.forward() {}
+            for turn in 0..6 {
+                reader.act(action::FORWARD, &panel);
+                assert_eq!(
+                    reader.page + 1,
+                    reader.page_count(),
+                    "full page {full_page}, turn {turn}: not on the last page"
+                );
+                let screen = reader.screen("Article");
+                assert_eq!(
+                    banners(&screen),
+                    vec![(BannerLevel::Info, "This is the end.".to_owned())],
+                    "full page {full_page}, turn {turn}"
+                );
+                assert!(
+                    format!("{screen:?}").contains("The last words of all."),
+                    "full page {full_page}, turn {turn}: the end of the text is not on the page"
+                );
+                let problems = screen.validate(&panel);
+                assert!(problems.is_empty(), "{problems:?}");
+            }
+        }
     }
 
     /// The facts under a NASA picture of the day: a table whose every row is
