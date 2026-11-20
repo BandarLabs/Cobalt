@@ -3,9 +3,11 @@
 //! Type an address, pick the feed it finds, and read the articles without
 //! leaving the application.
 //!
-//! Website names use feed discovery; full HTTPS feed addresses are fetched
-//! directly without disclosure to the discovery service. Articles currently
-//! survive refresh failures and are saved in verified local snapshots.
+//! Website names use feed discovery; full HTTPS addresses are fetched
+//! directly without disclosure to the discovery service, and an address that
+//! turns out to be a site's page rather than its feed is followed to the feed
+//! the page names. Articles currently survive refresh failures and are saved
+//! in verified local snapshots.
 //!
 //! Refresh all reads every feed in turn, and the newest articles that carry
 //! pictures are kept whole with their pictures, so the shelf's "Ready
@@ -18,6 +20,7 @@
 //! subscription reads as articles whether or not its feed carries them.
 
 mod cache;
+mod discover;
 mod feed;
 mod illustrations;
 mod opml;
@@ -32,6 +35,7 @@ use kobo_sdk::{
     action_id, ActionId, BannerLevel, BannerShape, Context, Failure, Glyph, KoboApp, LogLevel,
     RowEdge, RowState, Screen, ScreenBuilder, StoreResult, Task, TaskId, TaskOutcome,
 };
+use std::collections::VecDeque;
 use std::process::ExitCode;
 
 /// The most feeds one reader may follow.
@@ -286,6 +290,12 @@ struct Feeds {
     /// What the search found, best first.
     found: Vec<search::Found>,
     direct: bool,
+    /// The address being asked for a feed, when one is being asked directly.
+    probe: String,
+    /// The other places to ask once a pasted address has answered with a
+    /// page rather than a feed. Nothing until that page has been read, which
+    /// is how the first answer is told from the ones that follow it.
+    probing: Option<std::collections::VecDeque<String>>,
     /// Which subscription is open.
     open: Option<usize>,
     /// The open feed's articles.
@@ -373,10 +383,17 @@ impl Feeds {
         self.found.clear();
         self.problem = None;
         self.trouble = None;
+        self.probing = None;
         if let Some(refused) = refused_address(address) {
             self.problem = Some(refused.to_owned());
             return;
         }
+        self.probe(context, address);
+    }
+
+    /// Asks one address for a feed, directly.
+    fn probe(&mut self, context: &mut Context, address: &str) {
+        address.clone_into(&mut self.probe);
         match context.spawn_retrying(Task::Fetch {
             url: address.to_owned(),
             offset: 0,
@@ -387,6 +404,59 @@ impl Feeds {
             Some(task) => self.task = Some((task, Awaiting::Probe)),
             None => self.problem = Some("The device is busy. Try again.".to_owned()),
         }
+    }
+
+    /// An address asked for a feed has answered with something else, or not
+    /// at all. Says whether another place is now being asked.
+    ///
+    /// The first answer is the page the owner pasted, and the places to look
+    /// come from it. After that each place is tried in turn, and one that is
+    /// missing or is another page is simply not the feed.
+    fn probe_onwards(&mut self, context: &mut Context, page: Option<&[u8]>) -> bool {
+        if self.probing.is_none() {
+            let Some(page) = page else {
+                return false;
+            };
+            self.probing = Some(discover::candidates(page, &self.probe).into());
+        }
+        let Some(next) = self.probing.as_mut().and_then(VecDeque::pop_front) else {
+            return false;
+        };
+        self.probe(context, &next);
+        self.task.is_some()
+    }
+
+    /// Nothing that was asked had a feed.
+    ///
+    /// An address the owner pasted is told so, with what to try. A name that
+    /// the search service did not know, and whose own site had nothing
+    /// either, is a search that found nothing, and says that instead.
+    fn no_feed_found(&mut self) {
+        self.trouble = None;
+        if self.query.contains("://") {
+            self.problem = Some(
+                "This address did not return a feed. Enter its feed address, or search using the website name."
+                    .to_owned(),
+            );
+        } else {
+            self.direct = false;
+            self.problem = None;
+            self.found.clear();
+        }
+    }
+
+    /// The search service knew no feed for a name. When the name is a site's
+    /// address, the site is asked itself; says whether it is being.
+    fn ask_the_site(&mut self, context: &mut Context) -> bool {
+        let Some(address) = discover::site_address(&self.query) else {
+            return false;
+        };
+        self.direct = true;
+        self.probing = None;
+        self.problem = None;
+        self.trouble = None;
+        self.probe(context, &address);
+        self.task.is_some()
     }
 
     /// Asks Feedsearch what feeds an address has.
@@ -3133,24 +3203,35 @@ impl Feeds {
                     Awaiting::Probe => {
                         if let Some(parsed) = feed::parse(&bytes) {
                             self.found = vec![search::Found {
-                                url: self.query.clone(),
+                                url: self.probe.clone(),
                                 title: if parsed.title.trim().is_empty() {
-                                    pretty_host(&parsed.site, &self.query)
+                                    pretty_host(&parsed.site, &self.probe)
                                 } else {
                                     parsed.title
                                 },
                                 site: parsed.site,
                                 summary: format!("{} articles · Select to add", parsed.items.len()),
                             }];
-                        } else {
-                            self.problem = Some(if truncated(&bytes, FEED_BYTES) {
-                            "The feed response was too large to read."
-                        } else {
-                            "This address did not return a feed. Enter its feed address, or search using the website name."
-                        }.to_owned());
+                        } else if self.probing.is_none()
+                            && truncated(&bytes, FEED_BYTES)
+                            && bytes.trim_ascii_start().starts_with(b"{")
+                        {
+                            // Half a JSON feed is not a page to look for a
+                            // feed in. It is a feed, and it did not fit.
+                            self.problem =
+                                Some("The feed response was too large to read.".to_owned());
+                        } else if self.probe_onwards(context, Some(&bytes)) {
+                            self.show(context);
+                            return;
+                        } else if self.problem.is_none() {
+                            self.no_feed_found();
                         }
                     }
                     Awaiting::Search => match search::results(&bytes) {
+                        Ok(found) if found.is_empty() && self.ask_the_site(context) => {
+                            self.show(context);
+                            return;
+                        }
                         Ok(found) => self.found = found,
                         Err(_) => {
                             self.problem = Some(if truncated(&bytes, SEARCH_BYTES) {
@@ -3202,6 +3283,23 @@ impl Feeds {
                             });
                         }
                     },
+                }
+            }
+            // One of the places a feed might have been, and it is missing or
+            // refused. That says the feed is not there, not that the search
+            // failed, so the next place is asked. A reader that has lost its
+            // network is a different matter, and is said as one.
+            TaskOutcome::Failed(error)
+                if awaiting == Awaiting::Probe
+                    && error != kobo_sdk::TaskError::Offline
+                    && (self.probing.is_some() || !self.query.contains("://")) =>
+            {
+                if self.probing.is_some() && self.probe_onwards(context, None) {
+                    self.show(context);
+                    return;
+                }
+                if self.problem.is_none() {
+                    self.no_feed_found();
                 }
             }
             TaskOutcome::Failed(error) => {
@@ -3522,11 +3620,14 @@ mod tests {
         });
         runner.action(action_id("search-retry"));
         let task = runner.app_mut().task.unwrap().0;
-        let commands = runner.task_outcome(
+        runner.task_outcome(
             task,
             TaskOutcome::Completed(b"<html><body>A home page</body></html>".to_vec()),
         );
+        // The page names no feed, and none of the usual places has one.
+        let commands = nothing_anywhere(&mut runner);
         let screen = screen_of(&commands);
+        assert!(format!("{screen:?}").contains("did not return a feed"));
         assert_eq!(
             banners_of(&screen),
             [(kobo_sdk::BannerLevel::Attention, None)]
@@ -3535,6 +3636,164 @@ mod tests {
             node,
             kobo_sdk::Node::Button { action, .. } if *action == action_id("add")
         )));
+    }
+
+    /// Answers "not found" at every place a feed is being looked for, and
+    /// gives back what the last answer drew.
+    fn nothing_anywhere(runner: &mut AppRunner<Feeds>) -> Vec<Command> {
+        let mut drawn = Vec::new();
+        while let Some((task, Awaiting::Probe)) = runner.app().task {
+            drawn = runner.task_outcome(task, TaskOutcome::Failed(kobo_sdk::TaskError::NotFound));
+        }
+        drawn
+    }
+
+    const LETTER_HOME: &[u8] = br#"<html><head><title>The Tide Letter</title>
+        <link rel="alternate" type="application/rss+xml" href="/feed" title="The Tide Letter"/>
+        </head><body><h1>The Tide Letter</h1><p>A letter about the sea, most Sundays.</p>
+        </body></html>"#;
+
+    /// Types an address on the Add a feed screen and gives back what was
+    /// asked for because of it.
+    fn typed(runner: &mut AppRunner<Feeds>, address: &str) -> Vec<(TaskId, String)> {
+        runner.action(action_id("add"));
+        runner.action(action_id(super::FEED_ADDRESS));
+        fetched(&runner.type_text(address))
+    }
+
+    #[test]
+    fn a_pasted_page_is_followed_to_the_feed_it_names_without_the_search_service() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let mut asked = typed(&mut runner, "https://tide.example/");
+        assert_eq!(asked[0].1, "https://tide.example/");
+        let next =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(LETTER_HOME.to_vec())));
+        assert_eq!(next[0].1, "https://tide.example/feed");
+        asked.extend(next.clone());
+        let commands =
+            runner.task_outcome(next[0].0, TaskOutcome::Completed(ATOM.as_bytes().to_vec()));
+        let screen = screen_of(&commands);
+        fits_the_panel(&screen, "a feed found from its site's page");
+        assert!(format!("{screen:?}").contains("Feed preview"));
+        let app = runner.app();
+        assert_eq!(app.found.len(), 1);
+        assert_eq!(app.found[0].url, "https://tide.example/feed");
+        assert_eq!(app.found[0].title, "A Journal");
+        assert!(
+            asked.iter().all(|(_, url)| !url.contains("feedsearch")),
+            "a pasted address reached the search service: {asked:?}"
+        );
+        runner.action(action_id("found-0"));
+        assert_eq!(
+            runner.app().subscriptions[0].url,
+            "https://tide.example/feed"
+        );
+    }
+
+    #[test]
+    fn a_page_that_names_no_feed_is_looked_for_in_the_usual_places() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "https://tide.example/");
+        let mut next = fetched(&runner.task_outcome(
+            asked[0].0,
+            TaskOutcome::Completed(b"<html><body><p>A letter.</p></body></html>".to_vec()),
+        ));
+        assert_eq!(next[0].1, "https://tide.example/feed");
+        // Missing there, and the place after it answers with the site's own
+        // page again, as a site that sends every unknown address home does.
+        next = fetched(&runner.task_outcome(
+            next[0].0,
+            TaskOutcome::Failed(kobo_sdk::TaskError::NotFound),
+        ));
+        assert_eq!(next[0].1, "https://tide.example/rss");
+        next = fetched(&runner.task_outcome(
+            next[0].0,
+            TaskOutcome::Completed(b"<html><body><p>A letter.</p></body></html>".to_vec()),
+        ));
+        assert_eq!(next[0].1, "https://tide.example/feed.xml");
+        runner.task_outcome(next[0].0, TaskOutcome::Completed(ATOM.as_bytes().to_vec()));
+        assert_eq!(runner.app().found[0].url, "https://tide.example/feed.xml");
+    }
+
+    #[test]
+    fn losing_the_network_part_way_through_looking_says_so_rather_than_no_feed() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "https://tide.example/");
+        let next =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(LETTER_HOME.to_vec())));
+        // The SDK tries a lost connection once more on the application's
+        // behalf: a pause, then a second attempt, which fails the same way.
+        let offline = || TaskOutcome::Failed(kobo_sdk::TaskError::Offline);
+        let pause = runner.task_outcome(next[0].0, offline());
+        let [Command::Spawn { task: pause, .. }] = pause.as_slice() else {
+            panic!("the failure was not retried: {pause:?}");
+        };
+        let second = runner.task_outcome(*pause, TaskOutcome::Completed(Vec::new()));
+        let [Command::Spawn { task: second, .. }] = second.as_slice() else {
+            panic!("there was no second attempt: {second:?}");
+        };
+        let commands = runner.task_outcome(*second, offline());
+        let screen = format!("{:?}", screen_of(&commands));
+        assert!(screen.contains("Join Wi-Fi"), "{screen}");
+        assert!(!screen.contains("did not return a feed"), "{screen}");
+    }
+
+    #[test]
+    fn a_name_the_search_service_does_not_know_is_asked_of_the_site_itself() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "tide.example");
+        assert!(asked[0].1.starts_with("https://feedsearch.dev/"));
+        let site =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(b"[]".to_vec())));
+        assert_eq!(site[0].1, "https://tide.example");
+        let feed =
+            fetched(&runner.task_outcome(site[0].0, TaskOutcome::Completed(LETTER_HOME.to_vec())));
+        assert_eq!(feed[0].1, "https://tide.example/feed");
+        runner.task_outcome(feed[0].0, TaskOutcome::Completed(ATOM.as_bytes().to_vec()));
+        assert_eq!(runner.app().found[0].url, "https://tide.example/feed");
+    }
+
+    #[test]
+    fn a_name_with_no_feed_anywhere_is_a_search_that_found_nothing() {
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "tide.example");
+        let site =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(b"[]".to_vec())));
+        runner.task_outcome(
+            site[0].0,
+            TaskOutcome::Completed(b"<html><body><p>A letter.</p></body></html>".to_vec()),
+        );
+        let commands = nothing_anywhere(&mut runner);
+        let screen = screen_of(&commands);
+        let drawn = format!("{screen:?}");
+        assert!(drawn.contains("No feeds found"), "{drawn}");
+        assert!(drawn.contains("feedsearch.dev"), "{drawn}");
+        fits_the_panel(&screen, "a name with no feed anywhere");
+
+        // Words that are not an address are not turned into one.
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            ..Feeds::default()
+        });
+        let asked = typed(&mut runner, "tide letter");
+        let after =
+            fetched(&runner.task_outcome(asked[0].0, TaskOutcome::Completed(b"[]".to_vec())));
+        assert!(after.is_empty(), "{after:?}");
     }
 
     /// The shelf under each banner it can carry, with badges on some rows,
