@@ -75,6 +75,10 @@ For a page you saved from the browser, such as one you had to sign in to
 read, give the file and the address it came from:
 `kobo clip page.html --url https://...`.
 
+An arXiv abstract page (`https://arxiv.org/abs/...`) becomes a book of the
+paper itself where arXiv serves the paper as a web page. Where it does not,
+the book is the abstract page and the command says so.
+
 Pictures are fitted to the reader's screen and turned grey. `--colour`
 keeps their colour and `--no-pictures` leaves them out. At most 40 pictures
 are fetched and a book that goes to the reader is kept under the 4 MB Books

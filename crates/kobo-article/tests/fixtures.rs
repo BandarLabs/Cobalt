@@ -86,6 +86,42 @@ impl Pictures {
     }
 }
 
+/// Answers pages from a table of addresses and every picture with a
+/// photograph, and records what was asked for in order. An address not in
+/// the table answers as a site does for a page it does not have.
+struct Site {
+    pages: Vec<(&'static str, String)>,
+    asked: RefCell<Vec<String>>,
+}
+
+impl Site {
+    fn serving(pages: Vec<(&'static str, String)>) -> Self {
+        Self {
+            pages,
+            asked: RefCell::default(),
+        }
+    }
+}
+
+impl Fetch for Site {
+    fn fetch(&self, request: &Request<'_>) -> Result<Answer, String> {
+        self.asked.borrow_mut().push(request.address.to_owned());
+        let body = match request.kind {
+            Kind::Picture => photograph(),
+            Kind::Page => self
+                .pages
+                .iter()
+                .find(|(address, _)| *address == request.address)
+                .map(|(_, html)| html.clone().into_bytes())
+                .ok_or("the site answered with an error")?,
+        };
+        Ok(Answer {
+            body,
+            address: request.address.to_owned(),
+        })
+    }
+}
+
 /// A book, opened up for checking.
 struct Book {
     clipping: Clipping,
@@ -485,6 +521,128 @@ fn a_fetched_page_that_redirected_resolves_its_pictures_against_where_it_landed(
     let title = String::from_utf8(archive.read("oebps/p1.xhtml").expect("a page")).expect("UTF-8");
     assert!(
         title.contains("Saved from <a href=\"https://slipway.example.net/posts/tide-logger/\">")
+    );
+}
+
+const ABSTRACT_PAGE: &str = "https://arxiv.org/abs/2606.01234";
+const PAPER_PAGE: &str = "https://arxiv.org/html/2606.01234";
+
+/// An abstract page as an archive of papers serves one: the title, a
+/// paragraph of abstract and the submission's particulars.
+fn abstract_page() -> String {
+    "<html><head><title>[2606.01234] Tide tables from a single pressure sensor</title></head>\
+     <body><main><h1>Tide tables from a single pressure sensor</h1>\
+     <blockquote><p>Abstract: We show that a year of readings from one sealed pressure sensor \
+     on a harbour wall is enough to predict high water to within four minutes, and we give the \
+     harmonic constants the prediction rests on together with the method used to find them \
+     from readings that are missing every third night.</p></blockquote>\
+     <p>Comments: 9 pages, 2 figures. Subjects: Geophysics.</p></main></body></html>"
+        .to_owned()
+}
+
+/// The same paper in full, as the archive renders it for the web.
+fn paper_page() -> String {
+    let mut sections = String::new();
+    for (number, heading) in ["Introduction", "Method", "Results", "Discussion"]
+        .iter()
+        .enumerate()
+    {
+        sections.push_str(&format!("<section><h2>{} {heading}</h2>", number + 1));
+        for paragraph in 1..=4 {
+            sections.push_str(&format!(
+                "<p>{heading}, paragraph {paragraph}. The sensor was read every ten minutes \
+                 for a year, and the readings were fitted to the eight largest tidal \
+                 constituents by least squares, leaving out the nights on which the logger \
+                 slept through its alarm.</p>"
+            ));
+        }
+        sections.push_str("</section>");
+    }
+    format!(
+        "<html><head><title>Tide tables from a single pressure sensor</title></head><body>\
+         <article><h1>Tide tables from a single pressure sensor</h1>\
+         <figure><img src=\"2606.01234v1/x1.png\" width=\"900\" height=\"500\" alt=\"Fit\">\
+         <figcaption>Figure 1: Predicted and measured high water.</figcaption></figure>\
+         {sections}</article></body></html>"
+    )
+}
+
+#[test]
+fn an_abstract_page_is_made_into_a_book_of_the_paper_where_the_paper_is_served_in_full() {
+    let site = Site::serving(vec![
+        (ABSTRACT_PAGE, abstract_page()),
+        (PAPER_PAGE, paper_page()),
+    ]);
+    let clipping = kobo_article::clip_address(ABSTRACT_PAGE, &site, &options()).expect("the paper");
+    // The paper is asked for first and the abstract page never: a figure is
+    // found beside the paper, not beside the abstract.
+    assert_eq!(
+        site.asked.take(),
+        [PAPER_PAGE, "https://arxiv.org/html/2606.01234v1/x1.png"]
+    );
+    let archive = Archive::open(&clipping.epub).expect("a zip");
+    let body = String::from_utf8(archive.read("oebps/p2.xhtml").expect("a body")).expect("UTF-8");
+    assert!(body.contains("<h2>4 Discussion</h2>"), "{body}");
+    assert!(body.contains("Discussion, paragraph 4."));
+    assert!(body.contains("<figcaption>Figure 1: Predicted and measured high water."));
+    assert_eq!(clipping.title, "Tide tables from a single pressure sensor");
+    assert!(clipping.notes.is_empty(), "{:?}", clipping.notes);
+}
+
+#[test]
+fn an_abstract_page_whose_paper_is_not_served_in_full_is_clipped_as_it_is_with_a_note() {
+    let site = Site::serving(vec![(ABSTRACT_PAGE, abstract_page())]);
+    let clipping =
+        kobo_article::clip_address(ABSTRACT_PAGE, &site, &options()).expect("the abstract");
+    assert_eq!(site.asked.take(), [PAPER_PAGE, ABSTRACT_PAGE]);
+    let archive = Archive::open(&clipping.epub).expect("a zip");
+    let body = String::from_utf8(archive.read("oebps/p2.xhtml").expect("a body")).expect("UTF-8");
+    assert!(body.contains("predict high water to within four minutes"));
+    assert_eq!(
+        clipping.notes,
+        ["The paper's full text could not be made into a book, so this is its abstract page."]
+    );
+    // A rendering that answers but holds no paper is no better than none.
+    let empty = Site::serving(vec![
+        (ABSTRACT_PAGE, abstract_page()),
+        (PAPER_PAGE, "<html><body></body></html>".to_owned()),
+    ]);
+    let clipping =
+        kobo_article::clip_address(ABSTRACT_PAGE, &empty, &options()).expect("the abstract");
+    assert_eq!(clipping.notes, [kobo_article::ABSTRACT_ONLY]);
+}
+
+#[test]
+fn an_abstract_page_sent_from_a_browser_becomes_the_paper_too_and_is_its_own_fallback() {
+    let site = Site::serving(vec![(PAPER_PAGE, paper_page())]);
+    let clipping = kobo_article::clip_rendered(&abstract_page(), ABSTRACT_PAGE, &site, &options())
+        .expect("the paper");
+    assert!(clipping.notes.is_empty());
+    assert!(
+        clipping.epub.len() > 8 * 1024,
+        "the paper, not the abstract"
+    );
+    // With no paper to be had, the page the browser sent is the book, and
+    // the abstract is not fetched again.
+    let nothing = Site::serving(Vec::new());
+    let clipping =
+        kobo_article::clip_rendered(&abstract_page(), ABSTRACT_PAGE, &nothing, &options())
+            .expect("the abstract");
+    assert_eq!(nothing.asked.take(), [PAPER_PAGE]);
+    assert_eq!(clipping.notes, [kobo_article::ABSTRACT_ONLY]);
+}
+
+#[test]
+fn a_page_that_is_not_an_abstract_page_is_fetched_once_and_carries_no_note() {
+    let page = "https://slipway.example.net/posts/tide-logger/";
+    let site = Site::serving(vec![(page, fixture("synthetic-blog.html"))]);
+    let clipping = kobo_article::clip_address(page, &site, &options()).expect("a book");
+    assert_eq!(site.asked.take()[0], page);
+    assert!(clipping.notes.is_empty());
+    assert_eq!(
+        kobo_article::clip_address("https://slipway.example.net/gone", &site, &options())
+            .map_err(|refusal| refusal.to_string()),
+        Err("The page could not be fetched: the site answered with an error.".to_owned())
     );
 }
 

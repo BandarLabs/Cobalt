@@ -27,7 +27,9 @@ text, headings, lists, tables, code, and figures with their captions, with
 the menus, advertisements, share buttons and cookie notices left out. The
 first page names the site, the author and the date, and links back to the
 page. Pictures are fitted to the reader's screen and turned grey; --colour
-keeps their colour, and --no-pictures leaves them out.
+keeps their colour, and --no-pictures leaves them out. An arXiv abstract
+page becomes a book of the paper itself where arXiv serves the paper as a
+web page, and of the abstract with a note where it does not.
 
 The book goes to your Kobo's Articles shelf, the saved reader unless a
 target is named. A reader that is asleep or away gets it later: it waits on
@@ -59,6 +61,12 @@ pub(crate) enum Source {
     },
     /// A page a browser already rendered, as the extension sends it.
     Html {
+        html: String,
+        url: String,
+    },
+    /// What the owner selected on a page. It is the whole of what they asked
+    /// for, so no paper is looked for behind the page it came from.
+    Selection {
         html: String,
         url: String,
     },
@@ -200,7 +208,8 @@ pub(crate) fn make(
             let html = kobo_article::page_text(&bytes).map_err(|refusal| refusal.to_string())?;
             kobo_article::clip(&html, url, &fetch, options)
         }
-        Source::Html { html, url } => kobo_article::clip(html, url, &fetch, options),
+        Source::Html { html, url } => kobo_article::clip_rendered(html, url, &fetch, options),
+        Source::Selection { html, url } => kobo_article::clip(html, url, &fetch, options),
         Source::Address(address) => {
             eprintln!("Fetching {address}");
             // Read against wherever the address redirected to, so the page's

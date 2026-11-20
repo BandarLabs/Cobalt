@@ -344,8 +344,41 @@ pub fn fetch_page(address: &str, fetch: &dyn Fetch) -> Result<WebPage, Refusal> 
     })
 }
 
+/// Said with a book of an abstract page whose paper could not be had.
+pub const ABSTRACT_ONLY: &str =
+    "The paper's full text could not be made into a book, so this is its abstract page.";
+
+/// Makes the book `otherwise` would, unless `address` is an abstract page
+/// whose paper is served in full, in which case the book is the paper.
+///
+/// The paper is tried first and the abstract kept as the fallback, since
+/// only asking says whether a rendering exists. Whatever goes wrong with the
+/// paper, a rendering that was never made, one too large for a book, a site
+/// that timed out, the owner still gets the page they asked for, with a note
+/// that it is the abstract.
+fn preferring_full_text(
+    address: &str,
+    fetch: &dyn Fetch,
+    options: &Options,
+    otherwise: impl FnOnce() -> Result<Clipping, Refusal>,
+) -> Result<Clipping, Refusal> {
+    let Some(full) = address::full_text(address) else {
+        return otherwise();
+    };
+    let paper =
+        fetch_page(&full, fetch).and_then(|page| clip(&page.html, &page.address, fetch, options));
+    if let Ok(paper) = paper {
+        return Ok(paper);
+    }
+    let mut clipping = otherwise()?;
+    clipping.notes.push(ABSTRACT_ONLY.to_owned());
+    Ok(clipping)
+}
+
 /// Fetches the page at `address` and makes a book of its article, resolving
-/// the page's addresses against where it was finally served from.
+/// the page's addresses against where it was finally served from. An
+/// abstract page is made into a book of its paper where the paper is served
+/// in full ([`address::full_text`]).
 ///
 /// # Errors
 ///
@@ -355,8 +388,27 @@ pub fn clip_address(
     fetch: &dyn Fetch,
     options: &Options,
 ) -> Result<Clipping, Refusal> {
-    let page = fetch_page(address, fetch)?;
-    clip(&page.html, &page.address, fetch, options)
+    preferring_full_text(address, fetch, options, || {
+        let page = fetch_page(address, fetch)?;
+        clip(&page.html, &page.address, fetch, options)
+    })
+}
+
+/// Makes a book of a page a browser has already rendered, as [`clip`] does,
+/// except that an abstract page is made into a book of its paper, as
+/// [`clip_address`] does. The rendered page is the fallback, so nothing is
+/// fetched twice.
+///
+/// # Errors
+///
+/// The refusals of [`clip`].
+pub fn clip_rendered(
+    html: &str,
+    page: &str,
+    fetch: &dyn Fetch,
+    options: &Options,
+) -> Result<Clipping, Refusal> {
+    preferring_full_text(page, fetch, options, || clip(html, page, fetch, options))
 }
 
 /// Words in a picture address that mark a site's logo or a stand-in image,
