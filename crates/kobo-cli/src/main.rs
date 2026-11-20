@@ -27,6 +27,7 @@ mod console;
 mod deck;
 mod detect;
 mod devsession;
+mod dict;
 mod drive;
 mod exports;
 mod feeds;
@@ -63,6 +64,7 @@ mod panel;
 mod setup;
 mod sha256;
 mod sidekick;
+mod stardict;
 mod steps;
 mod sync;
 mod targets;
@@ -1189,6 +1191,7 @@ fn run_command(arguments: &[String]) -> Result<(), String> {
         "connect" => account::command(&arguments[1..]),
         "birds" => birds::command(&arguments[1..]),
         "clip" => clip::command(&arguments[1..]),
+        "dict" => dict::command(&arguments[1..]),
         "vault" => vault::command(&arguments[1..]),
         "sync" => sync::command(&arguments[1..]),
         "sidekick" => sidekick::command(&arguments[1..]),
@@ -1268,10 +1271,7 @@ fn run_command(arguments: &[String]) -> Result<(), String> {
             Err("device execution is safety-gated; use 'kobo run --sim' on the host".to_owned())
         }
 
-        "help" | "--help" | "-h" => {
-            print_help();
-            Ok(())
-        }
+        "help" | "--help" | "-h" => print_help(),
         "version" | "--version" | "-V" => version_command(&arguments[1..]),
         unknown => Err(format!("unknown command '{unknown}'")),
     }
@@ -5114,6 +5114,56 @@ fn wait_for_remote_child(
     }
 }
 
+/// How much of a file goes to the reader in one piece.
+///
+/// The reader's shell reads a here-document into memory before it runs the
+/// command the document feeds, which costs nothing for an article and would
+/// cost a five hundred megabyte reader a three hundred megabyte book: the
+/// shell, or whatever the kernel chose to kill in its place, would not
+/// survive it. So a large file is appended a slice at a time, each its own
+/// small here-document, and the shell never holds more than this. A whole
+/// number of base64 lines, fifty-seven bytes to the line, so slices join
+/// without a seam.
+const UPLOAD_SLICE: usize = 57 * 16 * 1024;
+
+/// The line that appends one slice to `$partial`, and the line that ends it.
+const SLICE_OPENS: &str = "base64 -d >> \"$partial\" <<'KOBO_SLICE'\n";
+const SLICE_CLOSES: &str = "KOBO_SLICE\n";
+
+/// Writes the commands that append `bytes` to the file a reader's script
+/// calls `$partial`.
+///
+/// Each slice is encoded as it is written, so the encoding of a large file
+/// is never in memory beside the file.
+fn append_in_slices(shell: &mut dyn Write, bytes: &[u8]) -> std::io::Result<()> {
+    for slice in bytes.chunks(UPLOAD_SLICE) {
+        let mut lines = base64_encode(slice);
+        if !lines.ends_with('\n') {
+            lines.push('\n');
+        }
+        shell.write_all(SLICE_OPENS.as_bytes())?;
+        shell.write_all(lines.as_bytes())?;
+        shell.write_all(SLICE_CLOSES.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// The lines of a reader's script that end it, saying `full=` and the
+/// kilobytes free, when the card holding `$dir` has fewer than
+/// `needed_kilobytes`.
+///
+/// Asked before anything is written, because a card filled half way through
+/// a copy has already cost the Kobo's own library the room it needed. A card
+/// that will not say how much it has free is taken to have room, as the
+/// runtime's shelves take it: not knowing is not a reason to refuse.
+fn room_script(needed_kilobytes: u64) -> String {
+    format!(
+        "free=$(df -Pk \"$dir\" 2>/dev/null | awk 'END {{ print $4 }}')\n\
+         case \"$free\" in ''|*[!0-9]*) free='' ;; esac\n\
+         if [ -n \"$free\" ] && [ \"$free\" -lt {needed_kilobytes} ]; then printf 'full=%s\\n' \"$free\"; exit 0; fi\n"
+    )
+}
+
 fn base64_encode(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4 + bytes.len() / 57);
@@ -8730,11 +8780,19 @@ fn report_trust_names<'a>(names: impl Iterator<Item = &'a str>) {
     }
 }
 
-fn print_help() {
+// A Result it can never fail to produce, as print_command_help's is, so the
+// dispatch arm that prints the list is one line of a function at the length
+// the lints allow.
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the Result is the dispatch arm's value, not a failure channel"
+)]
+fn print_help() -> Result<(), String> {
     let console = console::Console::detect();
     println!("{}", console.wrap(COMMAND_REFERENCE));
     print_output_contract();
     print_other_names();
+    Ok(())
 }
 
 /// Every command, one line each, in the order an owner meets them.
@@ -8784,6 +8842,9 @@ Send things to your apps. These go to the reader kobo setup saved; add
 Send a web article to the reader:
   clip URL | clip PAGE.html --url URL [--out FILE.epub] [--colour]  Send it, or save it with --out
   clip sync | install --browser NAME | uninstall  Send what waits; add Send to Kobo to a browser
+
+A dictionary for looking words up while reading:
+  dict install FILE [--name NAME] | list | remove NAME | check FILE  A TSV or StarDict dictionary
 
 Credentials an app asks for by name:
   connect APP            Connect an account app: asks for the server and
@@ -8847,6 +8908,7 @@ const ANSWERS_ITS_OWN_HELP: &[&str] = &[
     "birds",
     "clip",
     "deck",
+    "dict",
     "export",
     "feeds",
     "fieldbook",

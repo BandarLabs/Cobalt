@@ -377,7 +377,7 @@ fn files_word(count: usize) -> String {
 }
 
 /// A size as an owner reads one: "812 KB", "9.2 MB", "120 MB".
-fn size_words(bytes: u64) -> String {
+pub(crate) fn size_words(bytes: u64) -> String {
     const MEGABYTE: u64 = 1024 * 1024;
     if bytes < MEGABYTE {
         format!("{} KB", bytes.div_ceil(1024).max(1))
@@ -614,7 +614,7 @@ fn held_copy(folder: &Path, bytes: &[u8]) -> Option<String> {
 /// with nowhere to write comes back empty with nothing pointing at the book
 /// that filled the card. The runtime's own shelves keep
 /// [`kobo_protocol::SHELF_RESERVE`] free for it, and so does a send.
-fn needed(bytes: u64) -> u64 {
+pub(crate) fn needed(bytes: u64) -> u64 {
     bytes.saturating_add(kobo_protocol::SHELF_RESERVE)
 }
 
@@ -662,24 +662,9 @@ fn refusal_in(stdout: &[u8], book: &Book, reader: &str) -> Option<String> {
 
 /// How long one book's copy may take: a minute to connect and settle, and
 /// the time its size needs at the slowest speed worth waiting for.
-fn patience_for(bytes: u64) -> Duration {
+pub(crate) fn patience_for(bytes: u64) -> Duration {
     Duration::from_secs(60 + bytes / SLOWEST_COPY)
 }
-
-/// How much of a book goes to the reader in one piece.
-///
-/// The reader's shell reads a here-document into memory before it runs the
-/// command the document feeds, which costs nothing for an article and would
-/// cost a five hundred megabyte reader a three hundred megabyte book: the
-/// shell, or whatever the kernel chose to kill in its place, would not
-/// survive it. So a book is appended a slice at a time, each its own small
-/// here-document, and the shell never holds more than this. A whole number of
-/// base64 lines, fifty-seven bytes to the line, so slices join without a seam.
-const SLICE: usize = 57 * 16 * 1024;
-
-/// The line that appends one slice to the copy, and the line that ends it.
-const SLICE_OPENS: &str = "base64 -d >> \"$partial\" <<'KOBO_BOOK'\n";
-const SLICE_CLOSES: &str = "KOBO_BOOK\n";
 
 /// The script that saves a book on the reader, as the part before the book
 /// itself and the part after it.
@@ -711,9 +696,7 @@ pub(crate) fn device_script(book: &Book, needed_kilobytes: u64) -> (String, Stri
          set -- $(sha256sum \"$held\")\n\
          if [ \"$1\" = \"$digest\" ]; then printf 'already=%s\\n' \"${{held##*/}}\"; exit 0; fi\n\
          done\n\
-         free=$(df -Pk \"$dir\" 2>/dev/null | awk 'END {{ print $4 }}')\n\
-         case \"$free\" in ''|*[!0-9]*) free='' ;; esac\n\
-         if [ -n \"$free\" ] && [ \"$free\" -lt {needed_kilobytes} ]; then printf 'full=%s\\n' \"$free\"; exit 0; fi\n\
+         {room}\
          partial=\"$dir/.send-$$.writing\"\n\
          trap 'rm -f \"$partial\"' EXIT\n\
          trap 'exit 1' HUP INT TERM\n\
@@ -726,6 +709,7 @@ pub(crate) fn device_script(book: &Book, needed_kilobytes: u64) -> (String, Stri
         opening = delivery::opening_script(DEVICE_BOOKS, &book.stem),
         count = book.bytes.len(),
         digest = book.digest,
+        room = super::room_script(needed_kilobytes),
         settling = delivery::settling_script(book.suffix),
         announcing = delivery::announcing_script("send", &before, &after),
     );
@@ -734,9 +718,6 @@ pub(crate) fn device_script(book: &Book, needed_kilobytes: u64) -> (String, Stri
 
 /// Writes a book's script to the reader's shell: the head, the book in
 /// slices, and the tail.
-///
-/// Each slice is encoded as it is written, so the encoding of a large book
-/// is never in memory beside the book.
 fn write_script(
     shell: &mut dyn Write,
     head: &str,
@@ -744,15 +725,7 @@ fn write_script(
     tail: &str,
 ) -> std::io::Result<()> {
     shell.write_all(head.as_bytes())?;
-    for slice in bytes.chunks(SLICE) {
-        let mut lines = super::base64_encode(slice);
-        if !lines.ends_with('\n') {
-            lines.push('\n');
-        }
-        shell.write_all(SLICE_OPENS.as_bytes())?;
-        shell.write_all(lines.as_bytes())?;
-        shell.write_all(SLICE_CLOSES.as_bytes())?;
-    }
+    super::append_in_slices(shell, bytes)?;
     shell.write_all(tail.as_bytes())
 }
 
@@ -984,7 +957,7 @@ mod tests {
     fn the_reader_script_saves_a_book_once_numbers_a_clash_and_reports_the_copy_it_had() {
         let card = scratch("script");
         // Longer than two slices, so the pieces have to join exactly.
-        let long: Vec<u8> = (0..2 * SLICE + 12_345)
+        let long: Vec<u8> = (0..2 * crate::UPLOAD_SLICE + 12_345)
             .map(|n| u8::try_from(n % 251).expect("under 251"))
             .collect();
         let novel = book("Bleak House.epub", &long);
@@ -998,15 +971,18 @@ mod tests {
             run_script(&card, &book("Bleak House.epub", b"another edition"), 1),
             "saved=Bleak House (2).epub"
         );
-        let records = records(&card.join("inbox"));
+        // Two records written in the same second are ordered by the shell's
+        // process number, so they are looked for rather than counted off.
+        let mut announced: Vec<String> = records(&card.join("inbox"))
+            .iter()
+            .filter_map(|record| record.get("path").and_then(kobo_json::Value::as_str))
+            .map(str::to_owned)
+            .collect();
+        announced.sort();
         assert_eq!(
-            records.len(),
-            2,
-            "the copy the reader had was not announced"
-        );
-        assert_eq!(
-            records[1].get("path").and_then(kobo_json::Value::as_str),
-            Some("Books/Bleak House (2).epub")
+            announced,
+            ["Books/Bleak House (2).epub", "Books/Bleak House.epub"],
+            "the copy the reader had was not announced again"
         );
         let hidden = fs::read_dir(card.join("Books"))
             .expect("listed")
@@ -1056,6 +1032,7 @@ mod tests {
         assert!(!script.contains("rm -rf $HOME"), "a name reached the shell");
         assert!(script.contains("/mnt/onboard/Books"));
         let checked = head.find("df -Pk").expect("room is asked for");
+        assert!(head.contains("full="), "a card without room is said so");
         let begun = head.find(": > \"$partial\"").expect("the copy is begun");
         assert!(checked < begun, "room is asked for before the copy");
         let saved = head.find("mv \"$partial\"").expect("moved into place");
@@ -1065,46 +1042,6 @@ mod tests {
             tail, "finish\n",
             "the ending is one word, so a dropped connection cannot run half of it"
         );
-    }
-
-    #[test]
-    fn a_book_travels_in_slices_the_readers_shell_can_hold() {
-        for length in [1, 56, 57, 58, SLICE - 1, SLICE, SLICE + 1, 3 * SLICE] {
-            let bytes = vec![b'k'; length];
-            let mut script = Vec::new();
-            write_script(&mut script, "HEAD\n", &bytes, "TAIL\n").expect("written");
-            let script = String::from_utf8(script).expect("text");
-            let lines: Vec<&str> = script.lines().collect();
-            assert_eq!(lines.first(), Some(&"HEAD"));
-            assert_eq!(lines.last(), Some(&"TAIL"), "{length}");
-            let opened = lines
-                .iter()
-                .filter(|line| **line == SLICE_OPENS.trim_end())
-                .count();
-            let closed = lines
-                .iter()
-                .filter(|line| **line == SLICE_CLOSES.trim_end())
-                .count();
-            assert_eq!(opened, length.div_ceil(SLICE), "{length}");
-            assert_eq!(opened, closed, "every slice is ended");
-            let encoded: Vec<&&str> = lines[1..lines.len() - 1]
-                .iter()
-                .filter(|line| {
-                    **line != SLICE_OPENS.trim_end() && **line != SLICE_CLOSES.trim_end()
-                })
-                .collect();
-            assert!(encoded
-                .iter()
-                .all(|line| !line.is_empty() && line.len() <= 76));
-            // One slice is as much as the shell is ever asked to hold.
-            let longest = script
-                .split(SLICE_OPENS)
-                .skip(1)
-                .map(|slice| slice.split(SLICE_CLOSES).next().map_or(0, str::len))
-                .max()
-                .unwrap_or(0);
-            assert!(longest <= SLICE.div_ceil(57) * 77, "{longest}");
-        }
     }
 
     #[test]
