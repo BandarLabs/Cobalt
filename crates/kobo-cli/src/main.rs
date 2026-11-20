@@ -6455,7 +6455,11 @@ fn undo_setup(reader: &setup::Mounted, eject: bool) -> Result<(), String> {
          The same goes for the block setup added to /etc/ssh/sshd_config to keep\n\
          password login off. With the server switched off it does nothing. If you\n\
          turn SSH back on by hand and want password login back, delete the lines\n\
-         from '{}' to '{}'.",
+         from '{}' to '{}'.\n\n\
+         If this reader was signed in to Tailscale, its key is on the root\n\
+         filesystem too, in /var/lib/cobalt/tailscale. Signing out in the Tailscale\n\
+         app removes it. If Cobalt is already gone, remove the reader in your\n\
+         Tailscale admin console and delete that folder over SSH.",
         harden::SENTINEL_BEGIN,
         harden::SENTINEL_END,
     );
