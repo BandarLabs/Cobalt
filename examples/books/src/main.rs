@@ -75,7 +75,6 @@ const CANCEL_OPEN: &str = "cancel-open";
 const OPEN_AGAIN: &str = "open-again";
 const SEARCH: &str = "search";
 const CLEAR_SEARCH: &str = "clear-search";
-const SORT: &str = "sort";
 
 /// How long after one check Books leaves the computer alone when it comes
 /// back to the panel. Opening Books asks; flicking in and out of it should
@@ -401,9 +400,12 @@ impl Order {
         }
     }
 
+    /// Short enough for the three to share one row, each a third of it:
+    /// all three orders are on the shelf at once and the one in force is
+    /// the filled one, so nothing has to be opened to see how it stands.
     const fn label(self) -> &'static str {
         match self {
-            Self::Recent => "Recently opened",
+            Self::Recent => "Recent",
             Self::Title => "Title",
             Self::Author => "Author",
         }
@@ -494,8 +496,6 @@ struct Books {
 #[derive(Debug, Default)]
 struct Arranged {
     order: Order,
-    /// Whether the menu of orders is open.
-    sorting: bool,
     /// The field a search is typed into.
     search: TextEntry,
     /// What the shelf is narrowed to, or empty for all of it.
@@ -885,7 +885,7 @@ impl Books {
                 .build()
             };
         }
-        let mut screen = self.shelf_prefix(pile, self.library.sorting);
+        let mut screen = self.shelf_prefix(pile);
         let pages = self.pages(context, pile, members.len());
         self.page = self.page.min(pages.len().saturating_sub(1));
         let page: Vec<usize> = pages
@@ -915,7 +915,7 @@ impl Books {
     /// four books with nothing to say why reads as a library that lost the
     /// rest. The bar says it rather than a line under it: a line there took
     /// a whole row of covers off every page of results.
-    fn shelf_prefix(&self, pile: Shelf, sorting: bool) -> ScreenBuilder {
+    fn shelf_prefix(&self, pile: Shelf) -> ScreenBuilder {
         if pile != Shelf::Library {
             return self.notices(
                 ScreenBuilder::new("books-shelf")
@@ -941,10 +941,7 @@ impl Books {
             .iter()
             .position(|order| *order == self.library.order)
             .unwrap_or_default();
-        screen.picker(
-            SORT,
-            "Sort",
-            sorting,
+        screen.segmented(
             chosen,
             Order::ALL.map(|order| (order.name(), order.label())),
         )
@@ -1582,7 +1579,7 @@ impl Books {
     fn pages(&self, context: &Context, pile: Shelf, count: usize) -> Vec<Vec<usize>> {
         // Measured under the banners, so a notice with its action line takes
         // room from the grid's page rather than squeezing every tile.
-        let placed = self.shelf_prefix(pile, false).build();
+        let placed = self.shelf_prefix(pile).build();
         let pages = context.paginate_tiles_under(count, TileShape::Portrait, false, &placed);
         if pages.is_empty() {
             vec![Vec::new()]
@@ -2203,7 +2200,6 @@ impl Books {
             None => {}
         }
         if action == action_id(SEARCH) {
-            self.library.sorting = false;
             self.library.search.open();
             self.show(context);
             return true;
@@ -2214,16 +2210,10 @@ impl Books {
             self.show(context);
             return true;
         }
-        if action == action_id(SORT) {
-            self.library.sorting = !self.library.sorting;
-            self.show(context);
-            return true;
-        }
         if let Some(order) = Order::ALL
             .into_iter()
             .find(|order| action == action_id(order.name()))
         {
-            self.library.sorting = false;
             if order != self.library.order {
                 self.library.order = order;
                 self.page = 0;
@@ -2234,19 +2224,14 @@ impl Books {
             self.show(context);
             return true;
         }
-        // Back undoes the nearest thing first: the open menu, then the
-        // search, and only then the shelf.
-        if action == action_id(BACK) || action == ActionId::BACK {
-            if std::mem::take(&mut self.library.sorting) {
-                self.show(context);
-                return true;
-            }
-            if !self.library.query.is_empty() {
-                self.library.query.clear();
-                self.page = 0;
-                self.show(context);
-                return true;
-            }
+        // Back undoes the nearest thing first: the search, and only then
+        // the shelf.
+        if (action == action_id(BACK) || action == ActionId::BACK) && !self.library.query.is_empty()
+        {
+            self.library.query.clear();
+            self.page = 0;
+            self.show(context);
+            return true;
         }
         false
     }
@@ -2745,7 +2730,6 @@ impl KoboApp for Books {
         {
             self.page = 0;
             self.library.query.clear();
-            self.library.sorting = false;
             self.view = View::Shelf(shelf);
             self.show(context);
             return;
@@ -4549,22 +4533,6 @@ mod tests {
     #[test]
     fn the_library_stands_in_the_order_its_owner_chose_and_the_choice_is_kept() {
         let mut runner = on_a_named_shelf(None);
-        let shelf = shown(runner.action(action_id(super::SORT)));
-        let text = words(&shelf);
-        for label in ["Sort: Recently opened", "Title", "Author"] {
-            assert!(text.contains(label), "{label}: {text}");
-        }
-        // A menu open over a shelf of covers puts all five inks on the
-        // panel, as it does in the gallery of components. Nothing else
-        // about the screen is remarked on.
-        let issues = shelf.validate(&CLARA_BW_METRICS);
-        assert!(
-            issues
-                .iter()
-                .all(|issue| matches!(issue.kind, kobo_ui::LayoutIssueKind::ToneBudget { .. })),
-            "{issues:?}"
-        );
-
         let chosen = runner.action(action_id("order-title"));
         assert_eq!(
             saved(&chosen, super::ORDER).as_deref(),
@@ -4581,13 +4549,16 @@ mod tests {
                 "Wuthering Heights"
             ]
         );
-        assert!(words(&by_title).contains("Sort: Title"));
-        assert!(
-            !runner.app().library.sorting,
-            "the menu stayed open after a choice"
-        );
+        assert_eq!(runner.app().library.order, super::Order::Title);
+        // All three orders stand on the shelf at once, and the screen they
+        // share with the covers has nothing to remark on.
+        let text = words(&by_title);
+        for label in ["Recent", "Title", "Author"] {
+            assert!(text.contains(label), "{label}: {text}");
+        }
+        let issues = by_title.validate(&CLARA_BW_METRICS);
+        assert!(issues.is_empty(), "{issues:?}");
 
-        runner.action(action_id(super::SORT));
         let by_author = shown(runner.action(action_id("order-author")));
         // By the name as it is written, then the book with none.
         assert_eq!(
@@ -4602,8 +4573,9 @@ mod tests {
 
         // The next start puts the shelf back the way it was left.
         let mut runner = on_a_named_shelf(Some(b"order-author"));
-        let again = shown(runner.action(action_id(super::SORT)));
-        assert!(words(&again).contains("Sort: Author"));
+        assert_eq!(runner.app().library.order, super::Order::Author);
+        runner.action(action_id("order-title"));
+        let again = shown(runner.action(action_id("order-author")));
         assert_eq!(titles(&again)[0], "The Open Sea");
         // A value this build has no order for leaves the shelf alone.
         let runner = on_a_named_shelf(Some(b"order-by-colour"));
@@ -4611,13 +4583,8 @@ mod tests {
     }
 
     #[test]
-    fn back_closes_the_menu_of_orders_before_anything_else_and_a_search_keeps_its_order() {
+    fn a_search_keeps_the_order_the_shelf_stands_in() {
         let mut runner = on_a_named_shelf(Some(b"order-title"));
-        runner.action(action_id(super::SORT));
-        assert!(runner.app().library.sorting);
-        runner.action(ActionId::BACK);
-        assert!(!runner.app().library.sorting);
-        assert_eq!(runner.app().view, View::Shelf(Shelf::Library));
 
         runner.action(action_id(super::SEARCH));
         let found = shown(runner.type_text("e"));
