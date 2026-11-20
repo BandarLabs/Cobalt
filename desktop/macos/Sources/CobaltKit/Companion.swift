@@ -455,6 +455,17 @@ public final class Companion: ObservableObject {
         store.open = nil
     }
 
+    /// Lets every picture that could not be had be asked for once more.
+    /// Called when the store is shown again or the owner asks it to check
+    /// again, never on a timer: the server itself goes quiet for a while
+    /// after failing to reach the site, and asking in a loop would only
+    /// collect the same refusal.
+    public func forgetFailedShots() {
+        let failed = store.shots.filter { $0.value == .failed }.keys
+        guard !failed.isEmpty else { return }
+        for name in failed { store.shots[name] = nil }
+    }
+
     /// Asks for a picture that is on screen or about to be. Nothing is
     /// fetched twice, and only a few are fetched at once: the server may be
     /// getting each from the network, and a grid of thirty should not ask

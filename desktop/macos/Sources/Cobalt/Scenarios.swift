@@ -254,10 +254,10 @@ enum Scenarios {
     /// One app as the store describes it. The names of the pictures are the
     /// ones the project's site publishes, so a render given that folder
     /// shows the real screens.
-    private static func known(_ id: String, _ title: String, _ summary: String, _ version: String = "1.0.0", shots: [(String, String)] = [], description: String? = nil, needs: [String] = [], access: [String] = [], notes: String = "", setup: [[String: Any]] = []) -> [String: Any] {
+    private static func known(_ id: String, _ title: String, _ summary: String, _ version: String = "1.0.0", shots: [(String, String)] = [], description: String? = nil, access: [String] = [], notes: String = "", setup: [[String: Any]] = []) -> [String: Any] {
         [
-            "id": id, "title": title, "summary": summary, "needs": needs, "description": description ?? summary,
-            "version": version, "release_notes": notes, "minimum_cobalt_version": "0.3.30", "access": access, "setup": setup,
+            "id": id, "title": title, "summary": summary, "description": description ?? summary,
+            "version": version, "release_notes": notes.isEmpty ? NSNull() : notes, "access": access, "setup": setup,
             "shots": shots.map { ["name": $0.0, "caption": $0.1, "width": 1072, "height": 1448] as [String: Any] },
         ]
     }
@@ -270,6 +270,8 @@ enum Scenarios {
         "crossword": "Solve a crossword with the on-screen keyboard.",
         "sudoku": "Solve sudoku puzzles with pencil marks.",
         "nonograms": "Solve picture logic puzzles.",
+        "lichess": "Play chess against the computer or other people.",
+        "morse": "Learn Morse code by ear and by eye.",
         "habits": "Tick off the things you mean to do every day.",
         "todo": "Keep a list of things to do.",
         "atlas": "Carry offline maps of the places you choose.",
@@ -293,27 +295,29 @@ enum Scenarios {
     private static let storeAnswer = ok([
         "groups": [
             ["id": "reading", "title": "Reading and listening", "apps": ["rss", "panels", "vault"]],
-            ["id": "games", "title": "Games", "apps": ["backgammon", "crossword", "sudoku", "nonograms"]],
+            ["id": "games", "title": "Games", "apps": ["backgammon", "lichess", "crossword", "morse", "sudoku", "nonograms"]],
             ["id": "everyday", "title": "Everyday tools", "apps": ["habits", "todo", "atlas"]],
             ["id": "home-and-computer", "title": "Home and computer", "apps": ["homepanel", "syncthing"]],
             ["id": "developers", "title": "For developers", "apps": ["terminal", "gallery"]],
         ] as [[String: Any]],
         "apps": [
-            "rss": known("rss", "Feeds", summaries["rss"]!, "1.4.0", shots: [("feeds.png", "The list of sites, with how many articles are unread")], access: ["Use the network."], notes: "Articles keep their pictures when they are saved for reading offline."),
+            "rss": known("rss", "Feeds", summaries["rss"]!, "1.4.0", shots: [("feeds.png", "The list of sites, with how many articles are unread")], access: ["Connects to online services"], notes: "Articles keep their pictures when they are saved for reading offline."),
             "panels": known("panels", "Panels", summaries["panels"]!, "1.0.0", shots: [("panels.png", "A page of a comic, whole"), ("panels/library.png", "The comics on the reader"), ("panels/reader.png", "One panel filling the screen")]),
             "vault": known("vault", "Vault", summaries["vault"]!, "1.1.0", shots: [("vault.png", "A note open for reading")]),
             "backgammon": known("backgammon", "Backgammon", summaries["backgammon"]!, "1.0.1", shots: [("backgammon.png", "Backgammon in the middle of a game against the computer"), ("backgammon/backgammon-opening.png", "A new game against the computer"), ("backgammon/backgammon-match.png", "The score of a match to five points")], description: "Play complete backgammon on one Kobo, solo against the computer or passing the reader between two people. The doubling cube, the Crawford rule and matches to a number of points are all there, and a game left half way is where you left it.", notes: "Against the computer, the cube is now offered when it should be."),
             "crossword": known("crossword", "Crossword", summaries["crossword"]!, "2.1.0", shots: [("crossword.png", "A puzzle part way through"), ("crossword/crossword-play.png", "The keyboard up, with the clue above it"), ("crossword/completed.png", "A finished puzzle")], description: longDescription, notes: "Rebus squares take more than one letter."),
+            "lichess": known("lichess", "Chess", summaries["lichess"]!, "1.2.0", shots: [("lichess.png", "A game against the computer, with white to move"), ("lichess/computer-selection.png", "Playing the computer offline, with the legal moves for the selected bishop marked"), ("lichess/computer-large-text.png", "The same game at the largest text size"), ("lichess/challenge.png", "An incoming challenge from another player"), ("lichess/candidate.png", "A rated rapid game found and ready to open")], description: "Play chess on the reader. Against the computer it needs no network. With an account it finds rated games and takes challenges from other people, and a game you leave is where you left it.", access: ["Connects to online services", "Can keep the reader awake while in use"], notes: "The legal moves for a selected piece are marked on the board."),
+            "morse": known("morse", "Morse", summaries["morse"]!, shots: [("morse.png", "A letter sounded and shown, with the last ten answers")]),
             "sudoku": known("sudoku", "Sudoku", summaries["sudoku"]!, shots: [("sudoku.png", "A puzzle with pencil marks")]),
             "nonograms": known("nonograms", "Nonograms", summaries["nonograms"]!, shots: [("nonograms.png", "A fifteen by fifteen puzzle")]),
             "habits": known("habits", "Habits", summaries["habits"]!, shots: [("habits.png", "A week of habits")]),
             "todo": known("todo", "To Do", summaries["todo"]!, shots: [("todo.png", "A list with two things done")]),
             "atlas": known("atlas", "Atlas", summaries["atlas"]!, "0.8.0"),
-            "homepanel": known("homepanel", "Home Panel", summaries["homepanel"]!, shots: [("homepanel.png", "The lights and the heating in one room")], needs: ["Needs your computer.", "Needs a Home Assistant server on your network."], access: ["Use the network."], setup: [
+            "homepanel": known("homepanel", "Home Panel", summaries["homepanel"]!, shots: [("homepanel.png", "The lights and the heating in one room")], access: ["Connects to services on your network", "Can keep the reader awake while in use"], setup: [
                 ["text": "Set up the reader once over USB.", "command": "kobo setup", "link": NSNull()],
                 ["text": "Give the reader the address of your server and a token for it.", "command": "kobo secret set homepanel", "link": ["label": "Home Panel README", "url": "https://bandarlabs.github.io/Cobalt/apps/homepanel/"]],
             ]),
-            "syncthing": known("syncthing", "Syncthing", summaries["syncthing"]!, shots: [("syncthing.png", "A folder in step, and when it last changed")], needs: ["Needs your computer."], access: ["Use the network.", "Read and write the reader's library."]),
+            "syncthing": known("syncthing", "Syncthing", summaries["syncthing"]!, shots: [("syncthing.png", "A folder in step, and when it last changed")], access: ["Connects to services on your network", "Reads and writes the reader's library"]),
             "terminal": known("terminal", "Terminal", summaries["terminal"]!, shots: [("terminal.png", "A shell on the reader")]),
             "gallery": known("gallery", "Components", summaries["gallery"]!, shots: [("components.png", "Buttons, lists and type at their real size")]),
         ] as [String: Any],
@@ -332,6 +336,8 @@ enum Scenarios {
         entry("panels", "Panels", summaries["panels"]!, "1.0.0", installed: "0.9.2", update: true, runs: false, minimum: "0.4.0"),
         entry("vault", "Vault", summaries["vault"]!, "1.1.0", installed: "1.1.0"),
         entry("crossword", "Crossword", summaries["crossword"]!, "2.1.0", bytes: 2_310_000),
+        entry("lichess", "Chess", summaries["lichess"]!, "1.2.0", bytes: 3_100_000),
+        entry("morse", "Morse", summaries["morse"]!, "1.0.0", bytes: 540_000),
         entry("sudoku", "Sudoku", summaries["sudoku"]!, "1.0.0", bytes: 880_000),
         entry("nonograms", "Nonograms", summaries["nonograms"]!, "1.0.0", bytes: 910_000),
         entry("habits", "Habits", summaries["habits"]!, "1.0.0", bytes: 720_000),
@@ -571,6 +577,8 @@ enum Scenarios {
         Scenario(name: "store-removed", place: .apps, routes: with(appsBase, ["POST /api/apps/remove": ok(["apps": [] as [Any], "removed": ["id": "vault", "title": "Vault"]])]), act: loaded { store in await store.removeApp(id: "vault", title: "Vault") }),
         Scenario(name: "store-app-update", place: .apps, routes: appsBase, act: page("backgammon")),
         Scenario(name: "store-app-long", place: .apps, routes: appsBase, act: page("crossword")),
+        Scenario(name: "store-app-many-pictures", place: .apps, routes: appsBase, act: page("lichess")),
+        Scenario(name: "store-app-one-picture", place: .apps, routes: appsBase, act: page("morse")),
         Scenario(name: "store-app-setup", place: .apps, routes: appsBase, act: page("homepanel")),
         Scenario(name: "store-app-no-shots", place: .apps, routes: appsBase, act: page("atlas")),
         Scenario(name: "store-app-needs-newer", place: .apps, routes: appsBase, act: page("tide-table")),

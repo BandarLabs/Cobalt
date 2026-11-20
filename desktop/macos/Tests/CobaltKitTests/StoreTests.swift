@@ -33,6 +33,12 @@ struct StoreTests {
         // A picture the server gives no size for is taken to be a reader's screen.
         #expect(store.apps["tide-table"]?.shots.first?.width == 1072)
         #expect(store.apps["tide-table"]?.shots.first?.height == 1448)
+        // The store says nothing about which Cobalt an app needs; the catalog does.
+        #expect(store.apps["rss"]?.needs.isEmpty == true)
+        let real: Store = decoded(#"{"groups": [{"id": "other", "title": "Other apps", "apps": ["chat"]}], "apps": {"chat": {"id": "chat", "title": "Chat", "summary": "Ask a question.", "description": "Ask a question.", "version": "1.0.0", "release_notes": null, "access": ["Connects to online services"], "setup": [], "shots": []}}}"#)
+        #expect(real.apps["chat"]?.releaseNotes == "")
+        #expect(real.apps["chat"]?.minimumCobaltVersion == nil)
+        #expect(real.groups.map(\.title) == ["Other apps"])
     }
 
     @Test("With no reader the whole store is there to read, in its groups, and nothing is on offer")
@@ -174,6 +180,14 @@ struct StorePicturesTests {
         #expect(stage.asked.filter { $0.path == "/api/shot" }.count == 2)
         store.closeApp()
         #expect(store.store.open == nil)
+
+        // Showing the store again asks once more for whatever failed, and for nothing that did not.
+        board["GET /api/shot"] = .json(502, refusal("unreachable", "The picture could not be fetched."))
+        await store.loadShot("rss/article.png")
+        #expect(store.store.shots["rss/article.png"] == .failed)
+        store.forgetFailedShots()
+        #expect(store.store.shots["rss/article.png"] == nil)
+        #expect(store.store.shots["feeds.png"] == .loaded(StorePicturesTests.png))
     }
 
     @Test("A grid of pictures is asked for a few at a time")

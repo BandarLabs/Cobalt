@@ -213,13 +213,17 @@ enum Drops {
 
 @MainActor
 enum MainWindow {
-    static let smallest = NSSize(width: 640, height: 440)
+    /// Wide enough for two of the store's screens side by side and one of
+    /// an app's at full size, with the sidebar open.
+    static let smallest = NSSize(width: 820, height: 520)
+    /// What the window opens at the first time: three screens across.
+    static let usual = NSSize(width: 1100, height: 760)
 
     /// Builds the window. The app shows the one it gets; the render mode
     /// draws the one it gets to a file. They are the same window.
     static func make(store: Companion, desk: Desk) -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 980, height: 680),
+            contentRect: NSRect(origin: .zero, size: usual),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -240,7 +244,7 @@ enum MainWindow {
         host.sizingOptions = []
         window.contentViewController = host
         window.minSize = smallest
-        window.setContentSize(NSSize(width: 980, height: 680))
+        window.setContentSize(usual)
         return window
     }
 }

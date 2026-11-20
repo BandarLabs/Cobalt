@@ -353,16 +353,38 @@ private struct JobPane: View {
 
     @ViewBuilder
     private func running(_ scene: JobScene) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        if scene.stages.isEmpty {
             ProgressView()
                 .progressViewStyle(.linear)
+                .tint(Paper.accent)
                 .accessibilityLabel(scene.heading)
-            Text(scene.elapsed)
-                .font(.callout)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("Running for \(scene.elapsed)")
+        } else {
+            // Which of four things is happening, not a log of them.
+            VStack(alignment: .leading, spacing: 9) {
+                ForEach(Array(scene.stages.enumerated()), id: \.offset) { _, stage in
+                    HStack(alignment: .center, spacing: 10) {
+                        Group {
+                            switch stage.state {
+                            case .done: Image(systemName: "checkmark")
+                            case .current: ProgressView().controlSize(.small)
+                            case .waiting: Image(systemName: "circle").foregroundStyle(.tertiary)
+                            }
+                        }
+                        .font(.body.weight(.medium))
+                        .frame(width: 18, height: 18)
+                        Text(stage.title)
+                            .foregroundStyle(stage.state == .waiting ? .secondary : .primary)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(stage.title), \(stage.state == .done ? "done" : stage.state == .current ? "in progress" : "not started")")
+                }
+            }
         }
+        Text(scene.elapsed)
+            .font(.callout)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Running for \(scene.elapsed)")
         if !scene.waiting.isEmpty {
             Prose(scene.waiting)
         }
@@ -372,11 +394,11 @@ private struct JobPane: View {
         if !scene.quiet.isEmpty {
             Note(scene.quiet)
         }
-        if !scene.next.isEmpty {
+        if scene.turned {
             SaidView(blocks: scene.next)
         }
-        if !scene.report.isEmpty {
-            Folded(title: "What was done to the reader") { SaidView(blocks: scene.report) }
+        if !scene.said.isEmpty {
+            Folded(title: "Everything it has said") { SaidView(blocks: scene.said) }
         }
     }
 

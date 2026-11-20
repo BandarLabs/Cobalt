@@ -410,6 +410,7 @@ struct ReaderPlaceTests {
         #expect(ejected.pulled == "")
         #expect(ejected.waiting == "")
         #expect(ejected.next.first == .heading("Next, on the reader"))
+        #expect(ejected.turned)
     }
 
     @Test("A job that has printed nothing for two minutes says so, and after ten says what can be done")
@@ -865,5 +866,43 @@ struct SendPlaceTests {
         #expect(Privacy.looksKeptOffNetwork("kobo: could not reach 192.168.1.20: No route to host (os error 65)"))
         #expect(!Privacy.looksKeptOffNetwork("kobo: No reader is saved yet."))
         #expect(Privacy.localNetwork(origin: .finder).detail.contains("Local Network"))
+    }
+}
+
+@Suite("Where an install has got to")
+struct InstallStageTests {
+    func job(_ title: String, said: String) -> FollowedJob {
+        var job = FollowedJob(id: 3, kind: .reader, title: title, volume: "/Volumes/KOBOeReader", began: Date())
+        job.text = said
+        return job
+    }
+
+    func states(_ said: String, title: String = "Installing Cobalt") -> [JobScene.Stage.State] {
+        JobScene.scene(for: job(title, said: said), state: nil, now: Date()).stages.map(\.state)
+    }
+
+    @Test("An install is four things that happen in order, and the list shows which one is happening")
+    func advances() {
+        #expect(states("") == [.current, .waiting, .waiting, .waiting])
+        let ready = String(setupSaid[..<setupSaid.range(of: "Set up /Volumes")!.lowerBound])
+        #expect(states(ready) == [.done, .current, .waiting, .waiting])
+        let written = String(setupSaid[..<setupSaid.range(of: "  · volume ejected")!.lowerBound])
+        #expect(states(written) == [.done, .done, .current, .waiting])
+        let ejected = String(setupSaid[..<setupSaid.range(of: "The reader is back")!.lowerBound])
+        #expect(states(ejected) == [.done, .done, .done, .current])
+        #expect(states(setupSaid) == [.done, .done, .done, .done])
+        #expect(JobScene.scene(for: job("Updating Cobalt", said: ""), state: nil, now: Date()).stages.map(\.title) == [
+            "Reading the reader", "Writing Cobalt to the reader", "Ejecting the reader", "Waiting for the reader on Wi-Fi",
+        ])
+    }
+
+    @Test("A job that is not an install has no such list, and everything any job said is kept to be opened")
+    func onlyInstalls() {
+        #expect(states("anything", title: "Removing Cobalt").isEmpty)
+        #expect(states("anything", title: "Installing apps").isEmpty)
+        let scene = JobScene.scene(for: job("Installing Cobalt", said: setupSaid), state: nil, now: Date())
+        #expect(scene.said == Said.reflow(setupSaid))
+        #expect(scene.turned)
+        #expect(JobScene.scene(for: job("Installing Cobalt", said: "found Kobo Clara BW\n"), state: nil, now: Date()).turned == false)
     }
 }

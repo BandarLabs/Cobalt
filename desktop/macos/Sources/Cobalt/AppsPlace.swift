@@ -18,7 +18,9 @@ struct AppsPlace: View {
                 Browse(front: front)
             }
         }
-        .task { if store.store.store == nil { await store.loadStore() } }
+        .task {
+            if store.store.store == nil { await store.loadStore() } else { store.forgetFailedShots() }
+        }
         // What the reader holds and what its catalog offers are read when
         // there is a reader with Cobalt on it, and again when either
         // changes under the place.
@@ -39,6 +41,7 @@ struct AppsPlace: View {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     Task {
+                        store.forgetFailedShots()
                         await store.loadStore()
                         await store.loadApps()
                     }
@@ -111,7 +114,7 @@ private struct Browse: View {
 
     var body: some View {
         let query = store.apps.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        Pane(width: 760) {
+        Pane(width: Picture.grid * 4 + 24 * 3) {
             StoreNotes()
             if store.state != nil, store.appsReader == nil {
                 // The one line that says why there is nothing to press.
@@ -168,7 +171,8 @@ private struct Browse: View {
                 Spacer()
                 trailing()
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 132, maximum: 176), spacing: 20, alignment: .top)], alignment: .leading, spacing: 22) {
+            // Columns exactly as wide as a screen is drawn, as many as fit.
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: Picture.grid, maximum: Picture.grid), spacing: 24, alignment: .top)], alignment: .leading, spacing: 30) {
                 ForEach(entries) { entry in
                     Tile(entry: entry)
                 }
@@ -187,17 +191,16 @@ private struct Tile: View {
         Button {
             store.open(app: entry.id)
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
-                Picture(shot: entry.shots.first, title: entry.title)
-                VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 10) {
+                Picture(shot: entry.shots.first, title: entry.title, width: Picture.grid)
+                VStack(alignment: .leading, spacing: 3) {
                     Text(entry.title)
-                        .font(Paper.serif(15))
+                        .font(Paper.serif(19))
                         .lineLimit(1)
                     if !entry.summary.isEmpty {
                         Text(entry.summary)
-                            .font(.callout)
                             .foregroundStyle(.secondary)
-                            .lineLimit(3)
+                            .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     }
                     if let fact {
@@ -209,7 +212,7 @@ private struct Tile: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .frame(width: Picture.grid, alignment: .topLeading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -234,13 +237,30 @@ private struct Tile: View {
 /// the same shape with the app's name in it, and nothing around it moves
 /// when the picture comes.
 struct Picture: View {
+    /// The two widths a screen is drawn at. A reader's panel is 1072
+    /// pixels across, so these are a half and a quarter of it on an
+    /// ordinary display and the whole and a half on a dense one: a whole
+    /// fraction either way, which is what keeps a hairline on the reader a
+    /// hairline here.
+    static let page: CGFloat = 536
+    static let grid: CGFloat = 268
+
     @EnvironmentObject private var store: Companion
+    @Environment(\.displayScale) private var density
     var shot: Shot?
     var title: String
+    var width: CGFloat
 
-    private var proportions: CGFloat {
-        guard let shot, shot.height > 0 else { return 1072.0 / 1448.0 }
-        return CGFloat(shot.width) / CGFloat(shot.height)
+    /// The frame is a reader's screen whatever the picture's own shape. A
+    /// picture of another shape sits inside it on white, the way it would
+    /// on the reader, so a row of frames stays a row.
+    private let proportions: CGFloat = 1072.0 / 1448.0
+
+    /// Whether the picture has yet to be asked for. It becomes true again
+    /// when a failed picture is forgotten, which is what asks for it anew.
+    private var unasked: Bool {
+        guard let shot else { return false }
+        return store.store.shots[shot.name] == nil
     }
 
     var body: some View {
@@ -249,22 +269,22 @@ struct Picture: View {
             if let image {
                 Image(nsImage: image)
                     .resizable()
-                    .interpolation(.high)
+                    // Smoothed only when it is being shrunk. Pixel for
+                    // pixel, smoothing would soften what is already exact.
+                    .interpolation(image.size.width > width * density ? .high : .none)
                     .aspectRatio(contentMode: .fit)
             } else {
                 Text(title)
-                    .font(Paper.serif(12))
+                    .font(Paper.serif(width > Picture.grid ? 22 : 15))
                     .foregroundStyle(.tertiary)
                     .multilineTextAlignment(.center)
-                    .padding(8)
+                    .padding(12)
             }
         }
-        .aspectRatio(proportions, contentMode: .fit)
-        // Never drawn larger than it is, which on a screen of twice the
-        // density is half its pixels in points.
-        .frame(maxWidth: shot.map { CGFloat($0.width) / 2 } ?? 536)
+        // Whole points both ways, so the frame never lands on half a pixel.
+        .frame(width: width, height: (width / proportions).rounded())
         .overlay(Rectangle().strokeBorder(Paper.rule, lineWidth: 1))
-        .task(id: shot?.name) {
+        .task(id: "\(shot?.name ?? "")|\(unasked)") {
             if let shot { store.wantShot(shot.name) }
         }
         .accessibilityElement()
@@ -304,10 +324,10 @@ private struct AppPage: View {
         let reader = store.appsReader
         let obstacle = StoreWords.obstacle(to: entry, reader: store.chosen.reader, hasCatalog: store.apps.catalog != nil)
         let locked = reader?.writable == false
-        Pane(width: 680) {
+        Pane(width: Picture.page * 2 + 24) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(entry.title)
-                    .font(Paper.serif(28))
+                    .font(Paper.serif(34))
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
                 if !entry.summary.isEmpty {
@@ -342,19 +362,22 @@ private struct AppPage: View {
             }
             if !obstacle.isEmpty {
                 Note(obstacle)
+                    .frame(maxWidth: Paper.column)
             }
             if !entry.shots.isEmpty {
                 Gallery(entry: entry)
+                    .padding(.vertical, 6)
             }
             if !entry.description.isEmpty, entry.description != entry.summary {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(Array(entry.description.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
-                        Prose(paragraph.replacingOccurrences(of: "\n", with: " "), font: Paper.serif(15))
+                        Prose(paragraph.replacingOccurrences(of: "\n", with: " "), font: Paper.serif(16))
                     }
                 }
+                .frame(maxWidth: Paper.column, alignment: .leading)
             }
-            if !entry.needs.isEmpty {
-                listed("Needs", entry.needs)
+            if !entry.needs.isEmpty || entry.minimumCobaltVersion != nil {
+                listed("Needs", (entry.minimumCobaltVersion.map { ["Cobalt \($0) or newer"] } ?? []) + entry.needs)
             }
             if !entry.access.isEmpty {
                 listed("Access", entry.access)
@@ -426,17 +449,16 @@ private struct Gallery: View {
 
     var body: some View {
         ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 16) {
+            HStack(alignment: .top, spacing: 24) {
                 ForEach(entry.shots) { shot in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Picture(shot: shot, title: entry.title)
-                            .frame(width: 230)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picture(shot: shot, title: entry.title, width: Picture.page)
                         if !shot.caption.isEmpty {
                             Text(shot.caption)
-                                .font(.caption)
+                                .font(.callout)
                                 .foregroundStyle(.secondary)
-                                .frame(width: 230, alignment: .leading)
-                                .lineLimit(3)
+                                .frame(width: Picture.page, alignment: .leading)
+                                .lineLimit(2)
                                 .accessibilityHidden(true)
                         }
                     }

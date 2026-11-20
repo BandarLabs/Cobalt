@@ -64,6 +64,42 @@ public struct JobScene: Equatable, Sendable {
     /// What was done to the reader, folded away under the steps.
     public var report: [Block] = []
     public var elapsed = ""
+    /// Where an install has got to, as a short list that advances. Empty
+    /// for any job that is not an install.
+    public var stages: [Stage] = []
+    /// Everything the command has said, for whoever wants all of it.
+    public var said: [Block] = []
+    /// Whether the command has turned to the steps for the reader.
+    public var turned = false
+
+    public struct Stage: Equatable, Sendable {
+        public enum State: Equatable, Sendable { case done, current, waiting }
+        public var title: String
+        public var state: State
+    }
+
+    /// The four things an install does, and the line setup prints when
+    /// each is behind it. An install is a minute or two of output that
+    /// nobody waiting needs to read; which of four things is happening is
+    /// what they want to know. The lines are setup's own headings, so a
+    /// release that rewords one leaves a stage showing as not yet done
+    /// and loses nothing, since everything it said is still there to open.
+    private static let installStages: [(title: String, done: String)] = [
+        ("Reading the reader", "Ready to install Cobalt"),
+        ("Writing Cobalt to the reader", "\nSet up "),
+        ("Ejecting the reader", "volume ejected"),
+        ("Waiting for the reader on Wi-Fi", "The reader is back on Wi-Fi"),
+    ]
+
+    static func stages(of job: FollowedJob) -> [Stage] {
+        guard job.title.hasPrefix("Installing Cobalt") || job.title.hasPrefix("Updating Cobalt") else { return [] }
+        var reached = true
+        return installStages.map { stage in
+            let done = job.text.contains(stage.done)
+            defer { if !done { reached = false } }
+            return Stage(title: stage.title, state: done ? .done : reached ? .current : .waiting)
+        }
+    }
     /// The reader the job wrote to, when it is still mounted and so still
     /// needs ejecting before the cable comes out.
     public var connected: Reader?
@@ -82,6 +118,11 @@ public struct JobScene: Equatable, Sendable {
         "Removing Cobalt": "Cobalt is removed.",
     ]
 
+    private static func isTurn(_ block: Block?) -> Bool {
+        guard case .heading(let text)? = block else { return false }
+        return text.hasPrefix("Next")
+    }
+
     public static func scene(for job: FollowedJob, state: ServerState?, now: Date) -> JobScene {
         let reader = state?.readers.first { $0.volume == job.volume }
         if job.failed {
@@ -92,7 +133,8 @@ public struct JobScene: Equatable, Sendable {
             scene.next = Said.reflow(job.text)
             return scene
         }
-        let (report, next) = Said.afterwards(Said.reflow(job.text))
+        let all = Said.reflow(job.text)
+        let (report, next) = Said.afterwards(all)
         if !job.running {
             var scene = JobScene(phase: .done, heading: done[job.title] ?? "Done.")
             scene.next = next
@@ -103,6 +145,9 @@ public struct JobScene: Equatable, Sendable {
         var scene = JobScene(phase: .running, heading: job.title.isEmpty ? "Working" : job.title)
         scene.next = next
         scene.report = report
+        scene.said = all
+        scene.turned = !report.isEmpty || isTurn(next.first)
+        scene.stages = stages(of: job)
         scene.elapsed = Said.elapsed(now.timeIntervalSince(job.began))
         // Until the command turns to the steps for the reader there is
         // nothing for the owner to do but leave it alone, so that is said.

@@ -25,7 +25,11 @@ enum Renderer {
         var height: CGFloat
     }
 
-    static let sizes = [Size(name: "narrow", width: 700, height: 520), Size(name: "wide", width: 1120, height: 760)]
+    /// The smallest the window goes and the size it opens at.
+    static let sizes = [
+        Size(name: "narrow", width: MainWindow.smallest.width, height: MainWindow.smallest.height),
+        Size(name: "wide", width: MainWindow.usual.width, height: MainWindow.usual.height),
+    ]
 
     static func run(into directory: URL, only: String?, scale: CGFloat) async -> Int32 {
         do {
