@@ -2922,6 +2922,90 @@ mod tests {
         );
     }
 
+    /// Lets every task the application has asked for run to its end, in the
+    /// order it asked, and gives back the last screen that came of it.
+    fn run_tasks(runner: &mut AppRunner<Books>, mut commands: Vec<Command>) -> Option<Screen> {
+        let mut last = None;
+        for _ in 0..10_000 {
+            let tasks: Vec<TaskId> = commands
+                .iter()
+                .filter_map(|command| match command {
+                    Command::Spawn { task, .. } => Some(*task),
+                    _ => None,
+                })
+                .collect();
+            if tasks.is_empty() {
+                return last;
+            }
+            commands = Vec::new();
+            for task in tasks {
+                let answered = runner.task_outcome(task, TaskOutcome::Completed(Vec::new()));
+                if answered
+                    .iter()
+                    .any(|command| matches!(command, Command::SetScreen(_)))
+                {
+                    last = Some(shown(answered.clone()));
+                }
+                commands.extend(answered);
+            }
+        }
+        panic!("the application never stopped asking for more time");
+    }
+
+    #[test]
+    fn finding_words_in_a_book_lists_where_they_are_and_back_returns_from_one_of_them() {
+        let mut runner = started_with(None, None);
+        runner.action(action_id("book-0"));
+        runner.page_turn(true);
+        runner.store_result(StoreResult::Saved {
+            key: READING.into(),
+        });
+        let left = runner
+            .app()
+            .book
+            .reader()
+            .map(kobo_read::Reader::page_number);
+
+        runner.action(action_id(kobo_read::action::CONTROLS));
+        let field = shown(runner.action(action_id(kobo_read::action::FIND)));
+        assert!(words(&field).contains("Find"));
+        let searching = runner.type_text("Line 250 ");
+        assert!(
+            words(&shown(searching.clone())).contains("Searching for"),
+            "the book is read through after the screen says so, not before"
+        );
+        let found = run_tasks(&mut runner, searching).expect("the results were drawn");
+        let text = words(&found);
+        assert!(text.contains("is in 1 passage."), "{text}");
+        assert!(text.contains("Line 250 of a letter"), "{text}");
+        assert!(found.validate(&CLARA_BW_METRICS).is_empty());
+
+        // The words found are marked on the page, so they are set as a run
+        // of their own and the line is looked for by what follows them.
+        let kept = runner.action(action_id("reader-found-0"));
+        let page = words(&shown(kept.clone()));
+        assert!(page.contains("250") && page.contains("Line 251 of a letter"));
+        assert!(
+            saved(&kept, READING).is_some(),
+            "the place the search led to was not written down"
+        );
+        runner.action(ActionId::BACK);
+        assert_eq!(
+            runner.app().view,
+            View::Reading,
+            "Back from a place found closed the book"
+        );
+        assert_eq!(
+            runner
+                .app()
+                .book
+                .reader()
+                .map(kobo_read::Reader::page_number),
+            left,
+            "Back did not return to the page the search was made from"
+        );
+    }
+
     #[test]
     fn a_pdf_is_listed_and_will_not_open() {
         let mut runner = AppRunner::new(Books::seeded());

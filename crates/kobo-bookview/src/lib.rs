@@ -104,6 +104,16 @@ const MAX_PICTURE_NAME: usize = 512;
 /// is another round trip through the runtime to get through it.
 const FORMULA_PASS: Duration = Duration::from_millis(60);
 
+/// How long one pass may spend reading the book for a word.
+///
+/// The same sixty milliseconds a pass of formulae is given, for the same
+/// reason: it is a third of the deadline spent, with the rest left for the
+/// block the pass was in the middle of when the clock ran out. A megabyte of
+/// novel is read through in about one of these on the reader, so most
+/// searches are a single pass and the budget only matters for the long books
+/// it exists for.
+const FIND_PASS: Duration = Duration::from_millis(60);
+
 /// Typesets one formula, or nothing when this build cannot draw.
 ///
 /// Without the feature there is no rasteriser and no fonts to draw with, and
@@ -198,6 +208,8 @@ pub struct BookView {
     fetching: Option<(TaskId, String)>,
     /// Some formulas in the open HTML were left as text past the picture budget.
     formulae_as_text: bool,
+    /// The task carrying a search of the book forward, if one is in flight.
+    searching: Option<TaskId>,
 }
 
 impl BookView {
@@ -592,7 +604,20 @@ impl BookView {
         // are wanted, and a lane may have come free since the last one was
         // asked for.
         self.fetch_next(context);
+        self.carry_search(context);
         Some(outcome)
+    }
+
+    /// Asks the runtime to call back so a search of the book can go on, if
+    /// one is under way and nothing is already carrying it.
+    ///
+    /// Asked again on every action as well as after every pass: a search
+    /// started when the runtime had no lane to spare would otherwise sit
+    /// saying it was searching for as long as the reader cared to watch.
+    fn carry_search(&mut self, context: &mut Context) {
+        if self.searching.is_none() && self.reader.as_ref().is_some_and(Reader::is_searching) {
+            self.searching = context.spawn(Task::Sleep { seconds: 0 });
+        }
     }
 
     /// Takes a finger held on the page.
@@ -656,10 +681,11 @@ impl BookView {
     /// Carries the picture pipeline forward when one of its tasks lands.
     ///
     /// An application passes every finished task here; a task that was not
-    /// this view's comes back as [`Step::Elsewhere`] and costs two
-    /// comparisons. Two kinds of task are this view's: the sleep that carries
-    /// a plate from bytes to pixels a half-step at a time, and the fetch of a
-    /// picture a web page named but did not carry.
+    /// this view's comes back as [`Step::Elsewhere`] and costs three
+    /// comparisons. Three kinds of task are this view's: the sleep that
+    /// carries a plate from bytes to pixels a half-step at a time, the fetch
+    /// of a picture a web page named but did not carry, and the sleep that
+    /// carries a search of the book from one pass to the next.
     pub fn woke(&mut self, context: &mut Context, task: TaskId, outcome: &TaskOutcome) -> Step {
         if let Some((_, name)) = self.fetching.take_if(|(id, _)| *id == task) {
             // A picture that will not come is a picture the page reads
@@ -677,6 +703,16 @@ impl BookView {
             } else {
                 Step::Quiet
             };
+        }
+        if self.searching == Some(task) {
+            self.searching = None;
+            let metrics = context.metrics();
+            let changed = self
+                .reader
+                .as_mut()
+                .is_some_and(|reader| reader.search_on(FIND_PASS, &metrics));
+            self.carry_search(context);
+            return if changed { Step::Repaint } else { Step::Quiet };
         }
         if self.plating != Some(task) {
             return Step::Elsewhere;
@@ -1073,6 +1109,9 @@ impl BookView {
         self.wanted.clear();
         self.settled = false;
         if let Some((task, _)) = self.fetching.take() {
+            context.cancel(task);
+        }
+        if let Some(task) = self.searching.take() {
             context.cancel(task);
         }
     }

@@ -52,6 +52,7 @@ use kobo_ui::TextScale;
 use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Glyph, ProseArea};
 use unicode_segmentation::UnicodeSegmentation;
 
+mod find;
 mod word;
 
 /// Where something is in a book, independent of how the book is set.
@@ -187,6 +188,10 @@ pub enum Chrome {
     Word,
     /// The field a note beside a highlighted word is typed into.
     Note,
+    /// The field the words to find are typed into.
+    Find,
+    /// Where those words are in the book, each place a way to it.
+    Found,
 }
 
 /// One piece of one block, as it lands on a page.
@@ -561,6 +566,15 @@ pub mod action {
     pub const WORD_BACK: &str = "reader-word-back";
     /// Turns on to the definition after the one showing.
     pub const WORD_NEXT: &str = "reader-word-next";
+    /// Opens the search of this book: the places last found if there are
+    /// any, the field to type in if not.
+    pub const FIND: &str = "reader-find";
+    /// Opens the field again to look for something else.
+    pub const FIND_AGAIN: &str = "reader-find-again";
+    /// One per place found, suffixed with its position in the results.
+    pub const FOUND: &str = "reader-found-";
+    /// Goes back to the page a link, a search or a jump was made from.
+    pub const RETURN: &str = "reader-return";
 }
 
 /// One bounded in-book search match.
@@ -570,6 +584,9 @@ pub struct SearchHit {
     /// Byte offset of the match in the block's canonical text, on a character
     /// boundary. Lets a result be navigated to and marked exactly.
     pub offset: u32,
+    /// How many bytes of the block the match covers, which is not the length
+    /// of what was typed: folding case can change how long a letter is.
+    pub length: u32,
     pub excerpt: String,
 }
 
@@ -632,7 +649,18 @@ pub struct Reader {
     /// Publisher face installed by the application for this reading session.
     publisher_font: Option<kobo_ui::FontHandle>,
     /// Origins of internal links/search jumps, newest last and session-only.
-    navigation: Vec<Locator>,
+    ///
+    /// Each is the block that was at the top of the page and how far into it
+    /// the page began, the same two numbers a place is kept as. The block
+    /// alone names the page its paragraph started on, so Back from a footnote
+    /// used to land a page before the one that was left whenever that page
+    /// opened part-way through a paragraph.
+    navigation: Vec<(Locator, u32)>,
+    /// The search of this book: what was asked for and where it was found.
+    find: find::Find,
+    /// The words a search has just taken the reader to, as a block and the
+    /// bytes of it they cover, marked on the page until it is turned.
+    found: Option<(Locator, u32, u32)>,
     /// The word a finger is being held to account for, while its screen is up.
     word: Option<word::Held>,
     /// The field a note on that word is typed into.
@@ -651,6 +679,8 @@ impl Reader {
             pictures: BTreeMap::new(),
             publisher_font: None,
             navigation: Vec::new(),
+            find: find::Find::default(),
+            found: None,
             word: None,
             note: kobo_sdk::keyboard::TextEntry::new(),
             document,
@@ -960,6 +990,7 @@ impl Reader {
             return false;
         }
         self.page += 1;
+        self.found = None;
         self.remember_position();
         true
     }
@@ -970,6 +1001,7 @@ impl Reader {
             return false;
         }
         self.page -= 1;
+        self.found = None;
         self.remember_position();
         true
     }
@@ -982,26 +1014,60 @@ impl Reader {
     pub fn go_to(&mut self, block: Locator, panel: &DisplayMetrics) {
         self.memory.at = block;
         self.memory.within = 0;
-        self.chrome = Chrome::Hidden;
+        self.found = None;
+        self.set_chrome(Chrome::Hidden, panel);
         self.repaginate(panel);
     }
 
     /// Goes to a linked/search result while preserving an exact logical way
     /// back. Page numbers are deliberately never stored here.
     pub fn follow(&mut self, block: Locator, panel: &DisplayMetrics) {
+        self.leave_a_way_back();
+        self.go_to(block, panel);
+    }
+
+    /// Remembers the page being left, so Back can return to it.
+    fn leave_a_way_back(&mut self) {
         if self.navigation.len() >= MAX_NAVIGATION_HISTORY {
             self.navigation.remove(0);
         }
-        self.navigation.push(self.top());
-        self.go_to(block, panel);
+        let first = self.pages.get(self.page).and_then(|page| page.first());
+        self.navigation.push((
+            first.map_or(0, |piece| piece.block),
+            first.and_then(|piece| piece.source_offset).unwrap_or(0),
+        ));
+    }
+
+    /// Turns to the page holding a place, leaving a way back to this one.
+    ///
+    /// Nothing is measured again: the pages are already cut, and the place
+    /// asked for is on one of them. Only the page shown changes, which is
+    /// what makes a jump across a whole novel cost the same as a page turn.
+    fn jump_to(&mut self, block: Locator, within: u32, panel: &DisplayMetrics) {
+        self.leave_a_way_back();
+        self.turn_to(block, within, panel);
+    }
+
+    /// Turns to the page holding a place and puts away whatever was open.
+    fn turn_to(&mut self, block: Locator, within: u32, panel: &DisplayMetrics) {
+        self.page = self.page_holding_place(block, within);
+        self.remember_position();
+        self.set_chrome(Chrome::Hidden, panel);
+    }
+
+    /// The page Back would return to, counted from one, if there is one.
+    fn way_back(&self) -> Option<usize> {
+        let (block, within) = *self.navigation.last()?;
+        Some(self.page_holding_place(block, within) + 1)
     }
 
     /// Returns from the most recent internal jump.
     pub fn return_from_link(&mut self, panel: &DisplayMetrics) -> bool {
-        let Some(origin) = self.navigation.pop() else {
+        let Some((block, within)) = self.navigation.pop() else {
             return false;
         };
-        self.go_to(origin, panel);
+        self.found = None;
+        self.turn_to(block, within, panel);
         true
     }
 
@@ -1018,31 +1084,34 @@ impl Reader {
         }
         let limit = limit.min(MAX_SEARCH_RESULTS);
         let mut hits = Vec::new();
-        for (index, block) in self.document.blocks.iter().enumerate() {
-            // A table row has no single string of its own -- that is the
-            // point of it -- but a reader searching for a word does not care
-            // which cell it sat in, so the row is joined for the search and
-            // for the excerpt that names it.
-            let joined = block.row_text();
-            let Some(text) = joined.as_deref().or_else(|| block.text()) else {
-                continue;
-            };
-            let Some((from, to)) = find_folded(text, &query) else {
-                continue;
-            };
-            let Ok(at) = Locator::try_from(index) else {
-                break;
-            };
-            hits.push(SearchHit {
-                at,
-                offset: u32::try_from(from).unwrap_or(u32::MAX),
-                excerpt: search_excerpt(text, from, to),
-            });
-            if hits.len() >= limit {
-                break;
+        for index in 0..self.document.blocks.len() {
+            if let Some(hit) = self.hit_in(index, &query) {
+                hits.push(hit);
+                if hits.len() >= limit {
+                    break;
+                }
             }
         }
         hits
+    }
+
+    /// The first place the already-lowercased `query` is written in one
+    /// block, if it is there.
+    fn hit_in(&self, index: usize, query: &str) -> Option<SearchHit> {
+        let block = self.document.blocks.get(index)?;
+        // A table row has no single string of its own -- that is the point
+        // of it -- but a reader searching for a word does not care which
+        // cell it sat in, so the row is joined for the search and for the
+        // excerpt that names it.
+        let joined = block.row_text();
+        let text = joined.as_deref().or_else(|| block.text())?;
+        let (from, to) = find_folded(text, query)?;
+        Some(SearchHit {
+            at: Locator::try_from(index).ok()?,
+            offset: u32::try_from(from).ok()?,
+            length: u32::try_from(to - from).ok()?,
+            excerpt: search_excerpt(text, from, to),
+        })
     }
 
     #[must_use]
@@ -1313,17 +1382,24 @@ impl Reader {
         // and opening the controls reflowed the book under the reader's
         // finger.
         self.chrome = chrome;
-        self.list_page = 0;
         if chrome == Chrome::Hidden {
             // Going back to the page lets go of the held word and of any
-            // note half typed, whichever way the reader left: a field still
-            // open behind the page would take the next answer the runtime
-            // gave for a field of its own.
+            // field half typed into, whichever way the reader left: a field
+            // still open behind the page would take the next answer the
+            // runtime gave for a field of its own.
             self.word = None;
             if self.note.is_open() {
                 self.note.close();
             }
+            self.find.put_away();
         }
+        self.open_list(panel);
+    }
+
+    /// Opens the list for the chrome in force at the page of it the reader
+    /// is on, measuring it once.
+    fn open_list(&mut self, panel: &DisplayMetrics) {
+        self.list_page = 0;
         let Some(list) = self.list() else {
             self.list_paging = None;
             return;
@@ -1402,6 +1478,9 @@ impl Reader {
                 self.page = self.pages.len().saturating_sub(1);
             }
         }
+        if let Some(outcome) = self.act_beyond_the_page(name, panel) {
+            return outcome;
+        }
         match name {
             action::FORWARD => {
                 if self.forward() {
@@ -1452,11 +1531,6 @@ impl Reader {
                 Outcome::Repaint
             }
             action::FULL_PAGE => self.turn_full_page_over(panel),
-            action::WORD_HIGHLIGHT
-            | action::WORD_CLEAR
-            | action::WORD_NOTE
-            | action::WORD_BACK
-            | action::WORD_NEXT => self.word_action(name, panel),
             action::LIST_BACK => self.turn_list(false, panel),
             action::LIST_NEXT => self.turn_list(true, panel),
             action::LARGER => {
@@ -1504,6 +1578,32 @@ impl Reader {
                 Outcome::Elsewhere
             }
         }
+    }
+
+    /// Applies an action that belongs to one of the screens drawn in place
+    /// of the page: a held word, a search and the places it found.
+    ///
+    /// Apart from [`Self::act`] because each of those screens keeps its own
+    /// state and answers its own names, and the one list of every name the
+    /// reader knows had grown past what could be read in a sitting.
+    fn act_beyond_the_page(&mut self, name: &str, panel: &DisplayMetrics) -> Option<Outcome> {
+        Some(match name {
+            action::WORD_HIGHLIGHT
+            | action::WORD_CLEAR
+            | action::WORD_NOTE
+            | action::WORD_BACK
+            | action::WORD_NEXT => self.word_action(name, panel),
+            action::FIND | action::FIND_AGAIN => self.find_action(name, panel),
+            action::RETURN => {
+                if self.return_from_link(panel) {
+                    Outcome::Save
+                } else {
+                    Outcome::Repaint
+                }
+            }
+            _ if name.starts_with(action::FOUND) => self.go_to_found(name, panel),
+            _ => return None,
+        })
     }
 
     /// Turns the list in front of the book a page, stopping at either end.
@@ -1556,6 +1656,9 @@ impl Reader {
         if let Some(outcome) = self.note_typed(action, panel) {
             return outcome;
         }
+        if let Some(outcome) = self.find_typed(action, panel) {
+            return outcome;
+        }
         // A tap off an open panel arrives as Back from the scrim, and puts
         // the panel away. Passed on, it closed the book under the reader.
         // Back from anything else drawn over the page does the same: a
@@ -1593,7 +1696,15 @@ impl Reader {
             action::WORD_NOTE.into(),
             action::WORD_BACK.into(),
             action::WORD_NEXT.into(),
+            action::FIND.into(),
+            action::FIND_AGAIN.into(),
+            action::RETURN.into(),
         ];
+        if self.chrome == Chrome::Found {
+            for index in 0..self.find.count() {
+                names.push(format!("{}{index}", action::FOUND));
+            }
+        }
         // Every size there is, rather than a hard-coded three. The stepper's
         // ends name the size either side of the one in force, so a range that
         // grew without this list growing with it left the two controls tapping
@@ -1648,6 +1759,8 @@ impl Reader {
         match self.chrome {
             Chrome::Word => return self.word_screen(title),
             Chrome::Note => return self.note_screen(title),
+            Chrome::Find => return self.find_screen(title),
+            Chrome::Found if self.is_searching() => return self.searching_screen(title),
             _ => {}
         }
         match self.list() {
@@ -1663,7 +1776,14 @@ impl Reader {
             Chrome::Contents => Some(self.contents_list()),
             Chrome::Links => Some(self.links_list()),
             Chrome::Marking => Some(self.marking_list()),
-            Chrome::Controls | Chrome::Light | Chrome::Hidden | Chrome::Word | Chrome::Note => None,
+            Chrome::Found if !self.is_searching() => Some(self.found_list()),
+            Chrome::Controls
+            | Chrome::Light
+            | Chrome::Hidden
+            | Chrome::Word
+            | Chrome::Note
+            | Chrome::Find
+            | Chrome::Found => None,
         }
     }
 
@@ -1880,6 +2000,15 @@ impl Reader {
             Some((page, total)) => panel.secondary(format!("Page {page} of {total}")),
             None => panel,
         };
+        // After a jump, the way back is said here in words as well as being
+        // what Back does. A reader who followed a search across the book and
+        // read on for a page has no bar in front of them to say Back still
+        // leads to where they were, and this panel is where they look to find
+        // out where they are.
+        let panel = match self.way_back() {
+            Some(page) => panel.button(action::RETURN, format!("Back to page {page}")),
+            None => panel,
+        };
         let mut panel = panel
             .stepper(
                 format!("{}%", scale.percent()),
@@ -1925,6 +2054,10 @@ impl Reader {
             row.push((action::LINKS.to_owned(), "Links", Glyph::Globe));
         }
         row.push((action::HIGHLIGHTS.to_owned(), "Notes", Glyph::Note));
+        // A lens, which is what every search anywhere is drawn as. The words
+        // to look for are typed, so this is the one control here that leads
+        // to a keyboard, and it says nothing until it has been asked.
+        row.push((action::FIND.to_owned(), "Find", Glyph::Search));
         // Named rather than gestured. The bar is what teaches the tap that
         // opens this panel, so the reader who gives it up should be one who
         // has already found their way here and can read what they are turning
@@ -1941,8 +2074,12 @@ impl Reader {
             Glyph::Reader,
         ));
         // Four across at most: a fifth control on this panel would be narrower
-        // than a fingertip, and the row wraps rather than shrinking.
-        let columns = u8::try_from(row.len().min(4)).unwrap_or(4);
+        // than a fingertip, and the row wraps rather than shrinking. When it
+        // wraps, the rows are made as even as they can be: five controls set
+        // four and one leave the last of them alone under the others, where
+        // it reads as an afterthought.
+        let lines = row.len().div_ceil(4).max(1);
+        let columns = u8::try_from(row.len().div_ceil(lines)).unwrap_or(4);
         // The ribbon is drawn filled on a bookmarked page. Its label changes
         // too, but the cell shows the picture alone.
         panel
@@ -1969,7 +2106,7 @@ impl Reader {
             name: "reader-links",
             intro: entries
                 .is_empty()
-                .then_some("Nothing on this page points anywhere else in the book."),
+                .then_some("Nothing on this page points anywhere else in the book.".into()),
             entries,
             bar: Vec::new(),
             current: 0,
@@ -2144,7 +2281,7 @@ impl Reader {
         List {
             name: "reader-marks",
             intro: entries.is_empty().then_some(
-                "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.",
+                "Nothing is marked in this book yet. Mark a paragraph to keep the words, or bookmark a page to keep your place.".into(),
             ),
             entries,
             bar,
@@ -2176,7 +2313,7 @@ impl Reader {
             .collect();
         List {
             name: "reader-marking",
-            intro: Some("Tap a paragraph to mark it, or to take the mark off."),
+            intro: Some("Tap a paragraph to mark it, or to take the mark off.".into()),
             entries,
             bar: vec![
                 (action::BOOK, "Back to the book"),
@@ -2197,7 +2334,7 @@ impl Reader {
 struct List {
     name: &'static str,
     /// Said above the entries, on every page of them.
-    intro: Option<&'static str>,
+    intro: Option<std::borrow::Cow<'static, str>>,
     entries: Vec<Entry>,
     bar: Vec<(&'static str, &'static str)>,
     /// The entry the list opens showing.
@@ -2212,6 +2349,13 @@ struct Entry {
     section: Option<&'static str>,
     action: String,
     label: String,
+    /// What is said under the label, and the number the entry is known by.
+    ///
+    /// An entry with these is drawn as a row rather than a boxed button: a
+    /// row sets its words from the left margin and has a second line for
+    /// where they came from, which is what a passage quoted out of the book
+    /// needs and a chapter title does not.
+    row: Option<(String, u16)>,
 }
 
 impl Entry {
@@ -2222,6 +2366,15 @@ impl Entry {
             section,
             action,
             label: kobo_ui::drawable_in(label, Face::Text).into_owned(),
+            row: None,
+        }
+    }
+
+    /// An entry drawn as a numbered row with `under` set beneath its label.
+    fn row(action: String, label: &str, under: &str, number: u16) -> Self {
+        Self {
+            row: Some((kobo_ui::drawable_in(under, Face::Text).into_owned(), number)),
+            ..Self::new(None, action, label)
         }
     }
 }
@@ -2272,6 +2425,7 @@ impl List {
             entry.section.hash(&mut hasher);
             entry.action.hash(&mut hasher);
             entry.label.hash(&mut hasher);
+            entry.row.hash(&mut hasher);
         }
         panel.hash(&mut hasher);
         hasher.finish()
@@ -2287,18 +2441,31 @@ impl List {
         // The book's title is the book's words too.
         let mut screen =
             ScreenBuilder::new(self.name).top_bar(kobo_ui::drawable_in(title, Face::Text));
-        if let Some(intro) = self.intro {
-            screen = screen.secondary(intro);
+        if let Some(intro) = &self.intro {
+            screen = screen.secondary(intro.as_ref());
         }
         let mut section = None;
+        // Rows that follow one another are one list on the screen, ruled
+        // between, so they are gathered and handed over together.
+        let mut rows: Vec<(&str, &str, &str, u16)> = Vec::new();
         for index in shown {
             let entry = &self.entries[index];
+            let label = shortened.get(&index).unwrap_or(&entry.label);
+            if let Some((under, number)) = &entry.row {
+                rows.push((&entry.action, label, under, *number));
+                continue;
+            }
+            if !rows.is_empty() {
+                screen = screen.rows(std::mem::take(&mut rows));
+            }
             if let Some(heading) = entry.section.filter(|_| entry.section != section) {
                 screen = screen.heading(heading);
             }
             section = entry.section;
-            let label = shortened.get(&index).unwrap_or(&entry.label);
             screen = screen.button(&entry.action, label.as_str());
+        }
+        if !rows.is_empty() {
+            screen = screen.rows(rows);
         }
         if let Some((page, of)) = position {
             screen = screen
@@ -2422,7 +2589,9 @@ impl List {
 ///
 /// Asked of the layout itself rather than worked out from heights, because
 /// the layout is what drops a line that does not fit and it does so without
-/// a word.
+/// a word. A paragraph that lost its last lines counts: the node is still on
+/// the panel, so nothing else reports it, and a definition that stops in the
+/// middle of a clause was drawn that way before this asked.
 fn shows_whole(screen: &Screen, panel: &DisplayMetrics) -> bool {
     kobo_ui::with_text_scale(panel.text_scale, || {
         screen.diagnostics(panel, &kobo_ui::Chrome::measuring(true))
@@ -2435,6 +2604,7 @@ fn shows_whole(screen: &Screen, panel: &DisplayMetrics) -> bool {
             kobo_ui::LayoutIssueKind::ContentOverflow { .. }
                 | kobo_ui::LayoutIssueKind::InteractiveOffscreen
                 | kobo_ui::LayoutIssueKind::Clipped
+                | kobo_ui::LayoutIssueKind::TextOverflow
         )
     })
 }
@@ -2726,7 +2896,7 @@ impl Reader {
             screen
                 .selectable_rich_text_linking(
                     piece.text.clone(),
-                    piece.spans.clone(),
+                    self.spans_showing_found(piece, offset),
                     piece.presentation,
                     u64::from(piece.block),
                     offset,
@@ -3232,7 +3402,7 @@ fn highlighted_spans(
             .iter()
             .find(|span| span.start <= start && start < span.end)
             .map_or_else(kobo_ui::TextPresentation::default, |span| span.presentation);
-        presentation.highlighted = highlights
+        presentation.highlighted |= highlights
             .iter()
             .any(|&(from, to)| from < end && start < to);
         if presentation == kobo_ui::TextPresentation::default() {
