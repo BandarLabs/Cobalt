@@ -1,3 +1,8 @@
+# sweep: needs https://www.gutenberg.org/ebooks.opds/
+# Most of this route browses Project Gutenberg's own catalog as it is today,
+# so the sweep runs it only while that catalog is answering. drive-offline.kobo
+# beside it needs no connection and always runs.
+#
 # First run, the same with or without a connection: the first screen behind
 # the catalog leads with the books on this device, says what each catalog
 # holds, and names no test catalog and no raw address.
