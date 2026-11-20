@@ -27,6 +27,7 @@ use super::http::{Malformed, Response};
 use super::jobs::{self, Finish, Kind};
 use super::page;
 use super::server::{Request, Route, Shared};
+use super::shopfront::{self, Pictures, Shopfront};
 use super::surroundings::{self, Room};
 use crate::apps::usb;
 use crate::clip_delivery as delivery;
@@ -119,6 +120,16 @@ pub const ROUTES: &[Route] = &[
     },
     Route {
         method: "GET",
+        path: "/api/store",
+        handle: store,
+    },
+    Route {
+        method: "GET",
+        path: "/api/shot",
+        handle: shot,
+    },
+    Route {
+        method: "GET",
         path: "/api/browsers",
         handle: browsers,
     },
@@ -206,6 +217,12 @@ pub struct Machine {
     /// A private folder for files on their way to a reader.
     pub scratch: PathBuf,
     pub fetch: Transport,
+    /// Every app as the store shows it, with or without a reader.
+    pub shopfront: Shopfront,
+    /// The pictures of them kept on this computer.
+    pub pictures: Pictures,
+    /// How a picture that is not kept is fetched.
+    pub picture: Box<shopfront::Fetch>,
     pub key: Ed25519PublicKey,
     pub eject: Eject,
     pub room: RoomOf,
@@ -292,6 +309,8 @@ impl Machine {
                 Box::new(|| surroundings::refused(&surroundings::removable_volumes())),
             ),
         };
+        let shopfront = Shopfront::bundled()?;
+        let pictures = Pictures::open(Pictures::folder_here(), shopfront.pictures());
         Ok(Self {
             program,
             readers,
@@ -299,6 +318,9 @@ impl Machine {
             release_dir,
             scratch: private_folder()?,
             fetch: Box::new(usb::published),
+            shopfront,
+            pictures,
+            picture: Box::new(shopfront::published),
             key: usb::release_key()?,
             eject: Box::new(setup::eject),
             room: Box::new(surroundings::room),
@@ -982,6 +1004,51 @@ fn install_each(
     Finish {
         ok: failures == 0,
         code: None,
+    }
+}
+
+/// `GET /api/store`: every app as a store shows it, in the website's
+/// groups, from what this command was built with.
+///
+/// It asks nothing of a reader or the network, so the store can be read on
+/// a computer that has neither. What a particular reader has, and what the
+/// signed catalog offers it today, are the two routes above; a front end
+/// lays those over this by app id.
+fn store(shared: &Arc<Shared>, _: &mut Request<'_>) -> Response {
+    Response::ok(shared.machine.shopfront.answer())
+}
+
+/// `GET /api/shot`: one of the pictures the store lists, by the name it is
+/// listed under.
+///
+/// A name is looked up among the listed ones before it is used for
+/// anything, so what this fetches and what it reads from disk are chosen
+/// from a list built into this command and never composed from the
+/// request. It is a question that can write: a picture fetched for the
+/// first time is kept in this computer's cache folder. Nothing an owner
+/// chose changes by it and nothing on a reader does.
+fn shot(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let machine = &shared.machine;
+    let Some(name) = request
+        .head
+        .query("name")
+        .filter(|name| machine.shopfront.shows(name))
+    else {
+        return Response::refusal(
+            404,
+            "Not Found",
+            "not_found",
+            "The store lists no picture by that name.",
+        );
+    };
+    match machine.pictures.get(&name, &*machine.picture) {
+        Some(picture) => Response::file("image/png", &picture),
+        None => Response::refusal(
+            502,
+            "Bad Gateway",
+            "unreachable",
+            "The picture could not be fetched. Check this computer's internet connection.",
+        ),
     }
 }
 

@@ -6,7 +6,8 @@ use serde_json::json;
 
 use super::super::server::Limits;
 use super::super::testing::{
-    make_desk, query_value, quick, Desk, Running, CLARA_BW, CLARA_HD_NEWER, FIRMWARE_FIVE,
+    make_desk, picture, picture_address, query_value, quick, Desk, Running, CLARA_BW,
+    CLARA_HD_NEWER, FIRMWARE_FIVE,
 };
 use super::*;
 
@@ -478,6 +479,119 @@ fn an_install_names_apps_by_valid_ids_and_a_reader_without_cobalt_has_no_apps() 
         .starts_with("Cobalt is not installed on the reader"));
     let body = json!({ "volume": bare.to_string_lossy(), "ids": ["almanac"] }).to_string();
     assert_eq!(page.post("/api/apps/install", &body).status, 409);
+}
+
+#[test]
+fn the_store_is_whole_with_no_reader_and_no_network_and_asks_nothing_of_either() {
+    let (running, desk) = running("store");
+    let page = running.open();
+    desk.offline
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+
+    let reply = page.get("/api/store");
+
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    let store = reply.json();
+    assert_eq!(
+        store["groups"],
+        json!([
+            { "id": "reading", "title": "Reading and listening", "apps": ["almanac"] },
+            { "id": "everyday", "title": "Everyday tools", "apps": ["tide-table"] },
+        ])
+    );
+    assert_eq!(store["apps"]["almanac"]["title"], "Almanac");
+    assert_eq!(
+        store["apps"]["almanac"]["shots"][1]["name"],
+        "almanac/moon.png"
+    );
+    assert!(desk.fetched.lock().expect("fetched").is_empty());
+    // The Mac app is answered the same.
+    assert_eq!(running.app("GET", "/api/store", "").json(), store);
+}
+
+#[test]
+fn a_picture_is_fetched_by_this_server_from_the_published_site_and_served_as_an_image() {
+    let (running, desk) = running("shot");
+    let page = running.open();
+    let moon = picture(1072, 1448, 2);
+
+    let reply = page.get("/api/shot?name=almanac%2Fmoon.png");
+
+    assert_eq!(reply.status, 200, "{}", reply.body);
+    assert_eq!(reply.header("content-type"), Some("image/png"));
+    assert_eq!(reply.header("x-content-type-options"), Some("nosniff"));
+    assert_eq!(
+        reply.header("content-length"),
+        Some(moon.len().to_string().as_str())
+    );
+    // The one address asked for is the listed name under the published
+    // folder, and the copy kept is in the cache folder and nowhere else.
+    assert_eq!(
+        *desk.fetched.lock().expect("fetched"),
+        [picture_address("almanac/moon.png")]
+    );
+    assert_eq!(
+        fs::read(desk.root.join("cache/almanac_moon.png")).expect("kept"),
+        moon
+    );
+
+    // Asked for again with the network gone, by either front end, it comes
+    // from this computer.
+    desk.offline
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(page.get("/api/shot?name=almanac/moon.png").status, 200);
+    assert_eq!(
+        running
+            .app("GET", "/api/shot?name=almanac/moon.png", "")
+            .status,
+        200
+    );
+    assert_eq!(desk.fetched.lock().expect("fetched").len(), 1);
+
+    // One that was never fetched cannot be, and says which kind of failure
+    // that is so a front end can draw the frame empty.
+    let reply = page.get("/api/shot?name=almanac.png");
+    assert_eq!((reply.status, reply.kind().as_str()), (502, "unreachable"));
+    assert!(!desk.root.join("cache/almanac.png").exists());
+}
+
+#[test]
+fn a_picture_is_only_ever_one_the_store_lists_by_exactly_that_name() {
+    let (running, desk) = running("shot-names");
+    let page = running.open();
+    // Published, so that only the lookup stands between these and a fetch.
+    for name in ["secret.png", "almanac/sun.png"] {
+        desk.pictures
+            .lock()
+            .expect("pictures")
+            .insert(picture_address(name), picture(10, 10, 0));
+    }
+    let before = Desk::listing(&desk.root);
+
+    for name in [
+        "secret.png",
+        "almanac/sun.png",
+        "almanac/../almanac.png",
+        "../almanac.png",
+        "..%2F..%2F..%2Fetc%2Fpasswd",
+        "%2Fetc%2Fpasswd",
+        "ALMANAC.PNG",
+        "almanac.png%00",
+        "almanac.png%3Fx",
+        "https:%2F%2Fexample.org%2Falmanac.png",
+        "almanac_moon.png",
+        "",
+    ] {
+        let reply = page.get(&format!("/api/shot?name={name}"));
+        assert_eq!(
+            (reply.status, reply.kind().as_str()),
+            (404, "not_found"),
+            "{name}"
+        );
+    }
+    assert_eq!(page.get("/api/shot").status, 404);
+    assert!(desk.fetched.lock().expect("fetched").is_empty());
+    assert_eq!(Desk::listing(&desk.root), before);
 }
 
 #[test]

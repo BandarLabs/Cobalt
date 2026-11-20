@@ -24,6 +24,7 @@ use kobo_protocol::DeviceError;
 
 use super::api::Machine;
 use super::server::{Limits, Patience, Server, Shared, Stopped};
+use super::shopfront::{Fetch, Pictures, Shopfront};
 use super::surroundings::Room;
 use crate::setup;
 
@@ -60,6 +61,8 @@ pub struct Desk {
     pub blocked: Arc<Mutex<Vec<PathBuf>>>,
     /// How many Kobos the USB bus reports, when it reports.
     pub attached: Arc<Mutex<Option<usize>>>,
+    /// The pictures the site publishes, by address, to add to or take from.
+    pub pictures: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
 }
 
 impl Drop for Desk {
@@ -117,18 +120,65 @@ impl Desk {
     }
 }
 
-/// A computer made of folders: no readers until one is plugged in, a
-/// catalog that publishes Almanac and Tide Table, a release to install, and
-/// a stand-in for the kobo command that records how it was run.
-pub fn make_desk(name: &str) -> (Machine, Desk) {
-    let root = std::env::temp_dir().join(format!("kobo-ui-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    for folder in ["scratch", "home", "config"] {
-        fs::create_dir_all(root.join(folder)).expect("folder");
-    }
+/// Where the site publishes the picture the store lists as `name`.
+pub fn picture_address(name: &str) -> String {
+    format!("https://bandarlabs.github.io/Cobalt/media/site/apps/{name}")
+}
+
+/// The start of a PNG that says it is `width` by `height`, which is as far
+/// into a picture as this server ever reads. `mark` makes one differ from
+/// another.
+pub fn picture(width: u32, height: u32, mark: u8) -> Vec<u8> {
+    let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(&[8, 0, 0, 0, 0, mark, mark, mark, mark]);
+    bytes
+}
+
+/// The manifests the fixture store is made from. Almanac says everything a
+/// manifest can; Tide Table says the least it may.
+pub const MANIFESTS: &[&str] = &[
+    r#"{
+        "id": "almanac", "display_name": "Almanac", "short_label": "Almanac",
+        "summary": "The year at a glance.",
+        "page_description": "Sunrise, sunset and the phase of the moon for every day of the year.",
+        "version": "1.0.0", "release_notes": "The moon is drawn the right way up.",
+        "glyph": "note", "capabilities": ["network", "keep-awake"],
+        "setup": { "steps": [
+            { "text": "Find your town.", "link": { "label": "Towns", "url": "https://example.org/towns" } },
+            { "text": "Save it.", "command": "kobo almanac town NAME" }
+        ] }
+    }"#,
+    r#"{
+        "id": "tide-table", "display_name": "Tide Table", "short_label": "Tides",
+        "summary": "High and low water.", "version": "3.1.0",
+        "glyph": "note", "capabilities": []
+    }"#,
+];
+
+/// The listing that goes with [`MANIFESTS`]: two pictures of Almanac and
+/// none of Tide Table.
+pub const LISTING: &str = r#"{
+    "groups": [
+        { "id": "reading", "title": "Reading and listening", "apps": ["almanac"] },
+        { "id": "everyday", "title": "Everyday tools", "apps": ["tide-table"] }
+    ],
+    "shots": {
+        "almanac": [
+            { "name": "almanac.png", "caption": "The year on one screen", "width": 1072, "height": 1448 },
+            { "name": "almanac/moon.png", "caption": "Tonight's moon", "width": 1072, "height": 1448 }
+        ],
+        "tide-table": []
+    },
+    "release_note_overrides": {}
+}"#;
+
+/// Writes the stand-in for the kobo command under `root`: a script that
+/// says how it was run, where, and what was beside it, then exits with the
+/// status the file beside it asks for.
+fn stand_in_command(root: &Path) -> PathBuf {
     let program = root.join("kobo");
-    // Says how it was run, where, and what was beside it, then exits with
-    // the status its first line asks for.
     fs::write(
         &program,
         "#!/bin/sh\n\
@@ -144,6 +194,39 @@ pub fn make_desk(name: &str) -> (Machine, Desk) {
         use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).expect("executable");
     }
+    program
+}
+
+/// The site the pictures are published on: it answers with what `pictures`
+/// holds, notes each address in `asked`, and cannot be reached while
+/// `offline` is set.
+fn picture_site(
+    pictures: &Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    asked: &Arc<Mutex<Vec<String>>>,
+    offline: &Arc<AtomicBool>,
+) -> Box<Fetch> {
+    let (pictures, asked, offline) = (Arc::clone(pictures), Arc::clone(asked), Arc::clone(offline));
+    Box::new(move |url, _| {
+        asked.lock().expect("fetched").push(url.to_owned());
+        if offline.load(Ordering::SeqCst) {
+            return Err(DeviceError::Unreachable);
+        }
+        let published = pictures.lock().expect("pictures");
+        published.get(url).cloned().ok_or(DeviceError::NotFound)
+    })
+}
+
+/// A computer made of folders: no readers until one is plugged in, a
+/// catalog that publishes Almanac and Tide Table, a store that shows the
+/// same two with pictures of the first, a release to install, and a
+/// stand-in for the kobo command that records how it was run.
+pub fn make_desk(name: &str) -> (Machine, Desk) {
+    let root = std::env::temp_dir().join(format!("kobo-ui-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    for folder in ["scratch", "home", "config"] {
+        fs::create_dir_all(root.join(folder)).expect("folder");
+    }
+    let program = stand_in_command(&root);
     let plugged: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
     let ejected: Arc<Mutex<Vec<PathBuf>>> = Arc::default();
     let fetched: Arc<Mutex<Vec<String>>> = Arc::default();
@@ -171,6 +254,12 @@ pub fn make_desk(name: &str) -> (Machine, Desk) {
         Arc::clone(&blocked),
         Arc::clone(&attached),
     );
+    let pictures = Arc::new(Mutex::new(BTreeMap::from([
+        (picture_address("almanac.png"), picture(1072, 1448, 1)),
+        (picture_address("almanac/moon.png"), picture(1072, 1448, 2)),
+    ])));
+    let shopfront = Shopfront::from(MANIFESTS, LISTING).expect("fixture store");
+    let kept = Pictures::open(root.join("cache"), shopfront.pictures());
     let machine = Machine {
         program,
         readers: Box::new(move || {
@@ -194,6 +283,9 @@ pub fn make_desk(name: &str) -> (Machine, Desk) {
             }
             Ok(answer)
         }),
+        shopfront,
+        pictures: kept,
+        picture: picture_site(&pictures, &fetched, &offline),
         key: derive_public_key(&SEED).expect("fixture key"),
         eject: Box::new(move |volume| {
             gone.lock().expect("ejected").push(volume.to_owned());
@@ -220,6 +312,7 @@ pub fn make_desk(name: &str) -> (Machine, Desk) {
             room: space,
             blocked,
             attached,
+            pictures,
         },
     )
 }

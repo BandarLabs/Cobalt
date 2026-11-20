@@ -216,7 +216,7 @@ fn print_list(apps: &[kobo_catalog::App], query: &str) {
     println!("Setup instructions: kobo apps setup APP");
 }
 
-fn plain(value: &str) -> String {
+pub(crate) fn plain(value: &str) -> String {
     value
         .chars()
         .map(|character| {
@@ -229,7 +229,7 @@ fn plain(value: &str) -> String {
         .collect()
 }
 
-fn capability(value: &str) -> String {
+pub(crate) fn capability(value: &str) -> String {
     kobo_policy::Capability::parse(value).map_or_else(
         || format!("Additional capability: {}", plain(value)),
         |capability| capability.plain_wording().to_owned(),

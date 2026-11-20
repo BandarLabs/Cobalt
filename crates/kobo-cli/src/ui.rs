@@ -56,6 +56,7 @@ mod http;
 mod jobs;
 mod page;
 mod server;
+mod shopfront;
 mod surroundings;
 #[cfg(test)]
 mod testing;
