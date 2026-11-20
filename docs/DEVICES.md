@@ -535,8 +535,21 @@ keeps on loopback, such as the Sync engine's.
 
 Tailscale is started by the session when its switch is on and ended before
 the stock reader comes back, ahead of the supplicant hand-back described
-above, so the tunnel is never up while the radio changes owner. It does not
-run under the stock reader or while the reader sleeps. What has not been
+above, so the tunnel is never up while the radio changes owner. By default it
+does not run under the stock reader, and it never runs while the reader
+sleeps.
+
+An owner can ask for it to stay connected outside Cobalt. Then the tunnel is
+up through the hand-back, which is the part of this most likely to disturb a
+radio changing owner and has not been tried. Its programs and its supervisor
+run from the root filesystem in that mode, so the stock reader exporting the
+card over USB takes nothing away from under them.
+
+The exit node and the shared network do not depend on the kernel's packet
+filter: the daemon carries that traffic itself. `kobo doctor` still reports
+what each kernel offers for it, the forwarding switch, connection tracking
+and the packet filter, because a kernel that has them could do the forwarding
+faster and nobody has looked. What has not been
 measured on any reader: the daemon's memory beside a running app, whether its
 link monitoring disturbs the hand-back, how long a reconnect takes after the
 radio returns, and whether the daemon's routing works without the packet

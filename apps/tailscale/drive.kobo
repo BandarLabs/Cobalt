@@ -16,7 +16,8 @@ shot tailscale-starting
 tap About Tailscale
 wait-for the private network between your own devices
 expect kobo pair kobo
-expect no exit node, no routes and no Tailscale SSH
+expect offers no exit node and no routes
+expect It never runs Tailscale SSH.
 expect BSD 3
 clean
 shot tailscale-about

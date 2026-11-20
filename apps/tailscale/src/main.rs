@@ -496,10 +496,10 @@ impl Tailscale {
 fn about_builder() -> ScreenBuilder {
     ScreenBuilder::new("tailscale")
         .top_bar("About Tailscale")
-        .text("Tailscale puts this reader on your tailnet, the private network between your own devices. Your computer can then reach the reader from any network, and apps here can reach your own servers by name. It runs while Cobalt is open.")
+        .text("Tailscale puts this reader on your tailnet, the private network between your own devices. Your computer can then reach the reader from any network, and apps here can reach your own servers by name. It runs while Cobalt is open, or stays connected if you ask in Options.")
         .secondary("Once connected, save the reader's tailnet address on your computer. After that kobo send and kobo clip reach it from anywhere:")
         .command("kobo pair kobo --device ADDRESS")
-        .secondary("Computers on your tailnet can reach this reader's SSH server, which takes your key only. The reader forwards no traffic and offers no exit node, no routes and no Tailscale SSH.")
+        .secondary("Computers on your tailnet can reach this reader's SSH server, which takes your key only. Unless you switch it on in Options, the reader forwards no traffic and offers no exit node and no routes. It never runs Tailscale SSH.")
         .secondary("The reader downloads Tailscale the first time it is switched on. Tailscale is available under the BSD 3-Clause license.")
         .rows([(
             "sign-out",
