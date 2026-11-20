@@ -832,6 +832,26 @@ fn the_server_stops_when_the_program_showing_the_page_exits() {
 }
 
 #[test]
+fn a_server_tied_to_the_program_showing_it_outlives_silence_and_stops_with_the_program() {
+    let (machine, _desk) = make_desk("tied");
+    let closed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let asked = std::sync::Arc::clone(&closed);
+    let running = Running::start_with(machine, Limits::default(), brief(100, 300), move || {
+        asked.load(Ordering::SeqCst)
+    });
+    running.shared.tie();
+    // No request at all for several idle limits, as from an app the system
+    // has put to sleep behind another window.
+    assert_eq!(running.stops_within(Duration::from_millis(1200)), None);
+    assert_eq!(running.app("GET", "/api/state", "").status, 200);
+    closed.store(true, Ordering::SeqCst);
+    assert_eq!(
+        running.stops_within(Duration::from_secs(5)),
+        Some(Stopped::ShellClosed)
+    );
+}
+
+#[test]
 fn nothing_stops_the_server_while_a_job_is_still_running() {
     let (machine, _desk) = make_desk("job-holds");
     let closed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));

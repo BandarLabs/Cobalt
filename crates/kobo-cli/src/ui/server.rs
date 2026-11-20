@@ -12,7 +12,7 @@
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -123,6 +123,8 @@ pub struct Shared {
     pub machine: Machine,
     presence: Mutex<Presence>,
     connections: AtomicUsize,
+    /// Set when a program this server can watch is showing the companion.
+    tied: AtomicBool,
 }
 
 /// A request that has passed every rule, and the connection its body is
@@ -290,6 +292,13 @@ impl Shared {
         )
     }
 
+    /// Says that the companion is being shown by a program whose ending
+    /// this server will be told of, so that it stops when that program
+    /// does and for no other reason.
+    pub fn tie(&self) {
+        self.tied.store(true, Ordering::SeqCst);
+    }
+
     /// Notes that the page asked for something, or that it said goodbye.
     fn heard(&self, goodbye: bool) {
         if let Ok(mut presence) = self.presence.lock() {
@@ -313,6 +322,14 @@ impl Shared {
         }
         if shell_closed {
             return Some(Stopped::ShellClosed);
+        }
+        // With a program to watch, its ending is the only reason to stop.
+        // Silence means nothing then: the system slows an app that is
+        // hidden or minimised until it asks for almost nothing, and a
+        // server that took that for an empty room would be gone when the
+        // owner came back to the window.
+        if self.tied.load(Ordering::SeqCst) {
+            return None;
         }
         if presence
             .goodbye
@@ -418,6 +435,7 @@ impl Server {
                     goodbye: None,
                 }),
                 connections: AtomicUsize::new(0),
+                tied: AtomicBool::new(false),
             }),
         })
     }

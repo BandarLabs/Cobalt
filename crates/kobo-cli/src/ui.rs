@@ -173,6 +173,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
         std::io::stdout()
             .flush()
             .map_err(|error| format!("could not tell the app where the server is: {error}"))?;
+        server.shared.tie();
         server.serve(when_input_ends());
         let _ = std::fs::remove_dir_all(scratch);
         return Ok(());
@@ -185,6 +186,7 @@ pub fn command(arguments: &[String]) -> Result<(), String> {
     match show(options.showing, &program, &address, &handed) {
         Shown::Window(child) => {
             window = Some(child);
+            server.shared.tie();
             println!("Cobalt is open in its own window. Close the window to finish, or press Ctrl-C here.");
         }
         Shown::Browser => {
