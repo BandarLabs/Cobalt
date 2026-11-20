@@ -1,0 +1,6 @@
+running
+100.64.0.7
+Connected.
+
+kobo-cobalt.example.ts.net
+The reader's system storage does not have the 110 MB free that staying connected outside Cobalt needs. Tailscale runs while Cobalt is open instead.

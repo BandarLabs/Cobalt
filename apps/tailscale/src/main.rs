@@ -37,6 +37,8 @@ enum View {
     About,
     /// The question asked before this reader's key is forgotten.
     SignOut,
+    /// What the owner may switch on beyond being on the tailnet at all.
+    Options,
 }
 
 /// The supervisor's status, line by line. The name came after the first four
@@ -48,6 +50,9 @@ struct ServiceStatus {
     message: String,
     sign_in: String,
     name: String,
+    /// Why the reader is not staying connected outside Cobalt although it
+    /// was asked to. Empty when it is, or was not asked.
+    cannot_stay: String,
 }
 
 impl ServiceStatus {
@@ -60,6 +65,7 @@ impl ServiceStatus {
             message: next(),
             sign_in: next(),
             name: next(),
+            cannot_stay: next(),
         }
     }
 
@@ -84,6 +90,8 @@ impl ServiceStatus {
 
 struct Tailscale {
     enabled: bool,
+    /// Stay on the tailnet after Cobalt hands the screen back.
+    stay: bool,
     view: View,
     status: ServiceStatus,
     /// Ticks while a start is under way, so the screen follows it without a
@@ -100,6 +108,7 @@ impl Default for Tailscale {
     fn default() -> Self {
         Self {
             enabled: false,
+            stay: false,
             view: View::Status,
             status: ServiceStatus::default(),
             watch: Heartbeat::every(3),
@@ -110,10 +119,18 @@ impl Default for Tailscale {
 }
 
 impl Tailscale {
+    /// Saves what the owner chose, one word a line. The switch is first,
+    /// where a runtime from before the other choices looks for it.
     fn save(&self, context: &mut Context) {
         context
             .store()
-            .save(CONFIG, if self.enabled { "true" } else { "false" });
+            .save(CONFIG, format!("{}\n{}\n", self.enabled, self.stay));
+    }
+
+    /// Whether the reader really is staying connected: asked for, and the
+    /// runtime has not said it could not be arranged.
+    fn staying(&self) -> bool {
+        self.enabled && self.stay && self.status.cannot_stay.is_empty()
     }
 
     /// Follows a start that is under way, and stops when there is nothing
@@ -203,12 +220,14 @@ impl Tailscale {
         }
         // The line under the switch says what is true now, as the switch
         // does, not what a tap would do.
-        let summary = if self.enabled {
+        let summary = if self.staying() {
+            "Stays connected after you leave Cobalt."
+        } else if self.enabled {
             "Runs while Cobalt is open."
         } else {
             "Off. Nothing reaches this reader over a tailnet."
         };
-        let mut rows = Vec::with_capacity(2);
+        let mut rows = Vec::with_capacity(3);
         if self.waiting_for_approval() {
             rows.push((
                 "sign-in",
@@ -230,6 +249,12 @@ impl Tailscale {
                 Glyph::Refresh,
             ));
         }
+        rows.push((
+            "options",
+            "Options",
+            "Stay connected outside Cobalt.",
+            Glyph::Settings,
+        ));
         rows.push((
             "about",
             "About Tailscale",
@@ -253,6 +278,33 @@ impl Tailscale {
             .rows(rows)
             .facts(facts.iter().map(|(label, value)| (*label, value.as_str())))
             .build()
+    }
+
+    /// The choices beyond being on the tailnet, each off until the owner
+    /// turns it on, with what it costs said under it once it is on.
+    ///
+    /// A page of their own, so the first screen stays one switch. An owner
+    /// who never opens this has a reader that is a plain member of the
+    /// tailnet while Cobalt is open, which is the safe thing to be.
+    fn options_screen(&self) -> Screen {
+        let mut screen = ScreenBuilder::new("tailscale").top_bar("Tailscale options");
+        if self.stay && !self.status.cannot_stay.is_empty() {
+            screen = screen.banner(BannerLevel::Attention, self.status.cannot_stay.clone());
+        }
+        screen = screen.toggle(
+            "stay",
+            "Stay connected outside Cobalt",
+            if self.stay {
+                "Until the reader restarts."
+            } else {
+                "Stops when you leave Cobalt."
+            },
+            self.stay,
+        );
+        if self.stay {
+            screen = screen.secondary("Staying connected uses more battery. The Kobo software keeps Wi-Fi on only while the reader is awake, so the reader can be reached then and not while it sleeps. After a restart, open Cobalt once to connect again.");
+        }
+        screen.build()
     }
 
     /// The approval link as a code for the owner's phone, with the address
@@ -291,6 +343,7 @@ impl Tailscale {
             View::SignIn => self.sign_in_screen(),
             View::About => about_builder().build(),
             View::SignOut => Self::sign_out_screen(),
+            View::Options => self.options_screen(),
         };
         // Supporting pages receive the runtime's Back before it can leave the
         // app; the status screen is the way out.
@@ -367,9 +420,14 @@ impl KoboApp for Tailscale {
         };
         match key.as_str() {
             CONFIG => {
-                self.enabled = value
+                let saved = value
                     .as_deref()
-                    .is_some_and(|raw| String::from_utf8_lossy(raw).lines().next() == Some("true"));
+                    .map(String::from_utf8_lossy)
+                    .unwrap_or_default();
+                let mut lines = saved.lines();
+                let mut next = || lines.next() == Some("true");
+                self.enabled = next();
+                self.stay = next();
                 self.follow(context);
             }
             STATUS => self.load_status(context, value.as_deref()),
@@ -410,6 +468,14 @@ impl KoboApp for Tailscale {
             self.try_again(context);
         } else if action == action_id("sign-in") {
             self.view = View::SignIn;
+        } else if action == action_id("options") {
+            self.view = View::Options;
+        } else if action == action_id("stay") {
+            self.stay = !self.stay;
+            self.save(context);
+            // The runtime ends one supervisor and starts the other kind, so
+            // the screen follows that the way it follows any start.
+            self.watch.start(context);
         } else if action == action_id("about") {
             self.view = View::About;
         } else if action == action_id("sign-out") {
@@ -502,7 +568,10 @@ mod tests {
     fn turning_tailscale_on_saves_the_word_the_runtime_acts_on_and_nothing_else() {
         let mut runner = AppRunner::new(Tailscale::default());
         let turned_on = runner.action(action_id("toggle"));
-        assert_eq!(saves(&turned_on), [(CONFIG.to_owned(), "true".to_owned())]);
+        assert_eq!(
+            saves(&turned_on),
+            [(CONFIG.to_owned(), "true\nfalse\n".to_owned())]
+        );
         assert!(words(screen(&turned_on)).contains("Starting"));
         // A scheduled wake is never delivered on a reader, so asking for one
         // here would be asking nobody.
@@ -512,7 +581,7 @@ mod tests {
         let turned_off = runner.action(action_id("toggle"));
         assert_eq!(
             saves(&turned_off),
-            [(CONFIG.to_owned(), "false".to_owned())]
+            [(CONFIG.to_owned(), "false\nfalse\n".to_owned())]
         );
         assert!(words(screen(&turned_off)).contains("Off. Nothing reaches this reader"));
     }
@@ -642,7 +711,10 @@ mod tests {
             "timed-out\n\nSign-in was not finished in time. Tap Try again for a new code.\n\n\n",
         ));
         let again = runner.action(action_id("retry"));
-        assert_eq!(saves(&again), [(CONFIG.to_owned(), "true".to_owned())]);
+        assert_eq!(
+            saves(&again),
+            [(CONFIG.to_owned(), "true\nfalse\n".to_owned())]
+        );
         assert!(words(screen(&again)).contains("Starting"));
     }
 
@@ -663,7 +735,7 @@ mod tests {
             saves(&confirmed),
             [
                 (REQUEST.to_owned(), SIGN_OUT.to_owned()),
-                (CONFIG.to_owned(), "false".to_owned()),
+                (CONFIG.to_owned(), "false\nfalse\n".to_owned()),
             ]
         );
         assert!(!runner.app().enabled);
@@ -673,7 +745,7 @@ mod tests {
     #[test]
     fn runtime_back_returns_from_every_supporting_page() {
         let mut runner = AppRunner::new(with_status(true, WAITING));
-        for action in ["sign-in", "about"] {
+        for action in ["sign-in", "about", "options"] {
             let opened = runner.action(action_id(action));
             assert!(screen(&opened).owns_back, "{action} must receive Back");
             assert!(
@@ -687,6 +759,69 @@ mod tests {
             assert_eq!(runner.app().view, View::Status);
             assert!(!screen(&returned).owns_back, "root Back leaves the app");
         }
+    }
+
+    #[test]
+    fn staying_connected_is_off_until_asked_for_and_says_what_it_costs_once_on() {
+        let mut runner = AppRunner::new(with_status(true, CONNECTED));
+        let options = runner.action(action_id("options"));
+        let said = words(screen(&options));
+        assert!(said.contains("Stay connected outside Cobalt"));
+        assert!(said.contains("Stops when you leave Cobalt."));
+        assert!(
+            !said.contains("battery"),
+            "a cost shown for a switch that is off"
+        );
+
+        let asked = runner.action(action_id("stay"));
+        assert_eq!(
+            saves(&asked),
+            [(CONFIG.to_owned(), "true\ntrue\n".to_owned())]
+        );
+        let said = words(screen(&asked));
+        for expected in [
+            "Until the reader restarts.",
+            "uses more battery",
+            "only while the reader is awake",
+            "After a restart, open Cobalt once to connect again.",
+        ] {
+            assert!(said.contains(expected), "missing {expected:?} in {said}");
+        }
+        assert!(screen(&asked)
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
+        // And the first screen says which of the two it is doing.
+        let first = runner.action(ActionId::BACK);
+        assert!(words(screen(&first)).contains("Stays connected after you leave Cobalt."));
+    }
+
+    #[test]
+    fn a_reader_that_cannot_stay_connected_says_why_and_does_not_claim_to() {
+        let mut app = with_status(
+            true,
+            "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\nThe reader's system storage does not have the 110 MB free that staying connected outside Cobalt needs. Tailscale runs while Cobalt is open instead.\n",
+        );
+        app.stay = true;
+        let options = app.options_screen();
+        assert!(words(&options).contains("does not have the 110 MB free"));
+        assert!(!options
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .has_errors());
+        let first = words(&app.status_screen());
+        assert!(first.contains("Runs while Cobalt is open."));
+        assert!(!first.contains("Stays connected"));
+    }
+
+    #[test]
+    fn choices_saved_by_an_app_from_before_the_options_are_read_as_off() {
+        let mut runner = AppRunner::new(Tailscale::default());
+        runner.store_result(StoreResult::Loaded {
+            key: CONFIG.to_owned(),
+            value: Some(b"true".to_vec()),
+        });
+        assert!(runner.app().enabled);
+        assert!(!runner.app().stay);
     }
 
     #[test]
