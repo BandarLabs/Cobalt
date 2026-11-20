@@ -3007,6 +3007,65 @@ mod tests {
     }
 
     #[test]
+    fn a_page_typed_into_go_to_is_turned_to_and_kept_and_back_returns_from_it() {
+        let mut runner = started_with(None, None);
+        runner.action(action_id("book-0"));
+        let pages = runner
+            .app()
+            .book
+            .reader()
+            .map(kobo_read::Reader::page_count)
+            .expect("a book is open");
+        assert!(pages > 6, "a letter of several pages");
+
+        runner.action(action_id(kobo_read::action::CONTROLS));
+        let screen = shown(runner.action(action_id(kobo_read::action::GO_TO)));
+        assert!(words(&screen).contains(&format!("You are on page 1 of {pages}.")));
+        assert!(screen.validate(&CLARA_BW_METRICS).is_empty());
+
+        runner.action(action_id(kobo_read::action::GO_TO_TYPE));
+        let refused = shown(runner.type_text(&format!("{}", pages + 1)));
+        assert!(
+            words(&refused).contains(&format!("The pages run from 1 to {pages}.")),
+            "a page the book does not have was not said to be one"
+        );
+        assert_eq!(
+            runner
+                .app()
+                .book
+                .reader()
+                .map(kobo_read::Reader::page_number),
+            Some(1)
+        );
+
+        runner.action(action_id(kobo_read::action::GO_TO_TYPE));
+        let kept = runner.type_text("5");
+        assert_eq!(
+            runner
+                .app()
+                .book
+                .reader()
+                .map(kobo_read::Reader::page_number),
+            Some(5)
+        );
+        assert!(
+            saved(&kept, READING).is_some(),
+            "the page gone to was not written down as the place"
+        );
+        runner.action(ActionId::BACK);
+        assert_eq!(runner.app().view, View::Reading);
+        assert_eq!(
+            runner
+                .app()
+                .book
+                .reader()
+                .map(kobo_read::Reader::page_number),
+            Some(1),
+            "Back did not return to the page that was left"
+        );
+    }
+
+    #[test]
     fn a_pdf_is_listed_and_will_not_open() {
         let mut runner = AppRunner::new(Books::seeded());
         runner.start();

@@ -190,8 +190,9 @@ impl Reader {
     /// there to mark.
     fn refuse_highlight(&mut self, panel: &DisplayMetrics) -> Outcome {
         self.set_chrome(Chrome::Hidden, panel);
+        // Not "this book": the same reader shows articles and papers.
         self.report(format!(
-            "This book already keeps {MAX_ANNOTATIONS} highlights, which is as many as it can."
+            "There are already {MAX_ANNOTATIONS} highlights here, which is as many as can be kept."
         ));
         Outcome::Repaint
     }
