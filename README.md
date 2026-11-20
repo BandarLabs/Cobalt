@@ -162,13 +162,13 @@ Screenshots are from a Kobo Clara BW or its simulator.
 <td width="33%" valign="top"><a href="apps/syncthing/README.md"><img width="230" src="docs/media/site/apps/syncthing.png" alt="Sync folders: notes for Vault, photos for Frame and books come from the computer, and out goes back to it."></a><br><b><a href="apps/syncthing/README.md">Sync</a></b><br>Sync folders between your computer and your Kobo with Syncthing. Needs your computer.</td>
 </tr>
 <tr>
+<td width="33%" valign="top"><a href="apps/tailscale/README.md"><img width="230" src="docs/media/site/apps/store.png" alt="Tailscale available from the signed Cobalt Apps Catalog"></a><br><b><a href="apps/tailscale/README.md">Tailscale</a></b><br>Put your Kobo on your tailnet, so your computer reaches it from any network.</td>
 <td width="33%" valign="top"><a href="examples/tictactoe/README.md"><img width="230" src="docs/media/site/apps/tictactoe.png" alt="A completed game of tic-tac-toe on a Kobo"></a><br><b><a href="examples/tictactoe/README.md">Tic-tac-toe</a></b><br>Play tic-tac-toe together on one Kobo.</td>
 <td width="33%" valign="top"><a href="examples/todo/README.md"><img width="230" src="docs/media/site/apps/todo.png" alt="A to-do list with four open items and one done on a Kobo."></a><br><b><a href="examples/todo/README.md">Todo</a></b><br>Keep a simple to-do list that stays on your Kobo.</td>
-<td width="33%" valign="top"><a href="apps/vault/README.md"><img width="230" src="docs/media/site/apps/vault.png" alt="Vault home on a Kobo with eight notes and Browse, Tags, Recent and Search rows."></a><br><b><a href="apps/vault/README.md">Vault</a></b><br>Browse your notes by folder, tag, link, and backlink. Needs your computer.</td>
 </tr>
 <tr>
+<td width="33%" valign="top"><a href="apps/vault/README.md"><img width="230" src="docs/media/site/apps/vault.png" alt="Vault home on a Kobo with eight notes and Browse, Tags, Recent and Search rows."></a><br><b><a href="apps/vault/README.md">Vault</a></b><br>Browse your notes by folder, tag, link, and backlink. Needs your computer.</td>
 <td width="33%" valign="top"><a href="apps/verses/README.md"><img width="230" src="docs/media/site/apps/verses.png" alt="William Blake's The Tiger in Verses, set in a spacious Kobo reading layout."></a><br><b><a href="apps/verses/README.md">Verses</a></b><br>Read a public-domain poem each day.</td>
-<td></td>
 <td></td>
 </tr>
 </table>

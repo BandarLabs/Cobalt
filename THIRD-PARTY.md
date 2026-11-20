@@ -218,12 +218,14 @@ them is your responsibility, not theirs.
 
 ## Optional Tailscale runtime
 
-The experimental Tailscale app downloads the official, unmodified Tailscale
-1.102.2 ARM build from `pkgs.tailscale.com` on first use and verifies the
-archive's pinned SHA-256 digest before installation. The binary is not stored
-in this repository or Cobalt release artifacts. Tailscale is distributed
-under the BSD 3-Clause License. Its copyright notice, conditions and disclaimer
-are reproduced verbatim in
+The Tailscale app downloads the official, unmodified Tailscale 1.104.7 ARM
+build from `pkgs.tailscale.com` the first time it is switched on. The runtime
+checks the archive against a pinned SHA-256 digest before unpacking it, and
+each of the two programs against its own pinned digest before every start.
+The programs are not stored in this repository or in Cobalt release
+artifacts. Tailscale is distributed under the BSD 3-Clause License. Its
+copyright notice, conditions and disclaimer are reproduced verbatim in
 [`licenses/LICENSE-Tailscale.txt`](licenses/LICENSE-Tailscale.txt), which is
 installed on the reader with Cobalt. The corresponding source is
-<https://github.com/tailscale/tailscale/tree/v1.102.2>.
+<https://github.com/tailscale/tailscale/tree/v1.104.7>, and the digests are
+listed in [`apps/tailscale/THIRD-PARTY.md`](apps/tailscale/THIRD-PARTY.md).

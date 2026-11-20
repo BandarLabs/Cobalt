@@ -1,0 +1,18 @@
+# sweep: --bare --seed-root apps/tailscale/fixtures/sign-in
+# The runtime has a sign-in link, so the app opens on the code for a phone
+# with the address written out under it.
+wait-for Scan with your phone
+expect Approve this reader
+expect Or open this address on any phone or computer:
+expect 1a2b3c4d5e6f
+expect The code works for ten minutes.
+clean
+shot tailscale-sign-in
+# Back leaves the code, and the first screen offers it again.
+tap-id 4294967295
+wait-for This reader is waiting to be approved from your phone.
+expect Waiting for approval
+clean
+shot tailscale-waiting
+tap Approve this reader
+wait-for Scan with your phone

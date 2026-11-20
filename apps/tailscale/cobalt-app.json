@@ -2,24 +2,28 @@
   "id": "tailscale",
   "display_name": "Tailscale",
   "short_label": "Tailscale",
-  "summary": "Put this reader on your tailnet, with an on/off switch and the approval code on screen.",
-  "page_description": "EXPERIMENTAL: reach tailnet services - Calibre-Web, paperterm hosts, anything with a 100.x address - from any network. Not yet validated on hardware.",
+  "summary": "Put your Kobo on your tailnet, so your computer reaches it from any network.",
+  "page_description": "Put your Kobo on your Tailscale tailnet. Send books and articles to it from any network with kobo send and kobo clip, and reach your own servers from its apps. Runs while Cobalt is open.",
   "version": "0.1.0",
-  "release_notes": "First experimental cut: runtime-owned tailscaled, kernel TUN with netfilter off, /etc/hosts tailnet names, on-screen approval code.",
-  "glyph": "settings",
-  "capabilities": [
-    "scheduled-wake"
-  ],
+  "minimum_cobalt_version": "0.3.38",
+  "release_notes": "First release. One switch, sign-in by scanning a code with your phone, and the reader's tailnet name and address on screen once it is connected.",
+  "glyph": "globe",
+  "capabilities": [],
   "setup": {
     "steps": [
       {
-        "text": "The first time Tailscale runs it downloads the pinned upstream ARMv7 build over Wi-Fi and checks it against the digest the runtime requires, so the Kobo needs to be online once."
+        "text": "Set up the reader once over USB, if you have not already. Setup also closes password login to the reader, which Tailscale requires before it will start.",
+        "command": "kobo setup"
       },
       {
-        "text": "Turn Tailscale on. Within a minute the screen shows a short approval code; open the link on any phone or computer and approve this reader."
+        "text": "On the reader, open Tailscale and turn on the switch. The first time, the reader downloads Tailscale over Wi-Fi, about 37 MB, and checks it before running it."
       },
       {
-        "text": "In the Tailscale admin console, disable key expiry for this device - node keys expire after 180 days by default and the connection would silently stop."
+        "text": "Scan the code on the reader with your phone, sign in to Tailscale and approve the reader. The screen then shows the reader's tailnet name and address."
+      },
+      {
+        "text": "Save that address on this computer. After this, kobo send and kobo clip reach the reader from any network while Cobalt is open on it.",
+        "command": "kobo pair kobo --device 100.64.0.7"
       }
     ]
   }

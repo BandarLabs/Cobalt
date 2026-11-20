@@ -128,6 +128,7 @@ const categories = {
   sidekick: "Developer",
   sudoku: "Games",
   syncthing: "Devices",
+  tailscale: "Devices",
   tictactoe: "Games",
   todo: "Productivity",
   vault: "Reference",
