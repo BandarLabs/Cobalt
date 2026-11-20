@@ -156,6 +156,16 @@ const PAGE_DID_NOT_COME: &str =
 /// their results because of Feedsearch, and both have to say so.
 const ATTRIBUTION: &str = "Feed search powered by feedsearch.dev";
 
+/// What the screen that adds a feed says about newsletters.
+///
+/// Most newsletter services publish every issue as a feed as well as by
+/// email, and almost nobody who reads one knows it. An owner who wants a
+/// newsletter on the reader looks for somewhere to give an email address,
+/// finds none, and concludes it cannot be done, so the screen says the one
+/// thing they need: the address of the site is enough.
+const NEWSLETTERS: &str =
+    "Most newsletters can be followed here too. Enter the address of the newsletter's site.";
+
 /// The address field on the screen that adds a feed.
 const FEED_ADDRESS: &str = "feed-address";
 
@@ -1401,6 +1411,8 @@ impl Feeds {
             Some(error) => screen.field_error(error),
             None => screen,
         }
+        .section("Newsletters")
+        .text(NEWSLETTERS)
         .build()
     }
 
