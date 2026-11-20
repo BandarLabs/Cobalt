@@ -30,6 +30,7 @@
 
 mod articles;
 mod covers;
+mod ranges;
 
 use articles::{Kept, Said};
 use covers::{Cover, Described, Recent, Thumb};
@@ -43,6 +44,7 @@ use kobo_sdk::{
     ScreenBuilder, SlotWidth, Space, StoreResult, Task, TaskId, TaskOutcome, Tile, TilePicture,
     TileShape, MAX_STORE_VALUE,
 };
+use ranges::{Arrival, Assembly, Fault};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::process::ExitCode;
 
@@ -68,6 +70,8 @@ const RESTORE: &str = "article-restore";
 const DELETE: &str = "article-delete";
 const CONFIRM_DELETE: &str = "confirm-delete";
 const KEEP_ARTICLE: &str = "keep-article";
+const CANCEL_OPEN: &str = "cancel-open";
+const OPEN_AGAIN: &str = "open-again";
 
 /// How long after one check Books leaves the computer alone when it comes
 /// back to the panel. Opening Books asks; flicking in and out of it should
@@ -92,11 +96,68 @@ const KEPT_COVERS: usize = 200;
 /// How many decoded covers are held in memory at once.
 const HELD_COVERS: usize = 48;
 
-/// The largest book the runtime will hand over in one piece.
+/// The largest book the runtime hands over in one answer: the wire's own
+/// limit on a whole library document.
 ///
-/// The wire's own limit on a library document. A larger book is listed, and
-/// says why it does not open here rather than failing as if it were damaged.
-const LARGEST_OPENABLE: u32 = 4 * 1024 * 1024;
+/// A book up to this size is asked for whole, in one round trip, as it always
+/// was. It is also every book Books can open under a runtime that does not
+/// answer ranges; see [`Ranges`].
+const LARGEST_WHOLE: u32 = 4 * 1024 * 1024;
+
+/// The largest book Books opens, read from the runtime a range at a time.
+///
+/// What this bounds is memory at the one moment a book costs the most. A
+/// zip's directory is at its end, so the parser needs the whole file in hand
+/// while it builds the document beside it. Out of any book, however large,
+/// the parser keeps at most sixteen megabytes of text, eight of pictures and
+/// four of publisher faces (the bounds in `kobo_doc`), so past a few
+/// megabytes the only thing that still grows with the file is the file. At
+/// this limit that moment is about sixty megabytes, and the file is let go
+/// as soon as the first page is set. A larger book is listed, and says why it
+/// does not open here rather than failing as if it were damaged.
+///
+/// Thirty-two is the most any application already holds as one file on this
+/// hardware: the comic reader keeps an archive that size for a whole sitting,
+/// where Books holds one for the moment it takes to open. The readers that
+/// download their books stop at twelve and sixteen, and the runtime will not
+/// list a document past sixty-four. The reader has under five hundred
+/// megabytes for the runtime and every application it keeps alive, and the
+/// cost of asking for more than is free is not a slow open: the kernel stops
+/// the application that asked, and the owner is back at the launcher with
+/// the book they were trying to read still closed.
+///
+/// It is also a wait. A megabyte is four round trips to the runtime, so a
+/// book at the limit is a hundred and twenty-eight of them before its first
+/// page, with the count on the panel. A book past it is nearly always
+/// scanned pages, which the Kobo reader shows better than a reflowing one.
+const LARGEST_OPENABLE: u32 = 32 * 1024 * 1024;
+
+/// Whether the runtime under Books hands a book over a range at a time.
+///
+/// Books ships with the runtime, so the two are the same release except
+/// between an update applied mid-session, which replaces Books on the card
+/// while the old runtime is still running, and the next start. A runtime
+/// from before ranges cannot read the request and ends the session of an
+/// application that sends one, so Books never finds out by trying. It asks
+/// the runtime which release it is, and uses ranges only under its own.
+///
+/// It asks the first time a listing holds a book too large to arrive whole,
+/// because until then the answer changes nothing, and most libraries never
+/// hold one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Ranges {
+    /// No listing has held a book that needs them.
+    Unasked,
+    /// Asked, and the answer is on its way. A large book is shown as one
+    /// that opens, since under the release Books shipped with it does, and a
+    /// tap on one waits for the answer.
+    Asked,
+    /// The runtime is the release Books shipped with.
+    Answered,
+    /// Another release, or one that would not say. Books reads a book whole
+    /// or not at all, as it did before ranges.
+    Refused,
+}
 
 /// How wide the open book's cover is drawn at the top of Books.
 const HERO_MM: u16 = 28;
@@ -178,18 +239,20 @@ impl Document {
         self.on_card && self.kind.is_readable()
     }
 
-    /// Whether tapping it opens it here rather than explaining why not.
-    const fn opens_here(&self) -> bool {
-        self.belongs_here() && !self.too_large()
+    /// Whether tapping it opens it here rather than explaining why not,
+    /// where `largest` is the most Books can open under this runtime.
+    const fn opens_here(&self, largest: u32) -> bool {
+        self.belongs_here() && self.bytes <= largest
     }
 
-    const fn too_large(&self) -> bool {
-        self.bytes > LARGEST_OPENABLE
+    /// Whether it has to be asked for a range at a time.
+    const fn in_ranges(&self) -> bool {
+        self.bytes > LARGEST_WHOLE
     }
 
     /// Whether Books can read it for a cover and a title.
-    const fn describable(&self) -> bool {
-        self.on_card && self.kind.is_packaged() && !self.too_large() && self.body.is_none()
+    const fn describable(&self, largest: u32) -> bool {
+        self.on_card && self.kind.is_packaged() && self.bytes <= largest && self.body.is_none()
     }
 }
 
@@ -370,6 +433,28 @@ struct Books {
     asked_to_open: Option<String>,
     /// The Articles shelf: what is known about each article, and Sync.
     articles: articles::State,
+    /// Whether this runtime hands a large book over in ranges.
+    ranges: Ranges,
+    /// The large book on its way in, if one is. One at a time, because each
+    /// is tens of megabytes held until it is whole, and a book being opened
+    /// takes the place of one being read for its cover.
+    fetching: Option<Fetch>,
+    /// Whether the book last tried was replaced on the card while it was
+    /// arriving, so the note about it says that rather than calling it
+    /// damaged.
+    replaced: bool,
+}
+
+/// A large book being put together, and what for.
+#[derive(Debug)]
+struct Fetch {
+    assembly: Assembly,
+    /// To be opened, rather than read for its cover and name.
+    opening: bool,
+    /// The tenth of the book the panel last showed as arrived. The panel is
+    /// redrawn when this moves and not for every piece: a piece lands in a
+    /// few milliseconds and E Ink takes a few hundred to say so.
+    shown: u32,
 }
 
 impl Default for Books {
@@ -411,6 +496,17 @@ impl Books {
             on_panel: BTreeSet::new(),
             placed: BTreeMap::new(),
             articles: articles::State::default(),
+            ranges: Ranges::Unasked,
+            fetching: None,
+            replaced: false,
+        }
+    }
+
+    /// The largest book that opens here under the runtime Books is on.
+    const fn largest(&self) -> u32 {
+        match self.ranges {
+            Ranges::Refused => LARGEST_WHOLE,
+            Ranges::Unasked | Ranges::Asked | Ranges::Answered => LARGEST_OPENABLE,
         }
     }
 
@@ -444,6 +540,7 @@ impl Books {
         let screen = match self.view {
             View::Home => self.home(context),
             View::Shelf(pile) => self.shelf(context, pile),
+            View::Opening(index) if self.opening_in_ranges() => self.arriving(context, index),
             View::Opening(_) => match self.came_from {
                 View::Shelf(pile) => self.shelf(context, pile),
                 _ => self.home(context),
@@ -460,6 +557,63 @@ impl Books {
         };
         context.set_screen(screen);
         self.read_next(context);
+    }
+
+    /// Whether the book being opened is arriving a range at a time.
+    fn opening_in_ranges(&self) -> bool {
+        self.fetching.as_ref().is_some_and(|fetch| fetch.opening)
+    }
+
+    /// A large book on its way in: which book, how much of it has arrived,
+    /// and a way to give up.
+    ///
+    /// A book that arrives whole is on the panel before a screen saying so
+    /// could be drawn, so it keeps the shelf under it. One that takes a
+    /// hundred round trips would leave the owner looking at a shelf that had
+    /// ignored their tap.
+    fn arriving(&mut self, context: &mut Context, index: usize) -> Screen {
+        type Build = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>;
+        let picture = self.cover(context, HERO_HANDLE, index);
+        let (received, total) = self
+            .fetching
+            .as_ref()
+            .map_or((0, None), |fetch| fetch.assembly.progress());
+        let document = self.documents.get(index);
+        // Until the first range says how long the file is, the listing's
+        // word for it is the best there is.
+        let total = total.or_else(|| document.map(|document| document.bytes));
+        let title = document.map_or_else(String::new, |document| document.title.clone());
+        let author = document.and_then(|document| document.author.clone());
+        let about: Build = Box::new(move |slot: ScreenBuilder| {
+            let slot = slot.heading_at_level(2, title);
+            match author {
+                Some(author) => slot.secondary(author),
+                None => slot,
+            }
+        });
+        let screen = ScreenBuilder::new("books-opening")
+            .top_bar("Books")
+            .owns_back(true);
+        let screen = match picture {
+            Some(picture) => {
+                let cover: Build = Box::new(move |slot: ScreenBuilder| {
+                    slot.picture(picture, HERO_MM.saturating_mul(2))
+                });
+                screen.band(
+                    BandAlign::Top,
+                    [
+                        (SlotWidth::Fixed(HERO_MM.saturating_mul(10)), cover),
+                        (SlotWidth::Fill, about),
+                    ],
+                )
+            }
+            None => about(screen),
+        };
+        screen
+            .spacer(Space::Medium)
+            .transfer("Opening", u64::from(received), total.map(u64::from))
+            .cancellable(CANCEL_OPEN, "Cancel")
+            .build()
     }
 
     /// The splash for a library that could not be listed or is empty.
@@ -681,14 +835,14 @@ impl Books {
                 let document = self.documents.get(index)?;
                 let subtitle = if !document.on_card {
                     "Not downloaded".to_owned()
-                } else if document.belongs_here() && document.too_large() {
+                } else if document.belongs_here() && !document.opens_here(self.largest()) {
                     "Too large to open here".to_owned()
                 } else {
                     document.author.clone().unwrap_or_default()
                 };
                 let badge = self
                     .percent_read(&document.id)
-                    .filter(|_| document.opens_here())
+                    .filter(|_| document.opens_here(self.largest()))
                     .map(|read| format!("{read}%"))
                     .unwrap_or_default();
                 Some((
@@ -1107,9 +1261,9 @@ impl Books {
     /// The book to offer to continue: the last one opened that still opens.
     fn current(&self) -> Option<usize> {
         self.recent.iter().find_map(|recent| {
-            self.documents
-                .iter()
-                .position(|document| document.id == recent.id && document.opens_here())
+            self.documents.iter().position(|document| {
+                document.id == recent.id && document.opens_here(self.largest())
+            })
         })
     }
 
@@ -1153,11 +1307,14 @@ impl Books {
             format!(
                 "PDFs open in the Kobo reader. Books cannot show PDF pages yet. {IN_KOBO_READER}"
             )
-        } else if let Some(document) = document.filter(|document| document.too_large()) {
+        } else if let Some(document) = document.filter(|document| document.bytes > self.largest()) {
             format!(
-                "Books can open files up to 4 MB, and this one is {}. Open it in the app it came from, or in the Kobo reader if you copied it on yourself.",
+                "Books can open files up to {} MB, and this one is {}. Open it in the app it came from, or in the Kobo reader if you copied it on yourself.",
+                self.largest() / (1024 * 1024),
                 megabytes(document.bytes)
             )
+        } else if self.replaced {
+            "This file changed on the card while Books was opening it. Open it again.".to_owned()
         } else {
             "This file could not be opened. It may be damaged, or written in a way Books cannot read."
                 .to_owned()
@@ -1165,11 +1322,15 @@ impl Books {
         // The bar's own back arrow returns to the shelf too. Without owning
         // it, that arrow left Books altogether from a screen that is only a
         // note about one book.
-        ScreenBuilder::new("books-unreadable")
+        let screen = ScreenBuilder::new("books-unreadable")
             .top_bar("Books")
             .owns_back(true)
-            .splash(Some(Glyph::Book), title, reason)
-            .build()
+            .splash(Some(Glyph::Book), title, reason);
+        if self.replaced {
+            screen.button(OPEN_AGAIN, "Open again").build()
+        } else {
+            screen.build()
+        }
     }
 
     /// Says on the shelf that the last place was not kept, with the fix on
@@ -1377,7 +1538,7 @@ impl Books {
     }
 
     fn queue(&mut self, document: &Document) {
-        if document.describable()
+        if document.describable(self.largest())
             && self.describing.as_deref() != Some(document.id.as_str())
             && !self.wanted.contains(&document.id)
         {
@@ -1392,17 +1553,35 @@ impl Books {
         if self.describing.is_some() || matches!(self.view, View::Reading | View::Opening(_)) {
             return;
         }
+        let largest = self.largest();
         while let Some(id) = self.wanted.pop_front() {
             // Articles are read wherever they are, because the shelf is
             // sorted by the date inside each one.
-            let still_wanted = (self.on_panel.contains(&id) || articles::is_article(&id))
-                && self
-                    .documents
-                    .iter()
-                    .any(|document| document.id == id && document.describable());
-            if still_wanted {
+            if !self.on_panel.contains(&id) && !articles::is_article(&id) {
+                continue;
+            }
+            let Some(document) = self
+                .documents
+                .iter()
+                .find(|document| document.id == id && document.describable(largest))
+            else {
+                continue;
+            };
+            if !document.in_ranges() {
                 self.describing = Some(id.clone());
                 context.device().read_library(id);
+                return;
+            }
+            // A large book waits for the runtime to say it answers ranges.
+            // Drawing the shelf again queues it again, and the answer draws
+            // the shelf.
+            if self.ranges == Ranges::Answered {
+                self.describing = Some(id.clone());
+                self.fetching = Some(Fetch {
+                    assembly: Assembly::begin(context, id, LARGEST_OPENABLE),
+                    opening: false,
+                    shown: 0,
+                });
                 return;
             }
         }
@@ -1536,7 +1715,8 @@ impl Books {
         if matches!(self.view, View::Home | View::Shelf(_)) {
             self.came_from = self.view;
         }
-        if !document.opens_here() {
+        self.replaced = false;
+        if !document.opens_here(self.largest()) {
             self.book.close(context);
             self.open_title = None;
             self.view = View::Unreadable(index);
@@ -1549,8 +1729,132 @@ impl Books {
             return;
         }
         self.view = View::Opening(index);
+        // A large book being read for its cover gives way: two of them in
+        // hand at once is twice the most Books means to hold, and the owner
+        // is waiting on this one.
+        self.stop_fetching();
+        if document.in_ranges() {
+            match self.ranges {
+                Ranges::Answered => {
+                    self.fetching = Some(Fetch {
+                        assembly: Assembly::begin(context, document.id, LARGEST_OPENABLE),
+                        opening: true,
+                        shown: 0,
+                    });
+                }
+                // The answer opens the book when it lands; see `on_identity`.
+                Ranges::Unasked => self.ask_about_ranges(context),
+                Ranges::Asked | Ranges::Refused => {}
+            }
+            self.show(context);
+            return;
+        }
         self.show(context);
         context.device().read_library(document.id);
+    }
+
+    /// Asks the runtime which release it is, once. See [`Ranges`].
+    fn ask_about_ranges(&mut self, context: &mut Context) {
+        if self.ranges == Ranges::Unasked {
+            self.ranges = Ranges::Asked;
+            context.device().read_identity();
+        }
+    }
+
+    /// The runtime said which release it is, or would not.
+    fn on_identity(&mut self, context: &mut Context, result: &DeviceResult) {
+        if self.ranges != Ranges::Asked {
+            return;
+        }
+        let shipped_together = matches!(
+            result,
+            DeviceResult::Identity(identity)
+                if identity.runtime_version == env!("CARGO_PKG_VERSION")
+        );
+        self.ranges = if shipped_together {
+            Ranges::Answered
+        } else {
+            Ranges::Refused
+        };
+        match self.view {
+            // A large book tapped before the answer came is opened now, or
+            // said to be too large for this runtime.
+            View::Opening(index)
+                if self.fetching.is_none()
+                    && self.documents.get(index).is_some_and(Document::in_ranges) =>
+            {
+                self.view = self.came_from;
+                self.open_document(context, index);
+            }
+            View::Home | View::Shelf(_) => self.show(context),
+            _ => {}
+        }
+    }
+
+    /// Lets go of a large book that was arriving. One being read for its
+    /// cover goes back to the front of the queue, to be read when the shelf
+    /// is next on the panel with nothing open.
+    fn stop_fetching(&mut self) {
+        let Some(fetch) = self.fetching.take() else {
+            return;
+        };
+        if !fetch.opening && self.describing.as_deref() == Some(fetch.assembly.id()) {
+            if let Some(id) = self.describing.take() {
+                self.wanted.push_front(id);
+            }
+        }
+    }
+
+    /// One answer to a range Books asked for.
+    fn on_range(&mut self, context: &mut Context, request: &DeviceRequest, result: &DeviceResult) {
+        let Some(fetch) = self.fetching.as_mut() else {
+            return;
+        };
+        match fetch.assembly.advance(context, request, result) {
+            Arrival::Elsewhere => {}
+            Arrival::Moving { done, total } => {
+                let tenth = u32::try_from(u64::from(done) * 10 / u64::from(total.max(1)))
+                    .unwrap_or(u32::MAX);
+                if fetch.opening && tenth != fetch.shown {
+                    fetch.shown = tenth;
+                    if matches!(self.view, View::Opening(_)) {
+                        self.show(context);
+                    }
+                }
+            }
+            Arrival::Done => {
+                if let Some(fetch) = self.fetching.take() {
+                    let id = fetch.assembly.id().to_owned();
+                    let bytes = fetch.assembly.take();
+                    self.on_document(context, &id, &bytes);
+                }
+            }
+            Arrival::Failed(fault) => {
+                if let Some(fetch) = self.fetching.take() {
+                    self.on_fetch_failed(context, &fetch, fault);
+                }
+            }
+        }
+    }
+
+    /// A large book could not be put together.
+    fn on_fetch_failed(&mut self, context: &mut Context, fetch: &Fetch, fault: Fault) {
+        let id = fetch.assembly.id();
+        if let Fault::TooLarge(size) = fault {
+            // The listing was older than the file. The shelf and the note
+            // both go by the length the runtime just gave.
+            if let Some(document) = self.documents.iter_mut().find(|document| document.id == id) {
+                document.bytes = size;
+            }
+        }
+        if fetch.opening {
+            self.replaced = fault == Fault::Changed;
+        }
+        self.on_document_refused(context, id);
+        // A book the shelf offered to open is now one it says is too large.
+        if matches!(fault, Fault::TooLarge(_)) && matches!(self.view, View::Home | View::Shelf(_)) {
+            self.show(context);
+        }
     }
 
     fn finish_open(
@@ -1795,6 +2099,9 @@ impl Books {
         self.library_failed = false;
         self.truncated = truncated;
         self.take_documents(entries.into_iter().filter_map(from_entry).collect());
+        if self.documents.iter().any(Document::in_ranges) {
+            self.ask_about_ranges(context);
+        }
         self.take_articles(truncated);
         self.want_articles();
         self.articles.menu_open = None;
@@ -1834,8 +2141,15 @@ impl Books {
         }
     }
 
-    fn on_document_refused(&mut self, context: &mut Context) {
-        if let Some(id) = self.describing.take() {
+    /// The runtime would not hand over `id`, whole or in ranges.
+    ///
+    /// The refusal is matched to what it was for. A book can be on its way
+    /// for its cover while another is being opened, and a refusal used to be
+    /// taken for both: a cover that could not be read closed the book the
+    /// owner had just tapped.
+    fn on_document_refused(&mut self, context: &mut Context, id: &str) {
+        if self.describing.as_deref() == Some(id) {
+            self.describing = None;
             // Not read, and not worth asking about again on every repaint.
             let (bytes, listed) = self
                 .documents
@@ -1844,13 +2158,13 @@ impl Books {
                 .map_or((0, String::new()), |document| {
                     (document.bytes, document.listed.clone())
                 });
-            if let Some(kept) = self.articles.kept.get_mut(&id) {
+            if let Some(kept) = self.articles.kept.get_mut(id) {
                 // Not asked about again on every listing either.
                 kept.described = true;
                 self.articles.changed = true;
             }
             self.described.insert(
-                id,
+                id.to_owned(),
                 Described {
                     bytes,
                     listed,
@@ -1862,11 +2176,17 @@ impl Books {
             self.record = Record::Changed;
         }
         if let View::Opening(index) = self.view {
-            self.book.close(context);
-            self.open_title = None;
-            self.view = View::Unreadable(index);
-            self.show(context);
-            return;
+            let opening = self
+                .documents
+                .get(index)
+                .is_some_and(|document| document.id == id);
+            if opening {
+                self.book.close(context);
+                self.open_title = None;
+                self.view = View::Unreadable(index);
+                self.show(context);
+                return;
+            }
         }
         self.read_next(context);
     }
@@ -2096,6 +2416,25 @@ impl KoboApp for Books {
             self.show(context);
             return;
         }
+        if let View::Unreadable(index) = self.view {
+            if action == action_id(OPEN_AGAIN) {
+                self.view = self.came_from;
+                self.open_document(context, index);
+                return;
+            }
+        }
+        // Giving up on a large book returns to where it was tapped, as Back
+        // from the book itself would have.
+        let giving_up = self.opening_in_ranges()
+            && (action == action_id(CANCEL_OPEN)
+                || action == action_id(BACK)
+                || action == ActionId::BACK);
+        if giving_up {
+            self.stop_fetching();
+            self.view = self.came_from;
+            self.show(context);
+            return;
+        }
         if action == action_id(BACK) || action == ActionId::BACK {
             self.view = match self.view {
                 View::Unreadable(_) => self.came_from,
@@ -2171,13 +2510,21 @@ impl KoboApp for Books {
             self.removed(context, &id, &result);
             return;
         }
-        if let DeviceRequest::ReadLibrary { .. } = request {
+        if request == DeviceRequest::ReadIdentity {
+            self.on_identity(context, &result);
+            return;
+        }
+        if let DeviceRequest::ReadLibraryRange { .. } = request {
+            self.on_range(context, &request, &result);
+            return;
+        }
+        if let DeviceRequest::ReadLibrary { id: asked } = request {
             match result {
                 DeviceResult::LibraryDocument { id, bytes } => {
                     self.on_document(context, &id, &bytes);
                 }
                 DeviceResult::Denied(_) | DeviceResult::Failed(_) => {
-                    self.on_document_refused(context);
+                    self.on_document_refused(context, &asked);
                 }
                 _ => {}
             }
@@ -2440,6 +2787,12 @@ mod tests {
     /// An EPUB whose package names a cover picture, as Standard Ebooks and
     /// most publishers write one.
     fn a_book_with_a_cover() -> Vec<u8> {
+        a_book_with_a_cover_and(0)
+    }
+
+    /// The same book carrying `padding` bytes nothing in it refers to, so it
+    /// takes several ranges to arrive without taking any longer to parse.
+    fn a_book_with_a_cover_and(padding: usize) -> Vec<u8> {
         let cover =
             kobo_image::encode_png_grey(200, 300, &vec![0x20; 200 * 300]).expect("a cover picture");
         let members = [
@@ -2462,11 +2815,102 @@ mod tests {
             ("OEBPS/one.xhtml", b"<p>The tide was turning.</p>".to_vec()),
             ("OEBPS/cover.png", cover),
         ];
-        let members: Vec<(String, Vec<u8>)> = members
+        let mut members: Vec<(String, Vec<u8>)> = members
             .into_iter()
             .map(|(name, bytes)| (name.to_owned(), bytes))
             .collect();
+        if padding > 0 {
+            members.push(("OEBPS/plates.bin".to_owned(), vec![0x55; padding]));
+        }
         kobo_doc::zip::stored(&members).expect("a book")
+    }
+
+    const ATLAS: &str = "0/Atlas of the Coast.epub";
+    /// What the listing says the large book weighs: more than one answer
+    /// carries. The file the tests serve is smaller, which a listing older
+    /// than the file can be, and keeps them quick.
+    const LISTED_LARGE: u32 = 6 * 1024 * 1024;
+
+    /// Tells Books it is under the runtime it shipped with, and returns what
+    /// it did about it.
+    fn runner_identity(runner: &mut AppRunner<Books>) -> Vec<Command> {
+        runner.device_result(this_runtime())
+    }
+
+    fn runtime(version: &str) -> DeviceResult {
+        DeviceResult::Identity(kobo_sdk::DeviceIdentity {
+            runtime_version: version.to_owned(),
+            ..kobo_sdk::DeviceIdentity::default()
+        })
+    }
+
+    fn this_runtime() -> DeviceResult {
+        runtime(env!("CARGO_PKG_VERSION"))
+    }
+
+    fn requests(commands: &[Command]) -> Vec<DeviceRequest> {
+        commands
+            .iter()
+            .filter_map(|command| match command {
+                Command::Device(request) => Some(request.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn ranges_asked(commands: &[Command]) -> Vec<u32> {
+        requests(commands)
+            .iter()
+            .filter_map(|request| match request {
+                DeviceRequest::ReadLibraryRange { offset, .. } => Some(*offset),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Answers every device request in `commands`, and every request those
+    /// answers lead to, in the order they were made: ranges from `card`,
+    /// which is asked for the file and its stamp each time so a test can
+    /// change the file part-way, and the light a book asks about when it
+    /// opens. Returns everything Books did along the way.
+    fn serve(
+        runner: &mut AppRunner<Books>,
+        commands: Vec<Command>,
+        card: &mut dyn FnMut(&DeviceRequest) -> DeviceResult,
+    ) -> Vec<Command> {
+        let mut seen = Vec::new();
+        let mut waiting: std::collections::VecDeque<Command> = commands.into();
+        let mut answered = 0;
+        while let Some(command) = waiting.pop_front() {
+            if let Command::Device(request) = &command {
+                answered += 1;
+                assert!(answered < 2_000, "Books never stopped asking");
+                let result = match request {
+                    DeviceRequest::ReadLibraryRange { .. } => card(request),
+                    DeviceRequest::ReadFrontlight | DeviceRequest::SetFrontlight { .. } => {
+                        DeviceResult::Frontlight { percent: 20 }
+                    }
+                    other => panic!("a request the test has no answer for: {other:?}"),
+                };
+                waiting.extend(runner.device_result(result));
+            }
+            seen.push(command);
+        }
+        seen
+    }
+
+    /// Books started on a card holding one large book, with the records it
+    /// keeps answered and the listing in, up to the point where it has asked
+    /// the runtime which release it is.
+    fn started_with_a_large_book() -> (AppRunner<Books>, Vec<Command>) {
+        let mut runner = AppRunner::new(Books::empty());
+        runner.start();
+        answer_start(&mut runner, None, None, None);
+        let commands = runner.device_result(DeviceResult::Library {
+            entries: vec![entry(ATLAS, "atlas", 1, LISTED_LARGE, true)],
+            truncated: false,
+        });
+        (runner, commands)
     }
 
     #[test]
@@ -2848,30 +3292,325 @@ mod tests {
     }
 
     #[test]
-    fn a_book_too_large_to_open_here_says_how_large_and_is_not_read_for_a_cover() {
+    fn the_two_limits_are_the_wires_and_sit_inside_what_the_runtime_lists() {
+        assert_eq!(
+            usize::try_from(super::LARGEST_WHOLE).ok(),
+            Some(kobo_sdk::MAX_LIBRARY_DOCUMENT_BYTES),
+            "a book this size is asked for whole, and the runtime must agree it can be"
+        );
+        assert!(
+            u64::from(super::LARGEST_OPENABLE)
+                <= kobo_sdk::permissions::library::MAX_DOCUMENT_BYTES,
+            "Books would offer to open a book the runtime never lists"
+        );
+    }
+
+    #[test]
+    fn a_listing_with_a_large_book_asks_the_runtime_which_release_it_is_and_nothing_else() {
+        let (mut runner, asked) = started_with_a_large_book();
+        assert_eq!(requests(&asked), [DeviceRequest::ReadIdentity]);
+        // A second listing does not ask a second time.
+        let again = runner.device_result(this_runtime());
+        assert!(!requests(&again).contains(&DeviceRequest::ReadIdentity));
+
+        // A library with nothing that large never asks at all.
         let mut runner = AppRunner::new(Books::empty());
         runner.start();
         answer_start(&mut runner, None, None, None);
         let asked = runner.device_result(DeviceResult::Library {
-            entries: vec![entry(
-                "1/gutenbird/book-1a2b3c4d",
-                "Ulysses",
-                1,
-                6 * 1024 * 1024,
-                true,
-            )],
+            entries: vec![entry("0/notes.md", "Notes", 2, 80, true)],
             truncated: false,
         });
+        assert!(requests(&asked).is_empty(), "{:?}", requests(&asked));
+    }
+
+    #[test]
+    fn a_large_book_arrives_in_ranges_with_its_progress_on_the_panel_and_opens() {
+        let book = a_book_with_a_cover_and(700_000);
+        let (mut runner, _asked) = started_with_a_large_book();
+        // The shelf reads the book for its cover first, in ranges as well.
+        let answered = runner_identity(&mut runner);
+        let described = serve(&mut runner, answered, &mut |request| {
+            super::ranges::tests::answer(request, &book, 1)
+        });
+        assert_eq!(ranges_asked(&described), [0, 262_144, 524_288]);
         assert!(
-            !asked.iter().any(|command| matches!(
-                command,
-                Command::Device(DeviceRequest::ReadLibrary { .. })
-            )),
-            "a book the runtime will not hand over was asked for"
+            words(&shown(described)).contains("The Open Sea"),
+            "the package's title was not read out of a book that arrived in ranges"
         );
-        let text = words(&shown(runner.action(action_id("book-0"))));
-        assert!(text.contains("6.0 MB"), "{text}");
+
+        let opening = runner.action(action_id("book-0"));
+        assert_eq!(
+            ranges_asked(&opening),
+            [0],
+            "one range is asked for at a time"
+        );
+        assert!(
+            !requests(&opening)
+                .iter()
+                .any(|request| matches!(request, DeviceRequest::ReadLibrary { .. })),
+            "a book too large for one answer was asked for whole"
+        );
+        let first = shown(opening.clone());
+        let text = words(&first);
+        assert!(text.contains("Opening"), "{text}");
+        assert!(text.contains("The Open Sea"), "{text}");
+        assert!(text.contains("Cancel"), "{text}");
+        assert!(first.validate(&CLARA_BW_METRICS).is_empty());
+
+        let rest = serve(&mut runner, opening, &mut |request| {
+            super::ranges::tests::answer(request, &book, 1)
+        });
+        assert_eq!(ranges_asked(&rest), [0, 262_144, 524_288]);
+        let screens = rest
+            .iter()
+            .filter(|command| matches!(command, Command::SetScreen(_)))
+            .count();
+        assert!(
+            (2..=12).contains(&screens),
+            "{screens} screens for three pieces: progress is drawn by the tenth, not by the piece"
+        );
+        assert_eq!(runner.app().view, View::Reading);
+        assert!(runner.app().fetching.is_none(), "the file was kept in hand");
+        let page = words(&shown(rest));
+        assert!(page.contains("The tide was turning"), "{page}");
+    }
+
+    #[test]
+    fn under_another_release_of_the_runtime_books_reads_whole_or_not_at_all() {
+        for other in [
+            runtime("0.0.1"),
+            DeviceResult::Denied(kobo_sdk::DenyReason::Unsupported),
+            DeviceResult::Failed(kobo_sdk::DeviceError::Backend),
+        ] {
+            let small = a_book_with_a_cover();
+            let size = u32::try_from(small.len()).expect("a small book");
+            let mut runner = AppRunner::new(Books::empty());
+            runner.start();
+            answer_start(&mut runner, None, None, None);
+            let asked = runner.device_result(DeviceResult::Library {
+                entries: vec![
+                    entry(ATLAS, "Atlas", 1, LISTED_LARGE, true),
+                    entry("0/sea.epub", "sea", 1, size, true),
+                ],
+                truncated: false,
+            });
+            // The small book is read for its cover the way it always was,
+            // and that request is ahead of the question in the queue.
+            assert_eq!(
+                requests(&asked),
+                [
+                    DeviceRequest::ReadIdentity,
+                    DeviceRequest::ReadLibrary {
+                        id: "0/sea.epub".to_owned()
+                    }
+                ]
+            );
+            let mut said = runner.device_result(other.clone());
+            said.extend(runner.device_result(DeviceResult::LibraryDocument {
+                id: "0/sea.epub".to_owned(),
+                bytes: small.clone(),
+            }));
+            let shelf = words(&shown(runner.action(action_id("shelf-library"))));
+            assert!(
+                shelf.contains("Too large to open here"),
+                "{other:?}: {shelf}"
+            );
+
+            let atlas = runner
+                .app()
+                .documents
+                .iter()
+                .position(|document| document.id == ATLAS)
+                .expect("listed");
+            let tapped = runner.action(action_id(&format!("book-{atlas}")));
+            let text = words(&shown(tapped.clone()));
+            assert!(text.contains("6.0 MB"), "{other:?}: {text}");
+            assert!(text.contains("up to 4 MB"), "{other:?}: {text}");
+            said.extend(tapped);
+            runner.action(ActionId::BACK);
+
+            // A book that fits one answer still opens, whole.
+            let sea = runner
+                .app()
+                .documents
+                .iter()
+                .position(|document| document.id == "0/sea.epub")
+                .expect("listed");
+            let opening = runner.action(action_id(&format!("book-{sea}")));
+            assert_eq!(
+                requests(&opening),
+                [DeviceRequest::ReadLibrary {
+                    id: "0/sea.epub".to_owned()
+                }]
+            );
+            said.extend(runner.device_result(DeviceResult::LibraryDocument {
+                id: "0/sea.epub".to_owned(),
+                bytes: small,
+            }));
+            assert_eq!(runner.app().view, View::Reading, "{other:?}");
+            assert!(
+                ranges_asked(&said).is_empty(),
+                "{other:?}: a range was asked of a runtime that would end the session over it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_large_book_tapped_before_the_runtime_has_answered_opens_when_it_does() {
+        let book = a_book_with_a_cover_and(300_000);
+        let (mut runner, _asked) = started_with_a_large_book();
+        let tapped = runner.action(action_id("book-0"));
+        assert!(
+            requests(&tapped).is_empty(),
+            "asked for a range before knowing the runtime reads the request"
+        );
+        assert!(matches!(runner.app().view, View::Opening(_)));
+        let answered = runner_identity(&mut runner);
+        let opened = serve(&mut runner, answered, &mut |request| {
+            super::ranges::tests::answer(request, &book, 1)
+        });
+        assert_eq!(ranges_asked(&opened), [0, 262_144]);
+        assert_eq!(runner.app().view, View::Reading);
+
+        // And under another release the same tap ends at the note.
+        let (mut runner, _asked) = started_with_a_large_book();
+        runner.action(action_id("book-0"));
+        let text = words(&shown(runner.device_result(runtime("0.0.1"))));
         assert!(text.contains("up to 4 MB"), "{text}");
+        assert!(matches!(runner.app().view, View::Unreadable(_)));
+    }
+
+    #[test]
+    fn a_book_replaced_on_the_card_while_it_arrives_says_so_and_opens_on_a_second_try() {
+        let first = a_book_with_a_cover_and(700_000);
+        let second = a_book_with_a_cover_and(900_000);
+        let (mut runner, _asked) = started_with_a_large_book();
+        // Described under the first copy, so the shelf is quiet afterwards.
+        let answered = runner_identity(&mut runner);
+        serve(&mut runner, answered, &mut |request| {
+            super::ranges::tests::answer(request, &first, 1)
+        });
+        let opening = runner.action(action_id("book-0"));
+        let mut asked = 0;
+        let failed = serve(&mut runner, opening, &mut |request| {
+            asked += 1;
+            if asked == 1 {
+                super::ranges::tests::answer(request, &first, 1)
+            } else {
+                super::ranges::tests::answer(request, &second, 2)
+            }
+        });
+        assert_eq!(asked, 2, "kept asking after the file changed");
+        assert!(matches!(runner.app().view, View::Unreadable(_)));
+        assert!(runner.app().fetching.is_none());
+        let note = shown(failed);
+        let text = words(&note);
+        assert!(text.contains("changed on the card"), "{text}");
+        assert!(text.contains("Open again"), "{text}");
+        assert!(!text.contains("damaged"), "{text}");
+        assert!(note.validate(&CLARA_BW_METRICS).is_empty());
+
+        let again = runner.action(action_id(super::OPEN_AGAIN));
+        assert_eq!(
+            ranges_asked(&again),
+            [0],
+            "the second try began at the start"
+        );
+        let opened = serve(&mut runner, again, &mut |request| {
+            super::ranges::tests::answer(request, &second, 2)
+        });
+        assert_eq!(runner.app().view, View::Reading);
+        assert!(words(&shown(opened)).contains("The tide was turning"));
+    }
+
+    #[test]
+    fn giving_up_on_a_large_book_returns_to_its_shelf_and_stops_asking() {
+        let book = a_book_with_a_cover_and(700_000);
+        for leave in [action_id(super::CANCEL_OPEN), ActionId::BACK] {
+            let (mut runner, _asked) = started_with_a_large_book();
+            let answered = runner_identity(&mut runner);
+            serve(&mut runner, answered, &mut |request| {
+                super::ranges::tests::answer(request, &book, 1)
+            });
+            runner.action(action_id("shelf-library"));
+            let opening = runner.action(action_id("book-0"));
+            let first = requests(&opening).remove(0);
+            let left = runner.action(leave);
+            assert_eq!(runner.app().view, View::Shelf(Shelf::Library));
+            assert!(words(&shown(left)).contains("The Open Sea"));
+            // The range that was already on its way lands on nothing.
+            let late = runner.device_result(super::ranges::tests::answer(&first, &book, 1));
+            assert!(ranges_asked(&late).is_empty(), "asked on after giving up");
+            assert!(runner.app().fetching.is_none());
+        }
+    }
+
+    #[test]
+    fn a_file_that_turns_out_longer_than_books_opens_says_how_long_it_really_is() {
+        let (mut runner, _asked) = started_with_a_large_book();
+        let waiting = runner_identity(&mut runner);
+        // The shelf's own read for a cover is told the same thing.
+        let huge = |request: &DeviceRequest| {
+            let DeviceRequest::ReadLibraryRange { id, offset, .. } = request else {
+                panic!("not a range request");
+            };
+            DeviceResult::LibraryRange {
+                id: id.clone(),
+                offset: *offset,
+                size: 40 * 1024 * 1024,
+                stamp: 3,
+                bytes: vec![0x50; 262_144],
+            }
+        };
+        let described = serve(&mut runner, waiting, &mut |request| huge(request));
+        assert_eq!(
+            ranges_asked(&described),
+            [0],
+            "asked on for a book it will not hold"
+        );
+        let shelf = words(&shown(described));
+        assert!(shelf.contains("Too large to open here"), "{shelf}");
+        let text = words(&shown(runner.action(action_id("book-0"))));
+        assert!(text.contains("up to 32 MB"), "{text}");
+        assert!(text.contains("40.0 MB"), "{text}");
+    }
+
+    #[test]
+    fn a_large_book_being_read_for_its_cover_gives_way_to_the_one_being_opened() {
+        let book = a_book_with_a_cover_and(700_000);
+        let (mut runner, _asked) = started_with_a_large_book();
+        let describing = runner_identity(&mut runner);
+        assert_eq!(ranges_asked(&describing), [0]);
+        let stale = requests(&describing).remove(0);
+
+        // Tapped while its cover is one range in.
+        let opening = runner.action(action_id("book-0"));
+        assert_eq!(ranges_asked(&opening), [0]);
+        assert!(runner
+            .app()
+            .fetching
+            .as_ref()
+            .is_some_and(|fetch| fetch.opening));
+        assert_eq!(runner.app().describing, None);
+        assert_eq!(runner.app().wanted.front().map(String::as_str), Some(ATLAS));
+
+        // Both first ranges are answered, the abandoned one ahead of the
+        // other as the runtime would. They are the same piece of the same
+        // file, so the first to land is kept, the second is let go, and one
+        // book comes of it for one round trip more than it needed.
+        let mut outstanding = vec![Command::Device(stale)];
+        outstanding.extend(
+            opening
+                .into_iter()
+                .filter(|command| matches!(command, Command::Device(_))),
+        );
+        let answers = serve(&mut runner, outstanding, &mut |request| {
+            super::ranges::tests::answer(request, &book, 1)
+        });
+        assert_eq!(ranges_asked(&answers), [0, 0, 262_144, 524_288]);
+        assert_eq!(runner.app().view, View::Reading);
+        assert!(words(&shown(answers)).contains("The tide was turning"));
     }
 
     #[test]
