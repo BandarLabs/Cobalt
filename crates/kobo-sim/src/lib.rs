@@ -1634,7 +1634,8 @@ impl AppState {
             // connected over Bluetooth, and nothing ever connects to the
             // simulator, so every capture showing them was wrong.
             false,
-        );
+        )
+        .with_tailnet(simulated_tailnet_connected());
         let base = self.base_screen();
         let notice = self
             .notice
@@ -4350,6 +4351,20 @@ fn data_root_under(chosen: Option<std::ffi::OsString>, name: &str) -> std::path:
 #[must_use]
 pub fn simulated_secrets_root() -> std::path::PathBuf {
     simulated_folder(SIM_SECRETS, ".secrets")
+}
+
+/// Whether the band should show the tailnet mark.
+///
+/// No daemon runs here, so this reads what a route seeded for the Tailscale
+/// app: its switch on and a status that says connected. The reader also asks
+/// the kernel for the tunnel's interface, which a simulator does not have, so
+/// this is the picture of the mark and not a test of when it appears.
+fn simulated_tailnet_connected() -> bool {
+    let saved = |key: &str, word: &str| {
+        std::fs::read_to_string(simulated_state_root("tailscale").join(key))
+            .is_ok_and(|text| text.lines().next() == Some(word))
+    };
+    saved("tailscale-config", "true") && saved("tailscale-status", "running")
 }
 
 /// The folder one application's saved state lives in under the simulator.
