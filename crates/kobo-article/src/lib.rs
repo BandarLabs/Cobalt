@@ -396,7 +396,13 @@ fn rebuilt_body(
     if let Some(figure) = &article.lead_figure {
         root.prepend_html(figure.as_str());
     }
-    let body = body::rebuild(&root, page, title, article.byline.as_deref());
+    let body = body::rebuild(
+        &root,
+        page,
+        title,
+        article.byline.as_deref(),
+        body::Names::Trusted,
+    );
     if has_words(&body.nodes) {
         Ok(body)
     } else {

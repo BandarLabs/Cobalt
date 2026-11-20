@@ -619,6 +619,55 @@ fn a_magazine_feature_loses_its_paywall_prompt_pull_quote_and_recommendations() 
 }
 
 #[test]
+fn a_metered_article_keeps_the_paragraphs_its_template_marks_paywall_and_loses_the_barrier() {
+    let page = "https://www.quayreview.example.com/reportage/town-clock";
+    let book = book_of("synthetic-metered.html", page);
+    assert_gone(
+        "synthetic-metered.html",
+        &book,
+        &[
+            "free articles this month",
+            "Subscribe for 4 pounds a month",
+            "Keep reading with a subscription.",
+            "Subscribe to The Quay Review",
+            "every Friday",
+            "sent before breakfast",
+            "Sign me up",
+            "listen to this story",
+            ">Post<",
+            "More reportage",
+            "The last public weighbridge",
+            "Printed quarterly",
+        ],
+    );
+    assert_kept(
+        &book,
+        &[
+            "The clock in the tower above the corn exchange",
+            "She has wound it by hand every Monday and Thursday",
+            "she has outlasted four council clerks",
+            // Lines of dialogue far too short to be told from a label by
+            // their length.
+            "<p>&quot;And if you are ill?&quot;</p>",
+            "<p>&quot;Then I am ill on a Tuesday.&quot;</p>",
+            "<h2>Eleven days</h2>",
+            "<li>1991: six days, thickened oil in the going train.</li>",
+            "<figcaption>The movement, made in 1871, and the crank that turns it.</figcaption>",
+            "<blockquote><p>A clock that is right is not noticed.",
+            "The ledger records them in red.",
+            "so that the buses are caught.",
+        ],
+    );
+    // The opening paragraph, which the template leaves unmarked, the ten it
+    // marks, and the one inside the quotation.
+    assert_eq!(count(&book.body, "<p>"), 12, "{}", book.body);
+    assert_eq!(
+        book.asked,
+        ["https://img.quayreview.example.com/2026/clock/movement-1200.jpg"]
+    );
+}
+
+#[test]
 fn a_wikipedia_article_keeps_its_sections_and_figures_without_the_wiki_around_it() {
     let page = "https://en.wikipedia.org/wiki/Common_kingfisher";
     let book = book_of("wikipedia-common-kingfisher.html", page);
