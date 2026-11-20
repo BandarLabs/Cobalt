@@ -34,6 +34,15 @@
 //! passage looks like in a printed book, it needs nothing new from the
 //! renderer, and because the paragraph is *paginated* at that depth as well,
 //! marking one never pushes the foot of the page off the bottom.
+//!
+//! # Why one word can still be held
+//!
+//! A hold needs no cursor. The panel reports which word was under the finger,
+//! whole, so a word can be named without either of its ends being placed by
+//! hand. That is enough to ask a dictionary about it, to highlight it and to
+//! write a note beside it, and it is as fine as marking goes here: a phrase
+//! has two ends, and placing them is the thing the paragraph list exists to
+//! avoid.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,6 +51,8 @@ use kobo_sdk::{BannerLevel, Screen, ScreenBuilder};
 use kobo_ui::TextScale;
 use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Glyph, ProseArea};
 use unicode_segmentation::UnicodeSegmentation;
+
+mod word;
 
 /// Where something is in a book, independent of how the book is set.
 ///
@@ -171,6 +182,11 @@ pub enum Chrome {
     /// finger cannot place a cursor on a display that takes most of a second
     /// to repaint, so the paragraph is picked from a list instead.
     Marking,
+    /// The word a finger was held on: what a dictionary says of it, and the
+    /// ways to keep it.
+    Word,
+    /// The field a note beside a highlighted word is typed into.
+    Note,
 }
 
 /// One piece of one block, as it lands on a page.
@@ -535,6 +551,16 @@ pub mod action {
     pub const LIST_BACK: &str = "reader-list-back";
     /// Turns a list drawn over the book on a page.
     pub const LIST_NEXT: &str = "reader-list-next";
+    /// Highlights the word that was held.
+    pub const WORD_HIGHLIGHT: &str = "reader-word-highlight";
+    /// Takes the highlight off the word that was held.
+    pub const WORD_CLEAR: &str = "reader-word-clear";
+    /// Opens the field a note on the held word is typed into.
+    pub const WORD_NOTE: &str = "reader-word-note";
+    /// Turns back to the definition before the one showing.
+    pub const WORD_BACK: &str = "reader-word-back";
+    /// Turns on to the definition after the one showing.
+    pub const WORD_NEXT: &str = "reader-word-next";
 }
 
 /// One bounded in-book search match.
@@ -607,6 +633,10 @@ pub struct Reader {
     publisher_font: Option<kobo_ui::FontHandle>,
     /// Origins of internal links/search jumps, newest last and session-only.
     navigation: Vec<Locator>,
+    /// The word a finger is being held to account for, while its screen is up.
+    word: Option<word::Held>,
+    /// The field a note on that word is typed into.
+    note: kobo_sdk::keyboard::TextEntry,
 }
 
 impl Reader {
@@ -621,6 +651,8 @@ impl Reader {
             pictures: BTreeMap::new(),
             publisher_font: None,
             navigation: Vec::new(),
+            word: None,
+            note: kobo_sdk::keyboard::TextEntry::new(),
             document,
             memory,
             pages: Vec::new(),
@@ -1282,6 +1314,16 @@ impl Reader {
         // finger.
         self.chrome = chrome;
         self.list_page = 0;
+        if chrome == Chrome::Hidden {
+            // Going back to the page lets go of the held word and of any
+            // note half typed, whichever way the reader left: a field still
+            // open behind the page would take the next answer the runtime
+            // gave for a field of its own.
+            self.word = None;
+            if self.note.is_open() {
+                self.note.close();
+            }
+        }
         let Some(list) = self.list() else {
             self.list_paging = None;
             return;
@@ -1410,6 +1452,11 @@ impl Reader {
                 Outcome::Repaint
             }
             action::FULL_PAGE => self.turn_full_page_over(panel),
+            action::WORD_HIGHLIGHT
+            | action::WORD_CLEAR
+            | action::WORD_NOTE
+            | action::WORD_BACK
+            | action::WORD_NEXT => self.word_action(name, panel),
             action::LIST_BACK => self.turn_list(false, panel),
             action::LIST_NEXT => self.turn_list(true, panel),
             action::LARGER => {
@@ -1504,11 +1551,17 @@ impl Reader {
     /// would have to keep its own copy of that list in step, and the failure
     /// when it drifted would be a control that silently did nothing.
     pub fn act_on(&mut self, action: kobo_ui::ActionId, panel: &DisplayMetrics) -> Outcome {
+        // An open field is the runtime's while it is up, and what comes back
+        // from it is an answer rather than a tap on anything drawn here.
+        if let Some(outcome) = self.note_typed(action, panel) {
+            return outcome;
+        }
         // A tap off an open panel arrives as Back from the scrim, and puts
         // the panel away. Passed on, it closed the book under the reader.
-        if action == kobo_ui::ActionId::BACK
-            && matches!(self.chrome, Chrome::Controls | Chrome::Light)
-        {
+        // Back from anything else drawn over the page does the same: a
+        // definition, a list or a field is somewhere the reader went from the
+        // page, and the page is where Back from it leads.
+        if action == kobo_ui::ActionId::BACK && self.chrome != Chrome::Hidden {
             self.set_chrome(Chrome::Hidden, panel);
             return Outcome::Repaint;
         }
@@ -1535,6 +1588,11 @@ impl Reader {
             action::LINKS.into(),
             action::LIST_BACK.into(),
             action::LIST_NEXT.into(),
+            action::WORD_HIGHLIGHT.into(),
+            action::WORD_CLEAR.into(),
+            action::WORD_NOTE.into(),
+            action::WORD_BACK.into(),
+            action::WORD_NEXT.into(),
         ];
         // Every size there is, rather than a hard-coded three. The stepper's
         // ends name the size either side of the one in force, so a range that
@@ -1587,6 +1645,11 @@ impl Reader {
     /// Draws whatever the reader should be looking at.
     #[must_use]
     pub fn screen(&self, title: &str) -> Screen {
+        match self.chrome {
+            Chrome::Word => return self.word_screen(title),
+            Chrome::Note => return self.note_screen(title),
+            _ => {}
+        }
         match self.list() {
             Some(list) => list.screen(title, self.list_page, &self.paging_of(&list, &self.panel)),
             None => self.book_screen(title),
@@ -1600,7 +1663,7 @@ impl Reader {
             Chrome::Contents => Some(self.contents_list()),
             Chrome::Links => Some(self.links_list()),
             Chrome::Marking => Some(self.marking_list()),
-            Chrome::Controls | Chrome::Light | Chrome::Hidden => None,
+            Chrome::Controls | Chrome::Light | Chrome::Hidden | Chrome::Word | Chrome::Note => None,
         }
     }
 
@@ -1739,11 +1802,13 @@ impl Reader {
             .page_turns(action::BACK, action::FORWARD)
             .reading_menu(action::CONTROLS);
         // Holding a finger on the page asks to mark something on it, which is
-        // what a hold does in every reader anyone has used. It opens the list
-        // of this page's paragraphs rather than dropping a caret into the
-        // text: a selection dragged out by hand on E Ink means chasing a
-        // handle that redraws a third of a second behind the finger, and a
-        // paragraph is the unit this reader marks in anyway.
+        // what a hold does in every reader anyone has used. Held on a word of
+        // the prose, it is that word that is looked up and can be kept; held
+        // anywhere else, it opens the list of this page's paragraphs rather
+        // than dropping a caret into the text: a selection dragged out by
+        // hand on E Ink means chasing a handle that redraws a third of a
+        // second behind the finger, and a paragraph is the unit a passage is
+        // marked in anyway.
         if !self.markable().is_empty() {
             screen = screen.hold(action::MARKING);
         }
@@ -2022,11 +2087,14 @@ impl Reader {
                 || "Unavailable passage".to_owned(),
                 |text| first_words(&text),
             );
+            // The note follows its words after a colon, the way a line in a
+            // commonplace book reads, so the two are told apart without a
+            // second row for every highlight.
             let label = annotation.note.as_ref().map_or(selected.clone(), |note| {
-                format!("{selected} — {}", first_words(note))
+                format!("{selected}: {}", first_words(note))
             });
             entries.push(Entry::new(
-                Some("Highlights & marginalia"),
+                Some("Highlights and notes"),
                 format!("{}{}", action::GO, annotation.range.start.block),
                 &label,
             ));
@@ -2345,21 +2413,30 @@ impl List {
         panel: &DisplayMetrics,
         shortened: &BTreeMap<usize, String>,
     ) -> bool {
-        let screen = self.build("", shown, position, shortened);
-        kobo_ui::with_text_scale(panel.text_scale, || {
-            screen.diagnostics(panel, &kobo_ui::Chrome::measuring(true))
-        })
-        .issues
-        .iter()
-        .all(|issue| {
-            !matches!(
-                issue.kind,
-                kobo_ui::LayoutIssueKind::ContentOverflow { .. }
-                    | kobo_ui::LayoutIssueKind::InteractiveOffscreen
-                    | kobo_ui::LayoutIssueKind::Clipped
-            )
-        })
+        shows_whole(&self.build("", shown, position, shortened), panel)
     }
+}
+
+/// Whether `screen` is drawn on `panel` with nothing cut, clipped or pushed
+/// where a finger cannot reach it.
+///
+/// Asked of the layout itself rather than worked out from heights, because
+/// the layout is what drops a line that does not fit and it does so without
+/// a word.
+fn shows_whole(screen: &Screen, panel: &DisplayMetrics) -> bool {
+    kobo_ui::with_text_scale(panel.text_scale, || {
+        screen.diagnostics(panel, &kobo_ui::Chrome::measuring(true))
+    })
+    .issues
+    .iter()
+    .all(|issue| {
+        !matches!(
+            issue.kind,
+            kobo_ui::LayoutIssueKind::ContentOverflow { .. }
+                | kobo_ui::LayoutIssueKind::InteractiveOffscreen
+                | kobo_ui::LayoutIssueKind::Clipped
+        )
+    })
 }
 
 /// The panel a list action opens, and none for Back to the book.

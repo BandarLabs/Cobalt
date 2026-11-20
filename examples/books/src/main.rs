@@ -2162,19 +2162,7 @@ impl Books {
             return false;
         }
         if let Some(outcome) = self.book.act(context, action) {
-            match outcome {
-                Outcome::Close => self.close_reader(context),
-                Outcome::Light(level) => {
-                    context.device().set_frontlight(level);
-                    self.keep_position(context);
-                    self.show(context);
-                }
-                Outcome::Save => {
-                    self.keep_position(context);
-                    self.show(context);
-                }
-                Outcome::Elsewhere | Outcome::Repaint => self.show(context),
-            }
+            self.after_reader(context, outcome);
             return true;
         }
         if action == ActionId::BACK || action == action_id(BACK) {
@@ -2240,6 +2228,23 @@ impl Books {
             return true;
         }
         false
+    }
+
+    /// Does what the reader left for Books to do about something it handled.
+    fn after_reader(&mut self, context: &mut Context, outcome: Outcome) {
+        match outcome {
+            Outcome::Close => self.close_reader(context),
+            Outcome::Light(level) => {
+                context.device().set_frontlight(level);
+                self.keep_position(context);
+                self.show(context);
+            }
+            Outcome::Save => {
+                self.keep_position(context);
+                self.show(context);
+            }
+            Outcome::Elsewhere | Outcome::Repaint => self.show(context),
+        }
     }
 
     /// The Articles shelf's taps. Returns whether the action was one.
@@ -2704,6 +2709,19 @@ impl KoboApp for Books {
         }
     }
 
+    /// A finger held on a word of the open book looks the word up, and from
+    /// there it can be highlighted or given a note. The shared reader owns
+    /// all of that; Books only hands the hold over.
+    fn on_text_hold(&mut self, context: &mut Context, action: ActionId, hit: kobo_sdk::TextHit) {
+        if matches!(self.view, View::Reading) {
+            if let Some(outcome) = self.book.hold(context, action, hit) {
+                self.after_reader(context, outcome);
+                return;
+            }
+        }
+        self.on_action(context, action);
+    }
+
     fn on_action(&mut self, context: &mut Context, action: ActionId) {
         if self.read_action(context, action) {
             return;
@@ -2812,6 +2830,12 @@ impl KoboApp for Books {
                 if self.book.took_light(percent) {
                     self.show(context);
                 }
+            }
+            return;
+        }
+        if let DeviceRequest::LookupWord { .. } = request {
+            if self.book.took_definition(&request, &result) && matches!(self.view, View::Reading) {
+                self.show(context);
             }
             return;
         }
@@ -3657,6 +3681,84 @@ mod tests {
             runner.app().book.reader().map(kobo_read::Reader::chrome),
             Some(kobo_read::Chrome::Hidden),
             "Back to the book opened the controls"
+        );
+    }
+
+    /// The first word the page would report a held finger on.
+    fn a_word_on(screen: &Screen) -> kobo_sdk::TextHit {
+        let layout = screen.layout_with(&CLARA_BW_METRICS, &Chrome::with_back(true));
+        (0..CLARA_BW_METRICS.height)
+            .step_by(8)
+            .find_map(|y| layout.hit_text(CLARA_BW_METRICS.width / 4, y))
+            .expect("a page of prose has a word under a finger")
+    }
+
+    #[test]
+    fn holding_a_word_in_a_book_looks_it_up_and_a_highlight_made_there_is_kept_with_the_place() {
+        let mut runner = started_with(None, None);
+        let page = shown(runner.action(action_id("book-0")));
+        let commands = runner.text_hold(action_id(kobo_read::action::MARKING), a_word_on(&page));
+        let asked = commands
+            .iter()
+            .find_map(|command| match command {
+                Command::Device(DeviceRequest::LookupWord { word, .. }) => Some(word.clone()),
+                _ => None,
+            })
+            .expect("the held word was asked about");
+        assert!(
+            asked.chars().all(char::is_alphanumeric),
+            "a whole word and nothing round it is looked up, not {asked:?}"
+        );
+        assert!(words(&shown(commands)).contains("Looking up"));
+
+        // The light reading asked for when the book opened is answered first,
+        // as the runtime answers in the order it was asked.
+        runner.device_result(DeviceResult::Frontlight { percent: 20 });
+        let defined = runner.device_result(DeviceResult::Dictionary {
+            word: asked.clone(),
+            entries: vec![kobo_sdk::DictionaryEntry {
+                dictionary: "Pocket English".into(),
+                language: "en".into(),
+                headword: asked.clone(),
+                definition: "What the word means.".into(),
+            }],
+        });
+        let definition = shown(defined);
+        assert!(words(&definition).contains("What the word means."));
+        assert!(definition.validate(&CLARA_BW_METRICS).is_empty());
+
+        let kept = runner.action(action_id(kobo_read::action::WORD_HIGHLIGHT));
+        assert!(
+            saved(&kept, READING).is_some(),
+            "the highlight was not written down with the place"
+        );
+        let memory = runner.app().book.memory().cloned().expect("a book is open");
+        assert_eq!(memory.annotations.len(), 1);
+        assert_eq!(runner.app().view, View::Reading);
+    }
+
+    #[test]
+    fn a_word_no_dictionary_has_says_how_to_add_one_and_back_returns_to_the_page() {
+        let mut runner = started_with(None, None);
+        let page = shown(runner.action(action_id("book-0")));
+        runner.text_hold(action_id(kobo_read::action::MARKING), a_word_on(&page));
+        runner.device_result(DeviceResult::Frontlight { percent: 20 });
+        let missing =
+            shown(runner.device_result(DeviceResult::Denied(kobo_sdk::DenyReason::Unsupported)));
+        let text = words(&missing);
+        assert!(text.contains("No dictionary on this reader has this word."));
+        assert!(text.contains("kobo dict install"));
+        assert!(missing.validate(&CLARA_BW_METRICS).is_empty());
+
+        runner.action(ActionId::BACK);
+        assert_eq!(
+            runner.app().view,
+            View::Reading,
+            "Back from a definition closed the book"
+        );
+        assert_eq!(
+            runner.app().book.reader().map(kobo_read::Reader::chrome),
+            Some(kobo_read::Chrome::Hidden)
         );
     }
 
