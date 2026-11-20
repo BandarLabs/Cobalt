@@ -51,16 +51,38 @@ and keeps looking for a minute.
 ## Sending a file
 
 `kobo send FILE` sends a file or folder to the app that opens it and says
-which app received it: photos to Frame, Markdown notes to Vault, OPML lists to
-Feeds, CBZ comics to Panels, story files to Parser, and Anki APKG or COLPKG
-decks to Flashcards, which imports them first. A folder of PDF scores goes to
-Music Stand. A single PDF could be a score for Music Stand or a pattern for
-Needles, so you are asked which, or you name it with `--to musicstand` or
-`--to needles`. Panels keeps one comic, so a send to it asks before it
-replaces the one there; `--replace` answers yes in a script.
+which app received it: books and documents to Books, photos to Frame,
+Markdown notes to Vault, OPML lists to Feeds, CBZ comics to Panels, story
+files to Parser, and Anki APKG or COLPKG decks to Flashcards, which imports
+them first. A folder of PDF scores goes to Music Stand. A single PDF could be
+a score for Music Stand, a pattern for Needles or a document to read, so you
+are asked which, or you name it with `--to musicstand`, `--to needles` or
+`--to books`. Panels keeps one comic, so a send to it asks before it replaces
+the one there; `--replace` answers yes in a script.
 `kobo send --preview FILE --out DIR` checks or renders the file on this
 computer without sending it, and `kobo send --retry` repeats the last send
 that failed.
+
+### Books and documents
+
+`kobo send novel.epub` copies the book over Wi-Fi into a `Books` folder on
+the reader's card, where Books lists it, and the reader shows a notice that it
+arrived. Text and HTML files (`.txt`, `.html`, `.htm`, `.xhtml`) and Kobo
+EPUBs (`.kepub.epub`) go the same way, and so does a folder of any of these,
+one file at a time. A Markdown file goes to Vault unless you say
+`--to books`.
+
+Books opens EPUB, text, HTML and Markdown itself. It lists a PDF or a Kobo
+EPUB, and the Kobo's own reader opens those. A file larger than Books opens
+is sent all the same, and the command says so; `kobo send --preview FILE`
+says it before anything is sent. One send copies a file of up to 512 MB.
+
+A book never replaces another. A different file with the same name is saved
+beside it as `novel (2).epub`, and a book the reader already has in its
+`Books` folder, under any name, is recognised and not copied again. The card
+is asked for room first: a send leaves 64 MB free for the Kobo's own library
+and says how much there is when a book does not fit. A name with characters
+the card refuses, such as `?` or `:`, is saved without them.
 
 ## Sending a web article
 
