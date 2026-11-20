@@ -36,7 +36,7 @@
 	<key>NSRemovableVolumesUsageDescription</key>
 	<string>Cobalt reads your Kobo’s storage while it is plugged in, to see which reader it is and what is on it, and writes to it only when you install, update or remove something.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Cobalt finds your Kobo on this network and sends it the files and articles you choose, over Wi-Fi.</string>
+	<string>Cobalt looks for your Kobo on your Wi-Fi network after installing, and sends it the books and articles you choose.</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

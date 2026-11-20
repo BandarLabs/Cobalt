@@ -143,6 +143,8 @@ public final class Companion: ObservableObject {
     private var client: Client?
     private var misses = 0
     private var lastMiss: Failure?
+    /// When a Kobo was first seen plugged in and offering no storage.
+    private var unconnectedSince: Date?
     private var shotsInFlight = 0
     private var shotsWaiting: [String] = []
 
@@ -193,6 +195,29 @@ public final class Companion: ObservableObject {
     }
 
     public var clock: Date { now() }
+
+    /// The readers this computer has been linked to.
+    public var saved: [SavedLink] { state?.saved ?? [] }
+
+    /// Whether a Kobo has been plugged in and not connected for long
+    /// enough that tapping Connect is probably not what is missing.
+    public var connectStuck: Bool {
+        guard let since = unconnectedSince else { return false }
+        return now().timeIntervalSince(since) >= 20
+    }
+
+    /// Whether this reader has Cobalt and this computer has never been
+    /// linked to it, which the same install puts right. Only said by a
+    /// server that keeps the list of linked readers.
+    public func needsLinking(_ reader: Reader) -> Bool {
+        state?.saved != nil && reader.cobalt != nil && reader.savedAs == nil && (reader.cobaltProblem ?? "").isEmpty && reader.supported
+    }
+
+    /// Cobalt was installed from here and the reader has not been found
+    /// since, with nothing looking for it now.
+    public var awaitingReader: Bool {
+        state?.awaiting == true && reader.job == nil
+    }
 
     /// The jobs still running, which is what closing the window would walk
     /// away from.
@@ -275,6 +300,11 @@ public final class Companion: ObservableObject {
         // seconds.
         if fresh != state { state = fresh }
         if !fresh.readers.isEmpty, !reader.notice.isEmpty { reader.notice = "" }
+        if Advice.absence(fresh) == .unconnected {
+            if unconnectedSince == nil { unconnectedSince = now() }
+        } else {
+            unconnectedSince = nil
+        }
         if first { resume(fresh.jobs) }
         settle()
     }
@@ -355,6 +385,47 @@ public final class Companion: ObservableObject {
         } catch {
             let failure = heard(error)
             if place == .apps { apps.refusal = failure } else { reader.error = failure.sentence }
+        }
+    }
+
+    /// Looks again for the reader that was installed and not yet found.
+    public func lookAgain() async {
+        guard let client else { return }
+        reader.error = ""
+        do {
+            let id = try await client.findReader()
+            reader.job = FollowedJob(id: id, kind: .reader, title: "Finding the reader", volume: nil, began: now())
+            await poll(.reader)
+        } catch {
+            reader.error = heard(error).sentence
+        }
+    }
+
+    /// Ejects the reader an install has finished writing to and goes on to
+    /// look for it, which is what the install would have done by itself
+    /// had the system let it eject.
+    public func ejectThenLook(volume: String) async {
+        await eject(volume: volume)
+        if reader.error.isEmpty { await lookAgain() }
+    }
+
+    public func rename(saved name: String, to new: String) async {
+        guard let client else { return }
+        reader.error = ""
+        do {
+            state?.saved = try await client.renameReader(name, to: new.trimmingCharacters(in: .whitespacesAndNewlines))
+        } catch {
+            reader.error = heard(error).sentence
+        }
+    }
+
+    public func forget(saved name: String) async {
+        guard let client else { return }
+        reader.error = ""
+        do {
+            state?.saved = try await client.forgetReader(name)
+        } catch {
+            reader.error = heard(error).sentence
         }
     }
 
@@ -721,6 +792,7 @@ public final class Companion: ObservableObject {
             job.ok = report.ok
             job.code = report.code
             job.volume = report.volume ?? job.volume
+            job.setup = report.setup ?? job.setup
             set(job, in: slot)
             if !job.running { await finished(slot) }
         } catch {
@@ -802,7 +874,8 @@ public final class Companion: ObservableObject {
     /// Picks up jobs that were already running when the window opened.
     private func resume(_ jobs: [JobSummary]) {
         if let running = Advice.runningJob(jobs, kind: .reader) {
-            let job = FollowedJob(id: running.id, kind: .reader, title: running.title, volume: running.volume, began: now())
+            var job = FollowedJob(id: running.id, kind: .reader, title: running.title, volume: running.volume, began: now())
+            job.setup = running.setup
             // The two sorts of reader job share a queue and are shown in
             // different places. The title is the only thing that tells
             // them apart from here.

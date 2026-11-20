@@ -906,3 +906,171 @@ struct InstallStageTests {
         #expect(JobScene.scene(for: job("Installing Cobalt", said: "found Kobo Clara BW\n"), state: nil, now: Date()).turned == false)
     }
 }
+
+@MainActor
+@Suite("A first install, from plugging in to saved")
+struct FirstRunTests {
+    func setup(_ stage: String, waited: Int = 0, more: String = "") -> String {
+        #"{"stage": "\#(stage)", "waited": \#(waited), "limit": 300\#(more.isEmpty ? "" : ", " + more)}"#
+    }
+
+    func running(_ stage: String) -> String {
+        #"{"id": 3, "kind": "reader", "title": "Installing Cobalt", "running": true, "ok": null, "volume": "/Volumes/KOBOeReader", "setup": \#(setup(stage))}"#
+    }
+
+    func report(_ stage: String, running: Bool, ok: String = "null", waited: Int = 0, more: String = "") -> String {
+        #"{"id": 3, "kind": "reader", "title": "Installing Cobalt", "running": \#(running), "ok": \#(ok), "text": "", "next": 0, "volume": "/Volumes/KOBOeReader", "setup": \#(setup(stage, waited: waited, more: more))}"#
+    }
+
+    @Test("What the server adds for a first install is read, and a server that does not send it is still understood")
+    func decodes() {
+        let state: ServerState = decoded(stateJSON(readers: readerJSON(more: #""saved_as": "kobo", "menu_corner": "top left""#), jobs: running("finding"), more: #""saved": [{"name": "kobo", "volume": "/Volumes/KOBOeReader"}, {"name": "study", "volume": null}], "awaiting": true"#))
+        #expect(state.saved?.map(\.name) == ["kobo", "study"])
+        #expect(state.saved?[1].volume == nil)
+        #expect(state.awaiting)
+        #expect(state.readers[0].savedAs == "kobo")
+        #expect(state.readers[0].menuCorner == "top left")
+        #expect(state.jobs[0].setup?.stage == .finding)
+        #expect(state.jobs[0].setup?.limit == 300)
+        let older: ServerState = decoded(stateJSON(readers: readerJSON()))
+        #expect(older.saved == nil)
+        #expect(older.awaiting == false)
+        #expect(older.readers[0].savedAs == nil)
+        // A stage this build has not heard of is kept as that, not refused.
+        let odd: JobReport = decoded(report("polishing", running: true))
+        #expect(odd.setup?.stage == .unknown)
+    }
+
+    @Test("The steps tick off as the server says each is behind it, and a window opened part way starts at the right one")
+    func stagesFollowTheServer() async {
+        let board = Board(["GET /api/state": .json(200, stateJSON(jobs: running("writing"), more: #""saved": []"#)), "GET /api/job": .json(200, report("writing", running: true))])
+        let stage = StandIn.stage(board.script)
+        defer { stage.close() }
+        let store = companion(stage)
+        await store.start()
+        // Found running when the window opened, with how far it had got.
+        #expect(store.reader.job?.setup?.stage == .writing)
+        func states() -> [JobScene.Stage.State] { JobScene.scene(for: store.reader.job!, state: store.state, now: Date()).stages.map(\.state) }
+        #expect(states() == [.current, .waiting, .waiting, .waiting])
+        for (said, expected): (String, [JobScene.Stage.State]) in [
+            ("eject", [.done, .current, .waiting, .waiting]),
+            ("finding", [.done, .done, .current, .waiting]),
+            ("securing", [.done, .done, .done, .current]),
+        ] {
+            board["GET /api/job"] = .json(200, report(said, running: true, waited: 40))
+            await store.tick()
+            #expect(states() == expected, "\(said)")
+        }
+        board["GET /api/job"] = .json(200, report("ready", running: false, ok: "true", more: #""saved_as": "kobo", "secured": true"#))
+        await store.tick()
+        #expect(states() == [.done, .done, .done, .done])
+        #expect(store.reader.job?.setup?.savedAs == "kobo")
+        #expect(JobScene.scene(for: store.reader.job!, state: store.state, now: Date()).stages.map(\.title) == ["Copying Cobalt to the reader", "Ejecting the reader", "Finding the reader on Wi-Fi", "Saving it on this computer"])
+    }
+
+    @Test("A reader that is not found is looked for again when asked, and a look that cannot start says why")
+    func lookingAgain() async {
+        let board = Board([
+            "GET /api/state": .json(200, stateJSON(more: #""saved": [], "awaiting": true"#)),
+            "POST /api/reader/find": .json(200, #"{"job": 3}"#),
+            "GET /api/job": .json(200, report("finding", running: true, waited: 5)),
+        ])
+        let stage = StandIn.stage(board.script)
+        defer { stage.close() }
+        let store = companion(stage)
+        await store.start()
+        // Nothing is running and a reader is owed: the place says so and offers to look.
+        #expect(store.awaitingReader)
+        await store.lookAgain()
+        #expect(store.reader.job?.setup?.stage == .finding)
+        #expect(store.awaitingReader == false)
+        #expect(String(decoding: stage.asked.last { $0.path == "/api/reader/find" }!.body, as: UTF8.self) == "{}")
+
+        await store.dismissReaderJob()
+        board["POST /api/reader/find"] = .json(409, refusal("refused", "No reader is waiting to be found."))
+        await store.lookAgain()
+        #expect(store.reader.job == nil)
+        #expect(store.reader.error == "No reader is waiting to be found.")
+    }
+
+    @Test("A Kobo plugged in for twenty seconds without connecting is given the two real causes, and not before")
+    func stuckOnConnect() async {
+        let board = Board(["GET /api/state": .json(200, stateJSON(more: #""attached": 1"#))])
+        let stage = StandIn.stage(board.script)
+        defer { stage.close() }
+        let clock = Clock()
+        let store = companion(stage, clock: clock)
+        await store.start()
+        #expect(store.connectStuck == false)
+        clock.pass(19)
+        await store.refresh()
+        #expect(store.connectStuck == false)
+        clock.pass(2)
+        #expect(store.connectStuck)
+        // Connected: the count is over, and starts afresh for the next one.
+        board["GET /api/state"] = .json(200, stateJSON(readers: readerJSON()))
+        await store.refresh()
+        #expect(store.connectStuck == false)
+        #expect(FirstRun.connectCauses.count == 2)
+    }
+
+    @Test("A reader with Cobalt that this computer was never linked to is offered linking, only by a server that keeps the list")
+    func linking() async {
+        let unlinked = readerJSON(standing: "current", cobalt: "0.3.37")
+        let knows = StandIn.stage(StandIn.routes(["GET /api/state": .json(200, stateJSON(readers: unlinked, more: #""saved": []"#))]))
+        defer { knows.close() }
+        let store = companion(knows)
+        await store.start()
+        #expect(store.needsLinking(store.chosen.reader!))
+
+        let silent = StandIn.stage(StandIn.routes(["GET /api/state": .json(200, stateJSON(readers: unlinked))]))
+        defer { silent.close() }
+        let older = companion(silent)
+        await older.start()
+        #expect(older.needsLinking(older.chosen.reader!) == false)
+
+        let linked = StandIn.stage(StandIn.routes(["GET /api/state": .json(200, stateJSON(readers: readerJSON(standing: "current", cobalt: "0.3.37", more: #""saved_as": "kobo""#), more: #""saved": [{"name": "kobo", "volume": "/Volumes/KOBOeReader"}]"#))]))
+        defer { linked.close() }
+        let done = companion(linked)
+        await done.start()
+        #expect(done.needsLinking(done.chosen.reader!) == false)
+        #expect(done.saved.map(\.name) == ["kobo"])
+    }
+
+    @Test("A saved reader is renamed and forgotten by name, and a name that is taken is refused in the server's words")
+    func savedReaders() async throws {
+        let board = Board([
+            "GET /api/state": .json(200, stateJSON(more: #""saved": [{"name": "kobo", "volume": null}, {"name": "study", "volume": null}]"#)),
+            "POST /api/readers/rename": .json(200, #"{"saved": [{"name": "bedside", "volume": null}, {"name": "study", "volume": null}]}"#),
+            "POST /api/readers/forget": .json(200, #"{"saved": [{"name": "bedside", "volume": null}]}"#),
+        ])
+        let stage = StandIn.stage(board.script)
+        defer { stage.close() }
+        let store = companion(stage)
+        await store.start()
+        await store.rename(saved: "kobo", to: "  bedside ")
+        #expect(store.saved.map(\.name) == ["bedside", "study"])
+        let renamed = try JSONSerialization.jsonObject(with: stage.asked.last!.body) as? [String: String]
+        #expect(renamed == ["name": "kobo", "to": "bedside"])
+        await store.forget(saved: "study")
+        #expect(store.saved.map(\.name) == ["bedside"])
+
+        board["POST /api/readers/rename"] = .json(409, refusal("refused", "Another reader is already saved as “study”."))
+        await store.rename(saved: "bedside", to: "study")
+        #expect(store.reader.error == "Another reader is already saved as “study”.")
+        #expect(store.saved.map(\.name) == ["bedside"])
+    }
+
+    @Test("The words of a first install are the owner's: no paths, no script names, and never a command to type")
+    func ownersWords() {
+        let all = FirstRun.plan(undo: false) + FirstRun.plan(undo: true) + FirstRun.connectCauses + FirstRun.onTheReader(menuCorner: "top left")
+            + FirstRun.notFoundCauses(.notFound) + FirstRun.notFoundCauses(.several) + FirstRun.notFoundCauses(.noNetwork) + [FirstRun.localNetworkAhead]
+        for sentence in all {
+            for technical in ["/", ".adds", "SSH", "ssh", "kobo ", "NickelMenu", ".sh", "--"] {
+                #expect(!sentence.contains(technical), "\(sentence)")
+            }
+        }
+        #expect(FirstRun.onTheReader(menuCorner: "top left")[2] == "Open the menu at the top left of its screen and choose Cobalt.")
+        #expect(FirstRun.onTheReader(menuCorner: nil)[2].contains("bottom right"))
+    }
+}

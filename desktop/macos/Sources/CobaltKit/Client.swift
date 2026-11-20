@@ -98,6 +98,20 @@ public final class Client: Sendable {
         let _: Ejected = try await change("/api/reader/eject", ["volume": .text(volume)])
     }
 
+    /// Looks again on Wi-Fi for the reader Cobalt was installed on from
+    /// this computer and that has not been saved yet.
+    public func findReader() async throws -> Int {
+        try await (change("/api/reader/find", [:]) as JobStarted).job
+    }
+
+    public func renameReader(_ name: String, to new: String) async throws -> [SavedLink] {
+        try await (change("/api/readers/rename", ["name": .text(name), "to": .text(new)]) as SavedAnswer).saved
+    }
+
+    public func forgetReader(_ name: String) async throws -> [SavedLink] {
+        try await (change("/api/readers/forget", ["name": .text(name)]) as SavedAnswer).saved
+    }
+
     /// What is on the reader. No network is involved.
     public func apps(volume: String) async throws -> [AppEntry] {
         try await (ask("/api/apps", ["volume": volume]) as AppsAnswer).apps

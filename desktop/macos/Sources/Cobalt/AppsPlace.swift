@@ -142,7 +142,7 @@ private struct Browse: View {
                 if !front.onReader.isEmpty {
                     shelf("On this reader", front.onReader) {
                         if front.updates.count > 1, query.isEmpty {
-                            Button("Update All") { Task { await store.installApps(front.updates) } }
+                            Button("Update All \(front.updates.count)") { Task { await store.installApps(front.updates) } }
                                 .controlSize(.small)
                                 .disabled(busy || store.appsReader?.writable == false)
                                 .accessibilityLabel("Update all \(front.updates.count) apps")

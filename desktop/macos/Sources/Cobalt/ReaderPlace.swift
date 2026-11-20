@@ -13,6 +13,17 @@ struct ReaderPlace: View {
                 JobPane(job: job)
             } else if store.state == nil {
                 Standstill(headline: "Looking for a reader.", detail: "", working: true) {}
+            } else if store.awaitingReader, store.chosen == .none {
+                // Cobalt was installed from here and the reader has not
+                // been found since. The window was closed in between, and
+                // this is where it was.
+                Pane {
+                    Text("The reader has not been found on Wi-Fi yet.")
+                        .font(Paper.serif(24))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                    LookAgain(stage: .notFound)
+                }
             } else {
                 switch store.chosen {
                 case .none:
@@ -27,6 +38,9 @@ struct ReaderPlace: View {
                     }
                 }
             }
+        }
+        .onChange(of: store.chosen.reader?.menuCorner) { corner in
+            if let corner { UserDefaults.standard.set(corner, forKey: "menuCorner") }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -67,12 +81,18 @@ private struct NoReader: View {
             case .unconnected:
                 title("A reader", screen: .connect, present: true, headline: "The reader is plugged in but has not connected.")
                 Prose("Tap Connect on its screen, or unplug the cable and plug it in again if the question has gone.")
+                TimelineView(.periodic(from: .now, by: 2)) { _ in
+                    if store.connectStuck {
+                        SaidView(blocks: FirstRun.connectCauses.map { .item($0) })
+                    }
+                }
             case .none, .present:
                 title("A reader", screen: .blank, present: false, headline: "No reader is connected.")
                 if !store.reader.notice.isEmpty {
                     Note(store.reader.notice, kind: .done)
                 }
                 Prose("Plug in your Kobo with a cable that carries data and tap Connect on its screen.")
+                SavedReaders()
             }
         }
     }
@@ -160,6 +180,9 @@ private struct OneReader: View {
             if !advice.reason.isEmpty {
                 Note(advice.reason, kind: reader.cobaltProblem == nil ? .plain : .caution)
             }
+            if linking {
+                Note("This computer has not been linked to this reader, so it cannot send to it.")
+            }
             if advice.primary != nil, let untested = reader.untested, !untested.isEmpty {
                 Note(Said.sentence(untested))
             }
@@ -185,9 +208,14 @@ private struct OneReader: View {
                         .keyboardShortcut(.defaultAction)
                         .disabled(locked)
                 case nil:
-                    EmptyView()
+                    if linking {
+                        Button("Link This Computer…") { plan(false) }
+                            .leading()
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(locked)
+                    }
                 }
-                if advice.repair {
+                if advice.repair, !linking {
                     Button("Install Again…") { plan(false) }
                         .disabled(locked)
                 }
@@ -205,8 +233,11 @@ private struct OneReader: View {
             if reader.cobalt != nil {
                 Pointer(title: "Show the apps on this reader") { store.place = .apps }
             }
+            SavedReaders()
         }
     }
+
+    private var linking: Bool { store.needsLinking(reader) }
 
     private var facts: some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 4) {
@@ -257,8 +288,10 @@ private struct PlanPane: View {
 
     private var release: String { plan.release ?? store.computer?.release ?? "" }
 
+    private var linking: Bool { !plan.undo && store.needsLinking(reader) }
+
     private var title: String {
-        plan.undo ? "What removing Cobalt changes" : "What installing Cobalt \(release) changes"
+        plan.undo ? "What removing Cobalt changes" : linking ? "What linking this computer changes" : "What installing Cobalt \(release) changes"
     }
 
     /// The button says what will happen in the words the reader's standing
@@ -266,8 +299,9 @@ private struct PlanPane: View {
     /// an update.
     private var verb: String {
         if plan.undo { return "Remove Cobalt" }
+        if linking { return "Link This Computer" }
         guard reader.cobalt != nil else { return "Install Cobalt \(release)" }
-        return reader.standing == .current ? "Install \(release) Again" : "Update to \(release)"
+        return reader.standing == .current ? "Install Again" : "Update to \(release)"
     }
 
     var body: some View {
@@ -281,16 +315,25 @@ private struct PlanPane: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(plan.lines.enumerated()), id: \.offset) { index, line in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("\(index + 1).")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, alignment: .trailing)
-                        Text(Said.planStep(line))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .textSelection(.enabled)
+            // What it comes to, in the owner's words. The dry run's own
+            // lines name files and settings, and are there for whoever
+            // wants them and not in the way of whoever does not.
+            SaidView(blocks: FirstRun.plan(undo: plan.undo).map { .item($0) })
+            if !plan.undo {
+                Note(FirstRun.localNetworkAhead)
+            }
+            Folded(title: "Exactly what changes") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(plan.lines.enumerated()), id: \.offset) { index, line in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("\(index + 1).")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                                .frame(width: 22, alignment: .trailing)
+                            Text(Said.planStep(line))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             }
@@ -337,7 +380,10 @@ private struct JobPane: View {
         // moves while nothing else in the record is changing.
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             let scene = JobScene.scene(for: job, state: store.state, now: store.clock)
-            Pane {
+            if let setup = job.setup, setup.stage != .failed, setup.stage != .unknown, !job.failed || setup.stage != .writing {
+                SetupPane(job: job, scene: scene, setup: setup)
+            } else {
+              Pane {
                 Text(scene.heading)
                     .font(Paper.serif(24))
                     .fixedSize(horizontal: false, vertical: true)
@@ -347,6 +393,7 @@ private struct JobPane: View {
                 case .done: done(scene)
                 case .failed: failed(scene)
                 }
+              }
             }
         }
     }
@@ -360,25 +407,7 @@ private struct JobPane: View {
                 .accessibilityLabel(scene.heading)
         } else {
             // Which of four things is happening, not a log of them.
-            VStack(alignment: .leading, spacing: 9) {
-                ForEach(Array(scene.stages.enumerated()), id: \.offset) { _, stage in
-                    HStack(alignment: .center, spacing: 10) {
-                        Group {
-                            switch stage.state {
-                            case .done: Image(systemName: "checkmark")
-                            case .current: ProgressView().controlSize(.small)
-                            case .waiting: Image(systemName: "circle").foregroundStyle(.tertiary)
-                            }
-                        }
-                        .font(.body.weight(.medium))
-                        .frame(width: 18, height: 18)
-                        Text(stage.title)
-                            .foregroundStyle(stage.state == .waiting ? .secondary : .primary)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(stage.title), \(stage.state == .done ? "done" : stage.state == .current ? "in progress" : "not started")")
-                }
-            }
+            StageList(stages: scene.stages)
         }
         Text(scene.elapsed)
             .font(.callout)

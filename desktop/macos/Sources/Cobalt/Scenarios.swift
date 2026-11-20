@@ -126,7 +126,8 @@ enum Scenarios {
         untested: String? = nil,
         problem: String? = nil,
         free: Int = 5_200_000_000,
-        writable: Bool = true
+        writable: Bool = true,
+        savedAs: String? = nil
     ) -> [String: Any] {
         [
             "volume": volume, "model": model, "model_code": "N365", "firmware": firmware,
@@ -134,6 +135,7 @@ enum Scenarios {
             "standing": standing,
             "cobalt": cobalt.map { ["cobalt_version": $0, "channel": "stable"] as [String: Any] } ?? NSNull(),
             "cobalt_problem": problem ?? NSNull(), "free_bytes": free, "writable": writable,
+            "saved_as": savedAs ?? NSNull(), "menu_corner": "bottom right",
         ]
     }
 
@@ -144,16 +146,49 @@ enum Scenarios {
         blocked: [String] = [],
         release: String? = "0.3.37",
         api: Int = 1,
-        kobo: String = "0.3.37"
+        kobo: String = "0.3.37",
+        saved: [[String: Any]]? = nil,
+        awaiting: Bool = false,
+        ejects: Bool = true
     ) -> StandIn.Reply {
-        ok([
+        var answer: [String: Any] = ["awaiting": awaiting]
+        // A server that keeps no list of linked readers sends none, and
+        // most states here are drawn as that server would have them.
+        if let saved { answer["saved"] = saved }
+        return ok(answer.merging([
             "api": api,
             "computer": [
                 "kobo": kobo, "os": "macos", "release": release ?? NSNull(),
-                "release_problem": release == nil ? noRelease : NSNull(), "ejects": true, "upload_limit": 536_870_912,
+                "release_problem": release == nil ? noRelease : NSNull(), "ejects": ejects, "upload_limit": 536_870_912, "network": true,
             ] as [String: Any],
             "attached": attached ?? readers.count, "blocked": blocked, "readers": readers, "jobs": jobs,
-        ])
+        ]) { old, _ in old })
+    }
+
+    /// How far a first install has got, as the server reports it.
+    private static func setup(_ stage: String, waited: Int = 0, savedAs: String? = nil, secured: Bool? = nil, notes: [String] = []) -> [String: Any] {
+        ["stage": stage, "waited": waited, "limit": 300, "saved_as": savedAs ?? NSNull(), "secured": secured ?? NSNull(), "notes": notes]
+    }
+
+    /// A first install caught at one stage: found running when the window
+    /// opened, which is also what resuming after the window was closed is.
+    private static func path(_ name: String, _ stage: String, running: Bool, ok succeeded: Bool? = nil, readers: [[String: Any]] = [], waited: Int = 0, savedAs: String? = nil, secured: Bool? = nil, notes: [String] = [], ejects: Bool = true, text: String = setUp, after seconds: TimeInterval = 70) -> Scenario {
+        let progress = setup(stage, waited: waited, savedAs: savedAs, secured: secured, notes: notes)
+        var summary = Scenarios.running(3, "Installing Cobalt")
+        summary["setup"] = progress
+        var report: [String: Any] = [
+            "id": 3, "kind": "reader", "title": "Installing Cobalt", "running": running, "ok": succeeded ?? NSNull(), "code": NSNull(),
+            "text": text, "next": text.utf8.count, "volume": clara, "setup": progress,
+        ]
+        if !running, succeeded == nil { report["ok"] = true }
+        return Scenario(
+            name: name,
+            routes: ["GET /api/state": state(readers, jobs: [summary], saved: [], ejects: ejects), "GET /api/job": ok(report)],
+            act: { store, _ in
+                await store.tick()
+                drift = seconds
+            }
+        )
     }
 
     private static func job(_ id: Int, _ title: String, running: Bool, ok succeeded: Bool? = nil, text: String = "", kind: String = "reader", volume: String? = clara) -> StandIn.Reply {
@@ -442,7 +477,33 @@ enum Scenarios {
 
     // The states.
 
-    static let all: [Scenario] = reader + work + apps + browserAndSend + window
+    static let all: [Scenario] = reader + work + firstRun + apps + browserAndSend + window
+
+    private static let linked: [[String: Any]] = [["name": "kobo", "volume": clara], ["name": "study", "volume": NSNull()]]
+
+    private static let firstRun: [Scenario] = [
+        Scenario(name: "path-tap-connect-stuck", routes: ["GET /api/state": state(attached: 1, saved: [])], act: { _, _ in drift = 25 }),
+        path("path-writing", "writing", running: true, readers: [reader()], text: found, after: 48),
+        path("path-eject", "eject", running: false, readers: [reader(standing: "current", cobalt: "0.3.37")]),
+        path("path-eject-by-hand", "eject", running: false, readers: [reader(standing: "current", cobalt: "0.3.37")], ejects: false),
+        path("path-finding", "finding", running: true, waited: 40),
+        path("path-finding-long", "finding", running: true, waited: 215),
+        path("path-securing", "securing", running: true, waited: 96),
+        path("path-ready", "ready", running: false, savedAs: "kobo", secured: true),
+        path("path-ready-with-notes", "ready", running: false, savedAs: "kobo", secured: false, notes: ["The welcome note could not be added to the library."]),
+        path("path-not-found", "not_found", running: false, ok: false, waited: 300),
+        path("path-several", "several", running: false, ok: false),
+        path("path-no-network", "no_network", running: false, ok: false),
+        Scenario(name: "path-awaiting", routes: ["GET /api/state": state(saved: [], awaiting: true)]),
+        Scenario(name: "path-look-again-refused", routes: ["GET /api/state": state(saved: [], awaiting: true), "POST /api/reader/find": refuse(409, "busy", "Installing apps is still running. Wait for it to finish, then look again.")], act: { store, _ in await store.lookAgain() }),
+        Scenario(name: "path-link", routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37")], saved: [])]),
+        Scenario(name: "path-link-plan", routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37")], saved: []), "GET /api/plan": installPlan], act: { store, _ in await store.openPlan(undo: false) }),
+        Scenario(name: "reader-none-with-saved", routes: ["GET /api/state": state(saved: [["name": "kobo", "volume": NSNull()], ["name": "study", "volume": NSNull()]])]),
+        Scenario(name: "reader-current-with-saved", routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", savedAs: "kobo")], saved: linked)]),
+        Scenario(name: "reader-rename-refused", routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37", savedAs: "kobo")], saved: linked), "POST /api/readers/rename": refuse(409, "refused", "Another reader is already saved as “study”.")], act: { store, _ in await store.rename(saved: "kobo", to: "study") }),
+        Scenario(name: "ask-rename", routes: ["GET /api/state": withCobalt], question: { _ in Questions.renaming("kobo").0 }),
+        Scenario(name: "ask-forget", routes: ["GET /api/state": withCobalt], question: { _ in Questions.forgetting("kobo") }),
+    ]
 
     private static let reader: [Scenario] = [
         Scenario(name: "reader-looking", routes: ["GET /api/state": .silence]),

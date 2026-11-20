@@ -27,6 +27,8 @@ public struct FollowedJob: Equatable, Identifiable, Sendable {
     /// measured from.
     public var lastHeard: Date
     public var again: Again?
+    /// How far a first install has got, when the server says.
+    public var setup: SetupProgress?
 
     public init(id: Int, kind: JobKind, title: String, volume: String?, began: Date, again: Again? = nil) {
         self.id = id
@@ -71,6 +73,7 @@ public struct JobScene: Equatable, Sendable {
     public var said: [Block] = []
     /// Whether the command has turned to the steps for the reader.
     public var turned = false
+    public var setup: SetupProgress?
 
     public struct Stage: Equatable, Sendable {
         public enum State: Equatable, Sendable { case done, current, waiting }
@@ -91,7 +94,30 @@ public struct JobScene: Equatable, Sendable {
         ("Waiting for the reader on Wi-Fi", "The reader is back on Wi-Fi"),
     ]
 
+    /// The same four things in the server's own account of them, which is
+    /// what is used whenever the server gives one. Reading setup's printed
+    /// lines is kept for a kobo command too old to say.
+    private static let told: [(title: String, stage: SetupStage)] = [
+        ("Copying Cobalt to the reader", .writing),
+        ("Ejecting the reader", .eject),
+        ("Finding the reader on Wi-Fi", .finding),
+        ("Saving it on this computer", .securing),
+    ]
+
     static func stages(of job: FollowedJob) -> [Stage] {
+        if let setup = job.setup {
+            let order: [SetupStage] = [.writing, .eject, .finding, .securing]
+            let at: Int
+            switch setup.stage {
+            case .ready: at = order.count
+            case .notFound, .several, .noNetwork: at = 2
+            case .failed, .unknown: return []
+            default: at = order.firstIndex(of: setup.stage) ?? 0
+            }
+            return told.enumerated().map { index, stage in
+                Stage(title: stage.title, state: index < at ? .done : index == at ? .current : .waiting)
+            }
+        }
         guard job.title.hasPrefix("Installing Cobalt") || job.title.hasPrefix("Updating Cobalt") else { return [] }
         var reached = true
         return installStages.map { stage in
@@ -137,6 +163,9 @@ public struct JobScene: Equatable, Sendable {
         let (report, next) = Said.afterwards(all)
         if !job.running {
             var scene = JobScene(phase: .done, heading: done[job.title] ?? "Done.")
+            scene.setup = job.setup
+            scene.stages = stages(of: job)
+            scene.said = all
             scene.next = next
             scene.report = report
             scene.connected = reader
@@ -148,6 +177,7 @@ public struct JobScene: Equatable, Sendable {
         scene.said = all
         scene.turned = !report.isEmpty || isTurn(next.first)
         scene.stages = stages(of: job)
+        scene.setup = job.setup
         scene.elapsed = Said.elapsed(now.timeIntervalSince(job.began))
         // Until the command turns to the steps for the reader there is
         // nothing for the owner to do but leave it alone, so that is said.

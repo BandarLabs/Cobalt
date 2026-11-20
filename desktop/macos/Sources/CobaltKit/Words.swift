@@ -144,6 +144,66 @@ public enum Privacy {
     }
 }
 
+/// The words of the first install, written for someone who has never used
+/// Cobalt and will not open a terminal. Nothing here is lifted from what
+/// the command prints: its paths and the names of the parts it installs are
+/// for the disclosure beside these, not for the page.
+public enum FirstRun {
+    /// What an install or a removal does, in a few lines.
+    public static func plan(undo: Bool) -> [String] {
+        undo
+            ? [
+                "Cobalt and its entry in the reader's menu are taken off.",
+                "The settings Cobalt changed are put back.",
+                "Your books are left as they are, and so is anything you made in Cobalt's apps.",
+            ]
+            : [
+                "Cobalt is copied onto the reader's storage, beside your books.",
+                "An entry named Cobalt is added to the reader's own menu.",
+                "This computer, and no other, is allowed to manage the reader over Wi-Fi.",
+                "The reader is set to stay awake and on Wi-Fi for longer, so it can be reached.",
+                "Your books and the reader's own software are left as they are.",
+            ]
+    }
+
+    /// Said before an install on a Mac, so the system's question is not a
+    /// surprise and is answered the way that lets the reader be found.
+    public static let localNetworkAhead = "After the install, macOS asks whether Cobalt may find devices on your local network. Allow it: that is how the reader is found."
+
+    /// Why a Kobo that is plugged in still offers no storage after Connect
+    /// has had time to be tapped. There are two real causes and both are
+    /// said, because the owner is the only one who can tell which.
+    public static let connectCauses = [
+        "The cable may only charge. Use the one that came with the reader, plugged straight into the computer.",
+        "A new Kobo has to finish its own setup on its screen first: language, Wi-Fi and signing in. No computer can see it until that is done.",
+    ]
+
+    /// What the owner does with the reader once Cobalt is on it.
+    public static func onTheReader(menuCorner: String?) -> [String] {
+        [
+            "Unplug the reader. It restarts and shows Updating for about a minute.",
+            "Join it to Wi-Fi if it is not on it already.",
+            "Open the menu at the \(menuCorner ?? "bottom right") of its screen and choose Cobalt.",
+        ]
+    }
+
+    /// Why the reader was not found, most likely first.
+    public static func notFoundCauses(_ stage: SetupStage) -> [String] {
+        switch stage {
+        case .several:
+            return ["Put the others to sleep and look again."]
+        case .noNetwork:
+            return ["Join the Wi-Fi the reader is on and look again."]
+        default:
+            return [
+                "The reader may be asleep. Wake it and choose Cobalt from its menu.",
+                "It may be on a different Wi-Fi network from this computer, or on a guest network that keeps devices apart.",
+                "macOS may not have allowed Cobalt onto the local network. Allow it in System Settings, under Privacy & Security, Local Network.",
+            ]
+        }
+    }
+}
+
 /// What is asked before the window closes on work that is not finished.
 public struct QuitQuestion: Equatable, Sendable {
     public var title: String

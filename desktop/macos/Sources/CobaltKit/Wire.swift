@@ -23,8 +23,15 @@ public struct ServerState: Decodable, Equatable, Sendable {
     public var blocked: [String]
     public var readers: [Reader]
     public var jobs: [JobSummary]
+    /// The readers this computer has been linked to, by the name each was
+    /// saved under. Nil from a server that does not say, which is not the
+    /// same as none.
+    public var saved: [SavedLink]?
+    /// Cobalt was put on a reader from this computer and that reader has
+    /// not yet been found on Wi-Fi and saved.
+    public var awaiting: Bool
 
-    enum CodingKeys: String, CodingKey { case api, computer, attached, blocked, readers, jobs }
+    enum CodingKeys: String, CodingKey { case api, computer, attached, blocked, readers, jobs, saved, awaiting }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -34,6 +41,59 @@ public struct ServerState: Decodable, Equatable, Sendable {
         blocked = try container.decodeIfPresent([String].self, forKey: .blocked) ?? []
         readers = try container.decodeIfPresent([Reader].self, forKey: .readers) ?? []
         jobs = try container.decodeIfPresent([JobSummary].self, forKey: .jobs) ?? []
+        saved = try container.decodeIfPresent([SavedLink].self, forKey: .saved)
+        awaiting = try container.decodeIfPresent(Bool.self, forKey: .awaiting) ?? false
+    }
+}
+
+/// A reader this computer can reach by name over Wi-Fi.
+public struct SavedLink: Decodable, Equatable, Sendable, Identifiable {
+    public var name: String
+    /// Where it is mounted, when it is the one plugged in now.
+    public var volume: String?
+    public var id: String { name }
+}
+
+public struct SavedAnswer: Decodable, Equatable, Sendable {
+    public var saved: [SavedLink]
+}
+
+/// How far a first install has got, as the server sees it.
+public enum SetupStage: String, Sendable {
+    case writing, eject, finding, securing, ready
+    case notFound = "not_found"
+    case several
+    case noNetwork = "no_network"
+    case failed
+    /// A stage this build has not heard of. The job is still followed and
+    /// what it says is still shown; only the list of steps is left out.
+    case unknown
+}
+
+public struct SetupProgress: Decodable, Equatable, Sendable {
+    public var stage: SetupStage
+    /// Seconds spent looking for the reader on Wi-Fi, and how many it is
+    /// given.
+    public var waited: Int
+    public var limit: Int
+    public var savedAs: String?
+    /// Whether managing the reader was confirmed to be this computer's
+    /// alone. Nil until it is known either way.
+    public var secured: Bool?
+    /// Things that did not go as planned and did not stop it, in sentences
+    /// written for the owner.
+    public var notes: [String]
+
+    enum CodingKeys: String, CodingKey { case stage, waited, limit, savedAs, secured, notes }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        stage = SetupStage(rawValue: try container.decodeIfPresent(String.self, forKey: .stage) ?? "") ?? .unknown
+        waited = try container.decodeIfPresent(Int.self, forKey: .waited) ?? 0
+        limit = try container.decodeIfPresent(Int.self, forKey: .limit) ?? 300
+        savedAs = try container.decodeIfPresent(String.self, forKey: .savedAs)
+        secured = try container.decodeIfPresent(Bool.self, forKey: .secured)
+        notes = try container.decodeIfPresent([String].self, forKey: .notes) ?? []
     }
 }
 
@@ -48,8 +108,10 @@ public struct Computer: Decodable, Equatable, Sendable {
     /// Whether this system can eject a reader for the owner.
     public var ejects: Bool
     public var uploadLimit: Int64?
+    /// Whether this computer is on a network a reader could be found on.
+    public var network: Bool?
 
-    enum CodingKeys: String, CodingKey { case kobo, os, release, releaseProblem, ejects, uploadLimit }
+    enum CodingKeys: String, CodingKey { case kobo, os, release, releaseProblem, ejects, uploadLimit, network }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -59,6 +121,7 @@ public struct Computer: Decodable, Equatable, Sendable {
         releaseProblem = try container.decodeIfPresent(String.self, forKey: .releaseProblem)
         ejects = try container.decodeIfPresent(Bool.self, forKey: .ejects) ?? false
         uploadLimit = try container.decodeIfPresent(Int64.self, forKey: .uploadLimit)
+        network = try container.decodeIfPresent(Bool.self, forKey: .network)
     }
 }
 
@@ -90,11 +153,16 @@ public struct Reader: Decodable, Equatable, Sendable, Identifiable {
     /// False when the system mounted the storage read-only. Nil when the
     /// server could not tell.
     public var writable: Bool?
+    /// The name this computer saved the reader under, when it has.
+    public var savedAs: String?
+    /// Where on this model's screen its menu is: "bottom right" or
+    /// "top left".
+    public var menuCorner: String?
 
     public var id: String { volume }
 
     enum CodingKeys: String, CodingKey {
-        case volume, model, modelCode, firmware, supported, refusal, untested, standing, cobalt, cobaltProblem, freeBytes, writable
+        case volume, model, modelCode, firmware, supported, refusal, untested, standing, cobalt, cobaltProblem, freeBytes, writable, savedAs, menuCorner
     }
 
     public init(from decoder: Decoder) throws {
@@ -114,6 +182,8 @@ public struct Reader: Decodable, Equatable, Sendable, Identifiable {
         cobaltProblem = try container.decodeIfPresent(String.self, forKey: .cobaltProblem)
         freeBytes = try container.decodeIfPresent(Int64.self, forKey: .freeBytes)
         writable = try container.decodeIfPresent(Bool.self, forKey: .writable)
+        savedAs = try container.decodeIfPresent(String.self, forKey: .savedAs)
+        menuCorner = try container.decodeIfPresent(String.self, forKey: .menuCorner)
     }
 }
 
@@ -133,8 +203,9 @@ public struct JobSummary: Decodable, Equatable, Sendable, Identifiable {
     public var running: Bool
     public var ok: Bool?
     public var volume: String?
+    public var setup: SetupProgress?
 
-    enum CodingKeys: String, CodingKey { case id, kind, title, running, ok, volume }
+    enum CodingKeys: String, CodingKey { case id, kind, title, running, ok, volume, setup }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -144,6 +215,7 @@ public struct JobSummary: Decodable, Equatable, Sendable, Identifiable {
         running = try container.decodeIfPresent(Bool.self, forKey: .running) ?? false
         ok = try container.decodeIfPresent(Bool.self, forKey: .ok)
         volume = try container.decodeIfPresent(String.self, forKey: .volume)
+        setup = try container.decodeIfPresent(SetupProgress.self, forKey: .setup)
     }
 }
 
@@ -158,8 +230,9 @@ public struct JobReport: Decodable, Equatable, Sendable {
     public var text: String
     public var next: Int
     public var volume: String?
+    public var setup: SetupProgress?
 
-    enum CodingKeys: String, CodingKey { case id, kind, title, running, ok, code, text, next, volume }
+    enum CodingKeys: String, CodingKey { case id, kind, title, running, ok, code, text, next, volume, setup }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -172,6 +245,7 @@ public struct JobReport: Decodable, Equatable, Sendable {
         text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
         next = try container.decode(Int.self, forKey: .next)
         volume = try container.decodeIfPresent(String.self, forKey: .volume)
+        setup = try container.decodeIfPresent(SetupProgress.self, forKey: .setup)
     }
 }
 
