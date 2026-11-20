@@ -418,7 +418,12 @@ const nearWindow = new IntersectionObserver(entries => {
 }, { rootMargin: "300px" });
 
 // A frame for one picture of an app, or for an app that has none.
-function shotFrame(shot, title, tag = "span") {
+//
+// A frame on a shelf waits until it is near the window. One on an app's
+// page is `eager`: there are a handful, they are what the page is for, and
+// the ones further along the row would otherwise be found empty by
+// whoever scrolls to them.
+function shotFrame(shot, title, tag = "span", eager = false) {
   const frame = h(tag, { class: "shot" }, h("span", { class: "initial", "aria-hidden": "true" }, title.trim().charAt(0).toUpperCase()));
   if (!shot) {
     frame.classList.add("missing");
@@ -427,6 +432,7 @@ function shotFrame(shot, title, tag = "span") {
   frame.dataset.shot = shot.name;
   frame.dataset.alt = shot.caption;
   if (pictures.known.get(shot.name)?.state === "here") settleFrame(frame);
+  else if (eager) pictures.waiting.push(frame);
   else nearWindow.observe(frame);
   return frame;
 }
@@ -484,18 +490,23 @@ function notePictures() {
 
 const pictureNote = names => h("p", { class: "quiet", hidden: true, "data-pictures": names.join(" ") }, "The pictures could not be fetched.");
 
-// One picture at a time, larger, for reading what is on the screen in it.
-// The arrow keys move through an app's pictures and stop at each end.
+// One picture at a time, at its full size, for reading what is on the
+// screen in it. The arrow keys move through an app's pictures and stop at
+// each end. What it is and the way out of it stay at the top while the
+// picture scrolls under them, because a reader's screen at full size is
+// taller than most windows.
 const closer = { shots: [], title: "", index: 0 };
 closer.frame = h("div", { class: "full" });
+closer.scroll = h("div", { class: "scroll" }, closer.frame);
 closer.caption = h("p", { class: "caption" });
 closer.count = h("span", { class: "quiet count" });
 closer.back = button("Previous", () => lookCloser(closer.index - 1));
 closer.on = button("Next", () => lookCloser(closer.index + 1));
 closer.dialog = h("dialog", { class: "closer" },
-  closer.frame,
-  closer.caption,
-  h("div", { class: "actions" }, closer.back, closer.count, closer.on, button("Close", () => closer.dialog.close())));
+  h("div", { class: "head" },
+    closer.caption,
+    h("div", { class: "actions" }, closer.back, closer.count, closer.on, button("Close", () => closer.dialog.close()))),
+  closer.scroll);
 closer.dialog.addEventListener("keydown", event => {
   if (event.key === "ArrowLeft") lookCloser(closer.index - 1);
   if (event.key === "ArrowRight") lookCloser(closer.index + 1);
@@ -516,7 +527,9 @@ function lookCloser(index) {
   const shot = closer.shots[closer.index];
   closer.dialog.setAttribute("aria-label", `${closer.title}, picture ${closer.index + 1} of ${closer.shots.length}`);
   closer.frame.style.width = `${fullWidth(shot)}px`;
-  closer.frame.replaceChildren(shotFrame(shot, closer.title));
+  closer.frame.replaceChildren(shotFrame(shot, closer.title, "span", true));
+  closer.scroll.scrollTop = 0;
+  fetchPictures();
   closer.caption.textContent = shot.caption;
   closer.count.textContent = `${closer.index + 1} of ${closer.shots.length}`;
   closer.back.disabled = closer.index === 0;
@@ -565,10 +578,15 @@ function drawApps() {
   }
   const chosen = view.state ? chosenReader(view.state.readers, view.volume) : { kind: "none" };
   const busy = Boolean(local.job?.running);
+  const needs = reader ? "" : installingNeeds(chosen, view.state);
+  // Which reader this is about is said over the shelves. On an app's page
+  // it is said only when more than one is connected, which is the one time
+  // the button under the app's name could be about the wrong one.
+  const naming = reader && (!view.app || view.state.readers.length > 1);
   appsHead.replaceChildren(...[
-    reader
-      ? h("p", { class: "quiet" }, `${reader.model}, Cobalt ${reader.cobalt.cobalt_version}, ${reader.cobalt.channel} catalog.`)
-      : h("p", { class: "quiet" }, installingNeeds(chosen, view.state)),
+    naming && h("p", { class: "quiet" }, `${reader.model}, Cobalt ${reader.cobalt.cobalt_version}, ${reader.cobalt.channel} catalog.`),
+    needs && h("p", { class: "quiet" }, needs),
+    !view.app && pictureNote([]),
     local.job && h("div", { class: "strip" },
       h("p", null, h("strong", null, busy ? local.job.title : local.job.ok ? "Finished." : "Not everything was installed.")),
       busy && h("div", { class: "working", role: "progressbar", "aria-label": local.job.title }),
@@ -615,7 +633,6 @@ function drawShelves() {
   appsBody.replaceChildren(...[
     typed === "" && h("nav", { class: "jump", "aria-label": "Kinds of app" },
       shelves.groups.map(group => plain(group.title, () => document.getElementById(`group-${group.id}`)?.scrollIntoView({ block: "start" })))),
-    pictureNote([]),
     held && !(typed !== "" && held.length === 0) && h("section", { class: "part" },
       h("h2", null, "On this reader"),
       shelves.updates.length > 1 && typed === "" && h("p", null, button(`Update all ${shelves.updates.length}`, () => installApps(reader, shelves.updates), { disabled: busy })),
@@ -663,17 +680,18 @@ function drawAppPage() {
           standing.primary === "update" && primary(`Update to ${app.version}`, () => installApps(reader, [app.id]), { disabled: busy }),
           standing.removable && button("Remove", () => { local.removing = app.id; drawApps(); }, { disabled: busy })),
     standing.reason && h("p", { class: "quiet" }, standing.reason),
+    // An app with no pictures has no row of them: an empty frame the size
+    // of a screen would be the largest thing on its page.
     app.shots.length > 0
-      ? h("div", { class: "gallery", role: "group", "aria-label": `Pictures of ${app.title}`, tabIndex: closerShowsMore ? -1 : 0 },
+      && h("div", { class: "gallery", role: "group", "aria-label": `Pictures of ${app.title}`, tabIndex: closerShowsMore ? -1 : 0 },
           app.shots.map((shot, index) => {
-            if (!closerShowsMore) return h("figure", null, shotFrame(shot, app.title), h("figcaption", null, shot.caption));
-            const frame = shotFrame(shot, app.title, "button");
+            if (!closerShowsMore) return h("figure", null, shotFrame(shot, app.title, "span", true), h("figcaption", null, shot.caption));
+            const frame = shotFrame(shot, app.title, "button", true);
             frame.type = "button";
             frame.setAttribute("aria-label", `${shot.caption}. Picture ${index + 1} of ${app.shots.length}, show at full size`);
             frame.addEventListener("click", () => look(index));
             return h("figure", null, frame, h("figcaption", { "aria-hidden": "true" }, shot.caption));
-          }))
-      : h("div", { class: "gallery" }, h("figure", null, shotFrame(null, app.title))),
+          })),
     pictureNote(app.shots.map(shot => shot.name)),
     h("p", { class: "reading about-app" }, app.description),
     facts.length > 0 && h("dl", { class: "facts" }, facts.map(([name, value]) => [h("dt", null, name), h("dd", null, value)])),
@@ -692,6 +710,7 @@ function drawAppPage() {
         step.command && h("p", { class: "row command" }, h("code", null, step.command), copyButton(step.command))))),
     ],
   ].flat(Infinity).filter(Boolean));
+  fetchPictures();
   notePictures();
 }
 

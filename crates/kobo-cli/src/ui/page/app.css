@@ -707,6 +707,15 @@ details.whole summary {
   background: #fff;
 }
 
+/* A reader's screen is paper-white, and on a dark window a row of them is a
+   row of lamps. They are dimmed there to the grey an unlit page is in a dim
+   room. Black stays black, so nothing in a screenshot loses its edge. */
+@media (prefers-color-scheme: dark) {
+  .shot img {
+    filter: brightness(0.8);
+  }
+}
+
 /* The mark of an app with no picture to show: its initial, set large and
    faint, the way a book with no cover art is shelved by its title. */
 .shot .initial {
@@ -748,6 +757,13 @@ button.shot {
   font: 400 20px/26px var(--serif);
 }
 
+/* The ring around a tile with the keyboard on it stands off from the
+   picture and the words, so it frames them and touches neither. */
+.tile a:focus-visible {
+  outline-offset: 6px;
+  border-radius: 2px;
+}
+
 .tile a:hover .name {
   text-decoration: underline;
   text-decoration-thickness: 1px;
@@ -772,11 +788,26 @@ button.shot {
   font-variant-numeric: tabular-nums;
 }
 
+/* The kinds of app, as a line to jump down the page by. Set as quiet as a
+   running head, because it is the fourth thing above the first shelf and
+   the least of them. */
 .jump {
   display: flex;
   flex-wrap: wrap;
   gap: var(--s1) var(--s5);
   margin-bottom: var(--s6);
+}
+
+.jump .plain {
+  color: var(--soft);
+  text-decoration: none;
+}
+
+.jump .plain:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
 }
 
 .back {
@@ -798,6 +829,11 @@ button.shot {
 .gallery {
   display: flex;
   gap: var(--s6);
+  /* As wide as its pictures and no wider than the column: one picture
+     sits on a ground its own size, and a row of them runs to the edge and
+     scrolls. */
+  width: fit-content;
+  max-width: 100%;
   margin: var(--s6) 0;
   padding: var(--s6);
   overflow-x: auto;
@@ -861,32 +897,60 @@ button.shot {
 .closer {
   max-width: calc(100vw - var(--s7));
   max-height: calc(100vh - var(--s7));
-  padding: var(--s5);
+  padding: 0;
   border: 1px solid var(--edge);
   border-radius: 8px;
   background: var(--paper);
   color: var(--ink);
+  overflow: hidden;
+}
+
+.closer[open] {
+  display: flex;
+  flex-direction: column;
 }
 
 .closer::backdrop {
   background: rgba(0, 0, 0, 0.5);
 }
 
-.closer .full {
-  max-width: 100%;
+.closer .head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3) var(--s5);
+  padding: var(--s4) var(--s5);
+  border-bottom: 1px solid var(--rule);
 }
 
 .closer .caption {
-  margin: var(--s4) 0 0;
-  color: var(--soft);
+  flex: 1 1 16rem;
+  margin: 0;
 }
 
 .closer .actions {
-  margin-top: var(--s4);
+  flex: none;
+  margin-top: 0;
 }
 
 .closer .count {
   font-variant-numeric: tabular-nums;
+}
+
+.closer .scroll {
+  padding: var(--s5);
+  overflow: auto;
+  background: var(--sunk);
+}
+
+.closer .full {
+  max-width: 100%;
+  margin: 0 auto;
+}
+
+.closer .shot {
+  background: var(--paper);
 }
 
 .noscript {
@@ -1002,6 +1066,8 @@ button.shot {
 
   .gallery {
     gap: var(--s5);
+    width: auto;
+    max-width: none;
     margin-left: calc(-1 * var(--s5));
     margin-right: calc(-1 * var(--s5));
     padding: var(--s5);
