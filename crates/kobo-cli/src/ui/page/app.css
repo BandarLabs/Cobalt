@@ -668,6 +668,227 @@ details.whole summary {
   margin-bottom: var(--s3);
 }
 
+/* The store.
+ *
+ * A picture of a reader's screen is the reader's own shape, 1072 by 1448,
+ * and is drawn at a quarter or a half of that and nothing between: 268 wide
+ * on a shelf, 536 on an app's page. Those are the widths at which a screen
+ * of either density maps the picture's pixels onto its own in whole numbers,
+ * so the type in a screenshot stays as sharp as it is on the reader. The
+ * hairline around each is an outline, drawn outside the picture, so it takes
+ * none of those pixels.
+ */
+
+.column[data-place="apps"] {
+  max-width: none;
+}
+
+.shot {
+  position: relative;
+  display: block;
+  aspect-ratio: 1072 / 1448;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 1px solid var(--edge);
+  background: var(--sunk);
+  overflow: hidden;
+}
+
+.shot:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.shot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fff;
+}
+
+/* The mark of an app with no picture to show: its initial, set large and
+   faint, the way a book with no cover art is shelved by its title. */
+.shot .initial {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  color: var(--soft);
+  font: 400 72px/1 var(--serif);
+  opacity: 0.5;
+}
+
+.shot.missing .initial {
+  display: grid;
+}
+
+button.shot {
+  cursor: zoom-in;
+}
+
+.shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 268px);
+  gap: var(--s7) var(--s6);
+  margin: var(--s5) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tile a {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+
+.tile .name {
+  display: block;
+  margin-top: var(--s4);
+  font: 400 20px/26px var(--serif);
+}
+
+.tile a:hover .name {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.tile .about {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--soft);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.tile .standing {
+  display: block;
+  margin-top: var(--s2);
+  font-size: 13px;
+  line-height: 19px;
+  font-variant-numeric: tabular-nums;
+}
+
+.jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s5);
+  margin-bottom: var(--s6);
+}
+
+.back {
+  margin: 0 0 var(--s3);
+}
+
+[data-place="apps"] .toolbar {
+  max-width: 38rem;
+}
+
+[data-place="apps"] .part + .part {
+  margin-top: var(--s8);
+}
+
+/* An app's page. The pictures run across the whole column on a sunk ground,
+   which is what lets a white screen read as a page lying on something; the
+   words under them keep to a measure a line can be read across. */
+
+.gallery {
+  display: flex;
+  gap: var(--s6);
+  margin: var(--s6) 0;
+  padding: var(--s6);
+  overflow-x: auto;
+  background: var(--sunk);
+  scroll-snap-type: x proximity;
+  scroll-padding-left: var(--s6);
+}
+
+.gallery figure {
+  flex: 0 0 536px;
+  margin: 0;
+  scroll-snap-align: start;
+}
+
+.gallery .shot {
+  background: var(--paper);
+}
+
+.gallery figcaption {
+  margin-top: var(--s3);
+  color: var(--soft);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.actions.first {
+  margin-top: 0;
+}
+
+.about-app,
+[data-place="apps"] .facts,
+[data-place="apps"] h3 + p,
+[data-place="apps"] .uses,
+[data-place="apps"] .steps,
+[data-place="apps"] .note,
+[data-place="apps"] .strip {
+  max-width: 38rem;
+}
+
+.uses {
+  margin: 0 0 var(--s4);
+  padding-left: var(--s5);
+}
+
+.steps .command {
+  justify-content: space-between;
+  gap: var(--s4);
+  margin: var(--s2) 0 0;
+}
+
+.steps .command code {
+  overflow-wrap: anywhere;
+}
+
+.steps li p {
+  margin: var(--s1) 0 0;
+}
+
+/* One picture at its full size. */
+
+.closer {
+  max-width: calc(100vw - var(--s7));
+  max-height: calc(100vh - var(--s7));
+  padding: var(--s5);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.closer::backdrop {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.closer .full {
+  max-width: 100%;
+}
+
+.closer .caption {
+  margin: var(--s4) 0 0;
+  color: var(--soft);
+}
+
+.closer .actions {
+  margin-top: var(--s4);
+}
+
+.closer .count {
+  font-variant-numeric: tabular-nums;
+}
+
 .noscript {
   max-width: 40rem;
   margin: var(--s7) auto;
@@ -763,5 +984,31 @@ details.whole summary {
 
   .toolbar {
     flex-wrap: wrap;
+  }
+
+  .shelf {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s6) var(--s4);
+  }
+
+  .tile .name {
+    font-size: 17px;
+    line-height: 23px;
+  }
+
+  .shot .initial {
+    font-size: 48px;
+  }
+
+  .gallery {
+    gap: var(--s5);
+    margin-left: calc(-1 * var(--s5));
+    margin-right: calc(-1 * var(--s5));
+    padding: var(--s5);
+    scroll-padding-left: var(--s5);
+  }
+
+  .gallery figure {
+    flex-basis: 268px;
   }
 }

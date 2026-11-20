@@ -1042,7 +1042,7 @@ fn shot(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
         );
     };
     match machine.pictures.get(&name, &*machine.picture) {
-        Some(picture) => Response::file("image/png", &picture),
+        Some(picture) => Response::picture(&picture),
         None => Response::refusal(
             502,
             "Bad Gateway",

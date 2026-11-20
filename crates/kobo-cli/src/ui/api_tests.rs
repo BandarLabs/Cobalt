@@ -520,6 +520,12 @@ fn a_picture_is_fetched_by_this_server_from_the_published_site_and_served_as_an_
     assert_eq!(reply.status, 200, "{}", reply.body);
     assert_eq!(reply.header("content-type"), Some("image/png"));
     assert_eq!(reply.header("x-content-type-options"), Some("nosniff"));
+    // The one answer a browser may keep, and only in its own cache.
+    assert_eq!(reply.header("cache-control"), Some("private, max-age=3600"));
+    assert_eq!(
+        page.get("/api/store").header("cache-control"),
+        Some("no-store")
+    );
     assert_eq!(
         reply.header("content-length"),
         Some(moon.len().to_string().as_str())

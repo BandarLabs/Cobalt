@@ -271,12 +271,10 @@ fn percent_decoded(value: &str) -> Option<String> {
 /// nothing from anywhere else, which is what makes "the page talks to no
 /// other origin" a property the browser enforces rather than one a reviewer
 /// has to keep checking. It may not be framed, so nothing can be laid over
-/// it to borrow a click. Nothing is cached, because every answer is about a
-/// reader that may have been unplugged since. There is deliberately no
+/// it to borrow a click. There is deliberately no
 /// `Access-Control-Allow-*` line here or anywhere: no other origin has any
 /// business reading these answers.
 const FIXED_HEADERS: &str = "\
-Cache-Control: no-store\r\n\
 Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; \
 img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; \
 frame-ancestors 'none'\r\n\
@@ -294,9 +292,26 @@ pub struct Response {
     pub reason: &'static str,
     pub content_type: &'static str,
     pub body: Vec<u8>,
+    /// What a browser may do about keeping this answer. Nothing, for every
+    /// answer but a picture: the rest are about a reader that may have been
+    /// unplugged since.
+    pub cache: &'static str,
     /// Lines beyond the fixed ones, such as a redirect's `Location`.
     pub extra: Vec<(&'static str, String)>,
 }
+
+/// The answer to "may this be kept": no.
+const NEVER_KEPT: &str = "no-store";
+
+/// How long a browser may keep a picture of an app, in its own cache and
+/// nobody else's.
+///
+/// A picture is the same whoever asks and whenever, and it is published.
+/// The page draws its shelves again each time what it knows changes, and
+/// without this every redraw would ask for the same forty pictures again.
+/// An hour outlasts a sitting and is short enough that a retaken picture
+/// is seen the same day.
+const PICTURE_KEPT: &str = "private, max-age=3600";
 
 impl Response {
     /// A JSON answer.
@@ -307,6 +322,7 @@ impl Response {
             reason,
             content_type: "application/json; charset=utf-8",
             body: value.to_string().into_bytes(),
+            cache: NEVER_KEPT,
             extra: Vec::new(),
         }
     }
@@ -350,7 +366,17 @@ impl Response {
             reason: "OK",
             content_type,
             body: body.to_vec(),
+            cache: NEVER_KEPT,
             extra: Vec::new(),
+        }
+    }
+
+    /// A picture of an app, which is the one answer a browser may keep.
+    #[must_use]
+    pub fn picture(body: &[u8]) -> Self {
+        Self {
+            cache: PICTURE_KEPT,
+            ..Self::file("image/png", body)
         }
     }
 
@@ -365,11 +391,13 @@ impl Response {
     /// reporting to anybody.
     pub fn write(&self, stream: &mut impl Write) {
         let mut head = format!(
-            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n{FIXED_HEADERS}",
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\n\
+             Cache-Control: {}\r\n{FIXED_HEADERS}",
             self.status,
             self.reason,
             self.content_type,
-            self.body.len()
+            self.body.len(),
+            self.cache
         );
         for (name, value) in &self.extra {
             head.push_str(name);

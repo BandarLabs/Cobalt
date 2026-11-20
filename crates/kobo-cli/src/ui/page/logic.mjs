@@ -287,48 +287,193 @@ export function readerStanding(reader, computer) {
   }
 }
 
-// The apps as the Apps place lists them: what is on the reader first, then
-// what the catalog offers that is not, each narrowed to what was typed in
-// the search box.
+// Every app the window knows of, by id, with what each source says of it
+// laid together.
 //
-// `installed` is what the reader holds and is always known. `catalog` is
-// what was last fetched and may be null, when it has not arrived or could
-// not be reached; the reader's own apps are still listed then, with no
-// updates offered, because nothing is known about any.
-export function appSections(installed, catalog, query) {
-  const wanted = String(query ?? "").trim().toLowerCase();
-  const matches = app =>
-    wanted === "" ||
-    [app.title, app.id, app.summary].some(field => String(field ?? "").toLowerCase().includes(wanted));
-  const byTitle = (left, right) =>
-    left.title.localeCompare(right.title, "en", { sensitivity: "base" }) || left.id.localeCompare(right.id);
-
+// Three things know about apps and none knows everything. `store` is built
+// into the command: what each app is, its pictures, its group. It is always
+// there and can be a release behind. `installed` is what this reader holds.
+// `catalog` is what is published for this reader today: the version on
+// offer, its size, whether this reader can run it. Either of the last two
+// may be null, when no reader is chosen or the answer has not come.
+//
+// Where two disagree the newer source wins: the catalog's version and one
+// line over the store's, since the store was written when the command was
+// built, and the store's over the reader's own, which for a built-in copy
+// is the runtime's stand-in.
+export function storeApps(store, installed, catalog) {
+  const known = store?.apps ?? {};
+  const held = new Map((installed ?? []).map(app => [app.id, app]));
   const offered = new Map((catalog ?? []).map(app => [app.id, app]));
-  const onReader = (installed ?? []).map(app => {
-    const entry = offered.get(app.id);
-    return {
-      ...app,
-      // The catalog's entry knows the version on offer; the reader's own
-      // record knows only what it has. The catalog's line about what the
-      // app does is the app's own, from its signed manifest, and is used in
-      // place of the runtime's line for a built-in copy.
-      version: entry ? entry.version : app.version,
-      summary: entry?.summary || app.summary,
-      update_available: entry ? Boolean(entry.update_available) : false,
-      runs_on_this_reader: entry ? entry.runs_on_this_reader !== false : true,
-      minimum_cobalt_version: entry ? entry.minimum_cobalt_version : app.minimum_cobalt_version,
-      in_catalog: Boolean(entry),
-    };
-  });
-  const held = new Set(onReader.map(app => app.id));
-  const available = (catalog ?? []).filter(app => !held.has(app.id));
-  const updates = onReader.filter(app => app.update_available && app.runs_on_this_reader);
+  const apps = new Map();
+  for (const id of new Set([...Object.keys(known), ...held.keys(), ...offered.keys()])) {
+    const shown = known[id] ?? null;
+    const here = held.get(id) ?? null;
+    const offer = offered.get(id) ?? null;
+    const summary = offer?.summary || shown?.summary || here?.summary || "";
+    apps.set(id, {
+      id,
+      title: offer?.title || shown?.title || here?.title || id,
+      summary,
+      description: shown?.description || summary,
+      shots: shown?.shots ?? [],
+      // The note is about the version the store was built with, so it is
+      // dropped when the catalog has moved on to another.
+      release_notes: shown && (!offer || offer.version === shown.version) ? shown.release_notes ?? null : null,
+      access: shown ? shown.access ?? [] : null,
+      setup: shown?.setup ?? [],
+      version: offer?.version ?? shown?.version ?? here?.version ?? "",
+      installed_version: here ? here.installed_version ?? here.version ?? "" : null,
+      on_reader: Boolean(here),
+      offered: Boolean(offer),
+      update: Boolean(here && offer?.update_available),
+      runs: offer ? offer.runs_on_this_reader !== false : true,
+      minimum: offer?.minimum_cobalt_version ?? null,
+      bytes: Number.isFinite(offer?.bytes) ? offer.bytes : null,
+      fits: offer?.fits ?? null,
+    });
+  }
+  return apps;
+}
+
+const byTitle = (left, right) =>
+  left.title.localeCompare(right.title, "en", { sensitivity: "base" }) || left.id.localeCompare(right.id);
+
+// Whether an app is one the words typed are looking for: every word has to
+// be somewhere in its name, its id or what it says about itself.
+function sought(app, query) {
+  const words = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+  const text = [app.title, app.id, app.summary, app.description].join("\n").toLowerCase();
+  return words.every(word => text.includes(word));
+}
+
+// The store as the Apps place lays it out: what is on the reader first,
+// then every app under the group the website lists it in, each narrowed to
+// what was typed in the search box.
+//
+// An app on the reader is in its group as well. The first shelf is for
+// looking after what is there, the groups are for looking around, and an
+// owner looking through Games should see the one they already have. An app
+// the catalog offers and the store has never heard of, because it was
+// published after this command was built, goes in a last group so that it
+// can still be installed.
+//
+//   onReader  the reader's apps, or null when no reader's apps are known
+//   updates   ids of the ones with an update this reader can take
+//   groups    { id, title, apps } for each group with something to show
+//   found     how many apps are shown at all
+export function storeShelves(store, installed, catalog, query) {
+  const apps = storeApps(store, installed, catalog);
+  const wanted = app => sought(app, query);
+  const grouped = new Set();
+  const groups = (store?.groups ?? []).map(group => ({
+    id: group.id,
+    title: group.title,
+    apps: group.apps.map(id => { grouped.add(id); return apps.get(id); }).filter(Boolean),
+  }));
+  const strays = [...apps.values()].filter(app => app.offered && !grouped.has(app.id));
+  if (strays.length > 0) {
+    const other = groups.find(group => group.id === "other");
+    if (other) other.apps.push(...strays);
+    else groups.push({ id: "other", title: "Other apps", apps: strays });
+  }
+  for (const group of groups) group.apps = group.apps.filter(wanted).sort(byTitle);
+
+  const held = [...apps.values()].filter(app => app.on_reader);
+  const onReader = installed ? held.filter(wanted).sort(byTitle) : null;
+  const shown = groups.filter(group => group.apps.length > 0);
   return {
-    installed: onReader.filter(matches).sort(byTitle),
-    available: available.filter(matches).sort(byTitle),
-    updates: updates.map(app => app.id),
-    total: onReader.length + available.length,
+    onReader,
+    updates: held.filter(app => app.update && app.runs).sort(byTitle).map(app => app.id),
+    groups: shown,
+    found: new Set([...(onReader ?? []), ...shown.flatMap(group => group.apps)].map(app => app.id)).size,
   };
+}
+
+// The few words under an app's name in a shelf that are about this reader,
+// or nothing. A fact the owner needs before opening the app's page: that it
+// is already here, that there is a newer one, or why it cannot go on.
+export function tileStanding(app) {
+  if (app.on_reader) {
+    if (app.update && app.runs) return `Update to ${app.version}`;
+    if (app.update) return `${app.version} needs Cobalt ${app.minimum}`;
+    return "On this reader";
+  }
+  if (!app.offered) return "";
+  if (!app.runs) return `Needs Cobalt ${app.minimum}`;
+  if (app.fits === false) return `Needs ${fileSize(app.bytes)} free`;
+  return "";
+}
+
+// Why nothing can be installed from the store as things stand, in the one
+// line the store says it in, or nothing when a reader is ready.
+export function installingNeeds(chosen, state) {
+  if (!state) return "";
+  if (chosen.kind === "none") return "Connect a reader to install apps.";
+  if (chosen.kind === "several") return "Choose one of the connected readers in Reader to install apps.";
+  if (!chosen.reader.cobalt) return "Install Cobalt on this reader, in Reader, to install apps.";
+  return "";
+}
+
+// What an app's page offers to do with it on this reader, and the reason
+// when the thing an owner would expect is not on offer.
+//
+//   primary    "install", "update" or null
+//   removable  whether it is on the reader to be removed
+//   reason     why there is no primary action, or ""
+//
+// `reader` is the chosen reader with Cobalt on it, or null. `catalogKnown`
+// is whether the catalog has arrived: until it has, an app that is not on
+// the reader gives no reason, because none is known yet.
+export function appStanding(app, reader, catalogKnown) {
+  if (!reader) return { primary: null, removable: false, reason: "" };
+  const has = reader.cobalt?.cobalt_version ? ` This reader has ${reader.cobalt.cobalt_version}.` : "";
+  if (app.on_reader) {
+    if (app.update && app.runs) return { primary: "update", removable: true, reason: "" };
+    if (app.update) {
+      return { primary: null, removable: true, reason: `Version ${app.version} needs Cobalt ${app.minimum} or newer.${has}` };
+    }
+    return { primary: null, removable: true, reason: "" };
+  }
+  if (!app.offered) {
+    return { primary: null, removable: false, reason: catalogKnown ? "The catalog for this reader does not offer this app." : "" };
+  }
+  if (!app.runs) return { primary: null, removable: false, reason: `Needs Cobalt ${app.minimum} or newer.${has}` };
+  if (app.fits === false) {
+    const free = Number.isFinite(reader.free_bytes) ? ` The reader has ${fileSize(reader.free_bytes)} free.` : "";
+    return { primary: null, removable: false, reason: `Needs ${fileSize(app.bytes)}.${free}` };
+  }
+  return { primary: "install", removable: false, reason: "" };
+}
+
+// What is true of an app, as the name and value pairs its page sets in a
+// table. Only what is known is listed: a size and a minimum come from the
+// catalog, so a store read with no reader has neither.
+export function appFacts(app) {
+  return [
+    app.version && ["Version", app.version],
+    app.on_reader && ["On this reader", app.installed_version || "Installed"],
+    app.bytes !== null && ["Size", fileSize(app.bytes)],
+    app.minimum && ["Needs", `Cobalt ${app.minimum} or newer`],
+  ].filter(Boolean);
+}
+
+// A picture's place in the queue of ones being fetched: whether to ask for
+// it now. One that failed is asked for again only after the server has
+// stopped resting from the failure, so that an owner who opens a page of
+// empty frames, gets back on the network and opens it again sees pictures,
+// and a page that redraws itself does not ask in a loop.
+export function pictureDue(record, now, rest = 30_000) {
+  if (!record) return true;
+  if (record.state === "failed") return now - record.at >= rest;
+  return false;
+}
+
+// Which picture a step from one in a gallery lands on. It stops at the
+// ends: a gallery of four that wrapped from the last to the first would
+// leave somebody pressing an arrow unsure whether they had seen them all.
+export function galleryStep(index, by, count) {
+  return Math.min(Math.max(index + by, 0), Math.max(count - 1, 0));
 }
 
 // The one step a browser still needs, taken apart for display.
@@ -403,6 +548,15 @@ export function runningJob(jobs, kind) {
 export const PLACES = ["reader", "apps", "browser", "send"];
 
 export function placeFor(hash) {
-  const named = String(hash ?? "").replace(/^#/, "");
-  return PLACES.includes(named) ? named : "reader";
+  return routeFor(hash).place;
+}
+
+// The place an address names and, under Apps, the one app whose page it
+// is. An app is named by its id, and anything that could not be an id is
+// read as no app at all, never looked up.
+export function routeFor(hash) {
+  const [named, rest] = String(hash ?? "").replace(/^#/, "").split("/", 2);
+  const place = PLACES.includes(named) ? named : "reader";
+  const app = place === "apps" && /^[a-z0-9][a-z0-9-]{0,31}$/.test(rest ?? "") ? rest : null;
+  return { place, app };
 }

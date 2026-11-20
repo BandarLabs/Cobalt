@@ -11,20 +11,26 @@ import {
   absence,
   afterFailure,
   afterwards,
-  appObstacle,
-  appSections,
+  appFacts,
+  appStanding,
   browserStep,
   chosenReader,
   elapsed,
   failure,
   fileSize,
+  galleryStep,
+  installingNeeds,
   linked,
-  placeFor,
+  pictureDue,
   planStep,
   readerStanding,
   reflow,
+  routeFor,
   runningJob,
   sentence,
+  storeApps,
+  storeShelves,
+  tileStanding,
   uploadRefusal,
   webAddress,
 } from "/logic.mjs";
@@ -32,7 +38,9 @@ import {
 const token = document.querySelector('meta[name="kobo-token"]').content;
 
 const view = {
-  place: placeFor(location.hash),
+  place: routeFor(location.hash).place,
+  app: routeFor(location.hash).app,
+  store: null,
   lost: false,
   misses: 0,
   state: null,
@@ -386,7 +394,147 @@ async function eject(reader) {
   drawApps();
 }
 
+// Pictures.
+//
+// Every picture comes from this server, which fetches it from the published
+// site the first time and keeps it. A frame asks for its picture when it
+// comes near the window, and three are asked for at a time, so that a store
+// of forty apps does not queue forty requests in front of the one that says
+// whether a reader was just plugged in. A frame is the reader's shape from
+// the moment it is drawn, with or without its picture: empty while it
+// waits, and marked with the app's initial when there is no picture to
+// show. Nothing spins, because nothing here knows a picture is coming.
+
+const pictures = { known: new Map(), waiting: [], going: 0 };
+const shotAddress = name => `/api/shot?name=${encodeURIComponent(name)}`;
+
+const nearWindow = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    nearWindow.unobserve(entry.target);
+    pictures.waiting.push(entry.target);
+  }
+  fetchPictures();
+}, { rootMargin: "300px" });
+
+// A frame for one picture of an app, or for an app that has none.
+function shotFrame(shot, title, tag = "span") {
+  const frame = h(tag, { class: "shot" }, h("span", { class: "initial", "aria-hidden": "true" }, title.trim().charAt(0).toUpperCase()));
+  if (!shot) {
+    frame.classList.add("missing");
+    return frame;
+  }
+  frame.dataset.shot = shot.name;
+  frame.dataset.alt = shot.caption;
+  if (pictures.known.get(shot.name)?.state === "here") settleFrame(frame);
+  else nearWindow.observe(frame);
+  return frame;
+}
+
+// Draws a frame as what is now known of its picture.
+function settleFrame(frame) {
+  const record = pictures.known.get(frame.dataset.shot);
+  if (record?.state === "here" && !frame.querySelector("img")) {
+    frame.classList.remove("missing");
+    frame.append(h("img", { src: shotAddress(frame.dataset.shot), alt: frame.dataset.alt, decoding: "async", draggable: false }));
+  } else if (record?.state === "failed") {
+    frame.classList.add("missing");
+  }
+}
+
+function fetchPictures() {
+  while (pictures.going < 3 && pictures.waiting.length > 0) {
+    const frame = pictures.waiting.shift();
+    if (!frame.isConnected) continue;
+    const name = frame.dataset.shot;
+    if (!pictureDue(pictures.known.get(name), Date.now())) {
+      settleFrame(frame);
+      continue;
+    }
+    pictures.going += 1;
+    pictures.known.set(name, { state: "asked", at: Date.now() });
+    const picture = new Image();
+    const settle = state => {
+      pictures.going -= 1;
+      pictures.known.set(name, { state, at: Date.now() });
+      // Every frame showing this picture, not only the one that asked.
+      for (const shown of document.querySelectorAll(".shot[data-shot]")) {
+        if (shown.dataset.shot === name) settleFrame(shown);
+      }
+      notePictures();
+      fetchPictures();
+    };
+    picture.onload = () => settle("here");
+    picture.onerror = () => settle("failed");
+    picture.src = shotAddress(name);
+  }
+}
+
+// Says once, where the pictures would be, that they could not be fetched:
+// in the store when none has arrived and one has failed, which is a
+// computer that is offline, and on an app's page when one of its own did.
+function notePictures() {
+  const states = [...pictures.known.values()].map(record => record.state);
+  const none = states.includes("failed") && !states.includes("here");
+  for (const line of document.querySelectorAll("[data-pictures]")) {
+    const names = line.dataset.pictures.split(" ").filter(Boolean);
+    line.hidden = names.length === 0 ? !none : !names.some(name => pictures.known.get(name)?.state === "failed");
+  }
+}
+
+const pictureNote = names => h("p", { class: "quiet", hidden: true, "data-pictures": names.join(" ") }, "The pictures could not be fetched.");
+
+// One picture at a time, larger, for reading what is on the screen in it.
+// The arrow keys move through an app's pictures and stop at each end.
+const closer = { shots: [], title: "", index: 0 };
+closer.frame = h("div", { class: "full" });
+closer.caption = h("p", { class: "caption" });
+closer.count = h("span", { class: "quiet count" });
+closer.back = button("Previous", () => lookCloser(closer.index - 1));
+closer.on = button("Next", () => lookCloser(closer.index + 1));
+closer.dialog = h("dialog", { class: "closer" },
+  closer.frame,
+  closer.caption,
+  h("div", { class: "actions" }, closer.back, closer.count, closer.on, button("Close", () => closer.dialog.close())));
+closer.dialog.addEventListener("keydown", event => {
+  if (event.key === "ArrowLeft") lookCloser(closer.index - 1);
+  if (event.key === "ArrowRight") lookCloser(closer.index + 1);
+});
+// A click outside the picture closes it, as a click on the dimmed page
+// behind any sheet does.
+closer.dialog.addEventListener("click", event => { if (event.target === closer.dialog) closer.dialog.close(); });
+document.body.append(closer.dialog);
+
+// How wide a picture is when each of its pixels is one of the screen's.
+const fullWidth = shot => Math.round((shot.width || 1072) / (window.devicePixelRatio || 1));
+// How wide an app's page draws its pictures: half the reader's panel, which
+// is every pixel of it on a dense screen, and a quarter in a narrow window.
+const shownWidth = () => (matchMedia("(max-width: 760px)").matches ? 268 : 536);
+
+function lookCloser(index) {
+  closer.index = galleryStep(index, 0, closer.shots.length);
+  const shot = closer.shots[closer.index];
+  closer.dialog.setAttribute("aria-label", `${closer.title}, picture ${closer.index + 1} of ${closer.shots.length}`);
+  closer.frame.style.width = `${fullWidth(shot)}px`;
+  closer.frame.replaceChildren(shotFrame(shot, closer.title));
+  closer.caption.textContent = shot.caption;
+  closer.count.textContent = `${closer.index + 1} of ${closer.shots.length}`;
+  closer.back.disabled = closer.index === 0;
+  closer.on.disabled = closer.index === closer.shots.length - 1;
+  closer.back.hidden = closer.on.hidden = closer.count.hidden = closer.shots.length < 2;
+  if (!closer.dialog.open) closer.dialog.showModal();
+}
+
 // The Apps place.
+//
+// A store. With no reader it is still all there to read, from what the
+// command was built with; a reader adds what it holds and what the signed
+// catalog offers it today. The shelves are for looking and each app's page
+// is where anything is done to it.
+
+const appsTitle = document.getElementById("title-apps");
+const appsBack = h("p", { class: "back", hidden: true }, h("a", { href: "#apps" }, "All apps"));
+appsTitle.before(appsBack);
 
 const search = h("input", {
   class: "field",
@@ -394,12 +542,12 @@ const search = h("input", {
   id: "find-app",
   placeholder: "Name or what it is for",
   autocomplete: "off",
-  oninput: () => { view.apps.query = search.value; drawAppLists(); },
+  oninput: () => { view.apps.query = search.value; drawShelves(); },
 });
 const appsHead = h("div");
 const appsTools = h("div", { class: "toolbar" }, h("div", { class: "grow" }, h("label", { class: "over", htmlFor: "find-app" }, "Find an app"), search));
-const appsLists = h("div");
-slots.apps.append(appsHead, appsTools, appsLists);
+const appsBody = h("div");
+slots.apps.append(appsHead, appsTools, appsBody);
 
 // The reader the Apps place is about, when it is one with Cobalt on it.
 function appsReader() {
@@ -415,20 +563,12 @@ function drawApps() {
     Object.assign(local, { key, installed: null, catalog: null, problem: "", removing: null, said: "" });
     if (reader && view.place === "apps") loadApps();
   }
-  appsTools.hidden = !reader || local.installed === null;
-  if (!reader) {
-    appsLists.replaceChildren();
-    const chosen = view.state ? chosenReader(view.state.readers, view.volume) : { kind: "none" };
-    const why =
-      !view.state ? "Looking for a reader."
-      : chosen.kind === "none" ? "Connect a reader to see its apps."
-      : chosen.kind === "several" ? "Choose one of the connected readers in Reader first."
-      : "Install Cobalt on this reader first, in Reader.";
-    return appsHead.replaceChildren(h("p", { class: "reading" }, why));
-  }
+  const chosen = view.state ? chosenReader(view.state.readers, view.volume) : { kind: "none" };
   const busy = Boolean(local.job?.running);
   appsHead.replaceChildren(...[
-    h("p", { class: "quiet" }, `${reader.model}, Cobalt ${reader.cobalt.cobalt_version}, ${reader.cobalt.channel} catalog.`),
+    reader
+      ? h("p", { class: "quiet" }, `${reader.model}, Cobalt ${reader.cobalt.cobalt_version}, ${reader.cobalt.channel} catalog.`)
+      : h("p", { class: "quiet" }, installingNeeds(chosen, view.state)),
     local.job && h("div", { class: "strip" },
       h("p", null, h("strong", null, busy ? local.job.title : local.job.ok ? "Finished." : "Not everything was installed.")),
       busy && h("div", { class: "working", role: "progressbar", "aria-label": local.job.title }),
@@ -436,57 +576,134 @@ function drawApps() {
       !busy && h("div", { class: "actions" }, button("Dismiss", () => { local.job = null; drawApps(); }))),
     !local.job && local.said && note(local.said),
     local.problem && h("div", { class: "note wrong" }, h("p", null, prose(local.problem)), h("p", null, plain("Try again", loadApps))),
-    local.changed && !busy && h("div", { class: "note" },
+    local.changed && !busy && reader && h("div", { class: "note" },
       h("p", null, "Eject the reader before you unplug it. ",
         view.state.computer.ejects && plain("Eject it now", () => eject(reader)))),
+    reader && !local.catalog && !local.problem && h("p", { class: "quiet" }, local.installed === null ? "Reading the apps on the reader." : "Fetching the signed app catalog."),
   ].filter(Boolean));
-  drawAppLists();
+  appsBack.hidden = !view.app;
+  appsTools.hidden = Boolean(view.app) || !view.store;
+  if (view.app) drawAppPage();
+  else drawShelves();
 }
 
-function drawAppLists() {
+// One app in a shelf: its picture, its name, one line, and a few words
+// about this reader when there is something to say. The whole of it is a
+// link to the app's page.
+function tile(app, standing) {
+  return h("li", { class: "tile" },
+    h("a", { href: `#apps/${app.id}` },
+      shotFrame(app.shots[0], app.title),
+      h("span", { class: "name" }, app.title),
+      h("span", { class: "about" }, app.summary),
+      standing && h("span", { class: "standing" }, standing)));
+}
+
+function drawShelves() {
   const local = view.apps;
+  if (view.app) return;
+  appsTitle.textContent = "Apps";
+  if (!view.store) return appsBody.replaceChildren();
   const reader = appsReader();
-  if (!reader) return;
-  if (local.installed === null) return appsLists.replaceChildren(h("p", { class: "quiet" }, local.problem ? "" : "Reading the apps on the reader."));
-  const sections = appSections(local.installed, local.catalog, local.query);
+  const shelves = storeShelves(view.store, reader ? local.installed : null, reader ? local.catalog : null, local.query);
+  const typed = local.query.trim();
   const busy = Boolean(local.job?.running) || local.loading;
-  const install = ids => installApps(reader, ids);
+  if (typed !== "" && shelves.found === 0) {
+    return appsBody.replaceChildren(h("p", { class: "reading" }, `No app matches “${typed}”.`));
+  }
+  const held = shelves.onReader;
+  appsBody.replaceChildren(...[
+    typed === "" && h("nav", { class: "jump", "aria-label": "Kinds of app" },
+      shelves.groups.map(group => plain(group.title, () => document.getElementById(`group-${group.id}`)?.scrollIntoView({ block: "start" })))),
+    pictureNote([]),
+    held && !(typed !== "" && held.length === 0) && h("section", { class: "part" },
+      h("h2", null, "On this reader"),
+      shelves.updates.length > 1 && typed === "" && h("p", null, button(`Update all ${shelves.updates.length}`, () => installApps(reader, shelves.updates), { disabled: busy })),
+      held.length > 0
+        ? h("ul", { class: "shelf" }, held.map(app => tile(app, app.update ? tileStanding(app) : app.installed_version)))
+        : h("p", { class: "quiet" }, "No apps are on this reader yet; open one below to install it.")),
+    shelves.groups.map(group => h("section", { class: "part", id: `group-${group.id}` },
+      h("h2", null, group.title),
+      h("ul", { class: "shelf" }, group.apps.map(app => tile(app, tileStanding(app)))))),
+  ].flat().filter(Boolean));
+  notePictures();
+}
 
-  const onReader = sections.installed.map(app => {
-    const asking = local.removing === app.id;
-    return h("li", null,
-      h("div", null, h("span", { class: "name" }, app.title), h("span", { class: "version" }, app.installed_version ?? app.version)),
-      h("p", { class: "about" }, asking ? `Remove ${app.title}? Its data is kept.`
-        : app.update_available && !app.runs_on_this_reader ? `Version ${app.version} needs Cobalt ${app.minimum_cobalt_version} or newer.` : app.summary),
-      h("div", { class: "does" }, asking
-        ? [button("Remove", () => removeApp(reader, app), { disabled: busy }), button("Keep", () => { local.removing = null; drawAppLists(); })]
-        : [app.update_available && app.runs_on_this_reader && button(`Update to ${app.version}`, () => install([app.id]), { disabled: busy }),
-           button("Remove", () => { local.removing = app.id; drawAppLists(); }, { disabled: busy })]));
-  });
-  const offered = sections.available.map(app => {
-    const obstacle = appObstacle(app, reader);
-    return h("li", null,
-      h("div", null, h("span", { class: "name" }, app.title),
-        h("span", { class: "version" }, Number.isFinite(app.bytes) ? `${app.version}, ${fileSize(app.bytes)}` : app.version)),
-      h("p", { class: "about" }, app.summary),
-      h("div", { class: "does" }, obstacle
-        ? h("span", { class: "quiet small" }, obstacle)
-        : button("Install", () => install([app.id]), { disabled: busy })));
-  });
+// One app's page: its pictures, what it says about itself, what is true of
+// it, and the one or two things that can be done with it on this reader.
+function drawAppPage() {
+  const local = view.apps;
+  if (!view.store) return appsBody.replaceChildren();
+  const reader = appsReader();
+  const app = storeApps(view.store, reader ? local.installed : null, reader ? local.catalog : null).get(view.app);
+  if (!app) {
+    appsTitle.textContent = "Apps";
+    return appsBody.replaceChildren(h("p", { class: "reading" }, `There is no app with the id “${view.app}”.`));
+  }
+  appsTitle.textContent = app.title;
+  document.title = `Cobalt – ${app.title}`;
+  const standing = appStanding(app, reader, Boolean(local.catalog));
+  const busy = Boolean(local.job?.running) || local.loading;
+  const asking = local.removing === app.id;
+  const facts = appFacts(app);
+  const look = index => { Object.assign(closer, { shots: app.shots, title: app.title }); lookCloser(index); };
+  // A picture is something to press only where pressing it shows more: on
+  // a screen dense enough to show every pixel already, it is just a picture.
+  const closerShowsMore = app.shots.some(shot => fullWidth(shot) > shownWidth());
 
-  const nothing = local.query.trim() !== "" && onReader.length + offered.length === 0;
-  appsLists.replaceChildren(...[
-    nothing && h("p", { class: "reading" }, `No app matches “${local.query.trim()}”.`),
-    !nothing && h("div", { class: "part" },
-      h("h3", null, "On this reader"),
-      sections.updates.length > 1 && local.query.trim() === "" && h("p", null, button(`Update all ${sections.updates.length}`, () => install(sections.updates), { disabled: busy })),
-      onReader.length > 0 ? h("ul", { class: "entries" }, onReader)
-        : h("p", { class: "quiet" }, local.query ? "None of them match." : "No apps are installed. Install one from the list below.")),
-    !nothing && local.catalog && h("div", { class: "part" },
-      h("h3", null, "Available"),
-      offered.length > 0 ? h("ul", { class: "entries" }, offered) : h("p", { class: "quiet" }, local.query ? "None of them match." : "Everything published is on this reader.")),
-    !local.catalog && !local.problem && h("p", { class: "quiet" }, "Fetching the signed app catalog."),
-  ].filter(Boolean));
+  appsBody.replaceChildren(...[
+    asking
+      ? h("div", { class: "note" },
+          h("p", null, `Remove ${app.title} from this reader? Its data is kept.`),
+          h("div", { class: "actions" },
+            button("Remove", () => removeApp(reader, app), { disabled: busy }),
+            button("Keep", () => { local.removing = null; drawApps(); })))
+      : (standing.primary || standing.removable) && h("div", { class: "actions first" },
+          standing.primary === "install" && primary("Install", () => installApps(reader, [app.id]), { disabled: busy }),
+          standing.primary === "update" && primary(`Update to ${app.version}`, () => installApps(reader, [app.id]), { disabled: busy }),
+          standing.removable && button("Remove", () => { local.removing = app.id; drawApps(); }, { disabled: busy })),
+    standing.reason && h("p", { class: "quiet" }, standing.reason),
+    app.shots.length > 0
+      ? h("div", { class: "gallery", role: "group", "aria-label": `Pictures of ${app.title}`, tabIndex: closerShowsMore ? -1 : 0 },
+          app.shots.map((shot, index) => {
+            if (!closerShowsMore) return h("figure", null, shotFrame(shot, app.title), h("figcaption", null, shot.caption));
+            const frame = shotFrame(shot, app.title, "button");
+            frame.type = "button";
+            frame.setAttribute("aria-label", `${shot.caption}. Picture ${index + 1} of ${app.shots.length}, show at full size`);
+            frame.addEventListener("click", () => look(index));
+            return h("figure", null, frame, h("figcaption", { "aria-hidden": "true" }, shot.caption));
+          }))
+      : h("div", { class: "gallery" }, h("figure", null, shotFrame(null, app.title))),
+    pictureNote(app.shots.map(shot => shot.name)),
+    h("p", { class: "reading about-app" }, app.description),
+    facts.length > 0 && h("dl", { class: "facts" }, facts.map(([name, value]) => [h("dt", null, name), h("dd", null, value)])),
+    app.release_notes && [h("h3", null, `New in ${app.version}`), h("p", { class: "reading" }, app.release_notes)],
+    app.access && [
+      h("h3", null, "What it can use"),
+      app.access.length > 0
+        ? h("ul", { class: "reading uses" }, app.access.map(phrase => h("li", null, phrase)))
+        : h("p", { class: "reading" }, "Nothing beyond its own storage."),
+    ],
+    app.setup.length > 0 && [
+      h("h3", null, "Setup"),
+      h("ol", { class: "steps reading" }, app.setup.map(step => h("li", null,
+        prose(step.text),
+        step.link && h("p", null, h("a", { href: step.link.url, target: "_blank", rel: "noopener noreferrer" }, step.link.label)),
+        step.command && h("p", { class: "row command" }, h("code", null, step.command), copyButton(step.command))))),
+    ],
+  ].flat(Infinity).filter(Boolean));
+  notePictures();
+}
+
+async function loadStore() {
+  try {
+    view.store = await ask("/api/store");
+  } catch {
+    // Without the store the place still lists nothing wrong; the next
+    // look at the state says whether the server has gone.
+    return;
+  }
+  drawApps();
 }
 
 async function loadApps() {
@@ -749,8 +966,15 @@ async function loadSend() {
 
 // The whole page.
 
-function show(place) {
+function show({ place, app }) {
+  // Coming back to the shelves from an app's page lands where the owner
+  // was looking, and an app's page opens at its top.
+  const leavingShelves = view.place === "apps" && !view.app;
+  if (leavingShelves) view.shelvesAt = scrollY;
+  const returning = place === "apps" && !app && view.app;
   view.place = place;
+  view.app = app;
+  document.querySelector("main").dataset.place = place;
   for (const name of [...PLACES, "lost"]) document.getElementById(`place-${name}`).hidden = view.lost ? name !== "lost" : name !== place;
   for (const link of document.querySelectorAll(".places a")) {
     if (!view.lost && link.dataset.place === place) link.setAttribute("aria-current", "page");
@@ -758,7 +982,11 @@ function show(place) {
   }
   if (view.lost) return;
   document.title = `Cobalt – ${place[0].toUpperCase()}${place.slice(1)}`;
-  if (place === "apps") { drawApps(); if (appsReader() && view.apps.installed === null) loadApps(); }
+  if (place === "apps") {
+    drawApps();
+    if (appsReader() && view.apps.installed === null) loadApps();
+    scrollTo(0, returning ? view.shelvesAt ?? 0 : app ? 0 : scrollY);
+  }
   if (place === "browser") loadBrowsers();
   if (place === "send") loadSend();
 }
@@ -766,7 +994,7 @@ function show(place) {
 function lose() {
   if (view.lost) return;
   view.lost = true;
-  show(view.place);
+  show(view);
 }
 
 // Reads the state, and draws again only when something in it changed, so a
@@ -808,7 +1036,7 @@ function resume(jobs) {
   }
 }
 
-addEventListener("hashchange", () => show(placeFor(location.hash)));
+addEventListener("hashchange", () => show(routeFor(location.hash)));
 // Closing the window does not stop what is running: the command behind it
 // finishes the job before it exits. The browser's own question is still
 // asked, because an owner who closes the tab mid-install should do it
@@ -825,6 +1053,7 @@ addEventListener("pagehide", () => {
 drawReader();
 drawBrowser();
 drawSend();
-show(view.place);
+show(view);
+loadStore();
 refresh();
 setInterval(refresh, 2000);

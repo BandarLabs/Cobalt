@@ -369,10 +369,9 @@ fn to_the_page() -> Response {
     Response {
         status: 303,
         reason: "See Other",
-        content_type: "text/plain; charset=utf-8",
-        body: Vec::new(),
-        extra: vec![("Location", "/".to_owned())],
+        ..Response::file("text/plain; charset=utf-8", b"")
     }
+    .with("Location", "/".to_owned())
 }
 
 /// The answer to anybody who does not hold the session.
@@ -386,11 +385,11 @@ fn stranger(path: &str) -> Response {
         Response {
             status: 401,
             reason: "Unauthorized",
-            content_type: "text/plain; charset=utf-8",
-            body: b"This address opened Cobalt once and cannot open it again.\n\n\
-                    Run kobo ui in a terminal to open a new window.\n"
-                .to_vec(),
-            extra: Vec::new(),
+            ..Response::file(
+                "text/plain; charset=utf-8",
+                b"This address opened Cobalt once and cannot open it again.\n\n\
+                  Run kobo ui in a terminal to open a new window.\n",
+            )
         }
     } else {
         Response::refusal(401, "Unauthorized", "session", "Unauthorized")

@@ -9,20 +9,27 @@ import {
   absence,
   afterFailure,
   afterwards,
-  appObstacle,
-  appSections,
+  appFacts,
+  appStanding,
   browserStep,
   chosenReader,
   elapsed,
   failure,
   fileSize,
+  galleryStep,
+  installingNeeds,
   linked,
+  pictureDue,
   placeFor,
   planStep,
   readerStanding,
   reflow,
+  routeFor,
   runningJob,
   sentence,
+  storeApps,
+  storeShelves,
+  tileStanding,
   uploadRefusal,
   webAddress,
 } from "../crates/kobo-cli/src/ui/page/logic.mjs";
@@ -262,15 +269,6 @@ test("a wait is counted in seconds and then in minutes", () => {
   assert.equal(elapsed(-5), "0 s");
 });
 
-test("an app that cannot go on this reader says what stands in the way", () => {
-  const reader = { free_bytes: 400_000 };
-  assert.equal(appObstacle({ runs_on_this_reader: true, fits: true, bytes: 1 }, reader), "");
-  assert.equal(appObstacle({ runs_on_this_reader: true, fits: null, bytes: null }, reader), "");
-  assert.equal(appObstacle({ runs_on_this_reader: false, minimum_cobalt_version: "0.4.0", fits: false, bytes: 9 }, reader), "Needs Cobalt 0.4.0 or newer.");
-  assert.equal(appObstacle({ runs_on_this_reader: true, fits: false, bytes: 1_900_412 }, reader), "Needs 1.9 MB; the reader has 400 KB free.");
-  assert.equal(appObstacle({ runs_on_this_reader: true, fits: false, bytes: 1_900_412 }, {}), "Needs 1.9 MB.");
-});
-
 const computer = { release: "0.3.37", release_problem: null };
 const without = { release: null, release_problem: "This copy of the kobo command has nothing to put on a reader." };
 const withCobalt = (version, standing, more = {}) => ({
@@ -336,64 +334,230 @@ const app = (id, title, more = {}) => ({
   update_available: false,
   runs_on_this_reader: true,
   minimum_cobalt_version: "0.3.0",
+  bytes: 1_900_412,
+  fits: true,
   ...more,
 });
 
-test("the reader's apps come first, with what the catalog knows about each, then the rest", () => {
-  const installed = [app("rss", "Feeds", { installed_version: "1.0.0" }), app("almanac", "Almanac", { installed_version: "1.0.0" })];
+const shown = (id, title, more = {}) => ({
+  id,
+  title,
+  summary: `What ${title} is, from the store.`,
+  description: `Everything ${title} says about itself.`,
+  version: "1.0.0",
+  release_notes: `What changed in ${title} 1.0.0.`,
+  access: [],
+  setup: [],
+  shots: [{ name: `${id}.png`, caption: `${title} open`, width: 1072, height: 1448 }],
+  ...more,
+});
+
+const store = {
+  groups: [
+    { id: "reading", title: "Reading and listening", apps: ["rss", "almanac"] },
+    { id: "games", title: "Games", apps: ["backgammon"] },
+  ],
+  apps: {
+    almanac: shown("almanac", "Almanac"),
+    backgammon: shown("backgammon", "Backgammon", { summary: "A board game for two.", shots: [] }),
+    rss: shown("rss", "Feeds"),
+  },
+};
+
+test("with no reader the store is every app in its group, as the command was built with it", () => {
+  const shelves = storeShelves(store, null, null, "");
+  assert.equal(shelves.onReader, null);
+  assert.deepEqual(shelves.updates, []);
+  assert.deepEqual(shelves.groups.map(group => [group.title, group.apps.map(entry => entry.id)]), [
+    ["Reading and listening", ["almanac", "rss"]],
+    ["Games", ["backgammon"]],
+  ]);
+  assert.equal(shelves.found, 3);
+  const almanac = shelves.groups[0].apps[0];
+  assert.equal(almanac.description, "Everything Almanac says about itself.");
+  assert.equal(almanac.shots[0].name, "almanac.png");
+  assert.equal(almanac.on_reader, false);
+  assert.equal(almanac.offered, false);
+  assert.equal(almanac.bytes, null);
+  assert.equal(tileStanding(almanac), "");
+  // Nothing at all is still a store with nothing in it, not an error.
+  assert.deepEqual(storeShelves(null, null, null, ""), { onReader: null, updates: [], groups: [], found: 0 });
+});
+
+test("a reader's apps come first and stay in their groups, with what the catalog says of each", () => {
+  const installed = [app("rss", "Feeds", { installed_version: "1.0.0", summary: "The runtime's line." }), app("almanac", "Almanac", { installed_version: "1.0.0" })];
   const catalog = [
     app("almanac", "Almanac", { version: "1.2.0", installed_version: "1.0.0", update_available: true }),
-    app("rss", "Feeds", { installed_version: "1.0.0" }),
-    app("tide-table", "Tide Table"),
+    app("rss", "Feeds", { installed_version: "1.0.0", summary: "Follow feeds." }),
     app("backgammon", "Backgammon"),
+    app("tide-table", "Tide Table"),
   ];
-  const sections = appSections(installed, catalog, "");
-  assert.deepEqual(sections.installed.map(entry => entry.id), ["almanac", "rss"]);
-  assert.deepEqual(sections.available.map(entry => entry.id), ["backgammon", "tide-table"]);
-  assert.deepEqual(sections.updates, ["almanac"]);
-  assert.equal(sections.total, 4);
-  assert.equal(sections.installed[0].version, "1.2.0");
-  // What the app does is said in the catalog's words where it is in the
-  // catalog, and in the reader's own where it is not.
-  const blurbed = appSections([app("rss", "Feeds", { installed_version: "1.0.0", summary: "The runtime's line." })], [app("rss", "Feeds", { summary: "Follow feeds." })], "");
-  assert.equal(blurbed.installed[0].summary, "Follow feeds.");
-  assert.equal(appSections([app("rss", "Feeds", { summary: "The runtime's line." })], null, "").installed[0].summary, "The runtime's line.");
-  assert.equal(sections.installed[0].installed_version, "1.0.0");
-  assert.equal(sections.installed[0].update_available, true);
-  assert.equal(sections.installed[1].update_available, false);
+  const shelves = storeShelves(store, installed, catalog, "");
+  assert.deepEqual(shelves.onReader.map(entry => entry.id), ["almanac", "rss"]);
+  assert.deepEqual(shelves.updates, ["almanac"]);
+  assert.deepEqual(shelves.groups.map(group => [group.id, group.apps.map(entry => entry.id)]), [
+    ["reading", ["almanac", "rss"]],
+    ["games", ["backgammon"]],
+    // Published after this command was built: no group, no pictures, and
+    // still there to install.
+    ["other", ["tide-table"]],
+  ]);
+  assert.equal(shelves.found, 4);
+
+  const [almanac, feeds] = shelves.onReader;
+  assert.equal(almanac.version, "1.2.0");
+  assert.equal(almanac.installed_version, "1.0.0");
+  assert.equal(tileStanding(almanac), "Update to 1.2.0");
+  // The note was written for the version the store was built with.
+  assert.equal(almanac.release_notes, null);
+  assert.equal(feeds.release_notes, "What changed in Feeds 1.0.0.");
+  // The catalog's line is the app's own and the newest; the reader's own
+  // line for a built-in copy is the last resort.
+  assert.equal(feeds.summary, "Follow feeds.");
+  assert.equal(tileStanding(feeds), "On this reader");
+  const stray = shelves.groups[2].apps[0];
+  assert.deepEqual([stray.title, stray.description, stray.shots, stray.access], ["Tide Table", "The Tide Table app.", [], null]);
 });
 
-test("with no catalog the reader's own apps are still listed and nothing is called an update", () => {
-  const installed = [app("rss", "Feeds", { installed_version: "1.0.0", update_available: true })];
-  for (const catalog of [null, undefined]) {
-    const sections = appSections(installed, catalog, "");
-    assert.deepEqual(sections.installed.map(entry => entry.id), ["rss"]);
-    assert.equal(sections.installed[0].update_available, false);
-    assert.equal(sections.installed[0].in_catalog, false);
-    assert.deepEqual(sections.available, []);
-    assert.deepEqual(sections.updates, []);
-  }
-  assert.deepEqual(appSections(null, null, ""), { installed: [], available: [], updates: [], total: 0 });
+test("with no catalog a reader's apps are listed and nothing is called an update", () => {
+  const installed = [app("rss", "Feeds", { installed_version: "1.0.0", update_available: true }), app("sideloaded", "Sideloaded", { installed_version: "0.1.0" })];
+  const shelves = storeShelves(store, installed, null, "");
+  assert.deepEqual(shelves.onReader.map(entry => entry.id), ["rss", "sideloaded"]);
+  assert.deepEqual(shelves.updates, []);
+  assert.equal(shelves.onReader[0].update, false);
+  // An app the reader has that neither the store nor the catalog knows is
+  // on the reader's shelf and in no group.
+  assert.ok(!shelves.groups.some(group => group.apps.some(entry => entry.id === "sideloaded")));
+  assert.equal(shelves.found, 4);
+  // A reader with nothing on it has an empty shelf, which is not the same
+  // as no reader.
+  assert.deepEqual(storeShelves(store, [], null, "").onReader, []);
 });
 
-test("an update the reader's Cobalt is too old for is not counted among the updates", () => {
+test("an update or an app this reader cannot take says so and is not counted among the updates", () => {
   const installed = [app("almanac", "Almanac", { installed_version: "1.0.0" })];
-  const catalog = [app("almanac", "Almanac", { version: "2.0.0", update_available: true, runs_on_this_reader: false, minimum_cobalt_version: "0.4.0" })];
-  const sections = appSections(installed, catalog, "");
-  assert.deepEqual(sections.updates, []);
-  assert.equal(sections.installed[0].runs_on_this_reader, false);
-  assert.equal(sections.installed[0].minimum_cobalt_version, "0.4.0");
+  const catalog = [
+    app("almanac", "Almanac", { version: "2.0.0", update_available: true, runs_on_this_reader: false, minimum_cobalt_version: "0.4.0" }),
+    app("rss", "Feeds", { runs_on_this_reader: false, minimum_cobalt_version: "0.5.0" }),
+    app("backgammon", "Backgammon", { fits: false, bytes: 9_500_000 }),
+  ];
+  const reader = { cobalt: { cobalt_version: "0.3.37" }, free_bytes: 400_000 };
+  const apps = storeApps(store, installed, catalog);
+  assert.deepEqual(storeShelves(store, installed, catalog, "").updates, []);
+
+  assert.equal(tileStanding(apps.get("almanac")), "2.0.0 needs Cobalt 0.4.0");
+  assert.deepEqual(appStanding(apps.get("almanac"), reader, true), {
+    primary: null,
+    removable: true,
+    reason: "Version 2.0.0 needs Cobalt 0.4.0 or newer. This reader has 0.3.37.",
+  });
+  assert.equal(tileStanding(apps.get("rss")), "Needs Cobalt 0.5.0");
+  assert.deepEqual(appStanding(apps.get("rss"), reader, true), {
+    primary: null,
+    removable: false,
+    reason: "Needs Cobalt 0.5.0 or newer. This reader has 0.3.37.",
+  });
+  assert.equal(tileStanding(apps.get("backgammon")), "Needs 9.5 MB free");
+  assert.equal(appStanding(apps.get("backgammon"), reader, true).reason, "Needs 9.5 MB. The reader has 400 KB free.");
+  assert.equal(appStanding(apps.get("backgammon"), { cobalt: { cobalt_version: "0.3.37" } }, true).reason, "Needs 9.5 MB.");
 });
 
-test("the search narrows both lists by name, id or summary and leaves the counts alone", () => {
+test("an app's page offers the one thing that can be done with it, and nothing without a reader", () => {
+  const reader = { cobalt: { cobalt_version: "0.3.37" }, free_bytes: 9_000_000_000 };
+  const installed = [app("rss", "Feeds", { installed_version: "1.0.0" }), app("almanac", "Almanac", { installed_version: "1.0.0" })];
+  const catalog = [app("rss", "Feeds", { installed_version: "1.0.0" }), app("almanac", "Almanac", { version: "1.2.0", update_available: true }), app("backgammon", "Backgammon")];
+  const apps = storeApps(store, installed, catalog);
+  assert.deepEqual(appStanding(apps.get("backgammon"), reader, true), { primary: "install", removable: false, reason: "" });
+  assert.deepEqual(appStanding(apps.get("almanac"), reader, true), { primary: "update", removable: true, reason: "" });
+  assert.deepEqual(appStanding(apps.get("rss"), reader, true), { primary: null, removable: true, reason: "" });
+
+  // No reader: nothing to do, and the one line about that is the store's.
+  for (const entry of storeApps(store, null, null).values()) {
+    assert.deepEqual(appStanding(entry, null, false), { primary: null, removable: false, reason: "" });
+  }
+  // A reader whose catalog has not come gives no reason yet; one whose
+  // catalog came without the app says so.
+  const waiting = storeApps(store, installed, null).get("backgammon");
+  assert.equal(appStanding(waiting, reader, false).reason, "");
+  assert.equal(appStanding(waiting, reader, true).reason, "The catalog for this reader does not offer this app.");
+});
+
+test("the one line about why nothing can be installed says what to do about it", () => {
+  const cobalt = { cobalt_version: "0.3.37" };
+  assert.equal(installingNeeds({ kind: "none" }, null), "");
+  assert.equal(installingNeeds({ kind: "none" }, {}), "Connect a reader to install apps.");
+  assert.equal(installingNeeds({ kind: "several", readers: [] }, {}), "Choose one of the connected readers in Reader to install apps.");
+  assert.equal(installingNeeds({ kind: "one", reader: { cobalt: null } }, {}), "Install Cobalt on this reader, in Reader, to install apps.");
+  assert.equal(installingNeeds({ kind: "one", reader: { cobalt } }, {}), "");
+});
+
+test("an app's facts are only the ones that are known", () => {
+  const installed = [app("rss", "Feeds", { installed_version: "0.9.0" })];
+  const catalog = [app("rss", "Feeds", { version: "1.0.0", installed_version: "0.9.0", update_available: true })];
+  assert.deepEqual(appFacts(storeApps(store, null, null).get("rss")), [["Version", "1.0.0"]]);
+  assert.deepEqual(appFacts(storeApps(store, installed, catalog).get("rss")), [
+    ["Version", "1.0.0"],
+    ["On this reader", "0.9.0"],
+    ["Size", "1.9 MB"],
+    ["Needs", "Cobalt 0.3.0 or newer"],
+  ]);
+});
+
+test("the search looks through names, ids and descriptions for every word typed", () => {
   const installed = [app("rss", "Feeds", { installed_version: "1.0.0" })];
-  const catalog = [app("rss", "Feeds", { installed_version: "1.0.0" }), app("tide-table", "Tide Table"), app("backgammon", "Backgammon", { summary: "A board game." })];
-  assert.deepEqual(appSections(installed, catalog, "TIDE").available.map(entry => entry.id), ["tide-table"]);
-  assert.deepEqual(appSections(installed, catalog, "rss").installed.map(entry => entry.id), ["rss"]);
-  assert.deepEqual(appSections(installed, catalog, "board").available.map(entry => entry.id), ["backgammon"]);
-  const none = appSections(installed, catalog, "zzz");
-  assert.deepEqual([none.installed, none.available], [[], []]);
-  assert.equal(none.total, 3);
+  const found = query => {
+    const shelves = storeShelves(store, installed, null, query);
+    return [shelves.onReader.map(entry => entry.id), shelves.groups.flatMap(group => group.apps.map(entry => entry.id)), shelves.found];
+  };
+  assert.deepEqual(found("ALMANAC"), [[], ["almanac"], 1]);
+  assert.deepEqual(found("rss"), [["rss"], ["rss"], 1]);
+  assert.deepEqual(found("board two"), [[], ["backgammon"], 1]);
+  assert.deepEqual(found("says about itself feeds"), [["rss"], ["rss"], 1]);
+  assert.deepEqual(found("board feeds"), [[], [], 0]);
+  assert.deepEqual(found("zzz"), [[], [], 0]);
+  // A group with nothing left in it is not shown as an empty heading.
+  assert.deepEqual(storeShelves(store, installed, null, "board").groups.map(group => group.id), ["games"]);
+});
+
+test("a picture is asked for once, and again after a failure only when the server has stopped resting", () => {
+  assert.equal(pictureDue(undefined, 0), true);
+  assert.equal(pictureDue({ state: "asked", at: 0 }, 99_000), false);
+  assert.equal(pictureDue({ state: "here", at: 0 }, 99_000), false);
+  assert.equal(pictureDue({ state: "failed", at: 1_000 }, 30_999), false);
+  assert.equal(pictureDue({ state: "failed", at: 1_000 }, 31_000), true);
+});
+
+test("stepping through an app's pictures stops at the first and the last", () => {
+  assert.equal(galleryStep(0, 1, 4), 1);
+  assert.equal(galleryStep(3, 1, 4), 3);
+  assert.equal(galleryStep(0, -1, 4), 0);
+  assert.equal(galleryStep(2, 0, 4), 2);
+  assert.equal(galleryStep(7, 0, 4), 3);
+  assert.equal(galleryStep(0, 1, 0), 0);
+});
+
+test("an address under Apps names one app by its id and nothing that is not an id", () => {
+  assert.deepEqual(routeFor("#apps"), { place: "apps", app: null });
+  assert.deepEqual(routeFor("#apps/rss-miniflux"), { place: "apps", app: "rss-miniflux" });
+  assert.deepEqual(routeFor("#apps/"), { place: "apps", app: null });
+  assert.deepEqual(routeFor("#apps/../state"), { place: "apps", app: null });
+  assert.deepEqual(routeFor("#apps/Feeds"), { place: "apps", app: null });
+  assert.deepEqual(routeFor("#apps/<img>"), { place: "apps", app: null });
+  assert.deepEqual(routeFor("#send/rss"), { place: "send", app: null });
+  assert.deepEqual(routeFor("#nowhere/rss"), { place: "reader", app: null });
+});
+
+test("the page draws its pictures from its own server and at widths that keep them sharp", () => {
+  // Every picture's address is built in one place, from a listed name.
+  assert.ok(script.includes("const shotAddress = name => `/api/shot?name=${encodeURIComponent(name)}`;"));
+  assert.equal([...script.matchAll(/\.src = /g)].length, 1);
+  assert.ok(script.includes("picture.src = shotAddress(name);"));
+  // A quarter and a half of the reader's 1072 pixels, and no other width.
+  assert.match(style, /\.shelf \{[^}]*grid-template-columns: repeat\(auto-fill, 268px\)/);
+  assert.match(style, /\.gallery figure \{[^}]*flex: 0 0 536px/);
+  assert.match(style, /\.shot \{[^}]*aspect-ratio: 1072 \/ 1448/);
+  // Nothing moves on its own in the store.
+  assert.ok(!/setInterval\([^)]*(gallery|closer|shot)/i.test(script));
 });
 
 test("a browser's one step is split into what to do, what to pick and what to know", () => {
