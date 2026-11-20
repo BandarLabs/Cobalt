@@ -1226,13 +1226,15 @@ impl Books {
                 )
                 .build();
         }
-        let screen = screen.heading("No articles yet");
         // One thing to type at a time: with a step already on the panel for
         // a sync that failed, how a first article is sent can wait until
-        // that one is taken.
+        // that one is taken. The shelf still says it is empty, as a quiet
+        // line: a heading with nothing under it read as a page that had
+        // stopped half way.
         if self.says_what_to_run(pile) {
-            return screen.build();
+            return screen.secondary("No articles yet.").build();
         }
+        let screen = screen.heading("No articles yet");
         // The shelf used to say that pages sent from a computer arrive here,
         // and not how one is sent, which left an owner who had just paired
         // looking at an empty shelf with nothing to do.
