@@ -96,7 +96,13 @@ const SKIPPED: &[&str] = &[
 pub const MAX_DEPTH: usize = 6;
 
 /// How many documents one listing may contain.
+///
+/// Also the most the wire carries in one listing,
+/// [`kobo_protocol::MAX_LIBRARY_ENTRIES`], and the build holds this to that:
+/// a listing longer than the wire allows is not sent short, it fails to
+/// encode, and the session that asked for it ends.
 pub const MAX_ENTRIES: usize = 2_000;
+const _: () = assert!(MAX_ENTRIES <= kobo_protocol::MAX_LIBRARY_ENTRIES);
 
 /// How many directory entries one directory contributes before the walk gives
 /// up on it.
@@ -504,7 +510,10 @@ fn walk(
         if bytes == 0 || bytes > MAX_DOCUMENT_BYTES {
             continue;
         }
-        let Some(relative) = wire_path(root, &path) else {
+        let Some(id) = wire_path(root, &path)
+            .map(|relative| format!("{root_index}/{relative}"))
+            .filter(|id| carried(id))
+        else {
             continue;
         };
         let title = if named.is_some() {
@@ -514,13 +523,26 @@ fn walk(
             unnamed_title(&path, bytes, modified).unwrap_or_else(|| name.to_owned())
         };
         listing.entries.push(Entry {
-            id: format!("{root_index}/{relative}"),
+            id,
             title,
             kind: document,
             bytes,
             on_card: true,
         });
     }
+}
+
+/// Whether the wire carries this identifier: no longer than it allows, and
+/// with no control character in it.
+///
+/// A listing is encoded as one value, so an identifier the encoder refuses
+/// does not cost one tile: the whole reply fails and the session showing the
+/// shelf ends. A book in a deep folder of long names, which is how a library
+/// in a script of three bytes to the letter is filed, is therefore left off
+/// the listing, and never shortened to fit, because a shortened identifier
+/// names no file.
+fn carried(id: &str) -> bool {
+    id.len() <= kobo_protocol::MAX_LIBRARY_ID_LEN && !id.chars().any(char::is_control)
 }
 
 /// The file name without the suffix that named its format.
@@ -1345,6 +1367,35 @@ mod tests {
             Err(super::RangeFault::NotADocument),
             "a file outside the card was read through a stock identifier"
         );
+    }
+
+    #[test]
+    fn a_book_whose_path_the_wire_cannot_carry_is_left_off_rather_than_ending_the_listing() {
+        let root = scratch("long-paths");
+        // Three bytes to the letter, so sixty letters a folder is 180 bytes
+        // and two folders deep is past what an identifier may be.
+        let folder = "\u{672c}".repeat(60);
+        let deep = root.join(&folder).join(&folder);
+        fs::create_dir_all(&deep).expect("the folders");
+        fs::write(deep.join("Deep.epub"), b"body").expect("a deep book");
+        fs::write(root.join(&folder).join("Near.epub"), b"body").expect("a nearer book");
+        fs::write(root.join("Top.epub"), b"body").expect("a book at the top");
+        let entries: Vec<_> = list_in(&[root])
+            .entries
+            .into_iter()
+            .map(super::to_wire)
+            .collect();
+        let titles: Vec<_> = entries.iter().map(|entry| entry.title.as_str()).collect();
+        assert_eq!(titles, ["Near", "Top"]);
+        let frame = kobo_protocol::Frame {
+            version: kobo_protocol::VERSION,
+            request_id: 1,
+            message: kobo_protocol::Message::DeviceResult(kobo_protocol::DeviceResult::Library {
+                entries,
+                truncated: false,
+            }),
+        };
+        assert!(kobo_protocol::encode(&frame).is_ok());
     }
 
     #[test]

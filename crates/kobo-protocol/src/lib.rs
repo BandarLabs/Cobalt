@@ -2070,8 +2070,21 @@ pub enum DeviceResult {
     Text(TextOutcome),
 }
 
-/// The largest library listing one result may carry.
-pub const MAX_LIBRARY_ENTRIES: usize = 400;
+/// The most documents one library listing may carry.
+///
+/// As many as the runtime's walk of the card will find before it stops. It
+/// was 400, a fifth of that, so a reader holding a few hundred more books
+/// than this listed the first 400 and said the rest could not be shown, on
+/// a card the runtime had already read to the end. An entry is at most 362
+/// bytes, an identifier of [`MAX_LIBRARY_ID_LEN`] and a title of
+/// [`MAX_LIBRARY_TITLE_LEN`] with their lengths and three small fields, so
+/// the fullest listing is under three quarters of a megabyte in a frame
+/// that may be eight.
+///
+/// The count is checked on both sides, and a listing past it is refused
+/// rather than cut, which ends the session that asked. So the runtime's
+/// own bound must never be raised past this one without it.
+pub const MAX_LIBRARY_ENTRIES: usize = 2_000;
 /// How many audiobooks one listing may name. A collection past this is
 /// listed as far as this and said to be cut short.
 pub const MAX_AUDIO_ENTRIES: usize = 2_000;

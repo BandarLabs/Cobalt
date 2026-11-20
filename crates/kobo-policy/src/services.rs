@@ -1166,6 +1166,53 @@ mod tests {
         std::fs::remove_dir_all(folder).expect("clean up");
     }
 
+    /// A folder of `count` small books, each a file of its own.
+    fn a_library_of(name: &str, count: usize) -> std::path::PathBuf {
+        let folder =
+            std::env::temp_dir().join(format!("kobo-policy-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("library folder");
+        for place in 0..count {
+            std::fs::write(folder.join(format!("Book {place:04}.txt")), b"words").expect("a book");
+        }
+        folder
+    }
+
+    fn listed(services: &mut DeviceServices) -> (usize, bool) {
+        let answer = services.handle(DeviceRequest::ListLibrary);
+        let frame = kobo_protocol::Frame {
+            version: kobo_protocol::VERSION,
+            request_id: 1,
+            message: kobo_protocol::Message::DeviceResult(answer.clone()),
+        };
+        assert!(
+            kobo_protocol::encode(&frame).is_ok(),
+            "a listing the encoder refuses ends the session that asked"
+        );
+        let DeviceResult::Library { entries, truncated } = answer else {
+            panic!("the library is listed");
+        };
+        (entries.len(), truncated)
+    }
+
+    #[test]
+    fn a_library_of_several_hundred_books_is_listed_whole() {
+        // More than the four hundred a listing used to stop at.
+        let folder = a_library_of("library-hundreds", 650);
+        let mut services = DeviceServices::simulated().with_library_roots(vec![folder.clone()]);
+        assert_eq!(listed(&mut services), (650, false));
+        std::fs::remove_dir_all(folder).expect("clean up");
+    }
+
+    #[test]
+    fn a_library_past_what_the_walk_lists_stops_there_and_says_so() {
+        let most = crate::library::MAX_ENTRIES;
+        let folder = a_library_of("library-thousands", most + 3);
+        let mut services = DeviceServices::simulated().with_library_roots(vec![folder.clone()]);
+        assert_eq!(listed(&mut services), (most, true));
+        std::fs::remove_dir_all(folder).expect("clean up");
+    }
+
     fn declared(names: &[&str]) -> Declared {
         Declared::parse(names.iter().copied()).expect("valid declaration")
     }

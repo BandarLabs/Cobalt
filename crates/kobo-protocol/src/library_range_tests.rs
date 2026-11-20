@@ -213,3 +213,66 @@ fn the_whole_document_request_still_carries_what_it_always_did() {
     assert_eq!(&bytes[HEADER_LEN..], b"\x31\x00\x070/a.txt");
     assert_eq!(MAX_LIBRARY_DOCUMENT_BYTES, 4 * 1024 * 1024);
 }
+
+/// A listing as full as the wire allows, of entries as long as it allows.
+fn the_fullest_listing() -> Vec<LibraryEntry> {
+    (0..MAX_LIBRARY_ENTRIES)
+        .map(|place| {
+            let name = format!("0/{place:04}/");
+            LibraryEntry {
+                id: format!("{name}{}", "a".repeat(MAX_LIBRARY_ID_LEN - name.len())),
+                title: "t".repeat(MAX_LIBRARY_TITLE_LEN),
+                kind: 1,
+                bytes: u32::MAX,
+                on_card: true,
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn the_fullest_library_listing_fits_one_frame_many_times_over() {
+    let frame = frame(
+        VERSION,
+        Message::DeviceResult(DeviceResult::Library {
+            entries: the_fullest_listing(),
+            truncated: true,
+        }),
+    );
+    let bytes = encode(&frame).expect("a full listing is refused by the encoder");
+    assert_eq!(bytes.len(), HEADER_LEN + 4 + MAX_LIBRARY_ENTRIES * 362);
+    assert!(bytes.len() < MAX_FRAME_LEN / 10, "{} bytes", bytes.len());
+    assert_eq!(decode(&bytes).expect("decode"), frame);
+}
+
+#[test]
+fn a_listing_of_one_document_too_many_is_refused_at_both_ends() {
+    let mut entries = the_fullest_listing();
+    let full = encode(&frame(
+        VERSION,
+        Message::DeviceResult(DeviceResult::Library {
+            entries: entries.clone(),
+            truncated: false,
+        }),
+    ))
+    .expect("encode");
+    entries.push(entries[0].clone());
+    assert_eq!(
+        encode(&frame(
+            VERSION,
+            Message::DeviceResult(DeviceResult::Library {
+                entries,
+                truncated: false,
+            }),
+        )),
+        Err(ProtocolError::InvalidValue("library listing"))
+    );
+    // The count is the two bytes after the result's tag.
+    let mut forged = full;
+    let count = u16::try_from(MAX_LIBRARY_ENTRIES + 1).expect("fits two bytes");
+    forged[HEADER_LEN + 1..HEADER_LEN + 3].copy_from_slice(&count.to_be_bytes());
+    assert_eq!(
+        decode(&forged),
+        Err(ProtocolError::InvalidValue("library listing"))
+    );
+}
