@@ -108,6 +108,10 @@ public final class Companion: ObservableObject {
     /// outside its bundle has none and compares nothing.
     public let appVersion: String?
     public let origin: Origin
+    /// Whether a terminal is also printing what jobs say. True while the
+    /// server is the `kobo ui` that started the app, and false once the app
+    /// has had to start a server of its own, whose output only it reads.
+    public var jobsEchoInTerminal: Bool
 
     private let connect: Connect
     private let now: @Sendable () -> Date
@@ -125,6 +129,7 @@ public final class Companion: ObservableObject {
         self.place = place
         self.appVersion = appVersion
         self.origin = origin
+        self.jobsEchoInTerminal = origin == .terminal
         self.now = now
         self.connect = connect
     }
@@ -184,7 +189,7 @@ public final class Companion: ObservableObject {
         if job.kind == .reader {
             detail += " Leave the reader plugged in until it has."
             if job.title.contains("Cobalt"), !job.title.hasPrefix("Removing") {
-                detail += origin == .terminal
+                detail += jobsEchoInTerminal
                     ? " The steps to take on the reader afterwards will also be in the terminal that started Cobalt."
                     : " The steps to take on the reader afterwards appear only in this window, so quitting means not seeing them."
             }
@@ -564,7 +569,9 @@ public final class Companion: ObservableObject {
         return .idle(problem: problem)
     }
 
-    private func uploaded(_ sent: Int64, of name: String) {
+    /// Records how much of a file has gone. The client calls this as the
+    /// bytes leave; the render mode calls it to hold an upload part way.
+    public func uploaded(_ sent: Int64, of name: String) {
         guard case .uploading(let current, let size, _) = send.file, current == name else { return }
         send.file = .uploading(name: current, size: size, sent: min(sent, size))
     }

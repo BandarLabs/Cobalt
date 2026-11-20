@@ -158,5 +158,7 @@ public enum Storage {
     /// The server refuses a write to such a card with its own sentence.
     /// This is for before anything is tried, so the owner is not offered a
     /// button that can only fail.
-    public static let readOnly = "This reader's storage is mounted read-only, so nothing can be installed on it or removed from it. Eject it, unplug it and connect it again. If it is still read-only, restart the reader."
+    /// The remedy is the server's own, word for word, so the owner reads
+    /// one piece of advice whichever of the two says it.
+    public static let readOnly = "This reader's storage is mounted read-only, so nothing can be installed on it or removed from it. Eject it, unplug it, restart the reader and connect it again. If it comes back read-only, its storage needs repairing from the reader's own settings."
 }

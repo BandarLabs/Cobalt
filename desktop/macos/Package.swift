@@ -11,6 +11,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .target(name: "CobaltKit"),
+        .executableTarget(name: "Cobalt", dependencies: ["CobaltKit"]),
         .testTarget(name: "CobaltKitTests", dependencies: ["CobaltKit"]),
     ]
 )

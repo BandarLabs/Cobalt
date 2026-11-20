@@ -22,6 +22,8 @@
 	<string>@VERSION@</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSPrincipalClass</key>
@@ -31,5 +33,24 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Cobalt reads your Kobo’s storage while it is plugged in, to see which reader it is and what is on it, and writes to it only when you install, update or remove something.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Cobalt finds your Kobo on this network and sends it the files and articles you choose, over Wi-Fi.</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>File to send to a Kobo</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
