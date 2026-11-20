@@ -52,6 +52,7 @@ use kobo_ui::TextScale;
 use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Glyph, ProseArea};
 use unicode_segmentation::UnicodeSegmentation;
 
+mod copy;
 mod find;
 mod goto;
 mod place;
@@ -591,6 +592,9 @@ pub mod action {
     pub const GO_TO_GO: &str = "reader-go-to-go";
     /// Opens the field a page number is typed into.
     pub const GO_TO_TYPE: &str = "reader-go-to-type";
+    /// Asks for a copy of everything kept in this book, to be received on a
+    /// computer. The reader only offers it; whatever owns the store makes it.
+    pub const SAVE_COPY: &str = "reader-save-copy";
 }
 
 /// One bounded in-book search match.
@@ -686,6 +690,13 @@ pub struct Reader {
     chapter_starts: Vec<usize>,
     /// Where the reader is thinking of going, while that screen is up.
     go_to: goto::GoTo,
+    /// Whether the notes offer a copy of themselves.
+    ///
+    /// Off until whatever holds this reader says it can make one. Making a
+    /// copy means writing to the application's store and waiting on its
+    /// answers, which the reader cannot do, and a control that started
+    /// something nothing would ever finish is worse than no control.
+    offers_copy: bool,
     /// The word a finger is being held to account for, while its screen is up.
     word: Option<word::Held>,
     /// The field a note on that word is typed into.
@@ -710,6 +721,7 @@ impl Reader {
             foot_width: 0,
             chapter_starts: Vec::new(),
             go_to: goto::GoTo::default(),
+            offers_copy: false,
             word: None,
             note: kobo_sdk::keyboard::TextEntry::new(),
             document,
@@ -1481,6 +1493,14 @@ impl Reader {
         &self.memory
     }
 
+    /// Says whether the notes may offer a copy of themselves.
+    ///
+    /// Called by whatever can make one, which answers
+    /// [`action::SAVE_COPY`] itself: the reader only draws the control.
+    pub const fn offer_copy(&mut self, offered: bool) {
+        self.offers_copy = offered;
+    }
+
     /// Puts a kept memory back into an open book.
     ///
     /// For the case where the book and the place it was left arrive
@@ -2187,6 +2207,7 @@ impl Reader {
                 .then_some("Nothing on this page points anywhere else in the book.".into()),
             entries,
             bar: Vec::new(),
+            top: None,
             current: 0,
         }
     }
@@ -2281,6 +2302,7 @@ impl Reader {
                 })
                 .collect(),
             bar: Vec::new(),
+            top: None,
             // The chapter being read is the last one to start at or before
             // the top of the page.
             current: self
@@ -2363,6 +2385,11 @@ impl Reader {
             ),
             entries,
             bar,
+            // Offered where the reader is looking at what would be copied,
+            // and only when there is something to copy and somebody able to
+            // make the copy.
+            top: (self.offers_copy && self.has_notes())
+                .then_some((action::SAVE_COPY, "Save a copy")),
             current: 0,
         }
     }
@@ -2397,6 +2424,7 @@ impl Reader {
                 (action::BOOK, "Back to the book"),
                 (action::HIGHLIGHTS, "Notes"),
             ],
+            top: None,
             current: 0,
         }
     }
@@ -2415,6 +2443,9 @@ struct List {
     intro: Option<std::borrow::Cow<'static, str>>,
     entries: Vec<Entry>,
     bar: Vec<(&'static str, &'static str)>,
+    /// One more thing to do with the whole list, set in the bar above it
+    /// because the band below holds three and those are taken.
+    top: Option<(&'static str, &'static str)>,
     /// The entry the list opens showing.
     current: usize,
 }
@@ -2499,6 +2530,7 @@ impl List {
         self.name.hash(&mut hasher);
         self.intro.hash(&mut hasher);
         self.bar.hash(&mut hasher);
+        self.top.hash(&mut hasher);
         for entry in &self.entries {
             entry.section.hash(&mut hasher);
             entry.action.hash(&mut hasher);
@@ -2519,6 +2551,9 @@ impl List {
         // The book's title is the book's words too.
         let mut screen =
             ScreenBuilder::new(self.name).top_bar(kobo_ui::drawable_in(title, Face::Text));
+        if let Some((name, label)) = self.top {
+            screen = screen.top_bar_action(name, label);
+        }
         if let Some(intro) = &self.intro {
             screen = screen.secondary(intro.as_ref());
         }

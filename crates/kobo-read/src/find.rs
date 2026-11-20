@@ -312,6 +312,7 @@ impl Reader {
             intro: Some(kobo_ui::drawable_in(&intro, Face::Text).into_owned().into()),
             entries,
             bar: SEARCH_BAR.to_vec(),
+            top: None,
             current: self.find.chosen,
         }
     }
