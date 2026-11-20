@@ -539,6 +539,20 @@ jobs:
           #   and the advisory names that path as unaffected.
           # Re-check when the anki pin moves.
           #
+          # zip before 9 has two more. RUSTSEC-2026-0548 is ZipStreamReader
+          # extracting entries under the names in their local headers, which
+          # can differ from the central directory; nothing audited here reads
+          # an archive as a stream, for the reasons given for its extract
+          # above. RUSTSEC-2026-0545 is AES entries returned without their
+          # authentication code being checked when the data ends early. That
+          # code is behind zip's aes-crypto feature, which no lockfile here
+          # enables: kobo-comic takes zip with deflate alone, the importer
+          # with deflate alone, and neither resolves the aes, hmac or pbkdf2
+          # crates the feature brings. The fix is the same zip 9, with the
+          # same rustc 1.88 and anki pin in the way.
+          # Re-check on the same conditions, and if any crate turns
+          # aes-crypto on.
+          #
           # libsqlite3-sys before 0.39 bundles SQLite before 3.54, which has
           # RUSTSEC-2026-0459: a database opened together with a crafted -wal
           # file of another page size can return stale process memory. The
@@ -557,6 +571,8 @@ jobs:
             --ignore RUSTSEC-2026-0368
             --ignore RUSTSEC-2026-0369
             --ignore RUSTSEC-2026-0429
+            --ignore RUSTSEC-2026-0545
+            --ignore RUSTSEC-2026-0548
             --ignore RUSTSEC-2026-0433
             --ignore RUSTSEC-2026-0387
             --ignore RUSTSEC-2025-0044
