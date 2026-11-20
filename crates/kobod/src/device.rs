@@ -341,6 +341,147 @@ impl SyncWindows {
     }
 }
 
+/// How often the runtime looks at whether Tailscale should be running.
+///
+/// A tap in the Tailscale app is answered at once; this is for everything
+/// else, such as Wi-Fi coming back, and looking is two small reads.
+const TAILSCALE_CHECK: Duration = Duration::from_secs(30);
+
+/// How long a start that failed is left alone before it is tried again.
+///
+/// The failures that retry are the ones that pass by themselves: a download
+/// that did not finish, a tailnet that did not answer. Ten minutes is long
+/// enough that a reader on a bad connection is not downloading 37 MB in a
+/// loop, and short enough that an evening's session still gets there.
+const TAILSCALE_RETRY: Duration = Duration::from_secs(10 * 60);
+
+/// How long teardown waits for the Tailscale supervisor to stop before
+/// ending it.
+///
+/// The supervisor looks for the request every two seconds and gives the
+/// daemon ten to leave cleanly; this is both, with some to spare.
+const TAILSCALE_STOP_PATIENCE: Duration = Duration::from_secs(20);
+
+/// The Tailscale supervisor this session starts, so the switch in the
+/// Tailscale app actually brings the reader onto the tailnet.
+///
+/// Nothing else starts it. The app can only save what the owner chose;
+/// running a daemon needs the runtime's own privileges, and nothing on the
+/// reader runs while Cobalt is closed. So the service is started when a
+/// session finds it switched on, and ended with the session like a Sync
+/// window, for the same reason: nothing Cobalt started may still be running
+/// once the stock reader is.
+#[derive(Default)]
+struct TailscaleService {
+    running: Option<Child>,
+    checked: Option<Instant>,
+    /// Set when the Tailscale app saved something that may change what should
+    /// be running, so a tap is answered at once.
+    asked: bool,
+    /// When a start that failed may be tried again.
+    retry_after: Option<Instant>,
+    /// Whether this session has cleared what an earlier one may have left.
+    swept: bool,
+}
+
+impl TailscaleService {
+    fn tend(&mut self, online: bool) {
+        if !self.asked
+            && self
+                .checked
+                .is_some_and(|at| at.elapsed() < TAILSCALE_CHECK)
+        {
+            return;
+        }
+        // A tap is the owner trying again, so it does not wait out a failure.
+        if std::mem::take(&mut self.asked) {
+            self.retry_after = None;
+        }
+        self.checked = Some(Instant::now());
+        if let Some(supervisor) = &mut self.running {
+            match supervisor.try_wait() {
+                // It reads the app's choices itself while it runs.
+                Ok(None) => return,
+                Ok(Some(status)) if !status.success() => {
+                    trace("tailscale did not come up; trying again later");
+                    self.retry_after = Some(Instant::now() + TAILSCALE_RETRY);
+                }
+                _ => {}
+            }
+            self.running = None;
+        }
+        if !std::mem::replace(&mut self.swept, true) {
+            // A session that ended badly can leave a daemon with nobody
+            // watching it and its names in the hosts file.
+            crate::tailscale::sweep();
+        }
+        let Some(want) = crate::tailscale::wanted() else {
+            return;
+        };
+        if self.retry_after.is_some_and(|at| Instant::now() < at) {
+            return;
+        }
+        if want == crate::tailscale::Want::Run && !online {
+            crate::tailscale::waiting_for_wifi();
+            return;
+        }
+        crate::tailscale::forget_stop_request();
+        let started = std::env::current_exe().and_then(|runtime| {
+            use std::os::unix::process::CommandExt;
+            Command::new(runtime)
+                .args(want.arguments())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                // Its own group, so a signal meant for the session cannot
+                // take the supervisor down and leave the daemon behind.
+                .process_group(0)
+                .spawn()
+        });
+        match started {
+            Ok(supervisor) => {
+                trace(&format!("tailscale started ({want:?})"));
+                self.running = Some(supervisor);
+            }
+            Err(error) => trace(&format!("tailscale could not start: {error}")),
+        }
+    }
+
+    /// Ends the service this session started, before the reader is handed
+    /// back.
+    ///
+    /// Asked first, so the daemon leaves the tailnet cleanly and takes its
+    /// interface, its routes and its names with it before the stock reader
+    /// restarts the radio underneath. A supervisor that has not stopped by the
+    /// deadline is ended, and whatever it left is swept up after it.
+    fn finish(&mut self) {
+        if let Some(mut supervisor) = self.running.take() {
+            if matches!(supervisor.try_wait(), Ok(None)) {
+                if let Err(error) = crate::tailscale::ask_to_stop() {
+                    trace(&format!("could not ask tailscale to stop: {error}"));
+                }
+                let deadline = Instant::now() + TAILSCALE_STOP_PATIENCE;
+                while matches!(supervisor.try_wait(), Ok(None)) {
+                    if Instant::now() >= deadline {
+                        let _ignored = kobo_abi::process_group::signal(
+                            supervisor.id(),
+                            kobo_abi::process_group::SIGKILL,
+                        );
+                        let _ignored = supervisor.wait();
+                        trace("tailscale did not stop in time and was ended");
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+        }
+        // Also when nothing was started here: the daemon runs in a group of
+        // its own, so this is what ends one whose supervisor was killed.
+        crate::tailscale::sweep();
+        crate::tailscale::forget_stop_request();
+    }
+}
+
 /// Reads the clock, the radio and the gauge, no more often than it needs to.
 ///
 /// Held by the session rather than read per frame. Every reading here is from
@@ -504,6 +645,8 @@ struct Reading {
     battery: Option<kobo_ui::Percent>,
     charging: bool,
     signal: kobo_ui::Signal,
+    /// Whether the Tailscale tunnel is up.
+    tailnet: bool,
 }
 
 impl Reading {
@@ -515,6 +658,7 @@ impl Reading {
             self.signal,
             bluetooth,
         )
+        .with_tailnet(self.tailnet)
     }
 }
 
@@ -588,6 +732,9 @@ fn read_status() -> (Reading, kobo_hal::network::LinkState) {
         },
         battery: battery.map(|battery| kobo_ui::Percent::new(battery.percent)),
         charging: battery.is_some_and(|battery| battery.charging),
+        // Read with the rest and from the same kind of place: one file the
+        // kernel publishes and one small file the supervisor writes.
+        tailnet: crate::tailscale::connected(),
     };
     (reading, link)
 }
@@ -1110,6 +1257,7 @@ pub fn present(
     // Held out here rather than in the session, so that teardown can stop a
     // sync still running while the watchdog is fed and the radio is still up.
     let mut sync_windows = SyncWindows::default();
+    let mut tailscale = TailscaleService::default();
     let application_outcome = if consented {
         host_applications(
             application,
@@ -1124,6 +1272,7 @@ pub fn present(
             launch_painter,
             launch_started,
             &mut sync_windows,
+            &mut tailscale,
         )
     } else {
         // Not an error. The owner was asked and answered, and everything below
@@ -1155,6 +1304,10 @@ pub fn present(
     // running would write to the card the reader is about to scan, on a core
     // it needs to start, through a radio that is about to go.
     sync_windows.finish();
+    // And before the stock reader restarts the radio's supplicant: a tunnel
+    // still up through that would be left holding routes for an interface
+    // that is about to go, and a daemon nobody is watching.
+    tailscale.finish();
     // A session closed within seconds of opening can still be inside the
     // recovery's settle window, so this may wait. It waits beating, and it has
     // to: the radio cannot be handed back while it is still being restored.
@@ -2462,6 +2615,7 @@ fn host_applications(
     launch_painter: Option<Painter>,
     launch_started: Instant,
     sync_windows: &mut SyncWindows,
+    tailscale: &mut TailscaleService,
 ) -> Result<String, String> {
     // Keep the pre-takeover capture alive across every ordinary return. The
     // independent watchdog uses its saved record if this process cannot unwind.
@@ -2675,6 +2829,7 @@ fn host_applications(
                 )?;
             }
             sync_windows.tend(status.online());
+            tailscale.tend(status.online());
             if power.state() != kobod::power::State::Awake {
                 slept = true;
             }
@@ -4239,6 +4394,17 @@ fn host_applications(
                                 )
                             {
                                 sync_windows.asked = true;
+                            }
+                            // The same for Tailscale: its switch and its
+                            // requests are saved words the runtime acts on.
+                            if apps[index].name == "tailscale"
+                                && matches!(
+                                    &request,
+                                    kobo_protocol::StoreRequest::Save { key, .. }
+                                        if crate::tailscale::asks_for_the_service(key)
+                                )
+                            {
+                                tailscale.asked = true;
                             }
                             reply(
                                 &mut apps[index],

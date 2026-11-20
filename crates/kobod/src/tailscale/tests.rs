@@ -1,0 +1,1132 @@
+//! The supervisor, run against two shell scripts standing in for the daemon
+//! and its command.
+//!
+//! Nothing here needs a reader, a tailnet, a network or root. Each test
+//! builds a [`Layout`] inside a scratch folder, writes the stand-ins into its
+//! `bin`, and steers them through small files the scripts read, so every
+//! state the real programs can be in is one the supervisor is shown.
+
+use super::*;
+use std::os::unix::fs::MetadataExt;
+use std::os::unix::process::CommandExt;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// The daemon's stand-in. It records how it was started, opens its "socket"
+/// as an ordinary file, and leaves when asked, unless the test says otherwise.
+const DAEMON: &str = r#"#!/bin/sh
+root=$(dirname "$(dirname "$0")")
+printf '%s\n' "$@" > "$root/daemon-args"
+printf '%s\n' "GOMEMLIMIT=$GOMEMLIMIT" "GOGC=$GOGC" "TS_DISABLE_TAILDROP=$TS_DISABLE_TAILDROP" > "$root/daemon-env"
+sock=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = "--socket" ]; then sock="$2"; fi
+  shift
+done
+mode=$(cat "$root/daemon-mode" 2>/dev/null)
+echo "stand-in daemon starting" >&2
+case "$mode" in
+  dies) echo "tun: no such device" >&2; exit 1 ;;
+  no-socket) while :; do sleep 0.05; done ;;
+  deaf) trap '' TERM ;;
+  *) trap 'rm -f "$sock"; exit 0' TERM ;;
+esac
+: > "$sock"
+while :; do sleep 0.05; done
+"#;
+
+/// The command's stand-in. `status` prints whatever the test last wrote,
+/// `up` behaves as the test asked, and `logout` leaves a mark.
+const CLI: &str = r#"#!/bin/sh
+root=$(dirname "$(dirname "$0")")
+shift 2
+verb="$1"
+shift
+case "$verb" in
+  status)
+    cat "$root/status.json" 2>/dev/null || exit 1 ;;
+  logout)
+    : > "$root/logged-out" ;;
+  up)
+    printf '%s\n' "$@" > "$root/up-args"
+    case "$(cat "$root/up-mode" 2>/dev/null)" in
+      login)
+        echo "To authenticate, visit:" >&2
+        echo "	https://login.tailscale.com/a/1a2b3c4d" >&2
+        while [ ! -e "$root/approved" ]; do sleep 0.02; done ;;
+      silent) while :; do sleep 0.05; done ;;
+      fail) echo "something upstream is wrong" >&2; exit 1 ;;
+      *) ;;
+    esac ;;
+esac
+"#;
+
+const RUNNING: &str = r#"{
+  "BackendState": "Running",
+  "Self": {"DNSName": "kobo-cobalt.example.ts.net.", "TailscaleIPs": ["100.64.0.7", "fd7a::7"]},
+  "Peer": {
+    "a": {"DNSName": "desk.example.ts.net.", "TailscaleIPs": ["100.64.0.10"]},
+    "b": {"DNSName": "", "TailscaleIPs": []}
+  }
+}"#;
+
+const HOSTS: &str = "127.0.0.1\tlocalhost\n192.168.1.5 printer\n";
+
+/// The archive the unpacking tests download, and what it and its two
+/// programs hash to. Committed rather than built by the test, so the digests
+/// below are of bytes that cannot drift with the tar on the machine.
+const ARCHIVE: &[u8] = include_bytes!("fixtures/engine.tgz");
+const ARCHIVE_SHA256: &str = "6d34e510ee1da4b0836ab561c918291fce1184bb85f2c13e119968f91b4338c4";
+const ARCHIVE_DAEMON_SHA256: &str =
+    "9d3e14486f2a6ea68ddff2de25b467672f84f04663612bfb8ab85fb58854d556";
+const ARCHIVE_CLI_SHA256: &str = "f8aa1326155d8e8f175736e843509119d03b2010a9cd260512c57fdec795e80e";
+
+fn scratch(name: &str) -> PathBuf {
+    let folder = std::env::current_dir()
+        .expect("working directory")
+        .join("target")
+        .join(format!("kobod-tailscale-{name}-{}", std::process::id()));
+    let _ignored = fs::remove_dir_all(&folder);
+    fs::create_dir_all(&folder).expect("scratch folder");
+    folder
+}
+
+fn script(path: &Path, text: &str) {
+    fs::write(path, text).expect("stand-in");
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("stand-in mode");
+}
+
+fn leaked(text: String) -> &'static str {
+    Box::leak(text.into_boxed_str())
+}
+
+/// A reader in a folder: the stand-ins installed and pinned by their own
+/// digests, a hosts file with the owner's entries, a tunnel node that opens,
+/// loopback up, and nothing listening.
+fn reader(name: &str) -> (PathBuf, Layout) {
+    let root = scratch(name);
+    for folder in ["state", "bin", "proc/net", "interfaces/lo"] {
+        fs::create_dir_all(root.join(folder)).expect("layout folder");
+    }
+    fs::write(root.join("hosts"), HOSTS).expect("hosts");
+    fs::write(root.join("tun"), b"").expect("tunnel node");
+    fs::write(root.join("interfaces/lo/flags"), "0x49\n").expect("loopback flags");
+    script(&root.join("bin/tailscaled"), DAEMON);
+    script(&root.join("bin/tailscale"), CLI);
+    let layout = Layout {
+        app_state: root.join("state"),
+        home: root.join("home"),
+        bin: root.join("bin"),
+        hosts: root.join("hosts"),
+        tun_node: root.join("tun"),
+        proc: root.join("proc"),
+        interfaces: root.join("interfaces"),
+        sshd: root.join("sshd"),
+        sshd_configs: [root.join("sshd_config"), root.join("etc-sshd_config")],
+        engine: Engine {
+            url: "https://example.invalid/never-fetched",
+            folder: "tailscale_fixture_arm",
+            archive_sha256: ARCHIVE_SHA256,
+            daemon_sha256: leaked(sha256(&root.join("bin/tailscaled")).expect("digest")),
+            cli_sha256: leaked(sha256(&root.join("bin/tailscale")).expect("digest")),
+            limit: 1024 * 1024,
+        },
+        room: 0,
+        timing: Timing {
+            poll: Duration::from_millis(20),
+            refresh: Duration::from_millis(80),
+            socket: Duration::from_secs(5),
+            connect: Duration::from_secs(5),
+            sign_in: Duration::from_secs(8),
+            stop: Duration::from_secs(3),
+            answer: Duration::from_secs(5),
+        },
+    };
+    (root, layout)
+}
+
+fn switch(layout: &Layout, on: bool) {
+    fs::write(
+        layout.app_state.join(CONFIG),
+        if on { "true\n" } else { "false\n" },
+    )
+    .expect("config");
+}
+
+fn status(layout: &Layout) -> Vec<String> {
+    read_status(layout).lines().map(str::to_owned).collect()
+}
+
+fn state(layout: &Layout) -> String {
+    status(layout).first().cloned().unwrap_or_default()
+}
+
+/// Waits for something the supervisor does in its own time. Generous,
+/// because the same tests run under emulation, where a shell takes a while.
+fn eventually(what: &str, mut holds: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !holds() {
+        assert!(Instant::now() < deadline, "never happened: {what}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The supervisor running on a thread of its own, as the runtime runs it in
+/// a process of its own.
+fn supervise_in_background(layout: &Layout) -> std::thread::JoinHandle<End> {
+    let layout = layout.clone();
+    std::thread::spawn(move || run(&layout))
+}
+
+fn recorded(root: &Path, name: &str) -> Vec<String> {
+    fs::read_to_string(root.join(name))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn alive(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+/// A reader that is signed in already: the tunnel comes up without a link.
+fn connected_reader(name: &str) -> (PathBuf, Layout, std::thread::JoinHandle<End>) {
+    let (root, layout) = reader(name);
+    switch(&layout, true);
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    (root, layout, supervisor)
+}
+
+// The hosts file.
+
+#[test]
+fn the_block_is_added_after_the_owners_entries_and_nothing_else_changes() {
+    let lines = hosts::block(&parse_nodes(RUNNING));
+    let spliced = hosts::splice(HOSTS.as_bytes(), &lines);
+    assert_eq!(
+        String::from_utf8(spliced).expect("text"),
+        "127.0.0.1\tlocalhost\n192.168.1.5 printer\n\
+         # >>> cobalt-tailscale >>>\n\
+         100.64.0.10\tdesk.example.ts.net desk\n\
+         100.64.0.7\tkobo-cobalt.example.ts.net kobo-cobalt\n\
+         # <<< cobalt-tailscale <<<\n"
+    );
+}
+
+#[test]
+fn removing_the_block_gives_the_file_back_byte_for_byte() {
+    for original in [
+        HOSTS,
+        "",
+        "# only a comment\r\n10.0.0.1 nas\r\n",
+        "\n\n127.0.0.1 localhost\n\n",
+    ] {
+        let with = hosts::splice(original.as_bytes(), &["100.64.0.1\ta.ts.net a".to_owned()]);
+        assert_ne!(with, original.as_bytes());
+        assert_eq!(hosts::splice(&with, &[]), original.as_bytes());
+    }
+}
+
+#[test]
+fn a_last_entry_without_a_line_break_is_not_glued_to_the_marker() {
+    let with = hosts::splice(b"10.0.0.1 nas", &["100.64.0.1\ta.ts.net a".to_owned()]);
+    assert!(with.starts_with(b"10.0.0.1 nas\n# >>> cobalt-tailscale >>>\n"));
+}
+
+#[test]
+fn a_block_is_replaced_rather_than_added_to() {
+    let once = hosts::splice(HOSTS.as_bytes(), &["100.64.0.1\told.ts.net old".to_owned()]);
+    let twice = hosts::splice(&once, &["100.64.0.2\tnew.ts.net new".to_owned()]);
+    let text = String::from_utf8(twice).expect("text");
+    assert!(!text.contains("old.ts.net"));
+    assert_eq!(text.matches("# >>> cobalt-tailscale >>>").count(), 1);
+    assert!(text.starts_with(HOSTS));
+}
+
+#[test]
+fn a_marker_with_no_partner_is_removed_without_the_lines_beside_it() {
+    let damaged = "127.0.0.1 localhost\n# >>> cobalt-tailscale >>>\n10.0.0.9 mine\n";
+    assert_eq!(
+        hosts::splice(damaged.as_bytes(), &[]),
+        b"127.0.0.1 localhost\n10.0.0.9 mine\n"
+    );
+    let closing_only = "10.0.0.9 mine\n# <<< cobalt-tailscale <<<\n10.0.0.8 also-mine\n";
+    assert_eq!(
+        hosts::splice(closing_only.as_bytes(), &[]),
+        b"10.0.0.9 mine\n10.0.0.8 also-mine\n"
+    );
+}
+
+#[test]
+fn a_name_from_the_network_that_is_not_a_host_name_is_never_written() {
+    let node = |address: &str, name: &str| hosts::Node {
+        address: address.to_owned(),
+        name: name.to_owned(),
+    };
+    let lines = hosts::block(&[
+        node("100.64.0.1", "fine.example.ts.net."),
+        node("100.64.0.2", "evil.ts.net\n10.0.0.1 bank.example"),
+        node("100.64.0.3", "two words.ts.net"),
+        node("100.64.0.4", "Upper.ts.net"),
+        node("not-an-address", "ok.ts.net"),
+        node("100.64.0.5\n1.2.3.4 x", "ok.ts.net"),
+        node("100.64.0.6", ""),
+        node("100.64.0.7", "-leading.ts.net"),
+    ]);
+    assert_eq!(lines, ["100.64.0.1\tfine.example.ts.net fine"]);
+}
+
+#[test]
+fn a_large_tailnet_is_cut_to_a_bounded_block() {
+    let nodes = (0..500)
+        .map(|index| hosts::Node {
+            address: format!("100.64.{}.{}", index / 250, index % 250 + 1),
+            name: format!("node{index}.example.ts.net"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(hosts::block(&nodes).len(), 64);
+}
+
+#[test]
+fn an_unchanged_block_is_not_written_again() {
+    let (root, _) = reader("hosts-unchanged");
+    let path = root.join("hosts");
+    let lines = ["100.64.0.1\ta.ts.net a".to_owned()];
+    hosts::write(&path, &lines).expect("first write");
+    let first = fs::metadata(&path).expect("hosts").ino();
+    hosts::write(&path, &lines).expect("second write");
+    // A rewrite replaces the file, so the same file is the proof of none.
+    assert_eq!(fs::metadata(&path).expect("hosts").ino(), first);
+    hosts::write(&path, &[]).expect("removal");
+    assert_eq!(fs::read_to_string(&path).expect("hosts"), HOSTS);
+}
+
+#[test]
+fn a_hosts_file_that_cannot_be_read_is_left_alone() {
+    let (root, _) = reader("hosts-unreadable");
+    let path = root.join("hosts-is-a-folder");
+    fs::create_dir_all(&path).expect("folder");
+    assert!(hosts::write(&path, &["100.64.0.1\ta.ts.net a".to_owned()]).is_err());
+    assert!(path.is_dir());
+    assert!(!root.join("hosts-is-a-folder.cobalt-new").exists());
+}
+
+#[test]
+fn a_file_too_large_to_be_a_hosts_file_is_refused_untouched() {
+    let (root, _) = reader("hosts-large");
+    let path = root.join("hosts");
+    let large = "10.0.0.1 a-very-long-name\n".repeat(20_000);
+    fs::write(&path, &large).expect("large hosts");
+    assert!(hosts::write(&path, &["100.64.0.1\ta.ts.net a".to_owned()]).is_err());
+    assert_eq!(fs::read_to_string(&path).expect("hosts"), large);
+}
+
+#[test]
+fn a_write_cut_short_earlier_does_not_stop_the_next_one() {
+    let (root, _) = reader("hosts-leftover");
+    let path = root.join("hosts");
+    // What a reader that lost power mid-write is left with: the old file
+    // whole, and half a new one beside it.
+    fs::write(root.join("hosts.cobalt-new"), "127.0.0.1\tloc").expect("leftover");
+    assert_eq!(fs::read_to_string(&path).expect("hosts"), HOSTS);
+    hosts::write(&path, &["100.64.0.1\ta.ts.net a".to_owned()]).expect("write");
+    assert!(fs::read_to_string(&path).expect("hosts").starts_with(HOSTS));
+    assert!(!root.join("hosts.cobalt-new").exists());
+}
+
+#[test]
+fn a_linked_hosts_file_is_still_a_link_afterwards_and_keeps_its_mode() {
+    let (root, _) = reader("hosts-link");
+    let real = root.join("real-hosts");
+    fs::write(&real, HOSTS).expect("real hosts");
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o640)).expect("mode");
+    let link = root.join("linked-hosts");
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+    hosts::write(&link, &["100.64.0.1\ta.ts.net a".to_owned()]).expect("write");
+    assert!(fs::symlink_metadata(&link)
+        .expect("link")
+        .file_type()
+        .is_symlink());
+    assert!(fs::read_to_string(&real)
+        .expect("real hosts")
+        .contains("a.ts.net"));
+    assert_eq!(
+        fs::metadata(&real)
+            .expect("real hosts")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o640
+    );
+}
+
+// The two programs.
+
+#[test]
+fn the_committed_archive_is_the_one_the_tests_pin() {
+    assert_eq!(kobo_net::sha256::hex_digest(ARCHIVE), ARCHIVE_SHA256);
+}
+
+/// A reader with nothing installed, whose pins are the committed archive's.
+fn bare_reader(name: &str) -> (PathBuf, Layout) {
+    let (root, mut layout) = reader(name);
+    fs::remove_file(layout.daemon()).expect("remove stand-in");
+    fs::remove_file(layout.cli()).expect("remove stand-in");
+    layout.engine.daemon_sha256 = ARCHIVE_DAEMON_SHA256;
+    layout.engine.cli_sha256 = ARCHIVE_CLI_SHA256;
+    (root, layout)
+}
+
+fn nothing_is_installed(layout: &Layout) -> bool {
+    fs::read_dir(&layout.bin).map_or(true, |entries| entries.count() == 0)
+}
+
+#[test]
+fn a_verified_download_installs_the_two_programs_and_nothing_else() {
+    let (_, layout) = bare_reader("engine-install");
+    ensure_engine(&layout, &|| Some(ARCHIVE.to_vec())).expect("install");
+    let mut names = fs::read_dir(&layout.bin)
+        .expect("bin")
+        .map(|entry| {
+            entry
+                .expect("entry")
+                .file_name()
+                .into_string()
+                .expect("name")
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    // Not the service files that ride in the same archive, and none of the
+    // working files the install made on the way.
+    assert_eq!(names, ["tailscale", "tailscaled"]);
+    assert!(verify_engine(&layout).is_ok());
+    // Installed is installed: the next start does not download again.
+    ensure_engine(&layout, &|| panic!("downloaded a second time")).expect("second look");
+}
+
+#[test]
+fn a_download_with_the_wrong_digest_installs_nothing() {
+    let (_, layout) = bare_reader("engine-digest");
+    let mut tampered = ARCHIVE.to_vec();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 1;
+    let refused = ensure_engine(&layout, &|| Some(tampered.clone())).expect_err("refused");
+    assert_eq!(
+        refused,
+        "The Tailscale download did not match its checksum."
+    );
+    assert!(nothing_is_installed(&layout));
+}
+
+#[test]
+fn a_download_cut_short_installs_nothing() {
+    let (_, layout) = bare_reader("engine-truncated");
+    let half = ARCHIVE[..ARCHIVE.len() / 2].to_vec();
+    assert!(ensure_engine(&layout, &|| Some(half.clone())).is_err());
+    assert!(nothing_is_installed(&layout));
+}
+
+#[test]
+fn an_archive_that_will_not_unpack_installs_nothing() {
+    let (_, mut layout) = bare_reader("engine-corrupt");
+    // Pinned to its own digest, so the only thing left to object is tar.
+    let half = ARCHIVE[..ARCHIVE.len() / 2].to_vec();
+    layout.engine.archive_sha256 = leaked(kobo_net::sha256::hex_digest(&half));
+    let refused = ensure_engine(&layout, &|| Some(half.clone())).expect_err("refused");
+    assert!(
+        refused.starts_with("Tailscale could not be unpacked"),
+        "{refused}"
+    );
+    assert!(nothing_is_installed(&layout));
+}
+
+#[test]
+fn a_download_that_fails_says_to_check_wifi_and_leaves_nothing() {
+    let (_, layout) = bare_reader("engine-offline");
+    let refused = ensure_engine(&layout, &|| None).expect_err("refused");
+    assert_eq!(
+        refused,
+        "Tailscale could not be downloaded. Check Wi-Fi and try again."
+    );
+    assert!(nothing_is_installed(&layout));
+}
+
+#[test]
+fn a_card_without_room_is_refused_before_anything_is_downloaded() {
+    let (_, mut layout) = bare_reader("engine-full");
+    layout.room = u64::MAX;
+    let refused =
+        ensure_engine(&layout, &|| panic!("downloaded onto a full card")).expect_err("refused");
+    assert_eq!(refused, NO_ROOM);
+    assert!(nothing_is_installed(&layout));
+}
+
+#[test]
+fn a_program_that_is_not_the_one_pinned_is_not_installed_from_a_good_archive() {
+    let (_, mut layout) = bare_reader("engine-member");
+    // The archive is the pinned one, so only the program's own digest stands
+    // between a repacked archive and a daemon run as root.
+    layout.engine.daemon_sha256 = ARCHIVE_CLI_SHA256;
+    let refused = ensure_engine(&layout, &|| Some(ARCHIVE.to_vec())).expect_err("refused");
+    assert_eq!(refused, "A Tailscale program did not match its checksum.");
+    assert!(nothing_is_installed(&layout));
+}
+
+#[test]
+fn a_program_swapped_on_the_card_is_refused_and_fetched_again() {
+    let (_, layout) = bare_reader("engine-swapped");
+    let downloads = AtomicUsize::new(0);
+    let fetch = || {
+        downloads.fetch_add(1, Ordering::SeqCst);
+        Some(ARCHIVE.to_vec())
+    };
+    ensure_engine(&layout, &fetch).expect("install");
+    // What a computer with the reader mounted over USB can do in a second.
+    script(&layout.daemon(), "#!/bin/sh\necho owned\n");
+    assert!(verify_engine(&layout).is_err());
+    assert!(Daemon::start(&layout).is_err());
+    ensure_engine(&layout, &fetch).expect("reinstall");
+    assert_eq!(downloads.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        sha256(&layout.daemon()).expect("digest"),
+        ARCHIVE_DAEMON_SHA256
+    );
+}
+
+#[test]
+fn a_link_where_a_program_should_be_is_not_run() {
+    let (root, layout) = reader("engine-link");
+    let elsewhere = root.join("elsewhere");
+    fs::rename(layout.daemon(), &elsewhere).expect("move");
+    std::os::unix::fs::symlink(&elsewhere, layout.daemon()).expect("link");
+    assert!(verify_engine(&layout).is_err());
+}
+
+// What must be true before the reader joins a tailnet.
+
+const SOCKETS: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0 100 0 0 10 0
+   1: 0100007F:20E0 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 2 1 0 100 0 0 10 0
+   2: 0A00000C:0016 0A000002:C1A2 01 00000000:00000000 02:000A0000 00000000     0        0 3 4 0 20 4 30 10 -1
+";
+
+#[test]
+fn listeners_are_read_from_the_kernels_table_and_loopback_is_left_out() {
+    // The SSH server listening, the Sync engine's loopback port, and an
+    // established SSH connection, which is not a listener.
+    assert_eq!(parse_listeners(SOCKETS), [22]);
+    let six = "  sl  local_address ...\n   0: 00000000000000000000000000000000:0017 00000000000000000000000000000000:0000 0A 0\n   1: 00000000000000000000000001000000:0015 00000000000000000000000000000000:0000 0A 0\n";
+    assert_eq!(parse_listeners(six), [23]);
+    assert!(parse_listeners("").is_empty());
+}
+
+#[test]
+fn a_reader_that_still_takes_root_by_password_is_not_put_on_a_tailnet() {
+    let (root, layout) = reader("refuse-password");
+    switch(&layout, true);
+    fs::write(root.join("proc/net/tcp"), SOCKETS).expect("sockets");
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(status(&layout)[2].contains("Run kobo setup on your computer"));
+    assert!(!root.join("daemon-args").exists(), "the daemon was started");
+}
+
+#[test]
+fn setup_having_closed_password_login_lets_the_reader_join() {
+    let (root, layout) = reader("allow-hardened");
+    fs::write(root.join("proc/net/tcp"), SOCKETS).expect("sockets");
+    fs::write(
+        &layout.sshd_configs[0],
+        "PermitRootLogin yes\n\n# cobalt-hardening: key-only SSH for root.\nMatch User root\nPasswordAuthentication no\n# cobalt-hardening: end.\n",
+    )
+    .expect("config");
+    assert_eq!(exposure(&layout), Exposure::Acceptable);
+    // Until the confirming login the change is one that undoes itself.
+    fs::write(
+        root.join("sshd_config.cobalt-revert"),
+        "PermitRootLogin yes\n",
+    )
+    .expect("pending");
+    assert_eq!(exposure(&layout), Exposure::PasswordLogin);
+}
+
+#[test]
+fn what_the_ssh_server_says_it_will_do_outranks_what_the_file_says() {
+    let (root, layout) = reader("allow-effective");
+    fs::write(root.join("proc/net/tcp"), SOCKETS).expect("sockets");
+    script(
+        &layout.sshd,
+        "#!/bin/sh\necho 'permitrootlogin yes'\necho 'passwordauthentication no'\n",
+    );
+    assert_eq!(exposure(&layout), Exposure::Acceptable);
+    // A block in the file that the server does not honour is not hardening.
+    fs::write(
+        &layout.sshd_configs[0],
+        "# cobalt-hardening: key-only SSH for root.\n",
+    )
+    .expect("config");
+    script(
+        &layout.sshd,
+        "#!/bin/sh\necho 'passwordauthentication yes'\n",
+    );
+    assert_eq!(exposure(&layout), Exposure::PasswordLogin);
+}
+
+#[test]
+fn debug_services_are_refused_whatever_ssh_does() {
+    let (root, layout) = reader("refuse-telnet");
+    switch(&layout, true);
+    fs::write(
+        root.join("proc/net/tcp"),
+        "header\n   0: 00000000:0017 00000000:0000 0A 0\n",
+    )
+    .expect("sockets");
+    assert_eq!(exposure(&layout), Exposure::DebugServices);
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(status(&layout)[2].contains("Telnet or FTP"));
+}
+
+#[test]
+fn a_reader_with_nothing_listening_has_nothing_to_close() {
+    let (_, layout) = reader("allow-quiet");
+    assert_eq!(exposure(&layout), Exposure::Acceptable);
+}
+
+#[test]
+fn a_kernel_without_a_tunnel_driver_is_said_plainly_and_nothing_is_started() {
+    let (root, mut layout) = reader("no-tun");
+    switch(&layout, true);
+    // A node that cannot be opened for reading and writing, which is what a
+    // kernel with no driver behind it gives.
+    layout.tun_node = root.join("bin");
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "unsupported");
+    assert!(!root.join("daemon-args").exists(), "the daemon was started");
+}
+
+// The supervisor.
+
+#[test]
+fn switched_off_runs_nothing_and_says_off() {
+    let (root, layout) = reader("off");
+    switch(&layout, false);
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(status(&layout)[..3], ["off", "", OFF]);
+    assert!(!root.join("daemon-args").exists());
+    assert_eq!(wanted_in(&layout), None);
+}
+
+#[test]
+fn a_reader_nobody_has_set_up_is_off() {
+    let (root, layout) = reader("unset");
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "off");
+    assert!(!root.join("daemon-args").exists());
+    fs::write(layout.app_state.join(CONFIG), "yes please\n").expect("config");
+    assert_eq!(wanted_in(&layout), None);
+}
+
+#[test]
+fn a_signed_in_reader_comes_up_and_is_taken_down_with_the_session() {
+    let (root, layout, supervisor) = connected_reader("session");
+    assert_eq!(
+        status(&layout),
+        [
+            "running",
+            "100.64.0.7",
+            "Connected.",
+            "",
+            "kobo-cobalt.example.ts.net"
+        ]
+    );
+    eventually("the tailnet names are written", || {
+        fs::read_to_string(&layout.hosts).is_ok_and(|hosts| hosts.contains("desk.example.ts.net"))
+    });
+    let daemon = recorded_pid(&layout.home.join(DAEMON_PID)).expect("daemon recorded");
+    assert!(alive(daemon));
+    assert_eq!(
+        fs::metadata(&layout.home)
+            .expect("home")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+
+    ask_to_stop_in(&layout).expect("ask");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(status(&layout)[..3], ["stopped", "", LEFT_COBALT]);
+    assert_eq!(fs::read_to_string(&layout.hosts).expect("hosts"), HOSTS);
+    assert!(!alive(daemon));
+    for leftover in [DAEMON_PID, SUPERVISOR_PID, STOP, "tailscaled.sock"] {
+        assert!(!layout.home.join(leftover).exists(), "{leftover} was left");
+    }
+    assert!(fs::read_to_string(layout.home.join(DAEMON_LOG))
+        .expect("daemon log")
+        .contains("stand-in daemon starting"));
+    assert!(root.join("daemon-args").exists());
+}
+
+#[test]
+fn the_daemon_is_started_for_a_small_reader_and_brought_up_as_a_leaf() {
+    let (root, layout, supervisor) = connected_reader("flags");
+    assert_eq!(
+        recorded(&root, "daemon-args"),
+        [
+            "--statedir",
+            layout.home.to_str().expect("path"),
+            "--socket",
+            layout.socket().to_str().expect("path"),
+            "--tun=tailscale0",
+            "--no-logs-no-support",
+        ]
+    );
+    assert_eq!(
+        recorded(&root, "daemon-env"),
+        ["GOMEMLIMIT=48MiB", "GOGC=50", "TS_DISABLE_TAILDROP=true"]
+    );
+    // Every one of these is a promise: no exit node, no routes offered or
+    // taken, no Tailscale SSH, the resolver and the firewall left alone, and
+    // whatever was set by hand before put back.
+    assert_eq!(
+        recorded(&root, "up-args"),
+        [
+            "--reset",
+            "--accept-dns=false",
+            "--accept-routes=false",
+            "--ssh=false",
+            "--advertise-exit-node=false",
+            "--advertise-routes=",
+            "--exit-node=",
+            "--shields-up=false",
+            "--netfilter-mode=off",
+            "--hostname=kobo-cobalt",
+            "--timeout=8s",
+        ]
+    );
+    ask_to_stop_in(&layout).expect("ask");
+    supervisor.join().expect("supervisor");
+}
+
+#[test]
+fn the_sign_in_link_reaches_the_app_and_approval_finishes_the_start() {
+    let (root, layout) = reader("sign-in");
+    switch(&layout, true);
+    fs::write(root.join("up-mode"), "login").expect("mode");
+    fs::write(root.join("status.json"), r#"{"BackendState":"NeedsLogin"}"#).expect("status");
+    let supervisor = supervise_in_background(&layout);
+    eventually("the link is shown", || state(&layout) == "needs-login");
+    assert_eq!(status(&layout)[3], "https://login.tailscale.com/a/1a2b3c4d");
+    // The owner approves on their phone.
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    fs::write(root.join("approved"), b"").expect("approval");
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    assert_eq!(
+        status(&layout)[3],
+        "",
+        "the used link is still on the screen"
+    );
+    ask_to_stop_in(&layout).expect("ask");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+}
+
+#[test]
+fn a_sign_in_nobody_finishes_stops_the_daemon_and_waits_for_the_owner() {
+    let (root, mut layout) = reader("sign-in-timeout");
+    switch(&layout, true);
+    layout.timing.sign_in = Duration::from_millis(300);
+    layout.timing.answer = Duration::from_millis(300);
+    fs::write(root.join("up-mode"), "login").expect("mode");
+    fs::write(root.join("status.json"), r#"{"BackendState":"NeedsLogin"}"#).expect("status");
+    // Settled, not to be tried again: a new attempt would only show a new
+    // link to somebody who is not looking.
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "timed-out");
+    assert_eq!(status(&layout)[3], "");
+    assert!(!layout.home.join(DAEMON_PID).exists());
+    assert_eq!(fs::read_to_string(&layout.hosts).expect("hosts"), HOSTS);
+}
+
+#[test]
+fn a_tailnet_that_never_answers_is_reported_and_tried_again_later() {
+    let (root, mut layout) = reader("no-answer");
+    switch(&layout, true);
+    layout.timing.connect = Duration::from_millis(200);
+    fs::write(root.join("up-mode"), "silent").expect("mode");
+    fs::write(root.join("status.json"), r#"{"BackendState":"Starting"}"#).expect("status");
+    assert!(matches!(run(&layout), End::Later(_)));
+    assert_eq!(state(&layout), "failed");
+    assert!(status(&layout)[2].contains("could not reach its servers"));
+    assert!(!layout.home.join(DAEMON_PID).exists());
+}
+
+#[test]
+fn a_start_the_command_refuses_is_a_failure_to_try_again() {
+    let (root, layout) = reader("up-fails");
+    switch(&layout, true);
+    fs::write(root.join("up-mode"), "fail").expect("mode");
+    fs::write(root.join("status.json"), r#"{"BackendState":"Stopped"}"#).expect("status");
+    assert!(matches!(run(&layout), End::Later(_)));
+    assert_eq!(state(&layout), "failed");
+}
+
+#[test]
+fn a_tailnet_that_wants_an_admin_to_approve_the_reader_says_so() {
+    let (root, mut layout) = reader("machine-auth");
+    switch(&layout, true);
+    layout.timing.connect = Duration::from_millis(200);
+    fs::write(root.join("up-mode"), "silent").expect("mode");
+    fs::write(
+        root.join("status.json"),
+        r#"{"BackendState":"NeedsMachineAuth"}"#,
+    )
+    .expect("status");
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "needs-approval");
+}
+
+#[test]
+fn a_daemon_that_dies_at_once_is_a_failure_and_its_last_words_are_kept() {
+    let (root, layout) = reader("daemon-dies");
+    switch(&layout, true);
+    fs::write(root.join("daemon-mode"), "dies").expect("mode");
+    assert!(matches!(run(&layout), End::Later(_)));
+    assert_eq!(state(&layout), "failed");
+    eventually("the log is kept", || {
+        fs::read_to_string(layout.home.join(DAEMON_LOG))
+            .is_ok_and(|log| log.contains("tun: no such device"))
+    });
+    assert!(
+        !root.join("up-args").exists(),
+        "a dead daemon was brought up"
+    );
+}
+
+#[test]
+fn a_daemon_that_never_opens_its_socket_is_given_up_on_and_ended() {
+    let (root, mut layout) = reader("daemon-no-socket");
+    switch(&layout, true);
+    layout.timing.socket = Duration::from_millis(300);
+    fs::write(root.join("daemon-mode"), "no-socket").expect("mode");
+    assert!(matches!(run(&layout), End::Later(_)));
+    assert_eq!(state(&layout), "failed");
+    assert!(!layout.home.join(DAEMON_PID).exists());
+}
+
+#[test]
+fn a_daemon_that_dies_while_connected_is_noticed_and_its_names_are_removed() {
+    let (_, layout, supervisor) = connected_reader("daemon-killed");
+    eventually("the tailnet names are written", || {
+        fs::read_to_string(&layout.hosts).is_ok_and(|hosts| hosts.contains("desk.example.ts.net"))
+    });
+    // What the kernel does to it when memory runs out.
+    let daemon = recorded_pid(&layout.home.join(DAEMON_PID)).expect("daemon recorded");
+    kobo_abi::process_group::signal(daemon, kobo_abi::process_group::SIGKILL).expect("kill");
+    assert!(matches!(
+        supervisor.join().expect("supervisor"),
+        End::Later(_)
+    ));
+    assert_eq!(state(&layout), "failed");
+    assert_eq!(fs::read_to_string(&layout.hosts).expect("hosts"), HOSTS);
+}
+
+#[test]
+fn a_daemon_that_stops_answering_is_ended_and_tried_again_later() {
+    let (root, layout, supervisor) = connected_reader("daemon-mute");
+    fs::remove_file(root.join("status.json")).expect("stop answering");
+    assert!(matches!(
+        supervisor.join().expect("supervisor"),
+        End::Later(_)
+    ));
+    assert_eq!(state(&layout), "failed");
+    assert!(!layout.home.join(DAEMON_PID).exists());
+}
+
+#[test]
+fn switching_off_stops_the_daemon_and_says_off() {
+    let (_, layout, supervisor) = connected_reader("switch-off");
+    let daemon = recorded_pid(&layout.home.join(DAEMON_PID)).expect("daemon recorded");
+    switch(&layout, false);
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(status(&layout)[..3], ["off", "", OFF]);
+    assert!(!alive(daemon));
+    assert_eq!(fs::read_to_string(&layout.hosts).expect("hosts"), HOSTS);
+    // The key is kept, so switching on again needs no second approval.
+    assert!(layout.home.is_dir());
+}
+
+#[test]
+fn a_daemon_that_ignores_being_asked_is_ended_anyway() {
+    let (root, mut layout) = reader("deaf");
+    switch(&layout, true);
+    layout.timing.stop = Duration::from_millis(200);
+    fs::write(root.join("daemon-mode"), "deaf").expect("mode");
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    let daemon = recorded_pid(&layout.home.join(DAEMON_PID)).expect("daemon recorded");
+    ask_to_stop_in(&layout).expect("ask");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert!(!alive(daemon));
+}
+
+#[test]
+fn signing_out_tells_the_tailnet_then_forgets_the_key() {
+    let (root, layout, supervisor) = connected_reader("sign-out");
+    fs::write(layout.home.join("tailscaled.state"), "node key").expect("state");
+    // The app saves the request and then switches off, in that order.
+    fs::write(layout.app_state.join(REQUEST), SIGN_OUT).expect("request");
+    switch(&layout, false);
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert!(root.join("logged-out").exists(), "the tailnet was not told");
+    assert!(!layout.home.exists(), "the key is still on the reader");
+    assert_eq!(status(&layout)[..3], ["signed-out", "", SIGNED_OUT]);
+    assert!(!layout.app_state.join(REQUEST).exists());
+    assert_eq!(wanted_in(&layout), None);
+}
+
+#[test]
+fn signing_out_while_off_forgets_the_key_without_a_daemon() {
+    let (root, layout) = reader("sign-out-off");
+    switch(&layout, false);
+    fs::create_dir_all(&layout.home).expect("home");
+    fs::write(layout.home.join("tailscaled.state"), "node key").expect("state");
+    fs::write(layout.app_state.join(REQUEST), SIGN_OUT).expect("request");
+    assert_eq!(wanted_in(&layout), Some(Want::SignOut));
+    sign_out_while_off(&layout).expect("sign out");
+    assert!(!layout.home.exists());
+    assert_eq!(state(&layout), "signed-out");
+    assert_eq!(wanted_in(&layout), None);
+    assert!(!root.join("daemon-args").exists());
+}
+
+#[test]
+fn a_sign_in_that_expires_while_connected_asks_for_approval_again() {
+    let (root, layout, supervisor) = connected_reader("expired");
+    fs::write(root.join("up-mode"), "login").expect("mode");
+    fs::write(root.join("status.json"), r#"{"BackendState":"NeedsLogin"}"#).expect("status");
+    eventually("a new link is shown", || state(&layout) == "needs-login");
+    assert_eq!(status(&layout)[3], "https://login.tailscale.com/a/1a2b3c4d");
+    ask_to_stop_in(&layout).expect("ask");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+}
+
+#[test]
+fn a_stop_request_left_by_an_earlier_session_does_not_stop_the_next() {
+    let (root, layout) = reader("stale-stop");
+    switch(&layout, true);
+    fs::write(root.join("status.json"), RUNNING).expect("status");
+    ask_to_stop_in(&layout).expect("stale request");
+    let supervisor = supervise_in_background(&layout);
+    eventually("the tunnel comes up", || state(&layout) == "running");
+    ask_to_stop_in(&layout).expect("ask");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+}
+
+#[test]
+fn a_second_supervisor_does_not_start_beside_the_first() {
+    let (root, layout) = reader("second");
+    switch(&layout, true);
+    fs::create_dir_all(&layout.home).expect("home");
+    // Another process, alive, that the kernel says is a supervisor.
+    fs::write(layout.home.join(SUPERVISOR_PID), "4242").expect("pid");
+    fs::create_dir_all(root.join("proc/4242")).expect("proc");
+    fs::write(
+        root.join("proc/4242/cmdline"),
+        b"/bin/kobod\0--tailscale\0run\0",
+    )
+    .expect("cmdline");
+    assert!(matches!(run(&layout), End::Later(_)));
+    assert!(!root.join("daemon-args").exists());
+    // The same number after a restart, belonging to somebody else, is not.
+    fs::write(root.join("proc/4242/cmdline"), b"/usr/local/Kobo/nickel\0").expect("cmdline");
+    fs::write(root.join("up-mode"), "fail").expect("mode");
+    assert!(matches!(run(&layout), End::Later(_)));
+    assert!(root.join("daemon-args").exists());
+}
+
+/// A daemon with nobody watching it, as a supervisor killed outright leaves.
+fn stray(root: &Path, layout: &Layout, named: &Path) -> Child {
+    fs::create_dir_all(&layout.home).expect("home");
+    let mut command = Command::new(layout.daemon());
+    command
+        .arg("--socket")
+        .arg(layout.socket())
+        .stderr(Stdio::null())
+        .process_group(0);
+    let child = command.spawn().expect("stray daemon");
+    fs::write(layout.home.join(DAEMON_PID), child.id().to_string()).expect("pid");
+    let entry = root.join("proc").join(child.id().to_string());
+    fs::create_dir_all(&entry).expect("proc entry");
+    let mut line = b"/bin/sh\0".to_vec();
+    line.extend_from_slice(named.to_string_lossy().as_bytes());
+    line.push(0);
+    fs::write(entry.join("cmdline"), line).expect("cmdline");
+    eventually("the stray daemon is up", || layout.socket().exists());
+    child
+}
+
+#[test]
+fn a_daemon_left_by_a_dead_supervisor_is_stopped_at_the_next_look() {
+    let (root, mut layout) = reader("stray");
+    layout.timing.stop = Duration::from_millis(300);
+    fs::write(
+        layout.app_state.join(STATUS),
+        Status::quiet("running", "Connected.").render(),
+    )
+    .expect("stale status");
+    hosts::write(&layout.hosts, &["100.64.0.1\ta.ts.net a".to_owned()]).expect("stale names");
+    let mut child = stray(&root, &layout, &layout.daemon());
+    sweep_in(&layout);
+    child.wait().expect("the stray daemon ended");
+    assert!(!layout.home.join(DAEMON_PID).exists());
+    assert_eq!(fs::read_to_string(&layout.hosts).expect("hosts"), HOSTS);
+    assert_eq!(state(&layout), "stopped");
+}
+
+#[test]
+fn a_recorded_number_that_now_belongs_to_another_program_is_not_signalled() {
+    let (root, mut layout) = reader("stranger");
+    layout.timing.stop = Duration::from_millis(300);
+    let mut child = stray(&root, &layout, Path::new("/usr/local/Kobo/nickel"));
+    sweep_in(&layout);
+    assert!(alive(child.id()), "a process that was not ours was ended");
+    assert!(!layout.home.join(DAEMON_PID).exists());
+    kobo_abi::process_group::signal(child.id(), kobo_abi::process_group::SIGKILL).expect("kill");
+    child.wait().expect("ended");
+}
+
+#[test]
+fn the_band_shows_the_tunnel_only_while_the_kernel_has_its_interface() {
+    let (root, layout) = reader("band");
+    fs::write(
+        layout.app_state.join(STATUS),
+        Status::quiet("running", "Connected.").render(),
+    )
+    .expect("status");
+    // The status alone is a process's last word, which may be stale.
+    assert!(!connected_in(&layout));
+    fs::create_dir_all(root.join("interfaces/tailscale0")).expect("interface");
+    assert!(connected_in(&layout));
+    fs::write(
+        layout.app_state.join(STATUS),
+        Status::quiet("needs-login", "Approve this reader to finish.").render(),
+    )
+    .expect("status");
+    assert!(!connected_in(&layout));
+}
+
+#[test]
+fn the_runtime_is_asked_to_run_only_what_the_owner_asked_for() {
+    let (_, layout) = reader("wanted");
+    assert_eq!(wanted_in(&layout), None);
+    switch(&layout, true);
+    assert_eq!(wanted_in(&layout), Some(Want::Run));
+    fs::write(layout.app_state.join(REQUEST), "sign-out\n").expect("request");
+    assert_eq!(wanted_in(&layout), Some(Want::SignOut));
+    fs::write(layout.app_state.join(REQUEST), "anything else").expect("request");
+    assert_eq!(wanted_in(&layout), Some(Want::Run));
+    assert!(asks_for_the_service(CONFIG));
+    assert!(asks_for_the_service(REQUEST));
+    assert!(!asks_for_the_service(STATUS));
+}
+
+#[test]
+fn the_same_status_is_not_written_twice() {
+    let (_, layout) = reader("status-once");
+    let status = Status::quiet("running", "Connected.");
+    write_status(&layout, &status).expect("first");
+    let first = fs::metadata(layout.app_state.join(STATUS))
+        .expect("status")
+        .ino();
+    write_status(&layout, &status).expect("second");
+    assert_eq!(
+        fs::metadata(layout.app_state.join(STATUS))
+            .expect("status")
+            .ino(),
+        first
+    );
+}
+
+// What the daemon says.
+
+#[test]
+fn the_readers_name_and_address_are_read_from_what_the_daemon_reports() {
+    let report = parse_report(RUNNING).expect("report");
+    assert_eq!(report.backend, Backend::Running);
+    assert_eq!(report.address, "100.64.0.7");
+    assert_eq!(report.name, "kobo-cobalt.example.ts.net");
+    let waiting = parse_report(
+        r#"{"BackendState":"NeedsLogin","AuthURL":"https://login.tailscale.com/a/code"}"#,
+    )
+    .expect("report");
+    assert_eq!(waiting.backend, Backend::NeedsLogin);
+    assert_eq!(
+        waiting.sign_in.as_deref(),
+        Some("https://login.tailscale.com/a/code")
+    );
+    assert!(waiting.address.is_empty());
+    assert_eq!(
+        parse_report(r#"{"BackendState":"NeedsMachineAuth"}"#)
+            .expect("report")
+            .backend,
+        Backend::NeedsApproval
+    );
+    assert_eq!(
+        parse_report(r#"{"BackendState":"Starting"}"#)
+            .expect("report")
+            .backend,
+        Backend::Other
+    );
+    assert!(parse_report("not json").is_none());
+}
+
+#[test]
+fn only_a_link_to_tailscales_own_sign_in_host_is_ever_shown() {
+    assert_eq!(
+        sign_in_link("\thttps://login.tailscale.com/a/1a2b3c4d\n"),
+        Some("https://login.tailscale.com/a/1a2b3c4d")
+    );
+    assert_eq!(
+        sign_in_link("visit https://login.tailscale.com/a/1a2b3c4d."),
+        Some("https://login.tailscale.com/a/1a2b3c4d")
+    );
+    assert_eq!(sign_in_link("Success."), None);
+    assert_eq!(sign_in_link("https://example.com/a/1a2b3c4d"), None);
+    assert_eq!(
+        sign_in_link("https://login.tailscale.com.example.org/a/x"),
+        None
+    );
+    assert_eq!(
+        parse_report(r#"{"BackendState":"NeedsLogin","AuthURL":"https://example.com/no"}"#)
+            .expect("report")
+            .sign_in,
+        None
+    );
+}
+
+#[test]
+fn the_pinned_build_is_named_consistently() {
+    // The archive, its folder and the digests move together when the pin
+    // does; a pin edited in one place and not the others would download one
+    // version and look for another inside it.
+    assert!(PINNED.url.ends_with(&format!("/{}.tgz", PINNED.folder)));
+    for digest in [
+        PINNED.archive_sha256,
+        PINNED.daemon_sha256,
+        PINNED.cli_sha256,
+    ] {
+        assert_eq!(digest.len(), 64);
+        assert!(digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
+    }
+    assert_ne!(PINNED.daemon_sha256, PINNED.cli_sha256);
+}

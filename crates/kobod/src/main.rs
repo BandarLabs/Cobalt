@@ -101,7 +101,10 @@ mod consent;
 mod device;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod syncthing;
-#[cfg_attr(not(unix), allow(dead_code))]
+// The Tailscale supervisor is made of process groups, signals and device
+// nodes, and runs nowhere but the reader, so a Windows host build leaves it
+// out and says so if asked.
+#[cfg(unix)]
 mod tailscale;
 #[cfg_attr(not(unix), allow(dead_code))]
 mod touch_calibration;
@@ -185,7 +188,10 @@ fn run(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         .first()
         .is_some_and(|argument| argument == "--tailscale")
     {
+        #[cfg(unix)]
         return tailscale::command(&arguments[1..]).map_err(Into::into);
+        #[cfg(not(unix))]
+        return Err("Tailscale runs on the reader, not on this computer".into());
     }
     if arguments
         .first()
