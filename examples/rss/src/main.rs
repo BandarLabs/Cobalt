@@ -57,6 +57,17 @@ const FEEDS: &str = "feeds";
 /// follow, and the application looked broken on its first screen. The titles
 /// are the ones each feed gives itself, so the shelf does not rename a feed
 /// the moment it is first read.
+///
+/// A summary-only feed would no longer look broken, because the page behind
+/// a teaser is fetched now. The starters still carry their articles whole:
+/// that is one request for a feed's worth of reading where the other is one
+/// for every article, and the first thing a new owner opens should not depend
+/// on whether a site will answer a reader it has never met.
+///
+/// No newsletters are listed. Several were read whole from this application
+/// while the screen beside this one learned to follow them, and each is one
+/// person's letter: which of them a reader should be offered on its first
+/// day is an editorial choice, and not one to make in passing.
 const STARTER_FEEDS: &[(&str, &str, &str)] = &[
     (
         "NASA Science",
