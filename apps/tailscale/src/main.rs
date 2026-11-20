@@ -274,7 +274,10 @@ impl Tailscale {
             screen = screen.banner(level, words);
         }
         // The line under the switch says what is true now, as the switch
-        // does, not what a tap would do.
+        // does, not what a tap would do. It is the only title on this
+        // screen with a line under it. A row's name says what the row is
+        // for, and a second line that says it again in more words is noise
+        // on a panel that redraws slowly and holds little.
         let summary = if self.staying() {
             "Stays connected after you leave Cobalt."
         } else if self.enabled {
@@ -284,12 +287,7 @@ impl Tailscale {
         };
         let mut rows = Vec::with_capacity(3);
         if self.waiting_for_approval() {
-            rows.push((
-                "sign-in",
-                "Approve this reader",
-                "Show the code to scan with your phone.",
-                Glyph::Key,
-            ));
+            rows.push(("sign-in", "Approve this reader", "", Glyph::Key));
         } else if self.enabled
             && (self.stalled
                 || matches!(
@@ -297,25 +295,10 @@ impl Tailscale {
                     "timed-out" | "needs-approval" | "failed" | "refused"
                 ))
         {
-            rows.push((
-                "retry",
-                "Try again",
-                "Start Tailscale again now.",
-                Glyph::Refresh,
-            ));
+            rows.push(("retry", "Try again", "", Glyph::Refresh));
         }
-        rows.push((
-            "options",
-            "Options",
-            "Stay connected, exit node, share this network.",
-            Glyph::Settings,
-        ));
-        rows.push((
-            "about",
-            "About Tailscale",
-            "What it does, what it opens, and signing out.",
-            Glyph::Globe,
-        ));
+        rows.push(("options", "Options", "", Glyph::Settings));
+        rows.push(("about", "About Tailscale", "", Glyph::Globe));
         let mut facts = Vec::with_capacity(3);
         if self.enabled {
             facts.push(("Status", self.state_words().to_owned()));
@@ -348,19 +331,19 @@ impl Tailscale {
             .toggle(
                 "stay",
                 "Stay connected outside Cobalt",
+                // Under a switch goes what the switch cannot say: that it is
+                // on and not working. Off, and on and working, it has said.
                 if cannot_stay {
                     "Not available on this reader right now."
-                } else if self.stay {
-                    "Until the reader restarts."
                 } else {
-                    "Stops when you leave Cobalt."
+                    ""
                 },
                 self.stay,
             );
         if cannot_stay {
             screen = screen.secondary(self.status.cannot_stay.clone());
         } else if self.stay {
-            screen = screen.secondary("Staying connected uses more battery. The Kobo software keeps Wi-Fi on only while the reader is awake, so the reader can be reached then and not while it sleeps. After a restart, open Cobalt once to connect again.");
+            screen = screen.secondary("Uses more battery. The Kobo software keeps Wi-Fi on only while the reader is awake. After a restart, open Cobalt once to connect again.");
         }
         // What each says under it comes from the runtime, which is the one
         // that knows whether the tailnet has approved it and whether this
@@ -372,10 +355,9 @@ impl Tailscale {
             "exit-node",
             "Offer as an exit node",
             match exit_node {
-                Offer::Off => "Off.",
-                Offer::Starting => "Starts with Tailscale.",
+                Offer::Off | Offer::Starting => "",
                 Offer::Waiting => "Waiting for approval.",
-                Offer::Approved => "Approved. Your devices can choose it.",
+                Offer::Approved => "Approved.",
                 Offer::Unavailable => "Not available on this reader.",
             },
             self.exit_node,
@@ -388,8 +370,7 @@ impl Tailscale {
             "share-network",
             "Share this network",
             match network {
-                Offer::Off => "Off.".to_owned(),
-                Offer::Starting => "Starts with Tailscale.".to_owned(),
+                Offer::Off | Offer::Starting => String::new(),
                 Offer::Waiting => format!("Waiting for approval: {}", self.status.shared),
                 Offer::Approved => format!("Shared: {}", self.status.shared),
                 Offer::Unavailable => "Not available here.".to_owned(),
@@ -404,11 +385,18 @@ impl Tailscale {
         {
             screen = screen.secondary(self.status.network_why.clone());
         }
-        if [exit_node, network]
+        // Where to approve is said only while something is waiting to be,
+        // and what it costs for as long as anything is offered.
+        let offers = [exit_node, network];
+        let unapproved = offers
             .iter()
-            .any(|offer| matches!(offer, Offer::Starting | Offer::Waiting | Offer::Approved))
-        {
-            screen = screen.secondary("Approve it once in the Tailscale admin console, under this reader's route settings. A reader is slow at this, and it stops carrying traffic when it sleeps or Tailscale stops.");
+            .any(|offer| matches!(offer, Offer::Starting | Offer::Waiting));
+        let offered = unapproved || offers.contains(&Offer::Approved);
+        if unapproved {
+            screen = screen.secondary("Approve it once in the Tailscale admin console, under this reader's route settings.");
+        }
+        if offered {
+            screen = screen.secondary("A reader is slow at this, and it stops carrying traffic when it sleeps or Tailscale stops.");
         }
         screen.build()
     }
@@ -424,7 +412,7 @@ impl Tailscale {
             .top_bar("Approve this reader")
             .code(
                 &self.status.sign_in,
-                "Scan with your phone, sign in to Tailscale and approve this reader.",
+                "Scan with your phone and sign in to Tailscale.",
             )
             .secondary("Or open this address on any phone or computer:")
             .command(&self.status.sign_in)
@@ -504,7 +492,7 @@ fn about_builder() -> ScreenBuilder {
         .rows([(
             "sign-out",
             "Sign out",
-            "Forget this reader's key before you give the reader away.",
+            "",
             Glyph::Trash,
         )])
 }
@@ -887,7 +875,6 @@ mod tests {
         let options = runner.action(action_id("options"));
         let said = words(screen(&options));
         assert!(said.contains("Stay connected outside Cobalt"));
-        assert!(said.contains("Stops when you leave Cobalt."));
         assert!(
             !said.contains("battery"),
             "a cost shown for a switch that is off"
@@ -900,8 +887,7 @@ mod tests {
         );
         let said = words(screen(&asked));
         for expected in [
-            "Until the reader restarts.",
-            "uses more battery",
+            "Uses more battery.",
             "only while the reader is awake",
             "After a restart, open Cobalt once to connect again.",
         ] {
@@ -966,7 +952,6 @@ mod tests {
             [(CONFIG.to_owned(), "true\nfalse\ntrue\ntrue\n".to_owned())]
         );
         let said = words(screen(&share));
-        assert!(said.contains("Starts with Tailscale."));
         assert!(said.contains("Approve it once in the Tailscale admin console"));
         assert!(said.contains("stops carrying traffic when it sleeps"));
     }
@@ -976,7 +961,7 @@ mod tests {
         let options = routing_app(ROUTING).options_screen();
         let said = words(&options);
         for expected in [
-            "Approved. Your devices can choose it.",
+            "Approved.",
             "Waiting for approval: 192.168.1.0/24",
             "Approve it once in the Tailscale admin console",
         ] {
@@ -989,7 +974,12 @@ mod tests {
         let both = routing_app(
             "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\napproved\napproved\n192.168.1.0/24\n\n\n",
         );
-        assert!(words(&both.options_screen()).contains("Shared: 192.168.1.0/24"));
+        let said = words(&both.options_screen());
+        assert!(said.contains("Shared: 192.168.1.0/24"));
+        // Nothing is waiting, so where to approve is no longer said. What
+        // it costs still is.
+        assert!(!said.contains("admin console"));
+        assert!(said.contains("stops carrying traffic when it sleeps"));
     }
 
     #[test]
@@ -1018,6 +1008,50 @@ mod tests {
         let said = words(&hotel.options_screen());
         assert!(said.contains("Waiting for approval."));
         assert!(said.contains("not a private home network"));
+    }
+
+    #[test]
+    fn no_title_has_a_line_under_it_that_only_says_the_title_again() {
+        // Every screen, in the states that show the most rows and switches.
+        let mut waiting = with_status(true, WAITING);
+        waiting.shown_link.clone_from(&waiting.status.sign_in);
+        let screens = [
+            with_status(false, "").status_screen(),
+            waiting.status_screen(),
+            with_status(
+                true,
+                "timed-out\n\nSign-in was not finished in time. Tap Try again for a new code.\n\n\n",
+            )
+            .status_screen(),
+            with_status(true, CONNECTED).options_screen(),
+            routing_app(ROUTING).options_screen(),
+            about_builder().build(),
+        ];
+        let said = screens.iter().map(words).collect::<Vec<_>>().join(" ");
+        for explains in [
+            "Show the code",
+            "Start Tailscale again",
+            "Stay connected, exit node",
+            "What it does",
+            "Forget this reader's key before",
+            "Stops when you leave Cobalt",
+            "Starts with Tailscale",
+            "Your devices can choose it",
+        ] {
+            assert!(
+                !said.contains(explains),
+                "{explains:?} is back under a title"
+            );
+        }
+        // What does stand under a title is a state, never a description.
+        let off = words(&with_status(false, "").status_screen());
+        assert!(off.contains("Off. Nothing reaches this reader over a tailnet."));
+        // And a switch that is off says only its name.
+        // The band's clock is the only other thing the page draws.
+        assert_eq!(
+            words(&with_status(true, CONNECTED).options_screen()),
+            "00:00 Tailscale options Stay connected outside Cobalt Offer as an exit node Share this network"
+        );
     }
 
     #[test]
