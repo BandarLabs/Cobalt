@@ -1097,7 +1097,13 @@ impl Reader {
     /// Turns to the page holding a place and puts away whatever was open.
     fn turn_to(&mut self, block: Locator, within: u32, panel: &DisplayMetrics) {
         self.page = self.page_holding_place(block, within);
-        self.remember_position();
+        // The place itself is what is remembered, not the top of the page it
+        // happens to be on. A passage found near the foot of a page was kept
+        // as that page's first line, so a larger type size, or the book
+        // opened again, put the reader a page short of what they had gone
+        // to. The next page turn remembers the top of the page as ever.
+        self.memory.at = block;
+        self.memory.within = within;
         self.set_chrome(Chrome::Hidden, panel);
     }
 
@@ -7238,6 +7244,41 @@ mod tests {
         // same guess pagination made: a page that agrees with its own wrong
         // arithmetic still pours words off the panel.
         no_cell_falls_off_a_page(&reader);
+    }
+
+    #[test]
+    fn a_place_jumped_to_is_still_on_the_page_when_the_type_grows() {
+        let panel = kobo_ui::CLARA_BW_METRICS;
+        let html: String = (0..80)
+            .map(|number| {
+                format!(
+                    "<p>Paragraph {number}. {}</p>",
+                    "Saturn disappears from view when the Moon moves in front. ".repeat(3)
+                )
+            })
+            .collect();
+        let mut reader = Reader::open(kobo_doc::html::parse(&html), Memory::default(), &panel);
+        // A paragraph that is not the first on its page, and well into the
+        // book: the top of its page is some other paragraph.
+        let target = (20..80)
+            .find(|block| {
+                let page = reader.page_holding_place(*block, 0);
+                reader.pages[page].first().map(|piece| piece.block) != Some(*block)
+            })
+            .expect("a paragraph below the top of its page");
+        reader.jump_to(target, 0, &panel);
+        assert_eq!((reader.memory().at, reader.memory().within), (target, 0));
+        let holds = |reader: &Reader| {
+            reader.pages[reader.page]
+                .iter()
+                .any(|piece| piece.block == target)
+        };
+        assert!(holds(&reader));
+        // Twice larger: every page holds fewer paragraphs, and the page the
+        // reader is put back on has to be the one with the place on it.
+        reader.act(action::LARGER, &panel);
+        reader.act(action::LARGER, &panel);
+        assert!(holds(&reader), "the place jumped to left the page");
     }
 
     /// Turning past the end again and again, as a thumb resting on the edge
