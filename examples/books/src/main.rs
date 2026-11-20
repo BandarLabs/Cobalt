@@ -539,7 +539,9 @@ impl Books {
             came_from: View::Home,
             page: 0,
             documents: Vec::new(),
-            book: BookView::new(),
+            // Books passes on the answers a copy of the reader's notes waits
+            // for, in `on_save` and `on_shelf`, so the notes may offer one.
+            book: BookView::new().keeping_copies(),
             open_title: None,
             progress: Progress::default(),
             reading_id: None,
@@ -2642,7 +2644,22 @@ impl KoboApp for Books {
         }
     }
 
+    /// A copy of the open book's notes is written to the shelf before it is
+    /// offered to a computer, and the answers about that file are the
+    /// reader's.
+    fn on_shelf(&mut self, context: &mut Context, name: &str, result: StoreResult) {
+        if self.book.shelved(context, name, &result) && matches!(self.view, View::Reading) {
+            self.show(context);
+        }
+    }
+
     fn on_save(&mut self, context: &mut Context, key: &str, result: StoreResult) {
+        if self.book.saved(context, key, &result) {
+            if matches!(self.view, View::Reading) {
+                self.show(context);
+            }
+            return;
+        }
         if key == READING {
             self.progress.saved(context, result);
             if matches!(self.view, View::Home | View::Shelf(_)) {
@@ -3903,6 +3920,96 @@ mod tests {
             Some(1),
             "Back did not return to the page that was left"
         );
+    }
+
+    /// Answers every storage request in `commands`, and in whatever those
+    /// answers lead to, from a store and a shelf kept in `folder`, the way
+    /// the runtime would. Gives back the last screen that came of it.
+    fn store_everything(
+        runner: &mut AppRunner<Books>,
+        commands: Vec<Command>,
+        folder: &std::path::Path,
+    ) -> Option<Screen> {
+        use kobo_sdk::permissions::{shelf::Shelf, store::Store};
+        let shelf = Shelf::new(folder.join("data"));
+        let store = Store::new(folder.join("state"));
+        let mut waiting: std::collections::VecDeque<Command> = commands.into();
+        let mut last = None;
+        while let Some(command) = waiting.pop_front() {
+            match command {
+                Command::SetScreen(screen) => last = Some(screen),
+                Command::Store(request) => {
+                    let result = shelf
+                        .handle(&request)
+                        .unwrap_or_else(|| store.handle(&request));
+                    waiting.extend(runner.store_result(result));
+                }
+                _ => {}
+            }
+        }
+        last
+    }
+
+    #[test]
+    fn a_copy_of_a_books_notes_is_offered_to_a_computer_as_markdown_once_the_reader_has_kept_it() {
+        let folder = std::env::temp_dir().join(format!("books-notes-copy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).expect("a folder to keep the copy in");
+
+        let mut runner = started_with(None, None);
+        let opened = runner.action(action_id("book-0"));
+        store_everything(&mut runner, opened, &folder);
+        // With nothing kept there is nothing to copy, and no control for it.
+        runner.action(action_id(kobo_read::action::CONTROLS));
+        let empty = shown(runner.action(action_id(kobo_read::action::HIGHLIGHTS)));
+        let offers = |screen: &Screen| {
+            screen.top_bar.as_ref().is_some_and(|bar| {
+                bar.actions
+                    .iter()
+                    .any(|action| action.label == "Save a copy")
+            })
+        };
+        assert!(
+            !offers(&empty),
+            "an empty notes list offered a copy of itself"
+        );
+
+        runner.action(action_id(kobo_read::action::MARKING));
+        let marked = runner.action(action_id("reader-mark-0"));
+        store_everything(&mut runner, marked, &folder);
+        let notes = shown(runner.action(action_id(kobo_read::action::HIGHLIGHTS)));
+        assert!(offers(&notes), "the notes did not offer a copy");
+        assert!(notes.validate(&CLARA_BW_METRICS).is_empty());
+
+        let asked = runner.action(action_id(kobo_read::action::SAVE_COPY));
+        assert!(
+            words(&shown(asked.clone())).contains("Saving and checking the copy"),
+            "the copy was not begun as soon as it was asked for"
+        );
+        let ready = store_everything(&mut runner, asked, &folder).expect("the copy's screen");
+        let text = words(&ready);
+        assert!(text.contains("A Long Letter notes"), "{text}");
+        assert!(text.contains("Ready for your computer."), "{text}");
+
+        let offer = kobo_sdk::exports::Offer::restore(
+            &std::fs::read(folder.join("state").join(kobo_sdk::exports::OFFER_KEY))
+                .expect("an offer was written"),
+        )
+        .expect("a readable offer");
+        assert_eq!(offer.title, "A Long Letter notes");
+        assert_eq!(offer.format, kobo_sdk::exports::Format::Markdown);
+        let copy = std::fs::read_to_string(folder.join("data").join(&offer.digest))
+            .expect("the copy is on the shelf");
+        assert_eq!(
+            copy,
+            "# A Long Letter\n\n> Line 1 of a letter that runs on for page after page.\n"
+        );
+
+        // Back from the copy returns to the notes, not out of the book.
+        let back = shown(runner.action(ActionId::BACK));
+        assert!(words(&back).contains("Marked passages"));
+        assert_eq!(runner.app().view, View::Reading);
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
