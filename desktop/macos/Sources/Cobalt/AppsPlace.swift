@@ -327,93 +327,157 @@ private struct AppPage: View {
         let obstacle = StoreWords.obstacle(to: entry, reader: store.chosen.reader, hasCatalog: store.apps.catalog != nil)
         let locked = reader?.writable == false
         Pane(width: Picture.page * 2 + 24) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text(entry.title)
-                    .font(Paper.serif(34))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
-                if !entry.summary.isEmpty {
-                    Prose(entry.summary)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            StoreNotes()
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                if reader != nil, obstacle.isEmpty {
-                    if entry.isInstalled, entry.updateAvailable {
-                        Button("Update to \(entry.version)") { Task { await store.installApps([entry.id]) } }
-                            .leading()
-                            .disabled(busy || locked)
-                    } else if !entry.isInstalled, entry.offered {
-                        Button("Install") { Task { await store.installApps([entry.id]) } }
-                            .leading()
-                            .disabled(busy || locked)
+            // Wide enough for a screen and a column of reading beside it,
+            // the screen leads and the words sit next to it, so what the
+            // app does is read without scrolling past a picture. Narrower,
+            // the words come first and the screens follow in a row.
+            ViewThatFits(in: .horizontal) {
+                VStack(alignment: .leading, spacing: 24) {
+                    HStack(alignment: .top, spacing: 28) {
+                        if let first = entry.shots.first {
+                            shown(first)
+                        }
+                        VStack(alignment: .leading, spacing: 18) {
+                            words(obstacle: obstacle, reader: reader, locked: locked)
+                        }
+                        .frame(minWidth: 280, idealWidth: 280, maxWidth: 460, alignment: .leading)
+                    }
+                    if entry.shots.count > 1 {
+                        // A row that scrolls sideways would like to be as
+                        // wide as everything in it. Asked what it needs, it
+                        // is made to say very little, or this layout would
+                        // never be judged to fit.
+                        Gallery(entry: entry, shots: Array(entry.shots.dropFirst()))
+                            .frame(idealWidth: 300, maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                if entry.isInstalled, reader != nil {
-                    Button("Remove…") { Questions.askToRemove(id: entry.id, title: entry.title, store: store) }
-                        .disabled(busy || locked)
+                VStack(alignment: .leading, spacing: 18) {
+                    heading
+                    StoreNotes()
+                    actions(obstacle: obstacle, reader: reader, locked: locked)
+                    if !entry.shots.isEmpty {
+                        Gallery(entry: entry, shots: entry.shots)
+                            .padding(.vertical, 6)
+                    }
+                    about
                 }
-                if store.apps.removing == entry.id {
-                    ProgressView().controlSize(.small)
-                }
-                Text(facts)
+            }
+        }
+    }
+
+    private func shown(_ shot: Shot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picture(shot: shot, title: entry.title, width: Picture.page)
+            if !shot.caption.isEmpty {
+                Text(shot.caption)
                     .font(.callout)
-                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: Picture.page, alignment: .leading)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func words(obstacle: String, reader: Reader?, locked: Bool) -> some View {
+        heading
+        StoreNotes()
+        actions(obstacle: obstacle, reader: reader, locked: locked)
+        about
+    }
+
+    private var heading: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(entry.title)
+                .font(Paper.serif(34))
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            if !entry.summary.isEmpty {
+                Prose(entry.summary)
                     .foregroundStyle(.secondary)
             }
-            if !obstacle.isEmpty {
-                Note(obstacle)
-                    .frame(maxWidth: Paper.column)
-            }
-            if !entry.shots.isEmpty {
-                Gallery(entry: entry)
-                    .padding(.vertical, 6)
-            }
-            if !entry.description.isEmpty, entry.description != entry.summary {
-                VStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(entry.description.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
-                        Prose(paragraph.replacingOccurrences(of: "\n", with: " "), font: Paper.serif(16))
-                    }
-                }
-                .frame(maxWidth: Paper.column, alignment: .leading)
-            }
-            if !entry.needs.isEmpty || entry.minimumCobaltVersion != nil {
-                listed("Needs", (entry.minimumCobaltVersion.map { ["Cobalt \($0) or newer"] } ?? []) + entry.needs)
-            }
-            if !entry.access.isEmpty {
-                listed("Access", entry.access)
-            }
-            if !entry.releaseNotes.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Heading("New in \(entry.version)")
-                    Prose(entry.releaseNotes, font: Paper.serif(15))
+        }
+    }
+
+    @ViewBuilder
+    private func actions(obstacle: String, reader: Reader?, locked: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            if reader != nil, obstacle.isEmpty {
+                if entry.isInstalled, entry.updateAvailable {
+                    Button("Update to \(entry.version)") { Task { await store.installApps([entry.id]) } }
+                        .leading()
+                        .disabled(busy || locked)
+                } else if !entry.isInstalled, entry.offered {
+                    Button("Install") { Task { await store.installApps([entry.id]) } }
+                        .leading()
+                        .disabled(busy || locked)
                 }
             }
-            if !entry.setup.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Heading("Setup")
-                    ForEach(Array(entry.setup.enumerated()), id: \.offset) { index, step in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text("\(index + 1).")
-                                .font(Paper.serif(15))
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .frame(width: 22, alignment: .trailing)
-                            VStack(alignment: .leading, spacing: 5) {
-                                Prose(step.text, font: Paper.serif(15))
-                                if let command = step.command, !command.isEmpty {
-                                    Text(command)
-                                        .font(.system(.callout, design: .monospaced))
-                                        .textSelection(.enabled)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Paper.inset, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                                }
-                                if let link = step.link, let url = URL(string: link.url), url.scheme == "https" {
-                                    Link(link.label, destination: url)
-                                        .tint(Paper.link)
-                                }
+            if entry.isInstalled, reader != nil {
+                Button("Remove…") { Questions.askToRemove(id: entry.id, title: entry.title, store: store) }
+                    .disabled(busy || locked)
+            }
+            if store.apps.removing == entry.id {
+                ProgressView().controlSize(.small)
+            }
+            Text(facts)
+                .font(.callout)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        if !obstacle.isEmpty {
+            Note(obstacle)
+                .frame(maxWidth: Paper.column)
+        }
+    }
+
+    /// What the app does, what it needs and asks for, what is new, and how
+    /// to set it up: everything that is read and not pressed.
+    @ViewBuilder
+    private var about: some View {
+        if !entry.description.isEmpty, entry.description != entry.summary {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(entry.description.components(separatedBy: "\n\n").enumerated()), id: \.offset) { _, paragraph in
+                    Prose(paragraph.replacingOccurrences(of: "\n", with: " "), font: Paper.serif(16))
+                }
+            }
+            .frame(maxWidth: Paper.column, alignment: .leading)
+        }
+        if !entry.needs.isEmpty || entry.minimumCobaltVersion != nil {
+            listed("Needs", (entry.minimumCobaltVersion.map { ["Cobalt \($0) or newer"] } ?? []) + entry.needs)
+        }
+        if !entry.access.isEmpty {
+            listed("Access", entry.access)
+        }
+        if !entry.releaseNotes.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Heading("New in \(entry.version)")
+                Prose(entry.releaseNotes, font: Paper.serif(15))
+            }
+        }
+        if !entry.setup.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Heading("Setup")
+                ForEach(Array(entry.setup.enumerated()), id: \.offset) { index, step in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("\(index + 1).")
+                            .font(Paper.serif(15))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, alignment: .trailing)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Prose(step.text, font: Paper.serif(15))
+                            if let command = step.command, !command.isEmpty {
+                                Text(command)
+                                    .font(.system(.callout, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Paper.inset, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                            }
+                            if let link = step.link, let url = URL(string: link.url), url.scheme == "https" {
+                                Link(link.label, destination: url)
+                                    .tint(Paper.link)
                             }
                         }
                     }
@@ -448,11 +512,12 @@ private struct AppPage: View {
 /// it. Nothing moves unless the owner moves it.
 private struct Gallery: View {
     var entry: StoreEntry
+    var shots: [Shot]
 
     var body: some View {
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: 24) {
-                ForEach(entry.shots) { shot in
+                ForEach(shots) { shot in
                     VStack(alignment: .leading, spacing: 8) {
                         Picture(shot: shot, title: entry.title, width: Picture.page)
                         if !shot.caption.isEmpty {
