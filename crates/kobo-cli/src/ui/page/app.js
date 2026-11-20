@@ -1091,14 +1091,17 @@ function drawSend() {
   const local = view.send;
   const busy = Boolean(local.job?.running);
   const saved = local.info?.readers ?? [];
+  // With more than one saved there is no reader a send goes to by itself,
+  // so one is always chosen, and it starts as the first.
+  if (saved.length > 1 && !saved.some(reader => reader.name === local.reader)) local.reader = saved[0].name;
+  if (saved.length <= 1) local.reader = "";
   sendTo.replaceChildren(...[
     !local.info && h("p", { class: "quiet" }, "Looking for saved readers."),
-    local.info && saved.length === 0 && note("No reader is saved on this computer yet, so a file cannot be sent and an article waits. Installing Cobalt from Reader saves one."),
+    local.info && saved.length === 0 && note("No reader is saved on this computer yet; set one up in Reader first."),
     saved.length === 1 && h("p", { class: "quiet" }, `To “${saved[0].name}”, over Wi-Fi.`),
     saved.length > 1 && h("p", null,
       h("label", { class: "over", htmlFor: "send-to" }, "Send to"),
       h("select", { class: "field", id: "send-to", onchange: event => { local.reader = event.target.value; } },
-        h("option", { value: "", selected: local.reader === "" }, "The reader kobo setup saved"),
         saved.map(reader => h("option", { value: reader.name, selected: local.reader === reader.name }, reader.name)))),
   ].filter(Boolean));
 

@@ -185,8 +185,13 @@ export const NEXT_THINGS = [
 //   "first"     nothing saved and nothing waiting: ask for the cable
 //   "waiting"   a reader was set up from here and is still to be found
 //   "saved"     readers are saved; list them, and offer to add another
+//
+// A Kobo on the cable comes before either of the others. It has not
+// connected, or the system is keeping it from this page, and what to do
+// about that is what its owner is looking at the page for.
 export function withoutReader(state, adding) {
   if (!state) return "first";
+  if ((state.attached ?? 0) > 0 || (state.blocked ?? []).length > 0) return "first";
   if (state.awaiting) return "waiting";
   if ((state.saved ?? []).length > 0 && !adding) return "saved";
   return "first";

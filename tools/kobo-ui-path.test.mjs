@@ -148,6 +148,11 @@ test("with no reader plugged in the place is the way in, the wait, or the reader
   // A reader still to be found comes before anything else.
   assert.equal(withoutReader({ saved: [{ name: "kobo" }], awaiting: true }, false), "waiting");
   assert.equal(withoutReader({ saved: [], awaiting: true }, true), "waiting");
+  // Except a Kobo that is on the cable now and cannot be read: what to do
+  // about that is said first.
+  assert.equal(withoutReader({ saved: [{ name: "kobo" }], awaiting: true, attached: 1 }, false), "first");
+  assert.equal(withoutReader({ saved: [{ name: "kobo" }], awaiting: false, blocked: ["/Volumes/KOBOeReader"] }, false), "first");
+  assert.equal(withoutReader({ saved: [{ name: "kobo" }], awaiting: false, attached: 0, blocked: [] }, false), "saved");
 });
 
 test("a reader with Cobalt that this computer never saved still has to be linked", () => {
