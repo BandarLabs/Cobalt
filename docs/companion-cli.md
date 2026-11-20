@@ -30,7 +30,71 @@ without prompting. Explicit commands are unchanged. `kobo --help` opens the
 full command reference; `kobo frame --help`, `kobo flashcards --help` and
 `kobo feeds --help` show companion-specific commands.
 
-A desktop companion window remains under development.
+`kobo ui` opens the same tasks in a window, for anyone who would rather not
+type them. See [The companion window](#the-companion-window).
+
+## The companion window
+
+`kobo ui` opens Cobalt in a window with four places:
+
+- **Reader** shows the reader that is plugged in: its model and firmware,
+  whether Cobalt can be installed on it and the reason when it cannot, the
+  Cobalt on it, and the release this computer would install. Installing,
+  updating and removing first show what will change, in the words of
+  `kobo setup --dry-run`, then run `kobo setup` and show what it says, with
+  the steps to take on the reader first.
+- **Apps** lists the apps on the reader and the ones the signed catalog
+  offers, with their sizes, and installs, updates and removes them over the
+  cable.
+- **Browser** sets up Send to Kobo for each browser found on this computer
+  and shows the one step left to take in the browser itself.
+- **Send** sends a file or a web article to the saved reader and lists the
+  articles waiting for it.
+
+The window says what it finds when things are not as expected: a reader that
+is plugged in but has not been told to connect, a drive macOS will not let
+`kobo` read, storage that is full or mounted read-only, a catalog that
+cannot be reached, a reader unplugged in the middle of an install.
+
+On a Mac, when the Cobalt app sits in the same folder as the `kobo` binary,
+the window is that app, and opening the app from the Dock starts `kobo ui`
+for itself. `tools/build-macos-shell.sh` builds the app. Everywhere else the
+window is a page in the default browser. `--browser` asks for the page on a
+Mac as well, and `--no-open` prints the address instead of opening anything;
+the address opens the page once. `--volume PATH` names the mounted reader
+when it is not found by itself.
+
+The window is served by the `kobo ui` command to this computer only. It
+listens on `127.0.0.1` on a port the system picks, answers only requests
+that name that address exactly and carry the session's secrets, loads
+nothing from any other site, and stops when the window is closed or you
+press Ctrl-C. A job that is running is finished first, so closing the window
+during an install does not interrupt it.
+
+Every task in the window is also a command: `kobo setup`, `kobo apps`,
+`kobo clip` and `kobo send`.
+
+## Apps on a reader over USB
+
+With the reader plugged in and **Connect** chosen on its screen:
+
+- `kobo apps installed` lists the apps on the reader. It needs no network.
+- `kobo apps available` fetches the signed catalog for the channel the
+  reader is on and lists what it offers, marking what is installed, what has
+  an update, and what needs a newer Cobalt than the reader has.
+- `kobo apps install APP...` installs apps, or updates ones already there.
+  Each download is checked against the catalog and the app's own signature
+  before it is written, exactly as the reader's Store checks it. An app
+  already at the catalog's version is verified and left alone. One that
+  fails is reported and the rest still install.
+- `kobo apps remove APP` removes an app and keeps its data.
+
+`APP` is the app's id or its name as the Store shows it. `--volume PATH`
+names the reader when more than one is connected, `--eject` ejects it when
+the command has finished, and `--json` prints one JSON object in the
+versioned envelope `kobo devices --json` uses. Cobalt must already be on the
+reader; `kobo setup` installs it. Eject the reader before unplugging it, so
+the change is fully written.
 
 ## Which reader a command goes to
 

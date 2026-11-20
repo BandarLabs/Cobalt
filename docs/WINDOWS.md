@@ -60,6 +60,11 @@ run end-to-end on a real Windows machine):
   and the menu entry did nothing when tapped, before the launch bootstrap
   was normalized to LF. The fix has not been re-run on a reader.
 
+- `kobo ui` and the `kobo apps` verbs that write to a mounted reader. Their
+  tests that need no Unix shell run in CI; opening the default browser, the
+  page itself in a Windows browser, and installing an app onto a reader's
+  FAT volume from Windows have not been run on a real Windows machine.
+
 Not done on Windows yet:
 
 - Ejecting the reader. `kobo setup` writes everything and then asks the
@@ -74,6 +79,55 @@ Unsupported on Windows by design:
 - Device-side `device-write` crates (`kobo-hal` with the feature, the
   `kobo-tap`/`kobo-guard`/`kobo-handoff`/`kobo-smoke` binaries) are ARM
   Linux device software; they are not built for Windows at all.
+
+### The Windows build is not signed
+
+`kobo.exe` carries no Authenticode signature. Nothing in a Cobalt release is
+signed with a certificate Windows recognises; the only signature is the
+project's own, over the release manifest that lists each archive's length
+and SHA-256. Before running it, know what that means:
+
+- **Smart App Control**, where it is on, blocks unsigned programs it has no
+  reputation for, however they arrived, and has no way to allow one program.
+  On such a PC `kobo.exe` does not run.
+- **Microsoft Defender SmartScreen** shows "Windows protected your PC" when
+  an unsigned program that was downloaded with a browser is started from
+  File Explorer. It does not check a program started from a terminal.
+- **Antivirus**, Defender included, sometimes flags new unsigned programs on
+  behaviour alone. `kobo.exe` writes to removable drives and starts `ssh`,
+  which is the kind of behaviour they look for.
+
+Do not turn any of these off to run it. A warning that is wrong about this
+build is still right to be there for everything else on the computer. If
+`kobo.exe` is blocked, the [browser installer](INSTALL.md#option-1-install-from-the-browser)
+sets up a reader from Edge or Chrome without it, and a Mac or Linux computer
+runs the same commands.
+
+What you can do is check that the archive you have is the one the project
+published. The steps below follow the [signed bootstrap](INSTALL.md#signed-bootstrap)
+that is used on macOS and Linux, written for Command Prompt with the
+`curl`, `ssh-keygen` and `certutil` that Windows 10 and 11 include. They are
+UNVERIFIED in this document's sense: they have not been run on a real
+Windows machine. Take the signer line from a copy of this guide you already
+trust, not from the release you are checking.
+
+```bat
+set v=X.Y.Z
+set base=https://github.com/BandarLabs/Cobalt/releases/download/v%v%
+curl -fsSLO %base%/cobalt-host-manifest.txt
+curl -fsSLO %base%/cobalt-host-manifest.txt.sshsig
+curl -fsSLO %base%/kobo-%v%-windows-x86_64.tar.gz
+echo cobalt-release ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL7XUR3p+tvPgftO/kRbigc8gagzP2RBDG3tWIu/1KXe> allowed_signers
+ssh-keygen -Y verify -f allowed_signers -I cobalt-release -n cobalt-host-release -s cobalt-host-manifest.txt.sshsig < cobalt-host-manifest.txt
+findstr /b /c:"host windows-x86_64" cobalt-host-manifest.txt
+certutil -hashfile kobo-%v%-windows-x86_64.tar.gz SHA256
+```
+
+A beta release is under `beta-v%v%` instead of `v%v%`. `ssh-keygen` must
+answer `Good "cobalt-host-release" signature`. The `findstr` line then shows
+the archive's name, its length in bytes and its SHA-256, and the digest
+`certutil` prints must be that SHA-256. If either check fails, do not run
+what you downloaded.
 
 ### Where the host tools keep their files
 
