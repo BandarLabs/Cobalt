@@ -41,6 +41,34 @@ enum View {
     Options,
 }
 
+/// Where one thing the reader offers the tailnet stands, as the owner
+/// should read it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Offer {
+    Off,
+    /// Switched on, and the runtime has not said anything about it yet.
+    Starting,
+    /// Offered, and waiting for the tailnet's admin console to approve it.
+    Waiting,
+    Approved,
+    Unavailable,
+}
+
+impl Offer {
+    fn read(on: bool, connected: bool, state: &str) -> Self {
+        if !on {
+            return Self::Off;
+        }
+        match state {
+            // The one answer that holds whether or not the tunnel is up.
+            "unavailable" => Self::Unavailable,
+            "approved" if connected => Self::Approved,
+            "waiting" if connected => Self::Waiting,
+            _ => Self::Starting,
+        }
+    }
+}
+
 /// The supervisor's status, line by line. The name came after the first four
 /// lines, so an older supervisor leaves it empty rather than wrong.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -53,6 +81,14 @@ struct ServiceStatus {
     /// Why the reader is not staying connected outside Cobalt although it
     /// was asked to. Empty when it is, or was not asked.
     cannot_stay: String,
+    /// Where the exit node and the shared network stand: nothing when off,
+    /// `waiting` for the admin console, `approved`, or `unavailable`.
+    exit_node: String,
+    network: String,
+    /// The network being shared, as the admin console writes it.
+    shared: String,
+    exit_node_why: String,
+    network_why: String,
 }
 
 impl ServiceStatus {
@@ -66,6 +102,11 @@ impl ServiceStatus {
             sign_in: next(),
             name: next(),
             cannot_stay: next(),
+            exit_node: next(),
+            network: next(),
+            shared: next(),
+            exit_node_why: next(),
+            network_why: next(),
         }
     }
 
@@ -88,10 +129,18 @@ impl ServiceStatus {
     }
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each is a switch on the screen that the owner sets on its own"
+)]
 struct Tailscale {
     enabled: bool,
     /// Stay on the tailnet after Cobalt hands the screen back.
     stay: bool,
+    /// Offer this reader as an exit node.
+    exit_node: bool,
+    /// Share the network the reader's Wi-Fi is on.
+    share_network: bool,
     view: View,
     status: ServiceStatus,
     /// Ticks while a start is under way, so the screen follows it without a
@@ -109,6 +158,8 @@ impl Default for Tailscale {
         Self {
             enabled: false,
             stay: false,
+            exit_node: false,
+            share_network: false,
             view: View::Status,
             status: ServiceStatus::default(),
             watch: Heartbeat::every(3),
@@ -122,9 +173,13 @@ impl Tailscale {
     /// Saves what the owner chose, one word a line. The switch is first,
     /// where a runtime from before the other choices looks for it.
     fn save(&self, context: &mut Context) {
-        context
-            .store()
-            .save(CONFIG, format!("{}\n{}\n", self.enabled, self.stay));
+        context.store().save(
+            CONFIG,
+            format!(
+                "{}\n{}\n{}\n{}\n",
+                self.enabled, self.stay, self.exit_node, self.share_network
+            ),
+        );
     }
 
     /// Whether the reader really is staying connected: asked for, and the
@@ -252,7 +307,7 @@ impl Tailscale {
         rows.push((
             "options",
             "Options",
-            "Stay connected outside Cobalt.",
+            "Stay connected, exit node, share this network.",
             Glyph::Settings,
         ));
         rows.push((
@@ -287,22 +342,73 @@ impl Tailscale {
     /// who never opens this has a reader that is a plain member of the
     /// tailnet while Cobalt is open, which is the safe thing to be.
     fn options_screen(&self) -> Screen {
-        let mut screen = ScreenBuilder::new("tailscale").top_bar("Tailscale options");
-        if self.stay && !self.status.cannot_stay.is_empty() {
-            screen = screen.banner(BannerLevel::Attention, self.status.cannot_stay.clone());
-        }
-        screen = screen.toggle(
-            "stay",
-            "Stay connected outside Cobalt",
-            if self.stay {
-                "Until the reader restarts."
-            } else {
-                "Stops when you leave Cobalt."
-            },
-            self.stay,
-        );
-        if self.stay {
+        let cannot_stay = self.stay && !self.status.cannot_stay.is_empty();
+        let mut screen = ScreenBuilder::new("tailscale")
+            .top_bar("Tailscale options")
+            .toggle(
+                "stay",
+                "Stay connected outside Cobalt",
+                if cannot_stay {
+                    "Not available on this reader right now."
+                } else if self.stay {
+                    "Until the reader restarts."
+                } else {
+                    "Stops when you leave Cobalt."
+                },
+                self.stay,
+            );
+        if cannot_stay {
+            screen = screen.secondary(self.status.cannot_stay.clone());
+        } else if self.stay {
             screen = screen.secondary("Staying connected uses more battery. The Kobo software keeps Wi-Fi on only while the reader is awake, so the reader can be reached then and not while it sleeps. After a restart, open Cobalt once to connect again.");
+        }
+        // What each says under it comes from the runtime, which is the one
+        // that knows whether the tailnet has approved it and whether this
+        // reader can do it at all. A switch that is on and cannot work says
+        // so in the runtime's words; it never just sits there on.
+        let connected = self.connected();
+        let exit_node = Offer::read(self.exit_node, connected, &self.status.exit_node);
+        screen = screen.toggle(
+            "exit-node",
+            "Offer as an exit node",
+            match exit_node {
+                Offer::Off => "Off.",
+                Offer::Starting => "Starts with Tailscale.",
+                Offer::Waiting => "Waiting for approval.",
+                Offer::Approved => "Approved. Your devices can choose it.",
+                Offer::Unavailable => "Not available on this reader.",
+            },
+            self.exit_node,
+        );
+        if exit_node == Offer::Unavailable && !self.status.exit_node_why.is_empty() {
+            screen = screen.secondary(self.status.exit_node_why.clone());
+        }
+        let network = Offer::read(self.share_network, connected, &self.status.network);
+        screen = screen.toggle(
+            "share-network",
+            "Share this network",
+            match network {
+                Offer::Off => "Off.".to_owned(),
+                Offer::Starting => "Starts with Tailscale.".to_owned(),
+                Offer::Waiting => format!("Waiting for approval: {}", self.status.shared),
+                Offer::Approved => format!("Shared: {}", self.status.shared),
+                Offer::Unavailable => "Not available here.".to_owned(),
+            },
+            self.share_network,
+        );
+        // Said once when both are refused for the same reason.
+        if network == Offer::Unavailable
+            && !self.status.network_why.is_empty()
+            && !(exit_node == Offer::Unavailable
+                && self.status.network_why == self.status.exit_node_why)
+        {
+            screen = screen.secondary(self.status.network_why.clone());
+        }
+        if [exit_node, network]
+            .iter()
+            .any(|offer| matches!(offer, Offer::Starting | Offer::Waiting | Offer::Approved))
+        {
+            screen = screen.secondary("Approve it once in the Tailscale admin console, under this reader's route settings. A reader is slow at this, and it stops carrying traffic when it sleeps or Tailscale stops.");
         }
         screen.build()
     }
@@ -428,6 +534,8 @@ impl KoboApp for Tailscale {
                 let mut next = || lines.next() == Some("true");
                 self.enabled = next();
                 self.stay = next();
+                self.exit_node = next();
+                self.share_network = next();
                 self.follow(context);
             }
             STATUS => self.load_status(context, value.as_deref()),
@@ -475,6 +583,18 @@ impl KoboApp for Tailscale {
             self.save(context);
             // The runtime ends one supervisor and starts the other kind, so
             // the screen follows that the way it follows any start.
+            self.watch.start(context);
+        } else if action == action_id("exit-node") || action == action_id("share-network") {
+            if action == action_id("exit-node") {
+                self.exit_node = !self.exit_node;
+            } else {
+                self.share_network = !self.share_network;
+            }
+            // What the runtime said about the old choice is not about this
+            // one, and it starts the daemon again to apply it.
+            self.status.exit_node.clear();
+            self.status.network.clear();
+            self.save(context);
             self.watch.start(context);
         } else if action == action_id("about") {
             self.view = View::About;
@@ -570,7 +690,7 @@ mod tests {
         let turned_on = runner.action(action_id("toggle"));
         assert_eq!(
             saves(&turned_on),
-            [(CONFIG.to_owned(), "true\nfalse\n".to_owned())]
+            [(CONFIG.to_owned(), "true\nfalse\nfalse\nfalse\n".to_owned())]
         );
         assert!(words(screen(&turned_on)).contains("Starting"));
         // A scheduled wake is never delivered on a reader, so asking for one
@@ -581,7 +701,7 @@ mod tests {
         let turned_off = runner.action(action_id("toggle"));
         assert_eq!(
             saves(&turned_off),
-            [(CONFIG.to_owned(), "false\nfalse\n".to_owned())]
+            [(CONFIG.to_owned(), "false\nfalse\nfalse\nfalse\n".to_owned())]
         );
         assert!(words(screen(&turned_off)).contains("Off. Nothing reaches this reader"));
     }
@@ -713,7 +833,7 @@ mod tests {
         let again = runner.action(action_id("retry"));
         assert_eq!(
             saves(&again),
-            [(CONFIG.to_owned(), "true\nfalse\n".to_owned())]
+            [(CONFIG.to_owned(), "true\nfalse\nfalse\nfalse\n".to_owned())]
         );
         assert!(words(screen(&again)).contains("Starting"));
     }
@@ -735,7 +855,7 @@ mod tests {
             saves(&confirmed),
             [
                 (REQUEST.to_owned(), SIGN_OUT.to_owned()),
-                (CONFIG.to_owned(), "false\nfalse\n".to_owned()),
+                (CONFIG.to_owned(), "false\nfalse\nfalse\nfalse\n".to_owned()),
             ]
         );
         assert!(!runner.app().enabled);
@@ -776,7 +896,7 @@ mod tests {
         let asked = runner.action(action_id("stay"));
         assert_eq!(
             saves(&asked),
-            [(CONFIG.to_owned(), "true\ntrue\n".to_owned())]
+            [(CONFIG.to_owned(), "true\ntrue\nfalse\nfalse\n".to_owned())]
         );
         let said = words(screen(&asked));
         for expected in [
@@ -813,6 +933,93 @@ mod tests {
         assert!(!first.contains("Stays connected"));
     }
 
+    const ROUTING: &str = "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\napproved\nwaiting\n192.168.1.0/24\n\n\n";
+
+    fn routing_app(status: &str) -> Tailscale {
+        Tailscale {
+            exit_node: true,
+            share_network: true,
+            ..with_status(true, status)
+        }
+    }
+
+    #[test]
+    fn the_exit_node_and_the_shared_network_are_off_until_each_is_switched_on() {
+        let mut runner = AppRunner::new(with_status(true, CONNECTED));
+        let options = runner.action(action_id("options"));
+        let said = words(screen(&options));
+        assert!(said.contains("Offer as an exit node"));
+        assert!(said.contains("Share this network"));
+        assert!(
+            !said.contains("admin console"),
+            "approval asked for nothing"
+        );
+
+        let exit = runner.action(action_id("exit-node"));
+        assert_eq!(
+            saves(&exit),
+            [(CONFIG.to_owned(), "true\nfalse\ntrue\nfalse\n".to_owned())]
+        );
+        let share = runner.action(action_id("share-network"));
+        assert_eq!(
+            saves(&share),
+            [(CONFIG.to_owned(), "true\nfalse\ntrue\ntrue\n".to_owned())]
+        );
+        let said = words(screen(&share));
+        assert!(said.contains("Starts with Tailscale."));
+        assert!(said.contains("Approve it once in the Tailscale admin console"));
+        assert!(said.contains("stops carrying traffic when it sleeps"));
+    }
+
+    #[test]
+    fn each_offer_says_whether_the_tailnet_has_approved_it() {
+        let options = routing_app(ROUTING).options_screen();
+        let said = words(&options);
+        for expected in [
+            "Approved. Your devices can choose it.",
+            "Waiting for approval: 192.168.1.0/24",
+            "Approve it once in the Tailscale admin console",
+        ] {
+            assert!(said.contains(expected), "missing {expected:?} in {said}");
+        }
+        assert!(options
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .issues
+            .is_empty());
+        let both = routing_app(
+            "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\napproved\napproved\n192.168.1.0/24\n\n\n",
+        );
+        assert!(words(&both.options_screen()).contains("Shared: 192.168.1.0/24"));
+    }
+
+    #[test]
+    fn an_offer_this_reader_cannot_make_says_why_and_never_just_sits_there_on() {
+        let reason = "Tailscale on this reader could not carry traffic for other devices, so it is not an exit node and does not share its network.";
+        let refused = routing_app(&format!(
+            "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\nunavailable\nunavailable\n\n{reason}\n{reason}\n"
+        ));
+        let options = refused.options_screen();
+        let said = words(&options);
+        assert!(said.contains("Not available on this reader."));
+        assert!(said.contains("Not available here."));
+        assert_eq!(said.matches("could not carry traffic").count(), 1);
+        assert!(
+            !said.contains("admin console"),
+            "approval asked for nothing"
+        );
+        assert!(!options
+            .diagnostics(&CLARA_BW_METRICS, &Chrome::measuring(true))
+            .has_errors());
+
+        // The network alone can be the problem, for its own reason.
+        let hotel = routing_app(
+            "running\n100.64.0.7\nConnected.\n\nkobo-cobalt.example.ts.net\n\nwaiting\nunavailable\n\n\nThe Wi-Fi this reader is on is not a private home network, so it is not shared.\n",
+        );
+        let said = words(&hotel.options_screen());
+        assert!(said.contains("Waiting for approval."));
+        assert!(said.contains("not a private home network"));
+    }
+
     #[test]
     fn choices_saved_by_an_app_from_before_the_options_are_read_as_off() {
         let mut runner = AppRunner::new(Tailscale::default());
@@ -822,6 +1029,8 @@ mod tests {
         });
         assert!(runner.app().enabled);
         assert!(!runner.app().stay);
+        assert!(!runner.app().exit_node);
+        assert!(!runner.app().share_network);
     }
 
     #[test]

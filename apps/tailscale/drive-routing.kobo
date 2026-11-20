@@ -1,0 +1,17 @@
+# sweep: --bare --seed-root apps/tailscale/fixtures/routing
+# Both offers switched on: the exit node approved in the admin console, the
+# network still waiting. Each says where it stands, and what it costs is
+# said once under them.
+wait-for Connected
+tap Options
+wait-for Offer as an exit node
+expect Approved. Your devices can choose it.
+expect Waiting for approval: 192.168.1.0/24
+expect Approve it once in the Tailscale admin console
+expect it stops carrying traffic when it sleeps or Tailscale stops.
+clean
+shot tailscale-routing
+# Switching one off is saved at once and its line says Off.
+tap-id share-network
+wait-for Off.
+expect-missing 192.168.1.0/24

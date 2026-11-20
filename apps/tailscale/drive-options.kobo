@@ -6,7 +6,10 @@ expect Runs while Cobalt is open.
 tap Options
 wait-for Stay connected outside Cobalt
 expect Stops when you leave Cobalt.
+expect Offer as an exit node
+expect Share this network
 expect-missing battery
+expect-missing admin console
 clean
 shot tailscale-options
 tap-id stay
