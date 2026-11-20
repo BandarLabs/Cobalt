@@ -1188,6 +1188,7 @@ mod tests {
         line.iter().map(|word| (*word).to_owned()).collect()
     }
 
+    #[cfg(unix)]
     fn prepared(name: &str, entries: &[(&str, &str)]) -> Prepared {
         Prepared {
             name: name.to_owned(),
