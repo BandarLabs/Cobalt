@@ -2,8 +2,6 @@
 //! in and pulled out, a signed fixture catalog, and a stand-in for the kobo
 //! command that records exactly how it was run.
 
-use std::path::PathBuf;
-
 use serde_json::json;
 
 use super::super::server::Limits;
