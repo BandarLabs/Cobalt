@@ -199,17 +199,18 @@ struct LookAgain: View {
         } else {
             SaidView(blocks: causes.map { .item($0) })
         }
-        if stage == .notFound {
-            Button("Open Local Network Settings") { NSWorkspace.shared.open(Privacy.localNetwork(origin: store.origin).settings) }
-        }
         if !store.reader.error.isEmpty {
             Note(store.reader.error, kind: .caution)
         }
-        HStack {
-            Spacer()
+        // At the leading edge with the rest of the path's buttons, the one
+        // that carries on first and the way into Settings beside it.
+        HStack(spacing: 12) {
             Button("Look Again") { Task { await store.lookAgain() } }
                 .leading()
                 .keyboardShortcut(.defaultAction)
+            if stage == .notFound {
+                Button("Open Local Network Settings") { NSWorkspace.shared.open(Privacy.localNetwork(origin: store.origin).settings) }
+            }
         }
     }
 }

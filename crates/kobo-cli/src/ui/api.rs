@@ -590,7 +590,18 @@ fn reader_json(machine: &Machine, saved: &readers::Store, reader: &setup::Mounte
     let (cobalt, cobalt_problem) = match usb::Installation::on(&reader.volume) {
         Ok(installation) => (Some(usb::installation_json(&installation)), None),
         Err(_) if !installed => (None, None),
-        Err(error) => (None, Some(console::display(&error).to_owned())),
+        // The command's own sentence for this says where the reader is
+        // mounted and which command to run. In a window the reader is the
+        // one on screen and the way to put it right is the button under
+        // the sentence, so it is said again without either.
+        Err(_) => (
+            None,
+            Some(
+                "The Cobalt on this reader does not say which release it is. Installing it \
+                 again puts that right, and apps and their data are kept."
+                    .to_owned(),
+            ),
+        ),
     };
     let version = cobalt
         .as_ref()

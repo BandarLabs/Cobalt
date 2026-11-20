@@ -401,34 +401,60 @@ private struct AppPage: View {
 
     @ViewBuilder
     private func actions(obstacle: String, reader: Reader?, locked: Bool) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            if reader != nil, obstacle.isEmpty {
-                if entry.isInstalled, entry.updateAvailable {
-                    Button("Update to \(entry.version)") { Task { await store.installApps([entry.id]) } }
-                        .leading()
-                        .disabled(busy || locked)
-                } else if !entry.isInstalled, entry.offered {
-                    Button("Install") { Task { await store.installApps([entry.id]) } }
-                        .leading()
-                        .disabled(busy || locked)
+        // The facts sit beside the buttons while there is room for both.
+        // Where there is not, they go under: a button whose words are cut
+        // short to make room no longer says what it does.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                buttons(obstacle: obstacle, reader: reader, locked: locked)
+                said.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    buttons(obstacle: obstacle, reader: reader, locked: locked)
                 }
+                said.fixedSize(horizontal: false, vertical: true)
             }
-            if entry.isInstalled, reader != nil {
-                Button("Remove…") { Questions.askToRemove(id: entry.id, title: entry.title, store: store) }
-                    .disabled(busy || locked)
-            }
-            if store.apps.removing == entry.id {
-                ProgressView().controlSize(.small)
-            }
-            Text(facts)
-                .font(.callout)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
         }
         if !obstacle.isEmpty {
             Note(obstacle)
                 .frame(maxWidth: Paper.column)
         }
+    }
+
+    /// What can be done with the app from here, each at the width its own
+    /// words need.
+    @ViewBuilder
+    private func buttons(obstacle: String, reader: Reader?, locked: Bool) -> some View {
+        if reader != nil, obstacle.isEmpty {
+            if entry.isInstalled, entry.updateAvailable {
+                Button("Update to \(entry.version)") { Task { await store.installApps([entry.id]) } }
+                    .leading()
+                    .disabled(busy || locked)
+                    .fixedSize()
+            } else if !entry.isInstalled, entry.offered {
+                Button("Install") { Task { await store.installApps([entry.id]) } }
+                    .leading()
+                    .disabled(busy || locked)
+                    .fixedSize()
+            }
+        }
+        if entry.isInstalled, reader != nil {
+            Button("Remove…") { Questions.askToRemove(id: entry.id, title: entry.title, store: store) }
+                .disabled(busy || locked)
+                .fixedSize()
+        }
+        if store.apps.removing == entry.id {
+            ProgressView().controlSize(.small)
+        }
+    }
+
+    /// The version and size, and what is on the reader now.
+    private var said: some View {
+        Text(facts)
+            .font(.callout)
+            .monospacedDigit()
+            .foregroundStyle(.secondary)
     }
 
     /// What the app does, what it needs and asks for, what is new, and how

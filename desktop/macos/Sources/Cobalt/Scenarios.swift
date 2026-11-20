@@ -553,7 +553,7 @@ enum Scenarios {
             Scenario(name: "reader-ahead", routes: ["GET /api/state": state([reader(standing: "ahead", cobalt: "0.4.0")])]),
             Scenario(name: "reader-no-release", routes: ["GET /api/state": state([reader()], release: nil)]),
             Scenario(name: "reader-no-release-with-cobalt", routes: ["GET /api/state": state([reader(standing: "unknown", cobalt: "0.3.30")], release: nil)]),
-            Scenario(name: "reader-damaged", routes: ["GET /api/state": state([reader(standing: "unknown", problem: "The Cobalt on the reader does not say which release it is: .adds/cobalt/version is missing.")])]),
+            Scenario(name: "reader-damaged", routes: ["GET /api/state": state([reader(standing: "unknown", problem: "The Cobalt on this reader does not say which release it is. Installing it again puts that right, and apps and their data are kept.")])]),
             Scenario(name: "reader-read-only", routes: ["GET /api/state": state([reader(standing: "behind", cobalt: "0.3.30", writable: false)])]),
             Scenario(name: "reader-second-not-connected", routes: ["GET /api/state": state([reader(standing: "current", cobalt: "0.3.37")], attached: 2)]),
             Scenario(name: "reader-ejected", routes: ["GET /api/state": withCobalt], actOnStage: { store, stage in
