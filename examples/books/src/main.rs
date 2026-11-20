@@ -1245,10 +1245,9 @@ impl Books {
         // and not how one is sent, which left an owner who had just paired
         // looking at an empty shelf with nothing to do.
         screen
-            .text("An article is a web page sent here from your computer, set as a book without the menus and advertisements. In the computer's browser, right-click a page and choose Send to Kobo.")
-            .text("If the browser has no Send to Kobo yet, add it by running this once in a terminal on the computer:")
+            .text("To send one, right-click a page in your computer's browser and choose Send to Kobo.")
+            .text("If the browser has no Send to Kobo, run this once on the computer:")
             .command("kobo clip install --all")
-            .secondary("It ends by naming one step to take in the browser. An article sent while this reader was asleep waits on the computer until you tap Sync.")
             .build()
     }
 
@@ -5560,7 +5559,7 @@ mod tests {
         // How the first one gets here, in something an owner can do: the
         // menu in their browser, and the one command that puts it there.
         assert!(
-            said.contains("right-click a page and choose Send to Kobo"),
+            said.contains("right-click a page in your computer's browser and choose Send to Kobo"),
             "{said}"
         );
         assert_eq!(commands_on(&screen), ["kobo clip install --all"]);
