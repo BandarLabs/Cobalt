@@ -1,0 +1,1235 @@
+//! What the page can ask for, each over something that already existed.
+//!
+//! Nothing here decides anything about a reader that the command line does
+//! not already decide. Questions are answered by calling the functions the
+//! commands call: which readers are mounted and what they are, what a setup
+//! would change, what the signed catalog offers, which browsers are here.
+//! Anything long or that talks as it goes is the command itself, run as a
+//! job. The routes exist to put those in front of somebody who will never
+//! open a terminal twice, not to be a second implementation of them.
+//!
+//! Two rules hold for every handler. A path or a name that arrives from the
+//! page is never used as it is: a reader is looked up among the ones this
+//! process finds for itself, a browser and an app among the ones it knows,
+//! a saved reader among the ones in the store. And no handler builds a
+//! command line from the page's words, only from its own fixed ones plus
+//! values that have been through that lookup.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use kobo_app_store::Ed25519PublicKey;
+use kobo_protocol::DeviceError;
+use serde_json::{json, Value};
+
+use super::http::{Malformed, Response};
+use super::jobs::{self, Finish, Kind};
+use super::page;
+use super::server::{Request, Route, Shared};
+use crate::apps::usb;
+use crate::clip_delivery as delivery;
+use crate::clip_install::{self, Browser, Os, Registration};
+use crate::detect::{self, Companion};
+use crate::{console, readers, setup};
+
+/// The route the page calls as it closes.
+pub const GOODBYE: &str = "/api/goodbye";
+
+/// Every route there is.
+///
+/// A table rather than a `match`, so that a test can walk it and hold each
+/// route to the rules for its method without anybody remembering to add the
+/// new one to the test.
+pub const ROUTES: &[Route] = &[
+    Route {
+        method: "GET",
+        path: "/",
+        handle: page::index,
+    },
+    Route {
+        method: "GET",
+        path: "/app.css",
+        handle: page::style,
+    },
+    Route {
+        method: "GET",
+        path: "/app.js",
+        handle: page::script,
+    },
+    Route {
+        method: "GET",
+        path: "/logic.mjs",
+        handle: page::logic,
+    },
+    Route {
+        method: "GET",
+        path: "/api/state",
+        handle: state,
+    },
+    Route {
+        method: "GET",
+        path: "/api/plan",
+        handle: plan,
+    },
+    Route {
+        method: "POST",
+        path: "/api/reader/install",
+        handle: install_cobalt,
+    },
+    Route {
+        method: "POST",
+        path: "/api/reader/remove",
+        handle: remove_cobalt,
+    },
+    Route {
+        method: "POST",
+        path: "/api/reader/eject",
+        handle: eject,
+    },
+    Route {
+        method: "GET",
+        path: "/api/apps",
+        handle: installed_apps,
+    },
+    Route {
+        method: "POST",
+        path: "/api/apps/catalog",
+        handle: catalog,
+    },
+    Route {
+        method: "POST",
+        path: "/api/apps/install",
+        handle: install_apps,
+    },
+    Route {
+        method: "POST",
+        path: "/api/apps/remove",
+        handle: remove_app,
+    },
+    Route {
+        method: "GET",
+        path: "/api/browsers",
+        handle: browsers,
+    },
+    Route {
+        method: "POST",
+        path: "/api/browsers/setup",
+        handle: set_up_browser,
+    },
+    Route {
+        method: "POST",
+        path: "/api/browsers/remove",
+        handle: forget_browser,
+    },
+    Route {
+        method: "GET",
+        path: "/api/send",
+        handle: sending,
+    },
+    Route {
+        method: "POST",
+        path: "/api/send/file",
+        handle: receive_file,
+    },
+    Route {
+        method: "POST",
+        path: "/api/send/start",
+        handle: send_file,
+    },
+    Route {
+        method: "POST",
+        path: "/api/send/address",
+        handle: send_address,
+    },
+    Route {
+        method: "POST",
+        path: "/api/send/queue",
+        handle: send_waiting,
+    },
+    Route {
+        method: "GET",
+        path: "/api/job",
+        handle: job,
+    },
+    Route {
+        method: "POST",
+        path: GOODBYE,
+        handle: goodbye,
+    },
+];
+
+/// How catalog and package bytes are fetched.
+pub type Transport = Box<dyn Fn(&str, u32) -> Result<Vec<u8>, DeviceError> + Send + Sync>;
+
+/// How a mounted reader is ejected.
+pub type Eject = Box<dyn Fn(&Path) -> Result<(), String> + Send + Sync>;
+
+/// How the mounted readers are found.
+pub type Readers = Box<dyn Fn() -> Vec<setup::Mounted> + Send + Sync>;
+
+/// What the handlers know about the computer they are running on.
+///
+/// Everything that reaches outside this process is a field here: where
+/// readers are looked for, what is run as a child, where the catalog comes
+/// from, where this person's files are. The real ones are filled in by
+/// [`Machine::here`]; a test fills in folders and a fixture catalog, and the
+/// handlers cannot tell the difference.
+pub struct Machine {
+    /// The program run for the jobs that are commands: this one.
+    pub program: PathBuf,
+    /// Every reader mounted now.
+    pub readers: Readers,
+    /// The Cobalt release this computer would install, or why it has none.
+    pub release: Result<String, String>,
+    /// A release folder named on the command line, passed on to setup.
+    pub release_dir: Option<PathBuf>,
+    /// A private folder for files on their way to a reader.
+    pub scratch: PathBuf,
+    pub fetch: Transport,
+    pub key: Ed25519PublicKey,
+    pub eject: Eject,
+    pub home: PathBuf,
+    /// The companion's own folder: saved readers, the clip queue, the
+    /// extension.
+    pub config: PathBuf,
+    /// Files received and not yet sent.
+    pub uploads: Mutex<Uploads>,
+    /// Held while a file is arriving, so that one arrives at a time. Without
+    /// it the bound on what received files can cost the disk would be the
+    /// number of connections, not [`MOST_UPLOADS`].
+    pub receiving: Mutex<()>,
+    /// Held across every call into the reader's app store.
+    ///
+    /// The store finishes an interrupted transaction before it answers
+    /// anything, including a listing, so two requests arriving together
+    /// could each start repairing the same half-finished swap. One at a
+    /// time, they cannot.
+    pub store: Mutex<()>,
+}
+
+/// A file the page has handed over, waiting to be sent.
+#[derive(Debug)]
+pub struct Upload {
+    id: u64,
+    /// The folder made for it, which holds only it.
+    folder: PathBuf,
+    /// Its name inside that folder, already made safe.
+    name: String,
+}
+
+/// The files waiting, and the number the next one gets.
+///
+/// The number only ever goes up. A file's folder is named for it and is
+/// still in use while the file is being sent, so a number given out twice
+/// would hand a second file the folder a running send is reading from.
+#[derive(Debug, Default)]
+pub struct Uploads {
+    given: u64,
+    waiting: Vec<Upload>,
+}
+
+/// How many received files may wait at once.
+///
+/// One is the use: a file is handed over, a question about it is answered,
+/// and it is sent. The few extra are for a second window or a changed mind,
+/// and past them the oldest is deleted, so a page that hands over files and
+/// never sends them costs the disk at most this many times the upload
+/// limit, plus the one file that is arriving.
+const MOST_UPLOADS: usize = 3;
+
+/// The most apps one install may name. Above the size of the whole
+/// catalog, and well below what a body at the JSON limit could carry.
+const MOST_APPS: usize = 128;
+
+impl Machine {
+    /// This computer as it is.
+    ///
+    /// `volume` narrows the search for readers to one mounted path, as
+    /// `kobo setup --volume` does. `release_dir` names the release to
+    /// install instead of the one this command was installed with.
+    ///
+    /// # Errors
+    ///
+    /// When this program cannot find itself to run again, or cannot make its
+    /// private folder.
+    pub fn here(volume: Option<PathBuf>, release_dir: Option<PathBuf>) -> Result<Self, String> {
+        let program = std::env::current_exe()
+            .and_then(fs::canonicalize)
+            .map_err(|error| format!("could not find this kobo command: {error}"))?;
+        let readers: Readers = match volume {
+            Some(volume) => Box::new(move || setup::read_reader(&volume).into_iter().collect()),
+            None => Box::new(setup::mounted_readers),
+        };
+        Ok(Self {
+            program,
+            readers,
+            release: release_here(release_dir.as_deref()),
+            release_dir,
+            scratch: private_folder()?,
+            fetch: Box::new(usb::published),
+            key: usb::release_key()?,
+            eject: Box::new(setup::eject),
+            home: kobo_abi::home_directory().unwrap_or_default(),
+            config: delivery::config_root(),
+            uploads: Mutex::default(),
+            receiving: Mutex::default(),
+            store: Mutex::default(),
+        })
+    }
+}
+
+/// Makes the folder received files are kept in until they are sent.
+///
+/// Under the system's temporary folder, named for this process, and on Unix
+/// readable by this user only: what an owner sends to their reader can be a
+/// private document, and the temporary folder is one other accounts on the
+/// computer can list.
+fn private_folder() -> Result<PathBuf, String> {
+    let folder = std::env::temp_dir().join(format!("kobo-ui-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&folder);
+    fs::create_dir_all(&folder)
+        .map_err(|error| format!("could not make {}: {error}", folder.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&folder, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("could not make {} private: {error}", folder.display()))?;
+    }
+    Ok(folder)
+}
+
+/// The Cobalt release this computer would put on a reader.
+///
+/// The same folder `kobo setup` installs from, and the same refusals it
+/// makes, read from the signed manifest alone so that the window can say
+/// which release it has without unpacking it. Setup checks the package
+/// itself, in full, when it runs.
+fn release_here(named: Option<&Path>) -> Result<String, String> {
+    let Some(directory) = named
+        .map(Path::to_owned)
+        .or_else(crate::managed_release_directory)
+    else {
+        return Err(if cfg!(windows) {
+            "There is no installer for the kobo command on Windows yet, so this copy has no \
+             Cobalt release to put on a reader. The browser installer does the same job: \
+             https://bandarlabs.github.io/Cobalt/install/"
+                .to_owned()
+        } else {
+            "This copy of the kobo command was not installed with a Cobalt release, so it has \
+             nothing to put on a reader. Install it from https://bandarlabs.github.io/Cobalt/ \
+             and open this window again."
+                .to_owned()
+        });
+    };
+    let read = |name: &str| {
+        fs::read(directory.join(name)).map_err(|error| {
+            format!(
+                "The Cobalt release in {} could not be read ({name}: {error}).",
+                directory.display()
+            )
+        })
+    };
+    let manifest = read("cobalt-host-manifest.txt")?;
+    let signature = String::from_utf8_lossy(&read("cobalt-host-manifest.txt.sig")?).into_owned();
+    let manifest = crate::host_release::verify_manifest(&manifest, &signature)
+        .map_err(|error| format!("The Cobalt release on this computer was refused: {error}."))?;
+    let channel = String::from_utf8_lossy(&read("channel")?).trim().to_owned();
+    if channel != "stable" || !manifest.allows_channel("stable") {
+        return Err(
+            "The release on this computer is not a stable one, and only stable releases are \
+             installed over USB. Beta updates are turned on later, in Cobalt Settings on the \
+             reader."
+                .to_owned(),
+        );
+    }
+    if !kobo_app_store::cobalt_version_at_least(env!("CARGO_PKG_VERSION"), &manifest.version) {
+        return Err(format!(
+            "The release on this computer, {}, is newer than this kobo command, {}. Run kobo \
+             update, then open this window again.",
+            manifest.version,
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
+    Ok(manifest.version)
+}
+
+/// A string field of a JSON body.
+fn text<'a>(body: &'a Value, field: &str) -> Option<&'a str> {
+    body.get(field).and_then(Value::as_str)
+}
+
+fn bad(message: &str) -> Response {
+    Response::refusal(400, "Bad Request", message)
+}
+
+fn conflict(message: &str) -> Response {
+    Response::refusal(409, "Conflict", message)
+}
+
+fn failed(message: &str) -> Response {
+    Response::refusal(500, "Internal Server Error", console::display(message))
+}
+
+/// The mounted reader a request names.
+///
+/// The name is only ever compared with what this process finds mounted. A
+/// path is not taken from the page and opened, because the page is the one
+/// part of this program an attacker who got past every other rule would be
+/// speaking through, and "write Cobalt to this folder" is not something to
+/// do on its say-so.
+fn named_reader(shared: &Shared, volume: Option<&str>) -> Result<setup::Mounted, Response> {
+    let Some(volume) = volume else {
+        return Err(bad("Name the reader to act on."));
+    };
+    (shared.machine.readers)()
+        .into_iter()
+        .find(|reader| reader.volume.to_string_lossy() == volume)
+        .ok_or_else(|| {
+            Response::refusal(
+                404,
+                "Not Found",
+                "That reader is no longer connected. Plug it in and tap Connect on its screen.",
+            )
+        })
+}
+
+/// Refuses while a job is writing to a reader.
+fn reader_is_free(shared: &Shared) -> Result<(), Response> {
+    match shared.jobs.busy(Kind::Reader) {
+        Some(title) => Err(conflict(&format!(
+            "{title} has not finished yet. Wait for it, then try again."
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Starts this program again as a job.
+fn start_command(
+    shared: &Arc<Shared>,
+    kind: Kind,
+    title: &str,
+    arguments: Vec<String>,
+    directory: Option<PathBuf>,
+    after: impl FnOnce() + Send + 'static,
+) -> Response {
+    let program = shared.machine.program.clone();
+    let started = shared.jobs.start(
+        kind,
+        title,
+        move |job| jobs::run_child(&program, &arguments, directory.as_deref(), job),
+        after,
+    );
+    match started {
+        Ok(id) => Response::ok(&json!({ "job": id })),
+        Err(busy) => conflict(&format!(
+            "{busy} has not finished yet. Wait for it, then try again."
+        )),
+    }
+}
+
+/// How the Cobalt on a reader compares with the release on this computer.
+fn standing(on_reader: Option<&str>, release: Result<&String, &String>) -> &'static str {
+    match (on_reader, release) {
+        (None, _) => "absent",
+        (Some(_), Err(_)) => "unknown",
+        (Some(reader), Ok(release)) if reader == release => "current",
+        (Some(reader), Ok(release)) if kobo_app_store::cobalt_version_at_least(release, reader) => {
+            "behind"
+        }
+        (Some(_), Ok(_)) => "ahead",
+    }
+}
+
+/// One mounted reader as the page shows it.
+///
+/// The serial is left out. The page has no use for it, and the command line
+/// has never shown more than its first four characters, which are the model.
+fn reader_json(machine: &Machine, reader: &setup::Mounted) -> Value {
+    let identified = setup::install_profile(reader);
+    let profile = identified.as_ref().map_or_else(
+        |_| setup::undo_profile(reader).profile,
+        |found| found.profile,
+    );
+    let model = profile.map_or_else(
+        || format!("Kobo, model code {}", reader.model_code()),
+        |profile| profile.model.to_owned(),
+    );
+    let installed = reader
+        .volume
+        .join(setup::INSTALL_FOLDER)
+        .join("VERSION")
+        .is_file();
+    let (cobalt, cobalt_problem) = match usb::Installation::on(&reader.volume) {
+        Ok(installation) => (Some(usb::installation_json(&installation)), None),
+        Err(_) if !installed => (None, None),
+        Err(error) => (None, Some(console::display(&error).to_owned())),
+    };
+    let version = cobalt
+        .as_ref()
+        .and_then(|cobalt| cobalt.get("cobalt_version"))
+        .and_then(Value::as_str);
+    json!({
+        "volume": reader.volume.to_string_lossy(),
+        "model": model,
+        "model_code": reader.model_code(),
+        "firmware": reader.firmware,
+        "supported": identified.is_ok(),
+        "refusal": identified.as_ref().err(),
+        "untested": identified.as_ref().ok().and_then(|found| found.untested(reader)),
+        "standing": standing(version, machine.release.as_ref()),
+        "cobalt": cobalt,
+        "cobalt_problem": cobalt_problem,
+    })
+}
+
+/// `GET /api/state`: everything the page shows without being asked, which
+/// it reads every couple of seconds to notice a reader arriving or leaving.
+fn state(shared: &Arc<Shared>, _: &mut Request<'_>) -> Response {
+    let machine = &shared.machine;
+    let readers: Vec<Value> = (machine.readers)()
+        .iter()
+        .map(|reader| reader_json(machine, reader))
+        .collect();
+    Response::ok(&json!({
+        "computer": {
+            "kobo": env!("CARGO_PKG_VERSION"),
+            "release": machine.release.as_ref().ok(),
+            "release_problem": machine.release.as_ref().err(),
+            "ejects": cfg!(target_os = "macos"),
+            "upload_limit": shared.limits.upload,
+        },
+        "readers": readers,
+        "jobs": shared.jobs.summaries(),
+    }))
+}
+
+/// `GET /api/plan`: what installing or removing Cobalt would change on a
+/// reader, in the words `kobo setup --dry-run` uses, before anything is
+/// asked to happen.
+fn plan(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let volume = request.head.query("volume");
+    let reader = match named_reader(shared, volume.as_deref()) {
+        Ok(reader) => reader,
+        Err(refusal) => return refusal,
+    };
+    let undo = request.head.query("undo").is_some_and(|value| value == "1");
+    let mut words = vec![
+        "--dry-run".to_owned(),
+        "--volume".to_owned(),
+        reader.volume.to_string_lossy().into_owned(),
+    ];
+    if undo {
+        words.push("--undo".to_owned());
+    }
+    let options = match crate::parse_setup(&words) {
+        Ok(options) => options,
+        Err(error) => return failed(&error),
+    };
+    let identified = if undo {
+        Ok(setup::undo_profile(&reader))
+    } else {
+        setup::install_profile(&reader)
+    };
+    let identified = match identified {
+        Ok(identified) => identified,
+        Err(reason) => return conflict(&reason),
+    };
+    Response::ok(&json!({
+        "undo": undo,
+        "lines": joined(&crate::dry_run_plan(&options, &reader)),
+        "release": shared.machine.release.as_ref().ok(),
+        "untested": identified.untested(&reader).filter(|_| !undo),
+    }))
+}
+
+/// The plan as one entry per change.
+///
+/// The plan is wrapped for a terminal, with a continued line indented under
+/// the one it continues. The page wraps for itself, so the pieces are put
+/// back together here.
+fn joined(plan: &str) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for line in plan.lines() {
+        match lines.last_mut() {
+            Some(previous) if line.starts_with(' ') => {
+                previous.push(' ');
+                previous.push_str(line.trim());
+            }
+            _ => lines.push(line.trim().to_owned()),
+        }
+    }
+    lines
+}
+
+/// `POST /api/reader/install`: installs Cobalt, or updates it, by running
+/// `kobo setup` with its confirmation already given. The confirmation was
+/// the page showing the plan and the owner pressing the button under it.
+fn install_cobalt(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let reader = match named_reader(shared, text(&body, "volume")) {
+        Ok(reader) => reader,
+        Err(refusal) => return refusal,
+    };
+    if let Err(reason) = setup::install_profile(&reader) {
+        return conflict(&reason);
+    }
+    if let Err(problem) = &shared.machine.release {
+        return conflict(problem);
+    }
+    let mut arguments = vec![
+        "setup".to_owned(),
+        "--yes".to_owned(),
+        "--non-interactive".to_owned(),
+        "--volume".to_owned(),
+        reader.volume.to_string_lossy().into_owned(),
+    ];
+    if let Some(directory) = &shared.machine.release_dir {
+        arguments.push("--release-dir".to_owned());
+        arguments.push(directory.to_string_lossy().into_owned());
+    }
+    let title = if usb::Installation::on(&reader.volume).is_ok() {
+        "Updating Cobalt"
+    } else {
+        "Installing Cobalt"
+    };
+    start_command(shared, Kind::Reader, title, arguments, None, || {})
+}
+
+/// `POST /api/reader/remove`: takes Cobalt off the reader with
+/// `kobo setup --undo`.
+fn remove_cobalt(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let reader = match named_reader(shared, text(&body, "volume")) {
+        Ok(reader) => reader,
+        Err(refusal) => return refusal,
+    };
+    let arguments = vec![
+        "setup".to_owned(),
+        "--undo".to_owned(),
+        "--yes".to_owned(),
+        "--non-interactive".to_owned(),
+        "--volume".to_owned(),
+        reader.volume.to_string_lossy().into_owned(),
+    ];
+    start_command(
+        shared,
+        Kind::Reader,
+        "Removing Cobalt",
+        arguments,
+        None,
+        || {},
+    )
+}
+
+/// `POST /api/reader/eject`.
+fn eject(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let reader = match named_reader(shared, text(&body, "volume")) {
+        Ok(reader) => reader,
+        Err(refusal) => return refusal,
+    };
+    if let Err(refusal) = reader_is_free(shared) {
+        return refusal;
+    }
+    match (shared.machine.eject)(&reader.volume) {
+        Ok(()) => Response::ok(&json!({ "ejected": true })),
+        Err(error) => failed(&error),
+    }
+}
+
+/// The installation on the reader a request names, with the store held.
+fn with_installation(
+    shared: &Arc<Shared>,
+    volume: Option<&str>,
+    answer: impl FnOnce(&usb::Installation) -> Result<Value, String>,
+) -> Response {
+    let reader = match named_reader(shared, volume) {
+        Ok(reader) => reader,
+        Err(refusal) => return refusal,
+    };
+    if let Err(refusal) = reader_is_free(shared) {
+        return refusal;
+    }
+    let installation = match usb::Installation::on(&reader.volume) {
+        Ok(installation) => installation,
+        Err(error) => return conflict(console::display(&error)),
+    };
+    let Ok(_held) = shared.machine.store.lock() else {
+        return failed("the reader's app store is in use");
+    };
+    match answer(&installation) {
+        Ok(mut value) => {
+            value["reader"] = usb::installation_json(&installation);
+            Response::ok(&value)
+        }
+        Err(error) => failed(&error),
+    }
+}
+
+fn apps_json(installation: &usb::Installation, apps: &[kobo_protocol::AppInfo]) -> Value {
+    json!({
+        "apps": apps
+            .iter()
+            .map(|app| usb::app_json(installation, app))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// `GET /api/apps`: the apps on the reader, from the volume alone.
+///
+/// This is the one question whose answer can involve a write. The store
+/// finishes a swap that was interrupted before it lists anything, exactly
+/// as the reader does at its next start, and there is no way to ask it not
+/// to. It changes nothing an owner chose and is the same whoever asks.
+fn installed_apps(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let volume = request.head.query("volume");
+    with_installation(shared, volume.as_deref(), |installation| {
+        let apps = installation.installed(&shared.machine.key)?;
+        Ok(apps_json(installation, &apps))
+    })
+}
+
+/// `POST /api/apps/catalog`: fetches and verifies the published catalog for
+/// the reader's channel. A `POST` because the verified catalog is left on
+/// the reader as its Store's own cache.
+fn catalog(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    with_installation(shared, text(&body, "volume"), |installation| {
+        let machine = &shared.machine;
+        let apps = installation.available(&machine.key, |url, most| (machine.fetch)(url, most))?;
+        Ok(apps_json(installation, &apps))
+    })
+}
+
+/// `POST /api/apps/install`: installs or updates the apps named, as a job,
+/// one after another, each through the store's verified transaction.
+fn install_apps(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let reader = match named_reader(shared, text(&body, "volume")) {
+        Ok(reader) => reader,
+        Err(refusal) => return refusal,
+    };
+    let ids: Option<Vec<String>> = body.get("ids").and_then(Value::as_array).and_then(|ids| {
+        ids.iter()
+            .map(|id| {
+                id.as_str()
+                    .filter(|id| kobo_protocol::valid_app_id(id))
+                    .map(str::to_owned)
+            })
+            .collect()
+    });
+    let Some(ids) = ids.filter(|ids| !ids.is_empty() && ids.len() <= MOST_APPS) else {
+        return bad("Name the apps to install by their ids.");
+    };
+    let installation = match usb::Installation::on(&reader.volume) {
+        Ok(installation) => installation,
+        Err(error) => return conflict(console::display(&error)),
+    };
+    let title = if ids.len() == 1 {
+        "Installing an app"
+    } else {
+        "Installing apps"
+    };
+    let working = Arc::clone(shared);
+    let started = shared.jobs.start(
+        Kind::Reader,
+        title,
+        move |job| {
+            let machine = &working.machine;
+            let Ok(_held) = machine.store.lock() else {
+                job.say("The reader's app store is in use.\n");
+                return Finish {
+                    ok: false,
+                    code: None,
+                };
+            };
+            let fetch = |url: &str, most: u32| (machine.fetch)(url, most);
+            job.say("Fetching the signed app catalog.\n");
+            let apps = match installation.available(&machine.key, fetch) {
+                Ok(apps) => apps,
+                Err(error) => {
+                    job.say(&format!("{}\n", console::display(&error)));
+                    return Finish {
+                        ok: false,
+                        code: None,
+                    };
+                }
+            };
+            let mut failures = 0;
+            let mut changed = false;
+            for id in &ids {
+                let Some(app) = apps.iter().find(|app| app.id == *id) else {
+                    failures += 1;
+                    job.say(&format!("The catalog has no app with the id {id}.\n"));
+                    continue;
+                };
+                job.say(&format!(
+                    "Fetching and checking {} {}.\n",
+                    app.title, app.version
+                ));
+                match installation.install(app, &machine.key, fetch) {
+                    Ok(outcome) => {
+                        changed |= outcome.changed();
+                        job.say(&format!("{}\n", outcome.sentence(&app.title)));
+                    }
+                    Err(error) => {
+                        failures += 1;
+                        job.say(&format!("{}\n", console::display(&error)));
+                    }
+                }
+            }
+            if changed {
+                job.say(
+                    "\nEject the reader before you unplug it, so the change is fully written.\n",
+                );
+            }
+            Finish {
+                ok: failures == 0,
+                code: None,
+            }
+        },
+        || {},
+    );
+    match started {
+        Ok(id) => Response::ok(&json!({ "job": id })),
+        Err(busy) => conflict(&format!(
+            "{busy} has not finished yet. Wait for it, then try again."
+        )),
+    }
+}
+
+/// `POST /api/apps/remove`: removes one app and answers with what is left.
+fn remove_app(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let Some(id) = text(&body, "id").filter(|id| kobo_protocol::valid_app_id(id)) else {
+        return bad("Name the app to remove by its id.");
+    };
+    with_installation(shared, text(&body, "volume"), |installation| {
+        let key = &shared.machine.key;
+        let before = installation.installed(key)?;
+        let app = before
+            .iter()
+            .find(|app| app.id == id)
+            .ok_or_else(|| format!("{id} is not installed on this reader."))?;
+        installation.remove(&app.id, key)?;
+        let mut answer = apps_json(installation, &installation.installed(key)?);
+        answer["removed"] = json!({ "id": app.id, "title": app.title });
+        Ok(answer)
+    })
+}
+
+/// The browsers on this computer that Send to Kobo can be set up in.
+///
+/// A browser counts as here when the folder it keeps its profiles in
+/// exists, which is the test `kobo clip install --all` uses.
+fn browsers_here(machine: &Machine) -> Vec<Browser> {
+    let os = Os::current();
+    let local = std::env::var_os("LOCALAPPDATA").map_or_else(PathBuf::new, PathBuf::from);
+    let roaming = std::env::var_os("APPDATA").map_or_else(PathBuf::new, PathBuf::from);
+    Browser::ALL
+        .into_iter()
+        .filter(|browser| os == Os::Mac || *browser != Browser::Safari)
+        .filter(|browser| {
+            let folder =
+                clip_install::profile_folder(*browser, os, &machine.home, &local, &roaming);
+            !folder.as_os_str().is_empty() && folder.exists()
+        })
+        .collect()
+}
+
+/// Whether Send to Kobo has been set up for `browser`: whether the file
+/// that browser reads to find `kobo` is where setting it up puts it.
+fn is_set_up(machine: &Machine, browser: Browser) -> bool {
+    match clip_install::registration(browser, Os::current(), &machine.home, &machine.config) {
+        Some(Registration::File(path)) => path.is_file(),
+        Some(Registration::Registry { manifest, .. }) => manifest.is_file(),
+        None => clip_install::safari_service(&machine.home).exists(),
+    }
+}
+
+fn browsers_json(machine: &Machine) -> Value {
+    let extension = machine.config.join("clip").join("extension");
+    let found: Vec<Value> = browsers_here(machine)
+        .into_iter()
+        .map(|browser| {
+            json!({
+                "id": browser.id(),
+                "title": browser.title(),
+                "set_up": is_set_up(machine, browser),
+                "step": clip_install::steps(browser, &extension),
+            })
+        })
+        .collect();
+    json!({ "browsers": found })
+}
+
+/// `GET /api/browsers`.
+fn browsers(shared: &Arc<Shared>, _: &mut Request<'_>) -> Response {
+    Response::ok(&browsers_json(&shared.machine))
+}
+
+/// Runs `kobo clip install` or `uninstall` for one browser and answers with
+/// what it said and how the browsers stand afterwards.
+///
+/// Run and waited for rather than made a job: it writes a few small files
+/// and is done in well under a second.
+fn clip_command(shared: &Arc<Shared>, request: &mut Request<'_>, verb: &str) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let machine = &shared.machine;
+    let Some(browser) = text(&body, "browser")
+        .and_then(Browser::named)
+        .filter(|browser| browsers_here(machine).contains(browser))
+    else {
+        return bad("That browser was not found on this computer.");
+    };
+    let output = std::process::Command::new(&machine.program)
+        .args(["clip", verb, "--browser", browser.id()])
+        .stdin(std::process::Stdio::null())
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => return failed(&format!("Could not run the kobo command: {error}")),
+    };
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    if !output.status.success() {
+        return failed(said.trim());
+    }
+    let mut answer = browsers_json(machine);
+    answer["said"] = Value::String(said);
+    Response::ok(&answer)
+}
+
+/// `POST /api/browsers/setup`.
+fn set_up_browser(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    clip_command(shared, request, "install")
+}
+
+/// `POST /api/browsers/remove`.
+fn forget_browser(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    clip_command(shared, request, "uninstall")
+}
+
+/// `GET /api/send`: where a send can go and what is waiting to.
+fn sending(shared: &Arc<Shared>, _: &mut Request<'_>) -> Response {
+    let machine = &shared.machine;
+    let saved = readers::Store::load(&machine.config.join("readers")).unwrap_or_default();
+    let waiting = delivery::waiting(&machine.config.join("clip").join("queue"));
+    Response::ok(&json!({
+        "readers": saved
+            .readers
+            .iter()
+            .map(|reader| json!({ "name": reader.nickname, "paired": reader.paired }))
+            .collect::<Vec<_>>(),
+        "waiting": waiting
+            .iter()
+            .map(|article| json!({ "title": article.title, "site": article.site }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+/// A file name that is safe to create in a folder and to pass to a command.
+///
+/// What the page sends is what the owner's file is called, which can be
+/// anything. Only the last component is kept, so the name cannot climb out
+/// of its folder. Characters a file name cannot hold on some system become
+/// underscores. A leading dash would be read by `kobo send` as an option and
+/// a leading dot would hide the file, so neither survives. The extension is
+/// kept whole when the rest is shortened, because the extension is how the
+/// file is matched to the app that opens it.
+fn safe_name(offered: &str) -> String {
+    let last = offered.rsplit(['/', '\\']).next().unwrap_or_default();
+    let cleaned: String = last
+        .chars()
+        .map(|character| {
+            if character.is_control() || "<>:\"|?*".contains(character) {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim().trim_start_matches(['-', '.']).trim();
+    if cleaned.is_empty() {
+        return "file".to_owned();
+    }
+    let (stem, extension) = match cleaned.rsplit_once('.') {
+        Some((stem, extension)) if !stem.is_empty() && extension.chars().count() <= 12 => {
+            (stem, Some(extension))
+        }
+        _ => (cleaned, None),
+    };
+    let stem: String = stem.chars().take(96).collect();
+    match extension {
+        Some(extension) => format!("{stem}.{extension}"),
+        None => stem,
+    }
+}
+
+fn companion_json(companion: Companion) -> Value {
+    json!({
+        "name": companion.name(),
+        "title": companion.title(),
+        "purpose": companion.purpose(),
+        "replaces": companion.replaces(),
+    })
+}
+
+/// `POST /api/send/file`: receives a file and says which app opens it.
+///
+/// The bytes go straight to a file in a folder of their own. Which app
+/// takes the file is then decided the way `kobo send` decides it, and the
+/// two questions a terminal would be asked are sent back as data instead:
+/// which app, when more than one opens this kind of file, and whether to
+/// replace, when the app keeps one thing at a time.
+fn receive_file(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let machine = &shared.machine;
+    let name = safe_name(&request.head.query("name").unwrap_or_default());
+    let Ok(_receiving) = machine.receiving.lock() else {
+        return failed("another file is still arriving");
+    };
+    let id = {
+        let Ok(mut uploads) = machine.uploads.lock() else {
+            return failed("the received files could not be listed");
+        };
+        uploads.given += 1;
+        uploads.given
+    };
+    let folder = machine.scratch.join(format!("file-{id}"));
+    let path = folder.join(&name);
+    let received = fs::create_dir_all(&folder)
+        .and_then(|()| fs::File::create(&path))
+        .map_err(|_| Malformed::Incomplete)
+        .and_then(|mut file| request.save(&mut file));
+    let bytes = match received {
+        Ok(bytes) => bytes,
+        Err(why) => {
+            let _ = fs::remove_dir_all(&folder);
+            return Response::malformed(why);
+        }
+    };
+    let mut answer = json!({ "upload": id, "name": name, "bytes": bytes });
+    match detect::choose(&detect::candidates(&path), None) {
+        Ok(companion) => answer["app"] = companion_json(companion),
+        Err(detect::ChooseError::Ambiguous(offered)) => {
+            answer["choices"] = offered.into_iter().map(companion_json).collect();
+        }
+        Err(detect::ChooseError::Message(why)) => {
+            let _ = fs::remove_dir_all(&folder);
+            return Response::refusal(422, "Unprocessable Content", console::display(&why));
+        }
+    }
+    if let Ok(mut uploads) = machine.uploads.lock() {
+        uploads.waiting.push(Upload { id, folder, name });
+        // Only now, with the new file whole and wanted, does an old one make
+        // way for it. A file that was refused must not cost the owner one
+        // they were about to send.
+        while uploads.waiting.len() > MOST_UPLOADS {
+            let oldest = uploads.waiting.remove(0);
+            let _ = fs::remove_dir_all(oldest.folder);
+        }
+    }
+    Response::ok(&answer)
+}
+
+/// The saved reader a request names, as the flags that send to it.
+///
+/// No name is the reader `kobo setup` saved, which needs no flag. A name
+/// has to be one in the store, so that what follows `--reader` on the
+/// command line is always something this computer already wrote down.
+fn reader_flags(machine: &Machine, body: &Value) -> Result<Vec<String>, Response> {
+    let Some(name) = text(body, "reader").filter(|name| !name.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let saved = readers::Store::load(&machine.config.join("readers")).unwrap_or_default();
+    if saved.find(name).is_none() {
+        return Err(bad("No reader is saved under that name."));
+    }
+    Ok(vec!["--reader".to_owned(), name.to_owned()])
+}
+
+/// `POST /api/send/start`: sends a received file with `kobo send`.
+///
+/// The command runs in the file's own folder and is given the bare name, so
+/// that what it says is "Sent Winter.cbz to Panels" and not the path of a
+/// temporary folder. The file is deleted when the command ends, whichever
+/// way it ends.
+fn send_file(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let machine = &shared.machine;
+    let mut arguments = vec!["send".to_owned()];
+    if let Some(app) = text(&body, "to") {
+        let Some(companion) = Companion::ALL
+            .into_iter()
+            .find(|companion| companion.name() == app)
+        else {
+            return bad("No app by that name takes files.");
+        };
+        arguments.push("--to".to_owned());
+        arguments.push(companion.name().to_owned());
+    }
+    if body.get("replace").and_then(Value::as_bool) == Some(true) {
+        arguments.push("--replace".to_owned());
+    }
+    match reader_flags(machine, &body) {
+        Ok(flags) => arguments.extend(flags),
+        Err(refusal) => return refusal,
+    }
+    if let Some(busy) = shared.jobs.busy(Kind::Send) {
+        return conflict(&format!(
+            "{busy} has not finished yet. Wait for it, then try again."
+        ));
+    }
+    let wanted = body.get("upload").and_then(Value::as_u64);
+    let upload = machine.uploads.lock().ok().and_then(|mut uploads| {
+        let position = uploads
+            .waiting
+            .iter()
+            .position(|upload| Some(upload.id) == wanted)?;
+        Some(uploads.waiting.remove(position))
+    });
+    let Some(upload) = upload else {
+        return Response::refusal(
+            404,
+            "Not Found",
+            "That file is no longer here. Choose it again.",
+        );
+    };
+    // The name lost any leading dash when the file was received, so it
+    // cannot be read as an option wherever on the line it stands.
+    arguments.insert(1, upload.name.clone());
+    let folder = upload.folder.clone();
+    start_command(
+        shared,
+        Kind::Send,
+        &format!("Sending {}", upload.name),
+        arguments,
+        Some(upload.folder),
+        move || {
+            let _ = fs::remove_dir_all(folder);
+        },
+    )
+}
+
+/// An address `kobo clip` can be handed.
+///
+/// Only the two schemes a web page has. The scheme check is also what makes
+/// the address safe as an argument: nothing that begins `http` can be read
+/// as an option. Spaces and control characters are refused rather than
+/// escaped, because a pasted address that contains them is two things or a
+/// mistake.
+fn web_address(offered: &str) -> Option<&str> {
+    let address = offered.trim();
+    let has_scheme = ["http://", "https://"].iter().any(|scheme| {
+        address
+            .get(..scheme.len())
+            .is_some_and(|start| start.eq_ignore_ascii_case(scheme))
+            && address.len() > scheme.len()
+    });
+    (has_scheme
+        && address.len() <= 2048
+        && !address
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control()))
+    .then_some(address)
+}
+
+/// `POST /api/send/address`: sends a web article with `kobo clip`.
+fn send_address(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let Some(address) = text(&body, "url").and_then(web_address) else {
+        return bad("Enter a web address that starts with http:// or https://.");
+    };
+    let mut arguments = vec!["clip".to_owned(), address.to_owned()];
+    match reader_flags(&shared.machine, &body) {
+        Ok(flags) => arguments.extend(flags),
+        Err(refusal) => return refusal,
+    }
+    start_command(
+        shared,
+        Kind::Send,
+        "Sending an article",
+        arguments,
+        None,
+        || {},
+    )
+}
+
+/// `POST /api/send/queue`: sends what is waiting with `kobo clip sync`.
+fn send_waiting(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let body = match request.json() {
+        Ok(body) => body,
+        Err(refusal) => return refusal,
+    };
+    let mut arguments = vec!["clip".to_owned(), "sync".to_owned()];
+    match reader_flags(&shared.machine, &body) {
+        Ok(flags) => arguments.extend(flags),
+        Err(refusal) => return refusal,
+    }
+    start_command(
+        shared,
+        Kind::Send,
+        "Sending waiting articles",
+        arguments,
+        None,
+        || {},
+    )
+}
+
+/// `GET /api/job`: how a job is going and what it has said since `from`.
+fn job(shared: &Arc<Shared>, request: &mut Request<'_>) -> Response {
+    let id = request
+        .head
+        .query("id")
+        .and_then(|id| id.parse::<u64>().ok());
+    let from = request
+        .head
+        .query("from")
+        .and_then(|from| from.parse::<usize>().ok())
+        .unwrap_or(0);
+    match id.and_then(|id| shared.jobs.find(id)) {
+        Some(job) => Response::ok(&job.report(from)),
+        None => Response::refusal(404, "Not Found", "That job is not remembered any more."),
+    }
+}
+
+/// `POST /api/goodbye`: the page is closing. The server notes it and waits
+/// a moment to see whether it comes back, which a reload does.
+fn goodbye(_: &Arc<Shared>, _: &mut Request<'_>) -> Response {
+    Response::ok(&json!({}))
+}
+
+#[cfg(test)]
+#[path = "api_tests.rs"]
+mod tests;
