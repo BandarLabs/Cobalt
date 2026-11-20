@@ -525,8 +525,8 @@ fn observe(
 /// the supervisor in `crates/kobod/src/tailscale.rs` opens it. The device node
 /// existing says nothing either way, since anybody can make one. What is
 /// listening is the other thing worth reading before a tailnet is joined,
-/// because the supervisor refuses to start while telnet or FTP are up or
-/// while root can still log in over SSH with a password.
+/// because the supervisor refuses to start while anything is listening that
+/// it cannot account for, and its refusal names only the port.
 fn print_tailscale_readiness() {
     println!("tailscale readiness (read-only):");
     let misc = std::fs::read_to_string("/proc/misc").ok();
@@ -561,18 +561,21 @@ fn print_tailscale_readiness() {
         .filter_map(|table| std::fs::read_to_string(table).ok())
         .flat_map(|table| listening_ports(&table))
         .collect::<Vec<_>>();
-    for (port, name, consequence) in [
-        (
-            22,
-            "ssh",
-            "must refuse root a password before Tailscale starts",
-        ),
-        (23, "telnet", "Tailscale will not start while this is up"),
-        (21, "ftp", "Tailscale will not start while this is up"),
-    ] {
-        if listening.contains(&port) {
-            println!("  listening: {name} on {port} ({consequence})");
-        }
+    // Every one of them, because Tailscale joins a tailnet only when it can
+    // account for everything that is listening.
+    for port in &listening {
+        println!(
+            "  listening on {port}: {}",
+            match port {
+                22 => "ssh (must refuse root anything but a key before Tailscale starts)",
+                23 => "telnet (Tailscale will not start while this is up)",
+                21 => "ftp (Tailscale will not start while this is up)",
+                _ => "not known to Cobalt (Tailscale will not start while this is up, unless it is the Sync engine during a sync)",
+            }
+        );
+    }
+    if listening.is_empty() {
+        println!("  listening: nothing on an address other machines can reach");
     }
     let meminfo = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
     for key in ["MemTotal", "MemAvailable"] {

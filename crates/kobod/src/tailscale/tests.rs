@@ -118,6 +118,11 @@ fn reader(name: &str) -> (PathBuf, Layout) {
         fs::create_dir_all(root.join(folder)).expect("layout folder");
     }
     mount_card(&root);
+    fs::write(
+        root.join("proc/net/tcp"),
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n",
+    )
+    .expect("sockets");
     fs::write(root.join("hosts"), HOSTS).expect("hosts");
     fs::write(root.join("tun"), b"").expect("tunnel node");
     fs::write(root.join("interfaces/lo/flags"), "0x49\n").expect("loopback flags");
@@ -136,7 +141,7 @@ fn reader(name: &str) -> (PathBuf, Layout) {
         proc: root.join("proc"),
         interfaces: root.join("interfaces"),
         sshd: root.join("sshd"),
-        sshd_configs: [root.join("sshd_config"), root.join("etc-sshd_config")],
+        sync_engine: root.join("bin/syncthing"),
         engine: Engine {
             url: "https://example.invalid/never-fetched",
             folder: "tailscale_fixture_arm",
@@ -553,20 +558,178 @@ fn a_link_where_a_program_should_be_is_not_run() {
 
 // What must be true before the reader joins a tailnet.
 
+/// The kernel's table of TCP sockets with only its heading: nothing is
+/// listening.
+const NO_SOCKETS: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n";
+
+/// The SSH server listening on every address, the Sync engine's control port
+/// on loopback, and an established SSH connection, which is not a listener.
 const SOCKETS: &str = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
-   0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1 1 0 100 0 0 10 0
-   1: 0100007F:20E0 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 2 1 0 100 0 0 10 0
-   2: 0A00000C:0016 0A000002:C1A2 01 00000000:00000000 02:000A0000 00000000     0        0 3 4 0 20 4 30 10 -1
+   0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1001 1 0 100 0 0 10 0
+   1: 0100007F:20E0 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 1002 1 0 100 0 0 10 0
+   2: 0A00000C:0016 0A000002:C1A2 01 00000000:00000000 02:000A0000 00000000     0        0 1003 4 0 20 4 30 10 -1
 ";
+
+/// One more listening socket on every address, as a line of the table.
+fn listening(port: u16, inode: u64) -> String {
+    format!(
+        "   9: 00000000:{port:04X} 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 {inode} 1 0 100 0 0 10 0\n"
+    )
+}
+
+/// An SSH server that answers what it would enforce: these settings for a
+/// connection from a tailnet IPv4 address, and `for_ipv6` for one from a
+/// tailnet IPv6 address. It records what it was asked.
+fn ssh_server_saying(root: &Path, layout: &Layout, settings: &str, for_ipv6: &str) {
+    fs::write(root.join("sshd-says"), settings).expect("settings");
+    fs::write(root.join("sshd-says-6"), for_ipv6).expect("settings");
+    script(
+        &layout.sshd,
+        "#!/bin/sh\nroot=$(dirname \"$0\")\necho \"$*\" >> \"$root/sshd-asked\"\ncase \"$*\" in *addr=fd7a:*) cat \"$root/sshd-says-6\" ;; *) cat \"$root/sshd-says\" ;; esac\n",
+    );
+}
+
+const KEY_ONLY: &str =
+    "port 22\npermitrootlogin yes\npasswordauthentication no\nkbdinteractiveauthentication yes\n";
+const STOCK: &str =
+    "port 22\npermitrootlogin yes\npasswordauthentication yes\npermitemptypasswords yes\n";
+
+/// A process the kernel says is running, holding the given sockets.
+fn process_holding(root: &Path, pid: u32, started_as: &Path, sockets: &[u64]) {
+    let entry = root.join("proc").join(pid.to_string());
+    fs::create_dir_all(entry.join("fd")).expect("proc entry");
+    let mut arguments = started_as.to_string_lossy().into_owned().into_bytes();
+    arguments.push(0);
+    fs::write(entry.join("cmdline"), arguments).expect("cmdline");
+    for (number, inode) in sockets.iter().enumerate() {
+        let link = entry.join("fd").join(number.to_string());
+        let _ignored = fs::remove_file(&link);
+        std::os::unix::fs::symlink(format!("socket:[{inode}]"), link).expect("open file");
+    }
+}
 
 #[test]
 fn listeners_are_read_from_the_kernels_table_and_loopback_is_left_out() {
-    // The SSH server listening, the Sync engine's loopback port, and an
-    // established SSH connection, which is not a listener.
-    assert_eq!(parse_listeners(SOCKETS), [22]);
+    assert_eq!(
+        parse_listeners(SOCKETS),
+        [Listener {
+            port: 22,
+            inode: Some(1001)
+        }]
+    );
     let six = "  sl  local_address ...\n   0: 00000000000000000000000000000000:0017 00000000000000000000000000000000:0000 0A 0\n   1: 00000000000000000000000001000000:0015 00000000000000000000000000000000:0000 0A 0\n";
-    assert_eq!(parse_listeners(six), [23]);
+    assert_eq!(
+        parse_listeners(six),
+        [Listener {
+            port: 23,
+            inode: None
+        }]
+    );
     assert!(parse_listeners("").is_empty());
+}
+
+#[test]
+fn a_reader_with_nothing_listening_has_nothing_to_close() {
+    let (_, layout) = reader("allow-quiet");
+    assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+}
+
+#[test]
+fn a_reader_that_cannot_say_what_is_listening_is_not_put_on_a_tailnet() {
+    let (root, layout) = reader("refuse-blind");
+    switch(&layout, true);
+    fs::remove_file(root.join("proc/net/tcp")).expect("no table");
+    assert_eq!(exposure(&layout, None), Exposure::Unreadable);
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(status(&layout)[2].contains("does not say what is listening"));
+    assert!(!root.join("daemon-args").exists(), "the daemon was started");
+}
+
+#[test]
+fn anything_listening_that_is_not_known_refuses_the_join_and_names_its_port() {
+    let (root, layout) = reader("refuse-unknown");
+    switch(&layout, true);
+    ssh_server_saying(&root, &layout, KEY_ONLY, KEY_ONLY);
+    // The hardened SSH server, and beside it: a second SSH server on 2222,
+    // telnet moved to 8023, a web server somebody started from a shell.
+    for stranger in [2222_u16, 8023, 8080] {
+        fs::write(
+            root.join("proc/net/tcp"),
+            format!("{SOCKETS}{}", listening(stranger, 2000)),
+        )
+        .expect("sockets");
+        assert_eq!(exposure(&layout, None), Exposure::Listening(stranger));
+    }
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(status(&layout)[2].contains("listening on port 8080"));
+    assert!(!root.join("daemon-args").exists(), "the daemon was started");
+    // With only the hardened server left, the reader may join.
+    fs::write(root.join("proc/net/tcp"), SOCKETS).expect("sockets");
+    assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+}
+
+#[test]
+fn the_ssh_server_is_allowed_on_the_ports_it_says_are_its_own() {
+    let (root, layout) = reader("allow-ssh-port");
+    let moved = "port 2222\npermitrootlogin prohibit-password\npasswordauthentication yes\n";
+    ssh_server_saying(&root, &layout, moved, moved);
+    fs::write(
+        root.join("proc/net/tcp"),
+        format!("{NO_SOCKETS}{}", listening(2222, 2000)),
+    )
+    .expect("sockets");
+    assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+    // The same server does not vouch for a port it did not name.
+    fs::write(
+        root.join("proc/net/tcp"),
+        format!(
+            "{NO_SOCKETS}{}{}",
+            listening(2222, 2000),
+            listening(22, 2001)
+        ),
+    )
+    .expect("sockets");
+    assert_eq!(exposure(&layout, None), Exposure::Listening(22));
+}
+
+#[test]
+fn the_sync_engine_is_allowed_its_port_only_while_it_is_the_one_holding_it() {
+    let (root, layout) = reader("allow-sync");
+    fs::write(
+        root.join("proc/net/tcp"),
+        format!("{NO_SOCKETS}{}", listening(22000, 3000)),
+    )
+    .expect("sockets");
+    assert_eq!(exposure(&layout, None), Exposure::Listening(22000));
+    process_holding(&root, 500, &layout.sync_engine, &[7, 3000]);
+    assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+    // The same port held by some other program is a stranger's.
+    process_holding(&root, 500, Path::new("/tmp/not-the-engine"), &[7, 3000]);
+    assert_eq!(exposure(&layout, None), Exposure::Listening(22000));
+}
+
+#[test]
+fn the_daemons_own_listener_does_not_take_its_tunnel_down() {
+    let (root, layout, supervisor) = connected_reader("allow-daemon");
+    let daemon = recorded_pid(&layout.home.join(DAEMON_PID)).expect("daemon recorded");
+    // Once the tunnel is up the daemon listens on the tailnet address.
+    process_holding(&root, daemon, &layout.daemon(), &[4000]);
+    fs::write(
+        root.join("proc/net/tcp"),
+        format!("{NO_SOCKETS}{}", listening(40123, 4000)),
+    )
+    .expect("sockets");
+    assert_eq!(exposure(&layout, Some(daemon)), Exposure::Acceptable);
+    std::thread::sleep(Duration::from_millis(400));
+    assert_eq!(state(&layout), "running");
+    // The same socket in anybody else's hands is refused at the next look.
+    process_holding(&root, daemon, &layout.daemon(), &[]);
+    fs::remove_file(root.join("proc").join(daemon.to_string()).join("fd/0")).expect("closed");
+    assert_eq!(supervisor.join().expect("supervisor"), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(status(&layout)[2].contains("listening on port 40123"));
 }
 
 #[test]
@@ -574,6 +737,8 @@ fn a_reader_that_still_takes_root_by_password_is_not_put_on_a_tailnet() {
     let (root, layout) = reader("refuse-password");
     switch(&layout, true);
     fs::write(root.join("proc/net/tcp"), SOCKETS).expect("sockets");
+    ssh_server_saying(&root, &layout, STOCK, STOCK);
+    assert_eq!(exposure(&layout, None), Exposure::PasswordLogin);
     assert_eq!(run(&layout), End::Settled);
     assert_eq!(state(&layout), "refused");
     assert!(status(&layout)[2].contains("Run kobo setup on your computer"));
@@ -581,65 +746,106 @@ fn a_reader_that_still_takes_root_by_password_is_not_put_on_a_tailnet() {
 }
 
 #[test]
-fn setup_having_closed_password_login_lets_the_reader_join() {
-    let (root, layout) = reader("allow-hardened");
+fn the_ssh_server_is_asked_as_a_connection_from_the_tailnet_in_both_families() {
+    let (root, layout) = reader("ssh-asked");
     fs::write(root.join("proc/net/tcp"), SOCKETS).expect("sockets");
-    fs::write(
-        &layout.sshd_configs[0],
-        "PermitRootLogin yes\n\n# cobalt-hardening: key-only SSH for root.\nMatch User root\nPasswordAuthentication no\n# cobalt-hardening: end.\n",
-    )
-    .expect("config");
-    assert_eq!(exposure(&layout), Exposure::Acceptable);
-    // Until the confirming login the change is one that undoes itself.
-    fs::write(
-        root.join("sshd_config.cobalt-revert"),
-        "PermitRootLogin yes\n",
-    )
-    .expect("pending");
-    assert_eq!(exposure(&layout), Exposure::PasswordLogin);
+    ssh_server_saying(&root, &layout, KEY_ONLY, KEY_ONLY);
+    assert_eq!(exposure(&layout, None), Exposure::Acceptable);
+    assert_eq!(
+        recorded(&root, "sshd-asked"),
+        [
+            "-T -C user=root,host=tailnet,addr=100.64.0.1",
+            "-T -C user=root,host=tailnet,addr=fd7a:115c:a1e0::1"
+        ]
+    );
+    // A server whose rules are looser for one family is open, whichever.
+    ssh_server_saying(&root, &layout, KEY_ONLY, STOCK);
+    assert_eq!(exposure(&layout, None), Exposure::PasswordLogin);
+    ssh_server_saying(&root, &layout, STOCK, KEY_ONLY);
+    assert_eq!(exposure(&layout, None), Exposure::PasswordLogin);
 }
 
 #[test]
-fn what_the_ssh_server_says_it_will_do_outranks_what_the_file_says() {
-    let (root, layout) = reader("allow-effective");
+fn a_comment_in_the_servers_file_proves_nothing_when_the_server_cannot_be_asked() {
+    let (root, layout) = reader("ssh-unreadable");
+    switch(&layout, true);
     fs::write(root.join("proc/net/tcp"), SOCKETS).expect("sockets");
-    script(
-        &layout.sshd,
-        "#!/bin/sh\necho 'permitrootlogin yes'\necho 'passwordauthentication no'\n",
-    );
-    assert_eq!(exposure(&layout), Exposure::Acceptable);
-    // A block in the file that the server does not honour is not hardening.
+    // What kobo setup leaves in the file, with no server to say it is in
+    // force.
     fs::write(
-        &layout.sshd_configs[0],
-        "# cobalt-hardening: key-only SSH for root.\n",
+        root.join("sshd_config"),
+        "# cobalt-hardening: key-only SSH for root.\nMatch User root\nPasswordAuthentication no\n# cobalt-hardening: end.\n",
     )
     .expect("config");
-    script(
-        &layout.sshd,
-        "#!/bin/sh\necho 'passwordauthentication yes'\n",
+    assert_eq!(exposure(&layout, None), Exposure::SshUnreadable);
+    // A server that runs and answers nothing useful is no better.
+    script(&layout.sshd, "#!/bin/sh\necho 'port 22'\n");
+    assert_eq!(exposure(&layout, None), Exposure::SshUnreadable);
+    script(&layout.sshd, "#!/bin/sh\nexit 1\n");
+    assert_eq!(exposure(&layout, None), Exposure::SshUnreadable);
+    assert_eq!(run(&layout), End::Settled);
+    assert_eq!(state(&layout), "refused");
+    assert!(status(&layout)[2].contains("could not be asked"));
+}
+
+#[test]
+fn every_way_of_typing_a_secret_has_to_be_off_or_root_refused_one() {
+    let door = |settings: &str| parse_ssh_door(settings);
+    // Password login off, and no PAM behind the question and answer login:
+    // what kobo setup leaves on a stock reader.
+    assert_eq!(door(KEY_ONLY), SshDoor::Closed(vec![22]));
+    // With PAM in use, question and answer login is a password again.
+    assert_eq!(
+        door("port 22\nusepam yes\npasswordauthentication no\nkbdinteractiveauthentication yes\n"),
+        SshDoor::Open(vec![22])
     );
-    assert_eq!(exposure(&layout), Exposure::PasswordLogin);
+    assert_eq!(
+        door(
+            "port 22\nusepam yes\npasswordauthentication no\nchallengeresponseauthentication yes\n"
+        ),
+        SshDoor::Open(vec![22])
+    );
+    assert_eq!(
+        door("port 22\nusepam yes\npasswordauthentication no\nkbdinteractiveauthentication no\n"),
+        SshDoor::Closed(vec![22])
+    );
+    assert_eq!(door(STOCK), SshDoor::Open(vec![22]));
+    // Root refused a password outright closes it whatever else is on.
+    for refusing in [
+        "no",
+        "prohibit-password",
+        "without-password",
+        "forced-commands-only",
+    ] {
+        assert_eq!(
+            door(&format!(
+                "port 22\nport 2222\nusepam yes\npermitrootlogin {refusing}\npasswordauthentication yes\nkbdinteractiveauthentication yes\n"
+            )),
+            SshDoor::Closed(vec![22, 2222])
+        );
+    }
+    // A setting whose name only begins the same way is not that setting.
+    assert_eq!(
+        door("port 22\npasswordauthenticationextra no\n"),
+        SshDoor::Unreadable
+    );
+    assert_eq!(door(""), SshDoor::Unreadable);
 }
 
 #[test]
 fn debug_services_are_refused_whatever_ssh_does() {
     let (root, layout) = reader("refuse-telnet");
     switch(&layout, true);
+    ssh_server_saying(&root, &layout, KEY_ONLY, KEY_ONLY);
     fs::write(
         root.join("proc/net/tcp"),
-        "header\n   0: 00000000:0017 00000000:0000 0A 0\n",
+        format!("{SOCKETS}{}", listening(23, 2000)),
     )
     .expect("sockets");
-    assert_eq!(exposure(&layout), Exposure::DebugServices);
+    assert_eq!(exposure(&layout, None), Exposure::DebugServices);
     assert_eq!(run(&layout), End::Settled);
     assert_eq!(state(&layout), "refused");
     assert!(status(&layout)[2].contains("Telnet or FTP"));
-}
-
-#[test]
-fn a_reader_with_nothing_listening_has_nothing_to_close() {
-    let (_, layout) = reader("allow-quiet");
-    assert_eq!(exposure(&layout), Exposure::Acceptable);
 }
 
 #[test]

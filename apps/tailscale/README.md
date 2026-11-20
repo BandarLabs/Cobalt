@@ -122,17 +122,29 @@ The reader has no packet filter, so every port it listens on is reachable
 from the tailnet once it joins. A tailnet is every device signed in to it and
 anything shared into it, not only your laptop.
 
-- **SSH, port 22.** This is the point: it is how `kobo` reaches the reader.
-  The runtime will not join a tailnet until the SSH server refuses root a
-  password, which `kobo setup` arranges. A reader still on the firmware's
-  defaults shows what to run instead of starting.
-- **Sync, ports 22000 and 21027, while a sync is running.** It accepts only
-  the computers you paired.
-- **Nothing else from Cobalt.** The runtime and its apps listen on no network
-  port.
-- **Telnet and FTP, if the reader's debug services are on.** They take no
-  password, so the runtime refuses to join a tailnet while they are
-  listening.
+The runtime will not join a tailnet, and leaves one within a minute, unless
+it can account for every TCP port the reader is listening on. What it
+accepts:
+
+- **SSH, on the ports the SSH server says are its own.** This is the point:
+  it is how `kobo` reaches the reader. The server is asked what it would
+  enforce for root arriving from a tailnet address, and must refuse root
+  anything typed: password login off, and question-and-answer login off
+  wherever the server uses PAM. `kobo setup` arranges this. A server that
+  cannot be asked counts as open.
+- **Sync, while a sync is running**, recognised by the Sync engine being the
+  program that holds the port. It accepts only the computers you paired.
+- **Tailscale's own listener** on the tailnet address.
+
+Anything else refuses the join, and the screen names the port: a second SSH
+server, telnet or FTP from the reader's debug services, something started
+from a shell. So does a reader that cannot say what is listening. Nothing
+from Cobalt itself listens on a network port.
+
+This covers TCP. A program that only receives datagrams cannot be held to a
+list this way and stays reachable from the tailnet. On a stock reader that is
+the Wi-Fi address client, Tailscale itself, and Sync's discovery while a sync
+runs.
 
 Unless you switch an option on, the reader is a leaf. It forwards no traffic,
 offers no exit node and no routes, accepts none, and does not run Tailscale

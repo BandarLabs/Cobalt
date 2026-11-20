@@ -235,7 +235,9 @@ struct Layout {
     /// `/sys/class/net`, for loopback and for the tunnel's interface.
     interfaces: PathBuf,
     sshd: PathBuf,
-    sshd_configs: [PathBuf; 2],
+    /// The Sync engine, whose listening port is its own business and is
+    /// allowed for as long as it is that program holding it.
+    sync_engine: PathBuf,
     engine: Engine,
     /// Free room the book partition must have before a download.
     room: u64,
@@ -256,11 +258,12 @@ impl Layout {
             tun_node: PathBuf::from("/dev/net/tun"),
             proc: PathBuf::from("/proc"),
             interfaces: PathBuf::from("/sys/class/net"),
-            sshd: PathBuf::from("/usr/sbin/sshd"),
-            sshd_configs: [
-                PathBuf::from("/etc/ssh/sshd_config"),
-                PathBuf::from("/etc/sshd_config"),
-            ],
+            sshd: ["/usr/sbin/sshd", "/usr/bin/sshd", "/sbin/sshd"]
+                .iter()
+                .map(PathBuf::from)
+                .find(|path| path.is_file())
+                .unwrap_or_else(|| PathBuf::from("/usr/sbin/sshd")),
+            sync_engine: PathBuf::from(crate::syncthing::ENGINE),
             engine: PINNED,
             room: ROOM_NEEDED,
             timing: DEVICE_TIMING,
@@ -1401,118 +1404,288 @@ fn preflight(layout: &Layout) -> Option<Status> {
             "This reader's software has no tunnel support, so Tailscale cannot run on it.",
         ));
     }
-    refusal(exposure(layout))
+    refusal(exposure(layout, None))
 }
 
 /// The words for a reader that should not be on a tailnet as it stands.
 fn refusal(exposure: Exposure) -> Option<Status> {
-    match exposure {
-        Exposure::Acceptable => None,
-        Exposure::PasswordLogin => Some(Status::quiet(
-            "refused",
+    let why = match exposure {
+        Exposure::Acceptable => return None,
+        Exposure::PasswordLogin => {
             "Root can still log in to this reader with a password. Run kobo setup on your \
-             computer to close that, then turn Tailscale on again.",
-        )),
-        Exposure::DebugServices => Some(Status::quiet(
-            "refused",
+             computer to close that, then turn Tailscale on again."
+                .to_owned()
+        }
+        Exposure::SshUnreadable => {
+            "The reader's SSH server could not be asked how it lets root log in, so Tailscale \
+             will not put the reader on a tailnet."
+                .to_owned()
+        }
+        Exposure::DebugServices => {
             "Telnet or FTP is running on this reader and takes no password. Turn off the \
-             reader's debug services, restart it, then turn Tailscale on again.",
-        )),
-    }
+             reader's debug services, restart it, then turn Tailscale on again."
+                .to_owned()
+        }
+        Exposure::Listening(port) => format!(
+            "Something on this reader is listening on port {port}, where your whole tailnet \
+             could reach it. Stop it, then turn Tailscale on again."
+        ),
+        Exposure::Unreadable => {
+            "The reader does not say what is listening on it, so Tailscale will not put it on \
+             a tailnet."
+                .to_owned()
+        }
+    };
+    Some(Status::quiet("refused", why))
 }
 
 /// What the reader would be offering a tailnet that it should not.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Exposure {
     Acceptable,
-    /// The SSH server is listening and still takes root by password.
+    /// The SSH server is listening and root can still get in with something
+    /// typed rather than a key.
     PasswordLogin,
+    /// The SSH server is listening and would not say what it enforces.
+    SshUnreadable,
     /// The firmware's debug services are listening.
     DebugServices,
+    /// Something this runtime does not know is listening on this port.
+    Listening(u16),
+    /// The kernel's list of what is listening could not be read.
+    Unreadable,
 }
 
-/// Looks at what is listening before the reader is put on a tailnet.
+/// Looks at what is listening before the reader is put on a tailnet, and
+/// again every minute that it is on one.
 ///
 /// With no packet filter on the reader, joining a tailnet offers every
 /// listening port to every computer on it, and a tailnet is not only the
 /// owner's laptop: it is every device signed in to it and anything shared
-/// into it. The SSH server is the point of the exercise and is fine once it
-/// takes keys only, which `kobo setup` arranges. The stock firmware's
-/// defaults are not fine. Its SSH server accepts root with a password that
-/// is published or empty, and its debug services are telnet and FTP as root
-/// with no password at all. On the owner's own Wi-Fi those were a risk they
-/// had already taken. Carried onto a tailnet by a switch in an app, they are
-/// one nobody chose, so the switch does nothing until they are closed.
-fn exposure(layout: &Layout) -> Exposure {
-    let ports = listening_ports(layout);
-    if ports.contains(&21) || ports.contains(&23) {
-        return Exposure::DebugServices;
+/// into it. So the question asked is not whether anything known to be
+/// dangerous is listening. That was the first version of this, and it
+/// waved through a second SSH server on another port, telnet moved off its
+/// usual one, and anything a shell had started. The question is whether
+/// everything listening is something known and judged safe, and the list of
+/// those is short:
+///
+/// * The SSH server, on the ports it says are its own, once root cannot get
+///   in with anything but a key. It is the point of the exercise.
+/// * The Sync engine's transfer port while a sync is running, recognised by
+///   the engine being the process that holds the socket, not by its number.
+///   It accepts only the computers the owner paired.
+/// * The daemon's own listener on the tailnet address, recognised the same
+///   way, which exists only once the tunnel does.
+///
+/// Anything else refuses the join and names the port, and so does not being
+/// able to read the list. A reader this cannot see into is not one it puts
+/// on a network.
+///
+/// This is TCP. Datagram sockets cannot be held to a list this way, because
+/// every name lookup any program makes is, for a moment, a bound socket on a
+/// port nobody chose.
+fn exposure(layout: &Layout, daemon: Option<u32>) -> Exposure {
+    let Some(listeners) = listeners(layout) else {
+        return Exposure::Unreadable;
+    };
+    if listeners.is_empty() {
+        return Exposure::Acceptable;
     }
-    if ports.contains(&22) && !password_login_closed(layout) {
-        return Exposure::PasswordLogin;
+    // Asked only when something is listening, and only once however many
+    // ports it has.
+    let mut ssh: Option<SshDoor> = None;
+    let sync = processes_started_with(layout, &layout.sync_engine);
+    for listener in listeners {
+        let held_by_ours = listener.inode.is_some_and(|inode| {
+            daemon
+                .iter()
+                .chain(&sync)
+                .any(|pid| holds_socket(layout, *pid, inode))
+        });
+        if held_by_ours {
+            continue;
+        }
+        if matches!(listener.port, 21 | 23) {
+            return Exposure::DebugServices;
+        }
+        match ssh.get_or_insert_with(|| ssh_door(layout)) {
+            SshDoor::Closed(ports) if ports.contains(&listener.port) => {}
+            SshDoor::Open(ports) if ports.contains(&listener.port) => {
+                return Exposure::PasswordLogin
+            }
+            // The usual SSH port with a server that will not answer is far
+            // more likely that server than a stranger, and the owner is
+            // better told about the server.
+            SshDoor::Unreadable if listener.port == 22 => return Exposure::SshUnreadable,
+            _ => return Exposure::Listening(listener.port),
+        }
     }
     Exposure::Acceptable
 }
 
-/// The TCP ports something is listening on, on an address other machines
-/// can reach.
-fn listening_ports(layout: &Layout) -> Vec<u16> {
-    ["net/tcp", "net/tcp6"]
-        .iter()
-        .filter_map(|table| fs::read_to_string(layout.proc.join(table)).ok())
-        .flat_map(|table| parse_listeners(&table))
-        .collect()
+/// A TCP socket something is listening on, at an address other machines can
+/// reach.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Listener {
+    port: u16,
+    /// The socket's number in the kernel, which is how the process holding
+    /// it is found. Absent on a kernel whose table does not carry it.
+    inode: Option<u64>,
+}
+
+/// Every such socket, or `None` when the kernel's table cannot be read.
+///
+/// The table for the older address family is the one that must be readable.
+/// The other is missing on a kernel built without that family, and a kernel
+/// without the family has no listeners in it.
+fn listeners(layout: &Layout) -> Option<Vec<Listener>> {
+    let mut found = parse_listeners(&fs::read_to_string(layout.proc.join("net/tcp")).ok()?);
+    if let Ok(table) = fs::read_to_string(layout.proc.join("net/tcp6")) {
+        found.extend(parse_listeners(&table));
+    }
+    Some(found)
 }
 
 /// Reads the kernel's table of TCP sockets for the listening ones.
 ///
-/// The local address is the second column, hexadecimal address and port, and
-/// the state is the fourth, where `0A` is listening. A listener on loopback
-/// is left out, because a tunnel made by the kernel does not carry it.
-fn parse_listeners(table: &str) -> Vec<u16> {
+/// The local address is the second column, hexadecimal address and port, the
+/// state is the fourth, where `0A` is listening, and the socket's number is
+/// the tenth. A listener on loopback is left out, because a tunnel made by
+/// the kernel does not carry it.
+fn parse_listeners(table: &str) -> Vec<Listener> {
     const LISTENING: &str = "0A";
     table
         .lines()
         .skip(1)
         .filter_map(|line| {
-            let mut fields = line.split_whitespace();
-            let local = fields.nth(1)?;
-            let state = fields.nth(1)?;
-            let (address, port) = local.rsplit_once(':')?;
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            let (address, port) = fields.get(1)?.rsplit_once(':')?;
             let loopback = matches!(address, "0100007F" | "00000000000000000000000001000000");
-            (state == LISTENING && !loopback)
-                .then(|| u16::from_str_radix(port, 16).ok())
-                .flatten()
+            if *fields.get(3)? != LISTENING || loopback {
+                return None;
+            }
+            Some(Listener {
+                port: u16::from_str_radix(port, 16).ok()?,
+                inode: fields.get(9).and_then(|inode| inode.parse().ok()),
+            })
         })
         .collect()
 }
 
-/// Whether the SSH server refuses root a password.
+/// Whether process `pid` holds the socket numbered `inode`, read from the
+/// kernel's list of that process's open files.
+fn holds_socket(layout: &Layout, pid: u32, inode: u64) -> bool {
+    let socket = format!("socket:[{inode}]");
+    fs::read_dir(layout.proc.join(pid.to_string()).join("fd")).is_ok_and(|open| {
+        open.filter_map(Result::ok).any(|file| {
+            fs::read_link(file.path()).is_ok_and(|target| target.as_os_str() == socket.as_str())
+        })
+    })
+}
+
+/// The processes that were started as `program`.
+fn processes_started_with(layout: &Layout, program: &Path) -> Vec<u32> {
+    let program = program.to_string_lossy();
+    fs::read_dir(&layout.proc)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter_map(|entry| entry.file_name().to_str()?.parse().ok())
+                .filter(|pid| process_names(layout, *pid, &program))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// How the SSH server lets root in, and the ports it says are its own.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum SshDoor {
+    /// Root gets in with a key or not at all.
+    Closed(Vec<u16>),
+    /// Something typed still gets root in.
+    Open(Vec<u16>),
+    /// The server would not say.
+    Unreadable,
+}
+
+/// Asks the SSH server what it would enforce for root arriving from the
+/// tailnet.
 ///
-/// The server is asked for the configuration it would apply to root, which
-/// is the only reading that accounts for every file and every `Match` block
-/// it honours. Where it cannot be asked, the block `kobo setup` writes is
-/// looked for instead, and one still waiting for its confirming login does
-/// not count: until that login it is a change that will undo itself.
-fn password_login_closed(layout: &Layout) -> bool {
-    let mut command = Command::new(&layout.sshd);
-    command.args(["-T", "-C", "user=root,host=reader,addr=127.0.0.1"]);
-    if let Ok(said) = answer(command, layout.timing.answer) {
-        if let Some(setting) = said
-            .lines()
-            .find_map(|line| line.strip_prefix("passwordauthentication "))
-        {
-            return setting.trim() == "no";
+/// The server is the only witness worth asking. A comment in its file that
+/// says it was hardened says what somebody once wrote there, not what the
+/// server does with the file as it is now, so nothing is inferred from the
+/// file and a server that cannot be asked is treated as an open door.
+///
+/// It is asked as a connection from a tailnet address, in both address
+/// families, because that is who this is about. A server's rules can depend
+/// on where a connection comes from, and the answer for a connection from
+/// the reader itself, which is what was asked before, is the answer to a
+/// different question.
+fn ssh_door(layout: &Layout) -> SshDoor {
+    let mut ports = Vec::new();
+    for address in ["100.64.0.1", "fd7a:115c:a1e0::1"] {
+        let mut command = Command::new(&layout.sshd);
+        command.args([
+            "-T",
+            "-C",
+            &format!("user=root,host=tailnet,addr={address}"),
+        ]);
+        let Ok(said) = answer(command, layout.timing.answer) else {
+            return SshDoor::Unreadable;
+        };
+        match parse_ssh_door(&said) {
+            SshDoor::Closed(said_ports) => ports = said_ports,
+            other => return other,
         }
     }
-    layout.sshd_configs.iter().any(|config| {
-        let mut pending = config.as_os_str().to_owned();
-        pending.push(".cobalt-revert");
-        fs::read_to_string(config).is_ok_and(|text| {
-            text.lines()
-                .any(|line| line.starts_with("# cobalt-hardening:"))
-        }) && !Path::new(&pending).exists()
+    SshDoor::Closed(ports)
+}
+
+/// Every value the server gave for the setting called `name`.
+fn said<'a>(settings: &'a str, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    settings.lines().filter_map(move |line| {
+        line.strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix(' '))
+            .map(str::trim)
     })
+}
+
+/// Reads the server's effective settings for whether root can get in with
+/// anything but a key.
+///
+/// Two settings carry a typed secret: password login, and the question and
+/// answer login that the server calls keyboard-interactive, which is a
+/// password by another name wherever there is something behind it to check
+/// one. On Linux that something is PAM and nothing else, and a server built
+/// without PAM does not print the setting at all, so keyboard-interactive
+/// counts as open only where the server says PAM is in use. A server that
+/// refuses root outright, or lets root in by key only, is closed whatever
+/// the rest says.
+fn parse_ssh_door(settings: &str) -> SshDoor {
+    let is = |name: &str, value: &str| said(settings, name).any(|said| said == value);
+    let ports = said(settings, "port")
+        .filter_map(|port| port.parse().ok())
+        .collect::<Vec<u16>>();
+    let Some(password) = said(settings, "passwordauthentication").next() else {
+        // Not the server's answer, whatever it is.
+        return SshDoor::Unreadable;
+    };
+    let root_by_key_only = [
+        "no",
+        "prohibit-password",
+        "without-password",
+        "forced-commands-only",
+    ]
+    .iter()
+    .any(|value| is("permitrootlogin", value));
+    let asks_questions =
+        is("kbdinteractiveauthentication", "yes") || is("challengeresponseauthentication", "yes");
+    let typed = password != "no" || (asks_questions && is("usepam", "yes"));
+    if root_by_key_only || !typed {
+        SshDoor::Closed(ports)
+    } else {
+        SshDoor::Open(ports)
+    }
 }
 
 /// Makes the tunnel's device node and proves a driver answers behind it.
@@ -1761,6 +1934,10 @@ impl Daemon {
             std::thread::sleep(Duration::from_millis(50));
         }
         Ok(daemon)
+    }
+
+    fn pid(&self) -> Option<u32> {
+        self.child.as_ref().map(Child::id)
     }
 
     fn exited(&mut self) -> bool {
@@ -2249,7 +2426,7 @@ fn keep_up(supervisor: &Supervisor, daemon: &mut Daemon) -> Result<(), End> {
             // reader listens on can change under a tunnel that is up: a
             // hardening nobody confirmed undoes itself after five minutes,
             // and a reader kept connected for days has days for that.
-            if let Some(refusal) = refusal(exposure(layout)) {
+            if let Some(refusal) = refusal(exposure(layout, daemon.pid())) {
                 return Err(supervisor.fail(daemon, &refusal, End::Settled));
             }
             match report(layout) {
