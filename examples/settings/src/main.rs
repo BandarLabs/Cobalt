@@ -2373,6 +2373,7 @@ impl KoboApp for Settings {
             | DeviceResult::RemoteInstall(_)
             | DeviceResult::Library { .. }
             | DeviceResult::LibraryDocument { .. }
+            | DeviceResult::LibraryRange { .. }
             | DeviceResult::AudioLibrary { .. }
             | DeviceResult::AudioDetail(_)
             | DeviceResult::Secrets { .. }

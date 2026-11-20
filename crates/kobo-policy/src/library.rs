@@ -238,10 +238,103 @@ pub fn list() -> Listing {
 /// The bytes of a document, refusing anything too large to hand over.
 #[must_use]
 pub fn read(id: &str) -> Option<Vec<u8>> {
-    if let Some(bytes) = nickel::read(id) {
-        return Some(bytes);
+    whole(&locate(id)?)
+}
+
+/// One range of a document under the compiled-in [`ROOTS`] or in the stock
+/// reader's library. See [`Range`].
+///
+/// # Errors
+///
+/// [`RangeFault::NotADocument`] for an identifier that names nothing a
+/// listing could have, and [`RangeFault::Unreadable`] when the file is there
+/// and the card would not give up the bytes.
+pub fn read_range(id: &str, offset: u32, length: u32) -> Result<Range, RangeFault> {
+    range_of(&locate(id).ok_or(RangeFault::NotADocument)?, offset, length)
+}
+
+/// The file an identifier names, on the reader: one the stock library handed
+/// out, or one under the roots.
+fn locate(id: &str) -> Option<PathBuf> {
+    nickel::locate(id).or_else(|| resolve(id))
+}
+
+/// A whole document, unless it is empty or too large to hand over.
+fn whole(path: &Path) -> Option<Vec<u8>> {
+    let bytes = fs::metadata(path).ok()?.len();
+    if bytes == 0 || bytes > MAX_DOCUMENT_BYTES {
+        return None;
     }
-    read_in(&ROOTS.iter().map(PathBuf::from).collect::<Vec<_>>(), id)
+    fs::read(path).ok()
+}
+
+/// Part of a document, and what the file was at the moment it was read.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Range {
+    /// The length of the whole file.
+    pub size: u32,
+    /// The file's modification time as a number, there to be compared and
+    /// nothing else: it differs once the file has been written again, which
+    /// is how whoever is putting the ranges together learns that two of them
+    /// are not pieces of the same book. Zero when the card does not say.
+    pub stamp: u64,
+    pub bytes: Vec<u8>,
+}
+
+/// Why a range was not read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RangeFault {
+    /// The identifier names nothing a listing could have named: no such
+    /// file, one outside the roots, an empty one, or one past
+    /// [`MAX_DOCUMENT_BYTES`].
+    NotADocument,
+    /// The file is there and could not be read, or changed length while it
+    /// was being read.
+    Unreadable,
+}
+
+/// Reads at most `length` bytes of `path` from `offset`, by seeking.
+///
+/// The file is opened for this one range and closed again, so nothing is held
+/// between two requests and a book being replaced is never kept alive by a
+/// reader half-way through the old one. The length and the bytes both come
+/// from the open file rather than from its name, so they describe the same
+/// file even when the name is given to another one in between.
+fn range_of(path: &Path, offset: u32, length: u32) -> Result<Range, RangeFault> {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+    let mut file = fs::File::open(path).map_err(|_| RangeFault::NotADocument)?;
+    let metadata = file.metadata().map_err(|_| RangeFault::Unreadable)?;
+    let size = match u32::try_from(metadata.len()) {
+        Ok(size) if size > 0 && u64::from(size) <= MAX_DOCUMENT_BYTES => size,
+        _ => return Err(RangeFault::NotADocument),
+    };
+    let stamp = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| {
+            u64::try_from(since.as_nanos()).unwrap_or(u64::MAX)
+        });
+    // Clamped here as well as on the wire, because the answer is encoded as
+    // one value and a piece the encoder refuses ends the session that asked.
+    let wanted = usize::try_from(length.min(size.saturating_sub(offset)))
+        .unwrap_or(usize::MAX)
+        .min(kobo_protocol::MAX_LIBRARY_RANGE_BYTES);
+    let mut bytes = Vec::with_capacity(wanted);
+    if wanted > 0 {
+        file.seek(SeekFrom::Start(u64::from(offset)))
+            .map_err(|_| RangeFault::Unreadable)?;
+        file.take(u64::try_from(wanted).unwrap_or(u64::MAX))
+            .read_to_end(&mut bytes)
+            .map_err(|_| RangeFault::Unreadable)?;
+    }
+    // Fewer than the file's own length promised: it was cut short between
+    // being measured and being read, and a piece that stops early would be
+    // taken for the end of the book.
+    if bytes.len() != wanted {
+        return Err(RangeFault::Unreadable);
+    }
+    Ok(Range { size, stamp, bytes })
 }
 
 /// Where the stock reader keeps its database, relative to the card.
@@ -273,8 +366,28 @@ pub fn list_with_stock_in(roots: &[PathBuf]) -> Listing {
 /// have written, so a book it names is read only from inside one of `roots`.
 #[must_use]
 pub fn read_with_stock_in(roots: &[PathBuf], id: &str) -> Option<Vec<u8>> {
+    whole(&locate_with_stock_in(roots, id)?)
+}
+
+/// One range of a document [`list_with_stock_in`] listed, under the same
+/// rule as [`read_with_stock_in`]. See [`Range`].
+///
+/// # Errors
+///
+/// As [`read_range`].
+pub fn read_range_with_stock_in(
+    roots: &[PathBuf],
+    id: &str,
+    offset: u32,
+    length: u32,
+) -> Result<Range, RangeFault> {
+    let path = locate_with_stock_in(roots, id).ok_or(RangeFault::NotADocument)?;
+    range_of(&path, offset, length)
+}
+
+fn locate_with_stock_in(roots: &[PathBuf], id: &str) -> Option<PathBuf> {
     let Some(path) = id.strip_prefix("n/") else {
-        return read_in(roots, id);
+        return resolve_in(roots, id);
     };
     let real = Path::new(path).canonicalize().ok()?;
     let inside = roots
@@ -282,7 +395,7 @@ pub fn read_with_stock_in(roots: &[PathBuf], id: &str) -> Option<Vec<u8>> {
         .filter_map(|root| root.canonicalize().ok())
         .any(|root| real.starts_with(root));
     if inside {
-        nickel::read(id)
+        nickel::locate(id)
     } else {
         None
     }
@@ -644,16 +757,11 @@ pub fn resolve(id: &str) -> Option<PathBuf> {
 /// The bytes of a document, refusing anything too large to hand over.
 #[must_use]
 pub fn read_in(roots: &[PathBuf], id: &str) -> Option<Vec<u8>> {
-    let path = resolve_in(roots, id)?;
-    let bytes = fs::metadata(&path).ok()?.len();
-    if bytes == 0 || bytes > MAX_DOCUMENT_BYTES {
-        return None;
-    }
-    fs::read(path).ok()
+    whole(&resolve_in(roots, id)?)
 }
 
 mod nickel {
-    use super::{clip_title, Entry, Kind, Listing, MAX_DOCUMENT_BYTES, MAX_ENTRIES, ROOTS};
+    use super::{clip_title, Entry, Kind, Listing, MAX_ENTRIES, ROOTS};
     use std::path::{Path, PathBuf};
 
     const DATABASE: &str = "/mnt/onboard/.kobo/KoboReader.sqlite";
@@ -764,20 +872,15 @@ mod nickel {
         });
     }
 
-    pub fn read(id: &str) -> Option<Vec<u8>> {
+    /// The file an identifier from the stock library names, if it is one
+    /// this module would have listed.
+    pub fn locate(id: &str) -> Option<PathBuf> {
         let path = id.strip_prefix("n/")?;
         if path.contains("..") {
             return None;
         }
         let path = Path::new(path);
-        if skipped_internal(path) || !path.is_file() {
-            return None;
-        }
-        let bytes = std::fs::metadata(path).ok()?.len();
-        if bytes == 0 || bytes > MAX_DOCUMENT_BYTES {
-            return None;
-        }
-        std::fs::read(path).ok()
+        (!skipped_internal(path) && path.is_file()).then(|| path.to_path_buf())
     }
 
     fn downloaded(row: &rusqlite::Row<'_>) -> rusqlite::Result<bool> {
@@ -1016,6 +1119,232 @@ mod tests {
             Some(&b"the body"[..])
         );
         assert!(read_in(&roots, "0/Missing.txt").is_none());
+    }
+
+    /// Bytes that say where they are, so a piece put back in the wrong place
+    /// or read from the wrong offset is a different book.
+    fn a_file_of(length: usize) -> Vec<u8> {
+        (0..length)
+            .map(|at| u8::try_from((at * 31 + at / 251) % 251).expect("under 251"))
+            .collect()
+    }
+
+    const PIECE: u32 = 256 * 1024;
+
+    #[test]
+    fn a_document_read_in_ranges_is_the_file_and_no_range_is_more_than_a_piece() {
+        assert_eq!(
+            usize::try_from(PIECE).ok(),
+            Some(kobo_protocol::MAX_LIBRARY_RANGE_BYTES)
+        );
+        let root = scratch("ranges");
+        let book = a_file_of(2 * 262_144 + 1_000);
+        fs::write(root.join("Atlas.epub"), &book).expect("the file");
+        let roots = [root];
+        let size = u32::try_from(book.len()).expect("a small file");
+
+        let mut held = Vec::new();
+        let mut stamps = Vec::new();
+        let mut lengths = Vec::new();
+        loop {
+            let offset = u32::try_from(held.len()).expect("a small file");
+            // Asked for far more than a piece every time, as an application
+            // that ignored the bound would.
+            let range = super::read_range_with_stock_in(&roots, "0/Atlas.epub", offset, u32::MAX)
+                .expect("a range");
+            assert_eq!(range.size, size);
+            stamps.push(range.stamp);
+            lengths.push(range.bytes.len());
+            if range.bytes.is_empty() {
+                break;
+            }
+            held.extend_from_slice(&range.bytes);
+        }
+        assert_eq!(held, book, "the ranges put together are not the file");
+        assert_eq!(lengths, [262_144, 262_144, 1_000, 0]);
+        assert!(
+            stamps[0] != 0,
+            "this file system keeps no modification time"
+        );
+        assert!(stamps.iter().all(|stamp| *stamp == stamps[0]));
+
+        // A range from the middle is the middle, and one that reaches past
+        // the end stops at the end rather than failing.
+        let middle =
+            super::read_range_with_stock_in(&roots, "0/Atlas.epub", 300_000, 10).expect("a range");
+        assert_eq!(middle.bytes, book[300_000..300_010]);
+        let tail = super::read_range_with_stock_in(&roots, "0/Atlas.epub", size - 4, 100)
+            .expect("a range");
+        assert_eq!(tail.bytes, book[book.len() - 4..]);
+        let past = super::read_range_with_stock_in(&roots, "0/Atlas.epub", u32::MAX, PIECE)
+            .expect("a range");
+        assert_eq!((past.size, past.bytes.len()), (size, 0));
+    }
+
+    #[test]
+    fn a_range_is_refused_for_everything_a_whole_read_is_refused_for() {
+        let root = scratch("range-escape");
+        let shelf = root.join("readlater");
+        fs::create_dir_all(&shelf).expect("an application's folder");
+        fs::create_dir_all(root.join(".secrets")).expect("a hidden folder");
+        fs::write(root.join("Real.epub"), b"body").expect("the file");
+        fs::write(shelf.join("token"), b"hunter2").expect("an app's own blob");
+        fs::write(shelf.join("articles.json"), b"{}").expect("an app's own file");
+        fs::write(root.join(".secrets/lichess.epub"), b"a secret").expect("a secret");
+        fs::write(root.join(".Hidden.epub"), b"hidden").expect("a hidden file");
+        fs::write(root.join("Empty.epub"), b"").expect("an empty file");
+        let outside = root.parent().expect("a parent").join("range-outside.epub");
+        fs::write(&outside, b"body").expect("the file");
+        let roots = [root];
+
+        assert!(super::read_range_with_stock_in(&roots, "0/Real.epub", 0, PIECE).is_ok());
+        for forged in [
+            "0/../range-outside.epub",
+            "0/./../range-outside.epub",
+            "0//etc/passwd",
+            "1/Real.epub",
+            "Real.epub",
+            "0/",
+            "0/Missing.epub",
+            "0/readlater/token",
+            "0/readlater/articles.json",
+            "0/.secrets/lichess.epub",
+            "0/.Hidden.epub",
+            "0/Empty.epub",
+            "n//etc/passwd",
+        ] {
+            for offset in [0, 2] {
+                assert_eq!(
+                    super::read_range_with_stock_in(&roots, forged, offset, PIECE),
+                    Err(super::RangeFault::NotADocument),
+                    "{forged:?} from {offset}"
+                );
+            }
+        }
+        let _ = fs::remove_file(outside);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_range_does_not_follow_a_link_out_of_its_root() {
+        let root = scratch("range-link");
+        let outside = scratch("range-link-outside").join("Private.epub");
+        fs::write(&outside, b"not on the card").expect("a file off the card");
+        std::os::unix::fs::symlink(&outside, root.join("Linked.epub")).expect("a link");
+        assert_eq!(
+            super::read_range_with_stock_in(&[root], "0/Linked.epub", 0, PIECE),
+            Err(super::RangeFault::NotADocument)
+        );
+    }
+
+    #[test]
+    fn a_file_that_shrank_or_grew_between_two_ranges_says_so_in_every_range_after() {
+        let root = scratch("range-changed");
+        let path = root.join("Atlas.epub");
+        let first_copy = a_file_of(400_000);
+        fs::write(&path, &first_copy).expect("the file");
+        let written = |seconds: u64| {
+            let file = fs::File::options()
+                .write(true)
+                .open(&path)
+                .expect("the file");
+            let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+            file.set_modified(when).expect("a modification time");
+        };
+        written(1_700_000_000);
+        let roots = [root.clone()];
+        let read = |offset| super::read_range_with_stock_in(&roots, "0/Atlas.epub", offset, PIECE);
+
+        let first = read(0).expect("the first range");
+        assert_eq!((first.size, first.bytes.len()), (400_000, 262_144));
+
+        // Replaced by a shorter copy before the second range is asked for:
+        // the next offset is past its end.
+        fs::write(&path, a_file_of(100_000)).expect("a shorter copy");
+        written(1_700_000_100);
+        let shrunk = read(262_144).expect("an answer");
+        assert_eq!((shrunk.size, shrunk.bytes.len()), (100_000, 0));
+        assert_ne!(shrunk.stamp, first.stamp);
+
+        // Replaced by a longer one: there are bytes at the offset, and they
+        // are not the book the first range came from.
+        fs::write(&path, a_file_of(900_000)).expect("a longer copy");
+        written(1_700_000_200);
+        let grown = read(262_144).expect("an answer");
+        assert_eq!((grown.size, grown.bytes.len()), (900_000, 262_144));
+        assert_ne!(grown.stamp, first.stamp);
+
+        // Replaced by another book of exactly the first one's length, which
+        // only the stamp can tell from it.
+        let mut other = first_copy;
+        other.reverse();
+        fs::write(&path, &other).expect("another book");
+        written(1_700_000_300);
+        let other_book = read(262_144).expect("an answer");
+        assert_eq!(other_book.size, first.size);
+        assert_ne!(other_book.stamp, first.stamp);
+
+        // Gone altogether.
+        fs::remove_file(&path).expect("removed");
+        assert_eq!(read(262_144), Err(super::RangeFault::NotADocument));
+    }
+
+    #[test]
+    fn a_file_past_the_largest_document_is_not_read_in_ranges_either() {
+        let root = scratch("range-huge");
+        let path = root.join("Scans.epub");
+        let file = fs::File::create(&path).expect("the file");
+        // A length without the bytes: no card is filled to find this out.
+        file.set_len(super::MAX_DOCUMENT_BYTES + 1)
+            .expect("a long empty file");
+        drop(file);
+        let roots = [root];
+        assert!(
+            list_in(&roots).entries.is_empty(),
+            "a file too large to hand over was listed"
+        );
+        assert_eq!(
+            super::read_range_with_stock_in(&roots, "0/Scans.epub", 0, PIECE),
+            Err(super::RangeFault::NotADocument)
+        );
+        let file = fs::File::options()
+            .write(true)
+            .open(&path)
+            .expect("the file");
+        file.set_len(super::MAX_DOCUMENT_BYTES).expect("resized");
+        drop(file);
+        let last = u32::try_from(super::MAX_DOCUMENT_BYTES).expect("fits the wire") - 10;
+        let range =
+            super::read_range_with_stock_in(&roots, "0/Scans.epub", last, PIECE).expect("a range");
+        assert_eq!(
+            (u64::from(range.size), range.bytes.len()),
+            (super::MAX_DOCUMENT_BYTES, 10)
+        );
+        fs::remove_file(path).expect("removed");
+    }
+
+    #[test]
+    fn a_stock_library_book_is_read_in_ranges_only_from_inside_the_roots() {
+        let card = scratch("range-stock-card");
+        let kepubs = card.join(".kobo").join("kepub");
+        fs::create_dir_all(&kepubs).expect("the stock reader's folders");
+        let kepub = kepubs.join("1f7e9c2a");
+        let book = a_book_called("Piranesi");
+        fs::write(&kepub, &book).expect("a store book");
+        let elsewhere = scratch("range-stock-elsewhere").join("secret.epub");
+        fs::write(&elsewhere, a_book_called("Not a card book")).expect("a file off the card");
+        let roots = [card];
+        let id = |path: &std::path::Path| {
+            format!("n/{}", path.canonicalize().expect("a real path").display())
+        };
+        let range = super::read_range_with_stock_in(&roots, &id(&kepub), 0, PIECE)
+            .expect("a store book on the card");
+        assert_eq!(range.bytes, book);
+        assert_eq!(
+            super::read_range_with_stock_in(&roots, &id(&elsewhere), 0, PIECE),
+            Err(super::RangeFault::NotADocument),
+            "a file outside the card was read through a stock identifier"
+        );
     }
 
     #[test]
