@@ -133,6 +133,14 @@ pub fn progress(text: &str, running: bool, ok: Option<bool>) -> Value {
                 .to_owned(),
         );
     }
+    if said("this machine's key was not installed") {
+        notes.push(
+            "This computer could not be given its way in to the reader, because the reader \
+             has an update of its own waiting. Unplug it, let it restart, then plug it in and \
+             install again."
+                .to_owned(),
+        );
+    }
     if said("It could not be saved on this computer") {
         notes.push(
             "The reader was found, and this computer could not save it. Look again to retry."

@@ -136,6 +136,17 @@ fn what_did_not_go_to_plan_is_said_in_a_sentence_and_does_not_change_the_stage()
         "{notes}"
     );
 
+    let no_key = written(false, false).replace(
+        "  · volume left mounted",
+        "  · this machine's key was not installed: another archive is already waiting\n  · volume left mounted",
+    );
+    let answer = progress(&no_key, false, Some(true));
+    assert_eq!(answer["stage"], "eject");
+    assert!(answer["notes"][0]
+        .as_str()
+        .expect("a note")
+        .contains("let it restart"));
+
     let unsaved = written(true, true)
         + WAIT
         + "\nThe reader is back on Wi-Fi at 192.168.1.23.\n\
@@ -168,6 +179,7 @@ fn the_lines_these_stages_are_read_from_are_the_ones_setup_still_prints() {
     }
     let setup = include_str!("../setup.rs");
     assert!(setup.contains("no menu entry:"));
+    assert!(setup.contains("this machine's key was not installed:"));
     assert!(written(true, false).contains(EJECTED));
     assert!(written(false, false).contains(LEFT_MOUNTED));
     assert!(written(true, false).contains(WRITTEN));

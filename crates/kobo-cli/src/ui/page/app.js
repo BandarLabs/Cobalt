@@ -519,6 +519,7 @@ function arrivalView(job) {
     if (!mounted && !local.error && !local.sought) { local.sought = true; startFind(); }
     return [
       h("h2", null, title),
+      notes,
       steps,
       note(local.error, true),
       computer.ejects
@@ -527,11 +528,12 @@ function arrivalView(job) {
       whole,
     ];
   }
-  if (scene === "unplug") return [h("h2", null, title), steps, whole];
+  if (scene === "unplug") return [h("h2", null, title), notes, steps, whole];
   if (scene === "on_kobo") {
     const search = looking(setup);
     return [
       h("h2", null, title),
+      notes,
       h("ol", { class: "steps reading" }, onTheKobo(local.corner, plugged).map(step => h("li", null, step))),
       h("progress", { max: search.limit, value: search.waited, "aria-label": "Looking for the Kobo on Wi-Fi" }),
       h("p", { class: "quiet" }, `Looking for it on Wi-Fi, ${search.text}.`),
@@ -553,6 +555,7 @@ function arrivalView(job) {
   if (scene === "not_found") {
     return [
       h("h2", null, title),
+      notes,
       h("ul", { class: "reading causes" }, notFoundCauses(computer).map(cause => h("li", null, cause))),
       note(local.error, true),
       lookAgain,
