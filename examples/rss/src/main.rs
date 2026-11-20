@@ -83,20 +83,29 @@ const STARTER_FEEDS: &[(&str, &str, &str)] = &[
 /// willing to carry.
 const SEARCH_BYTES: u32 = 512 * 1024;
 
-/// How much of a feed to accept.
+/// How much of a feed is kept.
 ///
 /// A feed carrying fifty full articles is a few hundred kilobytes at the top
-/// end, and the largest this can ask for either way is the runtime's own
-/// [`kobo_sdk::MAX_TASK_BYTES`].
+/// end, and everything kept of a feed is parsed on one slow core inside one
+/// callback and then held in memory beside every other feed, so it has a
+/// ceiling whatever the publisher sends.
 ///
-/// Past this the answer is truncated rather than refused, and what that costs
-/// depends on the format. A cut XML feed keeps every item that arrived whole
-/// (which is the recent ones, because feeds are written newest first) and that
-/// is measured, not assumed. A cut JSON feed yields nothing at all: half a
-/// JSON document is not a JSON document, and there is no prefix of one to
-/// recover. So a feed that will not parse at exactly this length is reported
-/// as too large rather than as not a feed.
+/// A feed past this is cut to the items that fit, which are the recent ones
+/// because feeds are written newest first: see [`feed::within`]. A JSON feed
+/// cannot be cut that way and yields nothing at all, so a feed that will not
+/// parse at this length is reported as too large rather than as not a feed.
 const FEED_BYTES: u32 = 512 * 1024;
+
+/// How much of a feed is asked for.
+///
+/// The runtime refuses an answer larger than the request allowed rather than
+/// cutting it short, so asking for only what is kept turned every larger feed
+/// into "This item is too large to open". That was nine of the twelve
+/// newsletters tried: a newsletter's feed carries its last twenty issues
+/// whole, and those measured between half a megabyte and two and a half. So
+/// the request allows the most the runtime will carry, and the cut to
+/// [`FEED_BYTES`] is made here, before anything is parsed.
+const FEED_FETCH_BYTES: u32 = 4 * 1024 * 1024;
 
 /// Whether an answer arrived at its budget, and so was probably cut short.
 ///
@@ -407,7 +416,7 @@ impl Feeds {
         match context.spawn_retrying(Task::Fetch {
             url: address.to_owned(),
             offset: 0,
-            max_bytes: FEED_BYTES,
+            max_bytes: FEED_FETCH_BYTES,
             credential: None,
             headers: Vec::new(),
         }) {
@@ -576,7 +585,7 @@ impl Feeds {
         match context.spawn_retrying(Task::Fetch {
             url,
             offset: 0,
-            max_bytes: FEED_BYTES,
+            max_bytes: FEED_FETCH_BYTES,
             credential: None,
             headers: Vec::new(),
         }) {
@@ -814,7 +823,7 @@ impl Feeds {
         match context.spawn_retrying(Task::Fetch {
             url: url.clone(),
             offset: 0,
-            max_bytes: FEED_BYTES,
+            max_bytes: FEED_FETCH_BYTES,
             credential: None,
             headers: Vec::new(),
         }) {
@@ -828,8 +837,8 @@ impl Feeds {
     /// One feed of refresh all, answered.
     fn took_refresh(&mut self, context: &mut Context, url: &str, outcome: TaskOutcome) {
         let result = match outcome {
-            TaskOutcome::Completed(bytes) => match feed::parse(&bytes) {
-                Some(parsed) => {
+            TaskOutcome::Completed(bytes) => match kept_feed(bytes) {
+                Ok((bytes, parsed)) => {
                     match self.caches.get_mut(url) {
                         Some(cached) if !cached.busy() => {
                             if !cached.save(context, bytes.clone()) {
@@ -856,11 +865,7 @@ impl Feeds {
                     self.keep_newest(context, url, &parsed.site, &parsed.items);
                     Ok(status::timestamp().unwrap_or_else(|| "time unavailable".into()))
                 }
-                None => Err(if truncated(&bytes, FEED_BYTES) {
-                    "That feed is larger than this can read.".to_owned()
-                } else {
-                    "That address did not answer with a feed.".to_owned()
-                }),
+                Err(problem) => Err(problem.to_owned()),
             },
             TaskOutcome::Failed(error) => Err(Failure::of(error).advice.to_owned()),
             TaskOutcome::Cancelled => Err("Cancelled.".to_owned()),
@@ -3213,6 +3218,12 @@ impl Feeds {
             TaskOutcome::Completed(bytes) => {
                 match awaiting {
                     Awaiting::Probe => {
+                        // Cut as a feed is before it is parsed. A page being
+                        // read for the feed it names says so in its head,
+                        // which the cut keeps.
+                        let cut = feed::within(bytes, FEED_BYTES as usize);
+                        let too_large = cut.is_none();
+                        let bytes = cut.unwrap_or_default();
                         if let Some(parsed) = feed::parse(&bytes) {
                             self.found = vec![search::Found {
                                 url: self.probe.clone(),
@@ -3224,9 +3235,10 @@ impl Feeds {
                                 site: parsed.site,
                                 summary: format!("{} articles · Select to add", parsed.items.len()),
                             }];
-                        } else if self.probing.is_none()
-                            && truncated(&bytes, FEED_BYTES)
-                            && bytes.trim_ascii_start().starts_with(b"{")
+                        } else if too_large
+                            || (self.probing.is_none()
+                                && truncated(&bytes, FEED_BYTES)
+                                && bytes.trim_ascii_start().starts_with(b"{"))
                         {
                             // Half a JSON feed is not a page to look for a
                             // feed in. It is a feed, and it did not fit.
@@ -3253,8 +3265,8 @@ impl Feeds {
                             }.to_owned());
                         }
                     },
-                    Awaiting::Feed => match feed::parse(&bytes) {
-                        Some(parsed) => {
+                    Awaiting::Feed => match kept_feed(bytes) {
+                        Ok((bytes, parsed)) => {
                             feed_succeeded = true;
                             self.items = parsed.items;
                             self.site.clone_from(&parsed.site);
@@ -3284,16 +3296,7 @@ impl Feeds {
                                 }
                             }
                         }
-                        None => {
-                            // It did answer with a feed; the feed did not fit.
-                            // Saying it was not a feed sends somebody looking for
-                            // a different address, which will not help.
-                            self.problem = Some(if truncated(&bytes, FEED_BYTES) {
-                                "That feed is larger than this can read.".to_owned()
-                            } else {
-                                "That address did not answer with a feed.".to_owned()
-                            });
-                        }
+                        Err(problem) => self.problem = Some(problem.to_owned()),
                     },
                 }
             }
@@ -3334,6 +3337,22 @@ impl Feeds {
 fn refused_address(address: &str) -> Option<&'static str> {
     (address.contains("://") && !address.starts_with("https://"))
         .then_some("Use an HTTPS feed address.")
+}
+
+/// What is kept of a fetched feed and what it holds, or why there is nothing
+/// to keep.
+///
+/// A feed that did not fit is said to be too large rather than not a feed.
+/// It did answer with one, and saying otherwise sends somebody looking for a
+/// different address, which will not help.
+fn kept_feed(bytes: Vec<u8>) -> Result<(Vec<u8>, feed::Feed), &'static str> {
+    const TOO_LARGE: &str = "That feed is larger than this can read.";
+    let bytes = feed::within(bytes, FEED_BYTES as usize).ok_or(TOO_LARGE)?;
+    match feed::parse(&bytes) {
+        Some(parsed) => Ok((bytes, parsed)),
+        None if truncated(&bytes, FEED_BYTES) => Err(TOO_LARGE),
+        None => Err("That address did not answer with a feed."),
+    }
 }
 
 /// The request for the page behind a teaser.
@@ -5982,5 +6001,48 @@ mod tests {
         runner.action(action_id("search-articles"));
         runner.type_text("quartz");
         assert_eq!(runner.app().matching_items(), vec![0]);
+    }
+    #[test]
+    fn a_feed_larger_than_is_kept_is_asked_for_whole_and_cut_to_its_newest_issues() {
+        let issue = |number: usize| {
+            format!(
+                "<item><title>Issue {number}</title><description>{}</description></item>",
+                "Words of the issue. ".repeat(4000)
+            )
+        };
+        let issues: String = (0..12).rev().map(issue).collect::<Vec<_>>().concat();
+        let letter =
+            format!("<rss><channel><title>The Tide Letter</title>{issues}</channel></rss>");
+        assert!(letter.len() > FEED_BYTES as usize);
+        let mut runner = AppRunner::new(Feeds {
+            loaded: true,
+            view: View::Items,
+            open: Some(0),
+            subscriptions: following(),
+            ..Feeds::default()
+        });
+        let commands = runner.action(action_id("refresh"));
+        let asked = commands.iter().find_map(|command| match command {
+            Command::Spawn {
+                task,
+                work: kobo_sdk::Task::Fetch { max_bytes, .. },
+            } => Some((*task, *max_bytes)),
+            _ => None,
+        });
+        let (task, ceiling) = asked.expect("the feed was asked for");
+        assert_eq!(ceiling, super::FEED_FETCH_BYTES);
+        let commands = runner.task_outcome(task, TaskOutcome::Completed(letter.into_bytes()));
+        let app = runner.app();
+        assert_eq!(app.items[0].title, "Issue 11");
+        assert!(
+            (1..12).contains(&app.items.len()),
+            "{} issues were kept",
+            app.items.len()
+        );
+        assert!(
+            crate::whole::words(&app.items.last().unwrap().body) > 1000,
+            "the last issue kept is half of one"
+        );
+        assert!(!format!("{:?}", screen_of(&commands)).contains("larger than this can read"));
     }
 }
