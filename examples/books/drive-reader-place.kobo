@@ -1,0 +1,55 @@
+# sweep: --seed-root examples/books/fixtures/chapters
+# The place at the foot of the page, on The Lock Keeper's Year, a sample of
+# four short chapters with a contents list. A page given the whole panel says
+# nothing. With the bar kept, every page says which it is and how many are
+# left in its chapter, and the line keeps its own size when the type of the
+# book is made larger.
+wait-for Lock Keeper
+tap The Lock Keeper
+wait-for Spring
+expect-missing Page 1 of
+shot books-place-whole-page
+tap-id reader-controls
+wait-for Page 1 of
+tap-id reader-full-page
+wait-idle
+expect Page 1 of 8
+expect 1 page left in the chapter
+shot books-place
+page next
+wait-for Page 2 of 8
+expect Last page of the chapter
+shot books-place-chapter-end
+page next
+wait-for Page 3 of 8
+expect Summer
+expect 1 page left in the chapter
+# A notice takes its room from the words, and the place stays under it.
+page back
+page back
+wait-for Page 1 of 8
+page back
+wait-for This is the first page.
+expect Page 1 of 8
+shot books-place-notice
+# Larger type makes more pages of the same chapter, and the line under them
+# is the size it was.
+tap-id reader-controls
+wait-for 100%
+tap-id reader-size-5
+wait-for 110%
+tap-id reader-size-1
+wait-for 120%
+tap-id reader-size-6
+wait-for 130%
+tap-id 4294967295
+wait-idle
+expect Page 1 of 12
+expect 2 pages left in the chapter
+shot books-place-larger
+# Giving the page the whole panel takes the line away with the bar.
+tap-id reader-controls
+tap-id reader-full-page
+wait-idle
+expect-missing left in the chapter
+expect-missing Aa
