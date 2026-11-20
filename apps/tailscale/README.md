@@ -122,6 +122,29 @@ approved reconnects in a few seconds.
 
 Files sent to the reader with Taildrop are not accepted.
 
+## First run on a reader
+
+Nobody has done this yet, so a first run is evidence as well as a test. With
+the reader at `READER` on your Wi-Fi, capture these before switching
+Tailscale on, once it says **Connected**, and after leaving Cobalt:
+
+```sh
+kobo doctor --device READER
+ssh root@READER 'grep -E "MemTotal|MemAvailable" /proc/meminfo; grep tun /proc/misc; cat /etc/hosts; ip route'
+ssh root@READER 'pid=$(pidof tailscaled); grep -E "VmRSS|VmHWM" /proc/$pid/status; cat /proc/$pid/oom_score_adj'
+ssh root@READER 'cat /mnt/onboard/.adds/cobalt/state/tailscale/tailscale-status; tail -40 /var/lib/cobalt/tailscale/tailscaled.log'
+```
+
+What a good run looks like: the daemon's memory is in the tens of megabytes,
+its `oom_score_adj` is 800, the default route is still on the Wi-Fi interface,
+`/etc/hosts` has one marked block while connected and is byte for byte what
+it was once you have left Cobalt, and no `tailscaled` is running then. Stop
+and report if Wi-Fi does not come back in the Kobo software after you leave
+Cobalt, or if the screen says **Not supported**: that reader's kernel has no
+tunnel driver. `tailscaled.log` is the daemon's last 200 lines and is what a
+report needs. It can name your tailnet's computers, so read it before you
+share it.
+
 ## Development
 
 ```sh
