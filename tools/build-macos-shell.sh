@@ -46,10 +46,23 @@ built=$(swift build --package-path "$package" -c release --show-bin-path)/Cobalt
 
 app="$out/Cobalt.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$built" "$app/Contents/MacOS/Cobalt"
 sed "s/@VERSION@/$version/g" "$package/Info.plist" > "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" > /dev/null
+
+# The icon is drawn by a program in the package and packed by the system's
+# own tool, so there is no picture in the repository to fall out of step
+# with the mark. Without one the Dock, and every question macOS asks on the
+# app's behalf, would show the blank sheet it gives a program with no icon.
+iconset=$(mktemp -d "${TMPDIR:-/tmp}/cobalt-icon.XXXXXX")
+trap 'rm -rf "$iconset"' EXIT HUP INT TERM
+swift "$package/Icon.swift" "$iconset/Cobalt.iconset"
+iconutil --convert icns --output "$app/Contents/Resources/Cobalt.icns" "$iconset/Cobalt.iconset"
+[ -s "$app/Contents/Resources/Cobalt.icns" ] || {
+    echo "iconutil did not leave an icon" >&2
+    exit 1
+}
 
 # Signed ad hoc, and only once the bundle is whole. Apple silicon refuses to
 # run code with no signature at all. Signing the assembled bundle rather
@@ -62,11 +75,12 @@ plutil -lint "$app/Contents/Info.plist" > /dev/null
 codesign --force --sign - "$app"
 codesign --verify --strict "$app"
 
-# The bundle is an executable, a list and the signature over them. Anything
-# else in it arrived by accident and would ship.
-extra=$(cd "$app" && find . -type f \
+# The bundle is an executable, a list, an icon and the signature over them.
+# Anything else in it arrived by accident and would ship.
+extra=$(cd "$app" && find . ! -type d \
     ! -path ./Contents/MacOS/Cobalt \
     ! -path ./Contents/Info.plist \
+    ! -path ./Contents/Resources/Cobalt.icns \
     ! -path ./Contents/_CodeSignature/CodeResources)
 [ -z "$extra" ] || {
     echo "unexpected files in $app:" >&2

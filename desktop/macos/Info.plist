@@ -6,6 +6,8 @@
 	<string>en</string>
 	<key>CFBundleExecutable</key>
 	<string>Cobalt</string>
+	<key>CFBundleIconFile</key>
+	<string>Cobalt</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.github.bandarlabs.cobalt</string>
 	<key>CFBundleInfoDictionaryVersion</key>
