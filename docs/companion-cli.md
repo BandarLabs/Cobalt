@@ -169,6 +169,7 @@ unless you name another target.
 | App | Command | What it does |
 | --- | --- | --- |
 | [Birds](../apps/birds/README.md) | `kobo birds listen`, `status`, `stop`, `push` | Sends Fugleramme collages to the reader |
+| Books | `kobo send FILE`, `kobo dict install`, `list`, `remove`, `check` | Sends books and documents, and installs [offline dictionaries](DICTIONARIES.md) |
 | [Deck](../apps/deck/README.md) | `kobo deck init`, `set`, `ls`, `show`, `push` | Builds and sends the pad layout |
 | [Feeds](../examples/rss/README.md) | `kobo feeds check`, `push` | Checks and sends an OPML subscription list |
 | [Fieldbook](../apps/fieldbook/README.md) | `kobo fieldbook new`, `inspect`, `photos`, `push`, `ls`, `export` | Prepares field packs and fetches checklists |
