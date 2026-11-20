@@ -7249,14 +7249,15 @@ mod tests {
     #[test]
     fn a_place_jumped_to_is_still_on_the_page_when_the_type_grows() {
         let panel = kobo_ui::CLARA_BW_METRICS;
-        let html: String = (0..80)
-            .map(|number| {
-                format!(
-                    "<p>Paragraph {number}. {}</p>",
-                    "Saturn disappears from view when the Moon moves in front. ".repeat(3)
-                )
-            })
-            .collect();
+        let sentence = "Saturn disappears from view when the Moon moves in front. ".repeat(3);
+        let mut html = String::new();
+        for number in 0..80 {
+            html.push_str("<p>Paragraph ");
+            html.push_str(&number.to_string());
+            html.push_str(". ");
+            html.push_str(&sentence);
+            html.push_str("</p>");
+        }
         let mut reader = Reader::open(kobo_doc::html::parse(&html), Memory::default(), &panel);
         // A paragraph that is not the first on its page, and well into the
         // book: the top of its page is some other paragraph.
