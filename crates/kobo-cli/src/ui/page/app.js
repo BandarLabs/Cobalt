@@ -225,7 +225,7 @@ function jobView(job, { done, waiting, extra, after, back, again }) {
       h("h2", null, `${job.title} did not finish.`),
       note(whyFailed(job) || "The command stopped without saying why.", true),
       after && h("p", { class: "reading" }, after),
-      h("details", { class: "whole" }, h("summary", null, "Everything it said"), said(job.text)),
+      h("details", { class: "whole" }, h("summary", null, "Details"), said(job.text)),
       h("div", { class: "actions" }, again && primary("Try again", again), button("Back", back)),
     ];
   }
@@ -489,7 +489,7 @@ function arrivalView(job) {
   }
   const { scene, title, plugged } = arrivalScene(job, view.state, local.unplugSince ? Date.now() - local.unplugSince : 0);
   const back = () => { local.job = null; local.error = ""; local.adding = false; drawReader(); refresh(); };
-  const whole = job.text ? h("details", { class: "whole" }, h("summary", null, "Everything the command said"), said(job.text)) : null;
+  const whole = job.text ? h("details", { class: "whole" }, h("summary", null, "Details"), said(job.text)) : null;
   const notes = (setup.notes ?? []).map(text => note(text));
   const lookAgain = h("div", { class: "actions" }, primary("Look again", startFind), button("Not now", back));
   const steps = advance(setup.stage ?? "writing");
@@ -1126,7 +1126,7 @@ function sendStatus(job) {
   if (job.running) return h("div", null, h("div", { class: "working", role: "progressbar", "aria-label": job.title }), said(job.text));
   if (job.ok) return said(job.text);
   return h("div", null, note(whyFailed(job) || "The command stopped without saying why.", true),
-    h("details", { class: "whole" }, h("summary", null, "Everything it said"), said(job.text)));
+    h("details", { class: "whole" }, h("summary", null, "Details"), said(job.text)));
 }
 
 function fileView(file, job, busy) {
