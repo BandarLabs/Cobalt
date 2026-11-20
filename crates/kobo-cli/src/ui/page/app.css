@@ -552,6 +552,13 @@ details.whole summary {
   grid-column: 1 / -1;
 }
 
+/* A reason in place of a button is kept to the width a button would take,
+   so it does not push the description beside it into a narrow column. */
+.entries .does .small {
+  max-width: 13rem;
+  text-align: right;
+}
+
 /* An entry with something written under it keeps its button on the first
    line, beside the name, so the two do not collide lower down. */
 .entries .tall .does {
@@ -747,6 +754,11 @@ details.whole summary {
 
   .entries .does {
     margin-top: var(--s2);
+  }
+
+  .entries .does .small {
+    max-width: none;
+    text-align: left;
   }
 
   .toolbar {
