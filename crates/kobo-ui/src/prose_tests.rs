@@ -629,6 +629,53 @@ fn a_band_too_narrow_for_every_mark_drops_the_innermost_first() {
 }
 
 #[test]
+fn the_tailnet_mark_is_innermost_and_as_crisp_as_the_rest_of_the_band() {
+    let status = Status::standard("09:41", Some(Percent::new(80)), false, Signal::Fair, true)
+        .with_tailnet(true);
+    let marks = band_marks(status.clone(), &CLARA_BW_METRICS);
+    assert_eq!(marks.len(), 4);
+    assert_eq!(marks[3].0, StatusMark::Tailnet);
+    assert!(
+        marks[3].1.x < marks[2].1.x,
+        "the tailnet mark is not inside the Bluetooth mark"
+    );
+    // Not connected draws nothing and takes no room.
+    let without = Status::standard("09:41", Some(Percent::new(80)), false, Signal::Fair, true)
+        .with_tailnet(false);
+    assert_eq!(band_marks(without, &CLARA_BW_METRICS).len(), 3);
+
+    // The same rule the other marks are held to: a grey pixel here selects a
+    // greyscale refresh every time the clock ticks.
+    let screen = Screen::new(1, vec![]).with_top_bar(TopBar::new(NodeId(0), "Cobalt"));
+    let chrome = Chrome::with_back(false).with_status(status);
+    let stride = usize::try_from(CLARA_BW_METRICS.width).expect("a positive width");
+    let height = usize::try_from(CLARA_BW_METRICS.height).expect("a positive height");
+    let mut surface = Surface::new(stride, height);
+    surface.clear(tone::PAPER);
+    render_with(&screen, &CLARA_BW_METRICS, &chrome, &mut surface, None);
+    let mark = marks[3].1;
+    let (left, top) = (
+        usize::try_from(mark.x).expect("x"),
+        usize::try_from(mark.y).expect("y"),
+    );
+    let (wide, tall) = (
+        usize::try_from(mark.width).expect("width"),
+        usize::try_from(mark.height).expect("height"),
+    );
+    let mut ink = 0;
+    for row in top..top + tall {
+        for value in &surface.pixels[row * stride + left..row * stride + left + wide] {
+            assert!(
+                *value == tone::PAPER || *value == tone::INK,
+                "a grey pixel in the tailnet mark"
+            );
+            ink += usize::from(*value == tone::INK);
+        }
+    }
+    assert!(ink > 0, "the tailnet mark was given room and not drawn");
+}
+
+#[test]
 fn the_radio_does_not_move_as_the_battery_number_changes_width() {
     let signal_x = |level| {
         band_marks(
