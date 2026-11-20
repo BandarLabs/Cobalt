@@ -53,6 +53,7 @@ use kobo_ui::{quote_offsets, wrap_text_in, DisplayMetrics, Face, FontSize, Glyph
 use unicode_segmentation::UnicodeSegmentation;
 
 mod find;
+mod goto;
 mod place;
 mod word;
 
@@ -193,6 +194,10 @@ pub enum Chrome {
     Find,
     /// Where those words are in the book, each place a way to it.
     Found,
+    /// The stepper through the book, for going somewhere far from here.
+    GoTo,
+    /// The field a page number is typed into.
+    GoToPage,
 }
 
 /// One piece of one block, as it lands on a page.
@@ -576,6 +581,16 @@ pub mod action {
     pub const FOUND: &str = "reader-found-";
     /// Goes back to the page a link, a search or a jump was made from.
     pub const RETURN: &str = "reader-return";
+    /// Opens the screen for going to another part of the book.
+    pub const GO_TO: &str = "reader-go-to";
+    /// Moves the place to go to a tenth of the book back.
+    pub const GO_TO_LESS: &str = "reader-go-to-less";
+    /// Moves the place to go to a tenth of the book on.
+    pub const GO_TO_MORE: &str = "reader-go-to-more";
+    /// Goes to the page the stepper names.
+    pub const GO_TO_GO: &str = "reader-go-to-go";
+    /// Opens the field a page number is typed into.
+    pub const GO_TO_TYPE: &str = "reader-go-to-type";
 }
 
 /// One bounded in-book search match.
@@ -669,6 +684,8 @@ pub struct Reader {
     foot_width: i32,
     /// The pages a chapter starts on, in order, for counting to the next.
     chapter_starts: Vec<usize>,
+    /// Where the reader is thinking of going, while that screen is up.
+    go_to: goto::GoTo,
     /// The word a finger is being held to account for, while its screen is up.
     word: Option<word::Held>,
     /// The field a note on that word is typed into.
@@ -692,6 +709,7 @@ impl Reader {
             foot: 0,
             foot_width: 0,
             chapter_starts: Vec::new(),
+            go_to: goto::GoTo::default(),
             word: None,
             note: kobo_sdk::keyboard::TextEntry::new(),
             document,
@@ -1408,6 +1426,7 @@ impl Reader {
                 self.note.close();
             }
             self.find.put_away();
+            self.go_to.put_away();
         }
         self.open_list(panel);
     }
@@ -1610,6 +1629,11 @@ impl Reader {
             | action::WORD_BACK
             | action::WORD_NEXT => self.word_action(name, panel),
             action::FIND | action::FIND_AGAIN => self.find_action(name, panel),
+            action::GO_TO
+            | action::GO_TO_LESS
+            | action::GO_TO_MORE
+            | action::GO_TO_GO
+            | action::GO_TO_TYPE => self.go_to_action(name, panel),
             action::RETURN => {
                 if self.return_from_link(panel) {
                     Outcome::Save
@@ -1675,6 +1699,9 @@ impl Reader {
         if let Some(outcome) = self.find_typed(action, panel) {
             return outcome;
         }
+        if let Some(outcome) = self.go_to_typed(action, panel) {
+            return outcome;
+        }
         // A tap off an open panel arrives as Back from the scrim, and puts
         // the panel away. Passed on, it closed the book under the reader.
         // Back from anything else drawn over the page does the same: a
@@ -1715,6 +1742,11 @@ impl Reader {
             action::FIND.into(),
             action::FIND_AGAIN.into(),
             action::RETURN.into(),
+            action::GO_TO.into(),
+            action::GO_TO_LESS.into(),
+            action::GO_TO_MORE.into(),
+            action::GO_TO_GO.into(),
+            action::GO_TO_TYPE.into(),
         ];
         if self.chrome == Chrome::Found {
             for index in 0..self.find.count() {
@@ -1776,6 +1808,8 @@ impl Reader {
             Chrome::Word => return self.word_screen(title),
             Chrome::Note => return self.note_screen(title),
             Chrome::Find => return self.find_screen(title),
+            Chrome::GoTo => return self.go_to_screen(title),
+            Chrome::GoToPage => return self.go_to_page_screen(title),
             Chrome::Found if self.is_searching() => return self.searching_screen(title),
             _ => {}
         }
@@ -1799,7 +1833,9 @@ impl Reader {
             | Chrome::Word
             | Chrome::Note
             | Chrome::Find
-            | Chrome::Found => None,
+            | Chrome::Found
+            | Chrome::GoTo
+            | Chrome::GoToPage => None,
         }
     }
 
@@ -2021,8 +2057,25 @@ impl Reader {
         let scale = self.memory.scale;
         let smaller = scale.smaller().unwrap_or(scale);
         let larger = scale.larger().unwrap_or(scale);
+        // The place is said on a line that is also the way to change it: a
+        // reader who opens this panel to see how far in they are is the one
+        // who then wants to be somewhere else, and the two belong together.
+        // In words, because there is no picture for going to a page that
+        // anybody would know without being told.
         let panel = match self.place_in_book() {
-            Some((page, total)) => panel.secondary(format!("Page {page} of {total}")),
+            Some((page, total)) => {
+                type Slot = Box<dyn FnOnce(ScreenBuilder) -> ScreenBuilder>;
+                let place: Slot =
+                    Box::new(move |slot| slot.secondary(format!("Page {page} of {total}")));
+                let go: Slot = Box::new(|slot| slot.button(action::GO_TO, "Go to"));
+                panel.band(
+                    kobo_ui::BandAlign::Middle,
+                    [
+                        (kobo_ui::SlotWidth::Fill, place),
+                        (kobo_ui::SlotWidth::Natural, go),
+                    ],
+                )
+            }
             None => panel,
         };
         // After a jump, the way back is said here in words as well as being
