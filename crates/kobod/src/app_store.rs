@@ -753,6 +753,33 @@ pub fn install_using_fault(
     id: &str,
     channel: UpdateChannel,
     key: &Ed25519PublicKey,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+    fault: Option<AppWriteFault>,
+) -> Result<(), DeviceError> {
+    install_transaction(
+        root,
+        id,
+        channel,
+        key,
+        env!("CARGO_PKG_VERSION"),
+        fetch,
+        fault,
+    )
+}
+
+/// The install transaction, for a package that will run under
+/// `cobalt_version`.
+///
+/// Every caller on the reader passes this build's own version, because this
+/// build is the Cobalt that will start the package. The version is a
+/// parameter only so that [`install_onto_using`] can answer for a Cobalt it
+/// is not.
+fn install_transaction(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+    cobalt_version: &str,
     mut fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
     fault: Option<AppWriteFault>,
 ) -> Result<(), DeviceError> {
@@ -767,7 +794,7 @@ pub fn install_using_fault(
         .find(|entry| entry.manifest().id() == id)
         .ok_or(DeviceError::NotFound)?;
     if !kobo_app_store::cobalt_version_at_least(
-        env!("CARGO_PKG_VERSION"),
+        cobalt_version,
         entry.manifest().minimum_cobalt_version(),
     ) {
         return Err(DeviceError::InvalidInput);
@@ -812,6 +839,33 @@ pub fn install_using(
     fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
 ) -> Result<(), DeviceError> {
     install_channel_with(root, id, channel, key, fetch)
+}
+
+/// Installs into a Cobalt installation that is not the one running this
+/// code, such as a reader's book partition mounted on a computer.
+///
+/// [`install_using`] asks whether this build is new enough for the package,
+/// which is the right question on the reader, where this build is what will
+/// start it. A computer writing to a mounted reader is usually a different
+/// release from the one on the volume, and answering with its own version
+/// gets it wrong in both directions: an older computer refuses a package the
+/// reader can run, and a newer one installs a package the reader cannot.
+/// `cobalt_version` is the release the package will run under, read from the
+/// installation itself. Every other check is the one [`install_using`] makes.
+///
+/// # Errors
+///
+/// As [`install_using`], with [`DeviceError::InvalidInput`] when the package
+/// needs a newer Cobalt than `cobalt_version`.
+pub fn install_onto_using(
+    root: &Path,
+    id: &str,
+    channel: UpdateChannel,
+    key: &Ed25519PublicKey,
+    cobalt_version: &str,
+    fetch: impl FnMut(&str, u32) -> Result<Vec<u8>, DeviceError>,
+) -> Result<(), DeviceError> {
+    install_transaction(root, id, channel, key, cobalt_version, fetch, None)
 }
 
 /// Fetches a channel's catalog and its signature.
@@ -2175,6 +2229,60 @@ mod tests {
             }
         );
         assert!(!plan.install);
+        let _ignored = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_install_onto_another_cobalt_is_judged_by_that_cobalt_and_not_this_build() {
+        let root = root();
+        let seed = [9_u8; 32];
+        let key = derive_public_key(&seed).expect("key");
+        let (json, signature, package) =
+            release_for_minimum(&seed, "word-count", "1.0.0", "999.0.0");
+        refresh_with(&root, &key, |url, _| {
+            if url == CATALOG_URL {
+                Ok(json.clone())
+            } else {
+                Ok(signature.clone())
+            }
+        })
+        .expect("refresh");
+
+        // This build is older than the package asks for, and so is a reader
+        // on 998; neither may take it.
+        assert_eq!(
+            install_with(&root, "word-count", &key, |_, _| Ok(package.clone())),
+            Err(DeviceError::InvalidInput)
+        );
+        assert_eq!(
+            install_onto_using(
+                &root,
+                "word-count",
+                UpdateChannel::Stable,
+                &key,
+                "998.9.9",
+                |_, _| Ok(package.clone())
+            ),
+            Err(DeviceError::InvalidInput)
+        );
+        assert!(installed_manifests(&root, &key)
+            .expect("nothing installed")
+            .is_empty());
+
+        // A reader that is new enough takes it, whatever this build is.
+        install_onto_using(
+            &root,
+            "word-count",
+            UpdateChannel::Stable,
+            &key,
+            "999.0.0",
+            |_, _| Ok(package.clone()),
+        )
+        .expect("install onto a newer Cobalt");
+        assert_eq!(
+            installed_manifests(&root, &key).expect("installed")[0].version(),
+            "1.0.0"
+        );
         let _ignored = fs::remove_dir_all(root);
     }
 
