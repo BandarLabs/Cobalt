@@ -122,13 +122,18 @@ jobs:
             "cobalt-host-manifest.txt.sshsig",
             ...["macos-x86_64", "macos-arm64", "linux-x86_64", "linux-arm64", "windows-x86_64"]
               .map(platform => `kobo-${version}-${platform}.tar.gz`),
-          ].sort();
-          const assets = release.assets.map(asset => asset.name).sort();
+          ];
+          // The Mac app, one archive for each Mac. A beta published before
+          // the app shipped has neither, and is still a whole release.
+          const app = ["macos-x86_64", "macos-arm64"]
+            .map(platform => `cobalt-app-${version}-${platform}.tar.gz`);
+          const assets = JSON.stringify(release.assets.map(asset => asset.name).sort());
           if (
             release.tagName !== process.argv[3] ||
             release.isDraft ||
             !release.isPrerelease ||
-            JSON.stringify(assets) !== JSON.stringify(expected)
+            (assets !== JSON.stringify([...expected, ...app].sort()) &&
+              assets !== JSON.stringify(expected.sort()))
           ) process.exit(1);
           NODE
             tag_sha="$(git ls-remote --tags origin "refs/tags/$tag" | awk '{print $1}')"
@@ -458,6 +463,24 @@ jobs:
             cp "crates/kobo-flashcards-import/target/${{ matrix.helper-target }}/release/flashcards-import" \
               host/flashcards-import
           fi
+      # The Mac app is built on each Mac runner for that runner's own
+      # processor, sealed there, and staged beside the binaries. It is taken
+      # apart and put together again the way the release does it before it
+      # is staged, because a seal that does not survive that is a release no
+      # Mac will run, and this is the last place a Mac looks at it.
+      - name: Build and stage the Mac app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          tools/build-macos-shell.sh "$RUNNER_TEMP/macos-shell"
+          app="$RUNNER_TEMP/macos-shell/Cobalt.app"
+          test -x "$app/Contents/MacOS/Cobalt"
+          round="$RUNNER_TEMP/macos-shell-round-trip"
+          mkdir "$round"
+          COPYFILE_DISABLE=1 tar -czf "$round/app.tar.gz" -C "$RUNNER_TEMP/macos-shell" Cobalt.app
+          tar -xzf "$round/app.tar.gz" -C "$round"
+          codesign --verify --strict "$round/Cobalt.app"
+          cp -R "$app" host/Cobalt.app
       - name: Smoke the staged binaries
         # A file that exists is not a binary that runs: link errors show up
         # here, on CI, instead of on an owner's machine.
@@ -514,6 +537,11 @@ jobs:
             mv "dist/host-binaries/host-${platform}/flashcards-import" \
               "dist/host-binaries/${platform}/flashcards-import"
           done
+          for platform in macos-x86_64 macos-arm64; do
+            test -f "dist/host-binaries/host-${platform}/Cobalt.app/Contents/MacOS/Cobalt"
+            mv "dist/host-binaries/host-${platform}/Cobalt.app" \
+              "dist/host-binaries/${platform}/Cobalt.app"
+          done
           test -f "dist/host-binaries/host-windows-x86_64/kobo.exe"
           test -f "dist/host-binaries/host-windows-x86_64/kobo-sidekickd.exe"
           mkdir -p "dist/host-binaries/windows-x86_64"
@@ -568,7 +596,7 @@ jobs:
             --field "ref=refs/tags/${tag}" --field "sha=${GITHUB_SHA}" \
             --jq '.object.sha' | grep -Fx "$GITHUB_SHA"
           find dist -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} +
-          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 13
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 15
           gh release create "$tag" dist/* \
             --title "Cobalt ${VERSION} beta" \
             --notes "Immutable prerelease built from the beta branch at ${GITHUB_SHA}." \

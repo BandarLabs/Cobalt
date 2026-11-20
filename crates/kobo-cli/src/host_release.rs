@@ -131,6 +131,27 @@ mod tests {
             .contains("linux-arm64"));
     }
 
+    /// The Mac app ships as an archive of its own under a host line whose
+    /// platform no reader of the manifest asks for. Every installed command
+    /// and every reader checks the manifest with this parser before using a
+    /// release, so the lines must be ones it has always taken.
+    #[test]
+    fn a_manifest_that_also_names_the_mac_app_is_still_taken() {
+        let mut with_app = manifest();
+        with_app.extend_from_slice(
+            b"host macos-x86_64-app cobalt-app-0.3.3-macos-x86_64.tar.gz 17 1111111111111111111111111111111111111111111111111111111111111111\nhost macos-arm64-app cobalt-app-0.3.3-macos-arm64.tar.gz 18 2222222222222222222222222222222222222222222222222222222222222222\n",
+        );
+        let parsed = Manifest::parse(&with_app).expect("a manifest with the app");
+        assert_eq!(parsed.device().expect("device").bytes, 12);
+        let app = parsed
+            .assets
+            .iter()
+            .find(|asset| asset.platform.as_deref() == Some("macos-arm64-app"))
+            .expect("the app's line");
+        assert_eq!(app.name, "cobalt-app-0.3.3-macos-arm64.tar.gz");
+        assert_eq!(app.bytes, 18);
+    }
+
     #[test]
     fn raw_signature_verifies_and_detects_changes() {
         let bytes = manifest();
