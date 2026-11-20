@@ -162,6 +162,18 @@ enum ArticleSearch {
     EverySaved,
 }
 
+/// How far a refresh of the shelf has got.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Refresh {
+    /// Nothing has been asked for, or everything asked for has been tidied
+    /// up after.
+    #[default]
+    Finished,
+    /// Feeds are still being asked for, or their saved copies have not all
+    /// been acknowledged.
+    Unfinished,
+}
+
 /// What the one outstanding request is for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Awaiting {
@@ -244,6 +256,8 @@ struct Feeds {
     refresh_pending: std::collections::HashMap<String, Vec<u8>>,
     /// Articles and bytes in each saved feed, counted once as it arrives.
     offline: std::collections::HashMap<String, (usize, usize)>,
+    /// Whether a refresh has still to tidy up after itself.
+    refresh: Refresh,
 }
 
 #[derive(Default)]
@@ -357,6 +371,8 @@ impl Feeds {
         if matches!(event, Some(cache::Event::Loaded | cache::Event::Saved)) {
             self.count_offline(url);
         }
+        // A refresh waits for the last saved copy before it tidies up.
+        self.refresh_next(context);
         let current = self
             .open
             .and_then(|index| self.subscriptions.get(index))
@@ -558,6 +574,7 @@ impl Feeds {
             .collect();
         self.refreshed = (0, 0);
         self.problem = None;
+        self.refresh = Refresh::Unfinished;
         self.refresh_next(context);
     }
 
@@ -583,6 +600,7 @@ impl Feeds {
         self.refresh_queue = fresh;
         self.refreshed = (0, 0);
         self.problem = None;
+        self.refresh = Refresh::Unfinished;
         self.refresh_next(context);
     }
 
@@ -591,7 +609,16 @@ impl Feeds {
             return;
         }
         let Some(url) = self.refresh_queue.pop_front() else {
-            self.finish_refresh(context);
+            // Once, and only when every saved copy has been acknowledged.
+            // This ran after every task of any kind, reading and hashing
+            // every saved feed each time, and its first run came before the
+            // last feed's new copy was saved: that feed's new articles were
+            // not in what it read, so their places in the keeper's queue
+            // were let go as articles no feed carried.
+            if self.refresh == Refresh::Unfinished && !self.saved_copies_settling() {
+                self.refresh = Refresh::Finished;
+                self.finish_refresh(context);
+            }
             return;
         };
         match context.spawn_retrying(Task::Fetch {
@@ -1303,6 +1330,18 @@ impl Feeds {
             self.caches
                 .get(&feed.url)
                 .is_some_and(|cached| cached.bytes.is_none() && cached.busy())
+        })
+    }
+
+    /// Whether any saved copy is still being read or written.
+    ///
+    /// A refresh has not finished until this is false: what it kept and what
+    /// it lets go are both decided from the saved copies, and a copy still on
+    /// its way to the shelf reads as the one before it.
+    fn saved_copies_settling(&self) -> bool {
+        self.subscriptions.iter().any(|feed| {
+            self.refresh_pending.contains_key(&feed.url)
+                || self.caches.get(&feed.url).is_some_and(cache::Cache::busy)
         })
     }
 
@@ -4782,6 +4821,65 @@ mod tests {
         let item = &super::feed::parse(ILLUSTRATED.as_bytes()).unwrap().items[0];
         let id = super::article_id(item, "https://example.com/feed.xml");
         assert!(runner.app().keeper.is_keeping(&id));
+    }
+
+    #[test]
+    fn a_refresh_lets_nothing_go_until_the_last_feeds_new_copy_is_saved() {
+        const EARLIER: &str = "<feed><title>A Journal</title>\
+            <entry><title>An older plot</title><link href=\"https://example.com/1\"/>\
+            <content type=\"html\">&lt;p&gt;Old.&lt;/p&gt;&lt;img src=\"/old.png\"&gt;</content>\
+            </entry></feed>";
+        const LATER: &str = "<feed><title>A Journal</title>\
+            <entry><title>A new plot</title><link href=\"https://example.com/3\"/>\
+            <content type=\"html\">&lt;p&gt;New.&lt;/p&gt;&lt;img src=\"/new.png\"&gt;</content>\
+            </entry>\
+            <entry><title>Another new plot</title><link href=\"https://example.com/2\"/>\
+            <content type=\"html\">&lt;p&gt;Newer.&lt;/p&gt;&lt;img src=\"/newer.png\"&gt;</content>\
+            </entry></feed>";
+        let url = following()[0].url.clone();
+        let mut app = Feeds {
+            loaded: true,
+            subscriptions: following(),
+            ..Feeds::default()
+        };
+        // The feed's saved copy and the keeper's index, as a reader that
+        // has been running for a while holds them.
+        let mut scratch = kobo_sdk::Context::default();
+        let mut cache = super::cache::Cache::new(&url);
+        cache.stored(
+            &mut scratch,
+            &kobo_sdk::StoreResult::Loaded {
+                key: cache.key.clone(),
+                value: None,
+            },
+        );
+        cache.bytes = Some(EARLIER.as_bytes().to_vec());
+        app.caches.insert(url.clone(), cache);
+        app.keeper.loaded(
+            &mut scratch,
+            kobo_bookview::offline::INDEX_KEY,
+            &kobo_sdk::StoreResult::Loaded {
+                key: kobo_bookview::offline::INDEX_KEY.into(),
+                value: None,
+            },
+        );
+        let mut runner = AppRunner::new(app);
+        let asked = fetched(&runner.action(action_id("refresh-all")));
+        runner.task_outcome(
+            asked[0].0,
+            TaskOutcome::Completed(LATER.as_bytes().to_vec()),
+        );
+        for item in &super::feed::parse(LATER.as_bytes()).unwrap().items {
+            assert!(
+                runner
+                    .app()
+                    .keeper
+                    .is_keeping(&super::article_id(item, &url)),
+                "{} was let go before the copy naming it was saved",
+                item.title
+            );
+        }
+        assert_eq!(runner.app().refresh, super::Refresh::Unfinished);
     }
 
     #[test]
