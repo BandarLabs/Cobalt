@@ -95,7 +95,8 @@ struct ConnectionTests {
             await store.start()
             #expect(store.link == .lost(Lost(reason)))
         }
-        #expect(Lost(.missing(path: "/Applications/kobo")).detail.contains("/Applications/kobo"))
+        // The owner is sent to the installer, not shown a path they cannot act on.
+        #expect(Lost(.missing(path: "/Applications/kobo")).detail == "Install Cobalt again from https://bandarlabs.github.io/Cobalt/.")
         #expect(Lost(.exited(said: "kobo: the port could not be opened")).detail == "The port could not be opened.")
         #expect(Lost(.exited(said: "")).detail == "It did not say why.")
         // Where the headline and the button say everything, nothing is added.
@@ -377,6 +378,17 @@ struct ReaderPlaceTests {
         wordless.running = false
         wordless.ok = false
         #expect(JobScene.scene(for: wordless, state: nil, now: Date()).reason == "The command stopped without saying why.")
+    }
+
+    @Test("With several readers saved a send always names one, and with one or none it names nobody")
+    func sendDestination() {
+        #expect(Companion.destination(chosen: "", among: []) == "")
+        #expect(Companion.destination(chosen: "", among: ["kobo"]) == "")
+        #expect(Companion.destination(chosen: "kobo", among: ["kobo"]) == "")
+        #expect(Companion.destination(chosen: "", among: ["kobo", "study"]) == "kobo")
+        #expect(Companion.destination(chosen: "study", among: ["kobo", "study"]) == "study")
+        // A reader that was forgotten while it was the one chosen.
+        #expect(Companion.destination(chosen: "attic", among: ["kobo", "study"]) == "kobo")
     }
 
     @Test("A failure the server has words for is told in them, and the command's sentence is kept for the rest")

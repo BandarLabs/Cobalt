@@ -1148,11 +1148,15 @@ fn setting_up_a_browser_runs_clip_install_for_that_browser_and_no_other_word() {
     }
     assert_eq!(desk.commands().len(), 2);
 
-    // A command that fails is answered with what it said.
+    // A command that fails is answered with which browser it was and what
+    // the command said, without the command's own name in front of it.
     std::fs::write(desk.root.join("kobo.status"), "1").expect("status");
     let reply = page.post("/api/browsers/setup", r#"{"browser":"chrome"}"#);
     assert_eq!(reply.status, 500);
-    assert!(reply.error().contains("kobo: said on the error stream"));
+    assert_eq!(
+        reply.error(),
+        "Send to Kobo could not be added to Chrome. Said on the error stream."
+    );
 }
 
 #[test]

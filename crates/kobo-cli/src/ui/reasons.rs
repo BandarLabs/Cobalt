@@ -20,26 +20,70 @@
 use super::jobs::Kind;
 
 /// The owner's reason for a failed job, from everything the job said.
-///
-/// Only the sentence the command stopped on is read: the last line it wrote
-/// in its own name, with the indented lines under it, which is how a
-/// sentence too long for one line is carried on.
 pub fn reason(kind: Kind, said: &str) -> Option<String> {
-    let lines: Vec<&str> = said.lines().collect();
-    let last = lines.iter().rposition(|line| line.starts_with("kobo: "))?;
-    let mut stopped_on = lines[last]["kobo: ".len()..].trim().to_owned();
-    for more in lines[last + 1..]
-        .iter()
-        .take_while(|line| line.starts_with([' ', '\t']) && !line.trim().is_empty())
-    {
-        stopped_on.push(' ');
-        stopped_on.push_str(more.trim());
-    }
+    let stopped_on = stopped_on(said)?;
     match kind {
         Kind::Reader => writing_to_the_reader(&stopped_on),
         Kind::Send => sending(&stopped_on),
     }
     .map(str::to_owned)
+}
+
+/// The sentence a command stopped on: the last line it wrote in its own
+/// name, with the indented lines under it, which is how a sentence too long
+/// for one line is carried on.
+fn stopped_on(said: &str) -> Option<String> {
+    let lines: Vec<&str> = said.lines().collect();
+    let last = lines.iter().rposition(|line| line.starts_with("kobo: "))?;
+    let mut sentence = lines[last]["kobo: ".len()..].trim().to_owned();
+    for more in lines[last + 1..]
+        .iter()
+        .take_while(|line| line.starts_with([' ', '\t']) && !line.trim().is_empty())
+    {
+        sentence.push(' ');
+        sentence.push_str(more.trim());
+    }
+    Some(sentence)
+}
+
+/// Why Send to Kobo could not be added to a browser, or taken out of one.
+///
+/// This is not a job: the command runs for a moment and its outcome is the
+/// answer to the request. What it prints when it fails begins with its own
+/// name and usually ends with the folder it could not write, and the window
+/// used to show all of it. The owner is told which browser and, where the
+/// system refused the write, that it did. Anything else the command said is
+/// kept after that, without the command's name on it.
+pub fn browser(title: &str, adding: bool, said: &str) -> String {
+    let what = if adding {
+        format!("Send to Kobo could not be added to {title}.")
+    } else {
+        format!("Send to Kobo could not be taken out of {title}.")
+    };
+    let Some(stopped_on) = stopped_on(said) else {
+        return what;
+    };
+    match os_error(&stopped_on) {
+        Some(Trouble::NotAllowed | Trouble::ReadOnly) => {
+            format!("{what} This computer did not allow a change to the folder {title} keeps its extensions in.")
+        }
+        Some(Trouble::Full) => format!("{what} This computer's disk is full."),
+        None => {
+            // The commands write some reasons to follow a colon, in lower
+            // case and unpunctuated. Here it is a sentence of its own.
+            let mut letters = stopped_on.chars();
+            let begun: String = letters
+                .next()
+                .map(|first| first.to_uppercase().chain(letters).collect())
+                .unwrap_or_default();
+            let ended = if begun.ends_with(['.', '!', '?']) {
+                ""
+            } else {
+                "."
+            };
+            format!("{what} {begun}{ended}")
+        }
+    }
 }
 
 /// Failures of a job that writes to a reader plugged in over USB.
@@ -275,6 +319,31 @@ mod tests {
         }
         let reason = reason(Kind::Reader, said).expect("a reason");
         assert!(reason.contains("ran out of room"), "{reason}");
+    }
+
+    #[test]
+    fn a_browser_that_could_not_be_set_up_is_named_and_its_folder_is_not() {
+        if cfg!(windows) {
+            return;
+        }
+        let said = "kobo: write /Users/owner/Library/Application Support/Google/Chrome/NativeMessagingHosts/io.cobalt.clip.json: Permission denied (os error 13)\n";
+        let told = browser("Chrome", true, said);
+        assert_eq!(
+            told,
+            "Send to Kobo could not be added to Chrome. This computer did not allow a change to the folder Chrome keeps its extensions in."
+        );
+        assert!(!told.contains('/'), "{told}");
+        // Taking it out says so, and a command that said nothing leaves
+        // the plain fact.
+        assert_eq!(
+            browser("Firefox", false, ""),
+            "Send to Kobo could not be taken out of Firefox."
+        );
+        // What is not recognised is passed on, without the command's name.
+        assert_eq!(
+            browser("Edge", true, "kobo: its profile is one this cannot read\n"),
+            "Send to Kobo could not be added to Edge. Its profile is one this cannot read."
+        );
     }
 
     #[test]

@@ -54,8 +54,10 @@ public struct Lost: Error, Equatable, Sendable {
         switch reason {
         case .stopped, .refused, .silent:
             return ""
-        case .missing(let path):
-            return "It is expected at \(path). Install Cobalt again from https://bandarlabs.github.io/Cobalt/."
+        case .missing:
+            // Where it was looked for is not said. An owner cannot put it
+            // there, and the one thing that can is the installer.
+            return "Install Cobalt again from https://bandarlabs.github.io/Cobalt/."
         case .exited(let said):
             let reason = Said.failure(said)
             if !reason.isEmpty { return Said.sentence(reason) }

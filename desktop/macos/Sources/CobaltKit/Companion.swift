@@ -632,7 +632,7 @@ public final class Companion: ObservableObject {
             let info = try await client.sendInfo()
             if send.info != info { send.info = info }
             send.infoProblem = nil
-            if !info.readers.contains(where: { $0.name == send.reader }) { send.reader = "" }
+            send.reader = Self.destination(chosen: send.reader, among: info.readers.map(\.name))
         } catch {
             let failure = heard(error)
             if send.info == nil { send.infoProblem = failure }
@@ -641,6 +641,18 @@ public final class Companion: ObservableObject {
 
     public func sendTo(reader name: String) {
         send.reader = name
+    }
+
+    /// The reader a send is addressed to, given the ones saved.
+    ///
+    /// With one reader saved, or none, no name is given and the command
+    /// sends to the one there is. With several there is no such one: a send
+    /// with no name has nowhere to go and fails. So one of them is always
+    /// named, the one the owner chose while it is still saved, and the
+    /// first otherwise. The page chooses the same way.
+    static func destination(chosen: String, among saved: [String]) -> String {
+        guard saved.count > 1 else { return "" }
+        return saved.contains(chosen) ? chosen : saved[0]
     }
 
     /// Takes a file the owner chose or dropped, and gets it as far as it

@@ -1306,7 +1306,11 @@ fn clip_command(shared: &Arc<Shared>, request: &mut Request<'_>, verb: &str) -> 
         String::from_utf8_lossy(&output.stderr)
     );
     if !output.status.success() {
-        return failed(said.trim());
+        return failed(&super::reasons::browser(
+            browser.title(),
+            verb == "install",
+            &said,
+        ));
     }
     let mut answer = browsers_json(machine);
     answer["said"] = Value::String(said);

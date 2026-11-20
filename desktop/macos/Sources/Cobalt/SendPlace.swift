@@ -191,7 +191,6 @@ struct SendPlace: View {
                 HStack(spacing: 8) {
                     Text("Send to")
                     Picker("Send to", selection: Binding(get: { store.send.reader }, set: { store.sendTo(reader: $0) })) {
-                        Text("The reader kobo setup saved").tag("")
                         ForEach(info.readers) { reader in
                             Text(reader.name).tag(reader.name)
                         }

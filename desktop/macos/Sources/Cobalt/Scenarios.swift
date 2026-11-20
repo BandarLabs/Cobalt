@@ -695,7 +695,7 @@ enum Scenarios {
                 await store.loadBrowsers()
                 if let chrome = store.browser.list?.first { await store.change(browser: chrome, setUp: false) }
             }),
-            Scenario(name: "browser-failed", place: .browser, routes: ["GET /api/state": withCobalt, "GET /api/browsers": ok(["browsers": [browser("chrome", "Chrome", setUp: false), browser("safari", "Safari", setUp: false)]]), "POST /api/browsers/setup": refuse(500, "failed", "Chrome could not be set up: /Users/owner/Library/Application Support/Google/Chrome/NativeMessagingHosts could not be written to (Permission denied).")], act: { store, _ in
+            Scenario(name: "browser-failed", place: .browser, routes: ["GET /api/state": withCobalt, "GET /api/browsers": ok(["browsers": [browser("chrome", "Chrome", setUp: false), browser("safari", "Safari", setUp: false)]]), "POST /api/browsers/setup": refuse(500, "failed", "Send to Kobo could not be added to Chrome. This computer did not allow a change to the folder Chrome keeps its extensions in.")], act: { store, _ in
                 await store.loadBrowsers()
                 if let chrome = store.browser.list?.first { await store.change(browser: chrome, setUp: true) }
             }),
