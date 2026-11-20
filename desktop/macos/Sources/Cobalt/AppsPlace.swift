@@ -6,7 +6,6 @@ import SwiftUI
 /// and installing, updating and removing.
 struct AppsPlace: View {
     @EnvironmentObject private var store: Companion
-    @EnvironmentObject private var desk: Desk
 
     var body: some View {
         Group {
@@ -21,7 +20,6 @@ struct AppsPlace: View {
                 noReader
             }
         }
-        .navigationSubtitle(store.appsReader.map { "\($0.model), \($0.cobalt?.channel ?? "stable") catalog" } ?? "")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -37,21 +35,18 @@ struct AppsPlace: View {
 
     @ViewBuilder
     private var noReader: some View {
-        let purpose = "The apps on your reader, and the ones published for it, are listed here."
         if store.state == nil {
             Standstill(headline: "Looking for a reader.", detail: "", working: true) {}
         } else {
             switch store.chosen {
             case .none:
-                Standstill(headline: "No reader is connected.", detail: "\(purpose) Plug one in and tap Connect on its screen.") {
-                    Button("Go to Reader") { store.place = .reader }
-                }
+                Standstill(headline: "No reader is connected.", detail: "Plug in your Kobo and tap Connect on its screen.") {}
             case .several:
-                Standstill(headline: "More than one reader is connected.", detail: "\(purpose) Choose which reader in Reader first.") {
+                Standstill(headline: "More than one reader is connected.", detail: "Choose one in Reader.") {
                     Button("Go to Reader") { store.place = .reader }
                 }
             case .one:
-                Standstill(headline: "This reader does not have Cobalt yet.", detail: "\(purpose) Install Cobalt in Reader first.") {
+                Standstill(headline: "This reader does not have Cobalt yet.", detail: "Install it in Reader.") {
                     Button("Go to Reader") { store.place = .reader }
                 }
             }
@@ -61,7 +56,6 @@ struct AppsPlace: View {
 
 private struct AppList: View {
     @EnvironmentObject private var store: Companion
-    @EnvironmentObject private var desk: Desk
     var reader: Reader
 
     private var busy: Bool { store.apps.job?.running == true || store.apps.loading || store.apps.removing != nil }
@@ -70,51 +64,45 @@ private struct AppList: View {
     var body: some View {
         let shelf = store.shelf
         let query = store.apps.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        List(selection: $desk.selectedApp) {
-            // An empty section still takes its share of the list, so the
-            // notes have one only when there is a note.
-            if hasNotes {
-                Section {
-                    notes
-                }
-                .listRowSeparator(.hidden)
-            }
+        // The same column of paper as the other places, with the apps as
+        // ruled rows down it. A table would bring a selection that means
+        // nothing here and a background of its own under the toolbar.
+        Pane {
+            notes
             if store.apps.installed == nil {
                 if store.apps.problem == nil {
                     waiting("Reading the apps on the reader.")
                 }
             } else if !query.isEmpty, shelf.installed.isEmpty, shelf.available.isEmpty {
                 Text("No app matches “\(query)”.")
-                    .font(Paper.serif(16))
-                    .padding(.vertical, 6)
+                    .font(Paper.serif(17))
             } else {
-                Section {
+                section("On this reader") {
+                    if shelf.updates.count > 1, query.isEmpty {
+                        Button("Update All") { Task { await store.installApps(shelf.updates) } }
+                            .controlSize(.small)
+                            .disabled(busy || locked)
+                            .accessibilityLabel("Update all \(shelf.updates.count) apps")
+                    }
+                } rows: {
                     if shelf.installed.isEmpty {
-                        quiet(query.isEmpty ? "No apps yet. The ones below can be installed." : "None of them match.")
+                        quiet(query.isEmpty ? "No apps yet." : "None of them match.")
                     }
                     ForEach(shelf.installed) { listed in
                         InstalledRow(listed: listed, busy: busy || locked)
-                            .tag(listed.id)
-                    }
-                } header: {
-                    HStack {
-                        Text("On this reader")
-                        Spacer()
-                        if shelf.updates.count > 1, query.isEmpty {
-                            Button("Update All") { Task { await store.installApps(shelf.updates) } }
-                                .controlSize(.small)
-                                .disabled(busy || locked)
-                                .accessibilityLabel("Update all \(shelf.updates.count) apps")
-                        }
+                        Divider().overlay(Paper.rule)
                     }
                 }
                 if store.apps.catalog != nil {
-                    Section("Available") {
+                    section("Available") {
+                        EmptyView()
+                    } rows: {
                         if shelf.available.isEmpty {
                             quiet(query.isEmpty ? "Everything published is on this reader." : "None of them match.")
                         }
                         ForEach(shelf.available) { listed in
                             AvailableRow(listed: listed, reader: reader, busy: busy || locked)
+                            Divider().overlay(Paper.rule)
                         }
                     }
                 } else if store.apps.problem == nil {
@@ -122,16 +110,19 @@ private struct AppList: View {
                 }
             }
         }
-        .listStyle(.inset)
-        .scrollContentBackground(.hidden)
-        .frame(maxWidth: 720)
-        .frame(maxWidth: .infinity)
-        .background(Paper.ground)
-        .onDeleteCommand(perform: removeSelected)
     }
 
-    private var hasNotes: Bool {
-        locked || store.apps.job != nil || !store.apps.said.isEmpty || store.apps.refusal != nil || store.apps.problem != nil || store.apps.changed
+    private func section<Trailing: View, Rows: View>(_ title: String, @ViewBuilder trailing: () -> Trailing, @ViewBuilder rows: () -> Rows) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Heading(title)
+                Spacer()
+                trailing()
+            }
+            .padding(.bottom, 8)
+            Divider().overlay(Paper.rule)
+            rows()
+        }
     }
 
     @ViewBuilder
@@ -152,13 +143,13 @@ private struct AppList: View {
             }
         }
         if let problem = store.apps.problem {
-            Note(problem.sentence, detail: aftermath(of: problem), kind: .caution) {
+            Note(problem.sentence, kind: .caution) {
                 Button("Try Again") { Task { await store.loadApps() } }
                     .controlSize(.small)
             }
         }
         if store.apps.changed, store.apps.job?.running != true {
-            Note("Eject the reader before you unplug it, so the change is fully written.") {
+            Note("Eject the reader before you unplug it.") {
                 if store.computer?.ejects == true {
                     Button("Eject Now") { Task { await store.eject(volume: reader.volume, from: .apps) } }
                         .controlSize(.small)
@@ -168,40 +159,17 @@ private struct AppList: View {
         }
     }
 
-    /// What a failure to read or fetch leaves the owner with, which the
-    /// server's sentence does not always go on to say.
-    private func aftermath(of problem: Failure) -> String {
-        if store.apps.installed == nil { return "" }
-        switch problem {
-        case .refused(.unreachable, _, _):
-            return "The apps already on the reader are listed below. Installing and updating need the catalog."
-        case .refused(.integrity, _, _):
-            return "Nothing on the reader was changed. The apps already on it are listed below."
-        case .timedOut:
-            return "The catalog was not fetched within a minute. The apps already on the reader are listed below."
-        default:
-            return ""
-        }
-    }
-
     private func waiting(_ text: String) -> some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
             Text(text).foregroundStyle(.secondary)
         }
-        .padding(.vertical, 6)
-        .listRowSeparator(.hidden)
     }
 
     private func quiet(_ text: String) -> some View {
         Text(text)
             .foregroundStyle(.secondary)
-            .padding(.vertical, 4)
-    }
-
-    private func removeSelected() {
-        guard !busy, !locked, let id = desk.selectedApp, let listed = store.shelf.installed.first(where: { $0.id == id }) else { return }
-        Questions.askToRemove(listed.app, store: store)
+            .padding(.vertical, 10)
     }
 }
 
@@ -290,7 +258,8 @@ private struct InstalledRow: View {
                 .accessibilityLabel("Remove \(app.title)")
         }
         .controlSize(.small)
-        .padding(.vertical, 5)
+        .padding(.vertical, 9)
+        .contentShape(Rectangle())
         .contextMenu {
             if app.updateAvailable, app.runsOnThisReader {
                 Button("Update to \(app.version)") { Task { await store.installApps([app.id]) } }.disabled(busy)
@@ -332,6 +301,6 @@ private struct AvailableRow: View {
             }
         }
         .controlSize(.small)
-        .padding(.vertical, 5)
+        .padding(.vertical, 9)
     }
 }

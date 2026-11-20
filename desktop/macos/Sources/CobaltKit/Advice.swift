@@ -35,14 +35,19 @@ public enum Absence: Equatable, Sendable {
     case none
 }
 
-/// What the Reader place says about one reader and offers to do with it.
+/// What the Reader place offers to do with one reader, and the reason when
+/// the thing an owner would expect is not on offer.
+///
+/// What the reader has and what this computer has are facts and are shown
+/// as facts. Nothing here restates them. `reason` is only ever why something
+/// cannot be done: Cobalt cannot go on this reader, there is nothing here to
+/// install, the reader is ahead of this computer, what is on it is damaged.
+/// When everything is in order it is empty.
 public struct ReaderAdvice: Equatable, Sendable {
     public enum Primary: Equatable, Sendable { case install, update }
 
-    /// The one sentence that is true of this reader now.
-    public var headline: String
-    /// What follows from it, when something does.
-    public var detail: String
+    /// Why the expected action is missing, or nothing.
+    public var reason: String
     /// The one thing to do next, when there is one.
     public var primary: Primary?
     /// Whether installing again is offered as a lesser action.
@@ -79,65 +84,31 @@ public enum Advice {
     public static func standing(of reader: Reader, on computer: Computer?) -> ReaderAdvice {
         let release = computer?.release
         let noRelease = computer?.releaseProblem ?? ""
-        let on = reader.cobalt?.cobaltVersion
+        let refused = reader.supported ? "" : "Cobalt cannot be installed on this reader. \(Said.sentence(reader.refusal))"
 
         if let problem = reader.cobaltProblem, !problem.isEmpty {
-            return ReaderAdvice(
-                headline: "The Cobalt on this reader is damaged.",
-                detail: problem,
-                primary: release != nil && reader.supported ? .install : nil,
-                repair: false,
-                removable: true
-            )
+            return ReaderAdvice(reason: problem, primary: release != nil && reader.supported ? .install : nil, repair: false, removable: true)
         }
-        guard let on else {
-            if !reader.supported {
-                return ReaderAdvice(
-                    headline: "Cobalt cannot be installed on this reader.",
-                    detail: Said.sentence(reader.refusal),
-                    primary: nil,
-                    repair: false,
-                    removable: false
-                )
-            }
-            if let release {
-                return ReaderAdvice(
-                    headline: "Cobalt is not on this reader yet.",
-                    detail: "This computer has Cobalt \(release) ready to install.",
-                    primary: .install,
-                    repair: false,
-                    removable: false
-                )
-            }
-            return ReaderAdvice(headline: "Cobalt is not on this reader yet.", detail: noRelease, primary: nil, repair: false, removable: false)
+        guard reader.cobalt != nil else {
+            if !refused.isEmpty { return ReaderAdvice(reason: refused, primary: nil, repair: false, removable: false) }
+            return release != nil
+                ? ReaderAdvice(reason: "", primary: .install, repair: false, removable: false)
+                : ReaderAdvice(reason: noRelease, primary: nil, repair: false, removable: false)
         }
         switch reader.standing {
         case .behind:
-            return ReaderAdvice(
-                headline: "This reader has Cobalt \(on).",
-                detail: "This computer has \(release ?? ""), which is newer.",
-                primary: reader.supported ? .update : nil,
-                repair: false,
-                removable: true
-            )
+            return ReaderAdvice(reason: refused, primary: refused.isEmpty ? .update : nil, repair: false, removable: true)
         case .ahead:
             return ReaderAdvice(
-                headline: "This reader has Cobalt \(on).",
-                detail: "That is newer than the \(release ?? "") on this computer. Run kobo update in a terminal before changing this reader's Cobalt from here.",
+                reason: "The Cobalt on this reader is newer than the \(release ?? "") on this computer. Run kobo update in a terminal before changing it from here.",
                 primary: nil,
                 repair: false,
                 removable: true
             )
         case .current:
-            return ReaderAdvice(
-                headline: "This reader has Cobalt \(on).",
-                detail: "That is the release on this computer. The reader also updates itself over Wi-Fi.",
-                primary: nil,
-                repair: reader.supported,
-                removable: true
-            )
+            return ReaderAdvice(reason: "", primary: nil, repair: refused.isEmpty, removable: true)
         case .absent, .unknown:
-            return ReaderAdvice(headline: "This reader has Cobalt \(on).", detail: noRelease, primary: nil, repair: false, removable: true)
+            return ReaderAdvice(reason: noRelease, primary: nil, repair: false, removable: true)
         }
     }
 

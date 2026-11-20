@@ -49,7 +49,13 @@ public struct AppsDesk: Equatable, Sendable {
 
 public struct BrowserDesk: Equatable, Sendable {
     public var list: [Browser]?
+    /// Why the browsers could not be listed.
     public var problem: Failure?
+    /// Why the last set-up or removal did not happen. Kept apart from the
+    /// listing's own trouble so that reading the list again, which the
+    /// place does whenever it is opened, does not wipe the reason away
+    /// before the owner has read it.
+    public var refusal: Failure?
     /// The browser being set up or removed at this moment.
     public var busy: String?
     /// What there is to say about a browser after a change to it.
@@ -179,7 +185,7 @@ public final class Companion: ObservableObject {
         if case .uploading(let name, _, _) = send.file {
             return QuitQuestion(
                 title: "\(name) has not all been handed over.",
-                detail: "Quitting now stops it and nothing is sent. The file itself is not touched.",
+                detail: "Quitting now stops it and nothing is sent.",
                 stay: "Keep Open",
                 leave: "Quit"
             )
@@ -190,8 +196,8 @@ public final class Companion: ObservableObject {
             detail += " Leave the reader plugged in until it has."
             if job.title.contains("Cobalt"), !job.title.hasPrefix("Removing") {
                 detail += jobsEchoInTerminal
-                    ? " The steps to take on the reader afterwards will also be in the terminal that started Cobalt."
-                    : " The steps to take on the reader afterwards appear only in this window, so quitting means not seeing them."
+                    ? " The steps for the reader will also be in the terminal that started Cobalt."
+                    : " The steps for the reader appear only in this window."
             }
         }
         return QuitQuestion(title: "\(job.title) is still running.", detail: detail, stay: "Keep Open", leave: "Quit")
@@ -416,17 +422,20 @@ public final class Companion: ObservableObject {
     public func change(browser changed: Browser, setUp: Bool) async {
         guard let client, browser.busy == nil else { return }
         browser.busy = changed.id
-        browser.problem = nil
+        browser.refusal = nil
         defer { browser.busy = nil }
         do {
             let done = try await (setUp ? client.setUpBrowser(changed.id) : client.removeBrowser(changed.id))
             browser.list = done.browsers
-            // Taking the registration away does not take the extension out
-            // of the browser, which only the browser can do, so the owner
-            // is told the half that is left.
-            browser.said[changed.id] = setUp ? "" : "Send to Kobo is gone from \(changed.title). Remove the extension on \(changed.title)’s own extensions page too."
+            // What Send to Kobo is, said once, to the owner who has just
+            // asked for it. Taking the registration away does not take the
+            // extension out of the browser, which only the browser can do,
+            // so after a removal the owner is told the half that is left.
+            browser.said[changed.id] = setUp
+                ? "Send to Kobo adds Send page, Send link and Send selection to the right-click menu."
+                : "Remove the extension on \(changed.title)’s own extensions page too."
         } catch {
-            browser.problem = heard(error)
+            browser.refusal = heard(error)
         }
     }
 

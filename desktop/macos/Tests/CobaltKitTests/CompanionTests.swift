@@ -97,7 +97,11 @@ struct ConnectionTests {
         }
         #expect(Lost(.missing(path: "/Applications/kobo")).detail.contains("/Applications/kobo"))
         #expect(Lost(.exited(said: "kobo: the port could not be opened")).detail == "The port could not be opened.")
-        #expect(Lost(.exited(said: "")).detail.hasPrefix("It did not say why."))
+        #expect(Lost(.exited(said: "")).detail == "It did not say why.")
+        // Where the headline and the button say everything, nothing is added.
+        #expect(Lost(.stopped).detail == "")
+        #expect(Lost(.refused).detail == "")
+        #expect(Lost(.silent(seconds: 10)).detail == "")
         #expect(Lost(.silent(seconds: 10)).headline == "The kobo command did not answer within 10 seconds.")
     }
 
@@ -212,7 +216,7 @@ struct ConnectionTests {
         await mixed.start()
         #expect(mixed.versionTrouble == .release(app: "0.3.37", kobo: "0.3.36"))
         #expect(mixed.versionTrouble?.blocks == false)
-        #expect(mixed.versionTrouble?.detail.contains("Cobalt 0.3.37 and the kobo command is 0.3.36") == true)
+        #expect(mixed.versionTrouble?.detail == "This window is Cobalt 0.3.37 and the kobo command is 0.3.36. Run kobo update in a terminal, then open Cobalt again.")
 
         // A build run outside its bundle has no version of its own to compare.
         let bare = companion(behind, appVersion: nil)
@@ -424,7 +428,7 @@ struct ReaderPlaceTests {
         var scene = JobScene.scene(for: store.reader.job!, state: store.state, now: clock.now)
         #expect(scene.quiet == "")
         #expect(scene.elapsed == "45 s")
-        #expect(scene.waiting.hasPrefix("This takes a minute or two."))
+        #expect(scene.waiting == "Leave the reader plugged in.")
         clock.pass(80)
         scene = JobScene.scene(for: store.reader.job!, state: store.state, now: clock.now)
         #expect(scene.quiet == "Nothing new for 2 min 5 s. It is still running.")
@@ -468,7 +472,7 @@ struct ReaderPlaceTests {
         #expect(alone.quitQuestion == nil)
         await alone.start()
         #expect(alone.quitQuestion?.title == "Installing Cobalt is still running.")
-        #expect(alone.quitQuestion?.detail == "It finishes by itself if you quit. Leave the reader plugged in until it has. The steps to take on the reader afterwards appear only in this window, so quitting means not seeing them.")
+        #expect(alone.quitQuestion?.detail == "It finishes by itself if you quit. Leave the reader plugged in until it has. The steps for the reader appear only in this window.")
 
         let fromTerminal = companion(stage, origin: .terminal)
         await fromTerminal.start()
@@ -680,12 +684,18 @@ struct SendPlaceTests {
         await store.change(browser: chrome, setUp: true)
         #expect(store.browser.list?[0].setUp == true)
         #expect(store.browser.busy == nil)
+        // What was just asked for is said once, to the owner who asked.
+        #expect(store.browser.said["chrome"] == "Send to Kobo adds Send page, Send link and Send selection to the right-click menu.")
         await store.change(browser: chrome, setUp: false)
-        #expect(store.browser.said["chrome"] == "Send to Kobo is gone from Chrome. Remove the extension on Chrome’s own extensions page too.")
+        #expect(store.browser.said["chrome"] == "Remove the extension on Chrome’s own extensions page too.")
 
         board["POST /api/browsers/setup"] = .json(500, refusal("failed", "Chrome's folder could not be written to."))
         await store.change(browser: chrome, setUp: true)
-        #expect(store.browser.problem?.sentence == "Chrome's folder could not be written to.")
+        #expect(store.browser.refusal?.sentence == "Chrome's folder could not be written to.")
+        // Reading the list again leaves the reason where the owner can read it.
+        await store.loadBrowsers()
+        #expect(store.browser.refusal?.sentence == "Chrome's folder could not be written to.")
+        #expect(store.browser.problem == nil)
     }
 
     @Test("A file too large or empty is turned away before any of it is sent")
@@ -838,7 +848,7 @@ struct SendPlaceTests {
         let sending = Task { await store.offer(file: url) }
         for _ in 0..<50 where store.quitQuestion == nil { try await Task.sleep(nanoseconds: 10_000_000) }
         #expect(store.quitQuestion?.title == "Winter.cbz has not all been handed over.")
-        #expect(store.quitQuestion?.detail == "Quitting now stops it and nothing is sent. The file itself is not touched.")
+        #expect(store.quitQuestion?.detail == "Quitting now stops it and nothing is sent.")
         await sending.value
         // The upload timed out, which is said where the file was offered.
         #expect(store.send.file == .idle(problem: "The kobo command did not answer in time."))
@@ -849,7 +859,7 @@ struct SendPlaceTests {
     func privacy() {
         let own = Privacy.blocked(volume: "/Volumes/KOBOeReader", origin: .finder)
         #expect(own.headline == "macOS is keeping Cobalt from reading this reader.")
-        #expect(own.detail.contains("turn on Removable Volumes for Cobalt"))
+        #expect(own.detail == "In System Settings, go to Privacy & Security, then Files and Folders, and turn on Removable Volumes for Cobalt.")
         let terminal = Privacy.blocked(volume: "/Volumes/KOBOeReader", origin: .terminal)
         #expect(terminal.detail.contains("turn on Removable Volumes for that terminal"))
         #expect(Privacy.looksKeptOffNetwork("kobo: could not reach 192.168.1.20: No route to host (os error 65)"))

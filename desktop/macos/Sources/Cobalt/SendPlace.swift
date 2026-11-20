@@ -10,16 +10,15 @@ struct BrowserPlace: View {
 
     var body: some View {
         Pane {
-            Prose(
-                "Send to Kobo adds three things to your browser’s right-click menu: send this page, send this link, and send the selection. Each arrives on the reader as a book, without the menus and advertisements.",
-                font: Paper.serif(16)
-            )
             if let problem = store.browser.problem {
                 Note(problem.sentence, kind: .caution)
             }
+            if let refusal = store.browser.refusal {
+                Note(refusal.sentence, kind: .caution)
+            }
             if let list = store.browser.list {
                 if list.isEmpty {
-                    Note("No browser that Send to Kobo works with was found on this computer. It works with Chrome, Edge, Brave, Chromium and Firefox, and with Safari on a Mac.")
+                    Note("Install Chrome, Edge, Brave, Chromium or Firefox to use Send to Kobo.")
                 } else {
                     VStack(spacing: 0) {
                         ForEach(list) { browser in
@@ -73,6 +72,9 @@ private struct BrowserRow: View {
                     Task { await store.change(browser: browser, setUp: !browser.setUp) }
                 }
                 .disabled(store.browser.busy != nil)
+                // What is being set up is said here, where it is set up,
+                // and nowhere above the list.
+                .help(browser.setUp ? "Take Send to Kobo out of \(browser.title)" : "Add Send to Kobo to \(browser.title)’s right-click menu: send this page, this link or the selection to the reader")
                 .accessibilityLabel(browser.setUp ? "Remove Send to Kobo from \(browser.title)" : "Set up Send to Kobo in \(browser.title)")
             }
             if browser.setUp, !step.instruction.isEmpty {
@@ -107,7 +109,7 @@ private struct BrowserRow: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            if !browser.setUp, !said.isEmpty {
+            if !said.isEmpty {
                 Text(said)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -180,16 +182,16 @@ struct SendPlace: View {
     private var destination: some View {
         if let info = store.send.info {
             if info.readers.isEmpty {
-                Note("No reader is saved on this computer yet. One is saved when it comes back on Wi-Fi after Cobalt is installed from Reader. Until then a web article waits here, and a file has nowhere to go.")
+                Note("No reader is saved on this computer yet, so a file cannot be sent and an article waits. Installing Cobalt from Reader saves one.")
             } else if info.readers.count == 1 {
-                Text("These go over Wi-Fi to the reader saved as “\(info.readers[0].name)”.")
+                Text("To “\(info.readers[0].name)”, over Wi-Fi.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 HStack(spacing: 8) {
                     Text("Send to")
                     Picker("Send to", selection: Binding(get: { store.send.reader }, set: { store.sendTo(reader: $0) })) {
-                        Text("The default reader").tag("")
+                        Text("The reader kobo setup saved").tag("")
                         ForEach(info.readers) { reader in
                             Text(reader.name).tag(reader.name)
                         }
@@ -214,7 +216,7 @@ struct SendPlace: View {
     private var queue: some View {
         let waiting = store.send.info?.waiting ?? []
         if waiting.isEmpty {
-            Text("Nothing is waiting. An article sent while the reader is asleep waits here and goes when the reader is next awake.")
+            Text("Nothing is waiting.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         } else {
@@ -279,13 +281,10 @@ private struct FilePart: View {
                     Text("or drag one onto this window.")
                         .foregroundStyle(.secondary)
                 }
-                Text("Photos go to Frame, PDF scores to Music Stand, Markdown notes to Vault, OPML lists to Feeds, CBZ comics to Panels, story files to Parser and Anki decks to Flashcards.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             case .uploading(let name, let size, let sent):
                 Text("Handing over \(name), \(Advice.fileSize(size)).")
                 ProgressView(value: Double(sent), total: Double(max(size, 1)))
+                    .tint(Paper.accent)
                     .accessibilityLabel("Handing over \(name)")
             case .asking(let upload, let to):
                 ask(upload, to: to)
@@ -307,6 +306,7 @@ private struct FilePart: View {
             }
             .pickerStyle(.radioGroup)
             .labelsHidden()
+            .tint(Paper.accent)
             if let chosen, let replaces = chosen.replaces {
                 Text("\(chosen.title) keeps one \(replaces) at a time, so this replaces the \(replaces) on the reader.")
                     .foregroundStyle(.secondary)

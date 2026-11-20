@@ -49,11 +49,13 @@ struct RootView: View {
             if let trouble = store.versionTrouble, trouble.blocks {
                 Standstill(headline: trouble.headline, detail: trouble.detail) {}
             } else {
-                VStack(spacing: 0) {
+                // Set into the top of the place rather than stacked above
+                // it, so the place still reaches up under the toolbar the
+                // way every other pane does and scrolls beneath the banner.
+                place.safeAreaInset(edge: .top, spacing: 0) {
                     if let trouble = store.versionTrouble {
                         VersionBanner(trouble: trouble)
                     }
-                    place
                 }
             }
         }
@@ -85,22 +87,29 @@ private struct VersionBanner: View {
     var trouble: VersionTrouble
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Image(systemName: "exclamationmark.triangle")
-                    .accessibilityHidden(true)
-                Text(trouble.detail)
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 9)
-            Divider().overlay(Paper.rule)
+        // The sentence is left to wrap as the width allows and is not
+        // pinned to its ideal height. Outside a scroll view, a pinned
+        // paragraph reports the height it would have at no width at all,
+        // and the split view above it stops laying anything out.
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.body.weight(.medium))
+                .accessibilityHidden(true)
+            Text(trouble.detail)
+                .font(.callout)
+                .lineLimit(4)
+            Spacer(minLength: 0)
         }
-        .background(Paper.inset)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(Paper.inset, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .frame(maxWidth: Paper.column)
+        .padding(.horizontal, 28)
+        .padding(.top, 14)
+        .padding(.bottom, 2)
+        .frame(maxWidth: .infinity)
         .background(Paper.ground)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -112,6 +121,10 @@ private struct Sidebar: View {
             ForEach(Place.allCases) { place in
                 Label(place.title, systemImage: symbol(for: place))
                     .badge(badge(for: place))
+                    // The symbols are drawn in the label's own colour and
+                    // not the accent: four blue pictures down the side are
+                    // more colour than the rest of the window has in it.
+                    .listItemTint(.monochrome)
                     .tag(place)
             }
         }

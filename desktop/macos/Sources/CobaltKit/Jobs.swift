@@ -107,7 +107,7 @@ public struct JobScene: Equatable, Sendable {
         // Until the command turns to the steps for the reader there is
         // nothing for the owner to do but leave it alone, so that is said.
         if report.isEmpty {
-            scene.waiting = "This takes a minute or two. Leave the reader plugged in until the steps for it appear here."
+            scene.waiting = "Leave the reader plugged in."
         }
         let silence = now.timeIntervalSince(job.lastHeard)
         if silence >= stuckAfter {

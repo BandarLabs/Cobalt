@@ -48,15 +48,8 @@ struct ReaderAdviceTests {
 
     @Test("A reader without Cobalt is offered an install only when there is one to give it")
     func withoutCobalt() {
-        let offered = Advice.standing(of: clara, on: withRelease)
-        #expect(offered.headline == "Cobalt is not on this reader yet.")
-        #expect(offered.detail == "This computer has Cobalt 0.3.37 ready to install.")
-        #expect(offered.primary == .install)
-        #expect(offered.removable == false)
-
-        let nothing = Advice.standing(of: clara, on: withoutRelease)
-        #expect(nothing.primary == nil)
-        #expect(nothing.detail == withoutRelease.releaseProblem)
+        #expect(Advice.standing(of: clara, on: withRelease) == ReaderAdvice(reason: "", primary: .install, repair: false, removable: false))
+        #expect(Advice.standing(of: clara, on: withoutRelease) == ReaderAdvice(reason: withoutRelease.releaseProblem ?? "", primary: nil, repair: false, removable: false))
     }
 
     @Test("A reader Cobalt cannot start on is told why and offered nothing")
@@ -65,8 +58,7 @@ struct ReaderAdviceTests {
             of: reader(#""refusal": "firmware 5.2.190625 cannot start Cobalt: NickelMenu does not hook the 5.x firmware""#, supported: false),
             on: withRelease
         )
-        #expect(refused.headline == "Cobalt cannot be installed on this reader.")
-        #expect(refused.detail == "Firmware 5.2.190625 cannot start Cobalt: NickelMenu does not hook the 5.x firmware.")
+        #expect(refused.reason == "Cobalt cannot be installed on this reader. Firmware 5.2.190625 cannot start Cobalt: NickelMenu does not hook the 5.x firmware.")
         #expect(refused.primary == nil)
         #expect(refused.repair == false)
         #expect(refused.removable == false)
@@ -74,26 +66,19 @@ struct ReaderAdviceTests {
 
     @Test("A reader with Cobalt is offered an update only when this computer's release is newer")
     func withCobalt() {
-        let behind = Advice.standing(of: readerWithCobalt("0.3.30", "behind"), on: withRelease)
-        #expect(behind.headline == "This reader has Cobalt 0.3.30.")
-        #expect(behind.detail == "This computer has 0.3.37, which is newer.")
-        #expect(behind.primary == .update)
-        #expect(behind.removable)
-
-        let current = Advice.standing(of: readerWithCobalt("0.3.37", "current"), on: withRelease)
-        #expect(current.primary == nil)
-        #expect(current.repair)
-        #expect(current.removable)
+        #expect(Advice.standing(of: readerWithCobalt("0.3.30", "behind"), on: withRelease) == ReaderAdvice(reason: "", primary: .update, repair: false, removable: true))
+        // In order, nothing is said: the facts already show both releases.
+        #expect(Advice.standing(of: readerWithCobalt("0.3.37", "current"), on: withRelease) == ReaderAdvice(reason: "", primary: nil, repair: true, removable: true))
 
         let ahead = Advice.standing(of: readerWithCobalt("0.4.0", "ahead"), on: withRelease)
         #expect(ahead.primary == nil)
         #expect(ahead.repair == false)
-        #expect(ahead.detail.contains("newer than the 0.3.37 on this computer"))
-        #expect(ahead.detail.contains("kobo update"))
+        #expect(ahead.reason.contains("newer than the 0.3.37 on this computer"))
+        #expect(ahead.reason.contains("kobo update"))
 
         let unknown = Advice.standing(of: readerWithCobalt("0.3.30", "unknown"), on: withoutRelease)
         #expect(unknown.primary == nil)
-        #expect(unknown.detail == withoutRelease.releaseProblem)
+        #expect(unknown.reason == withoutRelease.releaseProblem)
         #expect(unknown.removable)
     }
 
@@ -102,8 +87,9 @@ struct ReaderAdviceTests {
         let stranded = Advice.standing(of: readerWithCobalt("0.3.30", "behind", #""refusal": "firmware 5.2 cannot start Cobalt""#, supported: false), on: withRelease)
         #expect(stranded.primary == nil)
         #expect(stranded.removable)
+        #expect(stranded.reason.hasPrefix("Cobalt cannot be installed on this reader. Firmware 5.2"))
         let damaged = Advice.standing(of: reader(#""cobalt_problem": "The Cobalt on the reader does not say which release it is.""#), on: withRelease)
-        #expect(damaged.headline == "The Cobalt on this reader is damaged.")
+        #expect(damaged.reason == "The Cobalt on the reader does not say which release it is.")
         #expect(damaged.primary == .install)
         #expect(damaged.removable)
     }
@@ -175,6 +161,17 @@ struct ShelfTests {
         #expect(shelf.installed[0].app.installedVersion == "1.0.0")
         #expect(shelf.installed[0].app.updateAvailable)
         #expect(shelf.installed[1].app.updateAvailable == false)
+    }
+
+    @Test("What an app is for is said in the catalog's words where the catalog has them")
+    func catalogSummaryIsPreferred() {
+        let installed = [app("rss", "Feeds", #""installed_version": "1.0.0", "summary": "The reader's own words for it.""#), app("vault", "Vault", #""installed_version": "1.0.0", "summary": "Only the reader knows this one.""#)]
+        let catalog = [app("rss", "Feeds", #""installed_version": "1.0.0", "summary": "The sites you follow, read as pages.""#)]
+        let shelf = Shelf.arrange(installed: installed, catalog: catalog, query: "")
+        #expect(shelf.installed.first { $0.id == "rss" }?.app.summary == "The sites you follow, read as pages.")
+        #expect(shelf.installed.first { $0.id == "vault" }?.app.summary == "Only the reader knows this one.")
+        // The search looks at the words that are shown.
+        #expect(Shelf.arrange(installed: installed, catalog: catalog, query: "sites").installed.map(\.id) == ["rss"])
     }
 
     @Test("With no catalog the reader's own apps are still listed and nothing is called an update")

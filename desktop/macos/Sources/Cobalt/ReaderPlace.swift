@@ -65,20 +65,14 @@ private struct NoReader: View {
                 Prose(advice.detail)
                 Button(advice.button) { NSWorkspace.shared.open(advice.settings) }
             case .unconnected:
-                title("A reader", screen: .connect, present: true, headline: "A Kobo is plugged in and has not connected.")
-                Prose("Its screen is asking whether to connect to this computer. Tap Connect on the reader. Until you do, it charges and the computer cannot see it.")
-                Prose("If the question is not on its screen, unplug the cable and plug it in again.")
-                    .foregroundStyle(.secondary)
+                title("A reader", screen: .connect, present: true, headline: "The reader is plugged in but has not connected.")
+                Prose("Tap Connect on its screen, or unplug the cable and plug it in again if the question has gone.")
             case .none, .present:
                 title("A reader", screen: .blank, present: false, headline: "No reader is connected.")
                 if !store.reader.notice.isEmpty {
                     Note(store.reader.notice, kind: .done)
                 }
-                Prose("Plug your Kobo into this computer and it appears here by itself.")
-                SaidView(blocks: [
-                    .step(1, "Use a cable that carries data, plugged straight into the computer and not through a hub. A cable that only charges looks the same."),
-                    .step(2, "The reader asks whether to connect. Tap Connect. It stays hidden from the computer until you do."),
-                ])
+                Prose("Plug in your Kobo with a cable that carries data and tap Connect on its screen.")
             }
         }
     }
@@ -105,7 +99,6 @@ private struct SeveralReaders: View {
             Text("\(readers.count) readers are connected.")
                 .font(Paper.serif(24))
                 .accessibilityAddTraits(.isHeader)
-            Prose("Choose the one to work on. Nothing is done to a reader you did not choose.")
             VStack(spacing: 0) {
                 ForEach(readers) { reader in
                     Divider().overlay(Paper.rule)
@@ -162,16 +155,11 @@ private struct OneReader: View {
                     facts
                 }
             }
-            VStack(alignment: .leading, spacing: 6) {
-                Text(advice.headline)
-                    .font(Paper.serif(19))
-                    .fixedSize(horizontal: false, vertical: true)
-                if !advice.detail.isEmpty {
-                    Prose(advice.detail)
-                        .foregroundStyle(.secondary)
-                }
+            // A reader in order is its facts and its buttons. A sentence is
+            // added only when something cannot be done, and it is the reason.
+            if !advice.reason.isEmpty {
+                Note(advice.reason, kind: reader.cobaltProblem == nil ? .plain : .caution)
             }
-            .padding(.top, 4)
             if advice.primary != nil, let untested = reader.untested, !untested.isEmpty {
                 Note(Said.sentence(untested))
             }
@@ -225,13 +213,20 @@ private struct OneReader: View {
             if let firmware = reader.firmware, !firmware.isEmpty {
                 fact("Firmware", firmware)
             }
-            fact("Cobalt", reader.cobalt.map { "\($0.cobaltVersion)\($0.channel.map { ", \($0) channel" } ?? "")" } ?? "Not installed")
+            fact("Cobalt", cobalt)
+            fact("This computer has", store.computer?.release.map { "Cobalt \($0)" } ?? "No release")
             if let free = reader.freeBytes {
                 fact("Free space", Advice.fileSize(free))
             }
             fact("Connected at", reader.volume)
         }
         .font(.callout)
+    }
+
+    private var cobalt: String {
+        if let problem = reader.cobaltProblem, !problem.isEmpty { return "Damaged" }
+        guard let cobalt = reader.cobalt else { return "Not installed" }
+        return "\(cobalt.cobaltVersion)\(cobalt.channel.map { ", \($0) channel" } ?? "")"
     }
 
     private func fact(_ name: String, _ value: String) -> some View {
@@ -282,7 +277,7 @@ private struct PlanPane: View {
                     .font(Paper.serif(24))
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                Text("On the \(reader.model) at \(reader.volume). Nothing is written until you agree below.")
+                Text("On the \(reader.model) at \(reader.volume).")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -391,7 +386,7 @@ private struct JobPane: View {
             // A reader still mounted after a finished job has not seen what
             // was written to it, and pulling the cable now can lose the end
             // of it.
-            Note("The reader is still connected. Eject it before you unplug it, so everything written is on it.") {
+            Note("The reader is still connected. Eject it before you unplug it.") {
                 if store.computer?.ejects == true {
                     Button("Eject Now") { Task { await store.eject(volume: reader.volume) } }
                         .disabled(store.reader.ejecting)

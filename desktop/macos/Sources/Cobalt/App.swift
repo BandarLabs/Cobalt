@@ -87,7 +87,7 @@ enum Questions {
     static func removal(of app: AppEntry) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = "Remove \(app.title) from this reader?"
-        alert.informativeText = "Its data is kept, so installing it again picks up where it left off."
+        alert.informativeText = "Its data is kept."
         alert.addButton(withTitle: "Remove")
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true

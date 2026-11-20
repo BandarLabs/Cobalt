@@ -38,7 +38,7 @@ public struct Lost: Error, Equatable, Sendable {
 
     public var headline: String {
         switch reason {
-        case .stopped: return "The kobo command behind this window has stopped."
+        case .stopped: return "The kobo command has stopped."
         case .refused: return "The kobo command no longer accepts this window."
         case .missing: return "Cobalt cannot find the kobo command."
         case .exited: return "The kobo command stopped as soon as it started."
@@ -47,23 +47,22 @@ public struct Lost: Error, Equatable, Sendable {
         }
     }
 
+    /// What goes under the headline: the reason where there is one, or
+    /// the one thing to do that the button beneath does not already do.
+    /// Where the headline and the button say it all, nothing.
     public var detail: String {
         switch reason {
-        case .stopped:
-            return "Anything that had finished is still done. Start it again to carry on from here."
-        case .refused:
-            return "Each window is given a key when it opens, and this one's is no longer good. Start again to get a new one."
+        case .stopped, .refused, .silent:
+            return ""
         case .missing(let path):
-            return "It is expected beside this app, at \(path). Install Cobalt again from https://bandarlabs.github.io/Cobalt/ so the two are together, or run kobo ui in a terminal."
+            return "It is expected at \(path). Install Cobalt again from https://bandarlabs.github.io/Cobalt/."
         case .exited(let said):
             let reason = Said.failure(said)
             if !reason.isEmpty { return Said.sentence(reason) }
             let last = said.split(separator: "\n").last.map(String.init) ?? ""
-            return last.isEmpty ? "It did not say why. Run kobo ui in a terminal to see what it prints." : Said.sentence(last)
-        case .silent:
-            return "It was started and has said nothing. Start again; if this keeps happening, run kobo ui in a terminal to see what it prints."
+            return last.isEmpty ? "It did not say why." : Said.sentence(last)
         case .garbled:
-            return "The two are probably from different releases. Run kobo update in a terminal, then open Cobalt again."
+            return "Run kobo update in a terminal, then open Cobalt again."
         }
     }
 }
@@ -90,9 +89,9 @@ public enum VersionTrouble: Equatable, Sendable {
     public var detail: String {
         switch self {
         case .contract(let app, let kobo):
-            return "\(app.map { "Cobalt \($0)" } ?? "This window") cannot work with kobo \(kobo): they no longer ask and answer in the same way. Run kobo update in a terminal, then open Cobalt again."
+            return "\(app.map { "This window is Cobalt \($0)" } ?? "This window is a different release") and the kobo command is \(kobo). Run kobo update in a terminal, then open Cobalt again."
         case .release(let app, let kobo):
-            return "This window is Cobalt \(app) and the kobo command is \(kobo). They are installed together and are meant to match. Run kobo update in a terminal, then open Cobalt again."
+            return "This window is Cobalt \(app) and the kobo command is \(kobo). Run kobo update in a terminal, then open Cobalt again."
         }
     }
 }
@@ -120,7 +119,7 @@ public enum Privacy {
         let entry = origin == .finder ? "Cobalt" : "that terminal"
         return Advice(
             headline: "macOS is keeping \(who) from reading this reader.",
-            detail: "A drive is connected at \(volume), and macOS has not allowed it to be opened. In System Settings, go to Privacy & Security, then Files and Folders, and turn on Removable Volumes for \(entry). This window carries on by itself once it can read the drive.",
+            detail: "In System Settings, go to Privacy & Security, then Files and Folders, and turn on Removable Volumes for \(entry).",
             button: "Open Privacy & Security",
             settings: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders")!
         )
@@ -138,7 +137,7 @@ public enum Privacy {
         let who = origin == .finder ? "Cobalt" : "the terminal that started Cobalt"
         return Advice(
             headline: "macOS may be keeping \(who) off the local network.",
-            detail: "Files and articles reach the reader over Wi-Fi, and \"No route to host\" is what macOS reports when it has not allowed that. In System Settings, go to Privacy & Security, then Local Network, and turn it on for \(who). If it is already on, the reader is on a different network from this computer.",
+            detail: "In System Settings, go to Privacy & Security, then Local Network, and turn it on for \(who). If it is already on, the reader is on a different network from this computer.",
             button: "Open Local Network Settings",
             settings: URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")!
         )
@@ -160,5 +159,5 @@ public enum Storage {
     /// button that can only fail.
     /// The remedy is the server's own, word for word, so the owner reads
     /// one piece of advice whichever of the two says it.
-    public static let readOnly = "This reader's storage is mounted read-only, so nothing can be installed on it or removed from it. Eject it, unplug it, restart the reader and connect it again. If it comes back read-only, its storage needs repairing from the reader's own settings."
+    public static let readOnly = "This reader's storage is mounted read-only, so nothing can be written to it. Eject it, unplug it, restart the reader and connect it again."
 }

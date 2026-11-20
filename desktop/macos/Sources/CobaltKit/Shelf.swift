@@ -50,6 +50,10 @@ public struct Shelf: Equatable, Sendable {
             // The catalog's entry knows the version on offer; the reader's
             // own record knows only what it has.
             var merged = held
+            // What an app is for is said in the catalog's words where the
+            // catalog has them: the reader's own record of a built-in app
+            // describes it for a different audience.
+            if !entry.summary.isEmpty { merged.summary = entry.summary }
             merged.version = entry.version
             merged.updateAvailable = entry.updateAvailable
             merged.runsOnThisReader = entry.runsOnThisReader

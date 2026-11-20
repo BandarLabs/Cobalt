@@ -62,8 +62,6 @@ enum Paper {
 final class Desk: ObservableObject {
     /// Raised to send the keyboard to the web address field, from the menu.
     @Published var addressFocus = 0
-    /// The app the owner has asked to remove and not yet confirmed.
-    @Published var selectedApp: String?
     /// True while the window is being drawn to a file. A window that is not
     /// on screen is never the key window, and the system draws a button in
     /// a window that is not key as if it were switched off.

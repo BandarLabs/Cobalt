@@ -47,7 +47,7 @@ enum Renderer {
                         alert.window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                         alert.layout()
                         let file = directory.appendingPathComponent("\(scenario.name)-sheet-\(appearance).png")
-                        try await capture(alert.window, scale: scale).write(to: file)
+                        try await capture(alert.window, scale: scale, to: file)
                         written += 1
                         continue
                     }
@@ -58,8 +58,8 @@ enum Renderer {
                         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                         window.setContentSize(NSSize(width: size.width, height: size.height))
                         let file = directory.appendingPathComponent("\(scenario.name)-\(size.name)-\(appearance).png")
-                        try await capture(window, scale: scale).write(to: file)
-                        window.contentViewController = nil
+                        defer { window.contentViewController = nil }
+                        try await capture(window, scale: scale, to: file)
                         written += 1
                     }
                 } catch {
@@ -74,7 +74,7 @@ enum Renderer {
 
     enum Problem: Error { case noFrame, noBitmap, blank, nothingToDraw }
 
-    static func capture(_ window: NSWindow, scale: CGFloat) async throws -> Data {
+    static func capture(_ window: NSWindow, scale: CGFloat, to file: URL) async throws {
         // The views lay themselves out and their tasks run over a few turns
         // of the run loop. A scripted server answers at once, so a few
         // short waits are enough for the window to reach the state it will
@@ -118,24 +118,30 @@ enum Renderer {
         NSGraphicsContext.restoreGraphicsState()
 
         guard let png = whole.representation(using: .png, properties: [:]) else { throw Problem.noBitmap }
-        // A window whose content never drew comes out as one flat colour. A
-        // file is still written by then, and a state that silently rendered
-        // as nothing is the failure this mode exists to catch.
-        guard hasDetail(drawn) else { throw Problem.blank }
-        return png
+        // The file is written whatever is in it, so there is something to
+        // look at. A place that drew nothing is then reported as a failure,
+        // because a state that silently rendered as an empty pane is what
+        // this mode exists to catch.
+        try png.write(to: file)
+        guard hasDetail(whole, below: Int(54 * scale)) else { throw Problem.blank }
     }
 
-    /// Whether more than one colour was drawn, sampled sparsely.
-    private static func hasDetail(_ bitmap: NSBitmapImageRep) -> Bool {
+    /// Whether anything was drawn beneath the toolbar, in the part of the
+    /// window the place fills. A place whose layout has failed still has a
+    /// title bar and a toolbar above an empty pane, so they are not counted.
+    /// Every pixel is read, because a place with one line of small grey
+    /// text in it is easily missed by a sample.
+    private static func hasDetail(_ bitmap: NSBitmapImageRep, below toolbar: Int) -> Bool {
+        guard let data = bitmap.bitmapData, bitmap.bitsPerPixel == 32 else { return true }
+        let left = bitmap.pixelsWide * 3 / 10
+        let first = min(toolbar, bitmap.pixelsHigh / 2)
         var seen = Set<UInt32>()
-        let stepX = max(1, bitmap.pixelsWide / 60)
-        let stepY = max(1, bitmap.pixelsHigh / 60)
-        for y in stride(from: 0, to: bitmap.pixelsHigh, by: stepY) {
-            for x in stride(from: 0, to: bitmap.pixelsWide, by: stepX) {
-                guard let colour = bitmap.colorAt(x: x, y: y) else { continue }
-                let key = UInt32(colour.redComponent * 255) << 16 | UInt32(colour.greenComponent * 255) << 8 | UInt32(colour.blueComponent * 255)
-                seen.insert(key)
-                if seen.count > 3 { return true }
+        for y in first..<bitmap.pixelsHigh {
+            let row = data + y * bitmap.bytesPerRow
+            for x in left..<bitmap.pixelsWide {
+                let pixel = row + x * 4
+                seen.insert(UInt32(pixel[0]) << 16 | UInt32(pixel[1]) << 8 | UInt32(pixel[2]))
+                if seen.count > 12 { return true }
             }
         }
         return false
@@ -153,6 +159,7 @@ enum Renderer {
             alert.window.center()
             alert.window.orderFrontRegardless()
             print("window \(alert.window.windowNumber)")
+            fflush(stdout)
         } else {
             let window = MainWindow.make(store: staged.store, desk: staged.desk)
             window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
@@ -161,6 +168,7 @@ enum Renderer {
             window.orderFrontRegardless()
             shown.append(window)
             print("window \(window.windowNumber)")
+            fflush(stdout)
         }
         kept.append(staged)
         return true
